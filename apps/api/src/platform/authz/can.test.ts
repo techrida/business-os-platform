@@ -1,5 +1,9 @@
 // Table tests for `can()`: every scope with a matching and a non-matching record, the deny reasons,
 // and the latency budget (P1 plan §7 U1: 100k calls, p99 < 0.05 ms).
+//
+// ADR 0027: every principal's `organizationId` is the acting legal entity, the same value for staff
+// and portal callers. A portal caller is told apart by `partyId`, and only the counterparty columns
+// (`customerPartyId`, `vendorPartyId`) are compared with it.
 import { performance } from 'node:perf_hooks';
 
 import type { OrgKind, Permission, Scope } from '@bos/contracts';
@@ -10,19 +14,21 @@ import type { Decision, Principal, ResourceRef } from './principal';
 
 const TENANT = '00000000-0000-4000-8000-000000000001';
 const OTHER_TENANT = '00000000-0000-4000-8000-000000000002';
-const STAFF_ORG = '10000000-0000-4000-8000-000000000001';
-const CUSTOMER_ORG = '20000000-0000-4000-8000-000000000001';
-const OTHER_CUSTOMER_ORG = '20000000-0000-4000-8000-000000000002';
-const VENDOR_ORG = '30000000-0000-4000-8000-000000000001';
+/** The acting legal entity, for staff and portal callers alike. */
+const ENTITY = '10000000-0000-4000-8000-000000000001';
+const OTHER_ENTITY = '10000000-0000-4000-8000-000000000002';
+const CUSTOMER_PARTY = '20000000-0000-4000-8000-000000000001';
+const OTHER_CUSTOMER_PARTY = '20000000-0000-4000-8000-000000000002';
+const VENDOR_PARTY = '30000000-0000-4000-8000-000000000001';
 const ME = 'a0000000-0000-4000-8000-000000000001';
 const SOMEONE_ELSE = 'a0000000-0000-4000-8000-000000000002';
 const MY_DEPT = 'd0000000-0000-4000-8000-000000000001';
 const OTHER_DEPT = 'd0000000-0000-4000-8000-000000000002';
 
-const ORG_OF: Record<OrgKind, string> = {
-  staff: STAFF_ORG,
-  customer: CUSTOMER_ORG,
-  vendor: VENDOR_ORG,
+const PARTY_OF: Record<OrgKind, string | null> = {
+  staff: null,
+  customer: CUSTOMER_PARTY,
+  vendor: VENDOR_PARTY,
 };
 
 function principalWith(
@@ -34,8 +40,10 @@ function principalWith(
     userId: ME,
     zitadelUserId: 'zitadel-sub-1',
     tenantId: TENANT,
-    organizationId: ORG_OF[orgKind],
+    organizationId: ENTITY,
     orgKind,
+    partyId: PARTY_OF[orgKind],
+    idpOrgId: 'e0000000-0000-4000-8000-000000000001',
     roles: [],
     departmentId: MY_DEPT,
     status: 'active',
@@ -44,10 +52,10 @@ function principalWith(
   };
 }
 
-/** A staff-owned record in our tenant; each case overrides what it tests. */
+/** A record of the acting entity in our tenant; each case overrides what it tests. */
 const rec = (over: Partial<ResourceRef> = {}): ResourceRef => ({
   tenantId: TENANT,
-  organizationId: STAFF_ORG,
+  organizationId: ENTITY,
   ...over,
 });
 
@@ -62,6 +70,7 @@ interface Case {
   scope: Scope;
   orgKind?: OrgKind;
   departmentId?: string | null;
+  partyId?: string | null;
   r: ResourceRef;
   want: Decision;
 }
@@ -90,9 +99,9 @@ const scopeCases: Case[] = [
   },
 
   {
-    name: 'own: I own it, but it belongs to another org',
+    name: 'own: I own it, but it belongs to another entity',
     scope: 'own',
-    r: rec({ organizationId: CUSTOMER_ORG, ownerUserId: ME }),
+    r: rec({ organizationId: OTHER_ENTITY, ownerUserId: ME }),
     want: DENIED('out_of_scope'),
   },
 
@@ -137,82 +146,99 @@ const scopeCases: Case[] = [
   },
 
   {
-    name: 'department: same department id, but another org',
+    name: 'department: same department id, but another entity',
     scope: 'department',
-    r: rec({ organizationId: CUSTOMER_ORG, departmentId: MY_DEPT }),
+    r: rec({ organizationId: OTHER_ENTITY, departmentId: MY_DEPT }),
     want: DENIED('out_of_scope'),
   },
 
-  // customer_org
+  // customer_org: rows of the acting entity that name the caller's party (ADR 0027 §5)
   {
-    name: 'customer_org: customer named in the customer column',
+    name: 'customer_org: my party named in the customer column',
     scope: 'customer_org',
     orgKind: 'customer',
-    r: rec({ customerOrganizationId: CUSTOMER_ORG }),
+    r: rec({ customerPartyId: CUSTOMER_PARTY }),
     want: ALLOWED('customer_org'),
   },
   {
-    name: 'customer_org: another customer named',
+    name: 'customer_org: another customer party named',
     scope: 'customer_org',
     orgKind: 'customer',
-    r: rec({ customerOrganizationId: OTHER_CUSTOMER_ORG }),
+    r: rec({ customerPartyId: OTHER_CUSTOMER_PARTY }),
     want: DENIED('out_of_scope'),
   },
   {
-    name: 'customer_org: customer id only in the vendor column',
+    name: 'customer_org: my party named, but in another entity',
     scope: 'customer_org',
     orgKind: 'customer',
-    r: rec({ vendorOrganizationId: CUSTOMER_ORG }),
+    r: rec({ organizationId: OTHER_ENTITY, customerPartyId: CUSTOMER_PARTY }),
     want: DENIED('out_of_scope'),
   },
   {
-    name: 'customer_org: customer is the owning org but not the counterparty',
+    // The silent-break regression: the old code compared the column with `organizationId`, which
+    // is now the acting entity. A party id equal to an entity id must grant nothing.
+    name: 'customer_org: the customer column holds the acting entity id',
     scope: 'customer_org',
     orgKind: 'customer',
-    r: rec({ organizationId: CUSTOMER_ORG }),
+    r: rec({ customerPartyId: ENTITY }),
     want: DENIED('out_of_scope'),
   },
   {
-    name: 'customer_org: vendor named in the vendor column',
+    name: 'customer_org: my party id only in the vendor column',
+    scope: 'customer_org',
+    orgKind: 'customer',
+    r: rec({ vendorPartyId: CUSTOMER_PARTY }),
+    want: DENIED('out_of_scope'),
+  },
+  {
+    name: 'customer_org: a customer with no party matches nothing, not even a null column',
+    scope: 'customer_org',
+    orgKind: 'customer',
+    partyId: null,
+    r: rec({ customerPartyId: null }),
+    want: DENIED('out_of_scope'),
+  },
+  {
+    name: 'customer_org: vendor party named in the vendor column',
     scope: 'customer_org',
     orgKind: 'vendor',
-    r: rec({ vendorOrganizationId: VENDOR_ORG }),
+    r: rec({ vendorPartyId: VENDOR_PARTY }),
     want: ALLOWED('customer_org'),
   },
   {
-    name: 'customer_org: vendor id only in the customer column',
+    name: 'customer_org: vendor party id only in the customer column',
     scope: 'customer_org',
     orgKind: 'vendor',
-    r: rec({ customerOrganizationId: VENDOR_ORG }),
+    r: rec({ customerPartyId: VENDOR_PARTY }),
     want: DENIED('out_of_scope'),
   },
   {
     name: 'customer_org: staff never match the counterparty column',
     scope: 'customer_org',
     orgKind: 'staff',
-    r: rec({ customerOrganizationId: STAFF_ORG, vendorOrganizationId: STAFF_ORG }),
+    r: rec({ customerPartyId: ENTITY, vendorPartyId: ENTITY }),
     want: DENIED('out_of_scope'),
   },
   {
     name: 'customer_org: another tenant',
     scope: 'customer_org',
     orgKind: 'customer',
-    r: rec({ tenantId: OTHER_TENANT, customerOrganizationId: CUSTOMER_ORG }),
+    r: rec({ tenantId: OTHER_TENANT, customerPartyId: CUSTOMER_PARTY }),
     want: DENIED('out_of_scope'),
   },
 
   // all
-  { name: 'all: staff, row owned by the staff org', scope: 'all', r: rec(), want: ALLOWED('all') },
+  { name: 'all: staff, row of the acting entity', scope: 'all', r: rec(), want: ALLOWED('all') },
   {
-    name: 'all: staff, staff-owned row that names a customer',
+    name: 'all: staff, row of the acting entity that names a customer',
     scope: 'all',
-    r: rec({ customerOrganizationId: CUSTOMER_ORG, ownerUserId: SOMEONE_ELSE }),
+    r: rec({ customerPartyId: CUSTOMER_PARTY, ownerUserId: SOMEONE_ELSE }),
     want: ALLOWED('all'),
   },
   {
-    name: 'all: staff, row owned by a customer org',
+    name: 'all: staff, row of another entity',
     scope: 'all',
-    r: rec({ organizationId: CUSTOMER_ORG }),
+    r: rec({ organizationId: OTHER_ENTITY }),
     want: DENIED('out_of_scope'),
   },
   {
@@ -222,64 +248,73 @@ const scopeCases: Case[] = [
     want: DENIED('out_of_scope'),
   },
   {
-    name: 'all: customer, row owned by its own org',
+    name: 'all: customer, row of the acting entity that names it',
     scope: 'all',
     orgKind: 'customer',
-    r: rec({ organizationId: CUSTOMER_ORG }),
+    r: rec({ customerPartyId: CUSTOMER_PARTY }),
     want: ALLOWED('all'),
   },
   {
-    name: 'all: customer, staff-owned row that names it',
-    scope: 'all',
-    orgKind: 'customer',
-    r: rec({ customerOrganizationId: CUSTOMER_ORG }),
-    want: ALLOWED('all'),
-  },
-  {
-    // The security-critical row: `all` for a customer must not mean "the whole tenant".
-    name: 'all: customer, staff-owned row naming another customer',
-    scope: 'all',
-    orgKind: 'customer',
-    r: rec({ customerOrganizationId: OTHER_CUSTOMER_ORG }),
-    want: DENIED('out_of_scope'),
-  },
-  {
-    name: 'all: customer, staff-owned row with no counterparty',
+    // The security-critical row: `all` for a customer must not mean "the whole entity", even
+    // though its `organizationId` is the entity that owns the row.
+    name: 'all: customer, row of the acting entity with no counterparty',
     scope: 'all',
     orgKind: 'customer',
     r: rec(),
     want: DENIED('out_of_scope'),
   },
   {
-    name: 'all: customer named only in the vendor column',
+    name: 'all: customer, row naming another customer',
     scope: 'all',
     orgKind: 'customer',
-    r: rec({ vendorOrganizationId: CUSTOMER_ORG }),
+    r: rec({ customerPartyId: OTHER_CUSTOMER_PARTY }),
     want: DENIED('out_of_scope'),
   },
   {
-    name: 'all: vendor, staff-owned row that names it',
+    name: 'all: customer, the customer column holds the acting entity id',
+    scope: 'all',
+    orgKind: 'customer',
+    r: rec({ customerPartyId: ENTITY }),
+    want: DENIED('out_of_scope'),
+  },
+  {
+    name: 'all: customer named only in the vendor column',
+    scope: 'all',
+    orgKind: 'customer',
+    r: rec({ vendorPartyId: CUSTOMER_PARTY }),
+    want: DENIED('out_of_scope'),
+  },
+  {
+    name: 'all: customer named, but in another entity',
+    scope: 'all',
+    orgKind: 'customer',
+    r: rec({ organizationId: OTHER_ENTITY, customerPartyId: CUSTOMER_PARTY }),
+    want: DENIED('out_of_scope'),
+  },
+  {
+    name: 'all: vendor, row of the acting entity that names it',
     scope: 'all',
     orgKind: 'vendor',
-    r: rec({ vendorOrganizationId: VENDOR_ORG }),
+    r: rec({ vendorPartyId: VENDOR_PARTY }),
     want: ALLOWED('all'),
   },
   {
     name: 'all: customer, another tenant',
     scope: 'all',
     orgKind: 'customer',
-    r: rec({ tenantId: OTHER_TENANT, organizationId: CUSTOMER_ORG }),
+    r: rec({ tenantId: OTHER_TENANT, customerPartyId: CUSTOMER_PARTY }),
     want: DENIED('out_of_scope'),
   },
 ];
 
 describe('can(): scopes on a record', () => {
-  it.each(scopeCases)('$name', ({ scope, orgKind, departmentId, r, want }) => {
+  it.each(scopeCases)('$name', ({ scope, orgKind, departmentId, partyId, r, want }) => {
     const p = principalWith(
       { 'memo.read': scope },
       {
         orgKind: orgKind ?? 'staff',
         ...(departmentId !== undefined ? { departmentId } : {}),
+        ...(partyId !== undefined ? { partyId } : {}),
       },
     );
     expect(can(p, 'memo.read', r)).toEqual(want);
@@ -329,7 +364,7 @@ describe('can(): grants and status', () => {
   );
 
   it('does not mistake an empty tenant id for a match', () => {
-    const p = principalWith({ 'memo.read': 'all' }, { tenantId: '', organizationId: STAFF_ORG });
+    const p = principalWith({ 'memo.read': 'all' }, { tenantId: '', organizationId: ENTITY });
     expect(can(p, 'memo.read', rec({ tenantId: '' }))).toEqual(DENIED('out_of_scope'));
   });
 });
@@ -393,8 +428,8 @@ describe('can(): latency budget', () => {
     const records = [
       rec({ ownerUserId: ME }),
       rec({ departmentId: OTHER_DEPT }),
-      rec({ customerOrganizationId: CUSTOMER_ORG }),
-      rec({ vendorOrganizationId: VENDOR_ORG, sodUserIds: [SOMEONE_ELSE, ME] }),
+      rec({ customerPartyId: CUSTOMER_PARTY }),
+      rec({ vendorPartyId: VENDOR_PARTY, sodUserIds: [SOMEONE_ELSE, ME] }),
       rec({ tenantId: OTHER_TENANT }),
       undefined,
     ];
