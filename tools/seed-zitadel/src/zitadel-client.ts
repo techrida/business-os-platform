@@ -571,7 +571,7 @@ const USER_EVENT_CONDITIONS: readonly ExecutionCondition[] = [
   { event: { all: true } },
 ];
 
-export class ZitadelClient implements ZitadelApi, ZitadelP1Api {
+export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceApi {
   private readonly transport: Transport;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
