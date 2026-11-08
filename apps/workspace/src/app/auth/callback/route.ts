@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 
-import { getMe } from '@/lib/api';
+import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
 import { completeLogin, LOGIN_COOKIE } from '@/lib/oidc';
 import { createSession, setSessionCookie } from '@/lib/session';
@@ -63,7 +63,14 @@ export async function GET(req: Request): Promise<Response> {
     await setSessionCookie(id);
     // returnTo went through safeReturnTo in /auth/login and was stored server-side with the state.
     return redirectTo(returnTo);
-  } catch {
+  } catch (err) {
+    // CR-02: the API answers 403 for staff without a project role. That is a valid login with
+    // no access, not a failure: no session is created, and /no-access renders without one. Its
+    // Sign out posts to /auth/logout, which ends the ZITADEL session, so there is no silent
+    // re-login loop.
+    if (err instanceof ApiError && err.status === 403) {
+      return redirectTo('/no-access');
+    }
     // Log a correlation id only. Error messages and stacks from the OIDC library can contain
     // the code, state or tokens, so nothing from the error itself goes to the log.
     const correlationId = crypto.randomUUID();
