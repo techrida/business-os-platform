@@ -46,6 +46,13 @@ export interface FormState {
   fieldErrors: Partial<Record<string, string>>;
   error?: string;
   ok?: boolean;
+  /**
+   * The Idempotency-Key the next submit must send, on the forms that create a record. The same key
+   * when the request never reached the API or its outcome is unknown (timeout, 5xx); a new one
+   * after a definite refusal (4xx) or a save, so a retry never applies twice and a new decision is
+   * never mistaken for a retry.
+   */
+  key?: string;
 }
 
 export type FormAction = (prev: FormState, form: FormData) => Promise<FormState>;

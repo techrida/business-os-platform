@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { LEAD_SOURCES } from '@bos/contracts';
 import type { Metadata } from 'next';
 
@@ -22,7 +24,7 @@ export default async function NewLeadPage() {
         description="A lead starts at New. Company and contact are plain text until you convert it to a customer."
       />
       <Panel title="Lead details">
-        <LeadForm action={createLeadAction} sources={sources} />
+        <LeadForm action={createLeadAction} sources={sources} idempotencyKey={randomUUID()} />
       </Panel>
     </Page>
   );
