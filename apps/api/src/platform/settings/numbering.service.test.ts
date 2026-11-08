@@ -5,9 +5,7 @@
 // rolled-back transaction gives its number back. The container starts with just a superuser, so beforeAll
 // creates the roles and default privileges that infra/postgres/init-dbs.sh creates in the real stack (same as
 // packages/db/src/db.test.ts), migrates as bos_owner and then works as bos_app.
-import { randomUUID } from 'node:crypto';
-
-import { organizations, runMigrations, settings, tenants } from '@bos/db';
+import { createTenantWithEntity, runMigrations, settings } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -68,21 +66,9 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
   db = drizzle({ client: appPool });
 
-  // Seed a tenant and an organization through withTx, like every other write to an app table.
-  const tenantId = randomUUID();
-  const organizationId = randomUUID();
+  // Seed a tenant with its default legal entity (ADR 0027) through the shared fixture.
+  const { tenantId, organizationId } = await createTenantWithEntity(appPool);
   scope = { tenantId, organizationId };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId });
-    await tx.insert(organizations).values({
-      id: organizationId,
-      tenantId,
-      organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${organizationId}`,
-    });
-  });
 }, 120_000);
 
 afterAll(async () => {
