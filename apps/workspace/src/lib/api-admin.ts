@@ -23,7 +23,8 @@ const UserSchema = z.object({
   email: z.string().nullable(),
   displayName: z.string().nullable(),
   status: z.string(),
-  departmentId: z.string().nullable(),
+  /** The idp_orgs row the user signs in through; a user has no entity or department column (ADR 0027). */
+  idpOrgId: z.string(),
   roles: z.array(RoleKeySchema),
 });
 const UsersPageSchema = z.object({
