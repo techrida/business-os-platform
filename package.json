@@ -18,7 +18,7 @@
     "format:check": "prettier --check .",
     "stack:up": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core up -d --wait --wait-timeout 300",
     "stack:down": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core --profile app --profile tools down --remove-orphans",
-    "stack:nuke": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core --profile app --profile tools down --volumes --remove-orphans",
+    "stack:nuke": "bash infra/scripts/stack-nuke.sh",
     "stack:logs": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core --profile app logs --follow --tail 100",
     "seed": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm seed-zitadel",
     "perf:load": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm -e K6_READ_P95_MS k6 run /perf/load.js",
