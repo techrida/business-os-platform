@@ -3,7 +3,17 @@
 // Rule of the whole file: look an object up by name first, create it only when it is missing,
 // and record every mutation in `changes`. A run that records nothing prints "no changes".
 //
-// Never print passwords, client secrets, the PAT or a token. Only ids, names and claim KEYS.
+// Never print passwords, client secrets, TOTP secrets, the PAT or a token. Only ids, names and
+// claim KEYS.
+//
+// P1 (U6b) adds, in this order: the accountant role and persona, TOTP for every persona, the
+// forceMfa login policy (only once every persona has TOTP, so a half-run never locks anyone out),
+// a 15 min access-token lifetime (NFR security: a revoked role stops working within 15 min) and
+// the `bos-loadtest-approver` machine user (k6 cannot approve its own requests: SoD, risk R13).
+// U6b part 2 adds: a PAT for `bos-provisioner` (the API's ZITADEL admin client), the Actions v2
+// webhook target and its user-event execution (user sync, ADR 0019), the kernel rows in the DB
+// (role grants, `test_memo` workflow v1, INR peg) and, last, retiring the first-instance human admin
+// once the Founder can log in with MFA (NFR security: no shared break-glass password left behind).
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,6 +31,7 @@ import {
   type DevFiles,
   type TokenReport,
 } from './outputs.js';
+import { seedKernelRows, setSeedActor } from './db-seed.js';
 import {
   APP_NAME,
   ORG_NAMES,
@@ -31,16 +42,53 @@ import {
   passwordsFromFile,
   personaUsername,
   renderPersonasFile,
+  totpSecretsFromFile,
   type PersonaEntry,
+  type RoleKey,
 } from './personas.js';
-import { ZitadelClient, createFetchTransport, type ZitadelApi } from './zitadel-client.js';
+import { totpCode } from './totp.js';
+import {
+  FORCE_MFA_POLICY,
+  ZitadelClient,
+  createFetchTransport,
+  type MachineSpec,
+  type ZitadelApi,
+  type ZitadelP1Api,
+} from './zitadel-client.js';
 
 export const SEED_TOOL = '@bos/seed-zitadel' as const;
 
 export const LOADTEST_USER = 'bos-loadtest';
 export const PROVISIONER_USER = 'bos-provisioner';
-export const PROVISIONER_ROLE = 'ORG_USER_MANAGER';
+/**
+ * Org roles of `bos-provisioner` on the staff org. ORG_USER_MANAGER creates and invites users.
+ * Whether it may also write user grants is unverified (plan section 3, risk R7); ZITADEL answers
+ * 403 if not, so ORG_USER_PERMISSION_EDITOR is granted up front instead of after a failure.
+ * Never IAM_OWNER: a leaked API token must not own the instance.
+ */
+export const PROVISIONER_ROLES = ['ORG_USER_MANAGER', 'ORG_USER_PERMISSION_EDITOR'] as const;
+/** A fresh provisioner PAT lives one year; a re-run reuses it while ZITADEL still lists it. */
+export const PROVISIONER_PAT_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
+/** The Actions v2 target that pushes user events to the API (`POST /v1/hooks/zitadel`). */
+export const WEBHOOK_TARGET_NAME = 'bos-users-webhook';
+/** Dev default: the API runs on the host, ZITADEL in Docker. The app profile uses `http://api:3001/...`. */
+export const DEFAULT_WEBHOOK_URL = 'http://host.docker.internal:3001/v1/hooks/zitadel';
+/** `ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME` comes from `ZITADEL_ADMIN_USERNAME` in `.env`. */
+export const DEFAULT_ADMIN_USERNAME = 'admin@techrida.localhost';
+/** The first-instance machine user whose PAT this seed runs with. It is never deactivated. */
+export const BOOTSTRAP_SA_USER = 'bos-bootstrap-sa';
+/** The Founder must own the staff org before the human admin goes, or nobody can administer it. */
+export const FOUNDER_ORG_ROLE = 'ORG_OWNER';
 export const SMTP_DESCRIPTION = 'bos-dev-mailpit';
+/** k6's second machine user: approves step 1 as an accountant, so the requester is never the approver. */
+export const LOADTEST_APPROVER_USER = 'bos-loadtest-approver';
+/** How `ListAuthenticationMethodTypes` names a registered authenticator app. */
+export const TOTP_METHOD = 'AUTHENTICATION_METHOD_TYPE_TOTP';
+/** NFR security: a role revoked in ZITADEL reaches the API within one token lifetime. */
+export const ACCESS_TOKEN_LIFETIME = '900s';
+
+/** Everything the seed calls on ZITADEL: the P0 surface plus the P1 additions. */
+export type SeedApi = ZitadelApi & ZitadelP1Api;
 
 export interface OrgRow {
   zitadelOrgId: string;
@@ -50,21 +98,42 @@ export interface OrgRow {
 
 export interface TenancyStore {
   /** Returns how many rows (and tenants) were created or changed. */
-  upsertOrganizations(rows: OrgRow[]): Promise<number>;
+  upsertOrganizations(rows: OrgRow[], correlationId: string): Promise<number>;
+  /**
+   * P1 step 8: role grants, the `test_memo` workflow and the INR peg for the staff org, found by its
+   * ZITADEL org id (the DB keys rows by our uuid, not ZITADEL's id). Returns 0 on a second run.
+   */
+  seedKernel(staffZitadelOrgId: string, correlationId: string): Promise<number>;
 }
 
 export interface SeedDeps {
-  api: ZitadelApi;
+  api: SeedApi;
   files: DevFiles;
   store: TenancyStore;
   log: (line: string) => void;
   issuer: string;
   workspaceUrl: string;
+  /** Clock for TOTP codes and the PAT expiry; tests pin it. Defaults to the real time. */
+  now?: () => Date;
+  /** Where ZITADEL posts user events. Defaults to DEFAULT_WEBHOOK_URL. */
+  webhookUrl?: string;
+  /** Login name of the first-instance human admin to retire. Defaults to DEFAULT_ADMIN_USERNAME. */
+  adminUsername?: string;
 }
 
 export interface SeedResult {
   changes: string[];
+  /** Problems the seed could not fix by itself; each line names the manual step. Not a change. */
+  warnings: string[];
   token: TokenReport;
+}
+
+/** What later steps need to know about a persona after the persona and TOTP steps ran. */
+export interface PersonaState {
+  userId: string;
+  orgId: string;
+  /** ZITADEL has a verified TOTP for this user (whether or not we still know the secret). */
+  hasTotp: boolean;
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]): boolean =>
@@ -72,10 +141,18 @@ const sameSet = (a: readonly string[], b: readonly string[]): boolean =>
 
 export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   const { api, files, store, log } = deps;
+  const now = deps.now ?? (() => new Date());
+  // One id for every DB write of this run, so the audit log groups them.
+  const correlationId = randomUUID();
   const changes: string[] = [];
+  const warnings: string[] = [];
   const changed = (what: string): void => {
     changes.push(what);
     log(`  + ${what}`);
+  };
+  const warn = (what: string): void => {
+    warnings.push(what);
+    log(`  ! ${what}`);
   };
 
   // --- Organisations. Staff is the first-instance org; the other two are ours. ---
@@ -173,9 +250,13 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     }
   };
 
-  // --- Personas. Passwords persist in .dev/personas.json across runs. ---
-  const passwords = passwordsFromFile(await files.read('personas.json'));
+  // --- Personas (P1 step 1 adds the Accountant). Passwords and TOTP secrets persist in
+  // .dev/personas.json across runs. ---
+  const personasText = await files.read('personas.json');
+  const passwords = passwordsFromFile(personasText);
+  const storedTotp = totpSecretsFromFile(personasText);
   const entries: PersonaEntry[] = [];
+  const personaState = new Map<string, PersonaState>();
   for (const persona of PERSONAS) {
     const orgId = orgIds[persona.orgKind];
     const username = personaUsername(persona.key);
@@ -199,6 +280,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
       changed(`reset password of persona ${persona.key} (personas.json had none)`);
     }
     await ensureAuthorization(user.id, orgId, [persona.role], `persona ${persona.key}`);
+    const totpSecret = storedTotp.get(persona.key);
     entries.push({
       key: persona.key,
       label: `${persona.givenName} ${persona.familyName}`,
@@ -207,30 +289,73 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
       username,
       preferredLoginName: user.preferredLoginName || username,
       password,
+      // Last key, and only when known: the file must render byte for byte the same on a re-run.
+      ...(totpSecret === undefined ? {} : { totpSecret }),
     });
+    personaState.set(persona.key, { userId: user.id, orgId, hasTotp: false });
   }
   if (await files.write('personas.json', renderPersonasFile(entries))) {
     changed('wrote .dev/personas.json');
   }
 
-  // --- Machine user for k6. The secret is shown by ZITADEL once, so never rotate it needlessly. ---
+  // --- P1 steps 2-3: TOTP for every persona, then forceMfa. ---
+  // Allowing OTP as a second factor first can lock nobody out, and registration may need it.
+  if (await api.addSecondFactor('SECOND_FACTOR_TYPE_OTP')) {
+    changed('allowed TOTP as a second factor in the login policy');
+  }
+  await ensurePersonaTotp({ api, files, changed, warn, now }, entries, personaState);
+  // forceMfa only when every persona has an authenticator: otherwise the next login of the one
+  // without TOTP would demand a factor it cannot produce.
+  const withoutTotp = [...personaState].filter(([, s]) => !s.hasTotp).map(([key]) => key);
+  if (withoutTotp.length > 0) {
+    warn(`forceMfa NOT enabled: personas without TOTP: ${withoutTotp.join(', ')}`);
+  } else if (await api.updateLoginPolicy(FORCE_MFA_POLICY)) {
+    changed('login policy: forceMfa on, MFA setup not skippable');
+  }
+
+  // --- P1 step 4: 15 min access tokens. ---
+  if (await api.updateOidcSettings({ accessTokenLifetime: ACCESS_TOKEN_LIFETIME })) {
+    changed(`set OIDC access-token lifetime to ${ACCESS_TOKEN_LIFETIME}`);
+  }
+
+  // --- Machine users for k6 (P1 step 7 adds the approver). Both live in k6.env, the only file the
+  // k6 container loads (compose `env_file`). A secret is shown by ZITADEL once: never rotate it
+  // needlessly. ---
   const k6Env = parseEnv(await files.read('k6.env'));
-  let loadUser = await api.findUser(staffOrgId, LOADTEST_USER);
-  if (!loadUser) {
-    loadUser = await api.createMachineUser({
-      orgId: staffOrgId,
+  const ensureMachineClient = async (
+    spec: Omit<MachineSpec, 'orgId'>,
+    role: RoleKey,
+    storedSecret: string | undefined,
+  ): Promise<string> => {
+    let user = await api.findUser(staffOrgId, spec.username);
+    if (!user) {
+      user = await api.createMachineUser({ ...spec, orgId: staffOrgId });
+      changed(`created machine user ${spec.username}`);
+    }
+    await ensureAuthorization(user.id, staffOrgId, [role], spec.username);
+    if (storedSecret && user.hasSecret) return storedSecret;
+    const secret = await api.addSecret(user.id);
+    changed(`generated client secret for ${spec.username}`);
+    return secret;
+  };
+  const loadSecret = await ensureMachineClient(
+    {
       username: LOADTEST_USER,
       name: 'Business OS load test',
       description: 'k6 client-credentials user for perf gates (dev only)',
-    });
-    changed(`created machine user ${LOADTEST_USER}`);
-  }
-  await ensureAuthorization(loadUser.id, staffOrgId, ['sales'], LOADTEST_USER);
-  let loadSecret = k6Env['K6_CLIENT_SECRET'];
-  if (!loadSecret || !loadUser.hasSecret) {
-    loadSecret = await api.addSecret(loadUser.id);
-    changed(`generated client secret for ${LOADTEST_USER}`);
-  }
+    },
+    'sales',
+    k6Env['K6_CLIENT_SECRET'],
+  );
+  const approverSecret = await ensureMachineClient(
+    {
+      username: LOADTEST_APPROVER_USER,
+      name: 'Business OS load test approver',
+      description: 'k6 accountant that approves step 1 of load-test requests (dev only)',
+    },
+    'accountant',
+    k6Env['K6_APPROVER_CLIENT_SECRET'],
+  );
   if (
     await files.write(
       'k6.env',
@@ -238,6 +363,8 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
         K6_CLIENT_ID: LOADTEST_USER,
         K6_CLIENT_SECRET: loadSecret,
         K6_PROJECT_ID: projectId,
+        K6_APPROVER_CLIENT_ID: LOADTEST_APPROVER_USER,
+        K6_APPROVER_CLIENT_SECRET: approverSecret,
       }),
     )
   ) {
@@ -256,9 +383,76 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     changed(`created machine user ${PROVISIONER_USER}`);
   }
   const memberRoles = await api.listOrgMemberRoles(staffOrgId, provisioner.id);
-  if (!memberRoles?.includes(PROVISIONER_ROLE)) {
-    await api.addOrgMember(staffOrgId, provisioner.id, [PROVISIONER_ROLE]);
-    changed(`made ${PROVISIONER_USER} ${PROVISIONER_ROLE} on the staff org`);
+  if (memberRoles === undefined) {
+    await api.addOrgMember(staffOrgId, provisioner.id, [...PROVISIONER_ROLES]);
+    changed(`made ${PROVISIONER_USER} ${PROVISIONER_ROLES.join(' + ')} on the staff org`);
+  } else {
+    // The client can only ADD a member; adding an existing one fails, so a P0 stack whose
+    // provisioner has only ORG_USER_MANAGER needs one console click.
+    const missing = PROVISIONER_ROLES.filter((r) => !memberRoles.includes(r));
+    if (missing.length > 0) {
+      warn(
+        `${PROVISIONER_USER} is a staff org member without ${missing.join(', ')}. Add the role in ` +
+          'the ZITADEL console (Organization > Members), or remove the member and run `pnpm seed` again.',
+      );
+    }
+  }
+
+  // --- P1 step 5: the provisioner PAT, the API's credential for invites and user sync. ZITADEL
+  // shows a PAT once, so reuse the stored one while the user still has a PAT (after
+  // `stack:nuke` the new provisioner has none, and the stored token is dead). ---
+  const oldZitadelEnv = parseEnv(await files.read('zitadel.env'));
+  let provisionerToken = oldZitadelEnv['ZITADEL_PROVISIONER_TOKEN'];
+  const provisionerPats = await api.listPats(provisioner.id, staffOrgId);
+  if (!provisionerToken || provisionerPats.length === 0) {
+    const expiry = new Date(now().getTime() + PROVISIONER_PAT_LIFETIME_MS).toISOString();
+    provisionerToken = (await api.addPat(provisioner.id, expiry, staffOrgId)).token;
+    changed(`issued a PAT for ${PROVISIONER_USER} (expires ${expiry.slice(0, 10)})`);
+  }
+
+  // --- P1 step 6: Actions v2 pushes user events to the API (ADR 0019; reconcile covers misses). ---
+  const webhookUrl = deps.webhookUrl ?? DEFAULT_WEBHOOK_URL;
+  let signingKey = oldZitadelEnv['ZITADEL_ACTIONS_SIGNING_KEY'];
+  // Not fatal: the 10-minute reconcile keeps app.users correct without the webhook (ADR 0019). The
+  // usual cause is ZITADEL's HTTPClient.DenyList, which blocks private IPs such as the Docker network.
+  try {
+    let target = (await api.listTargets()).find((t) => t.name === WEBHOOK_TARGET_NAME);
+    if (!target) {
+      const created = await api.createTarget({
+        name: WEBHOOK_TARGET_NAME,
+        endpoint: webhookUrl,
+        timeout: '10s',
+        restAsync: {},
+      });
+      target = { id: created.id, name: WEBHOOK_TARGET_NAME, endpoint: webhookUrl };
+      signingKey = created.signingKey;
+      changed(`created Actions target ${WEBHOOK_TARGET_NAME} -> ${webhookUrl}`);
+    } else {
+      if (!signingKey) {
+        // ZITADEL returns the key only on create or update, and the client has no update call.
+        warn(
+          `Actions target ${WEBHOOK_TARGET_NAME} exists but .dev/zitadel.env has no ` +
+            'ZITADEL_ACTIONS_SIGNING_KEY, so the API rejects every webhook. Delete the target in the ' +
+            'ZITADEL console (Actions > Targets), then run `pnpm seed` again.',
+        );
+      }
+      if (target.endpoint !== webhookUrl) {
+        warn(
+          `Actions target ${WEBHOOK_TARGET_NAME} points at ${target.endpoint}, but ZITADEL_WEBHOOK_URL ` +
+            `is ${webhookUrl}. Delete the target in the ZITADEL console and run \`pnpm seed\` again.`,
+        );
+      }
+    }
+    // An idempotent PUT, sent on every run so a half-run that created the target still gets its
+    // execution. Not a "change": nothing tells us whether it differed. Logs the shape, never the key.
+    const condition = await api.setUserEventExecution(target.id);
+    log(`Actions execution condition accepted: ${JSON.stringify(condition)}`);
+  } catch (error) {
+    warn(
+      `Actions webhook not set up (${error instanceof Error ? error.message : String(error)}). ` +
+        'User changes reach app.users through the 10-minute reconcile instead. If the message says ' +
+        'DeniedURL, the endpoint resolves to an address in ZITADEL_HTTPCLIENT_DENYLIST.',
+    );
   }
 
   // --- SMTP to Mailpit. Optional: the instance may not allow it, and login works without it. ---
@@ -274,35 +468,44 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     log(`  ! SMTP setup skipped: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // --- Env file for the API and the workspace. ---
+  // --- Env file for the API and the workspace. Steps add keys to this record; one write at the end.
   // The API accepts a token only when its client (azp, else client_id) is listed here. k6 sends
   // K6_CLIENT_ID, the machine user's username, as the client-credentials client id, so that is
   // the client its tokens carry. R7 below checks it against a real token.
   const allowedAzp = [app.clientId, LOADTEST_USER];
-  if (
-    await files.write(
-      'zitadel.env',
-      renderEnv({
-        OIDC_ISSUER: deps.issuer,
-        OIDC_AUDIENCE: projectId,
-        OIDC_CLIENT_ID: app.clientId,
-        OIDC_ALLOWED_AZP: allowedAzp.join(','),
-        ZITADEL_STAFF_ORG_ID: orgIds.staff,
-        ZITADEL_CUSTOMER_ORG_ID: orgIds.customer,
-        ZITADEL_VENDOR_ORG_ID: orgIds.vendor,
-      }),
-    )
-  ) {
+  const zitadelEnv: Record<string, string> = {
+    OIDC_ISSUER: deps.issuer,
+    OIDC_AUDIENCE: projectId,
+    OIDC_CLIENT_ID: app.clientId,
+    OIDC_ALLOWED_AZP: allowedAzp.join(','),
+    ZITADEL_STAFF_ORG_ID: orgIds.staff,
+    ZITADEL_CUSTOMER_ORG_ID: orgIds.customer,
+    ZITADEL_VENDOR_ORG_ID: orgIds.vendor,
+  };
+  zitadelEnv['ZITADEL_PROVISIONER_TOKEN'] = provisionerToken;
+  // Only when known: a lost key stays absent, so the file renders the same on every run.
+  if (signingKey) zitadelEnv['ZITADEL_ACTIONS_SIGNING_KEY'] = signingKey;
+  if (await files.write('zitadel.env', renderEnv(zitadelEnv))) {
     changed('wrote .dev/zitadel.env');
   }
 
   // --- Our own organizations table: ZITADEL org id -> tenant/org. ---
-  const dbChanges = await store.upsertOrganizations([
-    { zitadelOrgId: orgIds.staff, kind: 'staff', name: 'Techrida Staff' },
-    { zitadelOrgId: orgIds.customer, kind: 'customer', name: ORG_NAMES.customer },
-    { zitadelOrgId: orgIds.vendor, kind: 'vendor', name: ORG_NAMES.vendor },
-  ]);
+  const dbChanges = await store.upsertOrganizations(
+    [
+      { zitadelOrgId: orgIds.staff, kind: 'staff', name: 'Techrida Staff' },
+      { zitadelOrgId: orgIds.customer, kind: 'customer', name: ORG_NAMES.customer },
+      { zitadelOrgId: orgIds.vendor, kind: 'vendor', name: ORG_NAMES.vendor },
+    ],
+    correlationId,
+  );
   if (dbChanges > 0) changed(`upserted ${dbChanges} app.organizations row(s)`);
+
+  // --- P1 step 8: kernel rows (deny-by-default needs grants to exist; test_memo workflow v1). ---
+  const kernelChanges = await store.seedKernel(orgIds.staff, correlationId);
+  log(`kernel rows changed: ${kernelChanges}`);
+  if (kernelChanges > 0) {
+    changed(`seeded ${kernelChanges} kernel row(s) (grants, workflow, INR peg)`);
+  }
 
   // --- R7: fetch a real token and show which claims ZITADEL puts in it. Never print the token. ---
   const token = await fetchTokenReport(api, loadSecret, projectId);
@@ -326,7 +529,116 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     throw new Error(`R7 failed for the ${LOADTEST_USER} token: ${problems.join('; ')}`);
   }
 
-  return { changes, token };
+  // --- P1 step 9, last: retire the first-instance human admin once the Founder replaces it. ---
+  await retireBootstrapAdmin(
+    { api, changed, warn, log },
+    {
+      staffOrgId,
+      founder: personaState.get('founder'),
+      adminUsername: deps.adminUsername ?? DEFAULT_ADMIN_USERNAME,
+    },
+  );
+
+  return { changes, warnings, token };
+}
+
+export interface RetireDeps {
+  api: SeedApi;
+  changed: (what: string) => void;
+  warn: (what: string) => void;
+  log: (line: string) => void;
+}
+
+/**
+ * Deactivates the human admin from `ZITADEL_FIRSTINSTANCE_ORG_HUMAN_*`. Its password sits in
+ * `.env`, so it is a shared credential without MFA. Runs only when the Founder can take over:
+ * the persona exists, has TOTP and owns the staff org. Deactivate, not delete: a human can
+ * reactivate it in the console. `bos-bootstrap-sa` (this seed's own identity) is never touched.
+ */
+export async function retireBootstrapAdmin(
+  { api, changed, warn, log }: RetireDeps,
+  input: { staffOrgId: string; founder: PersonaState | undefined; adminUsername: string },
+): Promise<void> {
+  const { staffOrgId, founder, adminUsername } = input;
+  const skip = (why: string): void => warn(`bootstrap admin ${adminUsername} NOT retired: ${why}`);
+  if (!founder) return skip('the founder persona does not exist');
+  if (!founder.hasTotp) return skip('the founder persona has no TOTP yet');
+
+  const founderRoles = await api.listOrgMemberRoles(founder.orgId, founder.userId);
+  if (founderRoles === undefined) {
+    await api.addOrgMember(founder.orgId, founder.userId, [FOUNDER_ORG_ROLE]);
+    changed(`made persona founder ${FOUNDER_ORG_ROLE} on the staff org`);
+  } else if (!founderRoles.includes(FOUNDER_ORG_ROLE)) {
+    // The client cannot change an existing member's roles (see the provisioner step).
+    return skip(
+      `the founder is a staff org member without ${FOUNDER_ORG_ROLE}. Add it in the ZITADEL ` +
+        'console (Organization > Members), then run `pnpm seed` again.',
+    );
+  }
+
+  if (adminUsername === BOOTSTRAP_SA_USER) {
+    return skip(`refusing: ${BOOTSTRAP_SA_USER} is the seed's own service account`);
+  }
+  const admin = await api.findUser(staffOrgId, adminUsername);
+  if (!admin) {
+    return skip(
+      'no such user in the staff org. Set ZITADEL_ADMIN_USERNAME to the first admin login name.',
+    );
+  }
+  const serviceAccount = await api.findUser(staffOrgId, BOOTSTRAP_SA_USER);
+  if (admin.id === serviceAccount?.id || admin.id === founder.userId) {
+    return skip('it resolves to the seed service account or the founder; refusing');
+  }
+  if (await api.deactivateUser(admin.id)) {
+    changed(`retired bootstrap admin ${adminUsername} (deactivated; the founder is ORG_OWNER)`);
+  } else {
+    log(`bootstrap admin ${adminUsername}: already retired`);
+  }
+}
+
+interface TotpStepDeps {
+  api: SeedApi;
+  files: DevFiles;
+  changed: (what: string) => void;
+  warn: (what: string) => void;
+  now: () => Date;
+}
+
+/**
+ * P1 step 2. Per persona: skip when ZITADEL has TOTP and we know the secret; warn when ZITADEL has
+ * TOTP but the secret is gone (the client has no "remove TOTP" call, so a human must remove it);
+ * otherwise register, verify with one code, and save the secret at once.
+ *
+ * Why save after every persona: a verified TOTP whose secret was never written cannot be recovered
+ * (ZITADEL never shows it again), so the gap between verify and write stays one persona wide.
+ */
+async function ensurePersonaTotp(
+  { api, files, changed, warn, now }: TotpStepDeps,
+  entries: PersonaEntry[],
+  personaState: Map<string, PersonaState>,
+): Promise<void> {
+  for (const entry of entries) {
+    const state = personaState.get(entry.key);
+    if (!state) continue;
+    const methods = await api.listAuthMethods(state.userId);
+    if (methods.includes(TOTP_METHOD)) {
+      state.hasTotp = true;
+      if (entry.totpSecret === undefined) {
+        warn(
+          `persona ${entry.key} has TOTP in ZITADEL but .dev/personas.json has no secret, so ` +
+            'nobody can log in as it. Remove its authenticator in the ZITADEL console ' +
+            `(Users > ${entry.username} > Authenticators), then run \`pnpm seed\` again.`,
+        );
+      }
+      continue;
+    }
+    const registration = await api.registerTotp(state.userId);
+    await api.verifyTotpRegistration(state.userId, totpCode(registration.secret, now()));
+    entry.totpSecret = registration.secret;
+    state.hasTotp = true;
+    await files.write('personas.json', renderPersonasFile(entries));
+    changed(`registered TOTP for persona ${entry.key} (secret saved to .dev/personas.json)`);
+  }
 }
 
 async function fetchTokenReport(
@@ -355,15 +667,34 @@ async function fetchTokenReport(
 // ---------------------------------------------------------------------------------------------
 // Postgres side: `app.organizations` through the owner role (DATABASE_MIGRATE_URL).
 
-export class PgTenancyStore implements TenancyStore {
-  constructor(private readonly connectionString: string) {}
+/** An open connection plus how to close it; injectable so tests can check the SQL order. */
+export interface PgConnection {
+  client: pg.ClientBase;
+  close: () => Promise<void>;
+}
+export type PgConnect = () => Promise<PgConnection>;
 
-  async upsertOrganizations(rows: OrgRow[]): Promise<number> {
-    const client = new pg.Client({ connectionString: this.connectionString });
-    await client.connect();
+export class PgTenancyStore implements TenancyStore {
+  constructor(private readonly connect: PgConnect) {}
+
+  /** The real store: a fresh `pg.Client` per call on `DATABASE_MIGRATE_URL` (the table owner). */
+  static fromUrl(connectionString: string): PgTenancyStore {
+    return new PgTenancyStore(async () => {
+      const client = new pg.Client({ connectionString });
+      await client.connect();
+      return { client, close: () => client.end() };
+    });
+  }
+
+  async upsertOrganizations(rows: OrgRow[], correlationId: string): Promise<number> {
+    const { client, close } = await this.connect();
     let changed = 0;
     try {
       await client.query('BEGIN');
+      // R5: the audit trigger RAISEs on any app.* write without an actor. It takes tenant and org
+      // from the row itself, so only the actor and correlation id must be set here; the tenant is
+      // not known yet and stays empty (the trigger reads '' as NULL).
+      await setSeedActor(client, { tenantId: '', organizationId: '', correlationId });
       // One tenant for the whole dev stack: reuse the one already referenced, else any, else create.
       const fromOrgs = await client.query<{ tenant_id: string }>(
         'SELECT tenant_id FROM app.organizations LIMIT 1',
@@ -397,9 +728,31 @@ export class PgTenancyStore implements TenancyStore {
       await client.query('ROLLBACK');
       throw error;
     } finally {
-      await client.end();
+      await close();
     }
     return changed;
+  }
+
+  async seedKernel(staffZitadelOrgId: string, correlationId: string): Promise<number> {
+    const { client, close } = await this.connect();
+    try {
+      const org = await client.query<{ id: string; tenant_id: string }>(
+        'SELECT id, tenant_id FROM app.organizations WHERE zitadel_org_id = $1',
+        [staffZitadelOrgId],
+      );
+      const staff = org.rows[0];
+      if (!staff) {
+        throw new Error(`app.organizations has no row for staff org ${staffZitadelOrgId}`);
+      }
+      // seedKernelRows opens its own transaction and sets the seed actor inside it.
+      return await seedKernelRows(client, {
+        tenantId: staff.tenant_id,
+        organizationId: staff.id,
+        correlationId,
+      });
+    } finally {
+      await close();
+    }
   }
 }
 
@@ -429,14 +782,21 @@ export async function main(): Promise<void> {
   const result = await runSeed({
     api,
     files: new DevDir(dirname(personasFile)),
-    store: new PgTenancyStore(requiredEnv('DATABASE_MIGRATE_URL')),
+    store: PgTenancyStore.fromUrl(requiredEnv('DATABASE_MIGRATE_URL')),
     log: (line) => console.log(line),
     issuer,
     workspaceUrl,
+    webhookUrl: process.env['ZITADEL_WEBHOOK_URL'] ?? DEFAULT_WEBHOOK_URL,
+    adminUsername: process.env['ZITADEL_ADMIN_USERNAME'] ?? DEFAULT_ADMIN_USERNAME,
   });
   console.log(
     result.changes.length === 0 ? 'no changes' : `done: ${result.changes.length} change(s)`,
   );
+  if (result.warnings.length > 0) {
+    // Repeated at the end on purpose: these are manual steps and must not scroll away.
+    console.warn(`ATTENTION: ${result.warnings.length} manual step(s) needed:`);
+    for (const line of result.warnings) console.warn(`  ! ${line}`);
+  }
 }
 
 // Only run when executed directly, so tests can import this module.
