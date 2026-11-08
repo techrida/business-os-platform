@@ -20,6 +20,11 @@ export interface MintOptions {
   /** Seconds since the epoch. Default: five minutes from now. */
   expiresAt?: number;
   /**
+   * `auth_time`, seconds since the epoch. Default: none, like a token whose sign-in time is
+   * unknown, which step-up (K7) treats as stale. Pass `nowSeconds()` for a Founder decision.
+   */
+  authTime?: number;
+  /**
    * `trusted` signs with the key published at /jwks. `forged` signs with a different key but the
    * SAME `kid`, so the API finds the published key and the signature check is what fails.
    */
@@ -37,6 +42,10 @@ export interface TestIssuer {
 }
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
+/** The claims plus `auth_time` when the options ask for one. */
+const withAuthTime = (claims: JWTPayload, options: MintOptions): JWTPayload =>
+  options.authTime === undefined ? claims : { ...claims, auth_time: options.authTime };
 
 export async function startTestIssuer(): Promise<TestIssuer> {
   const trusted = await generateKeyPair('RS256', { extractable: true });
@@ -78,7 +87,7 @@ export async function startTestIssuer(): Promise<TestIssuer> {
   return {
     url,
     async mint(claims, options = {}) {
-      const jwt = new SignJWT(claims)
+      const jwt = new SignJWT(withAuthTime(claims, options))
         .setProtectedHeader({ alg: 'RS256', kid: KID, typ: 'at+jwt' })
         .setIssuer(options.issuer ?? url)
         .setIssuedAt(options.issuedAt ?? nowSeconds())
@@ -87,7 +96,7 @@ export async function startTestIssuer(): Promise<TestIssuer> {
       return jwt.sign(keyFor(options.signWith));
     },
     mintUnsigned(claims, options = {}) {
-      const jwt = new UnsecuredJWT(claims)
+      const jwt = new UnsecuredJWT(withAuthTime(claims, options))
         .setIssuer(options.issuer ?? url)
         .setIssuedAt(options.issuedAt ?? nowSeconds())
         .setExpirationTime(options.expiresAt ?? nowSeconds() + 300);
