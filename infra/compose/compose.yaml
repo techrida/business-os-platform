@@ -477,6 +477,10 @@ services:
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       # Login state (CR-03) lives on its own Valkey with a small memory cap.
       OIDC_STATE_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey-oidc:6379
+      # Session encryption key (32 random bytes, base64) and its id. Required in prod (compose.prod.yaml); dev
+      # falls back to empty/k1 so an older .env still starts. Not consumed by the app yet.
+      SESSION_ENC_KEY: ${SESSION_ENC_KEY:-}
+      SESSION_ENC_KEY_ID: ${SESSION_ENC_KEY_ID:-k1}
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     env_file:
       - path: ../../.dev/zitadel.env
