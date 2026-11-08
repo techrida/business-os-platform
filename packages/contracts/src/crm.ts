@@ -249,11 +249,13 @@ export const LEAD_TRANSITIONS: readonly StageTransition<LeadStage>[] = edges<Lea
 /**
  * The opportunity state machine, edge for edge (A2 section 2.2). Won and Quotation Sent are side
  * effects of the quotation lifecycle, so only the system moves into them. A2's prose says forward
- * moves may skip optional stages, but its diagram draws no such edge; the diagram is encoded as is.
+ * moves may skip optional stages, but its diagram draws no such edge; the diagram is encoded as is,
+ * plus one addition: `qualified` to `quotation_sent` (system), so a quote can be sent from Qualified.
  */
 export const OPPORTUNITY_TRANSITIONS: readonly StageTransition<OpportunityStage>[] =
   edges<OpportunityStage>([
     ['qualified', 'requirement_received'],
+    ['qualified', 'quotation_sent', 'system'],
     ['requirement_received', 'proposal_sent'],
     ['requirement_received', 'quotation_sent', 'system'],
     ['proposal_sent', 'quotation_sent', 'system'],
@@ -501,7 +503,7 @@ export const ACTIVITY_SUBJECT_KEYS = [
 ] as const;
 
 const exactlyOneSubject = (
-  a: Partial<Record<(typeof ACTIVITY_SUBJECT_KEYS)[number], string | null>>,
+  a: Partial<Record<(typeof ACTIVITY_SUBJECT_KEYS)[number], string | null | undefined>>,
 ) => ACTIVITY_SUBJECT_KEYS.filter((k) => a[k] !== undefined && a[k] !== null).length === 1;
 const ONE_SUBJECT = {
   path: ['leadId'],
