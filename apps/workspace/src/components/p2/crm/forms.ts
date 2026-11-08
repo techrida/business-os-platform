@@ -121,7 +121,8 @@ const LEAD_MESSAGES: Record<string, string> = {
   email: 'Enter an email address such as name@company.com.',
   phone: PHONE,
   requirement: 'The requirement is too long. The limit is 5,000 characters.',
-  expectedValue: 'Enter an amount such as 1250000.50: digits with at most two decimals, not negative.',
+  expectedValue:
+    'Enter an amount such as 1250000.50: digits with at most two decimals, not negative.',
   currency: 'Choose NPR, INR or USD.',
   probability: 'Enter a whole number from 0 to 100.',
   expectedClose: 'Enter a date.',

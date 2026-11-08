@@ -214,7 +214,12 @@ describe('parseConvert', () => {
 
   it('adds the duplicate override only with a reason, and asks for one when create anyway is ticked', () => {
     const withReason = parseConvert(
-      form({ ...create, contactMode: 'none', createAnyway: 'on', overrideReason: 'Different branch' }),
+      form({
+        ...create,
+        contactMode: 'none',
+        createAnyway: 'on',
+        overrideReason: 'Different branch',
+      }),
     );
     expect(withReason.ok && withReason.data.duplicateOverride).toEqual({
       reason: 'Different branch',
