@@ -120,7 +120,8 @@ interface Verify {
 /** audit.verify_chain as bos_app, for the current UTC month unless a month is given. */
 async function verify(tenantId: string, month?: string): Promise<Verify> {
   const { rows } = await app.query<Verify>(
-    `SELECT * FROM audit.verify_chain($1, coalesce($2::date, (now() AT TIME ZONE 'UTC')::date))`,
+    `SELECT ok, "rows", first_bad_seq
+       FROM audit.verify_chain($1, coalesce($2::date, (now() AT TIME ZONE 'UTC')::date))`,
     [tenantId, month ?? null],
   );
   const result = rows[0];
@@ -535,5 +536,207 @@ describe('seal', () => {
     });
     await expect(seal(scope.tenantId, month)).rejects.toThrow(/broken at seq 2; refusing to seal/);
     expect(await sealsOf(scope.tenantId)).toEqual([]);
+  });
+});
+
+// Hardening of 0008_audit_hardening (FIX-C1a): review findings R4, R5, R15 and R27.
+describe('audit hardening (0008)', () => {
+  interface VerifyFull extends Verify {
+    reason: string | null;
+  }
+
+  /** verify_chain with the reason column 0008 added, as bos_app. */
+  async function verifyFull(tenantId: string, month?: string): Promise<VerifyFull> {
+    const { rows } = await app.query<VerifyFull>(
+      `SELECT ok, "rows", first_bad_seq, reason
+         FROM audit.verify_chain($1, coalesce($2::date, (now() AT TIME ZONE 'UTC')::date))`,
+      [tenantId, month ?? null],
+    );
+    const result = rows[0];
+    if (result === undefined) throw new Error('verify_chain returned no row');
+    return result;
+  }
+
+  /** audit.append as bos_owner with an explicit occurred_at (a SQL expression). */
+  async function ownerAppend(scope: Scope, occurredAt: string, entityId = 'e'): Promise<void> {
+    await inTx(owner, settingsFor(scope), (c) =>
+      c.query(
+        `SELECT audit.append($1, $2, 'test.owner', 'test', $3, NULL, NULL, NULL, ${occurredAt})`,
+        [scope.tenantId, scope.organizationId, entityId],
+      ),
+    );
+  }
+
+  const LAST_MONTH = `date_trunc('month', now()) - interval '1 day'`;
+
+  /** Runs one statement as the superuser with every trigger switched off (what an attacker could do). */
+  async function asReplica(text: string, values: unknown[]): Promise<void> {
+    await inTx(superuser, null, async (c) => {
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(text, values);
+    });
+  }
+
+  const sealAsApp = (tenantId: string, month: string) =>
+    app.query('SELECT * FROM audit.seal($1, $2::date)', [tenantId, month]);
+
+  it('R4: never forks a month: a late owner append after a newer month lands in the newest month', async () => {
+    const scope = newScope();
+    await ownerAppend(scope, LAST_MONTH);
+    await record(scope, 'test.this_month');
+    // Dated one hour before this month began, i.e. last month, after this month already has a row.
+    await ownerAppend(scope, `date_trunc('month', now()) - interval '1 hour'`, 'late');
+
+    const events = await eventsOf(scope.tenantId);
+    const [lastMonthRow, thisMonthRow, late] = events;
+    expect(events).toHaveLength(3);
+    expect(late?.entity_id).toBe('late');
+    expect(late?.chain_month).toBe(thisMonthRow?.chain_month);
+    expect(late?.chain_month).not.toBe(lastMonthRow?.chain_month);
+    expect(late?.seq).toBe('2');
+    expect(late?.prev_hash).toEqual(thisMonthRow?.hash);
+    await expect(verifyFull(scope.tenantId)).resolves.toEqual({
+      ok: true,
+      rows: '2',
+      first_bad_seq: null,
+      reason: null,
+    });
+    await expect(verifyFull(scope.tenantId, lastMonthRow?.chain_month)).resolves.toMatchObject({
+      ok: true,
+      rows: '1',
+    });
+  });
+
+  it('R5: writes hash_version 2 and detects a tampered organization_id', async () => {
+    const scope = newScope();
+    await record(scope, 'test.one');
+    await record(scope, 'test.two');
+    const { rows: versions } = await owner.query<{ hash_version: number }>(
+      'SELECT hash_version FROM audit.audit_events WHERE tenant_id = $1 ORDER BY seq',
+      [scope.tenantId],
+    );
+    expect(versions.map((r) => r.hash_version)).toEqual([2, 2]);
+
+    await asReplica(
+      'UPDATE audit.audit_events SET organization_id = $2 WHERE tenant_id = $1 AND seq = 1',
+      [scope.tenantId, randomUUID()],
+    );
+    await expect(verifyFull(scope.tenantId)).resolves.toEqual({
+      ok: false,
+      rows: '2',
+      first_bad_seq: '1',
+      reason: 'hash_mismatch',
+    });
+  });
+
+  it('R5: still verifies a v1 row written before 0008, chained to a v2 row', async () => {
+    const scope = newScope();
+    // A row exactly as 0001's append wrote it: hash_version 1, hashed by audit.event_hash (v1).
+    await superuser.query(
+      `WITH v AS (
+         SELECT nextval(pg_get_serial_sequence('audit.audit_events', 'id')) AS id,
+                date_trunc('month', now() AT TIME ZONE 'UTC')::date AS m, now() AS at)
+       INSERT INTO audit.audit_events (id, tenant_id, organization_id, chain_month, seq, occurred_at,
+         actor_kind, actor_id, action, entity_type, entity_id, before, after, meta, ip, user_agent,
+         correlation_id, prev_hash, hash, hash_version)
+       OVERRIDING SYSTEM VALUE
+       SELECT v.id, $1::uuid, $2::uuid, v.m, 1, v.at, 'system', 'v1', 'test.v1', 'test', 'e',
+              NULL::jsonb, '{"n":1}'::jsonb, NULL::jsonb, '10.0.0.0/24'::inet, NULL::text, 'c',
+              '\\x00'::bytea,
+              audit.event_hash('\\x00'::bytea, v.id, $1::uuid, v.m, 1, v.at, 'system', 'v1', 'test.v1',
+                'test', 'e', NULL::jsonb, '{"n":1}'::jsonb, NULL::jsonb, '10.0.0.0/24'::inet, NULL::text,
+                'c'),
+              1
+         FROM v`,
+      [scope.tenantId, scope.organizationId],
+    );
+    await record(scope, 'test.v2');
+    await expect(verifyFull(scope.tenantId)).resolves.toEqual({
+      ok: true,
+      rows: '2',
+      first_bad_seq: null,
+      reason: null,
+    });
+  });
+
+  it('R15: reports a row deleted from a sealed month, and refuses to re-seal it', async () => {
+    const scope = newScope();
+    await ownerAppend(scope, LAST_MONTH, '0');
+    await ownerAppend(scope, LAST_MONTH, '1');
+    const month = (await eventsOf(scope.tenantId))[0]?.chain_month ?? '';
+    await expect(sealAsApp(scope.tenantId, month)).resolves.toMatchObject({
+      rows: [{ sealed: true, last_seq: '2' }],
+    });
+
+    await asReplica('DELETE FROM audit.audit_events WHERE tenant_id = $1 AND seq = 2', [
+      scope.tenantId,
+    ]);
+    await expect(verifyFull(scope.tenantId, month)).resolves.toMatchObject({
+      ok: false,
+      rows: '1',
+      reason: 'seal_count_mismatch',
+    });
+    await expect(sealAsApp(scope.tenantId, month)).rejects.toThrow(/refusing to seal/);
+  });
+
+  it('R15: refuses to append into a sealed month', async () => {
+    const scope = newScope();
+    await ownerAppend(scope, LAST_MONTH);
+    const month = (await eventsOf(scope.tenantId))[0]?.chain_month ?? '';
+    await sealAsApp(scope.tenantId, month);
+    await expect(ownerAppend(scope, LAST_MONTH, 'after-seal')).rejects.toThrow(/is sealed/);
+    expect(await eventsOf(scope.tenantId)).toHaveLength(1);
+  });
+
+  it('R15: makes chain_seals append-only, even for bos_owner', async () => {
+    const scope = newScope();
+    await ownerAppend(scope, LAST_MONTH);
+    const month = (await eventsOf(scope.tenantId))[0]?.chain_month ?? '';
+    await sealAsApp(scope.tenantId, month);
+    await expect(
+      owner.query('UPDATE audit.chain_seals SET last_seq = 99 WHERE tenant_id = $1', [
+        scope.tenantId,
+      ]),
+    ).rejects.toThrow('chain_seals is append-only');
+    await expect(
+      owner.query('DELETE FROM audit.chain_seals WHERE tenant_id = $1', [scope.tenantId]),
+    ).rejects.toThrow('chain_seals is append-only');
+    await expect(owner.query('TRUNCATE audit.chain_seals')).rejects.toThrow(
+      'chain_seals is append-only',
+    );
+  });
+
+  it('R27: refuses to append outside READ COMMITTED', async () => {
+    const scope = newScope();
+    const c = await app.connect();
+    try {
+      // The isolation level must be set before the first statement takes a snapshot.
+      await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      for (const [key, value] of Object.entries(settingsFor(scope))) {
+        await c.query('SELECT set_config($1, $2, true)', [key, value]);
+      }
+      await expect(
+        c.query(`SELECT audit.record('x.y', 'test', '1', NULL, NULL, NULL)`),
+      ).rejects.toThrow(/read committed/i);
+    } finally {
+      await c.query('ROLLBACK');
+      c.release();
+    }
+    expect(await eventsOf(scope.tenantId)).toEqual([]);
+  });
+
+  it('R27: ends the search_path of every SECURITY DEFINER function in audit with pg_temp', async () => {
+    const { rows } = await owner.query<{ proname: string; proconfig: string[] | null }>(
+      `SELECT p.proname, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'audit' AND p.prosecdef ORDER BY p.proname`,
+    );
+    expect(rows.map((r) => r.proname)).toEqual(
+      expect.arrayContaining(['append', 'capture_row', 'record', 'seal', 'verify_chain']),
+    );
+    for (const { proname, proconfig } of rows) {
+      const path = (proconfig ?? []).find((s) => s.startsWith('search_path='));
+      const last = path?.slice('search_path='.length).split(',').pop()?.trim();
+      expect({ proname, last }).toEqual({ proname, last: 'pg_temp' });
+    }
   });
 });
