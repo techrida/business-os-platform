@@ -1,5 +1,6 @@
 // ClamdClient against the fake clamd (same wire protocol as the real one).
 // EICAR comes from fake-clamd.ts's helper and stays in memory.
+import { createServer, type AddressInfo, type Server } from 'node:net';
 import { Readable } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -115,4 +116,95 @@ describe('ClamdClient', () => {
     expect(result.verdict).toBe('error');
     expect(result.detail).toBe('disk read failed');
   });
+
+  // R7: only an infrastructure failure may be retried; a clamd answer is final.
+  it('marks a refused connection, a timeout and a failing source as transient (retry later)', async () => {
+    const dead = await startFakeClamd();
+    const { port } = dead;
+    await dead.close();
+    const refused = new ClamdClient({ host: '127.0.0.1', port, timeoutMs: 500 });
+    expect(await refused.scan(Readable.from([Buffer.from('x')]))).toMatchObject({
+      verdict: 'error',
+      transient: true,
+    });
+
+    const hung = await client('hang', 300);
+    expect(await hung.scan(Readable.from([Buffer.from('x')]))).toMatchObject({
+      verdict: 'error',
+      transient: true,
+    });
+
+    const c = await client();
+    async function* broken(): AsyncGenerator<Buffer> {
+      yield Buffer.from('start');
+      await Promise.resolve();
+      throw new Error('disk read failed');
+    }
+    expect(await c.scan(Readable.from(broken()))).toMatchObject({
+      verdict: 'error',
+      transient: true,
+    });
+  });
+
+  it('marks an empty reply (clamd died mid-scan) as transient', async () => {
+    const silent = await replyServer(null);
+    const result = await new ClamdClient({
+      host: '127.0.0.1',
+      port: silent.port,
+      timeoutMs: 1_000,
+    }).scan(Readable.from([Buffer.from('x')]));
+    expect(result).toMatchObject({ verdict: 'error', transient: true });
+  });
+
+  it('does not mark a clamd ERROR line or the size-limit reply as transient (a definite answer)', async () => {
+    const c = await client('error');
+    const lookup = await c.scan(Readable.from([Buffer.from('x')]));
+    expect(lookup.verdict).toBe('error');
+    expect(lookup.transient).not.toBe(true);
+
+    fake = await startFakeClamd({ streamMaxBytes: 1024 });
+    const big = new ClamdClient({ host: fake.host, port: fake.port, timeoutMs: 2_000 });
+    const tooBig = await big.scan(Readable.from([Buffer.alloc(200 * 1024)]));
+    expect(tooBig.verdict).toBe('error');
+    expect(tooBig.transient).not.toBe(true);
+  });
+
+  // R20: with AlertExceedsMax yes (infra/clamav/clamd.conf) clamd reports an archive over its scan limits as a
+  // FOUND with a Heuristics.Limits.Exceeded signature. That has to block the file, not count as an error.
+  it.each([
+    'Heuristics.Limits.Exceeded',
+    'Heuristics.Limits.Exceeded.MaxFileSize',
+    'Heuristics.Limits.Exceeded.MaxRecursion',
+  ])('says infected for a file that exceeds the scan limits (%s)', async (signature) => {
+    const server = await replyServer(`stream: ${signature} FOUND`);
+    const result = await new ClamdClient({
+      host: '127.0.0.1',
+      port: server.port,
+      timeoutMs: 1_000,
+    }).scan(Readable.from([Buffer.from('a deeply nested archive')]));
+    expect(result).toMatchObject({ verdict: 'infected', signature });
+  });
 });
+
+const servers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((s) => new Promise((resolve) => s.close(resolve))));
+});
+
+/** A one-trick clamd: reads INSTREAM until the zero-length chunk, then sends `reply` (or just hangs up). */
+async function replyServer(reply: string | null): Promise<{ port: number }> {
+  const server = createServer((socket) => {
+    socket.on('error', () => undefined);
+    let seen = Buffer.alloc(0);
+    socket.on('data', (data: Buffer) => {
+      seen = Buffer.concat([seen, data]);
+      // The stream ends with four zero bytes (a zero-length chunk).
+      if (seen.subarray(-4).equals(Buffer.alloc(4))) {
+        socket.end(reply === null ? '' : `${reply}\0`);
+      }
+    });
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { port: (server.address() as AddressInfo).port };
+}
