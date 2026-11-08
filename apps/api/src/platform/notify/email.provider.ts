@@ -45,18 +45,44 @@ export class EmailSendError extends Error {
 /** The part of nodemailer's Transporter this class uses; a test passes a fake with the same method. */
 export type MailTransport = Pick<Transporter, 'sendMail'>;
 
+/**
+ * Default SMTP time limits in milliseconds. Their sum (50 s) must stay far below the outbox claim lease
+ * (STALE_CLAIM_MIN, 10 minutes in outbox.drainer.ts). `socket` is an idle limit between SMTP replies.
+ */
+export const DEFAULT_SMTP_TIMEOUTS_MS = {
+  connection: 10_000,
+  greeting: 10_000,
+  socket: 30_000,
+} as const;
+
 export class SmtpEmailProvider implements EmailProvider {
   private readonly transport: MailTransport;
 
   /**
-   * `config` is the two CoreConfig fields. `transport` is for tests; production leaves it out and the
+   * `config` is the CoreConfig fields it reads (the SMTP timeouts are optional). `transport` is for tests; production leaves it out and the
    * transport is built from SMTP_URL (nodemailer reads host, port, TLS and login from the URL).
    */
   constructor(
-    private readonly config: { SMTP_URL: string; MAIL_FROM: string },
+    private readonly config: {
+      SMTP_URL: string;
+      MAIL_FROM: string;
+      SMTP_CONNECTION_TIMEOUT_MS?: number | undefined;
+      SMTP_GREETING_TIMEOUT_MS?: number | undefined;
+      SMTP_SOCKET_TIMEOUT_MS?: number | undefined;
+    },
     transport?: MailTransport,
   ) {
-    this.transport = transport ?? createTransport(config.SMTP_URL);
+    // nodemailer's own defaults are 2 minutes for the connection, 30 s for the greeting and 10 minutes
+    // for the socket. A hung server could then keep a send past the outbox claim lease, and the drainer
+    // would give the row to a second worker. These bounds keep a hung send shorter than the lease.
+    this.transport =
+      transport ??
+      createTransport({
+        url: config.SMTP_URL,
+        connectionTimeout: config.SMTP_CONNECTION_TIMEOUT_MS ?? DEFAULT_SMTP_TIMEOUTS_MS.connection,
+        greetingTimeout: config.SMTP_GREETING_TIMEOUT_MS ?? DEFAULT_SMTP_TIMEOUTS_MS.greeting,
+        socketTimeout: config.SMTP_SOCKET_TIMEOUT_MS ?? DEFAULT_SMTP_TIMEOUTS_MS.socket,
+      });
   }
 
   async send(m: {
