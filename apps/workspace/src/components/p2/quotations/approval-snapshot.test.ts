@@ -1,0 +1,105 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  exceedsDiscountLimit,
+  parseApprovalSnapshot,
+  routeReasons,
+  trimPercent,
+} from './approval-snapshot';
+
+const valid = () => ({
+  nprTotal: '2690999.99',
+  effectiveDiscountPct: '13.0000',
+  marginPct: '22.5000',
+  nprDiscountAmount: '400000.00',
+  currency: 'USD',
+  fxRate: '133.500000',
+  customerName: 'Big Kahuna Burger Ltd.',
+  quotationNumber: 'QT-2082-0042',
+  revisionNo: 2,
+});
+
+describe('parseApprovalSnapshot', () => {
+  it('reads a valid snapshot, even after a JSON round trip', () => {
+    const stored = JSON.parse(JSON.stringify(valid())) as unknown;
+    expect(parseApprovalSnapshot(stored)).toEqual(valid());
+  });
+
+  it('reads an NPR document with an unknown margin', () => {
+    const snap = parseApprovalSnapshot({
+      ...valid(),
+      currency: 'NPR',
+      fxRate: '1',
+      marginPct: null,
+    });
+    expect(snap?.marginPct).toBeNull();
+    expect(snap?.currency).toBe('NPR');
+  });
+
+  it('gives null when a key is missing, and for every non-object', () => {
+    const { nprTotal, ...rest } = valid();
+    expect(nprTotal).toBe('2690999.99');
+    expect(parseApprovalSnapshot(rest)).toBeNull();
+    const { marginPct, ...noMargin } = valid();
+    expect(marginPct).toBe('22.5000');
+    expect(parseApprovalSnapshot(noMargin)).toBeNull();
+    for (const bad of [null, undefined, 'text', 42, [], {}]) {
+      expect(parseApprovalSnapshot(bad)).toBeNull();
+    }
+  });
+
+  it('gives null when a value has the wrong type', () => {
+    expect(parseApprovalSnapshot({ ...valid(), nprTotal: 2690999.99 })).toBeNull();
+    expect(parseApprovalSnapshot({ ...valid(), effectiveDiscountPct: 13 })).toBeNull();
+    expect(parseApprovalSnapshot({ ...valid(), revisionNo: '2' })).toBeNull();
+    expect(parseApprovalSnapshot({ ...valid(), currency: 'EUR' })).toBeNull();
+    expect(parseApprovalSnapshot({ ...valid(), marginPct: 22.5 })).toBeNull();
+  });
+
+  it('does not read snake_case keys', () => {
+    const { nprTotal, ...rest } = valid();
+    expect(parseApprovalSnapshot({ ...rest, npr_total: nprTotal })).toBeNull();
+  });
+});
+
+describe('exceedsDiscountLimit', () => {
+  it('is true only strictly above 12', () => {
+    expect(exceedsDiscountLimit('12.0000')).toBe(false);
+    expect(exceedsDiscountLimit('11.9999')).toBe(false);
+    expect(exceedsDiscountLimit('12.0001')).toBe(true);
+    expect(exceedsDiscountLimit('13.0000')).toBe(true);
+    expect(exceedsDiscountLimit('100')).toBe(true);
+    expect(exceedsDiscountLimit('0.0000')).toBe(false);
+  });
+});
+
+describe('trimPercent', () => {
+  it('drops trailing zeros without rounding anything away', () => {
+    expect(trimPercent('13.0000')).toBe('13');
+    expect(trimPercent('22.5000')).toBe('22.5');
+    expect(trimPercent('12.0001')).toBe('12.0001');
+    expect(trimPercent('-3.2500')).toBe('-3.25');
+    expect(trimPercent('133.500000')).toBe('133.5');
+    expect(trimPercent('1')).toBe('1');
+    expect(trimPercent('0.0000')).toBe('0');
+  });
+});
+
+describe('routeReasons', () => {
+  const step = (seq: number, reason: string) => ({ seq, reason });
+
+  it('lists each step reason once, in step order, skipping blanks', () => {
+    expect(
+      routeReasons([
+        step(2, 'Discount above 12%'),
+        step(1, 'Every quotation needs a Sales Manager'),
+        step(3, '  '),
+        step(4, 'Discount above 12%'),
+      ]),
+    ).toEqual(['Every quotation needs a Sales Manager', 'Discount above 12%']);
+  });
+
+  it('is empty when there are no steps', () => {
+    expect(routeReasons([])).toEqual([]);
+  });
+});
