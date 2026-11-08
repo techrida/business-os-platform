@@ -3,12 +3,15 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { Alert } from '@/components/ui/alert';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { failureOf, getMemo, listAudit, previewRoute, type MemoDetail } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
 
-import { Notice, StatusBadge } from '../../kit';
+import { StatusBadge } from '../../kit';
 import styles from '../../kit.module.css';
 import { updateMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
@@ -30,10 +33,10 @@ function Timeline({ events }: { events: AuditEventDto[] }) {
         <li key={e.id} className={styles.event}>
           <div className={styles.eventHead}>
             <span className={styles.eventName}>{auditLabel(e.action)}</span>
-            <span className={styles.meta}>
+            <span className={styles.eventMeta}>
               {e.actorKind === 'user' ? `person ${e.actorId.slice(-8)}` : e.actorKind}
             </span>
-            <time className={styles.eventTime} dateTime={e.occurredAt}>
+            <time className={styles.eventMeta} dateTime={e.occurredAt}>
               {when(e.occurredAt)}
             </time>
           </div>
@@ -65,24 +68,17 @@ export default async function MemoPage({
     const f = failureOf(err);
     if (f.status === 404) notFound();
     return (
-      <main id="main" className={`${styles.page} ${styles.narrow}`}>
-        <Link href="/memos" className={styles.back}>
-          Back to memos
-        </Link>
-        <Notice tone="bad" role="alert">
-          <p>
-            <strong>
-              {f.status === 403 ? 'You cannot open this memo' : 'This memo did not load'}
-            </strong>
-          </p>
-          <p>{f.message}</p>
-          {f.status !== 403 ? (
-            <p>
-              <a href={path}>Try again</a>
-            </p>
-          ) : null}
-        </Notice>
-      </main>
+      <Page width="narrow">
+        <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: 'Memo' }]} />
+        <Alert
+          tone="error"
+          role="alert"
+          title={f.status === 403 ? 'You cannot open this memo' : 'This memo did not load'}
+          actions={f.status !== 403 ? <a href={path}>Try again</a> : null}
+        >
+          {f.message}
+        </Alert>
+      </Page>
     );
   }
 
@@ -138,93 +134,89 @@ export default async function MemoPage({
         ? 'An attachment did not pass the scan, so this memo cannot be submitted.'
         : null;
 
-  return (
-    <main id="main" className={styles.page}>
-      <Link href="/memos" className={styles.back}>
-        Back to memos
-      </Link>
-      <div className={styles.pageHead}>
-        <div>
-          <h1 className={styles.title}>{memo.title}</h1>
-          <p className={styles.sub}>
-            {memo.number} · created <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>
-          </p>
-        </div>
-        <StatusBadge status={memo.status} />
-      </div>
+  const facts: Fact[] = [
+    {
+      key: 'amount',
+      label: 'Amount',
+      value: <span className={styles.amount}>{money(memo.amount, memo.currency)}</span>,
+    },
+    ...(memo.currency !== 'NPR'
+      ? [
+          {
+            key: 'npr',
+            label: 'In NPR',
+            value: (
+              <>
+                <span className={styles.amount}>{money(memo.amountNpr, 'NPR')}</span>
+                <span className={styles.caption}>
+                  at {memo.fxRate} ({memo.fxSource}, {when(memo.fxDate, 'date')})
+                </span>
+              </>
+            ),
+          },
+        ]
+      : []),
+    {
+      key: 'details',
+      label: 'Details',
+      wide: true,
+      value:
+        memo.body === '' ? (
+          <span className={styles.note}>No details were written.</span>
+        ) : (
+          <span className={styles.comment}>{memo.body}</span>
+        ),
+    },
+  ];
 
-      {saved || submitted !== null ? (
-        <div style={{ marginBottom: '1rem' }}>
-          {saved ? (
-            <Notice tone="ok" role="status">
-              <p>Your changes were saved.</p>
-            </Notice>
-          ) : submitted === 'blocked' ? (
-            <Notice tone="warn" role="status">
-              <p>
-                <strong>Submitted, but it is blocked.</strong> No approver is available for a step
-                of the route. An administrator can fix the route, then reroute it.
-              </p>
-            </Notice>
-          ) : (
-            <Notice tone="ok" role="status">
-              <p>Submitted for approval. You will get a notification when it is decided.</p>
-            </Notice>
-          )}
-        </div>
+  return (
+    <Page>
+      <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: memo.title }]} />
+      <PageHeader
+        title={memo.title}
+        status={<StatusBadge status={memo.status} />}
+        description={
+          <>
+            {memo.number} · created <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>
+          </>
+        }
+      />
+
+      {saved ? (
+        <Alert tone="success" role="status">
+          Your changes were saved.
+        </Alert>
+      ) : submitted === 'blocked' ? (
+        <Alert tone="warning" role="status" title="Submitted, but it is blocked.">
+          No approver is available for a step of the route. An administrator can fix the route, then
+          reroute it.
+        </Alert>
+      ) : submitted === 'pending' ? (
+        <Alert tone="success" role="status">
+          Submitted for approval. You will get a notification when it is decided.
+        </Alert>
       ) : null}
 
-      <div className={styles.split}>
-        <div className={styles.stack}>
-          <section className={styles.panel} aria-labelledby="memo-h">
-            <h2 id="memo-h" className={styles.panelTitle}>
-              Memo
-            </h2>
-            <dl className={styles.facts}>
-              <dt>Amount</dt>
-              <dd className={styles.amount} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {money(memo.amount, memo.currency)}
-              </dd>
-              {memo.currency !== 'NPR' ? (
-                <>
-                  <dt>In NPR</dt>
-                  <dd style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {money(memo.amountNpr, 'NPR')}
-                    <span className={styles.meta}>
-                      {' '}
-                      at {memo.fxRate} ({memo.fxSource}, {when(memo.fxDate, 'date')})
-                    </span>
-                  </dd>
-                </>
-              ) : null}
-              <dt className={styles.wide}>Details</dt>
-              <dd className={styles.wide}>
-                {memo.body === '' ? (
-                  <span className={styles.meta}>No details were written.</span>
-                ) : (
-                  <p className={styles.comment} style={{ margin: '0.25rem 0 0' }}>
-                    {memo.body}
-                  </p>
-                )}
-              </dd>
-            </dl>
-            {memo.approval ? (
-              <p style={{ margin: '1rem 0 0' }}>
+      <div className={styles.columns}>
+        <div className={styles.main}>
+          <Panel
+            title="Memo"
+            actions={
+              memo.approval ? (
                 <Link
                   href={`/inbox/${encodeURIComponent(memo.approval.requestId)}`}
                   className={styles.link}
                 >
                   View the approval route and history
                 </Link>
-              </p>
-            ) : null}
-          </section>
+              ) : null
+            }
+          >
+            <FactList facts={facts} />
+          </Panel>
 
           {editable ? (
-            <section className={styles.panel} aria-labelledby="edit-h">
-              <h2 id="edit-h" className={styles.panelTitle}>
-                Edit memo
-              </h2>
+            <Panel title="Edit memo">
               <MemoForm
                 action={updateMemoAction}
                 memoId={memo.id}
@@ -236,13 +228,10 @@ export default async function MemoPage({
                   currency: memo.currency,
                 }}
               />
-            </section>
+            </Panel>
           ) : null}
 
-          <section className={styles.panel} aria-labelledby="att-h">
-            <h2 id="att-h" className={styles.panelTitle}>
-              Attachments
-            </h2>
+          <Panel title="Attachments">
             <Attachments
               memoId={memo.id}
               initial={attachments}
@@ -250,55 +239,48 @@ export default async function MemoPage({
               maxBytes={MAX_UPLOAD_BYTES}
               allowedMime={[...ALLOWED_MIME]}
             />
-          </section>
+          </Panel>
 
-          <section className={styles.panel} aria-labelledby="audit-h">
-            <h2 id="audit-h" className={styles.panelTitle}>
-              Audit timeline
-            </h2>
-            <p className={styles.panelNote}>Times are Kathmandu time.</p>
+          <Panel title="Audit timeline" description="Times are Kathmandu time.">
             {auditDenied && events.length === 0 ? (
-              <p className={styles.meta} style={{ margin: 0 }}>
+              <p className={styles.note}>
                 The audit trail is only open to roles with audit access, so it is hidden for you.
               </p>
             ) : auditFailed && events.length === 0 ? (
-              <Notice tone="warn" role="status">
-                <p>The audit timeline did not load. The memo itself is unaffected.</p>
-                <p>
-                  <a href={path}>Reload</a>
-                </p>
-              </Notice>
+              <Alert tone="warning" role="status" actions={<a href={path}>Reload</a>}>
+                The audit timeline did not load. The memo itself is unaffected.
+              </Alert>
             ) : events.length === 0 ? (
-              <p className={styles.meta} style={{ margin: 0 }}>
-                No events recorded yet.
-              </p>
+              <p className={styles.note}>No events recorded yet.</p>
             ) : (
               <Timeline events={events} />
             )}
-          </section>
+          </Panel>
         </div>
 
-        <aside className={`${styles.panel} ${styles.sticky}`} aria-labelledby="route-h">
-          <h2 id="route-h" className={styles.panelTitle}>
-            {editable ? 'Approval route' : 'Status'}
-          </h2>
+        <Panel
+          as="aside"
+          title="Approval route"
+          description={
+            editable
+              ? 'This is who will be asked to approve, and why. It is worked out again when you submit.'
+              : undefined
+          }
+          className={styles.side}
+        >
           {editable ? (
-            <>
-              <p className={styles.panelNote}>
-                This is who will be asked to approve, and why. It is worked out again when you
-                submit.
-              </p>
+            <div className={styles.routeBody}>
               {plan ? (
-                <ol className={styles.steps} style={{ marginBottom: '1rem' }}>
+                <ol className={styles.steps}>
                   {plan.steps.map((s) => (
                     <li key={s.seq} className={styles.step}>
                       <span className={styles.stepNo} aria-hidden="true">
                         {s.seq}
                       </span>
-                      <div>
+                      <div className={styles.stepBody}>
                         <div className={styles.stepHead}>
                           <span className={styles.stepWho}>
-                            <span className={styles.visuallyHidden}>Step {s.seq}: </span>
+                            <span className="sr-only">Step {s.seq}: </span>
                             {s.kind === 'role' && s.roleKey
                               ? `Anyone with the ${s.roleKey} role`
                               : s.kind === 'group'
@@ -313,35 +295,27 @@ export default async function MemoPage({
                   ))}
                 </ol>
               ) : (
-                <div style={{ marginBottom: '1rem' }}>
-                  <Notice tone="warn" role="status">
-                    <p>
-                      {previewFailure?.status === 403
-                        ? 'You cannot preview the route with your roles. Submitting still works if you may submit.'
-                        : 'The route preview did not load. You can still submit; the route is worked out then.'}
-                    </p>
-                  </Notice>
-                </div>
+                <Alert tone="warning" role="status">
+                  {previewFailure?.status === 403
+                    ? 'You cannot preview the route with your roles. Submitting still works if you may submit.'
+                    : 'The route preview did not load. You can still submit; the route is worked out then.'}
+                </Alert>
               )}
               {plan?.blocked ? (
-                <div style={{ marginBottom: '1rem' }}>
-                  <Notice tone="warn">
-                    <p>
-                      <strong>
-                        No one can approve step {plan.steps.find((s) => s.blocked)?.seq ?? ''} yet.
-                      </strong>{' '}
-                      {plan.blockReason ??
-                        'Everyone eligible prepared this memo, so they cannot approve it.'}{' '}
-                      You can still submit; it will wait as blocked until an administrator fixes the
-                      route.
-                    </p>
-                  </Notice>
-                </div>
+                <Alert
+                  tone="warning"
+                  title={`No one can approve step ${plan.steps.find((s) => s.blocked)?.seq ?? ''} yet.`}
+                >
+                  {plan.blockReason ??
+                    'Everyone eligible prepared this memo, so they cannot approve it.'}{' '}
+                  You can still submit; it will wait as blocked until an administrator fixes the
+                  route.
+                </Alert>
               ) : null}
               <SubmitForm memoId={memo.id} blocker={submitBlocker} />
-            </>
+            </div>
           ) : (
-            <p className={styles.meta} style={{ margin: 0 }}>
+            <p className={styles.note}>
               {memo.status === 'submitted'
                 ? 'This memo is waiting for approval. It cannot be edited until it is returned.'
                 : memo.status === 'approved'
@@ -349,8 +323,8 @@ export default async function MemoPage({
                   : 'This memo was rejected.'}
             </p>
           )}
-        </aside>
+        </Panel>
       </div>
-    </main>
+    </Page>
   );
 }
