@@ -1,0 +1,40 @@
+# Prod overlay: use together with compose.yaml, always with --env-file .env (see the header of compose.yaml).
+#   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.prod.yaml --profile core --profile app up -d --wait
+#
+# P0 production is the office server reached over Tailscale: BIND_ADDR is the server's Tailscale IP.
+# Set AUTH_HOST, APP_HOST and API_HOST in .env to the real domains. Nothing is published except Caddy.
+# Not verified until that server exists (no prod run happened in P0).
+#
+# Hardening still to do before real data (tracked for P1):
+#   - split ZITADEL into init / setup / start (see the "prodlike" overlay in ZITADEL's deploy/compose)
+#   - set a short ZITADEL_PAT_EXPIRATION and delete admin.pat plus the bootstrap service account after setup
+#   - choose CADDY_TLS (default "internal" = Caddy's private CA; clients must trust it)
+#   - mail: there is no mailpit here; the Postal stack arrives in P1 (mail.<domain> answers 502 until then)
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+  valkey:
+    <<: *restart
+  zitadel-api:
+    <<: *restart
+  zitadel-login:
+    <<: *restart
+  api:
+    <<: *restart
+  worker:
+    <<: *restart
+  workspace:
+    <<: *restart
+  caddy:
+    <<: *restart
+    ports:
+      - '${BIND_ADDR:?set BIND_ADDR in .env (the Tailscale IP)}:80:80'
+      - '${BIND_ADDR}:443:443'
+    environment:
+      # In prod the apps run as containers, never on the host.
+      WORKSPACE_UPSTREAM: workspace:3000
+      API_UPSTREAM: api:3001
