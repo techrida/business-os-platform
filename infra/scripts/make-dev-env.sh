@@ -33,6 +33,7 @@ else
     -e "s/dev-zitadel-db-pw/$(r 16)/g" \
     -e "s/bos-dev-masterkey-0123456789abcd/$(r 16)/g" \
     -e "s/bos-dev-login-cookie-secret-0123456789abcdef/$(r 32)/g" \
+    -e "s/dev-docs-link-secret-0123456789abcdef0123/$(r 32)/g" \
     -e "s/Dev-Admin-Passw0rd-1#/Bos-$(r 8)-Aa1#/g" \
     -e "s/^PGBACKREST_REPO1_CIPHER_PASS=\$/PGBACKREST_REPO1_CIPHER_PASS=$(r 32)/" .env
   echo "make-dev-env: .env written with random secrets (mode 600). Back up ZITADEL_MASTERKEY and PGBACKREST_REPO1_CIPHER_PASS with it (no backup can be restored without the second)."
@@ -55,3 +56,17 @@ if grep -q '^VALKEY_URL=redis://\(:dev-valkey-pw@\)\?127\.0\.0\.1:6379$' .env; t
   sed -i "s|^VALKEY_URL=redis://\(:dev-valkey-pw@\)\?127\.0\.0\.1:6379\$|VALKEY_URL=redis://:${valkey_pw}@127.0.0.1:6379|" .env
   echo "make-dev-env: VALKEY_URL now carries VALKEY_PASSWORD"
 fi
+
+# P1 keys (P1 plan §6.3). Added only when missing or empty (ensure above), so a P0 .env upgrades in place
+# and a fresh .env made from an older .env.example still gets them. Host-run values: the compose
+# api and worker set their own container-side values. Values are never printed.
+ensure FILES_ROOT ./.dev/files
+ensure CLAMD_HOST 127.0.0.1
+ensure CLAMD_PORT 3310
+ensure SMTP_URL smtp://127.0.0.1:1025
+ensure MAIL_FROM '"Business OS <no-reply@bos.localhost>"'
+ensure DOCS_LINK_SECRET "$(r 32)"
+ensure ZITADEL_API_URL https://auth.localhost
+# Encrypts the restic repository of the files volume (infra/backup/files-backup.sh). Back it up with .env.
+ensure RESTIC_PASSWORD "$(r 32)"
+# ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY are written by the seed into .dev/zitadel.env.
