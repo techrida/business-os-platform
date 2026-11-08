@@ -1,47 +1,66 @@
 import type { ReactNode } from 'react';
 
-import styles from './kit.module.css';
+import { Alert, type AlertTone } from '@/components/ui/alert';
+import { Badge as UiBadge } from '@/components/ui/badge';
 
 /**
- * Small presentational pieces shared by the inbox and memo screens. Markup only (no state, no
+ * What the memo screens still import from here. Each piece is a thin wrapper over a shared
+ * component in components/ui, kept so the call sites do not change; new code should use the
+ * shared components directly (Badge, Alert, Table, Panel, ...). Markup only (no state, no
  * `use client`), so Server and Client Components can both import it.
  */
 
 export type Tone = 'good' | 'wait' | 'bad' | 'neutral';
 
-const TONE_CLASS: Record<Tone, string> = {
-  good: styles.good ?? '',
-  wait: styles.wait ?? '',
-  bad: styles.bad ?? '',
-  neutral: '',
+type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
+
+const BADGE_TONE: Record<Tone, BadgeTone> = {
+  good: 'success',
+  wait: 'warning',
+  bad: 'error',
+  neutral: 'neutral',
 };
 
-/** A status chip. The shape before the word (dot, diamond, square) backs up the colour. */
+/** A status pill. */
 export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`${styles.badge} ${TONE_CLASS[tone]}`}>{children}</span>;
+  return <UiBadge tone={BADGE_TONE[tone]}>{children}</UiBadge>;
 }
 
-const STATUS: Record<string, { tone: Tone; text: string }> = {
+const STATUS: Record<string, { tone: BadgeTone; text: string }> = {
   // Approval requests and memos
   draft: { tone: 'neutral', text: 'Draft' },
-  pending: { tone: 'wait', text: 'Waiting for approval' },
-  submitted: { tone: 'wait', text: 'Submitted' },
-  approved: { tone: 'good', text: 'Approved' },
-  returned: { tone: 'wait', text: 'Returned for changes' },
-  rejected: { tone: 'bad', text: 'Rejected' },
-  blocked: { tone: 'bad', text: 'Blocked: no approver' },
+  pending: { tone: 'warning', text: 'Waiting for approval' },
+  submitted: { tone: 'warning', text: 'Submitted' },
+  approved: { tone: 'success', text: 'Approved' },
+  returned: { tone: 'warning', text: 'Returned for changes' },
+  rejected: { tone: 'error', text: 'Rejected' },
+  blocked: { tone: 'error', text: 'Blocked: no approver' },
   cancelled: { tone: 'neutral', text: 'Cancelled' },
   // Steps
   waiting: { tone: 'neutral', text: 'Not started' },
-  active: { tone: 'wait', text: 'Waiting for a decision' },
+  active: { tone: 'info', text: 'Waiting for a decision' },
   skipped: { tone: 'neutral', text: 'Skipped' },
 };
 
+/** The state of an approval request, a memo or an approval step, in words. */
 export function StatusBadge({ status }: { status: string }) {
   const s = STATUS[status] ?? { tone: 'neutral' as const, text: status };
-  return <Badge tone={s.tone}>{s.text}</Badge>;
+  return <UiBadge tone={s.tone}>{s.text}</UiBadge>;
 }
 
+/** The words for a status, for places that are not a badge (a timeline segment). */
+export function statusText(status: string): string {
+  return STATUS[status]?.text ?? status;
+}
+
+const NOTICE_TONE: Record<'ok' | 'bad' | 'warn' | 'info', AlertTone> = {
+  ok: 'success',
+  bad: 'error',
+  warn: 'warning',
+  info: 'info',
+};
+
+/** An inline message. Wraps the shared Alert; see it for how `role` is used. */
 export function Notice({
   tone,
   role,
@@ -52,17 +71,9 @@ export function Notice({
   role?: 'alert' | 'status';
   children: ReactNode;
 }) {
-  const toneClass =
-    tone === 'ok'
-      ? styles.noticeOk
-      : tone === 'bad'
-        ? styles.noticeBad
-        : tone === 'warn'
-          ? styles.noticeWarn
-          : '';
   return (
-    <div className={`${styles.notice} ${toneClass}`} {...(role ? { role } : {})}>
+    <Alert tone={NOTICE_TONE[tone]} {...(role ? { role } : {})}>
       {children}
-    </div>
+    </Alert>
   );
 }
