@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import type { CustomerDto, VerificationCaseDto } from '@bos/contracts';
+import {
+  ALLOWED_MIME,
+  MAX_UPLOAD_BYTES,
+  type CustomerDto,
+  type VerificationCaseDto,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
@@ -29,6 +34,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
 
+import { AttachForm, type AttachOption } from './attach-form';
 import { ReviewForm } from './review-form';
 import { SubmitForm } from '../submit-form';
 import styles from '../verification.module.css';
@@ -99,6 +105,17 @@ function submitBlockedReason(c: VerificationCaseDto): string | null {
     .join(', ')}.`;
 }
 
+/** The checklist as options for the attach form: name, whether it is required, where it stands. */
+function attachOptions(c: VerificationCaseDto): { items: AttachOption[]; defaultKey: string } {
+  const items = c.checklist.map((i) => ({
+    key: i.key,
+    text: `${CHECKLIST_LABEL[i.key]} · ${i.required ? 'Required' : 'Optional'} · ${CHECKLIST_STATUS[i.status].text}`,
+  }));
+  const open = c.checklist.filter((i) => i.documentId === null);
+  const first = open.find((i) => i.required) ?? open[0];
+  return { items, defaultKey: first?.key ?? '' };
+}
+
 export default async function VerificationCasePage({
   params,
   searchParams,
@@ -157,6 +174,12 @@ export default async function VerificationCasePage({
   const progress = checklistProgress(c.checklist);
   const mayReview = hasPermission(session.roles, 'verification.review');
   const mayEdit = hasPermission(session.roles, 'customer.write');
+  // Only a draft or a rejected case can take documents; the API checks both permissions again.
+  const mayAttach =
+    mayEdit &&
+    hasPermission(session.roles, 'documents.upload') &&
+    (c.status === 'draft' || c.status === 'rejected');
+  const attach = attachOptions(c);
 
   return (
     <Page>
@@ -255,6 +278,25 @@ export default async function VerificationCasePage({
               </tbody>
             </Table>
           </Panel>
+
+          {mayAttach ? (
+            <Panel
+              title="Attach a document"
+              description="Upload a file and put it on one checklist item. Repeat for each document."
+            >
+              <AttachForm
+                caseId={c.id}
+                version={c.version}
+                reopens={c.status === 'rejected'}
+                items={attach.items}
+                defaultKey={attach.defaultKey}
+                // One key per render of this page; the form takes the next one from each answer.
+                idempotencyKey={randomUUID()}
+                maxBytes={MAX_UPLOAD_BYTES}
+                allowedMime={[...ALLOWED_MIME]}
+              />
+            </Panel>
+          ) : null}
         </div>
 
         <Panel
@@ -274,7 +316,9 @@ export default async function VerificationCasePage({
             <p className={styles.note}>
               {c.status === 'draft'
                 ? 'This case has not been submitted for review yet, so there is nothing to decide.'
-                : 'This case has been decided, so there is nothing left to do.'}
+                : c.status === 'rejected' && mayAttach
+                  ? 'This case was rejected. Use Attach a document to reopen it as a draft, then submit it again.'
+                  : 'This case has been decided, so there is nothing left to do.'}
             </p>
           ) : !mayReview ? (
             <p className={styles.note}>
