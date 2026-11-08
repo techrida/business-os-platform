@@ -15,6 +15,7 @@
   "dependencies": {
     "@bos/contracts": "workspace:*",
     "@fontsource-variable/outfit": "catalog:",
+    "@bos/locale": "workspace:*",
     "ioredis": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",
@@ -30,6 +31,7 @@
     "@types/react-dom": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "ioredis-mock": "catalog:",
+    "otplib": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
