@@ -406,10 +406,11 @@ services:
         bind:
           create_host_path: false
     healthcheck:
-      # clamdcheck.sh ships in the image and sends PING to clamd (the lead verified it and nc exist). clamd only
-      # starts answering after the signatures are loaded, so the first start (download ~300 MB, then load) is
-      # slow: start_period 300s keeps retries from counting against it.
-      test: ['CMD', 'clamdcheck.sh']
+      # PING over TCP, as the image's clamdcheck.sh does, but to 127.0.0.1: clamdcheck.sh asks `localhost`,
+      # which resolves to ::1 in this image while clamd listens on 0.0.0.0 only, so it reported a healthy clamd
+      # as unhealthy. clamd only starts answering after the signatures are loaded, so the first start
+      # (download ~300 MB, then load) is slow: start_period 300s keeps retries from counting against it.
+      test: ['CMD-SHELL', 'test "$(echo PING | nc -w 5 127.0.0.1 3310)" = PONG']
       interval: 30s
       timeout: 10s
       retries: 5
