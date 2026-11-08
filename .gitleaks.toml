@@ -1,0 +1,28 @@
+# gitleaks configuration (CI job `secrets`). Keeps every default rule on and adds an allowlist for
+# known TEST FIXTURES only: exact placeholder literals, matched against the finding's matched text.
+#
+# Everything else, including a new real-looking secret in a test file, is still reported. The literals
+# below are exempt wherever they appear.
+# (A path-scoped `condition = "AND"` allowlist was tried first and rejected: on gitleaks 8.30.1 it
+# suppressed unrelated findings in every test file, which is the opposite of the intent. Verified by
+# scanning a test file holding a made-up GitHub token; only these exact strings are exempt now.)
+#
+# Rules for adding an entry: it must be a value that protects nothing (a made-up string, a public
+# RFC example, a docker-network URL). Never add a value that was ever valid anywhere.
+title = "Business OS gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Placeholder values used in unit, integration and e2e tests"
+regexTarget = "match"
+regexes = [
+  # HMAC test secrets: made-up strings used to sign throw-away tokens in tests.
+  '''an-integration-test-secret-of-32-plus-chars''',
+  '''e2e-route-sweep-signing-key''',
+  # The RFC 6238 appendix B sample TOTP seed ("12345678901234567890" in base32); public.
+  '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
+  # `api:3001` is the compose service name and port of the API, not user:password credentials.
+  '''api:3001/''',
+]

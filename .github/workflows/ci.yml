@@ -70,6 +70,27 @@ jobs:
       - name: Container images are pinned by digest
         run: node infra/scripts/check-image-pins.mjs
 
+  # Scans the whole git history for committed secrets. Config: .gitleaks.toml (test fixtures only).
+  # Organisation-owned repos need a GITLEAKS_LICENSE secret (free key from gitleaks.io); personal
+  # accounts do not. Without the key the job fails loudly, which is intended: no silent skip.
+  secrets:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a secret removed in a later commit is still leaked.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   # Real Postgres through Testcontainers (it starts throw-away Docker containers from inside
   # the tests). ubuntu-24.04 runners already have Docker, so nothing extra to install.
   e2e:
