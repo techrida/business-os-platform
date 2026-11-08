@@ -16,7 +16,7 @@ vi.mock('@/lib/bff', () => ({
 const api = vi.hoisted(() => ({ createLead: vi.fn(), convertLead: vi.fn() }));
 vi.mock('@/components/p2/crm/crm-api', () => api);
 
-import { createLeadAction } from './actions';
+import { convertLeadAction, createLeadAction } from './actions';
 
 const IDEM = '44444444-4444-4444-8444-444444444444';
 const LEAD = '11111111-1111-4111-8111-111111111111';
@@ -80,4 +80,43 @@ describe('createLeadAction', () => {
     expect(sent).toMatch(GUID_SHAPE);
     expect(sent).not.toBe('x y');
   });
+});
+
+const apiError = (status: number, code: string) =>
+  new ApiError(status, 'x', {
+    error: { code, message: 'internal wording', correlationId: 'corr-12345678' },
+  });
+
+const convertForm = () => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries({
+    leadId: LEAD,
+    idempotencyKey: IDEM,
+    customerMode: 'create',
+    legalName: 'Himalayan Construction Pvt. Ltd.',
+    opportunityName: 'Bridge works',
+    expectedVersion: '3',
+    line1: 'Balaju',
+    city: 'Kathmandu',
+  })) {
+    f.set(k, v);
+  }
+  return f;
+};
+
+describe('convertLeadAction', () => {
+  it.each([
+    ['duplicate_pan_vat', 'Another customer already has this PAN/VAT number.'],
+    ['primary_contact_exists', 'This customer already has a primary contact.'],
+    ['kyb_not_verified', "This customer's verification must be approved first."],
+  ])(
+    'shows the real sentence for the 409 code %s, and does not ask for a reload',
+    async (code, text) => {
+      api.convertLead.mockRejectedValue(apiError(409, code));
+      const res = await convertLeadAction(empty, convertForm());
+      expect(res.error).toBe(text);
+      expect(res.reload).toBe(false);
+      expect(res.definite).toBe(true);
+    },
+  );
 });
