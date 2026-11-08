@@ -4,3 +4,4 @@ export * from './money.js';
 export * from './allocate.js';
 export * from './tax.js';
 export * from './discount.js';
+export * from './fx.js';
