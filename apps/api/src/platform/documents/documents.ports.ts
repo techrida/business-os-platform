@@ -28,6 +28,14 @@ export interface DocumentOwnerPolicy {
   ownerType: string;
   /** The record's ResourceRef for authz, or null when the owner does not exist or is invisible. */
   resource(scope: TxScope, ownerId: string): Promise<ResourceRef | null>;
+  /**
+   * Whether the owner still takes attachments (for a memo: only while it is a draft). Asked inside the
+   * upload, new-version and remove transactions, before anything is written; false answers 409. `tx` is that
+   * transaction, so an owner can lock its own row (FOR SHARE) and close the race with its submit. Absent
+   * means "always" (the behaviour before this existed). Removal asks it too: a file on a submitted memo is
+   * part of what was approved and cannot be taken away.
+   */
+  canAttach?(scope: TxScope, ownerId: string, tx?: DbTransaction): Promise<boolean>;
 }
 
 export const AUTHZ_PORT = Symbol('DOCUMENTS_AUTHZ_PORT');
