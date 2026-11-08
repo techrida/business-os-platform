@@ -277,17 +277,15 @@ describe('AuthGuard: token verification', () => {
       // `admin` and `viewer` are not ROLE_KEYS, so no org gets a role (finding 4).
       rolesByOrg: {},
       tokenExp: expect.any(Number) as number,
-      // The minted token has no auth_time: step-up (K7) reads that as stale.
-      authTime: null,
     });
   });
 
-  it('copies auth_time into req.auth for step-up (K7)', async () => {
+  it('never copies an access token auth_time into req.auth (step-up reads the ID token, K7)', async () => {
     stubIdp();
     const token = await sign(claims({ auth_time: 1_800_000_000 }));
     const { context, req } = httpContext(bearer(token));
     await expect(newGuard().canActivate(context)).resolves.toBe(true);
-    expect(req.auth?.authTime).toBe(1_800_000_000);
+    expect(req.auth).not.toHaveProperty('authTime');
   });
 });
 

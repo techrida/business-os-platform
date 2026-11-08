@@ -44,6 +44,10 @@ export class AuthUnavailableError extends Error {
 type RemoteKeySet = ReturnType<typeof createRemoteJWKSet>;
 
 const DISCOVERY_TIMEOUT_MS = 5_000;
+/** Clock drift allowed with ZITADEL on `exp` and `nbf`, in seconds. */
+const CLOCK_TOLERANCE_SECONDS = 30;
+/** How long after its `exp` an ID token still proves a sign-in (step-up reads `auth_time`). */
+const ID_TOKEN_EXPIRED_GRACE_SECONDS = 86_400;
 const DEFAULT_WARMUP_DELAYS_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -97,31 +101,14 @@ export class JwtVerifier implements JwksStatus, OnApplicationBootstrap, OnModule
    * (or another error) when the token itself is bad.
    */
   async verify(token: string): Promise<JWTPayload> {
-    const keySet = await this.getKeySet();
-
-    // jose reports a failed key fetch as a JOSEError too, just like a bad token. Wrapping the key
-    // lookup is the only place we can still tell them apart: "no key matches this token" is the
-    // token's fault (401); anything else here is the identity provider's (503).
-    const getKey: JWTVerifyGetKey = async (header, jws) => {
-      try {
-        return await keySet(header, jws);
-      } catch (err) {
-        if (
-          err instanceof errors.JWKSNoMatchingKey ||
-          err instanceof errors.JWKSMultipleMatchingKeys
-        ) {
-          throw err;
-        }
-        throw new AuthUnavailableError(`JWKS unavailable: ${describeError(err)}`, { cause: err });
-      }
-    };
+    const getKey = await this.keyLookup();
 
     const { payload } = await jwtVerify(token, getKey, {
       issuer: this.options.issuer,
       audience: this.options.audience,
       // Only RS256. This list is what stops `alg: none` and HS256-signed-with-the-public-key.
       algorithms: ['RS256'],
-      clockTolerance: 30,
+      clockTolerance: CLOCK_TOLERANCE_SECONDS,
       requiredClaims: ['sub', 'exp', 'iat'],
     });
     // Checked after the signature, so these errors only ever describe a genuine token. Thrown as
@@ -148,6 +135,105 @@ export class JwtVerifier implements JwksStatus, OnApplicationBootstrap, OnModule
       );
     }
     return payload;
+  }
+
+  /**
+   * Verifies an OIDC ID token as proof that `expectedSub` signed in at its `auth_time` (step-up,
+   * K7). ZITADEL puts `auth_time` only in ID tokens, never in access tokens, so the BFF forwards
+   * the ID token for a decision that needs a recent sign-in.
+   *
+   * Same issuer, keys and RS256 as {@link verify}, but `aud` must hold an allowed client id (an ID
+   * token is issued to the client, not to our project). An access token is refused by its
+   * `at+jwt` type. An expired `exp` is tolerated for up to 24 h: freshness is the caller's
+   * `auth_time` check, and ID tokens may expire before the access token they came with.
+   *
+   * Throws like {@link verify}: {@link AuthUnavailableError} for the identity provider, a `jose`
+   * error for the token. It does NOT check how recent `auth_time` is.
+   */
+  async verifyIdToken(token: string, expectedSub: string): Promise<JWTPayload> {
+    const { allowedAzp } = this.options;
+    if (expectedSub.length === 0 || allowedAzp.length === 0) {
+      throw new errors.JWTClaimValidationFailed(
+        'no user or client to match',
+        {},
+        'sub',
+        'check_failed',
+      );
+    }
+    const getKey = await this.keyLookup();
+
+    const { payload, protectedHeader } = await jwtVerify(token, getKey, {
+      issuer: this.options.issuer,
+      // jose accepts the token when `aud` contains ANY of these.
+      audience: [...allowedAzp],
+      algorithms: ['RS256'],
+      // Applies to `exp` (and `nbf`, re-checked below with the normal 30 s). A token whose `exp`
+      // is 24 h or more in the past is refused.
+      clockTolerance: ID_TOKEN_EXPIRED_GRACE_SECONDS,
+      requiredClaims: ['sub', 'exp', 'iat', 'auth_time'],
+    });
+    // RFC 9068: a JWT access token is typed `at+jwt` (media type `application/at+jwt`).
+    const typ = protectedHeader.typ?.toLowerCase().replace(/^application\//, '');
+    if (typ === 'at+jwt') {
+      throw new errors.JWTClaimValidationFailed(
+        'an access token is not an ID token',
+        payload,
+        'typ',
+        'check_failed',
+      );
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (typeof payload.nbf === 'number' && payload.nbf > nowSec + CLOCK_TOLERANCE_SECONDS) {
+      throw new errors.JWTClaimValidationFailed(
+        '"nbf" claim timestamp check failed',
+        payload,
+        'nbf',
+        'check_failed',
+      );
+    }
+    // OIDC Core 3.1.3.7: when `azp` is present it names the client the token was issued to.
+    if (
+      payload.azp !== undefined &&
+      (typeof payload.azp !== 'string' || !allowedAzp.includes(payload.azp))
+    ) {
+      throw new errors.JWTClaimValidationFailed(
+        'unexpected "azp" claim value',
+        payload,
+        'azp',
+        'check_failed',
+      );
+    }
+    if (payload.sub !== expectedSub) {
+      throw new errors.JWTClaimValidationFailed(
+        'the ID token belongs to another user',
+        payload,
+        'sub',
+        'check_failed',
+      );
+    }
+    return payload;
+  }
+
+  /**
+   * The key lookup for `jwtVerify`. jose reports a failed key fetch as a JOSEError too, just like
+   * a bad token. Wrapping the lookup is the only place we can still tell them apart: "no key
+   * matches this token" is the token's fault (401); anything else is the identity provider's (503).
+   */
+  private async keyLookup(): Promise<JWTVerifyGetKey> {
+    const keySet = await this.getKeySet();
+    return async (header, jws) => {
+      try {
+        return await keySet(header, jws);
+      } catch (err) {
+        if (
+          err instanceof errors.JWKSNoMatchingKey ||
+          err instanceof errors.JWKSMultipleMatchingKeys
+        ) {
+          throw err;
+        }
+        throw new AuthUnavailableError(`JWKS unavailable: ${describeError(err)}`, { cause: err });
+      }
+    };
   }
 
   private async warmUp(): Promise<void> {

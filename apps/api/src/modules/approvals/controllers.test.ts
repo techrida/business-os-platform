@@ -3,8 +3,11 @@
 // approvals.integration.test.ts.
 import 'reflect-metadata';
 
-import { BadRequestException } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
+import { BadRequestException, Logger } from '@nestjs/common';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { startTestIssuer, type TestIssuer } from '../../../test/e2e/support/test-issuer';
+import { JwtVerifier } from '../../platform/auth/jwt-verifier';
 
 import type { AuthenticatedRequest } from '../../platform/auth/claims';
 import { STEP_UP_REQUIRED, StepUpRequiredException } from '../../platform/auth/step-up';
@@ -39,8 +42,32 @@ function requestAt(roleKey: string, kind: 'role' | 'group' | 'user' = 'role') {
 
 const nowS = () => Math.floor(Date.now() / 1000);
 
-/** The request the AuthGuard leaves behind, with the given `auth_time` (seconds). */
-function reqWith(authTime?: number | null): AuthenticatedRequest {
+// Step-up (K7) runs against the real producer and consumer: the e2e test issuer mints the ID
+// token, a real JwtVerifier checks it against the issuer's JWKS.
+const PROJECT = '300000000000000001';
+const CLIENT = '300000000000000002';
+let issuer: TestIssuer;
+let verifier: JwtVerifier;
+
+beforeAll(async () => {
+  Logger.overrideLogger(false);
+  issuer = await startTestIssuer();
+  verifier = new JwtVerifier({ issuer: issuer.url, audience: PROJECT, allowedAzp: [CLIENT] });
+});
+afterAll(async () => {
+  verifier.onModuleDestroy();
+  await issuer.close();
+});
+
+/** An ID token for the caller `me`, signed in `ago` seconds ago. */
+const idToken = (ago = 10, sub = 'me') =>
+  issuer.mintIdToken({ sub, authTime: nowS() - ago, audience: [CLIENT] });
+
+/**
+ * The request the AuthGuard leaves behind. `authTime` puts a fresh sign-in time on the access
+ * identity (the removed path): step-up must ignore it and read only the ID token header.
+ */
+function reqWith(authTime?: number): AuthenticatedRequest {
   return {
     auth: {
       userId: 'me',
@@ -68,7 +95,7 @@ function approvalsController(current: unknown = requestAt('management'), maxAge?
   };
   return {
     service,
-    controller: new ApprovalsController(service as never, caller as never, maxAge),
+    controller: new ApprovalsController(service as never, caller as never, verifier, maxAge),
   };
 }
 
@@ -117,24 +144,45 @@ describe('ApprovalsController', () => {
       return ex;
     }
 
-    it('lets a Founder approve with a sign-in inside the window', async () => {
+    it('lets a Founder approve with a fresh ID token, though the access token has no auth_time', async () => {
       const { controller, service } = approvalsController(requestAt('founder'));
-      await controller.act(ID, 'key-1', approve, reqWith(nowS() - 60));
+      await controller.act(ID, 'key-1', approve, reqWith(), await idToken());
       expect(service.act).toHaveBeenCalledWith(ID, approve, 'key-1');
     });
 
-    it('refuses a stale sign-in with 401 step_up_required and never acts', async () => {
+    it('refuses a missing ID token header with 401 step_up_required and never acts', async () => {
       const { controller, service } = approvalsController(requestAt('founder'));
-      await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 301)));
+      await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 10)));
       expect(service.act).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ['missing', reqWith()],
-      ['null', reqWith(null)],
-    ])('fails closed when auth_time is %s', async (_label, req) => {
+    it('refuses a stale ID token, even when the access identity claims a fresh sign-in', async () => {
       const { controller, service } = approvalsController(requestAt('founder'));
-      await refusal(controller.act(ID, 'key-1', approve, req));
+      await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 10), await idToken(301)));
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it("refuses another user's ID token", async () => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      await refusal(
+        controller.act(
+          ID,
+          'key-1',
+          approve,
+          reqWith(nowS() - 10),
+          await idToken(10, 'someone-else'),
+        ),
+      );
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it('refuses an access token sent as the ID token', async () => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      const accessToken = await issuer.mint(
+        { sub: 'me', azp: CLIENT },
+        { audience: [PROJECT, CLIENT], authTime: nowS() - 10 },
+      );
+      await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 10), accessToken));
       expect(service.act).not.toHaveBeenCalled();
     });
 
@@ -145,7 +193,8 @@ describe('ApprovalsController', () => {
           ID,
           'key-1',
           { action: 'reject', comment: 'no', expectedVersion: 3 },
-          reqWith(nowS() - 301),
+          reqWith(),
+          await idToken(301),
         ),
       );
       expect(service.act).not.toHaveBeenCalled();
@@ -156,9 +205,15 @@ describe('ApprovalsController', () => {
       ['finance role', requestAt('finance')],
       ['group', requestAt('', 'group')],
       ['named user', requestAt('', 'user')],
-    ])('leaves a %s step alone, even with no auth_time', async (_label, current) => {
+    ])('leaves a %s step alone, with no ID token header', async (_label, current) => {
       const { controller, service } = approvalsController(current);
       await controller.act(ID, 'key-1', approve, reqWith());
+      expect(service.act).toHaveBeenCalledWith(ID, approve, 'key-1');
+    });
+
+    it('ignores a junk ID token header on a non-Founder step', async () => {
+      const { controller, service } = approvalsController(requestAt('management'));
+      await controller.act(ID, 'key-1', approve, reqWith(), 'junk');
       expect(service.act).toHaveBeenCalledWith(ID, approve, 'key-1');
     });
 
@@ -188,7 +243,7 @@ describe('ApprovalsController', () => {
 
     it('uses the configured window', async () => {
       const { controller, service } = approvalsController(requestAt('founder'), 60);
-      const ex = await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 120)));
+      const ex = await refusal(controller.act(ID, 'key-1', approve, reqWith(), await idToken(120)));
       expect(ex.getResponse()).toMatchObject({ maxAge: 60 });
       expect(service.act).not.toHaveBeenCalled();
     });

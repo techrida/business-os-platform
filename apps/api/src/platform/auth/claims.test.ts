@@ -22,7 +22,6 @@ describe('mapClaims', () => {
       zitadelOrgId: 'org-1',
       roles: [],
       rolesByOrg: {},
-      authTime: null,
     });
   });
 
@@ -205,28 +204,11 @@ describe('mapClaims rolesByOrg', () => {
   });
 });
 
-// K7 (M24): Founder approvals need a recent sign-in. Whether ZITADEL access tokens carry
-// `auth_time` is unconfirmed (R7-style risk), so anything but a usable number maps to null and
-// step-up treats null as stale.
-describe('mapClaims authTime', () => {
-  const base = { sub: 'u', [ORG_ID_CLAIM]: 'o' };
-
-  it('reads auth_time in seconds since the epoch', () => {
-    expect(mapClaims({ ...base, auth_time: 1_700_000_000 }, PROJECT).authTime).toBe(1_700_000_000);
-  });
-
-  it('maps a missing auth_time to null', () => {
-    expect(mapClaims(base, PROJECT).authTime).toBeNull();
-  });
-
-  it.each([
-    ['a string', '1700000000'],
-    ['NaN', Number.NaN],
-    ['Infinity', Number.POSITIVE_INFINITY],
-    ['zero', 0],
-    ['a negative number', -5],
-    ['an object', { t: 1 }],
-  ])('maps auth_time that is %s to null', (_label, value) => {
-    expect(mapClaims({ ...base, auth_time: value }, PROJECT).authTime).toBeNull();
+// K7 (M24): ZITADEL puts `auth_time` only in ID tokens, so step-up verifies the ID token header
+// and the access token's identity carries no sign-in time at all.
+describe('mapClaims auth_time', () => {
+  it('does not map an access token auth_time', () => {
+    const mapped = mapClaims({ sub: 'u', [ORG_ID_CLAIM]: 'o', auth_time: 1_700_000_000 }, PROJECT);
+    expect(mapped).not.toHaveProperty('authTime');
   });
 });

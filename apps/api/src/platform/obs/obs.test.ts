@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { Writable } from 'node:stream';
 
 import {
@@ -12,12 +12,14 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import pino from 'pino';
+import { pinoHttp, type Options as PinoHttpOptions } from 'pino-http';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { CoreConfig } from '../config/config';
 import { ConfigModule } from '../config/config.module';
 import { newCorrelationId } from './correlation';
-import { REDACT_PATHS, genReqId } from './logger';
+import { REDACT_PATHS, buildLoggerParams, genReqId } from './logger';
 import { MetricsServer } from './metrics.server';
 import { MetricsService } from './metrics.service';
 import { ObsModule } from './obs.module';
@@ -109,6 +111,33 @@ describe('log redaction', () => {
     expect(out).not.toContain('secret-pw');
     expect(out).toContain('"accept":"json"');
     expect(out).toContain('[Redacted]');
+  });
+});
+
+describe('log redaction through pino-http', () => {
+  it('redacts the step-up ID token header on a logged request (K7)', async () => {
+    const lines: string[] = [];
+    const sink = new Writable({
+      write(chunk: Buffer, _enc, cb) {
+        lines.push(chunk.toString());
+        cb();
+      },
+    });
+    // The real request logger settings, so a missing redact path shows up here.
+    const params = buildLoggerParams({ LOG_LEVEL: 'info' } as unknown as CoreConfig, 'api');
+    const log = pinoHttp(params.pinoHttp as PinoHttpOptions, sink);
+    const server = createServer((req, res) => {
+      log(req, res);
+      res.end('ok');
+    });
+    await request(server)
+      .post('/v1/approvals/requests/x/actions')
+      .set('x-bos-id-token', 'header.secret-id-token.sig')
+      .set('accept', 'json');
+    const out = lines.join('');
+    expect(out).toContain('"x-bos-id-token":"[Redacted]"');
+    expect(out).not.toContain('secret-id-token');
+    expect(out).toContain('"accept":"json"');
   });
 });
 
