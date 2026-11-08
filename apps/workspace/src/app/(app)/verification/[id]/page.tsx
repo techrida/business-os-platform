@@ -1,9 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
-import type { CustomerDto, VerificationCaseDto } from '@bos/contracts';
+import {
+  ALLOWED_MIME,
+  MAX_UPLOAD_BYTES,
+  type CustomerDto,
+  type VerificationCaseDto,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { getDocument } from '@/components/p2/crm/verification-api';
+import { downloadHref, fileOf, type FileView } from '@/components/p2/crm/verification-file';
 import { getCustomer, getVerificationCase } from '@/components/p2/customers/api';
 import {
   canApprove,
@@ -18,19 +25,67 @@ import {
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
+import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
 
+import { AttachForm, type AttachOption } from './attach-form';
 import { ReviewForm } from './review-form';
+import { SubmitForm } from '../submit-form';
 import styles from '../verification.module.css';
 
 export const metadata: Metadata = { title: 'Verification case · Business OS' };
 export const dynamic = 'force-dynamic';
+
+/** One attached file: its name, scan result and, once the scan passed, a link that opens it. */
+function AttachedFile({
+  documentId,
+  file,
+}: {
+  documentId: string;
+  file: FileView | null | 'unavailable';
+}) {
+  const ref = (
+    <span className={styles.ref} title={documentId}>
+      Attached, ref {shortId(documentId)}
+    </span>
+  );
+  if (file === null || file === 'unavailable') {
+    return (
+      <div className={styles.file}>
+        {ref}
+        <span className={styles.quiet}>
+          {file === null ? 'No readable version.' : 'The file details could not be read.'}
+        </span>
+      </div>
+    );
+  }
+  const scan = scanLabel(file.status);
+  return (
+    <div className={styles.file}>
+      <span className={styles.itemName}>{file.filename}</span>
+      <span className={styles.quiet}>{formatBytes(file.sizeBytes)}</span>
+      <Badge tone={{ good: 'success', wait: 'warning', bad: 'error' }[scan.tone]}>
+        {scan.text}
+      </Badge>
+      {file.status === 'clean' ? (
+        <LinkButton
+          variant="secondary"
+          size="small"
+          href={downloadHref(file)}
+          aria-label={`Open ${file.filename}`}
+        >
+          Open file
+        </LinkButton>
+      ) : null}
+    </div>
+  );
+}
 
 function approveBlockedReason(c: VerificationCaseDto): string | null {
   if (canApprove(c)) return null;
@@ -40,12 +95,36 @@ function approveBlockedReason(c: VerificationCaseDto): string | null {
   return `Approve opens when every required document is accepted (${p.accepted} of ${p.required} so far). You can still reject.`;
 }
 
+/** Why Submit is closed: the required items that still have no file. Null when it may go. */
+function submitBlockedReason(c: VerificationCaseDto): string | null {
+  const missing = c.checklist.filter((i) => i.required && i.documentId === null);
+  if (missing.length === 0 && c.checklist.some((i) => i.required)) return null;
+  if (missing.length === 0) return 'Submit opens when the case has a required document.';
+  return `Submit opens when every required document has a file. Still missing: ${missing
+    .map((i) => CHECKLIST_LABEL[i.key])
+    .join(', ')}.`;
+}
+
+/** The checklist as options for the attach form: name, whether it is required, where it stands. */
+function attachOptions(c: VerificationCaseDto): { items: AttachOption[]; defaultKey: string } {
+  const items = c.checklist.map((i) => ({
+    key: i.key,
+    text: `${CHECKLIST_LABEL[i.key]} · ${i.required ? 'Required' : 'Optional'} · ${CHECKLIST_STATUS[i.status].text}`,
+  }));
+  const open = c.checklist.filter((i) => i.documentId === null);
+  const first = open.find((i) => i.required) ?? open[0];
+  return { items, defaultKey: first?.key ?? '' };
+}
+
 export default async function VerificationCasePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ submitted?: string | string[] }>;
 }) {
   const { id } = await params;
+  const { submitted } = await searchParams;
   // An id that is not a GUID cannot be a case, so it never reaches the API.
   if (!isGuid(id)) notFound();
   const path = `/verification/${id}`;
@@ -79,10 +158,29 @@ export default async function VerificationCasePage({
   } catch {
     customer = undefined;
   }
+  // Each attached file is looked up on its own: one refusal (the reviewer may not read it) or one
+  // failure leaves the other rows and the decision form working. No signed link is issued here;
+  // it is issued by the download route when the link is clicked.
+  const documentIds = c.checklist.flatMap((i) => (i.documentId !== null ? [i.documentId] : []));
+  const lookups = await Promise.allSettled(documentIds.map((d) => getDocument(session, d)));
+  const files = new Map<string, FileView | null | 'unavailable'>();
+  lookups.forEach((r, i) => {
+    const documentId = documentIds[i];
+    if (documentId === undefined) return;
+    files.set(documentId, r.status === 'fulfilled' ? fileOf(r.value) : 'unavailable');
+  });
   const name = customerLabel(customer, c.partyId);
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
   const mayReview = hasPermission(session.roles, 'verification.review');
+  const mayEdit = hasPermission(session.roles, 'customer.write');
+  // Only a draft or a rejected case can take documents; the API checks both permissions again.
+  const mayAttach =
+    mayEdit &&
+    c.checklist.length > 0 &&
+    hasPermission(session.roles, 'documents.upload') &&
+    (c.status === 'draft' || c.status === 'rejected');
+  const attach = attachOptions(c);
 
   return (
     <Page>
@@ -96,6 +194,12 @@ export default async function VerificationCasePage({
             : 'The customer record could not be read.'
         }
       />
+
+      {submitted !== undefined && c.status === 'submitted' ? (
+        <Alert tone="success" role="status" title="Submitted for review.">
+          The reviewer can now see the documents. You will see the decision here.
+        </Alert>
+      ) : null}
 
       {c.status === 'approved' || c.status === 'rejected' ? (
         <Alert
@@ -154,9 +258,10 @@ export default async function VerificationCasePage({
                       </Td>
                       <Td>
                         {item.documentId !== null ? (
-                          <span className={styles.ref} title={item.documentId}>
-                            Attached, ref {shortId(item.documentId)}
-                          </span>
+                          <AttachedFile
+                            documentId={item.documentId}
+                            file={files.get(item.documentId) ?? 'unavailable'}
+                          />
                         ) : (
                           <span className={styles.quiet}>Nothing attached</span>
                         )}
@@ -174,14 +279,47 @@ export default async function VerificationCasePage({
               </tbody>
             </Table>
           </Panel>
+
+          {mayAttach ? (
+            <Panel
+              title="Attach a document"
+              description="Upload a file and put it on one checklist item. Repeat for each document."
+            >
+              <AttachForm
+                caseId={c.id}
+                version={c.version}
+                reopens={c.status === 'rejected'}
+                items={attach.items}
+                defaultKey={attach.defaultKey}
+                // One key per render of this page; the form takes the next one from each answer.
+                idempotencyKey={randomUUID()}
+                maxBytes={MAX_UPLOAD_BYTES}
+                allowedMime={[...ALLOWED_MIME]}
+              />
+            </Panel>
+          ) : null}
         </div>
 
-        <Panel as="aside" title="Your decision" className={styles.side}>
-          {c.status !== 'submitted' ? (
+        <Panel
+          as="aside"
+          title={c.status === 'draft' && mayEdit ? 'Submit for review' : 'Your decision'}
+          className={styles.side}
+        >
+          {c.status === 'draft' && mayEdit ? (
+            <SubmitForm
+              caseId={c.id}
+              // One key per render of this page, like the decision form's.
+              idempotencyKey={randomUUID()}
+              blockedReason={submitBlockedReason(c)}
+              reloadHref={path}
+            />
+          ) : c.status !== 'submitted' ? (
             <p className={styles.note}>
               {c.status === 'draft'
                 ? 'This case has not been submitted for review yet, so there is nothing to decide.'
-                : 'This case has been decided, so there is nothing left to do.'}
+                : c.status === 'rejected' && mayAttach
+                  ? 'This case was rejected. Use Attach a document to reopen it as a draft, then submit it again.'
+                  : 'This case has been decided, so there is nothing left to do.'}
             </p>
           ) : !mayReview ? (
             <p className={styles.note}>
