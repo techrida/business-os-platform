@@ -65,7 +65,7 @@ describe('sendAction', () => {
     expect(path).toBe(`/v1/quotations/${Q}/versions/${V}/send`);
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>)['idempotency-key']).toBe(KEY);
-    expect(JSON.parse(String(init.body))).toEqual({
+    expect(JSON.parse(init.body as string)).toEqual({
       recipientContactId: CONTACT,
       message: 'Hello',
       expectedVersion: 4,
@@ -144,7 +144,7 @@ describe('outcomeAction', () => {
     expect(state.done).toBe(true);
     const [, path, init] = mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit];
     expect(path).toBe(`/v1/quotations/${Q}/versions/${V}/outcome`);
-    expect(JSON.parse(String(init.body))).toMatchObject({
+    expect(JSON.parse(init.body as string)).toMatchObject({
       outcome: 'rejected',
       comment: 'Went with a competitor',
       decidedOn: '2020-01-01',
