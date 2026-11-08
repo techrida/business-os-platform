@@ -1,8 +1,7 @@
-import Link from 'next/link';
+import { LinkCard, LinkCardList } from '@/components/ui/link-card';
+import { Page, PageHeader } from '@/components/ui/page';
 
-import styles from './admin.module.css';
 import { requireSession } from './guard';
-import { PageHead } from './ui';
 
 const AREAS = [
   {
@@ -12,37 +11,36 @@ const AREAS = [
   },
   {
     href: '/admin/roles',
-    title: 'Roles',
-    text: 'What each role may do, and how far each permission reaches (own, department, customer organisation, all).',
+    title: 'Roles & Permissions',
+    text: 'What each role may do, and how far each permission reaches.',
   },
   {
     href: '/admin/workflows',
-    title: 'Workflows',
-    text: 'Approval routes and their thresholds: edit a draft, publish it, and manage approval groups and delegations.',
+    title: 'Approval workflows',
+    text: 'Approval routes and thresholds, approval groups and delegations.',
   },
   {
     href: '/admin/settings',
     title: 'Settings',
-    text: 'FX rates, document number series, VAT, enabled currencies and approval timing.',
+    text: 'FX rates, document number series, VAT, currencies and approval timing.',
   },
 ] as const;
 
 export default async function AdminOverviewPage() {
   await requireSession('/admin');
   return (
-    <>
-      <PageHead title="Administration">
-        Setup that changes how the whole organisation works. Each change is recorded in the audit
-        trail with your name.
-      </PageHead>
-      <ul className={styles.linkList}>
+    <Page>
+      <PageHeader
+        title="Administration"
+        description="Setup that changes how the whole organisation works. Each change is recorded in the audit trail with your name."
+      />
+      <LinkCardList>
         {AREAS.map((area) => (
-          <li key={area.href}>
-            <Link href={area.href}>{area.title}</Link>
-            <p>{area.text}</p>
-          </li>
+          <LinkCard key={area.href} href={area.href} title={area.title}>
+            {area.text}
+          </LinkCard>
         ))}
-      </ul>
-    </>
+      </LinkCardList>
+    </Page>
   );
 }

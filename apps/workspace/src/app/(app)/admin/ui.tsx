@@ -1,10 +1,14 @@
 import type { ReactNode } from 'react';
 
+import { Alert } from '@/components/ui/alert';
+import { PageHeader } from '@/components/ui/page';
+
 import styles from './admin.module.css';
 import type { ActionState } from './action-state';
 
 // Tiny presentational pieces shared by the admin pages. No hooks, so Server and Client Components
-// can both use them.
+// can both use them. They sit on the shared components (Alert, PageHeader); the names and props
+// stay as the pages already call them.
 
 export function Notice({
   kind = 'info',
@@ -13,29 +17,19 @@ export function Notice({
   kind?: 'info' | 'error' | 'ok';
   children: ReactNode;
 }) {
-  const tone =
-    kind === 'error' ? styles.noticeError : kind === 'ok' ? styles.noticeOk : styles.noticeInfo;
-  return (
-    <div className={`${styles.notice} ${tone}`}>
-      <p>{children}</p>
-    </div>
-  );
+  return <Alert tone={kind === 'ok' ? 'success' : kind}>{children}</Alert>;
 }
 
+/** The page's `h1` with a one-line description. Render it inside the page's `Page`. */
 export function PageHead({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <header className={styles.pageHead}>
-      <h1>{title}</h1>
-      {children ? <p className={styles.lede}>{children}</p> : null}
-    </header>
-  );
+  return <PageHeader title={title} description={children} />;
 }
 
 /** Result of a Server Action, announced to screen readers when it changes. */
 export function FormStatus({ state, pending }: { state: ActionState; pending: boolean }) {
   if (pending) {
     return (
-      <p className={styles.status} role="status">
+      <p className={`${styles.status} ${styles.muted}`} role="status">
         Saving...
       </p>
     );
@@ -43,12 +37,10 @@ export function FormStatus({ state, pending }: { state: ActionState; pending: bo
   if (state.status === 'idle') return null;
   const isError = state.status === 'error';
   return (
-    <p
-      className={`${styles.status} ${isError ? styles.statusError : styles.statusOk}`}
-      role={isError ? 'alert' : 'status'}
-    >
-      {state.message}
-    </p>
+    <Alert tone={isError ? 'error' : 'success'} role={isError ? 'alert' : 'status'}>
+      {/* Messages can carry line breaks (a list of field problems). */}
+      <span className={styles.status}>{state.message}</span>
+    </Alert>
   );
 }
 
