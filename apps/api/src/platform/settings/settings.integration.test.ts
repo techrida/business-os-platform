@@ -87,7 +87,7 @@ beforeAll(async () => {
   appPool.on('error', () => undefined);
   db = drizzle({ client: appPool });
   settingsService = new SettingsService(db);
-  money = new MoneyService(db);
+  money = new MoneyService(db, settingsService);
 }, 120_000);
 
 afterAll(async () => {
@@ -270,17 +270,17 @@ describe('MoneyService', () => {
   it('turns INR 1000.00 into NPR 1600.00 at the 1.6 peg', async () => {
     const scope = await newScope();
     await withTx(db, scope, systemActor('test'), (tx) =>
-      money.setRate(tx, 'INR', '1.6', '2025-01-01', 'NRB peg'),
+      money.setRate(tx, 'INR', '1.6', '2025-07-10', 'NRB peg'),
     );
     expect(
       await money.toNprSnapshot(db, scope, { amount: '1000.00', currency: 'INR' }, KTM_MIDNIGHT),
-    ).toEqual({ amountNpr: '1600.00', rate: '1.6', rateSource: 'NRB peg', rateDate: '2025-01-01' });
+    ).toEqual({ amountNpr: '1600.00', rate: '1.6', rateSource: 'NRB peg', rateDate: '2025-07-10' });
   });
 
   it('rounds half up to 2 places and uses all 6 rate decimals', async () => {
     const scope = await newScope();
     await withTx(db, scope, systemActor('test'), (tx) =>
-      money.setRate(tx, 'USD', '133.123456', '2025-01-01', 'manual'),
+      money.setRate(tx, 'USD', '133.123456', '2025-07-10', 'manual'),
     );
     // 0.05 * 133.123456 = 6.6561728 -> 6.66
     expect(
@@ -315,10 +315,45 @@ describe('MoneyService', () => {
     ).rejects.toThrow(/No NPR rate for USD on or before 2025-07-16/);
   });
 
+  it('answers 409 fx_rate_stale for a rate 8 days old, and takes a rate exactly 7 days old', async () => {
+    const scope = await newScope();
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      money.setRate(tx, 'USD', '133.00', '2025-07-09', 'manual'),
+    );
+    const usd = { amount: '100.00', currency: 'USD' } as const;
+
+    // 2025-07-09 is 8 days before the Kathmandu day 2025-07-17 and the default limit is 7.
+    const attempt = money.toNprSnapshot(db, scope, usd, KTM_MIDNIGHT);
+    await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+    await expect(attempt).rejects.toMatchObject({
+      response: {
+        code: 'fx_rate_stale',
+        details: { currency: 'USD', rateDate: '2025-07-09', maxAgeDays: 7 },
+      },
+    });
+
+    // One day earlier it is exactly 7 days old: still fresh.
+    expect(await money.toNprSnapshot(db, scope, usd, ONE_MINUTE_BEFORE)).toMatchObject({
+      amountNpr: '13300.00',
+      rateDate: '2025-07-09',
+    });
+  });
+
+  it('reads fx.max_rate_age_days from the settings: raising it to 30 accepts the 8-day-old rate', async () => {
+    const scope = await newScope();
+    await withTx(db, scope, systemActor('test'), async (tx) => {
+      await money.setRate(tx, 'USD', '133.00', '2025-07-09', 'manual');
+      await settingsService.set(tx, 'fx.max_rate_age_days', 30);
+    });
+    expect(
+      await money.toNprSnapshot(db, scope, { amount: '1.00', currency: 'USD' }, KTM_MIDNIGHT),
+    ).toMatchObject({ rateDate: '2025-07-09' });
+  });
+
   it('can snapshot inside a transaction', async () => {
     const scope = await newScope();
     const snapshot = await withTx(db, scope, systemActor('test'), async (tx) => {
-      await money.setRate(tx, 'INR', '1.6', '2025-01-01', 'NRB peg');
+      await money.setRate(tx, 'INR', '1.6', '2025-07-10', 'NRB peg');
       return money.toNprSnapshot(tx, scope, { amount: '10.00', currency: 'INR' }, KTM_MIDNIGHT);
     });
     expect(snapshot.amountNpr).toBe('16.00');

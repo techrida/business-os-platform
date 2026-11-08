@@ -132,6 +132,28 @@ describe('seedKernelRows', () => {
     expect(sql).toContain('IS DISTINCT FROM');
   });
 
+  it('writes the P2 roles tenant-wide, with the review and read-all grants of the plan', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    const written = new Set(
+      calls
+        .filter((c) => c.text.includes('INTO app.role_permissions'))
+        .map((c) => `${String(c.values[1])}|${String(c.values[2])}|${String(c.values[3])}`),
+    );
+    expect(written.has('pmo|verification.review|all')).toBe(true);
+    expect(written.has('pmo|quotation.read|all')).toBe(true);
+    expect(written.has('founder|customer.merge|all')).toBe(true);
+    expect(written.has('sales|quotation.send|own')).toBe(true);
+    // Every role with default grants gets rows; portal roles have none by design.
+    for (const role of ['pmo', 'operations_head']) {
+      expect(
+        [...written].some((w) => w.startsWith(`${role}|`)),
+        role,
+      ).toBe(true);
+    }
+  });
+
   it('inserts workflow test_memo v1 as published with a valid spec and sets current_version_id', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);

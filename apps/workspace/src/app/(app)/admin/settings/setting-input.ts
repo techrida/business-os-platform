@@ -20,6 +20,16 @@ export function parseSettingInput(key: SettingKey, raw: readonly string[]): Sett
         return { ok: false, message: 'The text is not valid JSON.' };
       }
       break;
+    case 'fx.max_rate_age_days':
+    case 'quotation.validity_days': {
+      // Digits only: Number() would also take '1e1', '0x10', '7.5' and ' ', which are not day counts.
+      const text = (raw[0] ?? '').trim();
+      if (!/^[0-9]+$/.test(text)) {
+        return { ok: false, message: 'Enter a whole number of days, such as 7.' };
+      }
+      value = Number(text);
+      break;
+    }
     default:
       value = (raw[0] ?? '').trim();
   }
@@ -34,6 +44,7 @@ export function parseSettingInput(key: SettingKey, raw: readonly string[]): Sett
 /** The current value as text for display and for a prefilled field. */
 export function settingValueText(value: unknown): string {
   if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
   if (Array.isArray(value) && value.every((v) => typeof v === 'string')) return value.join(', ');
   return JSON.stringify(value, null, 2);
 }

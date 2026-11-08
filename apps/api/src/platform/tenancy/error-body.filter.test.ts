@@ -112,6 +112,48 @@ describe('ErrorBodyFilter', () => {
     expect(ErrorBodySchema.parse(out.body).error.code).toBe('forbidden');
   });
 
+  it('keeps fx_rate_stale and its details on a 409 so the client can say which rate is old', () => {
+    const out = filter(
+      new ConflictException({
+        code: 'fx_rate_stale',
+        message: 'The USD rate of 2026-11-01 is older than 7 days',
+        details: { currency: 'USD', rateDate: '2026-11-01', maxAgeDays: 7, junk: { a: 1 } },
+      }),
+    );
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'fx_rate_stale',
+      message: 'The USD rate of 2026-11-01 is older than 7 days',
+    });
+    // An unusable detail value drops the whole bag instead of leaking a shape clients do not know.
+    expect((out.body as { error: { details?: unknown } }).error.details).toBeUndefined();
+
+    const clean = filter(
+      new ConflictException({
+        code: 'fx_rate_stale',
+        message: 'm',
+        details: { currency: 'USD', rateDate: '2026-11-01', maxAgeDays: 7 },
+      }),
+    );
+    expect(ErrorBodySchema.parse(clean.body).error.details).toEqual({
+      currency: 'USD',
+      rateDate: '2026-11-01',
+      maxAgeDays: 7,
+    });
+  });
+
+  it('does not let a 409 claim any other code, or a non-409 claim fx_rate_stale', () => {
+    expect(
+      ErrorBodySchema.parse(filter(new ConflictException({ code: 'whatever', message: 'm' })).body)
+        .error.code,
+    ).toBe('conflict');
+    expect(
+      ErrorBodySchema.parse(
+        filter(new BadRequestException({ code: 'fx_rate_stale', message: 'm' })).body,
+      ).error.code,
+    ).toBe('bad_request');
+  });
+
   it('exposes the message of a client error', () => {
     const out = filter(new ForbiddenException('Organization is not registered'));
 

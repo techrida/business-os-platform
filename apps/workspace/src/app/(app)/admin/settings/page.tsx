@@ -34,6 +34,18 @@ const SETTING_COPY: Record<SettingKey, { label: string; help: string }> = {
     label: 'Memo number prefix',
     help: 'Two to ten capitals or digits, as in MEMO-2082/83-00001.',
   },
+  'fx.max_rate_age_days': {
+    label: 'Oldest FX rate allowed (days)',
+    help: 'A document in USD or INR is refused when the newest rate is older than this many days. A whole number from 1 to 365.',
+  },
+  'quotation.validity_days': {
+    label: 'Quotation validity (days)',
+    help: 'How long a sent quotation stays valid when its author sets no expiry date. A whole number from 1 to 365.',
+  },
+  'sales.evidence_policy': {
+    label: 'Evidence before an opportunity is won',
+    help: 'What must be on file for an accepted quotation: a signed quote, a contract, a purchase order, or both a contract and a purchase order.',
+  },
 };
 
 const SECTIONS = [
