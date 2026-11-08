@@ -15,9 +15,32 @@ describe('@bos/db public API', () => {
     expect(typeof api.checkTenancy).toBe('function');
   });
 
-  it('gives organizations the documented fields', () => {
+  it('gives organizations the documented fields (a legal entity, ADR 0027)', () => {
     expect(Object.keys(api.organizations)).toEqual(
-      expect.arrayContaining(['id', 'tenantId', 'organizationId', 'kind', 'name', 'zitadelOrgId']),
+      expect.arrayContaining([
+        'id',
+        'tenantId',
+        'organizationId',
+        'code',
+        'name',
+        'legalName',
+        'isDefault',
+      ]),
     );
+    // kind and zitadelOrgId moved to parties and idp_orgs.
+    expect(Object.keys(api.organizations)).not.toContain('kind');
+    expect(Object.keys(api.organizations)).not.toContain('zitadelOrgId');
+  });
+
+  it('exports the party and IdP org tables and the test fixtures', () => {
+    expect(api.parties).toBeDefined();
+    expect(api.idpOrgs).toBeDefined();
+    expect(api.schema.parties).toBe(api.parties);
+    expect(api.schema.idpOrgs).toBe(api.idpOrgs);
+    expect(typeof api.createTenantWithEntity).toBe('function');
+    expect(typeof api.createParty).toBe('function');
+    expect(typeof api.createStaffUser).toBe('function');
+    expect(typeof api.createPortalUser).toBe('function');
+    expect(typeof api.createDepartment).toBe('function');
   });
 });
