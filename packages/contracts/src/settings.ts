@@ -5,9 +5,13 @@ import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
 import { CurrencySchema, DecimalString } from './money.js';
+import { EVIDENCE_KINDS } from './quotations.js';
 
-/** Evidence an accepted quotation needs before Won: a contract, a customer PO, both, or the signed quote. */
-export const EVIDENCE_POLICIES = ['contract', 'po', 'both', 'signed_quote'] as const;
+/**
+ * Evidence an accepted quotation needs before Won: one evidence kind, or `both`, which means a contract AND a
+ * purchase order. Built from EVIDENCE_KINDS so a kind cannot be renamed in one place only.
+ */
+export const EVIDENCE_POLICIES = [...EVIDENCE_KINDS, 'both'] as const;
 export const EvidencePolicySchema = z.enum(EVIDENCE_POLICIES);
 export type EvidencePolicy = z.infer<typeof EvidencePolicySchema>;
 
