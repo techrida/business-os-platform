@@ -13,10 +13,10 @@ vi.mock('@/lib/bff', () => ({
   requireStaffSession: vi.fn(() => Promise.resolve({ accessToken: 't', roles: ['sales'] })),
 }));
 
-const api = vi.hoisted(() => ({ openVerificationCase: vi.fn() }));
+const api = vi.hoisted(() => ({ openVerificationCase: vi.fn(), submitVerificationCase: vi.fn() }));
 vi.mock('@/components/p2/crm/verification-api', () => api);
 
-import { openCaseAction } from './case-actions';
+import { openCaseAction, submitCaseAction } from './case-actions';
 
 const KEY = '44444444-4444-4444-8444-444444444444';
 const CUSTOMER = '22222222-2222-4222-8222-222222222222';
@@ -104,5 +104,75 @@ describe('openCaseAction', () => {
   ])('words a %s as a plain sentence', async (status, code, message, text) => {
     api.openVerificationCase.mockRejectedValueOnce(apiError(status, code, message));
     expect((await openCaseAction({ key: KEY }, openForm())).error).toBe(text);
+  });
+});
+
+const submitForm = (extra: Record<string, string> = {}): FormData => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries({ caseId: CASE, idempotencyKey: KEY, ...extra })) f.set(k, v);
+  return f;
+};
+
+describe('submitCaseAction', () => {
+  it('sends the page key and returns to the case with the confirmation flag', async () => {
+    api.submitVerificationCase.mockResolvedValue({ id: CASE, status: 'submitted' });
+    await expect(submitCaseAction({ key: KEY }, submitForm())).rejects.toThrow(
+      `NEXT_REDIRECT /verification/${CASE}?submitted=1`,
+    );
+    expect(api.submitVerificationCase).toHaveBeenCalledWith(expect.anything(), CASE, KEY);
+  });
+
+  it('refuses a form without a case id before any call', async () => {
+    const res = await submitCaseAction({ key: KEY }, submitForm({ caseId: '' }));
+    expect(res.reload).toBe(true);
+    expect(api.submitVerificationCase).not.toHaveBeenCalled();
+  });
+
+  it('keeps the key after a 5xx or a network error, so a retry names the same request', async () => {
+    api.submitVerificationCase.mockRejectedValueOnce(new ApiError(502, 'bad gateway'));
+    expect((await submitCaseAction({ key: KEY }, submitForm())).key).toBe(KEY);
+    api.submitVerificationCase.mockRejectedValueOnce(new TypeError('fetch failed'));
+    expect((await submitCaseAction({ key: KEY }, submitForm())).key).toBe(KEY);
+  });
+
+  it('keeps the key after the in-progress 409', async () => {
+    api.submitVerificationCase.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'The first request with this Idempotency-Key did not finish'),
+    );
+    expect((await submitCaseAction({ key: KEY }, submitForm())).key).toBe(KEY);
+  });
+
+  it('names the required documents that have no file, rotates the key, and does not ask for a reload', async () => {
+    api.submitVerificationCase.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'Required documents are missing: pan_vat_certificate'),
+    );
+    const res = await submitCaseAction({ key: KEY }, submitForm());
+    expect(res.error).toContain('PAN or VAT certificate');
+    expect(res.reload).toBeUndefined();
+    expect(res.key).toMatch(GUID_SHAPE);
+    expect(res.key).not.toBe(KEY);
+  });
+
+  it('words a case that is no longer a draft and asks for a reload', async () => {
+    api.submitVerificationCase.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'A case in status submitted cannot be submitted'),
+    );
+    const res = await submitCaseAction({ key: KEY }, submitForm());
+    expect(res.error).toMatch(/no longer a draft/);
+    expect(res.reload).toBe(true);
+  });
+
+  it('words the separation-of-duties style 403 from the shared sentences', async () => {
+    api.submitVerificationCase.mockRejectedValueOnce(
+      new ApiError(403, 'x', {
+        error: {
+          code: 'forbidden',
+          message: 'Forbidden',
+          reason: 'no_permission',
+          correlationId: 'c',
+        },
+      }),
+    );
+    expect((await submitCaseAction({ key: KEY }, submitForm())).error).toMatch(/roles don't allow/);
   });
 });
