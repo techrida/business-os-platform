@@ -764,16 +764,41 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+/**
+ * The seed creates users with known passwords, a machine user with a client secret, and deactivates the
+ * first-instance admin. Pointed at a real instance by a copied `.env`, that is a security incident, so it
+ * refuses anything that is not `localhost` or `*.localhost` unless `SEED_ALLOW_NON_LOCAL=1` says the operator
+ * meant it. The host is parsed, not substring-matched: `localhost.evil.com` and `localhost@evil.com` are not local.
+ */
+export function assertDevTarget(issuer: string, env: NodeJS.ProcessEnv): void {
+  if (env['SEED_ALLOW_NON_LOCAL'] === '1') return;
+  let host: string | undefined;
+  try {
+    host = new URL(issuer).hostname.toLowerCase();
+  } catch {
+    // Not a URL: treated as non-local below, the safe side.
+  }
+  if (host === 'localhost' || host?.endsWith('.localhost')) return;
+  throw new Error(
+    `The dev seed refuses to run against ${host ?? 'an unparseable URL'}: it is not localhost or *.localhost. ` +
+      'This seed creates personas with known passwords and machine-user secrets, which must never reach a real ' +
+      'ZITADEL instance. If this really is a throwaway non-local dev instance, set SEED_ALLOW_NON_LOCAL=1.',
+  );
+}
+
 export async function main(): Promise<void> {
   const issuer = (process.env['OIDC_ISSUER'] ?? 'https://auth.localhost').replace(/\/+$/, '');
+  // ZITADEL picks the instance from the Host header, so we call it by its public name via Caddy.
+  const apiBase = (process.env['ZITADEL_API_URL'] ?? issuer).replace(/\/+$/, '');
+  // First, before any file or network access: guard the URL the seed writes to, and the issuer it records.
+  assertDevTarget(apiBase, process.env);
+  assertDevTarget(issuer, process.env);
   const patFile = process.env['ZITADEL_ADMIN_PAT_FILE'] ?? '/zitadel/bootstrap/admin.pat';
   const personasFile = process.env['BOS_DEV_PERSONAS_FILE'] ?? '.dev/personas.json';
   const workspaceUrl = (process.env['WORKSPACE_PUBLIC_URL'] ?? 'https://app.localhost').replace(
     /\/+$/,
     '',
   );
-  // ZITADEL picks the instance from the Host header, so we call it by its public name via Caddy.
-  const apiBase = (process.env['ZITADEL_API_URL'] ?? issuer).replace(/\/+$/, '');
 
   const pat = (await readFile(patFile, 'utf8')).trim();
   if (!pat) throw new Error(`Admin PAT file ${patFile} is empty`);
