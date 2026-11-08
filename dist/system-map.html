@@ -399,8 +399,8 @@ button, input { font: inherit; color: inherit; }
   el("caddy", "edge", "component", "Reverse proxy", "Caddy 2", "P0", "Terminates HTTPS with automatic certificates, sets security headers and routes hostnames to the apps.", { licence: "Apache-2.0", changes: { P2: "Goes public: rate limits, strict headers. Only the portal, login and API hostnames are reachable from outside; the admin hostnames stay on Tailscale." } });
 
   // Apps
-  el("apps", "bos", "container", "Apps", "Next.js 15 · React · TypeScript", "P0", "The screens. Two apps in Stage 1 plus a small vendor portal. All of them call one API.", { licence: "MIT" });
-  el("workspace", "apps", "container", "Workspace", "Next.js 15", "P0", "The staff app.", { licence: "MIT", nfr: ["LCP < 1.5 s on LAN", "WCAG 2.1 AA"] });
+  el("apps", "bos", "container", "Apps", "Next.js 16 · React · TypeScript", "P0", "The screens. Two apps in Stage 1 plus a small vendor portal. All of them call one API.", { licence: "MIT" });
+  el("workspace", "apps", "container", "Workspace", "Next.js 16", "P0", "The staff app.", { licence: "MIT", nfr: ["LCP < 1.5 s on LAN", "WCAG 2.1 AA"] });
   el("ws-shell", "workspace", "component", "Shell & sign-in", "OIDC code + PKCE", "P0", "Layout, navigation and the login redirect. Holds the session cookie (__Host-, Secure, HttpOnly).");
   el("ws-admin", "workspace", "component", "Admin", null, "P1", "Users, roles and record scope, approval thresholds, numbering series, currencies and tax.");
   el("ws-inbox", "workspace", "component", "Approval inbox", null, "P1", "Everything waiting for you, with the reason it needs you (\"Founder approval because NPR equivalent exceeds 10,00,000\").", { refs: ["Pack p7–9"] });
@@ -411,13 +411,13 @@ button, input { font: inherit; color: inherit; }
   el("ws-billing", "workspace", "component", "Invoices & receivables", null, "P3", "Draft, approve and issue invoices; verify payment proof; AR aging.");
   el("ws-purch", "workspace", "component", "Purchases", null, "P4", "Purchase requests, RFQ comparison, POs, receipts, vendor bills, vendor list.");
 
-  el("portal", "apps", "container", "Client portal", "Next.js 15", "P2", "The customer app. Customers never see costs, margins or internal comments.", { licence: "MIT", refs: ["PRD p5"], nfr: ["LCP < 2.5 s on 4G"] });
+  el("portal", "apps", "container", "Client portal", "Next.js 16", "P2", "The customer app. Customers never see costs, margins or internal comments.", { licence: "MIT", refs: ["PRD p5"], nfr: ["LCP < 2.5 s on 4G"] });
   el("cp-shell", "portal", "component", "Portal shell & sign-in", "OIDC", "P2", "Login through the customer's ZITADEL organisation.");
   el("cp-team", "portal", "component", "My team", null, "P2", "The customer's org admin invites and removes their own users.");
   el("cp-quotes", "portal", "component", "Quotes", null, "P2", "View the frozen PDF, accept or reject with notes, upload a PO.");
   el("cp-invoices", "portal", "component", "Invoices & payment proof", null, "P3", "See invoices and upload proof of payment.");
 
-  el("vportal", "apps", "container", "Vendor portal", "Next.js 15", "P4", "Small supplier app: onboarding and verification, quoting on RFQs, POs and bills. The blueprint put this in R5; the meeting asked for vendor accounts in Stage 1.", { licence: "MIT", proposed: true, refs: ["Meeting 4.10"] });
+  el("vportal", "apps", "container", "Vendor portal", "Next.js 16", "P4", "Small supplier app: onboarding and verification, quoting on RFQs, POs and bills. The blueprint put this in R5; the meeting asked for vendor accounts in Stage 1.", { licence: "MIT", proposed: true, refs: ["Meeting 4.10"] });
   el("vp-shell", "vportal", "component", "Vendor sign-in", "OIDC", "P4", "Login through the vendor's ZITADEL organisation.");
   el("vp-onboard", "vportal", "component", "Onboarding & verification", null, "P4", "Company details, PAN/VAT, registration, bank letter.");
   el("vp-rfq", "vportal", "component", "RFQ responses", null, "P4", "Submit a quote against an RFQ.");
@@ -440,7 +440,7 @@ button, input { font: inherit; color: inherit; }
   el("z-db", "accounts", "store", "Accounts database", "PostgreSQL 16 (own database)", "P0", "ZITADEL's events and projections. Kept apart from business data.");
 
   // API
-  el("api", "bos", "container", "API", "NestJS 11 · TypeScript · Zod · Drizzle", "P0", "One deployable service with strict module boundaries. Every call checks who you are, what your role allows and which records you may touch.", { licence: "MIT", refs: ["Blueprint §6"], nfr: ["reads p95 < 300 ms", "writes p95 < 500 ms", "100% endpoints have a deny test"] });
+  el("api", "bos", "container", "API", "NestJS 12 · TypeScript · Zod · Drizzle", "P0", "One deployable service with strict module boundaries. Every call checks who you are, what your role allows and which records you may touch.", { licence: "MIT", refs: ["Blueprint §6"], nfr: ["reads p95 < 300 ms", "writes p95 < 500 ms", "100% endpoints have a deny test"] });
 
   el("kernel", "api", "component", "Platform kernel", null, "P0", "The six platform services every module reuses: owner, status, approval path, evidence, notification trail, audit.", { refs: ["Blueprint §0, §3"] });
   el("k-guard", "kernel", "component", "Auth guard", "jose (JWT/JWKS)", "P0", "Checks the access token's signature, issuer, audience and expiry on every request.", { licence: "MIT" });
@@ -513,7 +513,7 @@ button, input { font: inherit; color: inherit; }
   el("db-app", "db", "store", "Business tables", "Drizzle migrations", "P0", "Customers, quotes, orders, invoices, purchases, approvals. Money as numeric(18,2).");
   el("db-audit", "db", "store", "audit_events", "INSERT-only role", "P1", "Append-only; tampering breaks the hash chain.");
   el("db-outbox", "db", "store", "outbox", null, "P1", "Messages waiting to be sent.");
-  el("valkey", "data", "store", "Job queue", "Valkey 9", "P0", "Queues for the background workers and the Workspace's server-side sessions.", { licence: "BSD-3" });
+  el("valkey", "data", "store", "Job queue", "Valkey 9.1", "P0", "Queues for the background workers and the Workspace's server-side sessions.", { licence: "BSD-3" });
   el("files", "data", "store", "File store", "disk on ZFS mirror · quarantine/clean", "P1", "Private evidence, PDFs and uploads. Garage (S3) is the option if it outgrows one disk.");
 
   // Supporting services
