@@ -102,6 +102,12 @@ describe('getPortalQuotation', () => {
     fetchMock.mockResolvedValue(json({ error: { code: 'not_found' } }, 404));
     await expect(getPortalQuotation(session, ID)).rejects.toMatchObject({ status: 404 });
   });
+  it('answers a draft, in-approval, approved or cancelled body as 404, not as an error page', async () => {
+    for (const status of ['draft', 'pending_approval', 'approved', 'cancelled']) {
+      fetchMock.mockResolvedValue(json({ ...sampleView(), status }));
+      await expect(getPortalQuotation(session, ID)).rejects.toMatchObject({ status: 404 });
+    }
+  });
 });
 
 describe('getPortalQuotationLink and openSignedFile', () => {
