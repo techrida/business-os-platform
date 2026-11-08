@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { AuditEventDtoSchema } from '@bos/contracts';
-import { organizations, runMigrations, tenants } from '@bos/db';
+import { createTenantWithEntity, organizations, runMigrations } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -36,23 +36,10 @@ function urlFor(user: string, password: string, database: string): string {
   return url.toString();
 }
 
-/** Seeds a tenant with one organization through withTx, like every other write to an app table. */
+/** Seeds a tenant with its default legal entity (ADR 0027) through the shared fixture. */
 async function seedTenant(): Promise<TxScope> {
-  const tenantId = randomUUID();
-  const organizationId = randomUUID();
-  const s = { tenantId, organizationId };
-  await withTx(db, s, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId });
-    await tx.insert(organizations).values({
-      id: organizationId,
-      tenantId,
-      organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${organizationId}`,
-    });
-  });
-  return s;
+  const { tenantId, organizationId } = await createTenantWithEntity(appPool);
+  return { tenantId, organizationId };
 }
 
 beforeAll(async () => {
@@ -264,9 +251,9 @@ describe('row-change events', () => {
         id: organizationId,
         tenantId: scope.tenantId,
         organizationId,
-        kind: 'staff',
+        code: `E${organizationId.slice(0, 8)}`,
         name: 'Second org',
-        zitadelOrgId: `zitadel-${organizationId}`,
+        legalName: 'Second org Pvt. Ltd.',
       }),
     );
 
