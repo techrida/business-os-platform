@@ -90,18 +90,69 @@ export const ACCESS_TOKEN_LIFETIME = '900s';
 /** Everything the seed calls on ZITADEL: the P0 surface plus the P1 additions. */
 export type SeedApi = ZitadelApi & ZitadelP1Api;
 
-export interface OrgRow {
-  zitadelOrgId: string;
-  kind: OrgKind;
+/** A legal entity (`app.organizations`, ADR 0027 section 2). The seed upserts it on (tenant, code). */
+export interface EntitySeed {
+  code: string;
+  name: string;
+  legalName: string;
+}
+
+/** A customer or vendor company (`app.parties`); its kind is the kind of the IdP org behind it. */
+export interface PartySeed {
+  code: string;
   name: string;
 }
 
+/** A ZITADEL org (`app.idp_orgs`). The staff org has no party; a customer or vendor org has one. */
+export type IdpOrgSeed =
+  | { zitadelOrgId: string; kind: 'staff'; name: string; party: null }
+  | { zitadelOrgId: string; kind: 'customer' | 'vendor'; name: string; party: PartySeed };
+
+export interface TenancySeed {
+  entity: EntitySeed;
+  idpOrgs: IdpOrgSeed[];
+}
+
+/** ADR 0027 section 11: one default entity. The legal name is still to confirm with Kuu. */
+export const SEED_ENTITY: EntitySeed = {
+  code: 'TR',
+  name: 'Techrida',
+  legalName: 'Techrida Pvt. Ltd.',
+};
+export const SEED_PARTIES = {
+  customer: { code: 'CUST-DEV', name: ORG_NAMES.customer },
+  vendor: { code: 'VEND-DEV', name: ORG_NAMES.vendor },
+} as const satisfies Record<'customer' | 'vendor', PartySeed>;
+export const STAFF_IDP_ORG_NAME = 'Techrida Staff';
+
+/** The dev stack's tenancy for the three ZITADEL orgs the seed created. */
+export function tenancySeed(orgIds: Record<OrgKind, string>): TenancySeed {
+  return {
+    entity: SEED_ENTITY,
+    idpOrgs: [
+      { zitadelOrgId: orgIds.staff, kind: 'staff', name: STAFF_IDP_ORG_NAME, party: null },
+      {
+        zitadelOrgId: orgIds.customer,
+        kind: 'customer',
+        name: ORG_NAMES.customer,
+        party: SEED_PARTIES.customer,
+      },
+      {
+        zitadelOrgId: orgIds.vendor,
+        kind: 'vendor',
+        name: ORG_NAMES.vendor,
+        party: SEED_PARTIES.vendor,
+      },
+    ],
+  };
+}
+
 export interface TenancyStore {
-  /** Returns how many rows (and tenants) were created or changed. */
-  upsertOrganizations(rows: OrgRow[], correlationId: string): Promise<number>;
+  /** Upserts the entity, the parties and the idp_orgs; returns how many rows (and tenants) changed. */
+  upsertTenancy(seed: TenancySeed, correlationId: string): Promise<number>;
   /**
-   * P1 step 8: role grants, the `test_memo` workflow and the INR peg for the staff org, found by its
-   * ZITADEL org id (the DB keys rows by our uuid, not ZITADEL's id). Returns 0 on a second run.
+   * P1 step 8: role grants, the `test_memo` workflow and the INR peg for the tenant of the staff
+   * org, found by its ZITADEL org id, and that tenant's default entity. Returns 0 on a second run.
    */
   seedKernel(staffZitadelOrgId: string, correlationId: string): Promise<number>;
 }
@@ -490,16 +541,9 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     changed('wrote .dev/zitadel.env');
   }
 
-  // --- Our own organizations table: ZITADEL org id -> tenant/org. ---
-  const dbChanges = await store.upsertOrganizations(
-    [
-      { zitadelOrgId: orgIds.staff, kind: 'staff', name: 'Techrida Staff' },
-      { zitadelOrgId: orgIds.customer, kind: 'customer', name: ORG_NAMES.customer },
-      { zitadelOrgId: orgIds.vendor, kind: 'vendor', name: ORG_NAMES.vendor },
-    ],
-    correlationId,
-  );
-  if (dbChanges > 0) changed(`upserted ${dbChanges} app.organizations row(s)`);
+  // --- Our own tenancy tables (ADR 0027): the TR entity, the parties, ZITADEL org id -> idp_orgs. ---
+  const dbChanges = await store.upsertTenancy(tenancySeed(orgIds), correlationId);
+  if (dbChanges > 0) changed(`upserted ${dbChanges} tenancy row(s) (entity, parties, idp_orgs)`);
 
   // --- P1 step 8: kernel rows (deny-by-default needs grants to exist; test_memo workflow v1). ---
   const kernelChanges = await store.seedKernel(orgIds.staff, correlationId);
@@ -666,7 +710,7 @@ async function fetchTokenReport(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Postgres side: `app.organizations` through the owner role (DATABASE_MIGRATE_URL).
+// Postgres side: the tenancy tables and kernel rows through the owner role (DATABASE_MIGRATE_URL).
 
 /** An open connection plus how to close it; injectable so tests can check the SQL order. */
 export interface PgConnection {
@@ -687,42 +731,77 @@ export class PgTenancyStore implements TenancyStore {
     });
   }
 
-  async upsertOrganizations(rows: OrgRow[], correlationId: string): Promise<number> {
+  async upsertTenancy(seed: TenancySeed, correlationId: string): Promise<number> {
     const { client, close } = await this.connect();
     let changed = 0;
     try {
       await client.query('BEGIN');
-      // R5: the audit trigger RAISEs on any app.* write without an actor. It takes tenant and org
-      // from the row itself, so only the actor and correlation id must be set here; the tenant is
-      // not known yet and stays empty (the trigger reads '' as NULL).
-      await setSeedActor(client, { tenantId: '', organizationId: '', correlationId });
-      // One tenant for the whole dev stack: reuse the one already referenced, else any, else create.
-      const fromOrgs = await client.query<{ tenant_id: string }>(
-        'SELECT tenant_id FROM app.organizations LIMIT 1',
-      );
-      let tenantId = fromOrgs.rows[0]?.tenant_id;
+      // One tenant for the whole dev stack: the staff IdP org's, else the one an entity already
+      // references, else any, else a new one (inserted below, after the seed actor is set).
+      const staffOrg = seed.idpOrgs.find((org) => org.kind === 'staff');
+      let tenantId: string | undefined;
+      if (staffOrg) {
+        const fromIdp = await client.query<{ tenant_id: string }>(
+          'SELECT tenant_id FROM app.idp_orgs WHERE zitadel_org_id = $1',
+          [staffOrg.zitadelOrgId],
+        );
+        tenantId = fromIdp.rows[0]?.tenant_id;
+      }
+      if (!tenantId) {
+        const fromOrgs = await client.query<{ tenant_id: string }>(
+          'SELECT tenant_id FROM app.organizations LIMIT 1',
+        );
+        tenantId = fromOrgs.rows[0]?.tenant_id;
+      }
       if (!tenantId) {
         const tenants = await client.query<{ id: string }>('SELECT id FROM app.tenants LIMIT 1');
         tenantId = tenants.rows[0]?.id;
       }
-      if (!tenantId) {
-        tenantId = randomUUID();
+      const newTenant = !tenantId;
+      tenantId ??= randomUUID();
+      const entity = await client.query<{ id: string }>(
+        'SELECT id FROM app.organizations WHERE tenant_id = $1 AND code = $2',
+        [tenantId, seed.entity.code],
+      );
+      const entityId = entity.rows[0]?.id ?? randomUUID();
+
+      // R5: the audit trigger RAISEs on any app.* write without an actor. parties and idp_orgs have
+      // no organization_id, so their events take bos.organization_id: the entity written below.
+      await setSeedActor(client, { tenantId, organizationId: entityId, correlationId });
+      if (newTenant) {
         await client.query('INSERT INTO app.tenants (id) VALUES ($1)', [tenantId]);
         changed += 1;
       }
-      for (const row of rows) {
-        const id = randomUUID();
-        // WHERE ... IS DISTINCT FROM makes an unchanged row a no-op, so rowCount is 0 on a re-run.
-        const result = await client.query(
-          `INSERT INTO app.organizations (id, tenant_id, organization_id, kind, name, zitadel_org_id)
-           VALUES ($1, $2, $1, $3, $4, $5)
+      // WHERE ... IS DISTINCT FROM makes an unchanged row a no-op, so rowCount is 0 on a re-run.
+      // is_default is set on insert only: the DO UPDATE never moves the tenant's default.
+      const upsertedEntity = await client.query(
+        `INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
+         VALUES ($1, $2, $1, $3, $4, $5, true)
+         ON CONFLICT (tenant_id, code) DO UPDATE
+           SET name = EXCLUDED.name, legal_name = EXCLUDED.legal_name
+           WHERE (app.organizations.name, app.organizations.legal_name)
+                 IS DISTINCT FROM (EXCLUDED.name, EXCLUDED.legal_name)`,
+        [entityId, tenantId, seed.entity.code, seed.entity.name, seed.entity.legalName],
+      );
+      changed += upsertedEntity.rowCount ?? 0;
+
+      for (const org of seed.idpOrgs) {
+        let partyId: string | null = null;
+        if (org.kind !== 'staff') {
+          const result = await this.upsertParty(client, tenantId, org);
+          partyId = result.partyId;
+          changed += result.changed;
+        }
+        const upserted = await client.query(
+          `INSERT INTO app.idp_orgs (tenant_id, zitadel_org_id, kind, party_id, name)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (zitadel_org_id) DO UPDATE
-             SET kind = EXCLUDED.kind, name = EXCLUDED.name
-             WHERE (app.organizations.kind, app.organizations.name)
-                   IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.name)`,
-          [id, tenantId, row.kind, row.name, row.zitadelOrgId],
+             SET kind = EXCLUDED.kind, party_id = EXCLUDED.party_id, name = EXCLUDED.name
+             WHERE (app.idp_orgs.kind, app.idp_orgs.party_id, app.idp_orgs.name)
+                   IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.party_id, EXCLUDED.name)`,
+          [tenantId, org.zitadelOrgId, org.kind, partyId, org.name],
         );
-        changed += result.rowCount ?? 0;
+        changed += upserted.rowCount ?? 0;
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -734,16 +813,62 @@ export class PgTenancyStore implements TenancyStore {
     return changed;
   }
 
+  /**
+   * The party behind a customer or vendor IdP org. A party already linked to the org (0013 migrated
+   * it with a code derived from its name) is re-coded in place, so it is never duplicated. Ids are
+   * re-selected, never read from RETURNING: a guarded DO UPDATE that changes nothing returns no row.
+   */
+  private async upsertParty(
+    client: pg.ClientBase,
+    tenantId: string,
+    org: Extract<IdpOrgSeed, { party: PartySeed }>,
+  ): Promise<{ partyId: string; changed: number }> {
+    const linked = await client.query<{ party_id: string | null }>(
+      'SELECT party_id FROM app.idp_orgs WHERE zitadel_org_id = $1',
+      [org.zitadelOrgId],
+    );
+    const linkedId = linked.rows[0]?.party_id;
+    if (linkedId) {
+      // kind stays: the idp_orgs FK includes it, and the org's kind never changes here.
+      const recoded = await client.query(
+        `UPDATE app.parties SET code = $2, name = $3, updated_at = now()
+         WHERE id = $1 AND (code, name) IS DISTINCT FROM ($2::text, $3::text)`,
+        [linkedId, org.party.code, org.party.name],
+      );
+      return { partyId: linkedId, changed: recoded.rowCount ?? 0 };
+    }
+    const inserted = await client.query(
+      `INSERT INTO app.parties (tenant_id, kind, code, name)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (tenant_id, code) DO UPDATE
+         SET name = EXCLUDED.name, updated_at = now()
+         WHERE app.parties.name IS DISTINCT FROM EXCLUDED.name`,
+      [tenantId, org.kind, org.party.code, org.party.name],
+    );
+    const found = await client.query<{ id: string }>(
+      'SELECT id FROM app.parties WHERE tenant_id = $1 AND code = $2',
+      [tenantId, org.party.code],
+    );
+    const partyId = found.rows[0]?.id;
+    if (!partyId) throw new Error(`party ${org.party.code} not found after upsert`);
+    return { partyId, changed: inserted.rowCount ?? 0 };
+  }
+
   async seedKernel(staffZitadelOrgId: string, correlationId: string): Promise<number> {
     const { client, close } = await this.connect();
     try {
+      // The staff IdP org names the tenant; the kernel rows go to that tenant's default entity.
       const org = await client.query<{ id: string; tenant_id: string }>(
-        'SELECT id, tenant_id FROM app.organizations WHERE zitadel_org_id = $1',
+        `SELECT o.id, o.tenant_id FROM app.idp_orgs i
+         JOIN app.organizations o ON o.tenant_id = i.tenant_id AND o.is_default
+         WHERE i.zitadel_org_id = $1`,
         [staffZitadelOrgId],
       );
       const staff = org.rows[0];
       if (!staff) {
-        throw new Error(`app.organizations has no row for staff org ${staffZitadelOrgId}`);
+        throw new Error(
+          `no default entity for staff IdP org ${staffZitadelOrgId}: app.idp_orgs or app.organizations has no row`,
+        );
       }
       // seedKernelRows opens its own transaction and sets the seed actor inside it.
       return await seedKernelRows(client, {
