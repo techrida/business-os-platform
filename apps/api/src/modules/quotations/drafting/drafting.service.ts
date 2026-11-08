@@ -10,7 +10,7 @@
 //   opportunity is read through scoped(), so another entity's opportunity is a 404.
 // - list, detail and getVersion (Part 2) are staff-only and read through scopeWhereFor(), the SQL twin of can(),
 //   so a quotation of another entity, or of another owner under `own` scope, is a 404 and never in the list.
-// updateDraft arrives in Part 3.
+// - updateDraft (Part 3) re-prices the merged draft content and guards the write with the row version.
 import {
   type CreateQuotationBody,
   type DocumentVersionStatus,
@@ -19,6 +19,7 @@ import {
   type QuotationDto,
   type QuotationListItem,
   type QuotationStatus,
+  QuotationVersionContentSchema,
   type QuotationVersionDto,
   type UpdateQuotationDraftBody,
 } from '@bos/contracts';
@@ -38,11 +39,11 @@ import {
 } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
-  NotImplementedException,
   Optional,
 } from '@nestjs/common';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
@@ -51,7 +52,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
 import { type Principal } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
-import { withIdempotency } from '../../../platform/db/idempotency';
+import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -88,6 +89,71 @@ const forbidden = () =>
   new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: 'no_permission' });
 
 const badRequest = (message: string) => new BadRequestException({ code: 'bad_request', message });
+
+const notEditable = () =>
+  new ConflictException({
+    code: 'conflict',
+    message: 'Only a Draft or Returned version can be edited; revise it instead',
+  });
+
+/** The pg error behind `error` (drizzle may wrap it as `cause`): its SQLSTATE and, when named, the constraint. */
+function pgError(error: unknown): { code: string; constraint?: string } | undefined {
+  for (
+    let e: unknown = error, depth = 0;
+    typeof e === 'object' && e !== null && depth < 3;
+    depth++
+  ) {
+    const { code, constraint, cause } = e as {
+      code?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
+    if (typeof code === 'string' && code.length === 5) {
+      return { code, ...(typeof constraint === 'string' ? { constraint } : {}) };
+    }
+    e = cause;
+  }
+  return undefined;
+}
+
+/** `o` without its undefined and null fields: a partial body names only what it changes. */
+function definedOnly<T extends object>(o: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(o).filter(([, v]) => v !== undefined && v !== null),
+  ) as Partial<T>;
+}
+
+/**
+ * The saved content of a version in the body's shape, read off its DTO (whose discount is already trimmed to
+ * the contract's decimals), so a partial update can be merged over it and parsed with the contract.
+ */
+function contentOf(v: QuotationVersionDto): Record<string, unknown> {
+  return definedOnly({
+    contactId: v.contactId,
+    templateId: v.templateId,
+    currency: v.currency,
+    issueDate: v.issueDate,
+    validUntil: v.validUntil,
+    scope: v.scope,
+    assumptions: v.assumptions,
+    exclusions: v.exclusions,
+    deliveryTimeline: v.deliveryTimeline,
+    paymentTermId: v.paymentTermId,
+    paymentSchedule: v.paymentSchedule,
+    discount: v.discount,
+    lines: v.lines.map((l) =>
+      definedOnly({
+        catalogItemId: l.catalogItemId,
+        description: l.description,
+        uom: l.uom,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        unitCost: l.unitCost,
+        taxCodeId: l.taxCodeId,
+      }),
+    ),
+  });
+}
 
 /** The pricing input of a version's content: lines numbered from 1 in the order the client sent them. */
 export function pricingInputOf(
@@ -380,19 +446,136 @@ export class DraftingService {
     });
   }
 
-  // ------------------------------------------------------------------------------------- later parts (stubs)
+  // ------------------------------------------------------------------------------------------- update draft
 
-  updateDraft(
+  /**
+   * Saves draft content onto a Draft or Returned version: the body's fields over the saved content, re-priced in
+   * full (a new issue date or currency changes rates even when the lines stay), the lines and tax summary
+   * replaced, and the version row bumped through updateVersioned(), all in one transaction. 404 outside the
+   * caller's read scope, 403 without quotation.draft on this quotation, 409 for any other status or a stale
+   * expectedVersion, 400 for merged content the contract refuses.
+   */
+  async updateDraft(
     id: string,
     versionId: string,
     body: UpdateQuotationDraftBody,
   ): Promise<{ version: number }> {
-    void id;
-    void versionId;
-    void body;
-    return Promise.reject(
-      new NotImplementedException('DraftingService.updateDraft (Q1b-B part 3)'),
-    );
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    try {
+      return await withTx(this.db, scope, actor, (tx) =>
+        this.updateDraftInTx(tx, scope, principal, id, versionId, body),
+      );
+    } catch (error) {
+      // The freeze triggers refuse what slipped past the status check (a submit committed in between).
+      const pg = pgError(error);
+      if (
+        pg?.code === '23514' &&
+        pg.constraint !== undefined &&
+        (pg.constraint.endsWith('_frozen_check') || pg.constraint.endsWith('_transition_check'))
+      ) {
+        throw notEditable();
+      }
+      throw error;
+    }
+  }
+
+  private async updateDraftInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    id: string,
+    versionId: string,
+    body: UpdateQuotationDraftBody,
+  ): Promise<{ version: number }> {
+    const quotation = await this.findVisible(tx, principal, id);
+    // The record check uses the stored owner: under `own`, a colleague's quotation is read-only.
+    const action: Permission = 'quotation.draft';
+    this.authz.assert(action, {
+      tenantId: quotation.tenantId,
+      organizationId: quotation.organizationId,
+      ownerUserId: quotation.ownerUserId,
+      customerPartyId: quotation.customerPartyId,
+    });
+    const version = await this.findVersion(tx, quotation, versionId, true);
+    if (version.status !== 'draft' && version.status !== 'returned') throw notEditable();
+
+    const { expectedVersion, ...patch } = body;
+    if (patch.attachmentDocumentIds !== undefined && patch.attachmentDocumentIds.length > 0) {
+      throw badRequest('attachmentDocumentIds are not supported yet');
+    }
+    const [parts] = await this.withParts(tx, scope.tenantId, [version]);
+    const saved = toQuotationVersionDto({ ...parts!, quotation });
+    const parsed = QuotationVersionContentSchema.safeParse({
+      ...contentOf(saved),
+      ...definedOnly(patch),
+    });
+    if (!parsed.success) {
+      throw badRequest(parsed.error.issues.map((i) => i.message).join('; '));
+    }
+    const content = parsed.data;
+    if (patch.contactId !== undefined && quotation.customerPartyId !== null) {
+      await this.assertContactOf(tx, scope.tenantId, patch.contactId, quotation.customerPartyId);
+    }
+    if (patch.paymentTermId !== undefined) {
+      await this.assertPaymentTerm(tx, scope.tenantId, patch.paymentTermId);
+    }
+
+    const priced = await this.pricing.priceVersion(tx, scope, pricingInputOf(content));
+    const owned = { tenantId: quotation.tenantId, organizationId: quotation.organizationId };
+    await tx
+      .delete(quotationLines)
+      .where(
+        and(eq(quotationLines.tenantId, scope.tenantId), eq(quotationLines.versionId, versionId)),
+      );
+    await tx
+      .delete(quotationTaxSummary)
+      .where(
+        and(
+          eq(quotationTaxSummary.tenantId, scope.tenantId),
+          eq(quotationTaxSummary.versionId, versionId),
+        ),
+      );
+    await tx
+      .insert(quotationLines)
+      .values(priced.lines.map((line) => ({ ...owned, versionId, ...line })));
+    if (priced.taxSummary.length > 0) {
+      await tx
+        .insert(quotationTaxSummary)
+        .values(priced.taxSummary.map((row) => ({ ...owned, versionId, ...row })));
+    }
+    const updated = await updateVersioned(tx, quotationVersions, versionId, expectedVersion, {
+      contactId: content.contactId ?? null,
+      templateId: content.templateId ?? null,
+      currency: content.currency,
+      issueDate: content.issueDate,
+      validUntil: content.validUntil,
+      scope: content.scope ?? null,
+      assumptions: content.assumptions ?? null,
+      exclusions: content.exclusions ?? null,
+      deliveryTimeline: content.deliveryTimeline ?? null,
+      paymentTermId: content.paymentTermId ?? null,
+      paymentSchedule: content.paymentSchedule ?? [],
+      discountMode: content.discount?.mode ?? null,
+      discountInput: content.discount?.value ?? null,
+      ...priced.columns,
+      updatedAt: this.clock(),
+    });
+
+    await this.audit.record(tx, {
+      action: 'quotation.draft_updated',
+      entityType: AUDIT_ENTITY,
+      entityId: quotation.id,
+      before: { versionId, version: version.version, total: version.total },
+      after: {
+        versionId,
+        version: updated.version,
+        currency: updated.currency,
+        total: updated.total,
+        fields: Object.keys(definedOnly(patch)),
+      },
+    });
+    return { version: updated.version };
   }
 
   // ----------------------------------------------------------------------------------------------- helpers
@@ -419,13 +602,17 @@ export class DraftingService {
     return row;
   }
 
-  /** A version of `quotation`; one of another quotation is a 404. */
+  /**
+   * A version of `quotation`; one of another quotation is a 404. `forUpdate` locks the row, so a submit cannot
+   * commit between the status check and the write.
+   */
   private async findVersion(
     tx: DbTransaction,
     quotation: QuotationRow,
     versionId: string,
+    forUpdate = false,
   ): Promise<QuotationVersionRow> {
-    const [row] = await tx
+    const query = tx
       .select()
       .from(quotationVersions)
       .where(
@@ -437,6 +624,7 @@ export class DraftingService {
         ),
       )
       .limit(1);
+    const [row] = forUpdate ? await query.for('update') : await query;
     if (row === undefined) {
       throw new NotFoundException({ code: 'not_found', message: 'Quotation version not found' });
     }
