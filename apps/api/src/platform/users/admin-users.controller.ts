@@ -1,0 +1,104 @@
+// Admin routes for users: list, invite, set roles.
+// Serves the NFR "role assignment has one source of truth": every change goes to ZITADEL first, then
+// the mirror, then the authz cache is invalidated, so the token, the mirror and the cache agree.
+import { RoleKeySchema } from '@bos/contracts';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Put,
+  Query,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { z } from 'zod';
+
+import { AuthzService } from '../authz/authz.service';
+import { Can } from '../authz/decorators';
+import { DB, type Db } from '../db/db.module';
+import { requestTx, withTx } from '../db/tx';
+import { UsersService } from './users.service';
+import { ZitadelNotConfiguredError } from './zitadel-admin.client';
+
+// Local schemas: @bos/contracts has no admin-user DTOs yet (move them there when the UI needs them).
+const ListQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  after: z.guid().optional(),
+});
+const Roles = z.array(RoleKeySchema).max(20);
+const InviteBody = z.object({
+  email: z.email().max(320),
+  givenName: z.string().trim().min(1).max(200),
+  familyName: z.string().trim().min(1).max(200),
+  roles: Roles,
+});
+const RolesBody = z.object({ roles: Roles });
+
+function parse<S extends z.ZodType>(schema: S, value: unknown, what: string): z.infer<S> {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    const fields = parsed.error.issues.map((i) => i.path.join('.') || '(root)');
+    throw new BadRequestException(`Invalid ${what}: ${fields.join(', ')}`);
+  }
+  return parsed.data;
+}
+
+/** No provisioner token: the admin feature is off, which is the server's state, not the caller's fault. */
+async function zitadelCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof ZitadelNotConfiguredError) {
+      throw new ServiceUnavailableException('User administration is not configured');
+    }
+    throw error;
+  }
+}
+
+@Controller('v1/admin/users')
+export class AdminUsersController {
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly users: UsersService,
+    private readonly authz: AuthzService,
+  ) {}
+
+  @Get()
+  @Can('admin.users.read')
+  async list(@Query() query: unknown) {
+    const q = parse(ListQuery, query, 'query');
+    const { scope } = requestTx();
+    const items = await this.users.list(scope, q);
+    return { items, nextAfter: items.length === q.limit ? (items.at(-1)?.id ?? null) : null };
+  }
+
+  @Post('invite')
+  @Can('admin.users.invite')
+  async invite(@Body() body: unknown): Promise<{ userId: string }> {
+    const b = parse(InviteBody, body, 'invite');
+    const { scope, actor } = requestTx();
+    const result = await zitadelCall(() =>
+      withTx(this.db, scope, actor, (tx) => this.users.invite(tx, b)),
+    );
+    if (b.roles.length > 0) await this.authz.invalidate(scope.tenantId, scope.organizationId);
+    return result;
+  }
+
+  @Put(':id/roles')
+  @HttpCode(204)
+  @Can('admin.roles.write')
+  async setRoles(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<void> {
+    const { roles } = parse(RolesBody, body, 'roles');
+    const { scope, actor } = requestTx();
+    await zitadelCall(() =>
+      withTx(this.db, scope, actor, (tx) => this.users.setRoles(tx, id, roles)),
+    );
+    // After commit: a cache refilled before commit would read the old roles.
+    await this.authz.invalidate(scope.tenantId, scope.organizationId);
+  }
+}
