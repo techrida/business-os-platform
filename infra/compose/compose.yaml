@@ -520,6 +520,8 @@ services:
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost}
       WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
       PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost} # customer email links point at the portal
+      # The worker renders approved quotations to PDF through Gotenberg (internal network, never published).
+      GOTENBERG_URL: http://gotenberg:3000
     env_file:
       - path: ../../.dev/zitadel.env
         required: false
@@ -542,6 +544,8 @@ services:
       migrate:
         condition: service_completed_successfully
       valkey:
+        condition: service_healthy
+      gotenberg:
         condition: service_healthy
     networks: [edge, backend]
     deploy:
