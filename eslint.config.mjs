@@ -8,6 +8,9 @@ import tseslint from 'typescript-eslint';
 
 const WORKSPACE_FILES = ['apps/workspace/**/*.{js,jsx,mjs,ts,tsx}'];
 
+const DRIVER_MESSAGE =
+  'Only packages/db may import the raw Postgres driver. Use @bos/db (createDb, the typed tables) and the injected DB with withTx instead.';
+
 /**
  * eslint-config-next ships global configs. Restrict each config object to the workspace app.
  * An object that holds only `ignores` is a global ignore, and giving it `files` would turn it
@@ -69,6 +72,49 @@ export default defineConfig([
     rules: {
       '@typescript-eslint/unbound-method': 'off',
     },
+  },
+
+  // Import boundary (review finding D32): only packages/db may touch the raw Postgres driver.
+  // Everything else goes through @bos/db, so a new module cannot bypass tenancy scoping or `withTx`
+  // by opening its own connection. (Test files, listed below, are the exception.) `drizzle-orm` itself (operators) and `drizzle-orm/pg-core`
+  // (schema builders, column types) are not drivers and stay allowed.
+  {
+    files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+    ignores: ['packages/db/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['pg', 'pg-pool', 'postgres'].map((name) => ({ name, message: DRIVER_MESSAGE })),
+          patterns: [
+            {
+              group: ['drizzle-orm/node-postgres', 'drizzle-orm/node-postgres/*'],
+              message: DRIVER_MESSAGE,
+            },
+            {
+              group: ['drizzle-orm/postgres-js', 'drizzle-orm/postgres-js/*'],
+              message: DRIVER_MESSAGE,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // Exemptions, each one deliberate. Keep this list short; do not add a file to dodge the rule.
+  {
+    files: [
+      // Tests build their own pg.Pool against a Testcontainers Postgres, and the e2e global setup
+      // and fixtures migrate and seed that database as a superuser.
+      '**/*.test.{ts,tsx}',
+      'apps/api/test/e2e/**/*.ts',
+      // The one place the API opens its pool and wraps it in drizzle.
+      'apps/api/src/platform/db/db.module.ts',
+      // Pings Postgres through the injected PG_POOL, so it names the pg.Pool type.
+      'apps/api/src/platform/health/health.service.ts',
+      // The ZITADEL seed tool is a standalone script with its own connection and no API process.
+      'tools/seed-zitadel/src/**/*.ts',
+    ],
+    rules: { 'no-restricted-imports': 'off' },
   },
 
   ...nextForWorkspace,
