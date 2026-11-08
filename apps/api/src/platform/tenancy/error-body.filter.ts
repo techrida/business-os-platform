@@ -33,6 +33,7 @@ export type ErrorCode =
   | 'primary_contact_exists'
   | 'quotation_not_sent'
   | 'quotation_expired'
+  | 'quotation_pdf_not_ready'
   | 'NO_ELIGIBLE_APPROVER'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
@@ -76,6 +77,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   primary_contact_exists: 'This customer already has a primary contact',
   quotation_not_sent: 'This quotation is not open for an answer',
   quotation_expired: 'This quotation has expired',
+  quotation_pdf_not_ready: 'The PDF of this quotation version is not ready to download',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
@@ -135,6 +137,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // validity ended before the decision day (`quotation_expired`). The portal shows "already answered".
   'quotation_not_sent',
   'quotation_expired',
+  // The staff PDF download: the version has no rendered file yet, or it has not scanned clean.
+  'quotation_pdf_not_ready',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
