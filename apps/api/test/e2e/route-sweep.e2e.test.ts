@@ -1,6 +1,6 @@
 // Walks every route Nest registered (not a hand-kept list) and proves that 100% of them fail closed.
 // Serves the NFR "authorization is deny-by-default" (P1 plan §1, §7 U1, finding 7):
-// - exactly four routes are public, and each authenticates itself (HMAC, signed link);
+// - exactly five routes are public, and each authenticates itself (HMAC, signed link);
 // - every other route carries @Can or @AnyAuthenticated, so none relies on the interceptor's default;
 // - no token is 401 everywhere; a staff token with no role, a customer token holding staff role
 //   names, and a role granted only in another org are all 403 on every @Can route.
@@ -44,6 +44,7 @@ const EXPECTED_PUBLIC = [
   'GET /health/live',
   'GET /health/ready',
   'GET /v1/files/:token',
+  'POST /v1/hooks/postal',
   'POST /v1/hooks/zitadel',
 ];
 
@@ -201,7 +202,7 @@ describe('route sweep: discovery and markers', () => {
     );
   });
 
-  it('exposes exactly the four self-authenticating public routes', () => {
+  it('exposes exactly the five self-authenticating public routes', () => {
     const open = routes
       .filter((r) => r.kind === 'public')
       .map(label)
@@ -330,6 +331,16 @@ describe('route sweep: the public routes authenticate themselves', () => {
   it('POST /v1/hooks/zitadel accepts a correctly signed call (so the 401s above come from the HMAC check)', async () => {
     const res = await postHook(sign(now(), hookBody));
     expect(res.status, JSON.stringify(res.body)).toBe(204);
+  });
+
+  it('POST /v1/hooks/postal answers 401 with no secret configured or no signature (fails closed)', async () => {
+    const res = await t
+      .http()
+      .post('/v1/hooks/postal')
+      .set('content-type', 'application/json')
+      .send({ event: 'MessageDeliveryFailed' });
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(ErrorBodySchema.parse(res.body).error.code).toBe('unauthenticated');
   });
 
   it('GET /v1/files/<garbage> answers 401 unauthenticated', async () => {
