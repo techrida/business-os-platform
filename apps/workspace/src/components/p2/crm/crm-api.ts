@@ -176,6 +176,12 @@ export function listActivities(
   return call(session, `/v1/activities${query(opts)}`, listOf(ActivityDtoSchema));
 }
 
-export function createActivity(session: Session, body: CreateActivityBody) {
-  return call(session, '/v1/activities', ActivityDtoSchema, json('POST', body));
+/** Sent with an `idempotency-key`, so a double click logs the activity once. */
+export function createActivity(session: Session, body: CreateActivityBody, idempotencyKey: string) {
+  return call(
+    session,
+    '/v1/activities',
+    ActivityDtoSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
 }
