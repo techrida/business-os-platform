@@ -26,7 +26,7 @@ import {
   UnprocessableEntityException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -465,7 +465,23 @@ export class VerificationService implements OnModuleInit {
     id: string,
     lock?: 'update' | 'share',
   ): Promise<Loaded | undefined> {
-    const query = q
+    const key = and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.id, id));
+    // Lock the case row on its own: drizzle writes `FOR UPDATE OF "app"."verification_cases"` when asked to lock
+    // one table of a join, and Postgres rejects the schema-qualified name. The joined read below then sees the
+    // row as the lock left it.
+    if (lock !== undefined) {
+      const [locked] = await q
+        .select({ id: verificationCases.id })
+        .from(verificationCases)
+        .where(key)
+        .for(lock);
+      if (locked === undefined) return undefined;
+    }
+    return this.read(q, key);
+  }
+
+  private async read(q: Q, key: SQL | undefined): Promise<Loaded | undefined> {
+    const [found] = await q
       .select({ row: verificationCases, customerOwnerUserId: customers.ownerUserId })
       .from(verificationCases)
       .innerJoin(
@@ -475,10 +491,7 @@ export class VerificationService implements OnModuleInit {
           eq(customers.id, verificationCases.partyId),
         ),
       )
-      .where(and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.id, id)));
-    // `of` locks the case row only, not the customer row it joins.
-    const [found] =
-      lock === undefined ? await query : await query.for(lock, { of: verificationCases });
+      .where(key);
     return found;
   }
 
