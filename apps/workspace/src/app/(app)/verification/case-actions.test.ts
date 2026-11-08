@@ -1,3 +1,4 @@
+import { revalidatePath } from 'next/cache';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
@@ -13,14 +14,19 @@ vi.mock('@/lib/bff', () => ({
   requireStaffSession: vi.fn(() => Promise.resolve({ accessToken: 't', roles: ['sales'] })),
 }));
 
-const api = vi.hoisted(() => ({ openVerificationCase: vi.fn(), submitVerificationCase: vi.fn() }));
+const api = vi.hoisted(() => ({
+  attachChecklistDocument: vi.fn(),
+  openVerificationCase: vi.fn(),
+  submitVerificationCase: vi.fn(),
+}));
 vi.mock('@/components/p2/crm/verification-api', () => api);
 
-import { openCaseAction, submitCaseAction } from './case-actions';
+import { attachDocumentAction, openCaseAction, submitCaseAction } from './case-actions';
 
 const KEY = '44444444-4444-4444-8444-444444444444';
 const CUSTOMER = '22222222-2222-4222-8222-222222222222';
 const CASE = '11111111-1111-4111-8111-111111111111';
+const DOC = '33333333-3333-4333-8333-333333333333';
 const GUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const apiError = (status: number, code: string, message: string) =>
@@ -174,5 +180,139 @@ describe('submitCaseAction', () => {
       }),
     );
     expect((await submitCaseAction({ key: KEY }, submitForm())).error).toMatch(/roles don't allow/);
+  });
+});
+
+const attachForm = (extra: Record<string, string> = {}): FormData => {
+  const f = new FormData();
+  const fields = {
+    caseId: CASE,
+    key: 'pan_vat_certificate',
+    documentId: DOC,
+    expiresOn: '',
+    expectedVersion: '3',
+    idempotencyKey: KEY,
+    ...extra,
+  };
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+};
+
+describe('attachDocumentAction', () => {
+  it('sends one item with the page key and the version the form was drawn from, then names the item', async () => {
+    api.attachChecklistDocument.mockResolvedValue({ id: CASE, status: 'draft' });
+    const res = await attachDocumentAction({ key: KEY }, attachForm());
+    expect(api.attachChecklistDocument).toHaveBeenCalledWith(
+      expect.anything(),
+      CASE,
+      { key: 'pan_vat_certificate', documentId: DOC, expectedVersion: 3 },
+      KEY,
+    );
+    expect(res.attached).toBe('PAN or VAT certificate');
+    expect(res.error).toBeUndefined();
+    expect(res.key).toMatch(GUID_SHAPE);
+    expect(res.key).not.toBe(KEY);
+  });
+
+  it('leaves expiresOn out when the date was left blank and sends it when it was chosen', async () => {
+    api.attachChecklistDocument.mockResolvedValue({ id: CASE });
+    await attachDocumentAction({ key: KEY }, attachForm());
+    expect(api.attachChecklistDocument.mock.calls[0]?.[2]).not.toHaveProperty('expiresOn');
+    await attachDocumentAction({ key: KEY }, attachForm({ expiresOn: '2027-04-13' }));
+    expect(api.attachChecklistDocument.mock.calls[1]?.[2]).toMatchObject({
+      expiresOn: '2027-04-13',
+    });
+  });
+
+  it('refreshes the case page and the queue after an attach, and not after a refusal', async () => {
+    api.attachChecklistDocument.mockResolvedValueOnce({ id: CASE });
+    await attachDocumentAction({ key: KEY }, attachForm());
+    expect(revalidatePath).toHaveBeenCalledWith(`/verification/${CASE}`);
+    expect(revalidatePath).toHaveBeenCalledWith('/verification');
+
+    vi.mocked(revalidatePath).mockClear();
+    api.attachChecklistDocument.mockRejectedValueOnce(new ApiError(503, 'down'));
+    await attachDocumentAction({ key: KEY }, attachForm());
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a case id that is not a GUID', { caseId: 'nope' }],
+    ['a document id that is not a GUID', { documentId: 'nope' }],
+    ['an item key the checklist does not have', { key: 'passport' }],
+    ['no version', { expectedVersion: '' }],
+    ['a version that is not a whole number', { expectedVersion: '1.5' }],
+    ['a date that is not a date', { expiresOn: 'soon' }],
+  ])('refuses a form with %s before any call and asks for a reload', async (_label, extra) => {
+    const res = await attachDocumentAction({ key: KEY }, attachForm(extra));
+    expect(res.reload).toBe(true);
+    expect(res.error).toBeTruthy();
+    expect(res.key).toBe(KEY);
+    expect(api.attachChecklistDocument).not.toHaveBeenCalled();
+  });
+
+  it('keeps the key after a 5xx or a network error, so a retry names the same request', async () => {
+    api.attachChecklistDocument.mockRejectedValueOnce(new ApiError(502, 'bad gateway'));
+    const first = await attachDocumentAction({ key: KEY }, attachForm());
+    expect(first.error).toBeTruthy();
+    expect(first.key).toBe(KEY);
+    expect(first.attached).toBeUndefined();
+    api.attachChecklistDocument.mockRejectedValueOnce(new TypeError('fetch failed'));
+    expect((await attachDocumentAction({ key: KEY }, attachForm())).key).toBe(KEY);
+  });
+
+  it('keeps the key after the in-progress 409', async () => {
+    api.attachChecklistDocument.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'The first request with this Idempotency-Key did not finish'),
+    );
+    const res = await attachDocumentAction({ key: KEY }, attachForm());
+    expect(res.key).toBe(KEY);
+    expect(res.error).toMatch(/still saving/i);
+  });
+
+  it('replaces a tampered key with a fresh one', async () => {
+    api.attachChecklistDocument.mockResolvedValue({ id: CASE });
+    await attachDocumentAction({ key: KEY }, attachForm({ idempotencyKey: 'x y' }));
+    const sent = api.attachChecklistDocument.mock.calls[0]?.[3] as string;
+    expect(sent).toMatch(GUID_SHAPE);
+    expect(sent).not.toBe('x y');
+  });
+
+  it('words a stale version, rotates the key and asks for a reload', async () => {
+    api.attachChecklistDocument.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'This record was changed by someone else. Reload and try again.'),
+    );
+    const res = await attachDocumentAction({ key: KEY }, attachForm());
+    expect(res.error).toMatch(/Someone else changed this case/);
+    expect(res.reload).toBe(true);
+    expect(res.key).not.toBe(KEY);
+    expect(res.reupload).toBeUndefined();
+  });
+
+  it('words a case that was submitted or decided meanwhile and asks for a reload', async () => {
+    api.attachChecklistDocument.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'A case in status submitted cannot be changed'),
+    );
+    const res = await attachDocumentAction({ key: KEY }, attachForm());
+    expect(res.error).toMatch(/can no longer be changed/);
+    expect(res.reload).toBe(true);
+  });
+
+  it('words the 422 for a file of another case and says the file must be uploaded again', async () => {
+    api.attachChecklistDocument.mockRejectedValueOnce(
+      apiError(422, 'unprocessable', 'documentId is not a document of this verification case'),
+    );
+    const res = await attachDocumentAction({ key: KEY }, attachForm());
+    expect(res.error).toMatch(/does not belong to this case/);
+    expect(res.reupload).toBe(true);
+    expect(res.reload).toBeUndefined();
+    expect(res.key).not.toBe(KEY);
+  });
+
+  it('words a 403 from the shared sentences', async () => {
+    api.attachChecklistDocument.mockRejectedValueOnce(apiError(403, 'forbidden', 'Forbidden'));
+    expect((await attachDocumentAction({ key: KEY }, attachForm())).error).toBe(
+      "You don't have permission to do this.",
+    );
   });
 });
