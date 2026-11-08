@@ -116,6 +116,8 @@ export function createFetchTransport(
 export interface ProjectInfo {
   id: string;
   projectRoleAssertion: boolean;
+  /** "Check for authorization on authentication": a user without a project role cannot sign in. */
+  authorizationRequired: boolean;
 }
 export interface AppInfo {
   id: string;
@@ -171,6 +173,7 @@ export interface ZitadelApi {
   findProject(ownerOrgId: string, name: string): Promise<ProjectInfo | undefined>;
   createProject(ownerOrgId: string, name: string): Promise<string>;
   enableRoleAssertion(projectId: string): Promise<void>;
+  enableAuthorizationRequired(projectId: string): Promise<void>;
   listProjectRoles(projectId: string): Promise<string[]>;
   addProjectRole(projectId: string, key: string, displayName: string): Promise<void>;
   listProjectGrants(projectId: string): Promise<GrantInfo[]>;
@@ -221,6 +224,7 @@ const ProjectList = z.object({
         organizationId: Str,
         name: Str,
         projectRoleAssertion: z.boolean().default(false),
+        authorizationRequired: z.boolean().default(false),
       }),
     )
     .default([]),
@@ -352,7 +356,13 @@ export class ZitadelClient implements ZitadelApi {
     );
     // The PAT is instance-wide, so match the owner org too: a granted copy is not "ours".
     const project = res.projects.find((p) => p.name === name && p.organizationId === ownerOrgId);
-    return project && { id: project.projectId, projectRoleAssertion: project.projectRoleAssertion };
+    return (
+      project && {
+        id: project.projectId,
+        projectRoleAssertion: project.projectRoleAssertion,
+        authorizationRequired: project.authorizationRequired,
+      }
+    );
   }
 
   async createProject(ownerOrgId: string, name: string): Promise<string> {
@@ -363,9 +373,13 @@ export class ZitadelClient implements ZitadelApi {
         name,
         // "Assert roles on authentication": role claims are put into tokens.
         projectRoleAssertion: true,
-        // Do not require an authorization or a project grant to sign in: the customer/vendor
-        // checks belong to the API's guards, and this keeps the first login simple.
-        authorizationRequired: false,
+        // CR-02: a user needs a role in this project to sign in. Whoever registers themselves (or is
+        // created by hand) without an authorization gets no session for this app. Every seeded persona
+        // and the load-test user gets a role in the seed, so they are unaffected.
+        authorizationRequired: true,
+        // Left off: the customer and vendor orgs are covered by project grants and every user by an
+        // authorization above. Requiring an org grant as well would add a second gate that we cannot
+        // exercise here (the owner org holds no grant of its own), for no extra protection.
         projectAccessRequired: false,
       }),
       'CreateProject',
@@ -374,6 +388,11 @@ export class ZitadelClient implements ZitadelApi {
 
   async enableRoleAssertion(projectId: string): Promise<void> {
     await this.transport.post(ENDPOINTS.updateProject, { projectId, projectRoleAssertion: true });
+  }
+
+  async enableAuthorizationRequired(projectId: string): Promise<void> {
+    // Only this flag is sent: UpdateProject leaves omitted optional fields unchanged.
+    await this.transport.post(ENDPOINTS.updateProject, { projectId, authorizationRequired: true });
   }
 
   async listProjectRoles(projectId: string): Promise<string[]> {
