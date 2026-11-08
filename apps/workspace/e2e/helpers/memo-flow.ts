@@ -133,11 +133,11 @@ export async function submitMemo(page: Page): Promise<string> {
   return requestId;
 }
 
-/** The inbox row for a memo, found by its (unique) title. */
+/** The inbox row for a memo, found by its (unique) title. The inbox is a table named "Waiting approvals". */
 export const inboxRow = (page: Page, title: string) =>
   page
-    .getByRole('list', { name: 'Waiting approvals' })
-    .getByRole('listitem')
+    .getByRole('table', { name: 'Waiting approvals' })
+    .getByRole('row')
     .filter({ hasText: title });
 
 /**
