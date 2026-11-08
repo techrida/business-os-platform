@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { MeModule } from './modules/me/me.module';
+import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
+import { VerificationModule } from './modules/verification/verification.module';
 import { AuditHttpModule } from './platform/audit/audit.module';
 import { AuthModule } from './platform/auth/auth.module';
 import { AuthzModule } from './platform/authz/authz.module';
@@ -47,6 +49,8 @@ import { UsersModule } from './platform/users/users.module';
     UsersModule,
     ApprovalsHttpModule,
     TestMemoModule,
+    OpportunitiesModule,
+    VerificationModule,
   ],
 })
 export class AppModule {}
