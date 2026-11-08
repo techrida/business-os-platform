@@ -2,7 +2,7 @@
 #   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.prod.yaml --profile core --profile app up -d --wait
 #
 # P0 production is the office server reached over private network: BIND_ADDR is the server's private network IP.
-# Set AUTH_HOST, APP_HOST and API_HOST in .env to the real domains. Nothing is published except Caddy.
+# Set AUTH_HOST, APP_HOST, API_HOST and PORTAL_HOST in .env to the real domains. Nothing is published except Caddy.
 # Not verified until that server exists (no prod run happened in P0).
 #
 # Hardening still to do before real data (tracked for P1):
@@ -40,6 +40,14 @@ services:
     <<: *restart
   worker:
     <<: *restart
+  gotenberg:
+    <<: *restart
+  portal:
+    <<: *restart
+    environment:
+      # Required in prod, for the same reason as the workspace key. A separate key and id: the apps never share one.
+      SESSION_ENC_KEY: ${PORTAL_SESSION_ENC_KEY:?set PORTAL_SESSION_ENC_KEY in .env (32 random bytes, base64, from openssl rand -base64 32)}
+      SESSION_ENC_KEY_ID: ${PORTAL_SESSION_ENC_KEY_ID:?set PORTAL_SESSION_ENC_KEY_ID in .env (e.g. p1)}
   workspace:
     <<: *restart
     environment:
@@ -63,3 +71,4 @@ services:
       # In prod the apps run as containers, never on the host.
       WORKSPACE_UPSTREAM: workspace:3000
       API_UPSTREAM: api:3001
+      PORTAL_UPSTREAM: portal:3000
