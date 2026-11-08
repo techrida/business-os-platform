@@ -3,8 +3,10 @@
 //   create hands the number back;
 // - "amounts are exact and traceable": the NPR value is frozen on the row with its rate, source and date,
 //   and re-frozen when the amount or currency is edited, because approval routing compares amountNpr;
-// - "separation of duties": everyone who touched the memo (owner and editors) goes to the approval request,
-//   which refuses their approval;
+// - "separation of duties": everyone who touched the memo (owner, editors, uploaders of its attachments and
+//   the submitter) goes to the approval request, which refuses their approval;
+// - "what was approved is what was seen": the attachments are frozen into the hashed snapshot at submit, and
+//   the owner policy refuses new uploads until the memo is editable again;
 // - "no double decisions": submit and update lock the memo row (FOR UPDATE), so a second click waits and then
 //   sees the new status.
 // P2 replaces this with quotations and deletes the module; the audit rows stay.
@@ -13,11 +15,13 @@ import {
   type DocumentVersionDto,
   type MemoDto,
   type Money,
+  type Permission,
 } from '@bos/contracts';
 import { approvalRequests, scoped, testMemos } from '@bos/db';
 import { Dec } from '@bos/locale';
 import {
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -28,11 +32,12 @@ import {
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
-import { ApprovalsService } from '../approvals/requests.service';
+import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
 import { type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
+import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { NotifyService } from '../../platform/notify/notify.service';
@@ -56,6 +61,43 @@ const MEMO_SERIES = 'MEMO';
 const EDITABLE: readonly MemoRow['status'][] = ['draft', 'returned'];
 
 const iso = (d: Date): string => d.toISOString();
+
+const memoNotFound = () => new NotFoundException({ code: 'not_found', message: 'Memo not found' });
+const notAllClean = () =>
+  new ConflictException({ code: 'conflict', message: 'attachments are not all clean' });
+
+/** One attachment as the approvers saw it: the exact version and its content hash. */
+interface FrozenAttachment {
+  documentId: string;
+  versionId: string;
+  filename: string;
+  sha256: string | null;
+  detectedMime: string | null;
+}
+
+/**
+ * The attachment of each document that a submit freezes: its newest version that was not rejected, the same
+ * rule as DocumentsService.allClean. Undefined when one of them is not clean (an upload raced the submit).
+ */
+function frozenAttachments(versions: DocumentVersionDto[]): FrozenAttachment[] | undefined {
+  const latest = new Map<string, DocumentVersionDto>();
+  for (const v of versions) {
+    if (v.status === 'rejected') continue;
+    const seen = latest.get(v.documentId);
+    if (seen === undefined || v.version > seen.version) latest.set(v.documentId, v);
+  }
+  const chosen = [...latest.values()];
+  if (!chosen.every((v) => v.status === 'clean')) return undefined;
+  return chosen
+    .sort((a, b) => (a.documentId < b.documentId ? -1 : a.documentId > b.documentId ? 1 : 0))
+    .map((v) => ({
+      documentId: v.documentId,
+      versionId: v.id,
+      filename: v.filename,
+      sha256: v.sha256,
+      detectedMime: v.detectedMime,
+    }));
+}
 
 export function toMemoDto(row: MemoRow): MemoDto {
   return {
@@ -114,13 +156,23 @@ export class TestMemoService implements OnModuleInit {
    * ApprovalsService.act, which is an API route, so the worker never needs the registration.
    */
   onModuleInit(): void {
-    this.documents.registerOwner({
+    // Typed with canAttach spelled out, so this compiles whether or not the port declares the optional hook yet.
+    const policy: DocumentOwnerPolicy & {
+      canAttach(scope: TxScope, ownerId: string): Promise<boolean>;
+    } = {
       ownerType: MEMO_OWNER_TYPE,
       resource: async (scope, ownerId) => {
         const row = await this.find(this.db, scope, ownerId);
         return row === undefined ? null : memoRef(row);
       },
-    });
+      // A submitted memo is frozen for the approvers, files included: the snapshot names the exact versions,
+      // so an upload after submit would sit on the memo unseen by anyone who approved it.
+      canAttach: async (scope, ownerId) => {
+        const row = await this.find(this.db, scope, ownerId);
+        return row !== undefined && EDITABLE.includes(row.status);
+      },
+    };
+    this.documents.registerOwner(policy);
     this.approvals.registerSubject({
       documentType: MEMO_OWNER_TYPE,
       onDecided: (tx, documentId, outcome) => this.onDecided(tx, documentId, outcome),
@@ -170,9 +222,9 @@ export class TestMemoService implements OnModuleInit {
 
   async get(id: string): Promise<MemoDetailDto> {
     const { scope } = this.caller.current();
-    // 404 before authz: a memo of another org is invisible, not forbidden.
+    // A memo of another org, or one outside the caller's scope, is invisible, not forbidden.
     const row = await this.require(this.db, scope, id);
-    this.authz.assert('memo.read', memoRef(row));
+    this.assertVisible('memo.read', row);
     const attachments: DocumentVersionDto[] = await this.documents.listForOwner(
       scope,
       MEMO_OWNER_TYPE,
@@ -188,8 +240,8 @@ export class TestMemoService implements OnModuleInit {
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
-      // Permission first (403), then state (409): someone who may not edit learns nothing about the status.
-      this.authz.assert('memo.update', memoRef(row));
+      // Scope first (404), then state (409): someone who may not edit learns nothing about the status.
+      this.assertVisible('memo.update', row);
       this.assertEditable(row);
 
       const money: Money = {
@@ -226,19 +278,31 @@ export class TestMemoService implements OnModuleInit {
   // ------------------------------------------------------------------------------------------------ submit
 
   async submit(id: string): Promise<SubmitMemoResult> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     const result = await withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
-      this.authz.assert('memo.update', memoRef(row));
+      this.assertVisible('memo.update', row);
       this.assertEditable(row);
       // allClean reads committed document rows: a scan that finishes after this point only makes a file
       // clean sooner, and an upload that starts after it belongs to the next submit.
-      if (!(await this.documents.allClean(scope, MEMO_OWNER_TYPE, id))) {
-        throw new ConflictException({ code: 'conflict', message: 'attachments are not all clean' });
-      }
+      if (!(await this.documents.allClean(scope, MEMO_OWNER_TYPE, id))) throw notAllClean();
+      // A second read for the snapshot: an upload that committed between the two reads must not be frozen
+      // unscanned, so the same rule is applied again to exactly the versions that get frozen.
+      const versions = await this.documents.listForOwner(scope, MEMO_OWNER_TYPE, id);
+      const attachments = frozenAttachments(versions);
+      if (attachments === undefined) throw notAllClean();
 
-      const submitted = await this.approvals.submit(tx, {
+      // Route on the rate of the submit day, not the draft day: a draft kept for a week must not dodge the
+      // management step because the rate moved. Inside the lock, so the stored value is the one routed on.
+      const snap = await this.money.toNprSnapshot(
+        tx,
+        scope,
+        { amount: row.amount, currency: row.currency as Money['currency'] },
+        now,
+      );
+
+      const input: SubmitInput & { submittedByUserId: string } = {
         documentType: MEMO_OWNER_TYPE,
         documentId: row.id,
         documentNumber: row.number,
@@ -250,22 +314,44 @@ export class TestMemoService implements OnModuleInit {
           body: row.body,
           amount: row.amount,
           currency: row.currency,
-          amountNpr: row.amountNpr,
-          fxRate: new Dec(row.fxRate).toFixed(),
-          fxSource: row.fxSource,
-          fxDate: row.fxDate,
+          amountNpr: snap.amountNpr,
+          fxRate: snap.rate,
+          fxSource: snap.rateSource,
+          fxDate: snap.rateDate,
           ownerUserId: row.ownerUserId,
           customerOrganizationId: row.customerOrganizationId,
           memoVersion: row.version,
+          attachments,
         },
         // The router compares this decimal string with decimal.js (never a float).
-        facts: { amountNpr: row.amountNpr },
+        facts: { amountNpr: snap.amountNpr },
         requesterUserId: row.ownerUserId,
-        sodUserIds: [...new Set([row.ownerUserId, ...row.editorUserIds])],
-      });
+        // Whoever shaped what the approvers see: the owner, every editor, everyone who uploaded a version
+        // (even a rejected one), and the person pressing submit (a founder may submit a colleague's memo).
+        sodUserIds: [
+          ...new Set([
+            row.ownerUserId,
+            ...row.editorUserIds,
+            principal.userId,
+            ...versions.flatMap((v) => (v.uploadedBy === null ? [] : [v.uploadedBy])),
+          ]),
+        ],
+        // The actor of the submit action. Declared as an extra field so this compiles before the approvals
+        // engine reads it; until then the engine records the requester as the submitter.
+        submittedByUserId: principal.userId,
+      };
+      const submitted = await this.approvals.submit(tx, input);
       await tx
         .update(testMemos)
-        .set({ status: 'submitted', version: row.version + 1, updatedAt: now })
+        .set({
+          status: 'submitted',
+          amountNpr: snap.amountNpr,
+          fxRate: snap.rate,
+          fxSource: snap.rateSource,
+          fxDate: snap.rateDate,
+          version: row.version + 1,
+          updatedAt: now,
+        })
         .where(scoped(scope).where(testMemos, eq(testMemos.id, id)));
       return submitted;
     });
@@ -310,6 +396,24 @@ export class TestMemoService implements OnModuleInit {
 
   // ----------------------------------------------------------------------------------------------- helpers
 
+  /**
+   * Record-level authz that answers 404, not 403, for a memo outside the caller's scope: a 403 would confirm
+   * that a guessed id exists. Other denials (no grant at all, inactive user) say nothing about the record, so
+   * they stay 403.
+   */
+  private assertVisible(action: Permission, row: MemoRow): void {
+    try {
+      this.authz.assert(action, memoRef(row));
+    } catch (error) {
+      const reason =
+        error instanceof ForbiddenException
+          ? (error.getResponse() as { reason?: unknown }).reason
+          : undefined;
+      if (reason === 'out_of_scope') throw memoNotFound();
+      throw error;
+    }
+  }
+
   private assertEditable(row: MemoRow): void {
     if (!EDITABLE.includes(row.status)) {
       throw new ConflictException({
@@ -329,8 +433,7 @@ export class TestMemoService implements OnModuleInit {
 
   private async require(q: Q, scope: TxScope, id: string): Promise<MemoRow> {
     const row = await this.find(q, scope, id);
-    if (row === undefined)
-      throw new NotFoundException({ code: 'not_found', message: 'Memo not found' });
+    if (row === undefined) throw memoNotFound();
     return row;
   }
 
@@ -341,8 +444,7 @@ export class TestMemoService implements OnModuleInit {
       .from(testMemos)
       .where(scoped(scope).where(testMemos, eq(testMemos.id, id)))
       .for('update');
-    if (row === undefined)
-      throw new NotFoundException({ code: 'not_found', message: 'Memo not found' });
+    if (row === undefined) throw memoNotFound();
     return row;
   }
 
