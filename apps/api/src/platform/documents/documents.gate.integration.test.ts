@@ -15,7 +15,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { organizations, runMigrations, tenants } from '@bos/db';
+import { createTenantWithEntity, runMigrations } from '@bos/db';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -114,21 +114,9 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
   db = drizzle({ client: pool });
 
-  const [tenant] = await db.insert(tenants).values({}).returning({ id: tenants.id });
-  if (tenant === undefined) throw new Error('no tenant');
-  const orgId = randomUUID();
-  current.scope = { tenantId: tenant.id, organizationId: orgId };
+  const { tenantId, organizationId } = await createTenantWithEntity(pool);
+  current.scope = { tenantId, organizationId };
   current.actor = { kind: 'user', id: USER, correlationId: 'test-correlation' };
-  await withTx(db, current.scope, current.actor, (tx) =>
-    tx.insert(organizations).values({
-      id: orgId,
-      tenantId: tenant.id,
-      organizationId: orgId,
-      kind: 'staff',
-      name: 'Test staff org',
-      zitadelOrgId: `zitadel-${orgId}`,
-    }),
-  );
 
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-docs-gate-'));
   storage = new DiskStorageAdapter(storageRoot);
