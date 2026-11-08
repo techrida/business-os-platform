@@ -95,8 +95,17 @@ export function getLead(session: Session, id: string) {
   return call(session, `/v1/leads/${seg(id)}`, LeadDtoSchema);
 }
 
-export function createLead(session: Session, body: CreateLeadBody) {
-  return call(session, '/v1/leads', LeadDtoSchema, json('POST', body));
+/**
+ * The API dedupes on the `idempotency-key` header, so a double click or a retry after a timeout
+ * creates one lead, not two.
+ */
+export function createLead(session: Session, body: CreateLeadBody, idempotencyKey: string) {
+  return call(
+    session,
+    '/v1/leads',
+    LeadDtoSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
 }
 
 /** ASSUMED: the stage route answers the updated lead. */

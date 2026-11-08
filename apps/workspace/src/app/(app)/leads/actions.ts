@@ -13,6 +13,7 @@ import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/a
 import { convertLead, createLead } from '@/components/p2/crm/crm-api';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
 import { parseConvert, parseLead } from '@/components/p2/crm/forms';
+import { keyOf, nextKey } from '@/components/p2/crm/idempotency';
 import type { ConvertState, FormState, MoveState } from '@/components/p2/crm/types';
 
 /**
@@ -27,14 +28,15 @@ export async function moveLeadStageAction(_prev: MoveState, form: FormData): Pro
 export async function createLeadAction(_prev: FormState, form: FormData): Promise<FormState> {
   const session = await requireStaffSession('/leads/new');
   const values = echo(form);
+  const key = keyOf(form);
   const parsed = parseLead(form);
-  if (!parsed.ok) return { values, fieldErrors: parsed.fieldErrors };
+  if (!parsed.ok) return { values, fieldErrors: parsed.fieldErrors, key };
 
   let id: string;
   try {
-    id = (await createLead(session, parsed.data)).id;
+    id = (await createLead(session, parsed.data, key)).id;
   } catch (err) {
-    return { values, fieldErrors: {}, error: failureOf(err).message };
+    return { values, fieldErrors: {}, error: failureOf(err).message, key: nextKey(err, key) };
   }
   revalidatePath('/leads');
   redirect(`/leads/${id}`);

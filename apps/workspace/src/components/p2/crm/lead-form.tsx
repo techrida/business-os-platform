@@ -36,9 +36,12 @@ const EMPTY: Record<string, string> = {
 export function LeadForm({
   action,
   sources,
+  idempotencyKey,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
+  /** Made once per page render on the server; the action hands back the key the next try uses. */
+  idempotencyKey: string;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, {
     values: EMPTY,
@@ -60,6 +63,8 @@ export function LeadForm({
 
   return (
     <form action={formAction} noValidate className={styles.form}>
+      <input type="hidden" name="idempotencyKey" value={state.key ?? idempotencyKey} />
+
       {state.error ? (
         <Alert ref={summary} tabIndex={-1} tone="error" role="alert">
           {state.error}
