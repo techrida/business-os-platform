@@ -6,8 +6,9 @@ import type { RoleKey } from '@bos/contracts';
 import type { Db, DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
 import {
+  type IdpOrgRow,
   type ListedUser,
-  type OrgRow,
+  type MembershipRow,
   type Queryable,
   type UserFields,
   type UserRow,
@@ -17,8 +18,12 @@ import {
 import type { ZitadelAdminClient, ZitadelUser, ZitadelUserPage } from './zitadel-admin.client';
 
 export const TENANT = '00000000-0000-4000-8000-000000000001';
+/** The tenant's default legal entity (ADR 0027): bootstrap memberships land here. */
 export const STAFF_ORG = '00000000-0000-4000-8000-0000000000aa';
+export const STAFF_IDP = '00000000-0000-4000-8000-0000000001aa';
 export const STAFF_ZORG = 'z-staff';
+export const CUST_IDP = '00000000-0000-4000-8000-0000000001cc';
+export const CUST_ZORG = 'z-customer';
 
 /** Counts the transactions withTx opened, so a test can see that writes went through it. */
 export function fakeDb(): Db & { txCount: number } {
@@ -34,8 +39,13 @@ export function fakeDb(): Db & { txCount: number } {
 }
 
 export class FakeUsersStore extends UsersStore {
-  orgs: OrgRow[] = [{ tenantId: TENANT, organizationId: STAFF_ORG, zitadelOrgId: STAFF_ZORG }];
+  orgs: IdpOrgRow[] = [
+    { idpOrgId: STAFF_IDP, tenantId: TENANT, zitadelOrgId: STAFF_ZORG, kind: 'staff' },
+    { idpOrgId: CUST_IDP, tenantId: TENANT, zitadelOrgId: CUST_ZORG, kind: 'customer' },
+  ];
+  defaultEntities = new Map<string, string>([[TENANT, STAFF_ORG]]);
   users: UserRow[] = [];
+  memberships: (MembershipRow & { tenantId: string; userId: string })[] = [];
   roles = new Map<string, RoleKey[]>();
   events = new Set<string>();
   cursors = new Map<string, string>();
@@ -43,14 +53,22 @@ export class FakeUsersStore extends UsersStore {
   scope: TxScope = { tenantId: TENANT, organizationId: STAFF_ORG };
   private seq = 0;
 
-  orgByZitadelId(z: string) {
+  idpOrgByZitadelId(z: string) {
     return Promise.resolve(this.orgs.find((o) => o.zitadelOrgId === z) ?? null);
   }
-  orgById(id: string) {
-    return Promise.resolve(this.orgs.find((o) => o.organizationId === id) ?? null);
+  idpOrgById(id: string) {
+    return Promise.resolve(this.orgs.find((o) => o.idpOrgId === id) ?? null);
   }
-  listOrgs() {
-    return Promise.resolve([...this.orgs]);
+  staffIdpOrgOf(tenantId: string) {
+    return Promise.resolve(
+      this.orgs.find((o) => o.tenantId === tenantId && o.kind === 'staff') ?? null,
+    );
+  }
+  listStaffIdpOrgs() {
+    return Promise.resolve(this.orgs.filter((o) => o.kind === 'staff'));
+  }
+  defaultEntityOf(tenantId: string) {
+    return Promise.resolve(this.defaultEntities.get(tenantId) ?? null);
   }
   txScope() {
     return Promise.resolve(this.scope);
@@ -60,9 +78,7 @@ export class FakeUsersStore extends UsersStore {
   }
   findById(_q: Queryable, s: TxScope, id: string) {
     return Promise.resolve(
-      this.users.find(
-        (u) => u.id === id && u.tenantId === s.tenantId && u.organizationId === s.organizationId,
-      ) ?? null,
+      this.users.find((u) => u.id === id && u.tenantId === s.tenantId) ?? null,
     );
   }
   insertUser(_tx: DbTransaction, s: TxScope, u: UserFields) {
@@ -70,20 +86,46 @@ export class FakeUsersStore extends UsersStore {
     if (existing) return Promise.resolve(existing.id);
     this.seq += 1;
     const id = `00000000-0000-4000-9000-${String(this.seq).padStart(12, '0')}`;
-    this.users.push({ id, ...s, ...u, departmentId: null });
+    this.users.push({ id, tenantId: s.tenantId, ...u });
     return Promise.resolve(id);
   }
-  updateUser(_tx: DbTransaction, id: string, u: Omit<UserFields, 'zitadelUserId'>) {
+  updateUser(_tx: DbTransaction, id: string, u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>) {
     const row = this.users.find((x) => x.id === id);
     if (row) Object.assign(row, u);
     return Promise.resolve();
   }
-  notInactiveInOrg(_q: Queryable, s: TxScope) {
+  notInactiveInIdpOrg(_q: Queryable, o: IdpOrgRow) {
     return Promise.resolve(
-      this.users.filter((u) => u.organizationId === s.organizationId && u.status !== 'inactive'),
+      this.users.filter((u) => u.idpOrgId === o.idpOrgId && u.status !== 'inactive'),
     );
   }
-  rolesOf(_q: Queryable, id: string) {
+  membershipsOf(_q: Queryable, tenantId: string, userId: string): Promise<MembershipRow[]> {
+    return Promise.resolve(
+      this.memberships
+        .filter((m) => m.tenantId === tenantId && m.userId === userId)
+        .map(({ organizationId, isDefault, roleKeys, departmentId }) => ({
+          organizationId,
+          isDefault,
+          roleKeys,
+          departmentId,
+        })),
+    );
+  }
+  ensureDefaultMembership(_tx: DbTransaction, tenantId: string, entityId: string, userId: string) {
+    if (this.memberships.some((m) => m.tenantId === tenantId && m.userId === userId)) {
+      return Promise.resolve(false);
+    }
+    this.memberships.push({
+      tenantId,
+      userId,
+      organizationId: entityId,
+      isDefault: true,
+      roleKeys: null,
+      departmentId: null,
+    });
+    return Promise.resolve(true);
+  }
+  rolesOf(_q: Queryable, _tenantId: string, id: string) {
     return Promise.resolve([...(this.roles.get(id) ?? [])].sort());
   }
   replaceRoles(_tx: DbTransaction, _s: TxScope, id: string, roles: readonly RoleKey[]) {
@@ -99,9 +141,15 @@ export class FakeUsersStore extends UsersStore {
       this.users
         .filter(
           (u) =>
-            u.organizationId === s.organizationId &&
+            u.tenantId === s.tenantId &&
             u.status === 'active' &&
-            (this.roles.get(u.id) ?? []).includes(role),
+            (this.roles.get(u.id) ?? []).includes(role) &&
+            this.memberships.some(
+              (m) =>
+                m.userId === u.id &&
+                m.organizationId === s.organizationId &&
+                (m.roleKeys === null || m.roleKeys.includes(role)),
+            ),
         )
         .map((u) => u.id),
     );
@@ -112,7 +160,11 @@ export class FakeUsersStore extends UsersStore {
   list(s: TxScope): Promise<ListedUser[]> {
     return Promise.resolve(
       this.users
-        .filter((u) => u.organizationId === s.organizationId)
+        .filter(
+          (u) =>
+            u.tenantId === s.tenantId &&
+            this.orgs.some((o) => o.idpOrgId === u.idpOrgId && o.kind === 'staff'),
+        )
         .map((u) => ({ ...u, roles: this.roles.get(u.id) ?? [] })),
     );
   }
