@@ -50,7 +50,9 @@ export default async function QuotationPage({
 
   const today = todayInKathmandu();
   const { responded } = await searchParams;
-  const confirmation = typeof responded === 'string' ? RESPONDED[responded] : undefined;
+  // Only when the status agrees: the query string alone is not proof, and anyone can send the link.
+  const confirmation =
+    typeof responded === 'string' && responded === view.status ? RESPONDED[responded] : undefined;
 
   return (
     <main className={styles.main}>
