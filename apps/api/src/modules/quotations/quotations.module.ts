@@ -1,5 +1,6 @@
 // Quotations module (P2 unit Q1, skeleton): it registers how the files of a quotation version are authorized,
-// with the documents module, and provides PricingService. Controllers, the drafting service and the render job
+// with the documents module, provides PricingService and serves the reference lists (tax codes, payment terms).
+// The drafting controller, the drafting service and the render job
 // join it in later parts. Imports DocumentsModule for DocumentsService and SettingsModule for MoneyService
 // (PricingService's FX snapshot); the database is global. Only AppModule imports this module.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
@@ -10,10 +11,14 @@ import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { PricingService } from './pricing/pricing.service';
 import { drizzleHeadLoader, QuotationOwnerPolicy } from './quotation-owner.policy';
+import { ReferenceCaller } from './reference/reference.caller';
+import { ReferenceController } from './reference/reference.controller';
+import { ReferenceService } from './reference/reference.service';
 
 @Module({
   imports: [DocumentsModule, SettingsModule],
-  providers: [PricingService],
+  controllers: [ReferenceController],
+  providers: [PricingService, ReferenceCaller, ReferenceService],
   exports: [PricingService],
 })
 export class QuotationsModule implements OnModuleInit {
