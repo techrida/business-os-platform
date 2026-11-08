@@ -61,6 +61,26 @@ export const ENDPOINTS = {
 
   // OIDC token endpoint (standard, not a ZITADEL API).
   token: '/oauth/v2/token',
+
+  // ---- P1 additions (U6b). Every path below is UNVERIFIED (P1-PLAN section 3) until the lead's
+  // live probe; the REST-style paths are plain HTTP verbs, not Connect `POST /<pkg>.<Service>/<Method>`.
+  // user v2 REST
+  registerTotp: (userId: string) => `/v2/users/${encodeURIComponent(userId)}/totp`,
+  verifyTotp: (userId: string) => `/v2/users/${encodeURIComponent(userId)}/totp/verify`,
+  listAuthMethods: (userId: string) =>
+    `/v2/users/${encodeURIComponent(userId)}/authentication_methods`,
+  deactivateUser: (userId: string) => `/v2/users/${encodeURIComponent(userId)}/deactivate`,
+  // admin v1 REST
+  loginPolicy: '/admin/v1/policies/login',
+  loginSecondFactors: '/admin/v1/policies/login/second_factors',
+  oidcSettings: '/admin/v1/settings/oidc',
+  // management v1 REST
+  pats: (userId: string) => `/management/v1/users/${encodeURIComponent(userId)}/pats`,
+  searchPats: (userId: string) => `/management/v1/users/${encodeURIComponent(userId)}/pats/_search`,
+  // actions v2 REST
+  targets: '/v2/actions/targets',
+  searchTargets: '/v2/actions/targets/search',
+  executions: '/v2/actions/executions',
 } as const;
 
 /** Thrown for any non-2xx answer. The message never contains the PAT or a request body. */
@@ -68,7 +88,8 @@ export class ZitadelError extends Error {
   constructor(
     readonly path: string,
     readonly status: number,
-    detail: string,
+    /** The server's `code message` (or truncated text). Callers match on this, not on `message`, so the path never produces a false hit. */
+    readonly detail: string,
   ) {
     super(`ZITADEL ${path} answered ${status}: ${detail}`);
     this.name = 'ZitadelError';
@@ -77,9 +98,12 @@ export class ZitadelError extends Error {
 
 export interface Transport {
   post(path: string, body: unknown, headers?: Record<string, string>): Promise<unknown>;
-  /** REST only (management v1 has no Connect endpoints, so reads there are plain GETs). */
+  /**
+   * REST only: management v1 has no Connect endpoints, so reads there are plain GETs; P1 adds
+   * admin v1 and user v2 reads.
+   */
   get(path: string, headers?: Record<string, string>): Promise<unknown>;
-  /** REST only. */
+  /** REST only (management v1, admin v1 and actions v2 replace-style writes). */
   put(path: string, body: unknown, headers?: Record<string, string>): Promise<unknown>;
 }
 
@@ -91,6 +115,7 @@ export function createFetchTransport(
   fetchImpl: typeof fetch = fetch,
 ): Transport {
   const base = baseUrl.replace(/\/+$/, '');
+  // One code path for every verb, so the PAT handling and error shaping cannot drift apart.
   const send = async (
     method: 'GET' | 'POST' | 'PUT',
     path: string,
@@ -105,6 +130,7 @@ export function createFetchTransport(
         authorization: `Bearer ${pat}`,
         ...headers,
       },
+      // A GET carries no body: fetch rejects one, and the REST gateway would ignore it anyway.
       ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
     });
     const text = await res.text();
@@ -235,6 +261,113 @@ export interface ZitadelApi {
 }
 
 // ---------------------------------------------------------------------------------------------
+// P1 additions (U6b): MFA, login policy, token lifetime, PATs, Actions v2 and user retirement.
+//
+// A separate interface (not more members on `ZitadelApi`) so the P0 fakes that implement
+// `ZitadelApi` keep compiling. The seed's `index.ts` takes `ZitadelApi & ZitadelP1Api`.
+// `listOrgMemberRoles` (needed to check ORG_OWNER) and the user-grant calls
+// (`findAuthorization` / `createAuthorization` / `updateAuthorization`) already exist on
+// `ZitadelApi`, so they are not repeated here.
+
+/** Loose on purpose: ZITADEL adds fields, and an update must send back every field it read. */
+export type LoginPolicy = Record<string, unknown> & {
+  forceMfa?: boolean;
+  forceMfaLocalOnly?: boolean;
+  mfaInitSkipLifetime?: string;
+  passwordlessType?: string;
+};
+export type OidcSettings = Record<string, unknown> & {
+  accessTokenLifetime?: string;
+  idTokenLifetime?: string;
+  refreshTokenIdleExpiration?: string;
+  refreshTokenExpiration?: string;
+};
+export type SecondFactorType =
+  | 'SECOND_FACTOR_TYPE_OTP'
+  | 'SECOND_FACTOR_TYPE_U2F'
+  | 'SECOND_FACTOR_TYPE_OTP_EMAIL'
+  | 'SECOND_FACTOR_TYPE_OTP_SMS';
+/** The login-policy values U6 wants: MFA required for everyone, never skippable. */
+export const FORCE_MFA_POLICY: LoginPolicy = {
+  forceMfa: true,
+  forceMfaLocalOnly: false,
+  mfaInitSkipLifetime: '0s',
+};
+export interface TotpRegistration {
+  /** `otpauth://totp/...` URI (what a QR code encodes). */
+  uri: string;
+  /** Base32 secret; feed it to `totpCode()`. Secret material: never log it. */
+  secret: string;
+}
+export interface PatInfo {
+  id: string;
+  /** RFC 3339 timestamp, absent when the PAT never expires. */
+  expirationDate?: string;
+}
+export interface CreatedPat {
+  tokenId: string;
+  /** The token itself, only ever returned here. Never log it. */
+  token: string;
+}
+export interface TargetSpec {
+  name: string;
+  endpoint: string;
+  timeout: string;
+  /** Fire-and-forget delivery: ZITADEL does not wait for or check the answer. */
+  restAsync: Record<string, never>;
+}
+export interface TargetInfo {
+  id: string;
+  name: string;
+  endpoint: string;
+}
+export interface CreatedTarget {
+  id: string;
+  /** HMAC key for `ZITADEL-Signature`, only returned on create or update. Never log it. */
+  signingKey: string;
+}
+/** The `condition` object of `SetExecution`, e.g. `{ event: { group: 'user' } }`. */
+export type ExecutionCondition = Record<string, unknown>;
+
+export interface ZitadelP1Api {
+  /** User v2 `POST /v2/users/{userId}/totp`: starts an authenticator registration. */
+  registerTotp(userId: string): Promise<TotpRegistration>;
+  /** User v2 `POST /v2/users/{userId}/totp/verify` `{ code }`: completes the registration. */
+  verifyTotpRegistration(userId: string, code: string): Promise<void>;
+  /** User v2 `GET /v2/users/{userId}/authentication_methods`; TOTP is `AUTHENTICATION_METHOD_TYPE_TOTP`. */
+  listAuthMethods(userId: string): Promise<string[]>;
+
+  /** Admin v1 `GET /admin/v1/policies/login`. */
+  getLoginPolicy(): Promise<LoginPolicy>;
+  /** Admin v1 `PUT /admin/v1/policies/login` with the current policy merged with `patch`. True when a write happened, false when nothing differed. */
+  updateLoginPolicy(patch: LoginPolicy): Promise<boolean>;
+  /** Admin v1 `POST /admin/v1/policies/login/second_factors`. True when added, false when it already existed. */
+  addSecondFactor(type: SecondFactorType): Promise<boolean>;
+
+  /** Admin v1 `GET /admin/v1/settings/oidc`. */
+  getOidcSettings(): Promise<OidcSettings>;
+  /** Admin v1 `PUT /admin/v1/settings/oidc` with the current settings merged with `patch`. True when a write happened. */
+  updateOidcSettings(patch: OidcSettings): Promise<boolean>;
+
+  /** Management v1 `POST /management/v1/users/{userId}/pats`. `orgId` adds `x-zitadel-orgid`. */
+  addPat(userId: string, expirationDate: string, orgId?: string): Promise<CreatedPat>;
+  /** Management v1 `POST /management/v1/users/{userId}/pats/_search`. */
+  listPats(userId: string, orgId?: string): Promise<PatInfo[]>;
+
+  /** Actions v2 `POST /v2/actions/targets`. */
+  createTarget(spec: TargetSpec): Promise<CreatedTarget>;
+  /** Actions v2 `POST /v2/actions/targets/search`. The signing key is not part of the answer. */
+  listTargets(): Promise<TargetInfo[]>;
+  /** Actions v2 `PUT /v2/actions/executions` `{ condition, targets }` (replaces the target list). */
+  setExecution(condition: ExecutionCondition, targetIds: string[]): Promise<void>;
+  /** Tries the user-event condition shapes in order; returns the one ZITADEL accepted. */
+  setUserEventExecution(targetId: string): Promise<ExecutionCondition>;
+
+  /** User v2 `POST /v2/users/{userId}/deactivate`. True when deactivated, false when it already was. */
+  deactivateUser(userId: string): Promise<boolean>;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Response parsing. Protobuf JSON omits empty arrays and false booleans, so default them.
 
 const Str = z.string();
@@ -340,6 +473,21 @@ const CARRY_OVER = [
   'forceMfaLocalOnly',
 ] as const;
 const TokenResponse = z.object({ access_token: Str.min(1) });
+const TotpRegistrationResponse = z.object({ uri: Str.min(1), secret: Str.min(1) });
+const AuthMethodList = z.object({ authMethodTypes: z.array(Str).default([]) });
+// The instance (admin v1) login policy, kept as a plain record; the org (management v1) one above is typed.
+const AdminLoginPolicyResponse = z.object({ policy: z.record(z.string(), z.unknown()) });
+const OidcSettingsResponse = z.object({ settings: z.record(z.string(), z.unknown()) });
+const CreatePatResponse = z.object({ tokenId: Str.min(1), token: Str.min(1) });
+const PatList = z.object({
+  result: z.array(z.object({ id: Str.min(1), expirationDate: Str.optional() })).default([]),
+});
+const CreateTargetResponse = z.object({ id: Str.min(1), signingKey: Str.min(1) });
+const TargetList = z.object({
+  targets: z
+    .array(z.object({ id: Str.min(1), name: Str.default(''), endpoint: Str.default('') }))
+    .default([]),
+});
 
 function parse<S extends z.ZodType>(schema: S, data: unknown, what: string): z.infer<S> {
   const result = schema.safeParse(data);
@@ -361,7 +509,52 @@ export interface ClientOptions {
   projectionWaitMs?: number;
 }
 
-export class ZitadelClient implements ZitadelApi {
+/** Read-only fields of the admin v1 GET answers; a PUT must not echo them back. */
+const READ_ONLY_FIELDS = ['details', 'isDefault'];
+
+/** Protobuf JSON omits false booleans and zero durations, so "missing" can mean `false` or `0s`. */
+function sameValue(current: unknown, wanted: unknown): boolean {
+  if (current === undefined) return wanted === false || wanted === '0s';
+  return current === wanted;
+}
+
+/** Merge `patch` over what ZITADEL returned, so fields the seed does not manage survive. */
+function mergeSettings<T extends Record<string, unknown>>(
+  current: Record<string, unknown>,
+  patch: T,
+): { next: Record<string, unknown>; changed: boolean } {
+  const next: Record<string, unknown> = { ...current };
+  for (const field of READ_ONLY_FIELDS) delete next[field];
+  const changed = Object.entries(patch).some(([key, value]) => !sameValue(current[key], value));
+  return { next: { ...next, ...patch }, changed };
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    error instanceof ZitadelError &&
+    (error.status === 409 || /already[\s_-]?exists?/i.test(error.detail))
+  );
+}
+
+function isAlreadyDeactivated(error: unknown): boolean {
+  return (
+    error instanceof ZitadelError &&
+    [400, 409, 412].includes(error.status) &&
+    /already|inactive|deactivated/i.test(error.detail)
+  );
+}
+
+/**
+ * Event conditions to try for "any user event", most specific first. The Actions v2 reference
+ * does not pin the shape (P1-PLAN section 3), so the seed asks the server instead of guessing.
+ */
+const USER_EVENT_CONDITIONS: readonly ExecutionCondition[] = [
+  { event: { group: 'user' } },
+  { event: { event: 'user.human.added' } },
+  { event: { all: true } },
+];
+
+export class ZitadelClient implements ZitadelApi, ZitadelP1Api {
   private readonly transport: Transport;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -737,6 +930,175 @@ export class ZitadelClient implements ZitadelApi {
       'AddEmailProviderSMTP',
     );
     await this.transport.post(ENDPOINTS.activateEmailProvider(added.id), {});
+    return true;
+  }
+
+  // ---- P1 additions (U6b). Every method below is UNVERIFIED (P1-PLAN section 3): no path here
+  // is confirmed in facts/zitadel-api.md, so the lead's live probe is what proves them.
+
+  /** POST /v2/users/{userId}/totp. UNVERIFIED (P1-PLAN §3). */
+  async registerTotp(userId: string): Promise<TotpRegistration> {
+    return parse(
+      TotpRegistrationResponse,
+      await this.transport.post(ENDPOINTS.registerTotp(userId), {}),
+      'RegisterTOTP',
+    );
+  }
+
+  /** POST /v2/users/{userId}/totp/verify with `{ code }`. UNVERIFIED (P1-PLAN §3). */
+  async verifyTotpRegistration(userId: string, code: string): Promise<void> {
+    await this.transport.post(ENDPOINTS.verifyTotp(userId), { code });
+  }
+
+  /** GET /v2/users/{userId}/authentication_methods. UNVERIFIED (P1-PLAN §3). */
+  async listAuthMethods(userId: string): Promise<string[]> {
+    return parse(
+      AuthMethodList,
+      await this.transport.get(ENDPOINTS.listAuthMethods(userId)),
+      'ListAuthenticationMethodTypes',
+    ).authMethodTypes;
+  }
+
+  /** GET /admin/v1/policies/login. UNVERIFIED (P1-PLAN §3). */
+  async getLoginPolicy(): Promise<LoginPolicy> {
+    return parse(
+      AdminLoginPolicyResponse,
+      await this.transport.get(ENDPOINTS.loginPolicy),
+      'GetLoginPolicy',
+    ).policy;
+  }
+
+  /**
+   * PUT /admin/v1/policies/login. UNVERIFIED (P1-PLAN §3).
+   * The PUT replaces the whole policy, so the current one is read first and `patch` merged over
+   * it; otherwise changing `forceMfa` would silently reset every other login setting.
+   * Skips the write when nothing differs (ZITADEL answers "not changed" with an error).
+   */
+  async updateLoginPolicy(patch: LoginPolicy): Promise<boolean> {
+    const current = await this.getLoginPolicy();
+    const { next, changed } = mergeSettings(current, patch);
+    if (!changed) return false;
+    try {
+      await this.transport.put(ENDPOINTS.loginPolicy, next);
+    } catch (error) {
+      if (error instanceof ZitadelError && /not\s+changed|no\s+changes/i.test(error.detail))
+        return false;
+      throw error;
+    }
+    return true;
+  }
+
+  /** POST /admin/v1/policies/login/second_factors. "Already exists" is success. UNVERIFIED (P1-PLAN §3). */
+  async addSecondFactor(type: SecondFactorType): Promise<boolean> {
+    try {
+      await this.transport.post(ENDPOINTS.loginSecondFactors, { type });
+    } catch (error) {
+      if (isAlreadyExists(error)) return false;
+      throw error;
+    }
+    return true;
+  }
+
+  /** GET /admin/v1/settings/oidc. UNVERIFIED (P1-PLAN §3). */
+  async getOidcSettings(): Promise<OidcSettings> {
+    return parse(
+      OidcSettingsResponse,
+      await this.transport.get(ENDPOINTS.oidcSettings),
+      'GetOIDCSettings',
+    ).settings;
+  }
+
+  /**
+   * PUT /admin/v1/settings/oidc. UNVERIFIED (P1-PLAN §3).
+   * Merged over the current settings so the other lifetimes stay as they are.
+   */
+  async updateOidcSettings(patch: OidcSettings): Promise<boolean> {
+    const current = await this.getOidcSettings();
+    const { next, changed } = mergeSettings(current, patch);
+    if (!changed) return false;
+    await this.transport.put(ENDPOINTS.oidcSettings, next);
+    return true;
+  }
+
+  /** POST /management/v1/users/{userId}/pats. UNVERIFIED (P1-PLAN §3). */
+  async addPat(userId: string, expirationDate: string, orgId?: string): Promise<CreatedPat> {
+    return parse(
+      CreatePatResponse,
+      await this.transport.post(
+        ENDPOINTS.pats(userId),
+        { expirationDate },
+        orgId ? { 'x-zitadel-orgid': orgId } : undefined,
+      ),
+      'AddPersonalAccessToken',
+    );
+  }
+
+  /** POST /management/v1/users/{userId}/pats/_search. UNVERIFIED (P1-PLAN §3). */
+  async listPats(userId: string, orgId?: string): Promise<PatInfo[]> {
+    const res = parse(
+      PatList,
+      await this.transport.post(
+        ENDPOINTS.searchPats(userId),
+        {},
+        orgId ? { 'x-zitadel-orgid': orgId } : undefined,
+      ),
+      'ListPersonalAccessTokens',
+    );
+    return res.result.map((p) => ({
+      id: p.id,
+      ...(p.expirationDate === undefined ? {} : { expirationDate: p.expirationDate }),
+    }));
+  }
+
+  /** POST /v2/actions/targets. UNVERIFIED (P1-PLAN §3). */
+  async createTarget(spec: TargetSpec): Promise<CreatedTarget> {
+    return parse(
+      CreateTargetResponse,
+      await this.transport.post(ENDPOINTS.targets, spec),
+      'CreateTarget',
+    );
+  }
+
+  /** POST /v2/actions/targets/search. UNVERIFIED (P1-PLAN §3). */
+  async listTargets(): Promise<TargetInfo[]> {
+    return parse(TargetList, await this.transport.post(ENDPOINTS.searchTargets, {}), 'ListTargets')
+      .targets;
+  }
+
+  /** PUT /v2/actions/executions with `{ condition, targets }`. UNVERIFIED (P1-PLAN §3). */
+  async setExecution(condition: ExecutionCondition, targetIds: string[]): Promise<void> {
+    await this.transport.put(ENDPOINTS.executions, { condition, targets: targetIds });
+  }
+
+  /**
+   * PUT /v2/actions/executions, once per candidate condition shape. UNVERIFIED (P1-PLAN §3).
+   * Stops at the first 2xx and returns that shape, so the seed can log which one this ZITADEL
+   * version takes. Only "bad request" answers move on to the next shape: a 401/403/5xx is not
+   * about the shape, so it is thrown straight away.
+   */
+  async setUserEventExecution(targetId: string): Promise<ExecutionCondition> {
+    const rejected: string[] = [];
+    for (const condition of USER_EVENT_CONDITIONS) {
+      try {
+        await this.setExecution(condition, [targetId]);
+        return condition;
+      } catch (error) {
+        if (!(error instanceof ZitadelError) || (error.status !== 400 && error.status !== 422))
+          throw error;
+        rejected.push(`${JSON.stringify(condition)} -> ${error.status} ${error.detail}`);
+      }
+    }
+    throw new Error(`ZITADEL rejected every user-event condition shape: ${rejected.join('; ')}`);
+  }
+
+  /** POST /v2/users/{userId}/deactivate. "Already deactivated" is success. UNVERIFIED (P1-PLAN §3). */
+  async deactivateUser(userId: string): Promise<boolean> {
+    try {
+      await this.transport.post(ENDPOINTS.deactivateUser(userId), {});
+    } catch (error) {
+      if (isAlreadyDeactivated(error)) return false;
+      throw error;
+    }
     return true;
   }
 
