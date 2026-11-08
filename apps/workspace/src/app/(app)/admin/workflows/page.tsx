@@ -1,3 +1,9 @@
+import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Icon } from '@/components/ui/icon';
+import { Page, PageHeader } from '@/components/ui/page';
+import { Panel } from '@/components/ui/panel';
+import { Table, Td, Th } from '@/components/ui/table';
 import {
   listApprovalGroups,
   listDelegations,
@@ -6,11 +12,11 @@ import {
   type WorkflowVersion,
 } from '@/lib/api-admin';
 
-import styles from '../admin.module.css';
+import adminStyles from '../admin.module.css';
 import { formatInstant } from '../format';
 import { requireSession } from '../guard';
 import { section } from '../section';
-import { Notice, PageHead, SectionError } from '../ui';
+import { Notice, SectionError } from '../ui';
 import {
   createWorkflowAction,
   deleteGroupAction,
@@ -23,12 +29,63 @@ import { AddMemberForm, ActionButton, CreateGroupForm, DelegationForm } from './
 import { SpecSummary } from './spec-summary';
 import type { UserOption } from './user-field';
 import { WorkflowEditor } from './workflow-editor';
+import styles from './workflows.module.css';
 
-const STATUS_CLASS: Record<WorkflowVersion['status'], string> = {
-  published: styles.chipOk ?? '',
-  draft: styles.chipWarn ?? '',
-  retired: styles.chipNeutral ?? '',
+const STATUS: Record<
+  WorkflowVersion['status'],
+  { tone: 'warning' | 'success' | 'neutral'; label: string }
+> = {
+  draft: { tone: 'warning', label: 'Draft' },
+  published: { tone: 'success', label: 'Published' },
+  retired: { tone: 'neutral', label: 'Retired' },
 };
+
+/** Up to two letters: first and last word of a name ("Leslie Alexander" is "LA"). */
+function initialsOf(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const first = words[0];
+  if (!first) return '?';
+  const last = words.length > 1 ? words[words.length - 1] : undefined;
+  return [first, last]
+    .filter((word): word is string => word !== undefined)
+    .map((word) => Array.from(word)[0] ?? '')
+    .join('')
+    .toUpperCase();
+}
+
+/** An initials avatar, the name, and the email under it. The avatar is decoration. */
+function Person({
+  name,
+  email,
+  unknown = false,
+}: {
+  name: string;
+  email: string | null;
+  unknown?: boolean;
+}) {
+  return (
+    <div className={styles.person}>
+      <span className={styles.avatar} aria-hidden="true">
+        {unknown ? '?' : initialsOf(name)}
+      </span>
+      <span className={styles.personText}>
+        <span className={styles.personName}>{name}</span>
+        {email ? <span className={styles.personEmail}>{email}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function SectionHead({ id, title, children }: { id: string; title: string; children?: string }) {
+  return (
+    <div className={styles.sectionHead}>
+      <h2 id={id} className={styles.sectionTitle}>
+        {title}
+      </h2>
+      {children ? <p className={styles.sectionIntro}>{children}</p> : null}
+    </div>
+  );
+}
 
 export default async function WorkflowsPage() {
   const session = await requireSession('/admin/workflows');
@@ -51,164 +108,179 @@ export default async function WorkflowsPage() {
             u.displayName && u.email
               ? `${u.displayName} (${u.email})`
               : (u.displayName ?? u.email ?? `User ${u.id.slice(0, 8)}`),
+          name: u.displayName ?? u.email ?? `User ${u.id.slice(0, 8)}`,
+          email: u.displayName ? u.email : null,
         }))
     : null;
-  const labelOf = (id: string): string =>
-    userOptions?.find((u) => u.id === id)?.label ?? `User ${id.slice(0, 8)}`;
+  const optionOf = (id: string): UserOption | undefined => userOptions?.find((u) => u.id === id);
+  const labelOf = (id: string): string => optionOf(id)?.label ?? `User ${id.slice(0, 8)}`;
+  const personOf = (id: string) => {
+    const option = optionOf(id);
+    return option
+      ? { name: option.name, email: option.email, unknown: false }
+      : { name: `User ${id.slice(0, 8)}`, email: null, unknown: true };
+  };
 
   const groupKeys = groups.ok ? groups.data.map((g) => g.key) : [];
   const documentTypes = workflows.ok ? [...new Set(workflows.data.map((w) => w.documentType))] : [];
 
   return (
-    <>
-      <PageHead title="Workflows">
-        Who approves what. A published version is frozen: to change a route, save a new draft and
-        publish it. Requests already submitted keep the version they started with.
-      </PageHead>
+    <Page>
+      <PageHeader
+        title="Workflows"
+        description="Who approves what. A published version is frozen: to change a route, save a new draft and publish it. Requests already submitted keep the version they started with."
+      />
 
-      <nav aria-label="On this page" className={styles.actions}>
-        <a className={styles.link} href="#workflows">
-          Workflows
-        </a>
-        <a className={styles.link} href="#groups">
-          Approval groups
-        </a>
-        <a className={styles.link} href="#delegations">
-          Delegations
-        </a>
+      <nav aria-label="On this page" className={styles.jump}>
+        <a href="#workflows">Workflows</a>
+        <a href="#groups">Approval groups</a>
+        <a href="#delegations">Delegations</a>
       </nav>
 
       {/* ---- workflows ------------------------------------------------------------------------- */}
       <section className={styles.section} id="workflows" aria-labelledby="wf-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="wf-heading">Workflow definitions</h2>
-        </div>
+        <SectionHead id="wf-heading" title="Workflow definitions" />
 
         {!workflows.ok ? (
           <SectionError message={workflows.message} />
         ) : (
           <>
             {workflows.data.length === 0 ? (
-              <p className={styles.empty}>No workflows yet. Create the first one below.</p>
-            ) : null}
+              <EmptyState title="No workflows yet." headingLevel={3}>
+                Create the first one below.
+              </EmptyState>
+            ) : (
+              <ul className={styles.list}>
+                {workflows.data.map((wf) => {
+                  const latest = wf.versions.at(-1);
+                  const current = wf.versions.find((v) => v.id === wf.currentVersionId);
+                  const versionsDesc = [...wf.versions].reverse();
+                  return (
+                    <li key={wf.id}>
+                      <article className={styles.workflow} aria-labelledby={`wf-${wf.id}`}>
+                        <div className={styles.workflowHead}>
+                          <h3 id={`wf-${wf.id}`} className={styles.workflowTitle}>
+                            {wf.name}
+                          </h3>
+                          <span className={styles.workflowMeta}>
+                            <span className={styles.mono}>{wf.key}</span> for{' '}
+                            <span className={styles.mono}>{wf.documentType}</span>
+                          </span>
+                        </div>
+                        <p className={styles.inUse}>
+                          {current
+                            ? `In use: version ${current.version}.`
+                            : 'Not in use yet: publish a draft to start using this workflow.'}
+                        </p>
 
-            {workflows.data.map((wf) => {
-              const latest = wf.versions.at(-1);
-              const current = wf.versions.find((v) => v.id === wf.currentVersionId);
-              const versionsDesc = [...wf.versions].reverse();
-              return (
-                <article key={wf.id} className={styles.workflow} aria-labelledby={`wf-${wf.id}`}>
-                  <div className={styles.workflowHead}>
-                    <h3 id={`wf-${wf.id}`}>{wf.name}</h3>
-                    <span className={styles.muted}>
-                      <span className={styles.mono}>{wf.key}</span> for{' '}
-                      <span className={styles.mono}>{wf.documentType}</span>
-                    </span>
-                  </div>
-                  <p className={styles.hint} style={{ margin: '0.25rem 0 0.75rem' }}>
-                    {current
-                      ? `In use: version ${current.version}.`
-                      : 'Not in use yet: publish a draft to start using this workflow.'}
-                  </p>
+                        <Table
+                          caption={`Versions of ${wf.name}`}
+                          className={adminStyles.local ?? ''}
+                          minWidth={520}
+                        >
+                          <thead>
+                            <tr>
+                              <Th>Version</Th>
+                              <Th>Status</Th>
+                              <Th>Published</Th>
+                              <Th>Action</Th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {versionsDesc.map((v) => (
+                              <tr key={v.id}>
+                                <Th scope="row" className={adminStyles.rowHead}>
+                                  <span className={styles.versionName}>Version {v.version}</span>
+                                  <details className={styles.specToggle}>
+                                    <summary>
+                                      View spec
+                                      <span className="sr-only"> of version {v.version}</span>
+                                    </summary>
+                                    <div className={styles.specBody}>
+                                      <SpecSummary spec={v.spec} />
+                                    </div>
+                                  </details>
+                                </Th>
+                                <Td>
+                                  <Badge tone={STATUS[v.status].tone}>
+                                    {STATUS[v.status].label}
+                                  </Badge>
+                                  {v.status !== 'draft' ? (
+                                    <span className={`${styles.hint} ${styles.readOnly}`}>
+                                      Read-only
+                                    </span>
+                                  ) : null}
+                                </Td>
+                                <Td>
+                                  {v.publishedAt ? (
+                                    <time dateTime={v.publishedAt}>
+                                      {formatInstant(v.publishedAt)}
+                                    </time>
+                                  ) : (
+                                    <span className={styles.muted}>Not published</span>
+                                  )}
+                                </Td>
+                                <Td>
+                                  {v.status === 'draft' ? (
+                                    <ActionButton
+                                      action={publishVersionAction}
+                                      fields={{ key: wf.key, version: String(v.version) }}
+                                      label="Publish"
+                                      hiddenLabel={`version ${v.version} of ${wf.name}`}
+                                      variant="primary"
+                                      confirmText={`Publish version ${v.version} of "${wf.name}"? New requests will use it, and the version in use is retired.`}
+                                    />
+                                  ) : (
+                                    <span className={styles.muted}>
+                                      <span aria-hidden="true">-</span>
+                                      <span className="sr-only">No action available</span>
+                                    </span>
+                                  )}
+                                </Td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </Table>
 
-                  <div
-                    className={styles.tableWrap}
-                    role="region"
-                    aria-labelledby={`vt-${wf.id}`}
-                    tabIndex={0}
-                  >
-                    <table className={styles.table}>
-                      <caption id={`vt-${wf.id}`} className={styles.srOnly}>
-                        Versions of {wf.name}
-                      </caption>
-                      <thead>
-                        <tr>
-                          <th scope="col">Version</th>
-                          <th scope="col">Status</th>
-                          <th scope="col">Published</th>
-                          <th scope="col">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {versionsDesc.map((v) => (
-                          <tr key={v.id}>
-                            <th scope="row">
-                              Version {v.version}
-                              <details className={styles.inlineDetails}>
-                                <summary>
-                                  View spec
-                                  <span className={styles.srOnly}> of version {v.version}</span>
-                                </summary>
-                                <SpecSummary spec={v.spec} />
-                              </details>
-                            </th>
-                            <td>
-                              <span className={`${styles.chip} ${STATUS_CLASS[v.status]}`}>
-                                {v.status}
-                              </span>
-                              {v.status !== 'draft' ? (
-                                <span className={`${styles.hint} ${styles.cellWrap}`}>
-                                  Read-only
-                                </span>
-                              ) : null}
-                            </td>
-                            <td>
-                              {v.publishedAt ? (
-                                formatInstant(v.publishedAt)
-                              ) : (
-                                <span className={styles.muted}>Not published</span>
-                              )}
-                            </td>
-                            <td>
-                              {v.status === 'draft' ? (
-                                <ActionButton
-                                  action={publishVersionAction}
-                                  fields={{ key: wf.key, version: String(v.version) }}
-                                  label="Publish"
-                                  hiddenLabel={`version ${v.version} of ${wf.name}`}
-                                  variant="primary"
-                                  confirmText={`Publish version ${v.version} of "${wf.name}"? New requests will use it, and the version in use is retired.`}
-                                />
-                              ) : (
-                                <span className={styles.muted}>-</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        <details className={styles.disclosure}>
+                          <summary>
+                            <Icon name="chevron-right" size={16} className={styles.chevron} />
+                            <span>
+                              Edit as a new draft
+                              <span className="sr-only"> of {wf.name}</span>
+                            </span>
+                          </summary>
+                          <div className={styles.disclosureBody}>
+                            <p className={styles.hint}>
+                              Starts from version {latest?.version ?? '-'}. Saving adds version{' '}
+                              {(latest?.version ?? 0) + 1} as a draft; it changes nothing until you
+                              publish it.
+                            </p>
+                            <WorkflowEditor
+                              action={saveDraftAction}
+                              mode="version"
+                              workflowKey={wf.key}
+                              documentType={wf.documentType}
+                              initialSpec={latest?.spec}
+                              submitLabel={`Save as draft version ${(latest?.version ?? 0) + 1}`}
+                              groupKeys={groupKeys}
+                              users={userOptions}
+                            />
+                          </div>
+                        </details>
+                      </article>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
 
-                  <details className={styles.details} style={{ marginTop: '0.75rem' }}>
-                    <summary>
-                      Edit as a new draft
-                      <span className={styles.srOnly}> of {wf.name}</span>
-                    </summary>
-                    <div className={styles.detailsBody}>
-                      <p className={styles.hint} style={{ marginBottom: '0.75rem' }}>
-                        Starts from version {latest?.version ?? '-'}. Saving adds version{' '}
-                        {(latest?.version ?? 0) + 1} as a draft; it changes nothing until you
-                        publish it.
-                      </p>
-                      <WorkflowEditor
-                        action={saveDraftAction}
-                        mode="version"
-                        workflowKey={wf.key}
-                        documentType={wf.documentType}
-                        initialSpec={latest?.spec}
-                        submitLabel={`Save as draft version ${(latest?.version ?? 0) + 1}`}
-                        groupKeys={groupKeys}
-                        users={userOptions}
-                      />
-                    </div>
-                  </details>
-                </article>
-              );
-            })}
-
-            <details className={styles.details} style={{ marginTop: '1rem' }}>
-              <summary>New workflow</summary>
-              <div className={styles.detailsBody}>
+            <details className={styles.disclosure}>
+              <summary>
+                <Icon name="chevron-right" size={16} className={styles.chevron} />
+                <span>New workflow</span>
+              </summary>
+              <div className={styles.disclosureBody}>
                 <WorkflowEditor
                   action={createWorkflowAction}
                   mode="create"
@@ -226,85 +298,74 @@ export default async function WorkflowsPage() {
 
       {/* ---- approval groups ----------------------------------------------------------------- */}
       <section className={styles.section} id="groups" aria-labelledby="grp-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="grp-heading">Approval groups</h2>
-          <p>
-            A group is a named set of people. A workflow step can name a group, and any member can
-            act on it.
-          </p>
-        </div>
+        <SectionHead id="grp-heading" title="Approval groups">
+          A group is a named set of people. A workflow step can name a group, and any member can act
+          on it.
+        </SectionHead>
         {!groups.ok ? (
           <SectionError message={groups.message} />
         ) : (
           <>
             {groups.data.length === 0 ? (
-              <p className={styles.empty}>No approval groups yet.</p>
+              <EmptyState title="No approval groups yet." headingLevel={3} />
             ) : (
-              <div className={styles.stack}>
+              <ul className={styles.groupList}>
                 {groups.data.map((g) => (
-                  <article
-                    key={g.id}
-                    className={styles.workflow}
-                    style={{ margin: 0 }}
-                    aria-labelledby={`g-${g.id}`}
-                  >
-                    <div className={styles.workflowHead}>
-                      <h3 id={`g-${g.id}`}>{g.name}</h3>
-                      <span className={`${styles.mono} ${styles.muted}`}>{g.key}</span>
-                    </div>
-                    {g.memberUserIds.length === 0 ? (
-                      <p className={styles.hint} style={{ margin: '0.5rem 0' }}>
-                        No members yet.
-                      </p>
-                    ) : (
-                      <ul
-                        className={styles.stack}
-                        style={{ margin: '0.5rem 0', padding: 0, listStyle: 'none' }}
-                      >
-                        {g.memberUserIds.map((userId) => (
-                          <li key={userId} className={styles.actions}>
-                            <span className={styles.cellWrap}>{labelOf(userId)}</span>
-                            <ActionButton
-                              action={removeMemberAction}
-                              fields={{ groupId: g.id, userId }}
-                              label="Remove"
-                              hiddenLabel={`${labelOf(userId)} from ${g.name}`}
-                              variant="danger"
-                            />
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <AddMemberForm groupId={g.id} groupName={g.name} users={userOptions} />
-                    <div style={{ marginTop: '0.75rem' }}>
-                      <ActionButton
-                        action={deleteGroupAction}
-                        fields={{ id: g.id }}
-                        label="Delete group"
-                        hiddenLabel={g.name}
-                        variant="danger"
-                        confirmText={`Delete the group "${g.name}"?`}
-                      />
-                    </div>
-                  </article>
+                  <li key={g.id}>
+                    <Panel
+                      title={g.name}
+                      headingLevel={3}
+                      description={<span className={styles.groupKey}>{g.key}</span>}
+                      actions={
+                        <ActionButton
+                          action={deleteGroupAction}
+                          fields={{ id: g.id }}
+                          label="Delete group"
+                          hiddenLabel={g.name}
+                          variant="dangerOutline"
+                          confirmText={`Delete the group "${g.name}"?`}
+                        />
+                      }
+                    >
+                      {g.memberUserIds.length === 0 ? (
+                        <p className={styles.muted}>No members yet.</p>
+                      ) : (
+                        <ul className={styles.members}>
+                          {g.memberUserIds.map((userId) => (
+                            <li key={userId} className={styles.member}>
+                              <Person {...personOf(userId)} />
+                              <ActionButton
+                                action={removeMemberAction}
+                                fields={{ groupId: g.id, userId }}
+                                label="Remove"
+                                hiddenLabel={`${labelOf(userId)} from ${g.name}`}
+                                variant="danger"
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className={styles.addMember}>
+                        <AddMemberForm groupId={g.id} groupName={g.name} users={userOptions} />
+                      </div>
+                    </Panel>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
-            <h3 className={styles.sub}>New group</h3>
-            <CreateGroupForm />
+            <Panel title="New group" headingLevel={3}>
+              <CreateGroupForm />
+            </Panel>
           </>
         )}
       </section>
 
       {/* ---- delegations --------------------------------------------------------------------- */}
       <section className={styles.section} id="delegations" aria-labelledby="del-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="del-heading">Delegations</h2>
-          <p>
-            Lets one person act for another for a period, for example during leave. Revoking keeps
-            the record in the audit trail; it just stops counting.
-          </p>
-        </div>
+        <SectionHead id="del-heading" title="Delegations">
+          Lets one person act for another for a period, for example during leave. Revoking keeps the
+          record in the audit trail; it just stops counting.
+        </SectionHead>
         {!delegations.ok ? (
           <SectionError message={delegations.message} />
         ) : (
@@ -316,61 +377,64 @@ export default async function WorkflowsPage() {
               </Notice>
             ) : null}
             {delegations.data.length === 0 ? (
-              <p className={styles.empty}>No active delegations.</p>
+              <EmptyState title="No active delegations." headingLevel={3} />
             ) : (
-              <div
-                className={styles.tableWrap}
-                role="region"
-                aria-labelledby="del-caption"
-                tabIndex={0}
+              <Table
+                caption="Active delegations"
+                className={adminStyles.local ?? ''}
+                minWidth={760}
               >
-                <table className={styles.table}>
-                  <caption id="del-caption" className={styles.srOnly}>
-                    Active delegations
-                  </caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">From</th>
-                      <th scope="col">To</th>
-                      <th scope="col">Window (Nepal time)</th>
-                      <th scope="col">Applies to</th>
-                      <th scope="col">Action</th>
+                <thead>
+                  <tr>
+                    <Th>From</Th>
+                    <Th>To</Th>
+                    <Th>Window (Nepal time)</Th>
+                    <Th>Applies to</Th>
+                    <Th>Action</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {delegations.data.map((d) => (
+                    <tr key={d.id}>
+                      <Th scope="row" className={adminStyles.rowHead}>
+                        <Person {...personOf(d.fromUserId)} />
+                      </Th>
+                      <Td>
+                        <Person {...personOf(d.toUserId)} />
+                      </Td>
+                      <Td>
+                        <time className={styles.nowrap} dateTime={d.startsAt}>
+                          {formatInstant(d.startsAt)}
+                        </time>{' '}
+                        to{' '}
+                        <time className={styles.nowrap} dateTime={d.endsAt}>
+                          {formatInstant(d.endsAt)}
+                        </time>
+                      </Td>
+                      <Td>
+                        {d.documentType ?? <span className={styles.muted}>All documents</span>}
+                      </Td>
+                      <Td>
+                        <ActionButton
+                          action={revokeDelegationAction}
+                          fields={{ id: d.id }}
+                          label="Revoke"
+                          hiddenLabel={`delegation from ${labelOf(d.fromUserId)} to ${labelOf(d.toUserId)}`}
+                          variant="dangerOutline"
+                          confirmText="Revoke this delegation? The person taking over can no longer act for the other."
+                        />
+                      </Td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {delegations.data.map((d) => (
-                      <tr key={d.id}>
-                        <th scope="row" className={styles.cellWrap}>
-                          {labelOf(d.fromUserId)}
-                        </th>
-                        <td className={styles.cellWrap}>{labelOf(d.toUserId)}</td>
-                        <td>
-                          {formatInstant(d.startsAt)} to {formatInstant(d.endsAt)}
-                        </td>
-                        <td>
-                          {d.documentType ?? <span className={styles.muted}>All documents</span>}
-                        </td>
-                        <td>
-                          <ActionButton
-                            action={revokeDelegationAction}
-                            fields={{ id: d.id }}
-                            label="Revoke"
-                            hiddenLabel={`delegation from ${labelOf(d.fromUserId)} to ${labelOf(d.toUserId)}`}
-                            variant="danger"
-                            confirmText="Revoke this delegation? The person taking over can no longer act for the other."
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </Table>
             )}
-            <h3 className={styles.sub}>New delegation</h3>
-            <DelegationForm users={userOptions} documentTypes={documentTypes} />
+            <Panel title="New delegation" headingLevel={3}>
+              <DelegationForm users={userOptions} documentTypes={documentTypes} />
+            </Panel>
           </>
         )}
       </section>
-    </>
+    </Page>
   );
 }

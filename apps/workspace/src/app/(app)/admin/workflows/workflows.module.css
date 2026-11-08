@@ -1,0 +1,384 @@
+/* Workflows admin page. Tokens only (src/styles/tokens.css). The shared Page, Panel, Table, Field,
+   Button and Badge do the heavy lifting; this file holds the page's own layout: the jump links, the
+   workflow blocks, the disclosure cards, the people rows and the small forms. */
+
+/* ---- jump links ------------------------------------------------------------------------------- */
+
+.jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.jump a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--surface-default);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  text-decoration: none;
+}
+
+.jump a:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+/* ---- sections --------------------------------------------------------------------------------- */
+
+.section {
+  display: grid;
+  gap: 16px;
+  /* Room for the sticky header when a jump link lands here. */
+  scroll-margin-top: 88px;
+}
+
+.sectionHead {
+  display: grid;
+  gap: 2px;
+}
+
+.sectionTitle {
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+  text-wrap: balance;
+}
+
+.sectionIntro {
+  max-width: 65ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.list {
+  display: grid;
+  gap: 32px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.groupList {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- one workflow ----------------------------------------------------------------------------- */
+
+.workflow {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.workflowHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+}
+
+.workflowTitle {
+  font-size: var(--font-size-body-large);
+  line-height: var(--line-height-body-large);
+  overflow-wrap: anywhere;
+}
+
+.workflowMeta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.inUse {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.mono {
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* Under the status badge in a table cell. */
+.readOnly {
+  display: block;
+  margin-top: 4px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* ---- version rows ----------------------------------------------------------------------------- */
+
+.versionName {
+  display: block;
+}
+
+.specToggle {
+  margin-top: 4px;
+}
+
+.specToggle > summary {
+  display: inline-block;
+  padding: 4px 0;
+  color: var(--action-primary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  cursor: pointer;
+}
+
+.specToggle > summary:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.specBody {
+  max-width: 32rem;
+  margin-top: 8px;
+  font-weight: var(--font-weight-regular);
+}
+
+/* ---- spec summary ----------------------------------------------------------------------------- */
+
+.specStack {
+  display: grid;
+  gap: 12px;
+}
+
+.specHeading {
+  margin: 0 0 4px;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-small);
+}
+
+.steps {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-inline-start: 24px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.pre {
+  max-height: 20rem;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* ---- disclosure cards ------------------------------------------------------------------------- */
+
+.disclosure {
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  color: var(--card-text);
+}
+
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 24px;
+  border-radius: var(--radius-xl);
+  font-weight: var(--font-weight-semibold);
+  list-style: none;
+  cursor: pointer;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary:hover {
+  background: var(--interactive-hover);
+}
+
+.disclosure[open] > summary {
+  border-bottom: var(--border-width-thin) solid var(--border-default);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.chevron {
+  flex: none;
+  color: var(--icon-secondary);
+}
+
+.disclosure[open] > summary .chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform 120ms ease-out;
+  }
+}
+
+.disclosureBody {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+}
+
+@media (max-width: 767.98px) {
+  .disclosure > summary {
+    padding-inline: 16px;
+  }
+
+  .disclosureBody {
+    padding: 16px;
+  }
+}
+
+/* ---- people ----------------------------------------------------------------------------------- */
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--action-primary-subtle);
+  color: var(--action-primary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.personText {
+  display: grid;
+  min-width: 0;
+}
+
+.personName {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.personEmail {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+/* ---- approval group cards --------------------------------------------------------------------- */
+
+.groupKey {
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+.members {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-block: 12px;
+  border-top: var(--border-width-thin) solid var(--table-border);
+}
+
+.member:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.addMember {
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+/* ---- forms and row actions -------------------------------------------------------------------- */
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+}
+
+.addRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.addRow > :first-child {
+  flex: 1 1 240px;
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* A one-button form in a row or cell; a failed action shows its message under the button. */
+.rowAction {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  max-width: 20rem;
+}

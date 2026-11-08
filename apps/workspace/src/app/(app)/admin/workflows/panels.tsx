@@ -2,13 +2,34 @@
 
 import { useActionState } from 'react';
 
-import styles from '../admin.module.css';
+import { Button } from '@/components/ui/button';
+import { Field, Input } from '@/components/ui/field';
+
+import adminStyles from '../admin.module.css';
 import { IDLE, type ActionState } from '../action-state';
 import { FormStatus } from '../ui';
 import { addMemberAction, createDelegationAction, createGroupAction } from './actions';
 import { UserField, type UserOption } from './user-field';
+import styles from './workflows.module.css';
 
 type ServerAction = (previous: ActionState, formData: FormData) => Promise<ActionState>;
+
+type RowVariant = 'primary' | 'quiet' | 'danger' | 'dangerOutline';
+
+const LOOK: Record<
+  RowVariant,
+  { variant: 'primary' | 'secondary' | 'ghost'; className: string | undefined }
+> = {
+  primary: { variant: 'primary', className: undefined },
+  quiet: { variant: 'secondary', className: undefined },
+  // Remove: a quiet red text button, so a list of members is not a column of red outlines.
+  danger: { variant: 'ghost', className: adminStyles.danger },
+  // Revoke, Delete: the same red, with an outline so it reads as a decision.
+  dangerOutline: {
+    variant: 'secondary',
+    className: `${adminStyles.danger ?? ''} ${adminStyles.dangerOutline ?? ''}`.trim(),
+  },
+};
 
 /**
  * A one-button form for a row action (publish, delete, remove, revoke). The Server Action is passed
@@ -27,16 +48,15 @@ export function ActionButton({
   label: string;
   /** Extra words for screen readers, so "Remove" says who or what it removes. */
   hiddenLabel?: string;
-  variant?: 'primary' | 'quiet' | 'danger';
+  variant?: RowVariant;
   confirmText?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, IDLE);
-  const tone =
-    variant === 'primary' ? '' : variant === 'danger' ? styles.btnDanger : styles.btnQuiet;
+  const look = LOOK[variant];
   return (
     <form
       action={formAction}
-      className={styles.actions}
+      className={styles.rowAction}
       onSubmit={(event) => {
         if (confirmText && !window.confirm(confirmText)) event.preventDefault();
       }}
@@ -44,14 +64,16 @@ export function ActionButton({
       {Object.entries(fields).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
-      <button
+      <Button
         type="submit"
-        className={`${styles.btn} ${styles.btnSmall} ${tone}`}
+        variant={look.variant}
+        size="small"
+        className={look.className}
         disabled={pending}
       >
         {label}
-        {hiddenLabel ? <span className={styles.srOnly}> {hiddenLabel}</span> : null}
-      </button>
+        {hiddenLabel ? <span className="sr-only"> {hiddenLabel}</span> : null}
+      </Button>
       <FormStatus state={state} pending={pending} />
     </form>
   );
@@ -63,40 +85,36 @@ export function CreateGroupForm() {
   return (
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
-        <div className={styles.field}>
-          <label htmlFor="group-name">Group name</label>
-          <input
-            id="group-name"
-            className={styles.input}
-            name="name"
-            required
-            autoComplete="off"
-            defaultValue={kept.name ?? ''}
-          />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="group-key">Key</label>
-          <input
-            id="group-key"
-            className={styles.input}
-            name="key"
-            required
-            autoComplete="off"
-            pattern="[a-z][a-z0-9_.\-]{0,63}"
-            aria-describedby="group-key-hint"
-            defaultValue={kept.key ?? ''}
-          />
-          <span id="group-key-hint" className={styles.hint}>
-            Lowercase letters, digits, _ . - ; used by workflow steps.
-          </span>
-        </div>
+        <Field label="Group name">
+          {(control) => (
+            <Input
+              {...control}
+              name="name"
+              required
+              autoComplete="off"
+              defaultValue={kept.name ?? ''}
+            />
+          )}
+        </Field>
+        <Field label="Key" hint="Lowercase letters, digits, _ . - ; used by workflow steps.">
+          {(control) => (
+            <Input
+              {...control}
+              name="key"
+              required
+              autoComplete="off"
+              pattern="[a-z][a-z0-9_.\-]{0,63}"
+              defaultValue={kept.key ?? ''}
+            />
+          )}
+        </Field>
       </div>
-      <div className={styles.actions}>
-        <button type="submit" className={styles.btn} disabled={pending}>
+      <div className={styles.formActions}>
+        <Button type="submit" disabled={pending}>
           Create group
-        </button>
-        <FormStatus state={state} pending={pending} />
+        </Button>
       </div>
+      <FormStatus state={state} pending={pending} />
     </form>
   );
 }
@@ -112,17 +130,22 @@ export function AddMemberForm({
 }) {
   const [state, formAction, pending] = useActionState(addMemberAction, IDLE);
   return (
-    <form action={formAction} className={styles.actions} style={{ alignItems: 'flex-end' }}>
+    <form action={formAction} className={styles.form}>
       <input type="hidden" name="groupId" value={groupId} />
-      <UserField
-        id={`member-${groupId}`}
-        name="userId"
-        label={`Add a member to ${groupName}`}
-        users={users}
-      />
-      <button type="submit" className={`${styles.btn} ${styles.btnSmall}`} disabled={pending}>
-        Add
-      </button>
+      <div className={styles.addRow}>
+        <UserField
+          name="userId"
+          label={
+            <>
+              Add a member<span className="sr-only"> to {groupName}</span>
+            </>
+          }
+          users={users}
+        />
+        <Button type="submit" variant="secondary" disabled={pending}>
+          Add
+        </Button>
+      </div>
       <FormStatus state={state} pending={pending} />
     </form>
   );
@@ -141,14 +164,12 @@ export function DelegationForm({
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
         <UserField
-          id="deleg-from"
           name="fromUserId"
           label="Handing over (from)"
           users={users}
           defaultValue={kept.fromUserId ?? ''}
         />
         <UserField
-          id="deleg-to"
           name="toUserId"
           label="Taking over (to)"
           users={users}
@@ -156,56 +177,58 @@ export function DelegationForm({
         />
       </div>
       <div className={styles.formRow}>
-        <div className={styles.field}>
-          <label htmlFor="deleg-start">Starts</label>
-          <input
-            id="deleg-start"
-            className={styles.input}
-            type="datetime-local"
-            name="startsAt"
-            required
-            defaultValue={kept.startsAt ?? ''}
-          />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="deleg-end">Ends</label>
-          <input
-            id="deleg-end"
-            className={styles.input}
-            type="datetime-local"
-            name="endsAt"
-            required
-            defaultValue={kept.endsAt ?? ''}
-          />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="deleg-doc">Document type (optional)</label>
-          <input
-            id="deleg-doc"
-            className={styles.input}
-            name="documentType"
-            list="deleg-doc-types"
-            autoComplete="off"
-            placeholder="All documents"
-            defaultValue={kept.documentType ?? ''}
-          />
-          <datalist id="deleg-doc-types">
-            {documentTypes.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-        </div>
+        <Field label="Starts">
+          {(control) => (
+            <Input
+              {...control}
+              type="datetime-local"
+              name="startsAt"
+              required
+              defaultValue={kept.startsAt ?? ''}
+            />
+          )}
+        </Field>
+        <Field label="Ends">
+          {(control) => (
+            <Input
+              {...control}
+              type="datetime-local"
+              name="endsAt"
+              required
+              defaultValue={kept.endsAt ?? ''}
+            />
+          )}
+        </Field>
+        <Field label="Document type (optional)">
+          {(control) => (
+            <>
+              <Input
+                {...control}
+                name="documentType"
+                list="deleg-doc-types"
+                autoComplete="off"
+                placeholder="All documents"
+                defaultValue={kept.documentType ?? ''}
+              />
+              <datalist id="deleg-doc-types">
+                {documentTypes.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+            </>
+          )}
+        </Field>
       </div>
       <p className={styles.hint}>
         Times are Nepal time (UTC+05:45). While it runs, the person taking over can act on steps
         that were meant for the person handing over.
       </p>
-      <div className={styles.actions}>
-        <button type="submit" className={styles.btn} disabled={pending}>
+      <div className={styles.formActions}>
+        <Button type="submit" disabled={pending}>
           Create delegation
-        </button>
-        <FormStatus state={state} pending={pending} />
+        </Button>
       </div>
+      <FormStatus state={state} pending={pending} />
     </form>
   );
 }
