@@ -8,6 +8,7 @@ import {
   PaymentMilestoneSchema,
   isCustomerVisibleStatus,
   type CustomerQuotationView,
+  type CustomerVisibleStatus,
 } from '@bos/contracts';
 import type {
   customerContacts,
@@ -89,14 +90,35 @@ const trimZeros = (value: string): string =>
 
 const addressOf = (raw: unknown) => AddressSchema.parse(raw);
 
-export function toCustomerQuotationView(input: CustomerViewInput): CustomerQuotationView {
+/**
+ * Who the view is for. `portal` (the default, so nothing loosens by accident) shows only the states a customer
+ * may see. `render` is the PDF job: it may also draw an `approved` version, which no customer can see yet, as the
+ * document that will be sent. Every other hidden state stays hidden in both.
+ */
+export type CustomerViewPurpose = 'portal' | 'render';
+
+export interface CustomerViewOptions {
+  purpose?: CustomerViewPurpose;
+}
+
+export function toCustomerQuotationView(
+  input: CustomerViewInput,
+  options: CustomerViewOptions = {},
+): CustomerQuotationView {
   const { version, quotation, customer, contact, paymentTerm, issuer } = input;
 
-  // A rejection is visible only when the customer made it; an internal one must look like a 404.
-  if (
-    !isCustomerVisibleStatus(version.status) ||
-    (version.status === 'rejected' && version.rejectionSource !== 'customer')
+  let status: CustomerVisibleStatus;
+  if (options.purpose === 'render' && version.status === 'approved') {
+    // The PDF is what the customer will receive, so it is drawn as `sent`. That also keeps its content identical
+    // whatever state the version is in later.
+    status = 'sent';
+  } else if (
+    // A rejection is visible only when the customer made it; an internal one must look like a 404.
+    isCustomerVisibleStatus(version.status) &&
+    !(version.status === 'rejected' && version.rejectionSource !== 'customer')
   ) {
+    status = version.status;
+  } else {
     throw new QuotationNotCustomerVisibleError(version.status);
   }
 
@@ -118,7 +140,7 @@ export function toCustomerQuotationView(input: CustomerViewInput): CustomerQuota
     id: version.id,
     number: quotation.number,
     revisionNo: version.revisionNo,
-    status: version.status,
+    status,
     issueDate: version.issueDate,
     validUntil: version.validUntil,
     currency: version.currency,

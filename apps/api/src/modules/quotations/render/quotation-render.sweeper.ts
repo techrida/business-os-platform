@@ -173,15 +173,12 @@ export class QuotationRenderSweeper {
       if (source === undefined) throw new RenderSourceMissingError();
       const { issuerLegalName, ...rows } = source;
       const issuer = await buildIssuer(this.settings, scope, issuerLegalName);
-      // The mapper shows a customer only states they may see, and `approved` is not one of them. The PDF is the
-      // document that will be sent, so it is drawn as `sent`. That also keeps its content identical whatever
-      // state the version is in later. The file field stays null: this PDF is not its own attachment.
-      const view = toCustomerQuotationView({
-        ...rows,
-        version: { ...rows.version, status: 'sent' },
-        issuer,
-        renderedScanClean: false,
-      });
+      // The `render` purpose lets the mapper draw an approved version (a customer cannot see one) as the
+      // document that will be sent. The file field stays null: this PDF is not its own attachment.
+      const view = toCustomerQuotationView(
+        { ...rows, issuer, renderedScanClean: false },
+        { purpose: 'render' },
+      );
       const bytes = await this.pdf.htmlToPdf(renderQuotationHtml(view));
       const file = {
         filename: `${rows.quotation.number}-R${rows.version.revisionNo}.pdf`,
