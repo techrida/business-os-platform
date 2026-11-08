@@ -31,11 +31,31 @@ export interface MintOptions {
   signWith?: 'trusted' | 'forged';
 }
 
+export interface MintIdTokenOptions {
+  /** `sub`: the user who signed in. */
+  sub: string;
+  /** `auth_time`, seconds since the epoch: when that sign-in happened. */
+  authTime: number;
+  /** `aud`: the client id(s) the ID token was issued to (ZITADEL: the web client id). */
+  audience: string | string[];
+  /** Seconds since the epoch. Default: five minutes from now. */
+  exp?: number;
+  /** `iss` claim. Default: this issuer's own URL. */
+  issuer?: string;
+  /** As in {@link MintOptions.signWith}. */
+  signWith?: 'trusted' | 'forged';
+}
+
 export interface TestIssuer {
   /** Base URL, also the `iss` of valid tokens and the OIDC_ISSUER the API is configured with. */
   readonly url: string;
   /** Signs an RS256 token. Every default produces a token the API accepts (given a valid `aud`). */
   mint(claims: JWTPayload, options?: MintOptions): Promise<string>;
+  /**
+   * Signs an RS256 OIDC ID token, the proof of a sign-in the BFF forwards in `x-bos-id-token` for
+   * step-up (K7). Header `typ: JWT`, never `at+jwt`, so it is not mistaken for an access token.
+   */
+  mintIdToken(options: MintIdTokenOptions): Promise<string>;
   /** An `alg: none` token with the same claims handling as {@link mint}. */
   mintUnsigned(claims: JWTPayload, options?: MintOptions): string;
   close(): Promise<void>;
@@ -94,6 +114,15 @@ export async function startTestIssuer(): Promise<TestIssuer> {
         .setExpirationTime(options.expiresAt ?? nowSeconds() + 300);
       if (options.audience !== undefined) jwt.setAudience(options.audience);
       return jwt.sign(keyFor(options.signWith));
+    },
+    async mintIdToken(options) {
+      return new SignJWT({ sub: options.sub, auth_time: options.authTime })
+        .setProtectedHeader({ alg: 'RS256', kid: KID, typ: 'JWT' })
+        .setIssuer(options.issuer ?? url)
+        .setAudience(options.audience)
+        .setIssuedAt(nowSeconds())
+        .setExpirationTime(options.exp ?? nowSeconds() + 300)
+        .sign(keyFor(options.signWith));
     },
     mintUnsigned(claims, options = {}) {
       const jwt = new UnsecuredJWT(withAuthTime(claims, options))
