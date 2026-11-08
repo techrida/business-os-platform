@@ -22,8 +22,15 @@ import {
   type TenancyStore,
 } from './index.js';
 import { type DevFiles, parseEnv } from './outputs.js';
-import { PERSONAS, PROJECT_ROLES, personaUsername, type PersonaEntry } from './personas.js';
+import {
+  ORG_NAMES,
+  PERSONAS,
+  PROJECT_ROLES,
+  personaUsername,
+  type PersonaEntry,
+} from './personas.js';
 import { totpCode } from './totp.js';
+import { PORTAL_LOGIN_POLICY } from './zitadel-client.js';
 import type {
   AppInfo,
   AuthorizationInfo,
@@ -190,6 +197,7 @@ class FakeZitadel implements SeedApi {
   private readonly pinnedPolicies = new Map<string, OrgLoginPolicyPatch>();
   ensureOrgLoginPolicy(orgId: string, patch: OrgLoginPolicyPatch): Promise<boolean> {
     this.portalPolicyCalls.push({ orgId, patch });
+    this.calls.push(`ensureOrgLoginPolicy:${orgId}`);
     const pinned = this.pinnedPolicies.get(orgId);
     if (pinned && JSON.stringify(pinned) === JSON.stringify(patch)) return Promise.resolve(false);
     this.mutate();
@@ -633,6 +641,48 @@ describe('@bos/seed-zitadel', () => {
     expect(api.mutations).toBe(mutationsAfterFirst);
     expect(api.authRequiredCalls).toHaveLength(authCallsAfterFirst); // a new project is created with it on
     expect(api.noRegisterCalls).toEqual([api.staffOrgId, api.staffOrgId]); // asked again, changed nothing
+  });
+
+  it('pins the portal login policy on the customer org only, after every persona has TOTP', async () => {
+    const { api, deps } = setup();
+    const result = await runSeed(deps);
+
+    const customerOrgId = await api.findOrgByName(ORG_NAMES.customer);
+    expect(customerOrgId).toBeDefined();
+    expect(api.portalPolicyCalls).toEqual([{ orgId: customerOrgId, patch: PORTAL_LOGIN_POLICY }]);
+    expect(PORTAL_LOGIN_POLICY).toEqual({
+      allowRegister: false,
+      forceMfa: true,
+      forceMfaLocalOnly: false,
+      mfaInitSkipLifetime: '0s',
+    });
+    expect(result.changes).toContain('pinned the portal login policy on the customer org');
+    const pin = api.calls.indexOf(`ensureOrgLoginPolicy:${customerOrgId}`);
+    expect(pin).toBeGreaterThan(api.calls.findLastIndex((c) => c.startsWith('verifyTotp:')));
+  });
+
+  it('a half-run does not pin the portal login policy; the next run does', async () => {
+    const { api, deps } = setup();
+    api.failVerifyFor = personaUsername('finance');
+    await expect(runSeed(deps)).rejects.toThrow(/verification failed/);
+    expect(api.portalPolicyCalls).toEqual([]);
+
+    api.failVerifyFor = undefined;
+    const result = await runSeed(deps);
+    expect(api.portalPolicyCalls).toHaveLength(1);
+    expect(result.changes).toContain('pinned the portal login policy on the customer org');
+  });
+
+  it('asks again on a second run but writes nothing', async () => {
+    const { api, deps } = setup();
+    await runSeed(deps);
+    const mutations = api.mutations;
+
+    const second = await runSeed(deps);
+
+    expect(api.portalPolicyCalls).toHaveLength(2);
+    expect(api.mutations).toBe(mutations);
+    expect(second.changes).toEqual([]);
   });
 
   it('keeps persona passwords across runs and never logs secrets', async () => {
