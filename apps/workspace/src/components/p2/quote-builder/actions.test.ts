@@ -31,6 +31,7 @@ const TAX = '33333333-3333-4333-8333-333333333333';
 const OPP = '55555555-5555-4555-8555-555555555555';
 const ref = { quotationId: QID, versionId: VID };
 const KEY = '44444444-4444-4444-8444-444444444444';
+const submit = { ...ref, expectedVersion: 3, idempotencyKey: KEY };
 const create = { mode: 'create', opportunityId: OPP, idempotencyKey: KEY } as const;
 
 function values(): BuilderValues {
@@ -52,7 +53,7 @@ describe('submitQuoteAction', () => {
   it('does not call the API when the payment schedule does not total 100%', async () => {
     const v = values();
     v.schedule = [m('60'), m('30')];
-    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: v });
+    const res = await submitQuoteAction({ ...submit, values: v });
     expect(res.ok).toBe(false);
     expect(res.ok ? '' : res.message).toMatch(/100%/);
     expect(api.submitVersion).not.toHaveBeenCalled();
@@ -62,14 +63,26 @@ describe('submitQuoteAction', () => {
     const v = values();
     v.schedule = [m('60'), m('40')];
     api.submitVersion.mockResolvedValue({ status: 'submitted' });
-    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: v });
+    const res = await submitQuoteAction({ ...submit, values: v });
     expect(res.ok).toBe(true);
-    expect(api.submitVersion).toHaveBeenCalledWith(expect.anything(), QID, VID, 3);
+    expect(api.submitVersion).toHaveBeenCalledWith(expect.anything(), QID, VID, 3, KEY);
+  });
+
+  it('keeps the key after a 5xx and rotates it after a 4xx', async () => {
+    const v = values();
+    v.schedule = [m('60'), m('40')];
+    api.submitVersion.mockRejectedValueOnce(new ApiError(502, 'bad gateway'));
+    expect(await submitQuoteAction({ ...submit, values: v })).toMatchObject({ key: KEY });
+
+    api.submitVersion.mockRejectedValueOnce(apiError(409, 'VERSION_CONFLICT'));
+    const res = await submitQuoteAction({ ...submit, values: v });
+    expect(res.ok ? '' : res.key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(res.ok ? '' : res.key).not.toBe(KEY);
   });
 
   it('asks for a reload on a stale row version (409)', async () => {
     api.submitVersion.mockRejectedValue(apiError(409, 'VERSION_CONFLICT'));
-    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: values() });
+    const res = await submitQuoteAction({ ...submit, values: values() });
     expect(res).toMatchObject({ ok: false, kind: 'stale' });
   });
 
@@ -77,7 +90,7 @@ describe('submitQuoteAction', () => {
     api.submitVersion.mockRejectedValue(apiError(409, 'FX_RATE_STALE'));
     const v = values();
     v.currency = 'USD';
-    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: v });
+    const res = await submitQuoteAction({ ...submit, values: v });
     expect(res).toMatchObject({ ok: false, kind: 'stale_fx' });
     expect(res.ok ? '' : res.message).toMatch(/exchange rate/i);
   });

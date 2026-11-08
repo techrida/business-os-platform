@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetEnvForTests } from '@/lib/env';
 import type { Session } from '@/lib/session';
 
-import { createQuotation } from './api';
+import { createQuotation, submitVersion } from './api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -88,5 +88,19 @@ describe('createQuotation', () => {
     expect(got.id).toBe(QID);
     expect(new URL(fetchMock.mock.calls[0]?.[0] as URL | string).pathname).toBe('/v1/quotations');
     expect(sentHeaders().get('idempotency-key')).toBe(KEY);
+  });
+});
+
+describe('submitVersion', () => {
+  it('sends the Idempotency-Key the API requires on submit, with expectedVersion', async () => {
+    fetchMock.mockResolvedValue(reply(200, { status: 'submitted' }));
+    await submitVersion(session, QID, OTHER, 3, KEY);
+    expect(new URL(fetchMock.mock.calls[0]?.[0] as URL | string).pathname).toBe(
+      `/v1/quotations/${QID}/versions/${OTHER}/submit`,
+    );
+    expect(sentHeaders().get('idempotency-key')).toBe(KEY);
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      expectedVersion: 3,
+    });
   });
 });
