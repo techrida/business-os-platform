@@ -1,0 +1,50 @@
+// Small test model for the viewer. Open map.html?fixture to use it.
+window.BOS_MODEL = {
+  meta: { title: "Fixture map", subtitle: "Viewer test data", updated: "2026-11-08" },
+  phases: [
+    { id: "P0", name: "Ground", weeks: "Weeks 1–2 (proposed)", goal: "Box and pipes", exit: "Health check green" },
+    { id: "P1", name: "Identity", weeks: "Weeks 3–4 (proposed)", goal: "People can log in", exit: "Staff log in with passkey" },
+    { id: "P2", name: "Selling", weeks: "Weeks 5–8 (proposed)", goal: "Quotes", exit: "Quote approved and sent", target: true },
+  ],
+  elements: [
+    { id: "staff", parent: null, kind: "person", name: "Staff", desc: "Company employees", since: "P0" },
+    { id: "cust-idp", parent: null, kind: "external", name: "Customer IdP", tech: "Entra ID / Google", desc: "Customer's own directory", since: "P1" },
+    { id: "bos", parent: null, kind: "system", name: "Business OS", desc: "The system", since: "P0" },
+    { id: "web", parent: "bos", kind: "container", name: "Workspace", tech: "Next.js", licence: "MIT", desc: "Staff app", since: "P0" },
+    { id: "access", parent: "bos", kind: "container", name: "Accounts", tech: "ZITADEL", licence: "AGPL-3.0", desc: "Identity provider", since: "P1" },
+    { id: "login", parent: "access", kind: "component", name: "Login & MFA", tech: "Passkeys, TOTP", desc: "Login", since: "P1" },
+    { id: "scim", parent: "access", kind: "component", name: "SCIM provisioning", desc: "Auto user creation", since: "P1", collapsed: true },
+    { id: "scim-ep", parent: "scim", kind: "component", name: "SCIM /Users endpoint", tech: "SCIM 2.0", desc: "Receives users", since: "P1" },
+    { id: "scim-map", parent: "scim", kind: "component", name: "Org mapping", desc: "Puts user in their org", since: "P1" },
+    { id: "api", parent: "bos", kind: "container", name: "API", tech: "NestJS", licence: "MIT", desc: "Modular monolith", since: "P0", changes: { P1: "Adds OIDC guard" } },
+    { id: "guard", parent: "api", kind: "component", name: "Auth guard", tech: "jose", desc: "Verifies tokens", since: "P1" },
+    { id: "quotes", parent: "api", kind: "component", name: "Quotations", desc: "Quotes", since: "P2" },
+    { id: "basic-auth", parent: "api", kind: "component", name: "Temporary admin login", desc: "Replaced by ZITADEL", since: "P0", until: "P1" },
+    { id: "db", parent: "bos", kind: "store", name: "PostgreSQL", tech: "Postgres 16", desc: "Main DB", since: "P0" },
+    { id: "later", parent: null, kind: "later", name: "Later (R2–R5)", desc: "Not in Stage 1", since: "P0" },
+  ],
+  relations: [
+    { id: "r1", src: "staff", dst: "web", label: "uses", tech: "HTTPS", since: "P0" },
+    { id: "r2", src: "web", dst: "login", label: "redirects to login", tech: "OIDC", since: "P1" },
+    { id: "r3", src: "web", dst: "guard", label: "calls with token", tech: "HTTPS/JSON", since: "P1" },
+    { id: "r4", src: "guard", dst: "login", label: "fetches keys", tech: "JWKS", since: "P1" },
+    { id: "r5", src: "cust-idp", dst: "scim-ep", label: "pushes users", tech: "SCIM 2.0", since: "P1" },
+    { id: "r6", src: "scim-ep", dst: "scim-map", label: "maps", since: "P1" },
+    { id: "r7", src: "quotes", dst: "db", label: "reads/writes", tech: "SQL", since: "P2" },
+    { id: "r8", src: "guard", dst: "db", label: "loads roles", tech: "SQL", since: "P1" },
+    { id: "r9", src: "web", dst: "basic-auth", label: "posts password", since: "P0", until: "P1" },
+  ],
+  flows: [
+    { id: "f1", name: "Staff sign-in", since: "P1", desc: "Passkey login then first API call", steps: [
+      { src: "staff", dst: "web", note: "Opens the Workspace" },
+      { src: "web", dst: "login", note: "Redirect to ZITADEL login" },
+      { src: "web", dst: "guard", note: "Calls API with access token" },
+      { src: "guard", dst: "login", note: "Checks signature against JWKS" },
+      { src: "guard", dst: "db", note: "Loads roles and scope" },
+    ] },
+    { id: "f2", name: "SCIM provisioning", since: "P1", desc: "Customer IdP creates a user", steps: [
+      { src: "cust-idp", dst: "scim-ep", note: "POST /Users" },
+      { src: "scim-ep", dst: "scim-map", note: "Put in customer org" },
+    ] },
+  ],
+};
