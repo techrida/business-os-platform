@@ -6,9 +6,15 @@
 // are moved to `sent` the way the app does (submit snapshot, approve, send), never inserted in that state.
 // PA-3 adds accept and reject: PortalRespondService over the real DrizzlePortalRespondStore and the real
 // QuotationOutcomeService (settings, audit, opportunities), as a real portal user, with notify faked.
+// The PDF link (`quotationPdfLink`) runs over a real DocumentsService (disk storage on a temp dir, the real
+// ScanProcessor against the fake clamd, real SignedLinks): only an own, customer-visible version whose rendered PDF
+// scanned clean gets a link, and the link redeems once.
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   createParty,
@@ -17,8 +23,9 @@ import {
   runMigrations,
   type Party,
 } from '@bos/db';
-import { HttpException, NotFoundException } from '@nestjs/common';
+import { HttpException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
@@ -28,15 +35,35 @@ import { AuditService } from '../../platform/audit/audit.service';
 import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { ClamdClient } from '../../platform/documents/clamd.client';
+import { DocumentsService, type GeneratedFile } from '../../platform/documents/documents.service';
+import { startFakeClamd, type FakeClamd } from '../../platform/documents/fake-clamd';
+import { ScanProcessor } from '../../platform/documents/scan.processor';
+import { SignedLinks, type LinkStore } from '../../platform/documents/signed-link';
+import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
 import type { NotifyService } from '../../platform/notify/notify.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome.service';
+import { QUOTATION_OWNER_TYPE } from '../quotations/quotation-owner.policy';
 import { PortalRespondService } from './portal-respond.service';
 import { PortalService } from './portal.service';
 import { DrizzlePortalQuotationStore, DrizzlePortalRespondStore } from './portal.store';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const SIGNING_SECRET = 'an-integration-test-secret-of-32-plus-chars';
+const RENDER_JOB = 'quotation-render';
+const SIGNED_PATH = /^\/v1\/files\/[A-Za-z0-9._~-]+$/;
+
+class MemoryLinkStore implements LinkStore {
+  private readonly keys = new Set<string>();
+  claim(key: string): Promise<boolean> {
+    if (this.keys.has(key)) return Promise.resolve(false);
+    this.keys.add(key);
+    return Promise.resolve(true);
+  }
+}
 
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
@@ -47,6 +74,10 @@ let pool: Pool;
 let db: Db;
 let settings: SettingsService;
 let outcomes: QuotationOutcomeService;
+let storageRoot: string;
+let documents: DocumentsService;
+let scanner: ScanProcessor;
+let fakeClamd: FakeClamd;
 
 /** Inside the seeded validity (issue 2026-11-09, valid until 2026-12-09): 2026-11-10 in Kathmandu. */
 const NOW = new Date('2026-11-10T06:00:00Z');
@@ -104,11 +135,39 @@ beforeAll(async () => {
     audit,
     clock,
   );
+
+  storageRoot = await mkdtemp(join(tmpdir(), 'bos-portal-pdf-'));
+  const storage = new DiskStorageAdapter(storageRoot);
+  documents = new DocumentsService(
+    db,
+    storage,
+    new SignedLinks(SIGNING_SECRET, new MemoryLinkStore(), () => Date.now()),
+    { add: vi.fn().mockResolvedValue({}) } as unknown as Queue,
+    { assert: vi.fn() },
+    { record: vi.fn().mockResolvedValue(undefined) },
+  );
+  // Let the render job attach to a `sent` version: the real policy only allows an approved one, and this test is
+  // about the portal's link, not the render job.
+  documents.registerOwner({
+    ownerType: QUOTATION_OWNER_TYPE,
+    resource: (s) => Promise.resolve({ tenantId: s.tenantId, organizationId: s.organizationId }),
+    allowsSystemActor: () => Promise.resolve(true),
+  });
+  fakeClamd = await startFakeClamd();
+  scanner = new ScanProcessor(
+    db,
+    storage,
+    new ClamdClient({ host: fakeClamd.host, port: fakeClamd.port, timeoutMs: 5_000 }),
+    { record: vi.fn().mockResolvedValue(undefined) },
+    { notifyUser: vi.fn().mockResolvedValue(undefined) },
+  );
 });
 
 afterAll(async () => {
+  await fakeClamd?.close();
   await pool?.end();
   await container?.stop();
+  if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------------------- seed
@@ -293,6 +352,63 @@ function serviceFor(p: Principal): PortalService {
     settings,
   );
 }
+
+/** The portal over the real documents module: for the PDF link, which reads the rendered document's scan status. */
+function serviceWithDocuments(p: Principal): PortalService {
+  return new PortalService(
+    { current: () => p },
+    new DrizzlePortalQuotationStore(db),
+    documents,
+    settings,
+  );
+}
+
+const pdf = (): GeneratedFile => ({
+  filename: 'QT-1-R1.pdf',
+  declaredMime: 'application/pdf',
+  bytes: Buffer.concat([
+    Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n'),
+    Buffer.alloc(200, 0x20),
+  ]),
+});
+
+/**
+ * The rendered PDF of a version the way the render job leaves it: a document of the quotation's own entity, received
+ * and (unless `scan` is false, which leaves it quarantined) scanned clean, then recorded on the version.
+ * Returns the document id and its version id.
+ */
+async function renderPdf(
+  w: World,
+  entity: string,
+  versionId: string,
+  opts: { scan?: boolean } = {},
+): Promise<{ documentId: string; documentVersionId: string }> {
+  const scope: TxScope = { tenantId: w.tenantId, organizationId: entity };
+  const file = pdf();
+  const who = { scope, actor: systemActor(RENDER_JOB) };
+  const created = await withTx(db, who.scope, who.actor, (tx) =>
+    documents.createGenerated(tx, { ownerType: QUOTATION_OWNER_TYPE, ownerId: versionId }, file),
+  );
+  await documents.receiveGenerated(created, file, who);
+  if (opts.scan !== false) {
+    expect(await scanner.scanVersion({ versionId: created.versionId, ...scope }, true)).toBe(
+      'clean',
+    );
+  }
+  await withTx(db, scope, seedActor(), async (tx) => {
+    await tx.execute(
+      sql`UPDATE app.quotation_versions SET render_state = 'pending' WHERE id = ${versionId}::uuid`,
+    );
+    await tx.execute(sql`
+      UPDATE app.quotation_versions
+         SET render_state = 'rendered', rendered_document_id = ${created.documentId}::uuid,
+             rendered_sha256 = decode(repeat('cd', 32), 'hex')
+       WHERE id = ${versionId}::uuid`);
+  });
+  return { documentId: created.documentId, documentVersionId: created.versionId };
+}
+
+const tokenOf = (url: string): string => url.replace(/^\/v1\/files\//, '');
 
 // ---------------------------------------------------------------------------------------- tests
 
@@ -499,5 +615,67 @@ describe('portal accept and reject on a real database', () => {
       rejection_source: 'customer',
     });
     expect(await opportunityState(sent.opportunityId)).toMatchObject({ stage: 'quotation_sent' });
+  });
+});
+
+// ---------------------------------------------------------------------------------------- PDF link
+
+describe('portal PDF link on a real database', () => {
+  it('links a clean rendered PDF of an own sent version, and the link redeems once', async () => {
+    const w = await seedWorld();
+    const sent = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    await renderPdf(w, w.entityA, sent.versionId);
+    const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
+
+    const link = await portal.quotationPdfLink(sent.versionId);
+    // The form the portal's BFF accepts before it fetches anything.
+    expect(link.url).toMatch(SIGNED_PATH);
+
+    const opened = await documents.openDownload(tokenOf(link.url));
+    expect(opened.mime).toBe('application/pdf');
+    expect(opened.filename).toBe('QT-1-R1.pdf');
+    opened.stream.destroy();
+    await expect(documents.openDownload(tokenOf(link.url))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('answers 404 while the rendered PDF is quarantined, then links once it is clean', async () => {
+    const w = await seedWorld();
+    const sent = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const { documentVersionId } = await renderPdf(w, w.entityA, sent.versionId, { scan: false });
+    const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
+
+    await expect(portal.quotationPdfLink(sent.versionId)).rejects.toBeInstanceOf(NotFoundException);
+
+    const scope: TxScope = { tenantId: w.tenantId, organizationId: w.entityA };
+    expect(await scanner.scanVersion({ versionId: documentVersionId, ...scope }, true)).toBe(
+      'clean',
+    );
+    const link = await portal.quotationPdfLink(sent.versionId);
+    expect(link.url).toMatch(SIGNED_PATH);
+  });
+
+  it('answers 404 for another party, another entity, a draft, an unrendered version and an unknown id', async () => {
+    const w = await seedWorld();
+    // Each one that can has a clean rendered PDF, so its 404 comes from the portal's scope, not from the scan.
+    const otherParty = await seedQuotation(w, w.entityA, w.partyQ, 'sent');
+    await renderPdf(w, w.entityA, otherParty.versionId);
+    const otherEntity = await seedQuotation(w, w.entityB, w.partyP, 'sent');
+    await renderPdf(w, w.entityB, otherEntity.versionId);
+    const draft = await seedQuotation(w, w.entityA, w.partyP, 'draft');
+    await renderPdf(w, w.entityA, draft.versionId);
+    const unrendered = await seedQuotation(w, w.entityA, w.partyP, 'sent');
+    const portal = serviceWithDocuments(customerOf(w, w.entityA, w.partyP));
+
+    for (const [name, id] of [
+      ['other party', otherParty.versionId],
+      ['other entity', otherEntity.versionId],
+      ['draft', draft.versionId],
+      ['not rendered', unrendered.versionId],
+      ['unknown', randomUUID()],
+    ] as const) {
+      await expect(portal.quotationPdfLink(id), name).rejects.toBeInstanceOf(NotFoundException);
+    }
   });
 });
