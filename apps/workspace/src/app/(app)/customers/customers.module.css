@@ -1,0 +1,63 @@
+/* Layout and small pieces that belong to the customer screens only. Everything else comes from
+   components/ui. Colours are Figma tokens from styles/tokens.css. */
+
+.count {
+  white-space: nowrap;
+}
+
+.note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* A legal name can be long or have no spaces: let it wrap rather than push the table wider. */
+.name {
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+/* ---- Search: a plain GET form, so it works without scripts and the URL can be shared ---- */
+
+.search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+}
+
+.search > :first-child {
+  flex: 1 1 18rem;
+  max-width: 32rem;
+}
+
+.searchActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---- Pager ---- */
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.pagerLinks {
+  display: flex;
+  gap: 8px;
+}
