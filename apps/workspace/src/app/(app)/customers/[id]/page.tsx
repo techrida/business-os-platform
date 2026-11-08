@@ -33,6 +33,8 @@ import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { shortId } from '@/lib/kernel-ui';
 
+import { OpenCaseForm } from '../../verification/open-case-form';
+
 import styles from './customer.module.css';
 
 export const metadata: Metadata = { title: 'Customer · Business OS' };
@@ -235,10 +237,13 @@ function Verification({
   result,
   here,
   maySee,
+  open,
 }: {
   result: PromiseSettledResult<Listing<VerificationCaseDto>>;
   here: string;
   maySee: boolean;
+  /** Set when this person may start a case (customer.write on a customer that was not merged away). */
+  open: { customerId: string; idempotencyKey: string } | null;
 }) {
   return (
     <Panel title="Verification" as="aside">
@@ -250,33 +255,52 @@ function Verification({
           forbiddenText="Verification is for the finance team."
         />
       ) : result.value.items.length === 0 ? (
-        <p className={styles.note}>
-          Not submitted for verification yet. A case appears here once the customer&apos;s documents
-          are sent for review.
-        </p>
+        <div className={styles.cases}>
+          <p className={styles.note}>
+            {open !== null
+              ? "No verification case yet. Start one to collect this customer's documents and send them for review."
+              : "Not submitted for verification yet. A case appears here once the customer's documents are sent for review."}
+          </p>
+          {open !== null ? (
+            <OpenCaseForm
+              partyId={open.customerId}
+              idempotencyKey={open.idempotencyKey}
+              label="Start verification"
+            />
+          ) : null}
+        </div>
       ) : (
-        <ul className={styles.cases}>
-          {result.value.items.map((c) => {
-            const status = VERIFICATION_STATUS_LABEL[c.status];
-            const p = checklistProgress(c.checklist);
-            return (
-              <li key={c.id} className={styles.case}>
-                <Badge tone={status.tone}>{status.text}</Badge>
-                <span className={styles.note}>
-                  {p.required === 0
-                    ? 'No required documents yet.'
-                    : `${p.accepted} of ${p.required} required documents accepted.`}
-                </span>
-                {maySee ? (
-                  <Link href={`/verification/${encodeURIComponent(c.id)}`}>
-                    Open this case
-                    <span className="sr-only"> ({status.text})</span>
-                  </Link>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <ul className={styles.cases}>
+            {result.value.items.map((c) => {
+              const status = VERIFICATION_STATUS_LABEL[c.status];
+              const p = checklistProgress(c.checklist);
+              return (
+                <li key={c.id} className={styles.case}>
+                  <Badge tone={status.tone}>{status.text}</Badge>
+                  <span className={styles.note}>
+                    {p.required === 0
+                      ? 'No required documents yet.'
+                      : `${p.accepted} of ${p.required} required documents accepted.`}
+                  </span>
+                  {maySee ? (
+                    <Link href={`/verification/${encodeURIComponent(c.id)}`}>
+                      Open this case
+                      <span className="sr-only"> ({status.text})</span>
+                    </Link>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {open !== null && result.value.items.some((c) => c.status === 'expired') ? (
+            <OpenCaseForm
+              partyId={open.customerId}
+              idempotencyKey={open.idempotencyKey}
+              label="Reopen verification"
+            />
+          ) : null}
+        </>
       )}
     </Panel>
   );
@@ -425,7 +449,16 @@ export default async function CustomerPage({
         </div>
 
         <div className={styles.sideStack}>
-          <Verification result={cases} here={here} maySee={maySeeVerification} />
+          <Verification
+            result={cases}
+            here={here}
+            maySee={maySeeVerification}
+            // One key per render of this page: a double click or a retry after a network error
+            // names the same request.
+            open={
+              mayWrite && !merged ? { customerId: customer.id, idempotencyKey: randomUUID() } : null
+            }
+          />
           <Panel title="Activity" as="aside">
             <EmptyState title="The timeline is not connected yet." headingLevel={3}>
               Calls, notes and changes to this customer will be listed here.

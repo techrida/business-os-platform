@@ -145,3 +145,15 @@
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
 }
+
+/* ---- Customer page: the "Start verification" form and its refusal ---- */
+
+.openCase {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.openCase > * {
+  max-width: 100%;
+}
