@@ -1,0 +1,27 @@
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+}
+
+.name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
