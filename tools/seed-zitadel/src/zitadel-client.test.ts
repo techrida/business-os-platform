@@ -9,6 +9,7 @@ import {
 } from './zitadel-client.js';
 
 interface Call {
+  method: 'GET' | 'POST' | 'PUT';
   path: string;
   body: unknown;
   headers: Record<string, string> | undefined;
@@ -20,7 +21,15 @@ function recording(answers: Record<string, unknown>): { transport: Transport; ca
     calls,
     transport: {
       post(path, body, headers) {
-        calls.push({ path, body, headers });
+        calls.push({ method: 'POST', path, body, headers });
+        return Promise.resolve(answers[path] ?? {});
+      },
+      get(path, headers) {
+        calls.push({ method: 'GET', path, body: undefined, headers });
+        return Promise.resolve(answers[path] ?? {});
+      },
+      put(path, body, headers) {
+        calls.push({ method: 'PUT', path, body, headers });
         return Promise.resolve(answers[path] ?? {});
       },
     },
@@ -62,6 +71,34 @@ describe('ZitadelClient request shapes', () => {
       name: 'business-os',
       projectRoleAssertion: true,
     });
+  });
+
+  it('creates the project requiring an authorization (a role) to sign in (CR-02)', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.createProject]: { projectId: 'p1' } });
+    await client(transport).createProject('org1', 'business-os');
+    expect(calls[0]?.body).toMatchObject({ authorizationRequired: true });
+  });
+
+  it('reports whether an existing project requires an authorization (absent means false)', async () => {
+    const project = (extra: object) => ({
+      projects: [{ projectId: 'p1', organizationId: 'org1', name: 'business-os', ...extra }],
+    });
+    const off = recording({ [ENDPOINTS.listProjects]: project({}) });
+    expect((await client(off.transport).findProject('org1', 'business-os'))?.authorizationRequired).toBe(
+      false,
+    );
+    const on = recording({ [ENDPOINTS.listProjects]: project({ authorizationRequired: true }) });
+    expect((await client(on.transport).findProject('org1', 'business-os'))?.authorizationRequired).toBe(
+      true,
+    );
+  });
+
+  it('turns authorizationRequired on for an existing project without touching other flags', async () => {
+    const { transport, calls } = recording({});
+    await client(transport).enableAuthorizationRequired('p1');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe(ENDPOINTS.updateProject);
+    expect(calls[0]?.body).toEqual({ projectId: 'p1', authorizationRequired: true });
   });
 
   it('creates machine users with JWT access tokens', async () => {
@@ -111,7 +148,90 @@ describe('ZitadelClient request shapes', () => {
   });
 });
 
+describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', () => {
+  // What GET /management/v1/policies/login returns for an org that inherits the instance default.
+  const inherited = {
+    isDefault: true,
+    policy: {
+      isDefault: true,
+      allowUsernamePassword: true,
+      allowRegister: true,
+      allowExternalIdp: true,
+      passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+      passwordCheckLifetime: '864000s',
+      secondFactors: ['SECOND_FACTOR_TYPE_OTP'],
+      multiFactors: ['MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION'],
+      details: { sequence: '1' },
+    },
+  };
+
+  it('creates a custom org policy from the inherited one with allowRegister false', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: inherited });
+    const changed = await client(transport).ensureOrgLoginPolicyNoRegister('staff-org');
+    expect(changed).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'POST']);
+    expect(calls.every((c) => c.path === ENDPOINTS.orgLoginPolicy)).toBe(true);
+    expect(calls.every((c) => c.headers?.['x-zitadel-orgid'] === 'staff-org')).toBe(true);
+    expect(calls[1]?.body).toEqual({
+      allowUsernamePassword: true,
+      allowRegister: false,
+      allowExternalIdp: true,
+      passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+      passwordCheckLifetime: '864000s',
+      secondFactors: ['SECOND_FACTOR_TYPE_OTP'],
+      multiFactors: ['MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION'],
+    });
+  });
+
+  it('updates an existing custom org policy, keeping every other setting', async () => {
+    const custom = {
+      isDefault: false,
+      policy: { ...inherited.policy, isDefault: false, forceMfa: true },
+    };
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: custom });
+    expect(await client(transport).ensureOrgLoginPolicyNoRegister('staff-org')).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+    // Update has no factor lists (they are managed by their own endpoints) and must not drop the rest.
+    expect(calls[1]?.body).toEqual({
+      allowUsernamePassword: true,
+      allowRegister: false,
+      allowExternalIdp: true,
+      forceMfa: true,
+      passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+      passwordCheckLifetime: '864000s',
+    });
+  });
+
+  it('sends nothing but the read when self-registration is already off', async () => {
+    const off = { isDefault: false, policy: { ...inherited.policy, isDefault: false, allowRegister: false } };
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: off });
+    expect(await client(transport).ensureOrgLoginPolicyNoRegister('staff-org')).toBe(false);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+
+  it('refuses to copy identity-provider links into a custom policy instead of dropping them', async () => {
+    const withIdp = { ...inherited, policy: { ...inherited.policy, idps: [{ idpId: 'i1' }] } };
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: withIdp });
+    await expect(client(transport).ensureOrgLoginPolicyNoRegister('o')).rejects.toThrow(/identity provider/i);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+});
+
 describe('createFetchTransport', () => {
+  it('uses GET without a body and PUT with a JSON body for the REST endpoints', async () => {
+    const seen: { method?: string; body?: unknown; org?: string }[] = [];
+    const fetchImpl: typeof fetch = (_input, init) => {
+      const headers = init?.headers as Record<string, string>;
+      seen.push({ method: init?.method, body: init?.body, org: headers['x-zitadel-orgid'] });
+      return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+    };
+    const transport = createFetchTransport('https://auth.localhost', 'PAT', fetchImpl);
+    await transport.get('/a', { 'x-zitadel-orgid': 'o1' });
+    await transport.put('/b', { x: 1 });
+    expect(seen[0]).toEqual({ method: 'GET', body: undefined, org: 'o1' });
+    expect(seen[1]).toMatchObject({ method: 'PUT', body: '{"x":1}' });
+  });
+
   it('sends Connect JSON with the bearer token and keeps the token out of errors', async () => {
     let seen: { url: string; init: RequestInit } | undefined;
     const fetchImpl: typeof fetch = (input, init) => {
