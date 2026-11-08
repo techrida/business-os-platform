@@ -4,27 +4,47 @@
 import type { RoleKey } from '@bos/contracts';
 
 import type { TxScope } from '../db/tx';
-import type { Principal } from './principal';
+
+/**
+ * One `app.user_entities` row: a legal entity the user may act for (ADR 0027 §3). Portal users have
+ * none; they act in the tenant's entities through their party.
+ */
+export interface EntityMembership {
+  organizationId: string;
+  isDefault: boolean;
+  /** Narrows the token's roles in this entity; null means every token role counts. */
+  roleKeys: string[] | null;
+  departmentId: string | null;
+}
+
+/**
+ * A user row as the tenancy interceptor needs it. `tenantId` and `idpOrgId` are the row's own, so
+ * the interceptor can refuse a row that does not match the token's IdP org (review R26).
+ */
+export interface ResolvedUser {
+  userId: string;
+  tenantId: string;
+  idpOrgId: string;
+  status: 'active' | 'inactive' | 'invited';
+  memberships: EntityMembership[];
+}
 
 export abstract class UserDirectory {
   /**
    * Maps a token identity to our user row. Creates the row (status `active`) and enqueues
    * `users.sync` when it is missing, so a first login works before the webhook arrives.
    *
-   * The lookup is by ZITADEL id alone, so it returns the row's own `tenantId` and `organizationId`:
-   * the tenancy interceptor refuses the request when they differ from the token's org (review R26).
+   * The lookup is by ZITADEL id alone, so it returns the row's own `tenantId` and `idpOrgId`: the
+   * tenancy interceptor refuses the request when they differ from the token's IdP org (review R26).
+   * `idpOrgId` is the token's IdP org: a JIT-created user is placed in it (`users.idp_org_id` is NOT
+   * NULL), and a staff user gets its bootstrap membership in the tenant's default entity (ADR 0027 §3).
+   * The acting entity is chosen only after this call, from the memberships it returns.
    */
   abstract resolve(i: {
     zitadelUserId: string;
     tenantId: string;
-    organizationId: string;
-  }): Promise<{
-    userId: string;
-    status: Principal['status'];
-    departmentId: string | null;
-    tenantId: string;
-    organizationId: string;
-  }>;
+    idpOrgId: string;
+  }): Promise<ResolvedUser>;
 
   /** Active users holding `role` in this scope: the approver lookup for routing and notifications. */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;

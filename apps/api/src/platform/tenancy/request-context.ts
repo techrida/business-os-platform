@@ -11,11 +11,20 @@ import type { Principal } from '../authz/principal';
 export interface RequestContext {
   correlationId: string;
   tenantId: string;
+  /** The acting legal entity (ADR 0027 §4): named by `X-Entity-Id`, else the default. */
   organizationId: string;
+  /** The kind of the caller's IdP org: staff, or a customer or vendor portal. */
   orgKind: OrgKind;
+  /** The customer or vendor party of a portal caller; null for staff. */
+  partyId: string | null;
+  /** `app.idp_orgs.id` of the token's ZITADEL org. */
+  idpOrgId: string;
   /** ZITADEL `sub`. */
   userId: string;
+  /** Effective roles in the acting entity: the token's roles narrowed by the membership. */
   roles: readonly string[];
+  /** The department of the caller's membership in the acting entity; null for portal callers. */
+  departmentId: string | null;
   /** Token expiry as epoch seconds (the JWT `exp` claim). */
   tokenExp: number;
   /** Client address as Express sees it (`req.ip`), truncated to 512 characters; null when absent. */

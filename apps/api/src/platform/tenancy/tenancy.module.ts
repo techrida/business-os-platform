@@ -3,7 +3,7 @@ import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { CorrelationMiddleware } from './correlation.middleware';
 import { ErrorBodyFilter } from './error-body.filter';
-import { CLOCK, OrgResolver } from './org-resolver';
+import { CLOCK, IdpOrgResolver } from './idp-org-resolver';
 import { TenancyInterceptor } from './tenancy.interceptor';
 
 /**
@@ -19,12 +19,12 @@ import { TenancyInterceptor } from './tenancy.interceptor';
  */
 @Module({
   providers: [
-    OrgResolver,
+    IdpOrgResolver,
     { provide: CLOCK, useValue: () => Date.now() },
     { provide: APP_INTERCEPTOR, useClass: TenancyInterceptor },
     { provide: APP_FILTER, useClass: ErrorBodyFilter },
   ],
-  exports: [OrgResolver],
+  exports: [IdpOrgResolver],
 })
 export class TenancyModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

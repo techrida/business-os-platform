@@ -4,6 +4,7 @@
 // findings 3 and 4): a route with no marker is refused, and a warm request touches no database.
 import { type OrgKind, type Permission, ROLE_KEYS, type RoleKey } from '@bos/contracts';
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -19,12 +20,17 @@ import { can } from '../authz/can';
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../authz/decorators';
 import type { DenyReason, Principal } from '../authz/principal';
 import { RoleCache } from '../authz/role-cache';
-import { UserDirectory } from '../authz/user-directory';
-import { CLOCK, type Clock, OrgResolver } from './org-resolver';
+import { type EntityMembership, type ResolvedUser, UserDirectory } from '../authz/user-directory';
+import { CLOCK, type Clock, IdpOrgResolver, type ResolvedIdpOrg } from './idp-org-resolver';
 import { bindIdentity, bindPrincipal } from './request-context';
 
 // Fixed text: it names no org, tenant or role, so the caller learns nothing about where it landed.
 const NO_ROLE = 'No project role has been granted';
+
+/** The request header naming the acting legal entity (ADR 0027 §4). Express lowercases header names. */
+export const ENTITY_HEADER = 'x-entity-id';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * How long a `UserDirectory.resolve()` answer is reused. A deactivated user can act for at most
@@ -34,8 +40,6 @@ export const USER_CACHE_TTL_MS = 60_000;
 
 /** Upper bound on cached users per instance, so a flood of distinct tokens cannot grow memory. */
 export const USER_CACHE_MAX = 10_000;
-
-type ResolvedUser = Awaited<ReturnType<UserDirectory['resolve']>>;
 
 interface UserCacheEntry {
   user: ResolvedUser;
@@ -82,11 +86,73 @@ function rolesInOrg(auth: AuthIdentity, orgKind: OrgKind): readonly RoleKey[] {
 const forbidden = (reason: DenyReason): ForbiddenException =>
   new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason });
 
+/** CR-02: a staff caller with no effective role. Fixed text, so it reveals nothing (see NO_ROLE). */
+const noRole = (): ForbiddenException =>
+  new ForbiddenException({ code: 'forbidden', message: NO_ROLE, reason: 'no_permission' });
+
 /**
- * Completes the request context and enforces the route-level permission, in this order:
- * resolve org → bindIdentity → UserDirectory.resolve (cached 60 s) → the row must belong to that
- * tenant and org → roles of this org only →
- * grants from RoleCache → bindPrincipal → `@Can` / `@AnyAuthenticated` / deny.
+ * The `X-Entity-Id` header, lowercased, or undefined when absent. Anything that is not exactly one
+ * uuid (a repeated header, an empty value, a typo) is the caller's mistake: 400 `invalid_entity`.
+ */
+function requestedEntity(req: AuthenticatedRequest): string | undefined {
+  const raw: unknown = req.headers[ENTITY_HEADER];
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string' || !UUID.test(raw)) {
+    throw new BadRequestException({
+      code: 'bad_request',
+      message: 'Bad request',
+      reason: 'invalid_entity',
+    });
+  }
+  return raw.toLowerCase();
+}
+
+/**
+ * ADR 0027 §4 step 5: the entity the request acts for, and the staff membership that allows it.
+ * An unknown entity and one the caller may not use are refused alike, so entities cannot be
+ * enumerated.
+ */
+function actingEntity(
+  idp: ResolvedIdpOrg,
+  user: ResolvedUser,
+  requested: string | undefined,
+): { entityId: string; membership: EntityMembership | null } {
+  if (idp.kind === 'staff') {
+    const { memberships } = user;
+    const membership =
+      requested === undefined
+        ? (memberships.find((m) => m.isDefault) ??
+          (memberships.length === 1 ? memberships[0] : undefined))
+        : memberships.find((m) => m.organizationId.toLowerCase() === requested);
+    if (membership === undefined) throw forbidden('entity_not_permitted');
+    return { entityId: membership.organizationId, membership };
+  }
+  // Portal users have no membership: they may name any entity of their tenant.
+  const wanted = requested ?? idp.defaultEntityId?.toLowerCase();
+  const entityId = idp.entityIds.find((id) => id.toLowerCase() === wanted);
+  if (entityId === undefined) throw forbidden('entity_not_permitted');
+  return { entityId, membership: null };
+}
+
+/**
+ * ADR 0027 §3: effective roles = token roles ∩ the membership's `roleKeys` (null: all token roles).
+ * BOS can only narrow, never widen. Portal callers have no membership and keep their token roles.
+ */
+function effectiveRoles(
+  tokenRoles: readonly RoleKey[],
+  membership: EntityMembership | null,
+): readonly RoleKey[] {
+  const allowed = membership?.roleKeys;
+  if (allowed === null || allowed === undefined) return tokenRoles;
+  return Object.freeze(tokenRoles.filter((role) => allowed.includes(role)));
+}
+
+/**
+ * Completes the request context and enforces the route-level permission (ADR 0027 §4), in this
+ * order: resolve the IdP org (cached 60 s) → token roles of that org's kind → UserDirectory.resolve
+ * (cached 60 s) → the row must belong to that tenant and IdP org (R26) → the acting entity from
+ * `X-Entity-Id` or the default → effective roles → grants from RoleCache → bindIdentity and
+ * bindPrincipal → `@Can` / `@AnyAuthenticated` / deny.
  *
  * Why an interceptor and not a second APP_GUARD (finding 3): Nest runs all guards before any
  * interceptor, so this always sees `req.auth` after AuthGuard whatever order modules are imported
@@ -107,7 +173,7 @@ export class TenancyInterceptor implements NestInterceptor {
   private readonly users = new Map<string, UserCacheEntry>();
 
   constructor(
-    private readonly orgs: OrgResolver,
+    private readonly idpOrgs: IdpOrgResolver,
     private readonly reflector: Reflector,
     private readonly directory: UserDirectory,
     private readonly roleCache: RoleCache,
@@ -124,42 +190,50 @@ export class TenancyInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const org = await this.orgs.resolve(auth.zitadelOrgId);
-    const roles = rolesInOrg(auth, org.orgKind);
-    if (org.orgKind === 'staff' && roles.length === 0) {
-      throw new ForbiddenException({
-        code: 'forbidden',
-        message: NO_ROLE,
-        reason: 'no_permission',
-      });
-    }
-    // `ctx().roles` carries the same per-org list as the principal, so `/v1/me` cannot show a role
-    // granted in another org either.
-    bindIdentity({
-      tenantId: org.tenantId,
-      organizationId: org.organizationId,
-      orgKind: org.orgKind,
-      userId: auth.userId,
-      roles,
-      tokenExp: auth.tokenExp,
-    });
+    const idp = await this.idpOrgs.resolve(auth.zitadelOrgId);
+    const tokenRoles = rolesInOrg(auth, idp.kind);
+    // Effective roles are a subset of the token roles, so a staff token with none is refused here,
+    // before any user lookup (CR-02).
+    if (idp.kind === 'staff' && tokenRoles.length === 0) throw noRole();
+    const requested = requestedEntity(req);
 
-    const user = await this.resolveUser(auth.userId, org.tenantId, org.organizationId);
+    const user = await this.resolveUser(auth.userId, idp.tenantId, idp.idpOrgId);
     // The directory finds the row by ZITADEL id alone, and a cached answer is keyed by tenant only,
-    // so the row may live in another tenant or org than the token resolved to. Acting as that row
-    // here would cross the boundary, so refuse before any principal exists (review R26).
-    if (user.tenantId !== org.tenantId || user.organizationId !== org.organizationId) {
+    // so the row may live in another tenant or IdP org than the token resolved to. Acting as that
+    // row here would cross the boundary, so refuse before any principal exists (review R26).
+    if (user.tenantId !== idp.tenantId || user.idpOrgId !== idp.idpOrgId) {
       throw forbidden('no_permission');
     }
-    const grants = await this.roleCache.grantsFor(org.tenantId, org.organizationId, roles);
+
+    const { entityId, membership } = actingEntity(idp, user, requested);
+    const roles = effectiveRoles(tokenRoles, membership);
+    if (idp.kind === 'staff' && roles.length === 0) throw noRole();
+    const departmentId = membership?.departmentId ?? null;
+
+    const grants = await this.roleCache.grantsFor(idp.tenantId, entityId, roles);
+    // `ctx().roles` carries the same effective list as the principal, so `/v1/me` cannot show a
+    // role granted in another org, or one the membership narrowed away.
+    bindIdentity({
+      tenantId: idp.tenantId,
+      organizationId: entityId,
+      orgKind: idp.kind,
+      partyId: idp.partyId,
+      idpOrgId: idp.idpOrgId,
+      userId: auth.userId,
+      roles,
+      departmentId,
+      tokenExp: auth.tokenExp,
+    });
     const principal: Principal = {
       userId: user.userId,
       zitadelUserId: auth.userId,
-      tenantId: org.tenantId,
-      organizationId: org.organizationId,
-      orgKind: org.orgKind,
+      tenantId: idp.tenantId,
+      organizationId: entityId,
+      orgKind: idp.kind,
+      partyId: idp.partyId,
+      idpOrgId: idp.idpOrgId,
       roles,
-      departmentId: user.departmentId,
+      departmentId,
       status: user.status,
       grants,
     };
@@ -204,7 +278,7 @@ export class TenancyInterceptor implements NestInterceptor {
   private async resolveUser(
     zitadelUserId: string,
     tenantId: string,
-    organizationId: string,
+    idpOrgId: string,
   ): Promise<ResolvedUser> {
     const key = `${tenantId}:${zitadelUserId}`;
     const cached = this.users.get(key);
@@ -212,14 +286,14 @@ export class TenancyInterceptor implements NestInterceptor {
       return cached.user;
     }
 
-    const user = await this.directory.resolve({ zitadelUserId, tenantId, organizationId });
+    const user = await this.directory.resolve({ zitadelUserId, tenantId, idpOrgId });
 
     this.users.delete(key);
     if (this.users.size >= USER_CACHE_MAX) {
       const oldest = this.users.keys().next();
       if (oldest.done !== true) this.users.delete(oldest.value);
     }
-    // Expiry counts from when the lookup finished, as in OrgResolver.
+    // Expiry counts from when the lookup finished, as in IdpOrgResolver.
     this.users.set(key, { user, expiresAt: this.now() + USER_CACHE_TTL_MS });
     return user;
   }

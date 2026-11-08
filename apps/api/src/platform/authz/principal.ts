@@ -9,7 +9,7 @@ import { currentPrincipal } from '../tenancy/request-context';
 
 /**
  * The caller, as authz sees them, for one request. Built by the tenancy interceptor after the
- * org is resolved; `roles` and `grants` already belong to that org only.
+ * IdP org and the acting entity are resolved; `roles` and `grants` already belong to that entity.
  */
 export interface Principal {
   /** `app.users.id` (uuid). Not the ZITADEL `sub`: rows reference our own user id. */
@@ -17,9 +17,17 @@ export interface Principal {
   /** ZITADEL `sub`. */
   zitadelUserId: string;
   tenantId: string;
+  /** The acting legal entity (ADR 0027 §4): named by `X-Entity-Id`, else the default. */
   organizationId: string;
+  /** The kind of the caller's IdP org (ADR 0027): staff, or a customer or vendor portal. */
   orgKind: OrgKind;
+  /** The customer or vendor party of a portal caller (`idp_orgs.party_id`); null for staff. */
+  partyId: string | null;
+  /** `app.idp_orgs.id` of the token's ZITADEL org. */
+  idpOrgId: string;
+  /** Effective roles in the acting entity: the token's roles narrowed by the membership. */
   roles: readonly RoleKey[];
+  /** The department of the caller's membership in the acting entity; null for portal callers. */
   departmentId: string | null;
   status: 'invited' | 'active' | 'inactive';
   /** Every permission the caller's roles give, with the widest scope among those roles. */
@@ -36,14 +44,21 @@ export interface ResourceRef {
   organizationId: string;
   ownerUserId?: string | null;
   departmentId?: string | null;
-  customerOrganizationId?: string | null;
-  vendorOrganizationId?: string | null;
+  /** The customer party the record names (`customer_party_id`, ADR 0027 §5). */
+  customerPartyId?: string | null;
+  /** The vendor party the record names (`vendor_party_id`). */
+  vendorPartyId?: string | null;
   /** Users who prepared the record and so must not approve it (separation of duties). */
   sodUserIds?: readonly string[];
 }
 
 export type DenyReason =
-  'no_permission' | 'out_of_scope' | 'separation_of_duties' | 'inactive_user';
+  | 'no_permission'
+  | 'out_of_scope'
+  | 'separation_of_duties'
+  | 'inactive_user'
+  /** ADR 0027 §4: the acting entity is unknown or the caller may not act for it (answered alike). */
+  | 'entity_not_permitted';
 
 export type Decision = { allowed: true; scope: Scope } | { allowed: false; reason: DenyReason };
 
@@ -55,8 +70,8 @@ export type Decision = { allowed: true; scope: Scope } | { allowed: false; reaso
 export type ScopableTable = ScopedTable & {
   ownerUserId?: AnyPgColumn;
   departmentId?: AnyPgColumn;
-  customerOrganizationId?: AnyPgColumn;
-  vendorOrganizationId?: AnyPgColumn;
+  customerPartyId?: AnyPgColumn;
+  vendorPartyId?: AnyPgColumn;
 };
 
 /**
