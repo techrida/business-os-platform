@@ -1,0 +1,236 @@
+/* Layout and small pieces that belong to the quotation detail only. Everything else comes from
+   components/ui. Colours are Figma tokens. */
+
+/* Part C puts its action buttons here. An empty slot takes no room: a JSX comment leaves no node. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions:empty {
+  display: none;
+}
+
+.note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* Customer names and reasons are free text: they wrap instead of widening the page. */
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+/* ---- Summary: the current revision's facts, with its totals beside them on a wide screen ---- */
+
+.columns {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (min-width: 1200px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr) 373px;
+  }
+}
+
+.totals {
+  display: grid;
+  margin: 0;
+}
+
+.totalRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 16px;
+  padding-block: 10px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.totalRow:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.totalTerm {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.totalValue {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The grand total is the one heavy line; weight and size carry it, no extra box. */
+.grandTotal {
+  padding-bottom: 0;
+}
+
+.grandTotal .totalTerm {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.grandTotal .totalValue {
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.pdfWords {
+  color: var(--text-secondary);
+}
+
+/* ---- Status history ---- */
+
+.history {
+  display: grid;
+}
+
+.event {
+  display: grid;
+  gap: 4px;
+  padding-block: 12px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.event:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.event:last-child {
+  padding-bottom: 0;
+}
+
+.eventHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
+.eventName {
+  font-weight: var(--font-weight-semibold);
+}
+
+.eventMeta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.reason {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Revisions dialog (a native modal dialog, as in the edit-roles dialog) ---- */
+
+.dialog {
+  width: min(880px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+  border: var(--border-width-thin) solid var(--modal-border);
+  border-radius: var(--radius-xl);
+  background: var(--modal-bg);
+  color: var(--modal-text);
+  box-shadow: 0 24px 48px color-mix(in srgb, var(--modal-overlay) 18%, transparent);
+}
+
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--modal-overlay) 50%, transparent);
+}
+
+.dialogBox {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: calc(100dvh - 32px);
+}
+
+.dialogHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.dialogTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dialogTitle h2 {
+  font-size: var(--font-size-body-large);
+  line-height: var(--line-height-body-large);
+  overflow-wrap: anywhere;
+}
+
+.dialogSub {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.dialogClose {
+  flex: none;
+  padding-inline: 8px;
+  color: var(--modal-close-icon);
+}
+
+.dialogBody {
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.dialogFoot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.revision {
+  display: grid;
+  gap: 4px;
+  min-width: 10ch;
+}
+
+.revisionName {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.revisionNote {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
