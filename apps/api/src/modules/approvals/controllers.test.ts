@@ -75,20 +75,20 @@ function approvalsController(current: unknown = requestAt('management'), maxAge?
 describe('ApprovalsController', () => {
   it('refuses a decision without an Idempotency-Key header with 400', () => {
     const { controller, service } = approvalsController();
-    expect(() => controller.act(ID, undefined, { action: 'approve', expectedVersion: 1 })).toThrow(
-      BadRequestException,
-    );
     expect(() =>
-      controller.act(ID, 'has space', { action: 'approve', expectedVersion: 1 }),
+      controller.act(ID, undefined, { action: 'approve', expectedVersion: 1 }, reqWith()),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      controller.act(ID, 'has space', { action: 'approve', expectedVersion: 1 }, reqWith()),
     ).toThrow(BadRequestException);
     expect(service.act).not.toHaveBeenCalled();
   });
 
   it('refuses a return without a comment with 400 before the service runs', () => {
     const { controller, service } = approvalsController();
-    expect(() => controller.act(ID, 'key-1', { action: 'return', expectedVersion: 1 })).toThrow(
-      /comment/,
-    );
+    expect(() =>
+      controller.act(ID, 'key-1', { action: 'return', expectedVersion: 1 }, reqWith()),
+    ).toThrow(/comment/);
     expect(service.act).not.toHaveBeenCalled();
   });
 
