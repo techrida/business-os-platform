@@ -71,6 +71,17 @@ beforeAll(async () => {
   await bosAdmin.query(
     'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
   );
+  // P1's audit trigger (0001) refuses a write to an app table with no actor. These P0 tests write rows
+  // directly as bos_app, so every bos_app session in THIS test database gets a test actor by default.
+  // The API never relies on this: withTx sets the actor per transaction (see packages/db/src/audit.test.ts
+  // for the test that a write without one raises).
+  for (const [key, value] of [
+    ['bos.actor_kind', 'system'],
+    ['bos.actor_id', 'system:db-test'],
+    ['bos.correlation_id', 'db-test-0001'],
+  ]) {
+    await bosAdmin.query(`ALTER ROLE bos_app IN DATABASE bos SET ${key} = '${value}'`);
+  }
   await bosAdmin.end();
 
   await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
@@ -86,17 +97,16 @@ afterAll(async () => {
 });
 
 describe('migrations', () => {
-  it('applied 0000 to an empty database', async () => {
+  it('applied the P0 tables (0000) alongside the P1 kernel migrations', async () => {
     const { rows } = await owner.query<{ table: string }>(
       `SELECT table_schema || '.' || table_name AS "table"
          FROM information_schema.tables
         WHERE table_schema IN ('app', 'ops') ORDER BY 1`,
     );
-    expect(rows.map((r) => r.table)).toEqual([
-      'app.organizations',
-      'app.tenants',
-      'ops.restore_canary',
-    ]);
+    // P1 (0001-0007) adds more tables; each kernel unit's own test checks those in detail.
+    expect(rows.map((r) => r.table)).toEqual(
+      expect.arrayContaining(['app.organizations', 'app.tenants', 'ops.restore_canary']),
+    );
   });
 
   it('can run again without error and without changes (idempotent)', async () => {
@@ -104,7 +114,8 @@ describe('migrations', () => {
     const { rows } = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM drizzle.__drizzle_migrations',
     );
-    expect(rows[0]?.n).toBe('1');
+    // 0000_platform plus the seven P1 migrations (0001 to 0007) that F1 registered.
+    expect(rows[0]?.n).toBe('8');
   });
 });
 
