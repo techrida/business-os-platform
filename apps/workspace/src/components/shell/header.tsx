@@ -2,14 +2,17 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 
-import { HeaderTitle } from './header-title';
 import styles from './header.module.css';
 import { MenuButton } from './shell-state';
 
 /**
- * The top bar (the page's `banner`): menu button on phones and the page title on the left;
- * search (disabled in P0), the organisation kind, the roles and Sign out on the right. A bell
- * for notifications is left out until P1 has notifications.
+ * The top bar (the page's `banner`). Left: the menu button on phones and the signed-in roles,
+ * which is what the Figma bar shows ("Super Admin"). Right: search (disabled in P0), the
+ * organisation kind and Sign out.
+ *
+ * Left out on purpose: the bell (until P1 has notifications) and the Figma cloud, undo and redo
+ * icons, which would look like working controls on a page with nothing to save or undo. Page
+ * titles belong to each page's own h1, as in Figma.
  *
  * It must stay a direct child of the layout, outside <main>: a <header> nested in <main> or a
  * section loses the banner role.
@@ -20,11 +23,13 @@ export function Header({ orgKind, roles }: { orgKind: string; roles: readonly st
     <header className={styles.header}>
       <div className={styles.lead}>
         <MenuButton />
-        <HeaderTitle />
+        <p className={styles.roles} title={rolesText}>
+          {rolesText}
+        </p>
       </div>
       <div className={styles.tools}>
         <div className={styles.search}>
-          <Icon name="search" size={16} className={styles.searchIcon} />
+          <Icon name="search" size={18} className={styles.searchIcon} />
           <input
             type="search"
             className={styles.searchInput}
@@ -37,9 +42,6 @@ export function Header({ orgKind, roles }: { orgKind: string; roles: readonly st
           <Badge tone="info" className={styles.kind}>
             {orgKind}
           </Badge>
-          <span className={styles.roles} title={rolesText}>
-            {rolesText}
-          </span>
           {/* POST, not a link: signing out changes state, so a crawler or prefetch must not trigger it. */}
           <form method="post" action="/auth/logout">
             <Button type="submit" variant="secondary" size="small">
