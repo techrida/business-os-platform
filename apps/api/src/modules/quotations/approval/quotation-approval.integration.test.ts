@@ -508,7 +508,10 @@ describe('quotation approval: submit', () => {
         .from(quotationStatusHistory)
         .where(eq(quotationStatusHistory.versionId, d.versionId)),
     );
-    expect(history).toEqual([{ from: 'draft', to: 'submitted' }]);
+    expect(history).toEqual([
+      { from: null, to: 'draft' },
+      { from: 'draft', to: 'submitted' },
+    ]);
 
     const { rows: quoteAudit } = await ownerPool.query<{ action: string }>(
       `SELECT action FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 ORDER BY id`,
@@ -685,7 +688,7 @@ describe('quotation approval: tamper after submit', () => {
     expect(pgErrorOf(error)).toEqual({ code: '23514', constraint: 'quotation_lines_frozen_check' });
   });
 
-  it('a change that bypasses the triggers fails the final approval with 409 (M10)', async () => {
+  it('a change made around the triggers fails the final approval with 409 (M10)', async () => {
     const d = await draft('50000.00');
     await submit(d, d.rowVersion);
     const [request] = await requestsOf(d.versionId);
