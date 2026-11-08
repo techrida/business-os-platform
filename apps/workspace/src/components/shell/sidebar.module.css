@@ -1,4 +1,4 @@
-/* Sidebar. 220px wide, 108px as the rail. White, with a right border (Figma 388:32689, 65:9705).
+/* Sidebar. 220px wide, 108px as the rail. Pale (surface-subtle), with a right border (Figma 388:32689, 65:9705).
    The sidebar is a size container: when its column is narrow (the rail), the container query at
    the bottom hides labels, so the toggle and the breakpoints only have to set the column width. */
 
@@ -14,7 +14,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   border-right: var(--border-width-thin) solid var(--border-default);
-  background: var(--surface-default);
+  background: var(--surface-subtle);
 }
 
 .top {
@@ -24,20 +24,59 @@
   justify-content: space-between;
   gap: 8px;
   min-height: var(--bos-header-height);
-  padding: 0 16px;
+  padding: 0 16px 0 20px;
+  border-bottom: var(--border-width-thin) solid var(--border-default);
+}
+
+/* "Search menu": a quiet field above the groups. It stays disabled until menu search exists,
+   but is drawn like the live one so the layout does not move when it is switched on. */
+.searchWrap {
+  position: relative;
+  flex: none;
+  padding: 12px 12px 11px;
+}
+
+.searchIcon {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 26px;
+  color: var(--icon-default);
+  /* The wrapper has 12px above and 11px below the field: shift by the half difference. */
+  transform: translateY(calc(-50% + 0.5px));
+  pointer-events: none;
+}
+
+.search {
+  display: block;
+  width: 100%;
+  height: 34px;
+  padding: 0 12px 0 37px;
+  border: var(--border-width-thin) solid var(--search-border);
+  border-radius: var(--radius-lg);
+  background: var(--search-bg);
+  color: var(--search-text);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.search::placeholder {
+  color: var(--search-placeholder);
+  opacity: 1;
+}
+
+.search:disabled {
+  cursor: not-allowed;
 }
 
 .nav {
   flex: 1 1 auto;
-  padding: 8px 12px 16px;
+  padding: 0 12px 16px;
 }
 
-.group + .group {
-  margin-top: 16px;
-}
-
+/* Rows are 36px with no gap between them; a group label sits 12px above and below its text. */
 .groupLabel {
-  padding: 0 12px 8px;
+  padding: 12px 10px;
   color: var(--text-tertiary);
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
@@ -46,27 +85,28 @@
 
 .items {
   display: grid;
-  gap: 2px;
 }
 
 .item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 40px;
-  padding: 0 12px;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
   border-radius: var(--radius-lg);
   color: var(--text-secondary);
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-body);
+  line-height: var(--line-height-body-small);
   text-decoration: none;
 }
 
 .icon {
   flex: none;
   color: var(--icon-default);
+  /* The Figma icons are drawn with a lighter stroke than the 2px default. */
+  stroke-width: 1.5;
 }
 
 .label {
@@ -201,6 +241,7 @@
     white-space: nowrap;
   }
 
+  .searchWrap,
   .groupLabel,
   .tag {
     display: none;
