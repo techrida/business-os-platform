@@ -46,7 +46,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { can } from '../../platform/authz/can';
 import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { withTx, type TxScope } from '../../platform/db/tx';
+import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import { ConditionError } from './conditions';
 import {
@@ -64,7 +64,7 @@ import {
   type StepDecision,
 } from './router';
 
-/** A document type that can be approved; onDecided runs in the deciding transaction. */
+/** A document type that can be approved. Every hook runs in the transaction that changes the request. */
 export interface ApprovalSubject {
   documentType: string;
   onDecided(
@@ -72,6 +72,18 @@ export interface ApprovalSubject {
     documentId: string,
     outcome: 'approved' | 'returned' | 'rejected',
   ): Promise<void>;
+  /**
+   * Optional: the request was cancelled (cancel()). Separate from onDecided because a cancel is not a
+   * decision, and a subject whose onDecided maps every outcome to a document state must not be handed a
+   * fourth one it never handled. Usually the subject's own module called cancel(), so most need no hook.
+   */
+  onCancelled?(tx: DbTransaction, documentId: string, reason: string): Promise<void>;
+  /**
+   * Optional: the workspace page of the document, for the decided notice to the requester (for example
+   * `/memos/<id>`). Without it the requester is sent to the request in the inbox. The path must be an area
+   * the `approval.decided` email allows (notify/templates.ts), else the notice fails at enqueue.
+   */
+  link?(documentId: string): string;
 }
 
 export interface SubmitInput {
@@ -98,9 +110,7 @@ const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
   (r) => DEFAULT_ROLE_PERMISSIONS[r]['admin.roles.write'] !== undefined,
 );
 const inboxLink = (requestId: string) => `/inbox/${requestId}`;
-/** The page to open for a decided document. Email links may only point under /inbox/ or /memos/. */
-const documentLink = (documentType: string, documentId: string, requestId: string) =>
-  documentType === 'test_memo' ? `/memos/${documentId}` : inboxLink(requestId);
+const MAX_CANCEL_REASON = 2000;
 /** Email vars are plain strings; a value that is not known is left out so the template default applies. */
 const emailVars = (v: Record<string, string | undefined>): Record<string, string> =>
   Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => e[1] !== undefined));
@@ -484,7 +494,8 @@ export class ApprovalsService {
       });
       if (decided) {
         // The requester opens the document itself when it has a page (a memo); else the request in the inbox.
-        const requesterLink = documentLink(request.documentType, request.documentId, requestId);
+        const requesterLink =
+          this.subjectOf(request.documentType).link?.(request.documentId) ?? inboxLink(requestId);
         await this.notify.notifyUser(tx, {
           userId: request.requesterUserId,
           title: `${request.documentNumber} was ${outcome}`,
@@ -522,6 +533,77 @@ export class ApprovalsService {
       }
       return dto;
     });
+  }
+
+  /**
+   * Withdraws an open (pending or blocked) request, for the module that owns the document: for example a
+   * quotation revised while its approval is pending. Not an HTTP route and checks no permission itself: the
+   * calling module has already authorised the change to its document (that is what triggers the cancel).
+   * Runs in the caller's transaction (opened with withTx, which also scopes it to the entity), so the cancel,
+   * its action row, its audit event and the subject's onCancelled commit or roll back with the module's change.
+   * Open steps become skipped, so the request leaves every inbox and the SLA tick; a later act() gets 409.
+   * A request that is not open (already cancelled, or decided) answers 409.
+   */
+  async cancel(
+    tx: DbTransaction,
+    requestId: string,
+    reason: string,
+    actor: Actor,
+  ): Promise<ApprovalRequestDto> {
+    const why = reason.trim();
+    if (why === '' || why.length > MAX_CANCEL_REASON) {
+      throw new BadRequestException(
+        `a cancel reason of 1 to ${MAX_CANCEL_REASON} characters is required`,
+      );
+    }
+    const scope = await scopeOf(tx);
+    const now = this.clock();
+    const request = await this.lockRequest(tx, scope, requestId);
+    if (request.status !== 'pending' && request.status !== 'blocked') {
+      throw new ConflictException(
+        `The request is ${request.status}; only open requests can be cancelled`,
+      );
+    }
+    const newVersion = request.version + 1;
+    const current = (await this.stepsOf(tx, requestId)).find((s) => s.seq === request.currentSeq);
+    await tx
+      .update(approvalSteps)
+      .set({ status: 'skipped', remindAt: null, escalateAt: null })
+      .where(
+        and(
+          eq(approvalSteps.requestId, requestId),
+          inArray(approvalSteps.status, ['active', 'waiting']),
+        ),
+      );
+    await tx
+      .update(approvalRequests)
+      .set({ status: 'cancelled', version: newVersion, decidedAt: now })
+      .where(eq(approvalRequests.id, requestId));
+    await this.writeAction(tx, scope, {
+      requestId,
+      ...(current === undefined ? {} : { stepId: current.id }),
+      // A user id only: the column references app.users, and a system job (an expiry) has none.
+      actorUserId: actor.kind === 'user' ? actor.id : null,
+      action: 'cancel',
+      comment: why,
+      requestVersion: newVersion,
+      now,
+    });
+    await this.audit.record(tx, {
+      action: 'approvals.cancel',
+      entityType: 'approval_request',
+      entityId: requestId,
+      before: { status: request.status, version: request.version },
+      after: { status: 'cancelled', version: newVersion, reason: why },
+      meta: {
+        documentType: request.documentType,
+        documentId: request.documentId,
+        actorKind: actor.kind,
+        actorId: actor.id,
+      },
+    });
+    await this.subjectOf(request.documentType).onCancelled?.(tx, request.documentId, why);
+    return this.loadDto(tx, scope, requestId);
   }
 
   /** Pending requests whose active step the caller may decide now. */
