@@ -4,7 +4,8 @@
 # What it adds:
 #   - Caddy published on 127.0.0.1:80 and :443 only (Windows reaches it through WSL localhost forwarding)
 #   - Postgres and Valkey published on 127.0.0.1 only, for apps and tests that run on the host
-#   - Caddy upstreams for app.localhost and api.localhost point at dev servers on the host
+#   - Caddy upstreams for app.localhost, api.localhost and portal.localhost point at dev servers on the host
+#     (workspace :3000, api :3001, portal :3002)
 #   - Mailpit (fake SMTP server with a web UI) behind https://mail.localhost; its SMTP port on 127.0.0.1:1025
 #   - BOS_DEV_LOGIN_RATE_LIMIT=200 on the workspace service (the `app` profile), so e2e runs do not trip the login limit
 #   - ClamAV (profile `files`) published on 127.0.0.1:3310
@@ -20,6 +21,8 @@ services:
       # on 127.0.0.1, or Caddy (which reaches them through the docker bridge) gets "connection refused".
       WORKSPACE_UPSTREAM: ${WORKSPACE_UPSTREAM:-host.docker.internal:3000}
       API_UPSTREAM: ${API_UPSTREAM:-host.docker.internal:3001}
+      # The portal's `next dev` runs on 3002 (apps/portal/package.json).
+      PORTAL_UPSTREAM: ${PORTAL_UPSTREAM:-host.docker.internal:3002}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
 

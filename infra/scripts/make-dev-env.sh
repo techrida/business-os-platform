@@ -70,3 +70,8 @@ ensure ZITADEL_API_URL https://auth.localhost
 # Encrypts the restic repository of the files volume (infra/backup/files-backup.sh). Back it up with .env.
 ensure RESTIC_PASSWORD "$(r 32)"
 # ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY are written by the seed into .dev/zitadel.env.
+
+# P2 customer portal. Its own session key and key id (the portal and the workspace never share one), generated like
+# SESSION_ENC_KEY above: 32 random bytes, base64. Added only when missing or empty. Values are never printed.
+ensure PORTAL_SESSION_ENC_KEY "$(openssl rand -base64 32)"
+ensure PORTAL_SESSION_ENC_KEY_ID p1
