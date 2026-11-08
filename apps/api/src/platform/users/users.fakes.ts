@@ -131,24 +131,47 @@ export class FakeUsersStore extends UsersStore {
   }
 }
 
-/** ZITADEL as a map of users and grants; listUsers pages by `pageSize`. */
+/**
+ * ZITADEL as a map of users and grants; listUsers pages by `pageSize`. The knobs below reproduce the
+ * ways the real list call can lie: `ignoreOffset` (always serves the first page), `hiddenFromList`
+ * (a user getUser still returns but the list omits), `totalOverride`/`omitTotal` (a wrong or absent
+ * totalResult) and `onListUsers` (something happens in ZITADEL while a pass is running).
+ */
 export class FakeZitadel {
   users = new Map<string, ZitadelUser>();
   grants = new Map<string, RoleKey[]>();
   pageSize = 2;
   failListFor = new Set<string>();
   setGrantsCalls: { userId: string; orgId: string; roles: RoleKey[] }[] = [];
+  getUserCalls: string[] = [];
+  listUsersCalls = 0;
+  ignoreOffset = false;
+  hiddenFromList = new Set<string>();
+  totalOverride: number | null = null;
+  omitTotal = false;
+  onListUsers: ((call: number) => void) | null = null;
 
   getUser(id: string) {
+    this.getUserCalls.push(id);
     return Promise.resolve(this.users.get(id) ?? null);
   }
   listUsers(orgId: string, cursor?: string | null): Promise<ZitadelUserPage> {
     if (this.failListFor.has(orgId)) return Promise.reject(new Error('ZITADEL 503'));
-    const all = [...this.users.values()].filter((u) => u.orgId === orgId);
-    const offset = cursor ? Number(cursor) : 0;
-    const users = all.slice(offset, offset + this.pageSize);
-    const next = offset + users.length;
-    return Promise.resolve({ users, nextCursor: next < all.length ? String(next) : null });
+    this.listUsersCalls += 1;
+    this.onListUsers?.(this.listUsersCalls);
+    const all = [...this.users.values()].filter(
+      (u) => u.orgId === orgId && !this.hiddenFromList.has(u.id),
+    );
+    const requested = cursor ? Number(cursor) : 0;
+    const served = this.ignoreOffset ? 0 : requested;
+    const users = all.slice(served, served + this.pageSize);
+    // Like the real client: the next cursor comes from the offset it asked for, not from what it got.
+    const next = requested + users.length;
+    return Promise.resolve({
+      users,
+      nextCursor: next < all.length ? String(next) : null,
+      totalResult: this.omitTotal ? null : (this.totalOverride ?? all.length),
+    });
   }
   listGrants(id: string) {
     return Promise.resolve([...(this.grants.get(id) ?? [])]);
@@ -188,6 +211,7 @@ export function zUser(id: string, over: Partial<ZitadelUser> = {}): ZitadelUser 
     email: `${id}@techrida.test`,
     displayName: `User ${id}`,
     status: 'active',
+    createdAt: null,
     ...over,
   };
 }
