@@ -12,6 +12,7 @@ import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { runMigrations } from './migrate.js';
+import { createTenantWithEntity } from './testing/fixtures.js';
 
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
@@ -62,22 +63,10 @@ async function inTx<T>(scope: Scope, fn: (c: PoolClient) => Promise<T>): Promise
   }
 }
 
-/** A fresh tenant and organization. */
+/** A fresh tenant with its default legal entity (the entity owns the rows these tests write). */
 async function newScope(): Promise<Scope> {
-  const { rows: tenants } = await app.query<{ id: string }>(
-    'INSERT INTO app.tenants DEFAULT VALUES RETURNING id',
-  );
-  const tenantId = tenants[0]?.id ?? '';
-  const scope = { tenantId, organizationId: randomUUID() };
-  const orgId = await inTx(scope, async (c) => {
-    const { rows } = await c.query<{ id: string }>(
-      `INSERT INTO app.organizations (tenant_id, kind, name, zitadel_org_id)
-       VALUES ($1, 'customer', 'Acme', $2) RETURNING id`,
-      [tenantId, `z-${randomUUID()}`],
-    );
-    return rows[0]?.id ?? '';
-  });
-  return { tenantId, organizationId: orgId };
+  const { tenantId, organizationId } = await createTenantWithEntity(app);
+  return { tenantId, organizationId };
 }
 
 /** A document with one version in `status`. A scanned version has its sha256, like the real flow. */
