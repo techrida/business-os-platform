@@ -36,9 +36,11 @@ export type RateLimitResult = { allowed: true } | { allowed: false; retryAfter: 
 /**
  * The client IP: the first hop of `X-Forwarded-For`, else `X-Real-IP`, else `'unknown'`.
  *
- * Trusting the first hop is safe only because Caddy is the sole way in and, with no
- * `trusted_proxies` configured, it replaces any client-sent `X-Forwarded-For` with the real peer
- * address. Anything that is not a literal IP is ignored, which also bounds the key length.
+ * Trusting the first hop is safe only because Caddy is the sole way in (compose.prod.yaml
+ * publishes no port but Caddy's) and, with no `trusted_proxies` configured, it replaces any
+ * client-sent `X-Forwarded-For` with the real peer address. In dev, `next dev` on :3000 is also
+ * reachable directly, so there the header is spoofable. Anything that is not a literal IP is
+ * ignored, which also bounds the key length.
  */
 export function clientIp(headers: Headers): string {
   const forwarded = headers.get('x-forwarded-for')?.split(',')[0]?.trim();
