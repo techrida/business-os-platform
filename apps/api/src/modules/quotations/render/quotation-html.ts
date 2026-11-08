@@ -3,7 +3,7 @@
 // that forbids anything else, so a render never reaches the network. Gotenberg's container supplies the
 // Noto fonts. The function takes the whitelist view and nothing else, so it cannot print a cost or a rate.
 import type { CustomerQuotationView } from '@bos/contracts';
-import { formatKathmandu, formatMoney, toBs } from '@bos/locale';
+import { Dec, formatKathmandu, formatMoney, toBs } from '@bos/locale';
 
 export interface RenderQuotationOptions {
   /** Print the Bikram Sambat date beside each date. Default true. */
@@ -106,7 +106,7 @@ export function renderQuotationHtml(
   const text = (value: string | null | undefined): string => escapeHtml(value ?? '');
 
   const statusLabel = STATUS_LABELS[view.status];
-  const hasDiscount = Number(view.totals.discountAmount) !== 0;
+  const hasDiscount = !new Dec(view.totals.discountAmount).isZero();
 
   const meta: [string, string][] = [
     ['Issue date', dateCell(view.issueDate, showBs)],
