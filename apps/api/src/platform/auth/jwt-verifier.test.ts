@@ -199,6 +199,28 @@ describe('JwtVerifier.verify: token checks (each must reject as a token error, n
     await rejects(await sign(claims({ azp: [CLIENT_ID] })), errors.JWTClaimValidationFailed);
   });
 
+  // Some ZITADEL token profiles carry the client only as `client_id`. It counts as the authorized
+  // party when `azp` is absent, and is checked against the same allow-list.
+  it('accepts a token with only client_id when that client is allow-listed', async () => {
+    stubIdp();
+    const { azp: _azp, ...noAzp } = claims({ client_id: CLIENT_ID });
+    await expect(newVerifier().verify(await sign(noAzp))).resolves.toMatchObject({
+      client_id: CLIENT_ID,
+    });
+  });
+
+  it('rejects a token with only client_id when that client is not allow-listed', async () => {
+    const { azp: _azp, ...noAzp } = claims({ client_id: '399999999999999999' });
+    await rejects(await sign(noAzp), errors.JWTClaimValidationFailed);
+  });
+
+  it('does not let client_id stand in for a disallowed azp', async () => {
+    await rejects(
+      await sign(claims({ azp: '399999999999999999', client_id: CLIENT_ID })),
+      errors.JWTClaimValidationFailed,
+    );
+  });
+
   it('accepts every allow-listed azp', async () => {
     stubIdp();
     const verifier = newVerifier();

@@ -21,8 +21,9 @@ export interface AuthOptions {
   /** Our ZITADEL project id: the required `aud`, and the project whose roles we read. */
   readonly audience: string;
   /**
-   * Client ids allowed as the token's `azp` (authorized party). `aud` only says our project may
-   * read the token, and any client can ask for our project in `aud`. Empty rejects every token.
+   * Client ids allowed as the token's `azp` (authorized party), or its `client_id` when `azp` is
+   * absent. `aud` only says our project may read the token, and any client can ask for our project
+   * in `aud`. Empty rejects every token.
    */
   readonly allowedAzp: readonly string[];
   /** Delays between warm-up attempts in ms; the last one repeats. Tests shorten it. */
@@ -125,7 +126,10 @@ export class JwtVerifier implements JwksStatus, OnApplicationBootstrap, OnModule
     });
     // Checked after the signature, so these errors only ever describe a genuine token. Thrown as
     // jose claim errors, so the guard answers 401 like any other bad token.
-    if (typeof payload.azp !== 'string' || !this.options.allowedAzp.includes(payload.azp)) {
+    // The client is `azp`; some ZITADEL token profiles carry only `client_id`, so that stands in
+    // when `azp` is absent. A present `azp` is never overridden by `client_id`.
+    const clientId = payload.azp ?? payload.client_id;
+    if (typeof clientId !== 'string' || !this.options.allowedAzp.includes(clientId)) {
       throw new errors.JWTClaimValidationFailed(
         'unexpected "azp" claim value',
         payload,
