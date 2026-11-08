@@ -21,7 +21,7 @@
 -- Every table is audited (audit.attach). The tenant-level tables have no organization_id, so their events take
 -- the acting entity (bos.organization_id, set by withTx). No GRANT: 0008's default privileges give bos_app
 -- SELECT, INSERT, UPDATE, DELETE on new app tables.
--- row_version is the optimistic lock the API compares with the body's expectedVersion (the DTOs' `version`).
+-- version is the optimistic lock (as on test_memos): updateVersioned() compares it with the body's expectedVersion.
 -- updated_at is set by the API, as on every kernel table.
 --
 -- DDL only: no row is written, so no actor context is needed. Runs as bos_owner, split at the breakpoint
@@ -49,7 +49,7 @@ CREATE TABLE "app"."customers" (
 	"default_currency" char(3),
 	"address" jsonb NOT NULL,
 	"merged_into_id" uuid,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "customers_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -63,7 +63,7 @@ CREATE TABLE "app"."customers" (
 	CONSTRAINT "customers_pan_vat_no_check" CHECK ("pan_vat_no" ~ '^[A-Z0-9-]{5,20}$'),
 	CONSTRAINT "customers_address_check" CHECK (jsonb_typeof("address") = 'object'),
 	CONSTRAINT "customers_merged_into_check" CHECK ("merged_into_id" <> "id"),
-	CONSTRAINT "customers_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "customers_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 
@@ -85,7 +85,7 @@ CREATE TABLE "app"."customer_contacts" (
 	"phone_e164" text,
 	"title" text,
 	"is_primary" boolean DEFAULT false NOT NULL,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "customer_contacts_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -94,7 +94,7 @@ CREATE TABLE "app"."customer_contacts" (
 	CONSTRAINT "customer_contacts_customer_fk" FOREIGN KEY ("tenant_id", "customer_id") REFERENCES "app"."customers"("tenant_id", "id"),
 	CONSTRAINT "customer_contacts_email_norm_check" CHECK ("email_norm" = lower(btrim("email_norm"))),
 	CONSTRAINT "customer_contacts_phone_e164_check" CHECK ("phone_e164" ~ '^\+[1-9][0-9]{6,14}$'),
-	CONSTRAINT "customer_contacts_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "customer_contacts_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 
@@ -118,7 +118,7 @@ CREATE TABLE "app"."verification_cases" (
 	"reviewer_user_id" uuid,
 	"decided_at" timestamp with time zone,
 	"reason" text,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "verification_cases_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -130,7 +130,7 @@ CREATE TABLE "app"."verification_cases" (
 	CONSTRAINT "verification_cases_checklist_check" CHECK (jsonb_typeof("checklist") = 'array'),
 	CONSTRAINT "verification_cases_decision_check" CHECK ("status" NOT IN ('approved', 'rejected') OR ("reviewer_user_id" IS NOT NULL AND "decided_at" IS NOT NULL)),
 	CONSTRAINT "verification_cases_reason_check" CHECK ("status" <> 'rejected' OR "reason" IS NOT NULL),
-	CONSTRAINT "verification_cases_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "verification_cases_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 
@@ -149,7 +149,7 @@ CREATE TABLE "app"."party_accounts" (
 	"default_currency" char(3),
 	"payment_term_id" uuid,
 	"credit_limit" numeric(18, 2),
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "party_accounts_tenant_org_party_unique" UNIQUE("tenant_id", "organization_id", "party_id"),
@@ -159,7 +159,7 @@ CREATE TABLE "app"."party_accounts" (
 	CONSTRAINT "party_accounts_owner_user_fk" FOREIGN KEY ("tenant_id", "owner_user_id") REFERENCES "app"."users"("tenant_id", "id"),
 	CONSTRAINT "party_accounts_default_currency_check" CHECK ("default_currency" in ('NPR', 'INR', 'USD')),
 	CONSTRAINT "party_accounts_credit_limit_check" CHECK ("credit_limit" >= 0),
-	CONSTRAINT "party_accounts_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "party_accounts_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 CREATE INDEX "party_accounts_tenant_party_idx" ON "app"."party_accounts" USING btree ("tenant_id", "party_id");
@@ -195,7 +195,7 @@ CREATE TABLE "app"."leads" (
 	"stage_reason" text,
 	"stage_note" text,
 	"converted_opportunity_id" uuid,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "leads_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -217,7 +217,7 @@ CREATE TABLE "app"."leads" (
 	CONSTRAINT "leads_stage_reason_check" CHECK ("stage" NOT IN ('lost', 'on_hold') OR ("stage_reason" IS NOT NULL AND "stage_note" IS NOT NULL)),
 	CONSTRAINT "leads_converted_check" CHECK (("stage" = 'converted') = ("converted_opportunity_id" IS NOT NULL)),
 	CONSTRAINT "leads_converted_customer_check" CHECK ("stage" <> 'converted' OR "customer_id" IS NOT NULL),
-	CONSTRAINT "leads_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "leads_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 CREATE INDEX "leads_tenant_org_stage_idx" ON "app"."leads" USING btree ("tenant_id", "organization_id", "stage");
@@ -249,7 +249,7 @@ CREATE TABLE "app"."opportunities" (
 	"probability" smallint,
 	"expected_close" date,
 	"won_quotation_version_id" uuid,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "opportunities_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -267,7 +267,7 @@ CREATE TABLE "app"."opportunities" (
 	CONSTRAINT "opportunities_probability_check" CHECK ("probability" BETWEEN 0 AND 100),
 	CONSTRAINT "opportunities_stage_reason_check" CHECK ("stage" NOT IN ('lost', 'on_hold') OR ("stage_reason" IS NOT NULL AND "stage_note" IS NOT NULL)),
 	CONSTRAINT "opportunities_won_check" CHECK ("stage" <> 'won' OR "won_quotation_version_id" IS NOT NULL),
-	CONSTRAINT "opportunities_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "opportunities_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 CREATE INDEX "opportunities_tenant_org_stage_idx" ON "app"."opportunities" USING btree ("tenant_id", "organization_id", "stage");
@@ -291,7 +291,7 @@ CREATE TABLE "app"."requirements" (
 	"summary" text NOT NULL,
 	"detail" text,
 	"received_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "requirements_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -299,7 +299,7 @@ CREATE TABLE "app"."requirements" (
 	CONSTRAINT "requirements_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "app"."tenants"("id"),
 	CONSTRAINT "requirements_tenant_org_fk" FOREIGN KEY ("tenant_id", "organization_id") REFERENCES "app"."organizations"("tenant_id", "id"),
 	CONSTRAINT "requirements_opportunity_fk" FOREIGN KEY ("tenant_id", "organization_id", "opportunity_id") REFERENCES "app"."opportunities"("tenant_id", "organization_id", "id"),
-	CONSTRAINT "requirements_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "requirements_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 CREATE INDEX "requirements_tenant_org_opportunity_idx" ON "app"."requirements" USING btree ("tenant_id", "organization_id", "opportunity_id");
@@ -315,7 +315,7 @@ CREATE TABLE "app"."proposals" (
 	"title" text NOT NULL,
 	"sent_at" timestamp with time zone,
 	"document_id" uuid,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "proposals_tenant_id_unique" UNIQUE("tenant_id", "id"),
@@ -324,7 +324,7 @@ CREATE TABLE "app"."proposals" (
 	CONSTRAINT "proposals_tenant_org_fk" FOREIGN KEY ("tenant_id", "organization_id") REFERENCES "app"."organizations"("tenant_id", "id"),
 	CONSTRAINT "proposals_opportunity_fk" FOREIGN KEY ("tenant_id", "organization_id", "opportunity_id") REFERENCES "app"."opportunities"("tenant_id", "organization_id", "id"),
 	CONSTRAINT "proposals_document_fk" FOREIGN KEY ("tenant_id", "organization_id", "document_id") REFERENCES "app"."documents"("tenant_id", "organization_id", "id"),
-	CONSTRAINT "proposals_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "proposals_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 CREATE INDEX "proposals_tenant_org_opportunity_idx" ON "app"."proposals" USING btree ("tenant_id", "organization_id", "opportunity_id");
@@ -349,7 +349,7 @@ CREATE TABLE "app"."activities" (
 	"assignee_user_id" uuid,
 	"completed_at" timestamp with time zone,
 	"occurred_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"row_version" integer DEFAULT 1 NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "activities_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "app"."tenants"("id"),
@@ -361,7 +361,7 @@ CREATE TABLE "app"."activities" (
 	CONSTRAINT "activities_assignee_user_fk" FOREIGN KEY ("tenant_id", "assignee_user_id") REFERENCES "app"."users"("tenant_id", "id"),
 	CONSTRAINT "activities_kind_check" CHECK ("kind" in ('call', 'meeting', 'email', 'note', 'task', 'stage_change', 'system')),
 	CONSTRAINT "activities_one_subject_check" CHECK (num_nonnulls("lead_id", "opportunity_id", "customer_id", "contact_id", "quotation_id") = 1),
-	CONSTRAINT "activities_row_version_check" CHECK ("row_version" >= 1)
+	CONSTRAINT "activities_version_check" CHECK ("version" >= 1)
 );
 --> statement-breakpoint
 CREATE INDEX "activities_tenant_org_lead_idx" ON "app"."activities" USING btree ("tenant_id", "organization_id", "lead_id");

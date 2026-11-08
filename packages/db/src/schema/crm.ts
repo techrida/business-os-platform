@@ -120,7 +120,7 @@ export const customers = appSchema.table(
     address: jsonb('address').notNull(),
     /** Set when this record was merged into another; the target is the live one. */
     mergedIntoId: uuid('merged_into_id'),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t): PgTableExtraConfigValue[] => [
@@ -154,7 +154,7 @@ export const customers = appSchema.table(
     check('customers_pan_vat_no_check', sql`${t.panVatNo} ~ '^[A-Z0-9-]{5,20}$'`),
     check('customers_address_check', sql`jsonb_typeof(${t.address}) = 'object'`),
     check('customers_merged_into_check', sql`${t.mergedIntoId} <> ${t.id}`),
-    check('customers_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('customers_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -174,7 +174,7 @@ export const customerContacts = appSchema.table(
     phoneE164: text('phone_e164'),
     title: text('title'),
     isPrimary: boolean('is_primary').notNull().default(false),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [
@@ -193,7 +193,7 @@ export const customerContacts = appSchema.table(
     index('customer_contacts_tenant_phone_e164_idx').on(t.tenantId, t.phoneE164),
     check('customer_contacts_email_norm_check', sql`${t.emailNorm} = lower(btrim(${t.emailNorm}))`),
     check('customer_contacts_phone_e164_check', sql`${t.phoneE164} ~ '^\\+[1-9][0-9]{6,14}$'`),
-    check('customer_contacts_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('customer_contacts_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -215,7 +215,7 @@ export const verificationCases = appSchema.table(
     decidedAt: timestamp('decided_at', { withTimezone: true }),
     /** The decision note (the DTO's decisionNote); required to reject. */
     reason: text('reason'),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [
@@ -244,7 +244,7 @@ export const verificationCases = appSchema.table(
       'verification_cases_reason_check',
       sql`${t.status} <> 'rejected' OR ${t.reason} IS NOT NULL`,
     ),
-    check('verification_cases_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('verification_cases_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -269,7 +269,7 @@ export const partyAccounts = appSchema.table(
     defaultCurrency: char('default_currency', { length: 3 }),
     paymentTermId: uuid('payment_term_id'),
     creditLimit: numeric('credit_limit', { precision: 18, scale: 2 }),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [
@@ -295,7 +295,7 @@ export const partyAccounts = appSchema.table(
       sql`${t.defaultCurrency} in ('NPR', 'INR', 'USD')`,
     ),
     check('party_accounts_credit_limit_check', sql`${t.creditLimit} >= 0`),
-    check('party_accounts_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('party_accounts_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -334,7 +334,7 @@ export const leads = appSchema.table(
     stageNote: text('stage_note'),
     /** Set exactly when stage = 'converted' (leads_converted_check). */
     convertedOpportunityId: uuid('converted_opportunity_id'),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t): PgTableExtraConfigValue[] => [
@@ -400,7 +400,7 @@ export const leads = appSchema.table(
       'leads_converted_customer_check',
       sql`${t.stage} <> 'converted' OR ${t.customerId} IS NOT NULL`,
     ),
-    check('leads_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('leads_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -433,7 +433,7 @@ export const opportunities = appSchema.table(
     probability: smallint('probability'),
     expectedClose: date('expected_close', { mode: 'string' }),
     wonQuotationVersionId: uuid('won_quotation_version_id'),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t): PgTableExtraConfigValue[] => [
@@ -484,7 +484,7 @@ export const opportunities = appSchema.table(
       'opportunities_won_check',
       sql`${t.stage} <> 'won' OR ${t.wonQuotationVersionId} IS NOT NULL`,
     ),
-    check('opportunities_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('opportunities_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -501,7 +501,7 @@ export const requirements = appSchema.table(
     summary: text('summary').notNull(),
     detail: text('detail'),
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [
@@ -522,7 +522,7 @@ export const requirements = appSchema.table(
       t.organizationId,
       t.opportunityId,
     ),
-    check('requirements_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('requirements_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -539,7 +539,7 @@ export const proposals = appSchema.table(
     title: text('title').notNull(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     documentId: uuid('document_id'),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [
@@ -562,7 +562,7 @@ export const proposals = appSchema.table(
       foreignColumns: [documents.tenantId, documents.organizationId, documents.id],
     }),
     index('proposals_tenant_org_opportunity_idx').on(t.tenantId, t.organizationId, t.opportunityId),
-    check('proposals_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('proposals_version_check', sql`${t.version} >= 1`),
   ],
 );
 
@@ -591,7 +591,7 @@ export const activities = appSchema.table(
     assigneeUserId: uuid('assignee_user_id'),
     completedAt: timestamp('completed_at', { withTimezone: true }),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
-    rowVersion: integer('row_version').notNull().default(1),
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [
@@ -648,6 +648,6 @@ export const activities = appSchema.table(
       'activities_one_subject_check',
       sql`num_nonnulls(${t.leadId}, ${t.opportunityId}, ${t.customerId}, ${t.contactId}, ${t.quotationId}) = 1`,
     ),
-    check('activities_row_version_check', sql`${t.rowVersion} >= 1`),
+    check('activities_version_check', sql`${t.version} >= 1`),
   ],
 );
