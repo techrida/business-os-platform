@@ -18,9 +18,10 @@
     color 120ms ease;
 }
 
-/* Heights from Figma: 34 / 40 / 48. Medium and Large share one text style there. */
+/* Heights from the Figma exports (Buttons, Dashboard, Add User): 36 / 40 / 48. Medium and Large
+   share one text style, 14px at tablet and up, and the same side padding. */
 .small {
-  min-height: 34px;
+  min-height: 36px;
   padding: 0 12px;
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
@@ -29,15 +30,15 @@
 .medium {
   min-height: 40px;
   padding: 0 16px;
-  font-size: var(--font-size-body);
-  line-height: var(--line-height-body);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
 }
 
 .large {
   min-height: 48px;
-  padding: 0 20px;
-  font-size: var(--font-size-body);
-  line-height: var(--line-height-body);
+  padding: 0 16px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
 }
 
 .primary {
