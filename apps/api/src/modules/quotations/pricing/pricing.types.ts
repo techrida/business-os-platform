@@ -90,7 +90,10 @@ export interface PricedColumns {
   calcVersion: number;
   /** round(sum of quantity x unitCost, 2); null unless every line has a unit cost. */
   internalCostTotal: string | null;
-  /** (taxable - unrounded cost) / taxable x 100, 4 decimals; null when the cost is unknown or taxable is 0. */
+  /**
+   * (taxable - unrounded cost) / taxable x 100, 4 decimals; null when the cost is unknown, taxable is 0, or the
+   * margin is beyond -999.9999 (facts.marginOutOfRange).
+   */
   marginPct: string | null;
 }
 
@@ -106,7 +109,13 @@ export interface QuoteFacts {
   effectiveDiscountPct: string;
   /** Strictly above 12%, decided exactly (not from the rounded text). */
   discountApprovalRequired: boolean;
+  /** Null when a cost is missing, taxable is 0, or the margin is out of range. */
   marginPct: string | null;
+  /**
+   * True when every line has a cost but the margin lies beyond -999.9999 (outside margin_pct numeric(9,4) and the
+   * approval snapshot regex); marginPct is then null. False when the margin is known or simply unknown.
+   */
+  marginOutOfRange: boolean;
   currency: Currency;
 }
 
