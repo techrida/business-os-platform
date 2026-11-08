@@ -43,6 +43,13 @@
 	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000}
 }
 
+# Customer portal (Next.js, apps/portal). Same shape as the workspace site: security headers (CSP, nosniff,
+# frame-deny) come from the app's own next.config.ts, and the login limiter is in the app too.
+{$PORTAL_HOST:portal.localhost} {
+	import site_tls
+	reverse_proxy {$PORTAL_UPSTREAM:portal:3000}
+}
+
 # API. /metrics is never served here (metrics live on an internal port).
 {$API_HOST:api.localhost} {
 	import site_tls
