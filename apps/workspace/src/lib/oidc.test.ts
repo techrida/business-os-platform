@@ -422,16 +422,11 @@ describe('refreshTokens', () => {
 });
 
 describe('endSessionUrl', () => {
-  it('sends the ID token hint, client id and the public URL as post-logout redirect', async () => {
-    const url = await endSessionUrl({ idTokenHint: 'idt' });
+  // CR-05a: this URL is a browser redirect, so it lands in history, proxy logs and Referer
+  // headers. It carries no ID token; client_id ties post_logout_redirect_uri to the client.
+  it('sends the client id and the public URL as post-logout redirect, never an ID token hint', async () => {
+    const url = await endSessionUrl();
     expect(url.origin + url.pathname).toBe('https://auth.test/oidc/v1/end_session');
-    expect(url.searchParams.get('id_token_hint')).toBe('idt');
-    expect(url.searchParams.get('client_id')).toBe('client-123');
-    expect(url.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');
-  });
-
-  it('still names the client when there is no ID token', async () => {
-    const url = await endSessionUrl({});
     expect(url.searchParams.has('id_token_hint')).toBe(false);
     expect(url.searchParams.get('client_id')).toBe('client-123');
     expect(url.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');
