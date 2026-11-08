@@ -35,7 +35,83 @@ const coreShape = (service: ServiceName) => ({
   VALKEY_URL: z
     .string()
     .refine(urlWithProtocol(['redis:', 'rediss:']), 'must be a redis:// or rediss:// URL'),
+  // P1 kernel settings the worker needs too (scan job, outbox, user sync). Hosts, ports and paths
+  // have dev-safe defaults, like the ports above. Anything with no safe default (SMTP_URL,
+  // MAIL_FROM, ZITADEL_API_URL) or secret (the token) is optional here and REQUIRED in production,
+  // see kernelProblems(): a dev default must never reach production silently.
+  FILES_ROOT: z.string().min(1).default('/var/lib/bos/files'),
+  CLAMD_HOST: z.string().min(1).default('clamav'),
+  CLAMD_PORT: port.default(3310),
+  SMTP_URL: z
+    .string()
+    .refine(urlWithProtocol(['smtp:', 'smtps:']), 'must be an smtp:// or smtps:// URL')
+    .optional(),
+  MAIL_FROM: z
+    .string()
+    .refine((v) => v.includes('@'), 'must contain an email address')
+    .optional(),
+  ZITADEL_API_URL: z
+    .string()
+    .refine(urlWithProtocol(['https:', 'http:']), 'must be an http(s) URL')
+    .optional(),
+  ZITADEL_PROVISIONER_TOKEN: z.string().min(1).optional(),
+  // Base of the only links emails may carry (`/inbox/<id>`, which needs a login): never a file link.
+  WORKSPACE_PUBLIC_URL: z
+    .string()
+    .refine(urlWithProtocol(['https:', 'http:']), 'must be an http(s) URL')
+    .optional(),
 });
+
+/** What a missing optional kernel value becomes outside production (the local compose stack). */
+const KERNEL_DEV_DEFAULTS = {
+  SMTP_URL: 'smtp://mailpit:1025',
+  MAIL_FROM: 'Business OS <noreply@bos.localhost>',
+  ZITADEL_API_URL: 'https://auth.localhost',
+  WORKSPACE_PUBLIC_URL: 'https://app.localhost',
+} as const;
+
+const CORE_REQUIRED_IN_PRODUCTION = [
+  'SMTP_URL',
+  'MAIL_FROM',
+  'ZITADEL_API_URL',
+  'ZITADEL_PROVISIONER_TOKEN',
+  'WORKSPACE_PUBLIC_URL',
+] as const;
+const API_REQUIRED_IN_PRODUCTION = [
+  ...CORE_REQUIRED_IN_PRODUCTION,
+  'DOCS_LINK_SECRET',
+  // ZITADEL_ACTIONS_SIGNING_KEY is deliberately NOT required: the webhook is an optional nudge
+  // (ADR 0019, the 10-minute reconcile keeps users correct), and without a key the hook answers 401.
+] as const;
+
+/** Production must state every kernel value itself: the names only, never a value, in the message. */
+function kernelProblems(required: readonly string[]) {
+  return (cfg: { NODE_ENV?: string } & Record<string, unknown>, ctx: z.RefinementCtx): void => {
+    if (cfg.NODE_ENV !== 'production') return;
+    for (const key of required) {
+      if (cfg[key] === undefined) {
+        ctx.addIssue({ code: 'custom', path: [key], message: 'is required in production' });
+      }
+    }
+  };
+}
+
+function withKernelDefaults<
+  T extends {
+    SMTP_URL?: string | undefined;
+    MAIL_FROM?: string | undefined;
+    ZITADEL_API_URL?: string | undefined;
+    WORKSPACE_PUBLIC_URL?: string | undefined;
+  },
+>(cfg: T) {
+  return {
+    ...cfg,
+    SMTP_URL: cfg.SMTP_URL ?? KERNEL_DEV_DEFAULTS.SMTP_URL,
+    MAIL_FROM: cfg.MAIL_FROM ?? KERNEL_DEV_DEFAULTS.MAIL_FROM,
+    ZITADEL_API_URL: cfg.ZITADEL_API_URL ?? KERNEL_DEV_DEFAULTS.ZITADEL_API_URL,
+    WORKSPACE_PUBLIC_URL: cfg.WORKSPACE_PUBLIC_URL ?? KERNEL_DEV_DEFAULTS.WORKSPACE_PUBLIC_URL,
+  };
+}
 
 /**
  * Is this host a loopback address? Only literal loopbacks count (localhost, 127.0.0.0/8, ::1,
@@ -82,6 +158,10 @@ const apiShape = {
   // not enough: any client can ask ZITADEL to add our project to `aud`. Unset or blank means
   // [OIDC_CLIENT_ID]; with neither, the config is refused.
   OIDC_ALLOWED_AZP: z.string().optional(),
+  // API-only secrets (the worker neither signs links nor receives the ZITADEL webhook).
+  // At least 32 characters when present; required in production (kernelProblems).
+  DOCS_LINK_SECRET: z.string().min(32).optional(),
+  ZITADEL_ACTIONS_SIGNING_KEY: z.string().min(1).optional(),
 };
 
 const AZP_REQUIRED = 'must list at least one client id (or set OIDC_CLIENT_ID)';
@@ -94,7 +174,11 @@ function allowedAzp(list: string | undefined, clientId: string | undefined): str
     .filter((id) => id !== '');
 }
 
-const coreSchema = (service: ServiceName) => z.object(coreShape(service));
+const coreSchema = (service: ServiceName) =>
+  z
+    .object(coreShape(service))
+    .superRefine(kernelProblems(CORE_REQUIRED_IN_PRODUCTION))
+    .transform(withKernelDefaults);
 
 const apiSchema = z
   .object({ ...coreShape('api'), ...apiShape })
@@ -103,13 +187,14 @@ const apiSchema = z
     if (problem !== undefined)
       ctx.addIssue({ code: 'custom', path: ['OIDC_ISSUER'], message: problem });
   })
+  .superRefine(kernelProblems(API_REQUIRED_IN_PRODUCTION))
   .transform((cfg, ctx) => {
     const azp = allowedAzp(cfg.OIDC_ALLOWED_AZP, cfg.OIDC_CLIENT_ID);
     if (azp.length === 0) {
       ctx.addIssue({ code: 'custom', path: ['OIDC_ALLOWED_AZP'], message: AZP_REQUIRED });
       return z.NEVER;
     }
-    return { ...cfg, OIDC_ALLOWED_AZP: Object.freeze(azp) };
+    return withKernelDefaults({ ...cfg, OIDC_ALLOWED_AZP: Object.freeze(azp) });
   });
 
 /**
@@ -126,6 +211,15 @@ export abstract class CoreConfig {
   abstract readonly METRICS_PORT: number;
   abstract readonly DATABASE_URL: string;
   abstract readonly VALKEY_URL: string;
+  abstract readonly FILES_ROOT: string;
+  abstract readonly CLAMD_HOST: string;
+  abstract readonly CLAMD_PORT: number;
+  abstract readonly SMTP_URL: string;
+  abstract readonly MAIL_FROM: string;
+  abstract readonly ZITADEL_API_URL: string;
+  abstract readonly WORKSPACE_PUBLIC_URL: string;
+  /** Undefined outside production when unset; a consumer that needs it must fail with a clear error. */
+  abstract readonly ZITADEL_PROVISIONER_TOKEN?: string | undefined;
 }
 
 /** The API's config: the core plus its port and the OIDC settings. */
@@ -136,6 +230,9 @@ export abstract class AppConfig extends CoreConfig {
   abstract readonly OIDC_CLIENT_ID?: string | undefined;
   /** Never empty: the `azp` values the verifier accepts. */
   abstract readonly OIDC_ALLOWED_AZP: readonly string[];
+  /** API-only secrets: undefined outside production when unset (see CoreConfig's token). */
+  abstract readonly DOCS_LINK_SECRET?: string | undefined;
+  abstract readonly ZITADEL_ACTIONS_SIGNING_KEY?: string | undefined;
 }
 
 export class ConfigError extends Error {
