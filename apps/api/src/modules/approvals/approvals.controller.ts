@@ -2,7 +2,8 @@
 // reroute it. Thin on purpose: validation here, every rule in ApprovalsService. Serves the NFR
 // "no double decisions": a decision without an Idempotency-Key header is refused with 400 before
 // anything is read, so every click the client sends can be safely retried. A decision on a Founder
-// step also needs a recent sign-in (K7, step-up): otherwise 401 `step_up_required`.
+// step also needs a recent sign-in (K7, step-up), proven by the user's ID token in the
+// `x-bos-id-token` header: otherwise 401 `step_up_required`.
 import {
   type ApprovalActionBody,
   ApprovalActionBodySchema,
@@ -27,9 +28,11 @@ import {
 import { z } from 'zod';
 
 import type { AuthenticatedRequest, AuthIdentity } from '../../platform/auth/claims';
+import { JwtVerifier } from '../../platform/auth/jwt-verifier';
 import {
-  assertRecentAuth,
+  assertRecentIdToken,
   DEFAULT_STEP_UP_MAX_AGE_SECONDS,
+  ID_TOKEN_HEADER,
   STEP_UP_MAX_AGE_SECONDS,
 } from '../../platform/auth/step-up';
 import { Can } from '../../platform/authz/decorators';
@@ -80,6 +83,7 @@ export class ApprovalsController {
   constructor(
     private readonly approvals: ApprovalsService,
     private readonly caller: ApprovalsCaller,
+    private readonly verifier: JwtVerifier,
     @Optional()
     @Inject(STEP_UP_MAX_AGE_SECONDS)
     private readonly stepUpMaxAge: number = DEFAULT_STEP_UP_MAX_AGE_SECONDS,
@@ -119,13 +123,20 @@ export class ApprovalsController {
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() body: unknown,
     @Req() req: AuthenticatedRequest,
+    @Headers(ID_TOKEN_HEADER) idToken?: string,
   ): Promise<ApprovalRequestDto> {
     if (idempotencyKey === undefined || !IdempotencyKeySchema.safeParse(idempotencyKey).success) {
       throw new BadRequestException(
         'The Idempotency-Key header is required (1-200 printable characters)',
       );
     }
-    return this.decide(id, parseOr400(ApprovalActionBodySchema, body), idempotencyKey, req.auth);
+    return this.decide(
+      id,
+      parseOr400(ApprovalActionBodySchema, body),
+      idempotencyKey,
+      req.auth,
+      idToken,
+    );
   }
 
   /** The step-up check, then the decision. Separate so the 400s above stay synchronous. */
@@ -134,11 +145,20 @@ export class ApprovalsController {
     action: ApprovalActionBody,
     idempotencyKey: string,
     auth: AuthIdentity | undefined,
+    idToken: string | undefined,
   ): Promise<ApprovalRequestDto> {
     // `get` applies the read permission; every role that may act also reads at scope `all`.
     const request = await this.approvals.get(id);
     if (needsStepUp(request, action.expectedVersion)) {
-      assertRecentAuth(auth, Date.now(), this.stepUpMaxAge);
+      // The ID token must belong to the access token's user (`sub`, held in `auth.userId`).
+      // Other steps never read the header.
+      await assertRecentIdToken(
+        this.verifier,
+        idToken,
+        auth?.userId,
+        Math.floor(Date.now() / 1000),
+        this.stepUpMaxAge,
+      );
     }
     return this.approvals.act(id, action, idempotencyKey);
   }
