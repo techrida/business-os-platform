@@ -7,7 +7,7 @@
 #
 # Hardening still to do before real data (tracked for P1):
 #   - split ZITADEL into init / setup / start (see the "prodlike" overlay in ZITADEL's deploy/compose)
-#   - set a short ZITADEL_PAT_EXPIRATION and delete admin.pat plus the bootstrap service account after setup
+#   - delete admin.pat plus the bootstrap service account after setup (ZITADEL_PAT_EXPIRATION is already required below)
 #   - choose CADDY_TLS (default "internal" = Caddy's private CA; clients must trust it)
 #   - mail: there is no mailpit here; the Postal stack arrives in P1 (mail.<domain> answers 502 until then)
 
@@ -23,6 +23,12 @@ services:
     <<: *restart
   zitadel-api:
     <<: *restart
+    environment:
+      # Prod must choose an expiry for the two bootstrap tokens (compose.yaml defaults to 2099 for dev). Required, so
+      # a prod start without it fails instead of minting tokens that never expire (CR-10). Format:
+      # ZITADEL_PAT_EXPIRATION=2027-01-01T00:00:00Z. It only applies when the first instance is created.
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:?set ZITADEL_PAT_EXPIRATION in .env (RFC 3339, e.g. 2027-01-01T00:00:00Z; prod tokens must expire)}
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:?set ZITADEL_PAT_EXPIRATION in .env (RFC 3339, e.g. 2027-01-01T00:00:00Z; prod tokens must expire)}
   zitadel-login:
     <<: *restart
   api:
