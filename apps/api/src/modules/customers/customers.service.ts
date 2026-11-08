@@ -147,7 +147,7 @@ const isUnique = (error: unknown, constraint: string): boolean => {
   return e?.code === '23505' && e.constraint === constraint;
 };
 
-const duplicatePan = (pan: string, existing?: { id: string; number: string }) =>
+export const duplicatePan = (pan: string, existing?: { id: string; number: string }) =>
   new ConflictException({
     code: 'duplicate_pan_vat',
     message:
@@ -228,54 +228,67 @@ export class CustomersService {
       const done = await withIdempotency(
         tx,
         { command: 'customer.create', key: idempotencyKey, body },
-        async () => {
-          const pan = body.panVatNo === undefined ? null : normalizePan(body.panVatNo);
-          if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
-          if (body.ownerUserId !== undefined) {
-            await this.assertUser(tx, scope.tenantId, body.ownerUserId);
-          }
-          const number = await this.issueNumber(tx, scope, now);
-          try {
-            const [party] = await tx
-              .insert(parties)
-              .values({
-                tenantId: scope.tenantId,
-                kind: 'customer',
-                code: number,
-                name: body.legalName,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .returning({ id: parties.id });
-            const [row] = await tx
-              .insert(customers)
-              .values({
-                id: party!.id,
-                tenantId: scope.tenantId,
-                number,
-                legalName: body.legalName,
-                nameNorm: normalizeName(body.legalName),
-                panVatNo: pan,
-                industry: body.industry ?? null,
-                relationship: body.relationship,
-                ownerUserId: body.ownerUserId ?? null,
-                defaultCurrency: body.defaultCurrency ?? null,
-                address: body.address,
-                version: 1,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .returning();
-            return { status: 201, response: toCustomerDto(row!) };
-          } catch (error) {
-            // Two creates with the same PAN can both pass the pre-check; the unique index decides.
-            if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
-            throw error;
-          }
-        },
+        async () => ({ status: 201, response: await this.createInTx(tx, scope, body, now) }),
       );
       return done.response;
     });
+  }
+
+  /**
+   * The customer insert of create(), inside a transaction that withTx opened for `scope`: the PAN pre-check, the
+   * owner check, the CUS number, the party row, and the customers row with its `name_norm`. It has no
+   * idempotency and no caller checks (the caller of this method decides who may write); lead conversion calls it
+   * inside its own transaction so the customer, contact, opportunity and lead change commit together.
+   */
+  async createInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    body: CreateCustomerBody,
+    now: Date,
+  ): Promise<CustomerDto> {
+    const pan = body.panVatNo === undefined ? null : normalizePan(body.panVatNo);
+    if (pan !== null) await this.assertPanFree(tx, scope.tenantId, pan);
+    if (body.ownerUserId !== undefined) {
+      await this.assertUser(tx, scope.tenantId, body.ownerUserId);
+    }
+    const number = await this.issueNumber(tx, scope, now);
+    try {
+      const [party] = await tx
+        .insert(parties)
+        .values({
+          tenantId: scope.tenantId,
+          kind: 'customer',
+          code: number,
+          name: body.legalName,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning({ id: parties.id });
+      const [row] = await tx
+        .insert(customers)
+        .values({
+          id: party!.id,
+          tenantId: scope.tenantId,
+          number,
+          legalName: body.legalName,
+          nameNorm: normalizeName(body.legalName),
+          panVatNo: pan,
+          industry: body.industry ?? null,
+          relationship: body.relationship,
+          ownerUserId: body.ownerUserId ?? null,
+          defaultCurrency: body.defaultCurrency ?? null,
+          address: body.address,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      return toCustomerDto(row!);
+    } catch (error) {
+      // Two creates with the same PAN can both pass the pre-check; the unique index decides.
+      if (pan !== null && isUnique(error, PAN_INDEX)) throw duplicatePan(pan);
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------------ update
@@ -377,36 +390,54 @@ export class CustomersService {
           const customer = await this.find(tx, scope.tenantId, customerId);
           if (customer === undefined) throw customerNotFound();
           this.assertVisible('customer.write', customer, principal);
-          try {
-            const [row] = await tx
-              .insert(customerContacts)
-              .values({
-                tenantId: scope.tenantId,
-                customerId,
-                fullName: body.fullName,
-                emailNorm: body.email === undefined ? null : normalizeEmail(body.email),
-                phoneE164: body.phone ?? null,
-                title: body.title ?? null,
-                isPrimary: body.isPrimary,
-                version: 1,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .returning();
-            return { status: 201, response: toContactDto(row!) };
-          } catch (error) {
-            if (isUnique(error, PRIMARY_CONTACT_INDEX)) {
-              throw new ConflictException({
-                code: 'primary_contact_exists',
-                message: 'This customer already has a primary contact',
-              });
-            }
-            throw error;
-          }
+          return {
+            status: 201,
+            response: await this.createContactInTx(tx, scope, customerId, body, now),
+          };
         },
       );
       return done.response;
     });
+  }
+
+  /**
+   * The contact insert of createContact(), inside a transaction that withTx opened for `scope`. The customer must
+   * exist and the caller must be allowed to write it: the caller of this method decides both (a 409
+   * `primary_contact_exists` is answered here, from the unique index).
+   */
+  async createContactInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    customerId: string,
+    body: CreateContactBody,
+    now: Date,
+  ): Promise<ContactDto> {
+    try {
+      const [row] = await tx
+        .insert(customerContacts)
+        .values({
+          tenantId: scope.tenantId,
+          customerId,
+          fullName: body.fullName,
+          emailNorm: body.email === undefined ? null : normalizeEmail(body.email),
+          phoneE164: body.phone ?? null,
+          title: body.title ?? null,
+          isPrimary: body.isPrimary,
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      return toContactDto(row!);
+    } catch (error) {
+      if (isUnique(error, PRIMARY_CONTACT_INDEX)) {
+        throw new ConflictException({
+          code: 'primary_contact_exists',
+          message: 'This customer already has a primary contact',
+        });
+      }
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------------ helpers
