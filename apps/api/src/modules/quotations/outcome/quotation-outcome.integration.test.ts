@@ -349,6 +349,7 @@ describe('RecordOutcomeService.record', () => {
     const dto = await record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [docA, docB] }));
 
     expect(dto.evidenceDocumentIds).toEqual([docA, docB]);
+    expect(dto.acceptedByName).toBeNull();
     const [row] = await acceptanceRows(q.currentVersionId);
     expect(row).toMatchObject({ evidenceDocumentIds: [docA, docB], acceptedByName: null });
   });
@@ -371,6 +372,7 @@ describe('RecordOutcomeService.record', () => {
     );
 
     expect(dto.evidenceDocumentIds).toEqual([doc]);
+    expect(dto.acceptedByName).toBe('Sita Sharma');
     expect(await acceptanceRows(q.currentVersionId)).toEqual([
       expect.objectContaining({
         actorKind: 'customer_user',
