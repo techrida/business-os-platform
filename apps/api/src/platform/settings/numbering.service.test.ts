@@ -137,6 +137,30 @@ describe('NumberingService.next', () => {
   });
 });
 
+describe('NumberingService.issue', () => {
+  it('returns the counter, the formatted number and the fiscal year of the series', async () => {
+    const issue = (): ReturnType<NumberingService['issue']> =>
+      withTx(db, scope, systemActor('test'), (tx) => numbering.issue(tx, 'ISSUE', FIRST_DAY_OF_FY));
+
+    const first = await issue();
+    const second = await issue();
+
+    expect(first).toEqual({ number: 'ISSUE-2082/83-00001', seq: 1, fiscalYear: '2082/83' });
+    expect(second.seq).toBe(first.seq + 1);
+    expect(second.number).toBe('ISSUE-2082/83-00002');
+    expect(second.fiscalYear).toBe(first.fiscalYear);
+    expect(typeof second.seq).toBe('number');
+  });
+
+  it('reports the fiscal year of the date it was asked for', async () => {
+    const before = await withTx(db, scope, systemActor('test'), (tx) =>
+      numbering.issue(tx, 'ISSUEFY', new Date('2025-07-16T18:14:00Z')),
+    );
+    expect(before.fiscalYear).toBe('2081/82');
+    expect(before.number).toBe('ISSUEFY-2081/82-00001');
+  });
+});
+
 describe('app.settings', () => {
   it('is append-only: UPDATE and DELETE raise, a new version inserts', async () => {
     await withTx(db, scope, systemActor('test'), async (tx) => {
