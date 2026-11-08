@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 
+import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { LeadsModule } from './modules/leads/leads.module';
 import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
+import { QuotationsModule } from './modules/quotations/quotations.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
 import { VerificationModule } from './modules/verification/verification.module';
@@ -52,6 +55,9 @@ import { UsersModule } from './platform/users/users.module';
     TestMemoModule,
     CustomersModule,
     OpportunitiesModule,
+    LeadsModule,
+    ActivitiesModule,
+    QuotationsModule,
     VerificationModule,
   ],
 })
