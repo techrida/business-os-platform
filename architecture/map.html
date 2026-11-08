@@ -1,0 +1,1554 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Business OS System Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&display=swap">
+<script>try { var t = JSON.parse(localStorage.getItem("bos-map-v1")).theme; if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}</script>
+<style>
+/* One infinite board. Elements are glass cards with a kind sticker on the corner, sections are quiet frames,
+   the controls are thin floating glass. Read-only: nothing here edits the model. */
+:root {
+  --bg: #f5f3ef; --fg: #19191b; --muted: #6b6a6f; --faint: #9d9ca2; --line: #e3e0da;
+  --accent: #3657f0; --accent-soft: #3657f01f; --on-accent: #ffffff; --die: #ffffff;
+  --warn: #f59f00; --on-warn: #2a1c00; --bad: #d6336c; --on-bad: #ffffff;
+  --dot: rgba(25, 25, 27, .13);
+  --frame: rgba(255, 255, 255, .42); --frame-line: rgba(25, 25, 27, .07);
+  --edge: #a9a399; --edge-hl: #3a3a40;
+  --glass: linear-gradient(180deg, rgba(255, 255, 255, .9), rgba(255, 255, 255, .7));
+  --glass-rim: linear-gradient(140deg, #fff 0%, rgba(255, 255, 255, .4) 28%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, .6) 100%);
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, .95), inset 0 -10px 18px -14px rgba(120, 100, 80, .2), 0 0 0 .5px rgba(25, 25, 27, .09), 0 1px 2px rgba(40, 30, 20, .06), 0 12px 32px -14px rgba(40, 30, 20, .28);
+  --glass-float: linear-gradient(180deg, rgba(255, 255, 255, .62), rgba(255, 255, 255, .4));
+  --glass-float-rim: linear-gradient(140deg, #fff 0%, rgba(255, 255, 255, .55) 24%, rgba(255, 255, 255, .08) 52%, rgba(255, 255, 255, .7) 100%);
+  --glass-float-edge: inset 0 1px 0 rgba(255, 255, 255, .95), inset 0 0 0 .5px rgba(255, 255, 255, .45), 0 0 0 .5px rgba(25, 25, 27, .08), 0 1px 2px rgba(40, 30, 20, .06), 0 14px 34px -14px rgba(40, 30, 20, .32);
+  --glass-float-blur: blur(14px) saturate(2) brightness(1.04);
+  --field: rgba(255, 255, 255, .7);
+  --sticker-lift: 0 6px 12px -5px rgba(60, 40, 20, .45);
+  --paper: #efebe4; --ink-face: #1d1d22; --ink-text: #ffffff; --cut: rgba(25, 25, 27, .13);
+  --button-lift: 0 1px 1px rgba(60, 40, 20, .16), 0 6px 12px -5px rgba(60, 40, 20, .5);
+  --button-lift-up: 0 1px 1px rgba(60, 40, 20, .12), 0 10px 18px -7px rgba(60, 40, 20, .5);
+  --hatch: rgba(90, 90, 100, .13);
+  --font: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --spring: cubic-bezier(.3, 1.5, .5, 1);
+  --cw: 212px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111113; --fg: #ececee; --muted: #9b9aa2; --faint: #6c6b73; --line: #2b2b30;
+    --accent: #7d95ff; --accent-soft: #7d95ff2a; --on-accent: #101018; --dot: rgba(255, 255, 255, .09);
+    --warn: #ffc23d; --on-warn: #2a1c00; --bad: #ff6b9a; --on-bad: #2a0614;
+    --frame: rgba(255, 255, 255, .025); --frame-line: rgba(255, 255, 255, .07);
+    --edge: #5a5a64; --edge-hl: #d8d8de;
+    --glass: linear-gradient(180deg, rgba(48, 48, 56, .92), rgba(32, 32, 38, .86));
+    --glass-rim: linear-gradient(140deg, rgba(255, 255, 255, .3) 0%, rgba(255, 255, 255, .07) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, .14) 100%);
+    --glass-edge: inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 -10px 18px -14px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .06), 0 12px 32px -14px rgba(0, 0, 0, .75);
+    --glass-float: linear-gradient(180deg, rgba(58, 58, 68, .62), rgba(28, 28, 34, .5));
+    --glass-float-rim: linear-gradient(140deg, rgba(255, 255, 255, .45) 0%, rgba(255, 255, 255, .12) 28%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, .22) 100%);
+    --glass-float-edge: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .08), 0 14px 34px -14px rgba(0, 0, 0, .8);
+    --glass-float-blur: blur(14px) saturate(1.9) brightness(.92);
+    --field: rgba(255, 255, 255, .06);
+    --sticker-lift: 0 6px 12px -5px rgba(0, 0, 0, .7);
+    --paper: #4a4a53; --ink-face: #f2f2f4; --ink-text: #18181b; --cut: rgba(0, 0, 0, .5);
+    --button-lift: 0 4px 9px -4px rgba(0, 0, 0, .8); --button-lift-up: 0 9px 16px -7px rgba(0, 0, 0, .85);
+    --hatch: rgba(255, 255, 255, .08);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111113; --fg: #ececee; --muted: #9b9aa2; --faint: #6c6b73; --line: #2b2b30;
+  --accent: #7d95ff; --accent-soft: #7d95ff2a; --on-accent: #101018; --dot: rgba(255, 255, 255, .09);
+  --warn: #ffc23d; --on-warn: #2a1c00; --bad: #ff6b9a; --on-bad: #2a0614;
+  --frame: rgba(255, 255, 255, .025); --frame-line: rgba(255, 255, 255, .07);
+  --edge: #5a5a64; --edge-hl: #d8d8de;
+  --glass: linear-gradient(180deg, rgba(48, 48, 56, .92), rgba(32, 32, 38, .86));
+  --glass-rim: linear-gradient(140deg, rgba(255, 255, 255, .3) 0%, rgba(255, 255, 255, .07) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, .14) 100%);
+  --glass-edge: inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 -10px 18px -14px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(255, 255, 255, .06), 0 12px 32px -14px rgba(0, 0, 0, .75);
+  --glass-float: linear-gradient(180deg, rgba(58, 58, 68, .62), rgba(28, 28, 34, .5));
+  --glass-float-rim: linear-gradient(140deg, rgba(255, 255, 255, .45) 0%, rgba(255, 255, 255, .12) 28%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, .22) 100%);
+  --glass-float-edge: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .08), 0 14px 34px -14px rgba(0, 0, 0, .8);
+  --glass-float-blur: blur(14px) saturate(1.9) brightness(.92);
+  --field: rgba(255, 255, 255, .06);
+  --sticker-lift: 0 6px 12px -5px rgba(0, 0, 0, .7);
+  --paper: #4a4a53; --ink-face: #f2f2f4; --ink-text: #18181b; --cut: rgba(0, 0, 0, .5);
+  --button-lift: 0 4px 9px -4px rgba(0, 0, 0, .8); --button-lift-up: 0 9px 16px -7px rgba(0, 0, 0, .85);
+  --hatch: rgba(255, 255, 255, .08);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 14px/1.4 var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+::selection { background: var(--accent-soft); }
+
+/* The board */
+#vp { position: fixed; inset: 0; overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+  background-image: radial-gradient(circle, var(--dot) 1.1px, transparent 1.5px); }
+#vp.panning { cursor: grabbing; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#frames, #labels, #nodes { position: absolute; left: 0; top: 0; }
+#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+#edges, #labels { transition: opacity .2s ease; }
+#edges.wait, #labels.wait { opacity: 0; transition: none; }
+
+/* Sections: a quiet frame with a header row. It stays out of pointer events so the board can be panned across it. */
+.frame { position: absolute; border-radius: 28px; background: var(--frame); box-shadow: inset 0 0 0 1px var(--frame-line); pointer-events: none; transition: opacity .2s ease; }
+.fh { position: absolute; left: 0; top: 0; right: 0; height: 44px; display: flex; align-items: center; padding: 0 10px 0 14px; box-sizing: border-box; pointer-events: none; }
+.fh-in { display: flex; align-items: center; gap: 9px; white-space: nowrap; max-width: 100%; min-width: 0; }
+.fh .stk { position: relative; left: auto; top: auto; width: 26px; height: 26px; flex: none; }
+.fh .stk svg { width: 15px; height: 15px; }
+.fh-name { pointer-events: auto; border: 0; background: none; padding: 2px 4px; margin: -2px -4px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 15px; letter-spacing: -.01em;
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis; min-width: 0; text-align: left; }
+.fh-name:hover { background: var(--field); }
+.fh-tech { font-size: 12px; color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.fh .chips { position: static; pointer-events: none; }
+.fh .tg { pointer-events: auto; margin-left: 4px; flex: none; }
+.frame.st-retired .fh-name { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.frame.st-new { box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 5px var(--accent-soft); }
+.frame.k-external { box-shadow: inset 0 0 0 1.5px var(--edge); background-image: none; }
+.frame.k-external::after { content: ""; position: absolute; inset: 0; border-radius: inherit; border: 1.5px dashed var(--muted); pointer-events: none; }
+.frame.k-later { background: repeating-linear-gradient(135deg, var(--hatch) 0 6px, transparent 6px 12px); }
+.frame.proposed { outline: 1.5px dashed var(--accent); outline-offset: 3px; }
+.frame.sel { box-shadow: inset 0 0 0 1.5px var(--fg), 0 0 0 5px var(--accent-soft); }
+.frame.retired { opacity: .55; }
+.frame.faint { opacity: .38; }
+.frame.dim { opacity: .3; }
+
+/* Cards */
+.node { position: absolute; width: var(--cw); min-height: 70px; box-sizing: border-box; padding: 13px 14px 13px 15px; border-radius: 18px;
+  background: var(--glass); box-shadow: var(--glass-edge); transition: opacity .2s ease, box-shadow .2s ease; }
+.node::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: var(--glass-rim); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.cv { display: contents; }
+.hit { position: absolute; inset: 0; z-index: 1; border: 0; padding: 0; margin: 0; background: none; border-radius: inherit; cursor: pointer; }
+.hit:focus-visible, .fh-name:focus-visible, .link:focus-visible, .elabel:focus-visible, .btn:focus-visible, .pbtn:focus-visible, .opt:focus-visible, #q:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.node .who { display: block; padding-left: 21px; font-size: 11.5px; font-weight: 600; letter-spacing: .03em; color: var(--muted); margin-bottom: 5px; }
+.node .ttl { display: block; font-size: 14.5px; font-weight: 500; line-height: 1.28; letter-spacing: -.005em; overflow-wrap: anywhere; }
+.node .tech { display: block; margin-top: 3px; font-size: 12px; line-height: 1.3; color: var(--muted); overflow-wrap: anywhere; }
+.node .tgrow { margin-top: 10px; display: flex; }
+.node .tgrow .tg { position: relative; z-index: 2; }
+.node.sel { box-shadow: var(--glass-edge), 0 0 0 2px var(--bg), 0 0 0 4px var(--fg); }
+.node.st-new { box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 7px var(--accent-soft); }
+.node.sel.st-new { box-shadow: var(--glass-edge), 0 0 0 2px var(--bg), 0 0 0 4px var(--fg); }
+.node.now { box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 12px var(--accent-soft); }
+.node.pulse, .frame.pulse { animation: pulse .9s ease-out 2; }
+@keyframes pulse { 0% { box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-soft); } 60% { box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 16px transparent; } 100% { box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 4px transparent; } }
+.node.retired .ttl, .node.retired .tech { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.node.retired { opacity: .55; }
+.node.faint { opacity: .38; }
+.node.dim { opacity: .26; }
+.node.proposed { outline: 1.5px dashed var(--accent); outline-offset: 3px; }
+.node.k-external::after { content: ""; position: absolute; inset: 0; border-radius: inherit; border: 1.5px dashed var(--muted); pointer-events: none; }
+.node.k-later { background: repeating-linear-gradient(135deg, var(--hatch) 0 6px, transparent 6px 12px), var(--glass); }
+.node.k-later .ttl { color: var(--muted); }
+
+/* Kind sticker, stuck half on the corner. */
+.stk { position: absolute; left: -9px; top: -11px; width: 30px; height: 30px; border-radius: 50%; background: var(--c); display: grid; place-items: center;
+  box-shadow: 0 0 0 3px var(--die), var(--sticker-lift); rotate: -6deg; overflow: hidden; transition: rotate .3s var(--spring), translate .3s var(--spring); }
+.stk::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(135deg, transparent 32%, rgba(255, 255, 255, .28) 32% 50%, transparent 50%); }
+.stk svg { width: 18px; height: 18px; fill: #fff; position: relative; }
+@media (hover: hover) { .node:hover .stk { translate: 0 -2px; rotate: -10deg; } }
+
+/* Chips: status and proposed. Colour is never the only signal, each carries its word. */
+.chips { position: absolute; right: -8px; top: -10px; display: flex; gap: 4px; z-index: 2; pointer-events: none; }
+.chip { display: inline-flex; align-items: center; height: 19px; padding: 0 8px; border-radius: 99px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; white-space: nowrap;
+  box-shadow: 0 0 0 2px var(--die), 0 3px 6px -3px rgba(60, 40, 20, .5); background: var(--paper); color: var(--fg); }
+.chip.new { background: var(--accent); color: var(--on-accent); }
+.chip.changed { background: var(--warn); color: var(--on-warn); }
+.chip.retired { background: var(--bad); color: var(--on-bad); }
+.chip.proposed { background: var(--bg); color: var(--muted); box-shadow: 0 0 0 1.5px var(--muted); }
+.chip.inner { background: var(--paper); color: var(--fg); }
+.chip.same { background: var(--paper); color: var(--muted); }
+
+/* Links */
+.eg { color: var(--edge); transition: opacity .2s ease; }
+.eg .e { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.eg .ah { fill: currentColor; }
+.eg .ehit { fill: none; stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
+.eg.ret .e { stroke-dasharray: 6 6; }
+.eg.ret { opacity: .55; }
+.eg.hl { color: var(--edge-hl); }
+.eg.on { color: var(--accent); }
+.eg.on .e { stroke-width: 2.6; }
+.eg.sel { color: var(--accent); }
+.eg.faint { opacity: .3; }
+.eg.dim { opacity: .18; }
+.elabel { position: absolute; translate: -50% -50%; padding: 3px 9px; border: 0; border-radius: 99px; background: var(--bg); box-shadow: 0 0 0 1px var(--line);
+  font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap; cursor: pointer; transition: opacity .2s ease, color .2s ease; }
+.elabel:hover, .elabel.sel { color: var(--fg); box-shadow: 0 0 0 1.5px var(--accent); }
+.elabel.ret { text-decoration: line-through; opacity: .6; }
+.elabel.faint { opacity: .3; }
+.elabel.dim { opacity: .18; }
+#vp.playing .ehit { pointer-events: none; }
+#tmpl { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 6; }
+#token circle { fill: var(--accent); stroke: #fff; stroke-width: 3.5; }
+
+/* Buttons are stickers (one recipe). */
+.btn { --die-w: 3px; position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 0 16px;
+  border: 0; border-radius: 99px; background: var(--paper); color: var(--fg); font: 600 13px/1 var(--font); white-space: nowrap; cursor: pointer;
+  box-shadow: 0 0 0 var(--die-w) var(--die), 0 0 0 calc(var(--die-w) + .5px) var(--cut), var(--button-lift);
+  transition: translate .3s var(--spring), rotate .3s var(--spring), scale .12s ease, box-shadow .2s ease, background .2s ease; }
+.btn.sm { --die-w: 2.5px; min-height: 28px; padding: 0 12px; font-size: 12px; }
+.btn.icon { width: 34px; padding: 0; }
+.btn.icon.sm { width: 28px; }
+.btn svg { width: 16px; height: 16px; flex: none; transition: rotate .3s var(--spring); }
+.btn.sm svg { width: 14px; height: 14px; }
+.btn[aria-pressed="true"]:not(.accent), .btn[aria-selected="true"], .btn.primary { background: var(--ink-face); color: var(--ink-text); }
+.btn.accent[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { translate: 0 -1.5px; rotate: -1deg; box-shadow: 0 0 0 var(--die-w) var(--die), 0 0 0 calc(var(--die-w) + .5px) var(--cut), var(--button-lift-up); }
+  .btn.icon:hover:not(:disabled) { rotate: 0deg; }
+}
+.btn:active:not(:disabled) { translate: 0; rotate: 0deg; scale: .95; }
+.btn:disabled { cursor: default; opacity: .45; box-shadow: 0 0 0 var(--die-w) var(--die), 0 0 0 calc(var(--die-w) + .5px) var(--cut); }
+.btn.tg { min-height: 26px; --die-w: 2px; }
+.btn.tg.icon { width: 26px; }
+
+/* Floating controls: thin glass. */
+.bar { position: relative; border-radius: 22px; background: var(--glass-float); -webkit-backdrop-filter: var(--glass-float-blur); backdrop-filter: var(--glass-float-blur);
+  box-shadow: var(--glass-float-edge); }
+.bar::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: var(--glass-float-rim); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+
+#top { position: fixed; z-index: 5; top: calc(14px + env(safe-area-inset-top, 0px)); left: calc(14px + env(safe-area-inset-left, 0px)); right: calc(14px + env(safe-area-inset-right, 0px));
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 12px; pointer-events: none; }
+#top > * { pointer-events: auto; }
+#head { padding: 10px 18px 10px 16px; max-width: min(460px, 100%); box-sizing: border-box; min-width: 0; }
+#head h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; line-height: 1.15; text-wrap: balance; overflow-wrap: anywhere; }
+#head p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+#tools { flex: 1 1 520px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 14px; padding: 10px 12px; box-sizing: border-box; max-width: 100%; }
+.grp { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.grp .lab { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.srch { position: relative; }
+#q { width: 168px; box-sizing: border-box; height: 30px; border: 0; border-radius: 99px; padding: 0 12px; background: var(--field); box-shadow: 0 0 0 .5px var(--line); font-size: 12.5px; }
+#q::placeholder { color: var(--muted); }
+#q:focus { outline: none; box-shadow: 0 0 0 1.5px var(--accent); }
+#q:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+.pop { position: absolute; top: calc(100% + 14px); right: 0; z-index: 7; box-sizing: border-box; padding: 8px; border-radius: 20px; background: var(--glass);
+  -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7); box-shadow: var(--glass-edge); }
+#qres { list-style: none; margin: 0; width: 300px; max-width: calc(100vw - 28px); max-height: 320px; overflow: auto; }
+.opt { display: flex; flex-direction: column; gap: 1px; width: 100%; box-sizing: border-box; padding: 7px 10px; border: 0; border-radius: 12px; background: none; text-align: left; cursor: pointer; }
+.opt .n { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.opt .m { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.opt:hover, .opt[aria-selected="true"] { background: var(--field); box-shadow: 0 0 0 1.5px var(--accent); }
+.qnone { padding: 10px; font-size: 12.5px; color: var(--muted); }
+#key { width: 292px; max-width: calc(100vw - 28px); padding: 14px; right: 0; }
+#key h3 { margin: 0 0 8px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+#key h3:not(:first-child) { margin-top: 14px; }
+.krow { display: flex; align-items: center; gap: 10px; padding: 4px; font-size: 13px; }
+.krow .stk { position: relative; left: auto; top: auto; width: 22px; height: 22px; flex: none; }
+.krow .stk svg { width: 13px; height: 13px; }
+.krow .t { display: block; font-weight: 600; }
+.krow .d { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.3; }
+.krow .chip { box-shadow: 0 0 0 2px var(--die); flex: none; min-width: 62px; justify-content: center; }
+.kline { display: block; width: 28px; height: 0; border-top: 2px solid var(--edge); flex: none; }
+.kline.d { border-top-style: dashed; }
+
+#phasebar { flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; box-sizing: border-box; min-width: 0; }
+.prow { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }
+#phases { display: flex; gap: 10px; overflow-x: auto; padding: 5px 6px 14px; margin: -5px -6px -10px; flex: 1 1 100%; min-width: 0; scrollbar-width: thin; }
+.pbtn { --die-w: 3px; flex: none; min-width: 148px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 14px 9px; border: 0; border-radius: 16px;
+  background: var(--paper); color: var(--fg); cursor: pointer; font: 500 13px/1.2 var(--font);
+  box-shadow: 0 0 0 var(--die-w) var(--die), 0 0 0 calc(var(--die-w) + .5px) var(--cut), var(--button-lift);
+  transition: translate .3s var(--spring), box-shadow .2s ease, background .2s ease; }
+.pbtn .l1 { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.pbtn .l1 span { font-weight: 600; overflow-wrap: anywhere; }
+.pbtn .wk { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+.pbtn .flag { font-weight: 700; margin-left: auto; padding: 1px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; background: var(--warn); color: var(--on-warn); }
+.pbtn[aria-pressed="true"] { background: var(--ink-face); color: var(--ink-text); }
+.pbtn[aria-pressed="true"] .wk { color: inherit; opacity: .75; }
+@media (hover: hover) { .pbtn:hover { translate: 0 -1.5px; } }
+#pcap { flex: 1 1 320px; min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 18px; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+#pcap b { color: var(--fg); font-weight: 600; margin-right: 4px; }
+#pcap span { overflow-wrap: anywhere; }
+
+#player { position: fixed; z-index: 5; left: 50%; translate: -50% 0; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 18px;
+  width: max-content; max-width: calc(100vw - 2 * 150px); box-sizing: border-box; }
+#player .lab { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+#flows { display: flex; gap: 10px; flex-wrap: wrap; }
+.ctl { display: flex; align-items: center; gap: 10px; }
+#cap { min-width: 0; width: 250px; font-size: 12.5px; line-height: 1.3; color: var(--muted); overflow-wrap: anywhere; }
+#cap b { display: block; color: var(--fg); font-weight: 600; font-size: 13px; }
+#cap .num { font-variant-numeric: tabular-nums; }
+#zoom { position: fixed; z-index: 5; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+#zoom .pct { min-width: 56px; }
+
+/* The detail sheet: frosted glass, full of text. */
+#sheet { position: fixed; z-index: 6; right: calc(14px + env(safe-area-inset-right, 0px)); top: var(--sheet-top, 150px); width: 340px; max-height: calc(100% - var(--sheet-top, 150px) - 90px); overflow: auto;
+  box-sizing: border-box; padding: 18px; border-radius: 24px; background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7); box-shadow: var(--glass-edge);
+  display: flex; flex-direction: column; gap: 14px; overscroll-behavior: contain; }
+.sh-head { display: flex; align-items: center; gap: 12px; }
+.sh-head .stk { position: relative; left: auto; top: auto; width: 34px; height: 34px; flex: none; }
+.sh-head .stk svg { width: 20px; height: 20px; }
+.sh-kind { font-size: 12px; font-weight: 600; letter-spacing: .03em; color: var(--muted); }
+.sh-head .btn { margin-left: auto; }
+#sheet h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; overflow-wrap: anywhere; }
+.sh-tech { margin: 3px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.sh-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sh-chips .chip { box-shadow: none; }
+.fl { display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.sh-p { margin: 0; font-size: 13.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.sh-note { padding: 10px 12px; border-radius: 14px; background: var(--accent-soft); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.sh-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.4; }
+.sh-list li { overflow-wrap: anywhere; }
+.sh-list.dots li { padding-left: 14px; position: relative; }
+.sh-list.dots li::before { content: ""; position: absolute; left: 2px; top: .6em; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.crumbs { font-size: 12.5px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.link { display: inline; text-align: left; border: 0; background: none; padding: 1px 0; cursor: pointer; font-size: 13px; color: var(--accent); line-height: 1.3; text-underline-offset: 2px; }
+.link:hover { text-decoration: underline; }
+.rel { display: block; }
+.rel .lb { color: var(--muted); }
+.rel .tc { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: var(--field); box-shadow: 0 0 0 .5px var(--line); font-size: 11px; font-weight: 600; color: var(--muted); }
+.none { font-size: 13px; color: var(--muted); }
+.sh-foot { display: flex; gap: 10px; flex-wrap: wrap; padding: 3px; }
+
+#busy { position: fixed; z-index: 4; left: 50%; translate: -50% 0; top: var(--busy-top, 190px); padding: 8px 16px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: var(--muted);
+  background: var(--glass); box-shadow: var(--glass-edge); }
+#fatal { position: fixed; z-index: 9; left: 50%; top: 50%; translate: -50% -50%; width: min(440px, calc(100vw - 28px)); box-sizing: border-box; padding: 20px 22px; border-radius: 24px; background: var(--glass); box-shadow: var(--glass-edge); }
+#fatal h2 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+#fatal p { margin: 0 0 6px; font-size: 13.5px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+#empty { position: fixed; z-index: 3; left: 50%; top: 45%; translate: -50% -50%; font-size: 14px; color: var(--muted); text-align: center; }
+#measure { position: absolute; left: -99999px; top: 0; width: 1200px; visibility: hidden; pointer-events: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (max-width: 1100px) {
+  #player .lab { display: none; }
+  #player { left: 14px; right: 82px; translate: none; width: auto; max-width: none; flex-wrap: wrap; gap: 10px 12px; padding: 10px 12px; }
+  #cap { width: auto; flex: 1 1 160px; }
+}
+@media (max-width: 720px) {
+  #head p { display: none; }
+  #head { padding: 8px 14px; max-width: calc(100vw - 28px); }
+  #head h1 { font-size: 14px; }
+  #tools { flex: 1 1 100%; justify-content: flex-start; padding: 8px 10px; gap: 8px 12px; }
+  #q { width: 140px; }
+  .grp .lab { display: none; }
+  .pbtn { min-width: 132px; }
+  #sheet { left: 10px; right: 10px; top: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: auto; max-height: 58%; }
+  #player { right: 14px; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+  #zoom { padding: 8px 10px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .srch { position: static; }
+  .pop { left: 0; right: 0; width: auto; }
+  #key { width: auto; max-width: none; }
+  #qres { width: auto; max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn, .btn svg, .node, .frame, .stk, .eg, .elabel, .pbtn, #edges, #labels { transition: none !important; }
+  .btn:hover, .btn:active { translate: none !important; rotate: none !important; scale: none !important; }
+  .node.pulse, .frame.pulse { animation: none; box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 10px var(--accent-soft); }
+}
+@media (prefers-reduced-transparency: reduce) { :root { --glass-float: var(--glass); --glass-float-blur: blur(20px) saturate(1.7); } }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/elkjs@0.12.1/lib/elk.bundled.js"></script>
+</head>
+<body>
+
+<div id="vp" role="region" aria-label="System map board. Drag to move around, scroll or pinch to zoom.">
+  <div id="world">
+    <div id="frames"></div>
+    <svg id="edges" aria-hidden="true"><g id="eg"></g><path id="tmpl" d=""/><g id="token" hidden><circle r="7"/></g></svg>
+    <div id="labels"></div>
+    <div id="nodes"></div>
+  </div>
+</div>
+
+<div id="top">
+  <header id="head" class="bar">
+    <h1 id="title">Business OS System Map</h1>
+    <p id="subtitle"></p>
+  </header>
+
+  <div id="tools" class="bar" role="toolbar" aria-label="Map controls">
+    <div class="grp" role="group" aria-label="Detail level"><span class="lab" aria-hidden="true">Level</span><span id="levels" class="grp"></span></div>
+    <div class="grp">
+      <button class="btn sm" id="expandAll">Expand all</button>
+      <button class="btn sm" id="collapseAll">Collapse all</button>
+    </div>
+    <div class="srch">
+      <label class="sr" for="q">Find an element</label>
+      <input id="q" type="search" placeholder="Find an element" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="qres" aria-autocomplete="list">
+      <div class="pop" id="qpop" hidden><ul id="qres" role="listbox" aria-label="Matching elements"></ul></div>
+    </div>
+    <div class="srch">
+      <button class="btn sm" id="keyBtn" aria-expanded="false" aria-controls="key">Key</button>
+      <aside class="pop" id="key" hidden aria-label="Key to kinds and statuses"></aside>
+    </div>
+    <button class="btn sm" id="themeBtn" aria-label="Switch theme"></button>
+  </div>
+
+  <nav id="phasebar" class="bar" aria-label="Phases">
+    <div class="prow">
+      <div id="phases" role="group" aria-label="Choose a phase"></div>
+    </div>
+    <div class="prow">
+      <div id="pcap" aria-live="polite"></div>
+      <button class="btn sm accent" id="onlyBtn" aria-pressed="false">Only what changed</button>
+    </div>
+  </nav>
+</div>
+
+<div id="player" class="bar" role="group" aria-label="Flow player">
+  <span class="lab">Flows</span>
+  <div id="flows" role="group" aria-label="Pick a flow"></div>
+  <div class="ctl">
+    <button class="btn icon sm" id="prevBtn" aria-label="Previous step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <button class="btn icon primary" id="playBtn" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><g id="playIcon"></g></svg></button>
+    <button class="btn icon sm" id="nextBtn" aria-label="Next step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+  </div>
+  <div id="cap" aria-live="polite"></div>
+</div>
+
+<div id="zoom" class="bar" role="group" aria-label="Zoom">
+  <button class="btn icon sm" id="zoomOut" aria-label="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+  <button class="btn sm pct" id="fitBtn" aria-label="Fit the whole map, now 100%" title="Fit the whole map">100%</button>
+  <button class="btn icon sm" id="zoomIn" aria-label="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+</div>
+
+<aside id="sheet" hidden aria-label="Details"></aside>
+<div id="busy" hidden role="status">Laying out the map…</div>
+<div id="empty" hidden>Nothing exists in this phase yet.</div>
+<div id="fatal" hidden role="alert"></div>
+<div id="measure" aria-hidden="true"></div>
+
+<script>
+(function () {
+"use strict";
+
+/* ===== MODEL LOGIC (pure, no DOM). SCHEMA.md phase and collapse rules live here. ===== */
+function createLogic(M) {
+  const phases = M.phases || [];
+  const pidx = Object.create(null);
+  phases.forEach((p, i) => { pidx[p.id] = i; });
+  const els = new Map();
+  (M.elements || []).forEach((e) => els.set(e.id, e));
+  const kidsAll = new Map();
+  els.forEach((e) => {
+    if (e.parent && els.has(e.parent)) {
+      if (!kidsAll.has(e.parent)) kidsAll.set(e.parent, []);
+      kidsAll.get(e.parent).push(e);
+    }
+  });
+  const idx = (v, d) => (v != null && v in pidx ? pidx[v] : d);
+  // exists: since <= i and (no until, or i < until)
+  const alive = (o, i) => idx(o.since, 0) <= i && !(o.until != null && o.until in pidx && i >= pidx[o.until]);
+  // the phase an item is retired in: drawn faded and struck through in this phase only
+  const retiredNow = (o, i) => o.until != null && idx(o.until, -1) === i && idx(o.since, 0) <= i;
+  const present = (o, i) => alive(o, i) || retiredNow(o, i);
+  function status(o, i) {
+    const P = phases[i].id;
+    if (retiredNow(o, i)) return "retired";
+    if (o.since === P) return "new";
+    if (o.changes && o.changes[P]) return "changed";
+    return "same";
+  }
+  const memo = [];
+  // shown: present at phase i and every ancestor is shown too
+  function shown(id, i) {
+    const m = memo[i] || (memo[i] = new Map());
+    if (m.has(id)) return m.get(id);
+    m.set(id, false);
+    const o = els.get(id);
+    let r = !!o && present(o, i);
+    if (r && o.parent) r = els.has(o.parent) && shown(o.parent, i);
+    m.set(id, r);
+    return r;
+  }
+  const shownKids = (id, i) => (kidsAll.get(id) || []).filter((k) => shown(k.id, i));
+  function shownDesc(id, i) {
+    const out = [], st = shownKids(id, i);
+    while (st.length) { const k = st.shift(); out.push(k); st.push(...shownKids(k.id, i)); }
+    return out;
+  }
+  const isSection = (id, i) => shownKids(id, i).length > 0;
+  // visible: shown and every ancestor expanded
+  function visible(id, i, exp) {
+    if (!shown(id, i)) return false;
+    for (let p = els.get(id).parent; p; p = els.get(p).parent) if (!exp.has(p)) return false;
+    return true;
+  }
+  // lift: nearest visible ancestor-or-self (null when the element is not shown at all)
+  function lift(id, i, exp) {
+    if (!shown(id, i)) return null;
+    for (let c = id; c; c = els.get(c).parent) if (visible(c, i, exp)) return c;
+    return null;
+  }
+  function ancestors(id) {
+    const out = [];
+    for (let p = els.has(id) ? els.get(id).parent : null; p && els.has(p) && out.length < 50; p = els.get(p).parent) out.push(p);
+    return out;
+  }
+  const relPresent = (r, i) => present(r, i) && shown(r.src, i) && shown(r.dst, i);
+  const relsAt = (i) => (M.relations || []).filter((r) => relPresent(r, i));
+  // lifted + dropped (same box) + merged arrows
+  function lifted(i, exp) {
+    const P = phases[i].id, groups = new Map(), out = [];
+    for (const r of M.relations || []) {
+      if (!relPresent(r, i)) continue;
+      const a = lift(r.src, i, exp), b = lift(r.dst, i, exp);
+      if (!a || !b || a === b) continue;
+      const k = a + "\u0001" + b;
+      let g = groups.get(k);
+      if (!g) { g = { id: "e:" + a + ">" + b, src: a, dst: b, rels: [] }; groups.set(k, g); out.push(g); }
+      g.rels.push(r);
+    }
+    for (const g of out) {
+      const one = g.rels.length === 1;
+      g.label = one ? (g.rels[0].label || "1 link") : g.rels.length + " links";
+      g.tech = one ? (g.rels[0].tech || "") : "";
+      g.retired = g.rels.every((r) => retiredNow(r, i));
+      g.isNew = g.rels.some((r) => r.since === P);
+    }
+    return out;
+  }
+  const flowsAt = (i) => (M.flows || []).filter((f) => idx(f.since, 0) <= i);
+  // usable steps: both ends shown at this phase (not lifted yet)
+  const flowSteps = (f, i) => (f.steps || []).filter((s) => shown(s.src, i) && shown(s.dst, i));
+  const depthOf = (id) => ancestors(id).length;
+  function presetSet(name) {
+    const s = new Set();
+    els.forEach((o, id) => {
+      if (!kidsAll.has(id)) return;
+      const d = depthOf(id);
+      if (name === "everything" || (name === "containers" && d <= 0) || (name === "components" && d <= 1)) s.add(id);
+    });
+    return s;
+  }
+  function defaultExpanded() {
+    const s = new Set();
+    // Start at the Containers level (top-level sections open) so the first view is readable.
+    // A section can opt in with collapsed: false, or stay shut with collapsed: true.
+    els.forEach((o, id) => { if (kidsAll.has(id) && o.collapsed !== true && (depthOf(id) <= 0 || o.collapsed === false)) s.add(id); });
+    return s;
+  }
+  const sectionIds = () => [...kidsAll.keys()];
+  return { phases, pidx, els, kidsAll, idx, status, shown, shownKids, shownDesc, isSection, visible, lift, ancestors, relsAt, lifted, flowsAt, flowSteps, presetSet, defaultExpanded, sectionIds, retiredNow };
+}
+/* ===== END MODEL LOGIC ===== */
+
+const KEY = "bos-map-v1";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function fatal(title, lines) {
+  const f = $("#fatal");
+  f.innerHTML = `<h2>${esc(title)}</h2>` + lines.map((l) => `<p>${esc(l)}</p>`).join("");
+  f.hidden = false;
+}
+
+/* ---------- Loading: ELK, then the model (fixture on request or when model.js is missing) ---------- */
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error("Could not load " + src));
+    document.head.appendChild(s);
+  });
+}
+async function boot() {
+  if (typeof ELK === "undefined") {
+    fatal("The layout engine did not load", ["This map needs elkjs from cdn.jsdelivr.net. Check the connection, then reload the page."]);
+    return;
+  }
+  const wantFixture = /[?&]fixture(=|&|$)/.test(location.search);
+  let fixture = wantFixture;
+  try {
+    if (!wantFixture) {
+      try { await loadScript("model.js"); }
+      catch (e) { console.warn("model.js not found next to map.html, using model.fixture.js instead."); fixture = true; }
+    }
+    if (fixture || !window.BOS_MODEL) { fixture = true; await loadScript("model.fixture.js"); }
+  } catch (e) {
+    fatal("The map data did not load", ["Expected model.js (or model.fixture.js with ?fixture) in the same folder as map.html.", String(e && e.message || e)]);
+    return;
+  }
+  const M = window.BOS_MODEL;
+  if (!M || !Array.isArray(M.phases) || !M.phases.length || !Array.isArray(M.elements)) {
+    fatal("The map data is not valid", ["window.BOS_MODEL needs at least one phase and an elements array. See SCHEMA.md."]);
+    return;
+  }
+  try { await (document.fonts && document.fonts.ready); } catch (e) {}
+  main(M, fixture);
+}
+
+function main(M, usedFixture) {
+const LG = createLogic(M);
+
+/* ---------- Kinds, statuses, icons ---------- */
+const KINDS = {
+  person:    { label: "Person",    color: "#0a7cff", desc: "A human who uses the system", glyph: '<circle cx="12" cy="8.3" r="3.7"/><path d="M4.8 19.6c.9-3.8 3.7-5.9 7.2-5.9s6.3 2.1 7.2 5.9z"/>' },
+  system:    { label: "System",    color: "#7048e8", desc: "A software system as a whole", glyph: '<path d="M12 2.8 20.2 7v10L12 21.2 3.8 17V7z"/><path d="M3.8 7 12 11.2 20.2 7M12 11.2v10" fill="none" style="stroke:var(--c)" stroke-width="1.7" stroke-linejoin="round"/>' },
+  container: { label: "Container", color: "#0f9d9a", desc: "An app or service we deploy", glyph: '<rect x="3.5" y="5" width="17" height="14" rx="2.6"/><path d="M3.5 9.6h17" fill="none" style="stroke:var(--c)" stroke-width="1.7"/>' },
+  component: { label: "Component", color: "#2fb36b", desc: "A part inside a container", glyph: '<rect x="4" y="4" width="7" height="7" rx="1.7"/><rect x="13" y="4" width="7" height="7" rx="1.7"/><rect x="4" y="13" width="7" height="7" rx="1.7"/><rect x="13" y="13" width="7" height="7" rx="1.7" opacity=".55"/>' },
+  store:     { label: "Store",     color: "#c49a00", desc: "A database or file storage", glyph: '<path d="M4.5 6.5c0-1.9 3.4-3.2 7.5-3.2s7.5 1.3 7.5 3.2v11c0 1.9-3.4 3.2-7.5 3.2s-7.5-1.3-7.5-3.2z"/><path d="M4.5 6.5c0 1.9 3.4 3.2 7.5 3.2s7.5-1.3 7.5-3.2M4.5 12c0 1.9 3.4 3.2 7.5 3.2s7.5-1.3 7.5-3.2" fill="none" style="stroke:var(--c)" stroke-width="1.5"/>' },
+  external:  { label: "External",  color: "#d6336c", desc: "Outside our control (dashed border)", glyph: '<path d="M13 3.5h7.5V11h-2.4V7.9l-6.4 6.4-1.7-1.7 6.4-6.4H13z"/><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10v2.4H6.4v9.2h9.2V14z"/>' },
+  worker:    { label: "Worker",    color: "#e8590c", desc: "A background job or process", glyph: '<circle cx="12" cy="12" r="4.6" fill="none" stroke="#fff" stroke-width="3"/><path d="M12 2.6v3.2M12 18.2v3.2M2.6 12h3.2M18.2 12h3.2M5.4 5.4l2.2 2.2M16.4 16.4l2.2 2.2M18.6 5.4l-2.2 2.2M7.6 16.4l-2.2 2.2" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>' },
+  later:     { label: "Later",     color: "#6e6d75", desc: "Not part of Stage 1 (grey, hatched)", glyph: '<circle cx="6" cy="12" r="2.1"/><circle cx="12" cy="12" r="2.1"/><circle cx="18" cy="12" r="2.1"/>' },
+};
+const kindOf = (o) => KINDS[o.kind] || KINDS.component;
+const STATUS_WORD = { new: "New", changed: "Changed", retired: "Retired", same: "Unchanged" };
+const ICON = {
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M18.7 5.3l-1.8 1.8M7.1 16.9l-1.8 1.8"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"/></svg>',
+  pause: '<path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/>',
+  play: '<path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/>',
+};
+
+/* ---------- State ---------- */
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { saved = {}; }
+const sameSrc = saved.src === (usedFixture ? "fixture" : "model");
+const defPhase = Math.max(0, LG.phases.findIndex((p) => p.target));
+const state = {
+  phase: sameSrc && saved.phase in LG.pidx ? LG.pidx[saved.phase] : (LG.phases.some((p) => p.target) ? defPhase : 0),
+  expanded: sameSrc && Array.isArray(saved.expanded) ? new Set(saved.expanded.filter((id) => LG.els.has(id))) : LG.defaultExpanded(),
+  only: false,
+  sel: null,       // { type: "el", id } | { type: "edge", id }
+  flowId: null,
+};
+function persist() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ src: usedFixture ? "fixture" : "model", phase: LG.phases[state.phase].id, expanded: [...state.expanded], theme: document.documentElement.getAttribute("data-theme") || undefined }));
+  } catch (e) {}
+}
+
+const vp = $("#vp"), world = $("#world"), framesL = $("#frames"), nodesL = $("#nodes"), labelsL = $("#labels"), edgesSvg = $("#edges"), egG = $("#eg");
+const tmpl = $("#tmpl"), token = $("#token"), sheet = $("#sheet"), cap = $("#cap"), measureEl = $("#measure");
+const cardEls = new Map(), frameEls = new Map();
+const view = { x: 0, y: 0, z: 1 };
+let L = null;          // last committed layout
+let layoutSeq = 0;
+
+/* ---------- Header, theme ---------- */
+$("#title").textContent = (M.meta && M.meta.title) || "Business OS System Map";
+$("#subtitle").textContent = [(M.meta && M.meta.subtitle) || "", M.meta && M.meta.updated ? "updated " + M.meta.updated : ""].filter(Boolean).join(" · ");
+if (!$("#subtitle").textContent) $("#subtitle").hidden = true;
+const effTheme = () => document.documentElement.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+function renderTheme() {
+  const dark = effTheme() === "dark", b = $("#themeBtn");
+  b.innerHTML = (dark ? ICON.sun : ICON.moon) + `<span>${dark ? "Light" : "Dark"}</span>`;
+  b.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+}
+$("#themeBtn").onclick = () => { document.documentElement.setAttribute("data-theme", effTheme() === "dark" ? "light" : "dark"); renderTheme(); persist(); };
+renderTheme();
+
+/* ---------- HTML builders ---------- */
+const stickerHTML = (o) => `<span class="stk" style="--c:${kindOf(o).color}"><svg viewBox="0 0 24 24" aria-hidden="true">${kindOf(o).glyph}</svg></span>`;
+function innerChanges(id) { return LG.shownDesc(id, state.phase).some((d) => LG.status(d, state.phase) !== "same"); }
+function chipsHTML(o, st, id) {
+  let h = "";
+  if (st === "new") h += '<span class="chip new">New</span>';
+  else if (st === "changed") h += '<span class="chip changed">Changed</span>';
+  else if (st === "retired") h += '<span class="chip retired">Retired</span>';
+  else if (!LG.visible(id, state.phase, state.expanded) || (LG.isSection(id, state.phase) && !state.expanded.has(id))) { if (innerChanges(id)) h += '<span class="chip inner">Changes inside</span>'; }
+  if (o.proposed) h += '<span class="chip proposed">Proposed</span>';
+  return h ? `<span class="chips" aria-hidden="true">${h}</span>` : "";
+}
+function descCount(id) { return LG.shownDesc(id, state.phase).length; }
+function a11yLabel(o, st) {
+  return `${o.name}, ${kindOf(o).label}${o.tech ? ", " + o.tech : ""}. ${STATUS_WORD[st]} in ${LG.phases[state.phase].id}${o.proposed ? ", proposed" : ""}. Open details`;
+}
+function cardHTML(id) {
+  const o = LG.els.get(id), st = LG.status(o, state.phase), sec = LG.isSection(id, state.phase);
+  let h = `<span class="cv" aria-hidden="true">${stickerHTML(o)}${chipsHTML(o, st, id)}<span class="who">${esc(kindOf(o).label)}</span><span class="ttl">${esc(o.name)}</span>${o.tech ? `<span class="tech">${esc(o.tech)}</span>` : ""}</span>`;
+  h += `<button class="hit" type="button" data-act="open" data-id="${esc(id)}" data-fk="open:${esc(id)}" aria-label="${esc(a11yLabel(o, st))}"></button>`;
+  if (sec) h += `<span class="tgrow"><button class="btn sm tg" type="button" data-act="toggle" data-id="${esc(id)}" data-fk="tg:${esc(id)}" aria-expanded="false" aria-label="Expand ${esc(o.name)}, ${descCount(id)} inside">${ICON.plus}+${descCount(id)} inside</button></span>`;
+  return h;
+}
+function cardClass(id) {
+  const o = LG.els.get(id), st = LG.status(o, state.phase);
+  return `node k-${o.kind || "component"} st-${st}${st === "retired" ? " retired" : ""}${o.proposed ? " proposed" : ""}`;
+}
+function headerHTML(id) {
+  const o = LG.els.get(id), st = LG.status(o, state.phase);
+  return `<div class="fh"><div class="fh-in">${stickerHTML(o)}<button class="fh-name" type="button" data-act="open" data-id="${esc(id)}" data-fk="open:${esc(id)}" title="${esc(o.name)}" aria-label="${esc(a11yLabel(o, st))}">${esc(o.name)}</button>` +
+    `${o.tech ? `<span class="fh-tech">${esc(o.tech)}</span>` : ""}${chipsHTML(o, st, id)}` +
+    `<button class="btn icon sm tg" type="button" data-act="toggle" data-id="${esc(id)}" data-fk="tg:${esc(id)}" aria-expanded="true" aria-label="Collapse ${esc(o.name)}">${ICON.minus}</button></div></div>`;
+}
+function frameClass(id) {
+  const o = LG.els.get(id), st = LG.status(o, state.phase);
+  return `frame k-${o.kind || "container"} st-${st}${st === "retired" ? " retired" : ""}${o.proposed ? " proposed" : ""}`;
+}
+
+/* ---------- Layout with ELK ---------- */
+const elk = new ELK();
+const isFrameId = (id, vis, kidsOf) => !!(kidsOf.get(id) && kidsOf.get(id).length);
+
+function measureAll(ids, frames) {
+  measureEl.innerHTML = ids.map((id) => frames.has(id)
+    ? `<div class="frame" style="position:absolute;left:0;top:0;width:900px">${headerHTML(id)}</div>`
+    : `<div class="${cardClass(id)}">${cardHTML(id)}</div>`).join("");
+  const sizes = new Map();
+  ids.forEach((id, i) => {
+    const el = measureEl.children[i];
+    if (frames.has(id)) { const fi = el.querySelector(".fh-in"); sizes.set(id, { minW: Math.ceil(fi.scrollWidth) + 28 }); }
+    else sizes.set(id, { w: el.offsetWidth, h: el.offsetHeight });
+  });
+  measureEl.innerHTML = "";
+  return sizes;
+}
+
+function elkGraph(ids, vis, kidsOf, sizes, edges, withLabels) {
+  const nodeMap = new Map();
+  const root = { id: "__root", layoutOptions: {
+    "elk.algorithm": "layered", "elk.direction": "RIGHT", "elk.hierarchyHandling": "INCLUDE_CHILDREN", "elk.edgeRouting": "ORTHOGONAL",
+    "elk.separateConnectedComponents": "false",
+    "elk.spacing.nodeNode": "48", "elk.layered.spacing.nodeNodeBetweenLayers": "110",
+    "elk.spacing.edgeNode": "32", "elk.layered.spacing.edgeNodeBetweenLayers": "32",
+    "elk.spacing.edgeEdge": "18", "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
+    "elk.padding": "[top=40,left=40,bottom=40,right=40]",
+    "elk.json.edgeCoords": "ROOT", "elk.json.shapeCoords": "ROOT",
+  }, children: [], edges: [] };
+  const mk = (id) => {
+    const sz = sizes.get(id), kids = kidsOf.get(id);
+    let n;
+    if (kids && kids.length) {
+      n = { id, children: kids.map(mk), edges: [], layoutOptions: {
+        "elk.padding": "[top=56,left=24,bottom=24,right=24]",
+        "elk.nodeSize.constraints": "MINIMUM_SIZE", "elk.nodeSize.minimum": `(${Math.max(sz.minW, 120)},96)`,
+      } };
+    } else n = { id, width: sz.w, height: sz.h };
+    nodeMap.set(id, n);
+    return n;
+  };
+  for (const id of ids) { const p = LG.els.get(id).parent; if (!(p && vis.has(p))) root.children.push(mk(id)); }
+  const chain = (id) => { const c = [id]; for (let p = LG.els.get(id).parent; p && vis.has(p); p = LG.els.get(p).parent) c.unshift(p); return c; };
+  for (const e of edges) {
+    const ca = chain(e.src), cb = chain(e.dst);
+    let k = 0; while (k < ca.length && k < cb.length && ca[k] === cb[k]) k++;
+    const host = k > 0 ? nodeMap.get(ca[k - 1]) : root;
+    const edge = { id: e.id, sources: [e.src], targets: [e.dst] };
+    if (withLabels) edge.labels = [{ text: e.label, width: Math.min(220, e.label.length * 6.6 + 20), height: 22 }];
+    (host.edges || (host.edges = [])).push(edge);
+  }
+  return root;
+}
+
+function near(p, b) {
+  if (!b || !p) return false;
+  const t = 3;
+  if (p[0] < b.x - t || p[0] > b.x + b.w + t || p[1] < b.y - t || p[1] > b.y + b.h + t) return false;
+  return Math.abs(p[0] - b.x) <= t || Math.abs(p[0] - b.x - b.w) <= t || Math.abs(p[1] - b.y) <= t || Math.abs(p[1] - b.y - b.h) <= t;
+}
+function readElk(res, edges) {
+  const A = new Map(), B = new Map(), eA = new Map(), eB = new Map();
+  (function walk(n, ox, oy) {
+    for (const c of n.children || []) {
+      A.set(c.id, { x: c.x, y: c.y, w: c.width, h: c.height });
+      const bb = { x: ox + c.x, y: oy + c.y, w: c.width, h: c.height };
+      B.set(c.id, bb);
+      walk(c, bb.x, bb.y);
+    }
+    for (const e of n.edges || []) {
+      const s = (e.sections || [])[0]; if (!s) continue;
+      const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
+      eA.set(e.id, pts.map((p) => [p.x, p.y]));
+      eB.set(e.id, pts.map((p) => [p.x + ox, p.y + oy]));
+    }
+  })(res, 0, 0);
+  const score = (boxes, ep) => {
+    let f = 0;
+    for (const [id, b] of boxes) {
+      const par = LG.els.get(id).parent, p = par && boxes.get(par);
+      if (p && (b.x < p.x - 1 || b.y < p.y - 1 || b.x + b.w > p.x + p.w + 1 || b.y + b.h > p.y + p.h + 1)) f++;
+    }
+    for (const e of edges) {
+      const pts = ep.get(e.id);
+      if (!pts) { f++; continue; }
+      if (!near(pts[0], boxes.get(e.src))) f++;
+      if (!near(pts[pts.length - 1], boxes.get(e.dst))) f++;
+    }
+    return f;
+  };
+  const fa = score(A, eA), fb = score(B, eB);
+  const useA = fa <= fb;
+  if (Math.min(fa, fb) > 0) console.warn(`[map] ELK coordinate self-check: ${Math.min(fa, fb)} issue(s) in ${useA ? "ROOT" : "summed"} mode (ROOT ${fa}, summed ${fb}). Some arrows may not touch their cards.`);
+  else if (!useA) console.info("[map] ELK did not honour ROOT coordinates, summed parent offsets instead.");
+  return { boxes: useA ? A : B, pts: useA ? eA : eB };
+}
+
+function clipTo(b, from) {   // point on b's border towards 'from'
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, dx = from[0] - cx, dy = from[1] - cy;
+  if (!dx && !dy) return [cx, cy];
+  const k = Math.min(dx ? (b.w / 2) / Math.abs(dx) : Infinity, dy ? (b.h / 2) / Math.abs(dy) : Infinity);
+  return [cx + dx * k, cy + dy * k];
+}
+function geomOf(pts) {
+  const p = [];
+  for (const q of pts) if (!p.length || Math.hypot(q[0] - p[p.length - 1][0], q[1] - p[p.length - 1][1]) > .5) p.push(q);
+  if (p.length < 2) return null;
+  let d = `M${p[0][0]},${p[0][1]}`;
+  for (let i = 1; i < p.length - 1; i++) {
+    const a = p[i - 1], c = p[i], b = p[i + 1];
+    const l1 = Math.hypot(a[0] - c[0], a[1] - c[1]), l2 = Math.hypot(b[0] - c[0], b[1] - c[1]), r = Math.min(9, l1 / 2, l2 / 2);
+    if (r < 1) { d += ` L${c[0]},${c[1]}`; continue; }
+    d += ` L${c[0] + (a[0] - c[0]) / l1 * r},${c[1] + (a[1] - c[1]) / l1 * r} Q${c[0]},${c[1]} ${c[0] + (b[0] - c[0]) / l2 * r},${c[1] + (b[1] - c[1]) / l2 * r}`;
+  }
+  const t = p[p.length - 1], pr = p[p.length - 2], L2 = Math.hypot(t[0] - pr[0], t[1] - pr[1]) || 1;
+  const ux = (t[0] - pr[0]) / L2, uy = (t[1] - pr[1]) / L2, bx = t[0] - ux * 10, by = t[1] - uy * 10;
+  d += ` L${t[0]},${t[1]}`;
+  const ah = `M${t[0]},${t[1]} L${bx - uy * 5.5},${by + ux * 5.5} L${bx + uy * 5.5},${by - ux * 5.5}Z`;
+  let best = 0, mid = [(p[0][0] + t[0]) / 2, (p[0][1] + t[1]) / 2];
+  for (let i = 1; i < p.length; i++) {
+    const len = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+    if (len > best) { best = len; mid = [(p[i][0] + p[i - 1][0]) / 2, (p[i][1] + p[i - 1][1]) / 2]; }
+  }
+  return { d, ah, mid };
+}
+
+async function computeLayout() {
+  const i = state.phase, exp = state.expanded;
+  const ids = [...LG.els.keys()].filter((id) => LG.visible(id, i, exp));
+  const vis = new Set(ids), kidsOf = new Map();
+  for (const id of ids) { const p = LG.els.get(id).parent; if (p && vis.has(p)) { if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(id); } }
+  const frames = new Set(ids.filter((id) => isFrameId(id, vis, kidsOf)));
+  const edges = LG.lifted(i, exp);
+  if (!ids.length) return { ids, frames, boxes: new Map(), edges: [], w: 0, h: 0, byPair: new Map() };
+  const sizes = measureAll(ids, frames);
+  let res;
+  try { res = await elk.layout(elkGraph(ids, vis, kidsOf, sizes, edges, true)); }
+  catch (e) {
+    console.warn("[map] ELK failed with edge labels, retrying without them.", e);
+    res = await elk.layout(elkGraph(ids, vis, kidsOf, sizes, edges, false));
+  }
+  const rd = readElk(res, edges);
+  const boxes = new Map();
+  for (const id of ids) {
+    const b = rd.boxes.get(id);
+    if (!b) throw new Error("ELK returned no box for " + id);
+    boxes.set(id, { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: b.w, h: b.h, frame: frames.has(id) });
+  }
+  const out = [], byPair = new Map();
+  for (const e of edges) {
+    let pts = rd.pts.get(e.id);
+    if (!pts) {
+      const a = boxes.get(e.src), b = boxes.get(e.dst);
+      pts = [clipTo(a, [b.x + b.w / 2, b.y + b.h / 2]), clipTo(b, [a.x + a.w / 2, a.y + a.h / 2])];
+    }
+    const g = geomOf(pts);
+    if (!g) continue;
+    const item = Object.assign({}, e, g);
+    out.push(item); byPair.set(e.src + "|" + e.dst, item);
+  }
+  return { ids, frames, boxes, edges: out, byPair, w: res.width || 0, h: res.height || 0 };
+}
+
+/* ---------- Commit a layout: DOM, view anchoring, FLIP ---------- */
+let anims = [], leavers = [];
+function finishAnims() {
+  anims.forEach((a) => { try { a.finish(); } catch (e) {} });
+  anims = [];
+  leavers.forEach((el) => el.remove());
+  leavers = [];
+}
+const EASE = "cubic-bezier(.2,.8,.2,1)", DUR = 350;
+function ancRect(id, boxes) {
+  for (let c = id; c; c = LG.els.get(c) && LG.els.get(c).parent) if (boxes.has(c)) return boxes.get(c);
+  return null;
+}
+function autoAnchor(ob, nb) {
+  let best = null, bd = Infinity;
+  const cx = innerWidth / 2, cy = innerHeight / 2;
+  for (const [id, o] of ob) {
+    if (!nb.has(id)) continue;
+    const sx = view.x + view.z * (o.x + o.w / 2), sy = view.y + view.z * (o.y + o.h / 2), d = Math.hypot(sx - cx, sy - cy);
+    if (d < bd) { bd = d; best = id; }
+  }
+  return best;
+}
+function commit(res, opts) {
+  const ob = L ? L.boxes : new Map(), nb = res.boxes;
+  const oldView = { x: view.x, y: view.y, z: view.z };
+  finishAnims();
+  cancelAnimationFrame(camRaf);
+  const animate = !reduced && !!L && opts.animate !== false;
+  let anchor = opts.anchor;
+  if (!anchor && L && !opts.fit) anchor = autoAnchor(ob, nb);
+  if (anchor && L && !opts.fit && ob.has(anchor) && nb.has(anchor)) {
+    const o = ob.get(anchor), n = nb.get(anchor);
+    view.x += (o.x - n.x) * view.z; view.y += (o.y - n.y) * view.z;
+  }
+  const sx = (oldView.x - view.x) / view.z, sy = (oldView.y - view.y) / view.z;   // view change expressed in world units
+
+  const fkEl = document.activeElement && document.activeElement.closest && document.activeElement.closest("[data-fk]");
+  const fk = fkEl && fkEl.dataset.fk;
+
+  // elements that are gone (or changed type) leave; the rest are created or updated
+  const gone = [];
+  for (const [id, el] of cardEls) if (!res.ids.includes(id) || res.frames.has(id)) { gone.push({ id, el, frame: false }); cardEls.delete(id); }
+  for (const [id, el] of frameEls) if (!res.ids.includes(id) || !res.frames.has(id)) { gone.push({ id, el, frame: true }); frameEls.delete(id); }
+  const entering = [];
+  for (const id of res.ids) {
+    const b = nb.get(id), isF = res.frames.has(id), map = isF ? frameEls : cardEls;
+    let el = map.get(id), isNew = false;
+    if (!el) {
+      el = document.createElement("div"); el.dataset.id = id; map.set(id, el); (isF ? framesL : nodesL).appendChild(el); isNew = true;
+    }
+    el.className = isF ? frameClass(id) : cardClass(id);
+    el.innerHTML = isF ? headerHTML(id) : cardHTML(id);
+    el.style.left = b.x + "px"; el.style.top = b.y + "px";
+    el.style.width = isF ? b.w + "px" : ""; el.style.height = b.h + "px";
+    if (isNew) entering.push(id);
+  }
+  // sort frames so parents sit below children
+  // (frames are appended in model order, parents come first in most models; z-order does not matter, they never overlap by design)
+
+  if (animate) {
+    for (const id of res.ids) {
+      const b = nb.get(id), isF = b.frame, el = (isF ? frameEls : cardEls).get(id), o = ob.get(id);
+      if (o && entering.indexOf(id) < 0 || (o && isF !== !!o.frame)) {
+        if (isF) {
+          anims.push(el.animate([{ left: (o.x + sx) + "px", top: (o.y + sy) + "px", width: o.w + "px", height: o.h + "px" }, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px" }], { duration: DUR, easing: EASE }));
+        } else {
+          const dx = o.x - b.x + sx, dy = o.y - b.y + sy;
+          if (Math.abs(dx) + Math.abs(dy) > .5) anims.push(el.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }], { duration: DUR, easing: EASE }));
+        }
+      } else if (entering.indexOf(id) >= 0 || !o) {
+        const ar = isF ? null : ancRect(LG.els.get(id).parent, ob);
+        if (ar) {
+          const dx = ar.x + ar.w / 2 - (b.x + b.w / 2) + sx, dy = ar.y + ar.h / 2 - (b.y + b.h / 2) + sy;
+          anims.push(el.animate([{ transform: `translate(${dx}px,${dy}px) scale(.9)`, opacity: 0 }, { transform: "none", opacity: 1 }], { duration: DUR, easing: EASE }));
+        } else anims.push(el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: DUR, easing: EASE }));
+      }
+    }
+  }
+  for (const g of gone) {
+    const o = ob.get(g.id);
+    if (!animate || !o) { g.el.remove(); continue; }
+    g.el.style.pointerEvents = "none"; g.el.style.zIndex = "0";
+    g.el.querySelectorAll("button").forEach((b) => { b.tabIndex = -1; b.removeAttribute("data-fk"); b.removeAttribute("data-act"); });
+    let tx = 0, ty = 0;
+    const target = ancRect(g.id, nb);
+    if (target && !g.frame) { tx = target.x + target.w / 2 - (o.x + o.w / 2); ty = target.y + target.h / 2 - (o.y + o.h / 2); }
+    leavers.push(g.el);
+    anims.push(g.el.animate([{ transform: `translate(${sx}px,${sy}px)`, opacity: 1 }, { transform: `translate(${sx + tx}px,${sy + ty}px) scale(${g.frame ? 1 : .9})`, opacity: 0 }], { duration: DUR, easing: EASE, fill: "forwards" }));
+  }
+  if (!animate) gone.forEach((g) => g.el.remove());
+
+  // edges are redrawn once things have settled
+  L = res;
+  edgesSvg.setAttribute("width", Math.max(1, res.w)); edgesSvg.setAttribute("height", Math.max(1, res.h));
+  drawEdges();
+  if (anims.length) {
+    edgesSvg.classList.add("wait"); labelsL.classList.add("wait");
+    const mine = anims.slice();
+    Promise.all(mine.map((a) => a.finished.catch(() => {}))).then(() => {
+      if (mine[0] === anims[0]) { edgesSvg.classList.remove("wait"); labelsL.classList.remove("wait"); }
+      mine.forEach((a) => { if (a.effect && a.effect.target && leavers.indexOf(a.effect.target) >= 0) { a.effect.target.remove(); leavers = leavers.filter((l) => l !== a.effect.target); } });
+    });
+  } else { edgesSvg.classList.remove("wait"); labelsL.classList.remove("wait"); }
+  if (fk) { const n = document.querySelector(`[data-fk="${CSS.escape(fk)}"]`); if (n) n.focus({ preventScroll: true }); }
+  $("#empty").hidden = res.ids.length > 0;
+  applyView();
+  applyFocus();
+}
+
+function drawEdges() {
+  let h = "", lab = "";
+  for (const e of L.edges) {
+    const t = edgeTitle(e);
+    h += `<g class="eg${e.retired ? " ret" : ""}" data-id="${esc(e.id)}"><title>${esc(t)}</title><path class="ehit" d="${e.d}"/><path class="e" d="${e.d}"/><path class="ah" d="${e.ah}"/></g>`;
+    lab += `<button type="button" class="elabel${e.retired ? " ret" : ""}" data-edge="${esc(e.id)}" title="${esc(t)}" aria-label="${esc(t.replace(/\n/g, "; "))}" style="left:${e.mid[0]}px;top:${e.mid[1]}px">${esc(e.label)}</button>`;
+  }
+  egG.innerHTML = h; labelsL.innerHTML = lab;
+}
+function edgeTitle(e) {
+  const nm = (id) => LG.els.get(id).name;
+  const head = `${nm(e.src)} to ${nm(e.dst)}`;
+  return head + "\n" + e.rels.map((r) => `${nm(r.src)} → ${nm(r.dst)}: ${r.label || "link"}${r.tech ? " (" + r.tech + ")" : ""}`).join("\n");
+}
+
+async function relayout(opts) {
+  opts = opts || {};
+  const seq = ++layoutSeq;
+  const busy = $("#busy");
+  const timer = setTimeout(() => { if (seq === layoutSeq) { positionChrome(); busy.hidden = false; } }, 180);
+  try {
+    const res = await computeLayout();
+    if (seq !== layoutSeq) return false;
+    commit(res, opts);
+    return true;
+  } catch (err) {
+    console.error("[map] layout failed", err);
+    if (seq === layoutSeq) fatal("The map could not be laid out", [String(err && err.message || err), "Try another level, or reload the page."]);
+    return false;
+  } finally {
+    clearTimeout(timer);
+    if (seq === layoutSeq) busy.hidden = true;
+  }
+}
+
+/* ---------- Camera ---------- */
+const clampZ = (z) => Math.max(.05, Math.min(2, z));
+function applyView() {
+  world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.z})`;
+  let step = 24 * view.z; while (step < 12) step *= 4;
+  vp.style.backgroundSize = `${step}px ${step}px`;
+  vp.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  const pct = Math.round(view.z * 100) + "%";
+  $("#fitBtn").textContent = pct; $("#fitBtn").setAttribute("aria-label", "Fit the whole map, now " + pct);
+}
+function zoomAt(sx, sy, z) {
+  z = clampZ(z);
+  const wx = (sx - view.x) / view.z, wy = (sy - view.y) / view.z;
+  view.z = z; view.x = sx - wx * z; view.y = sy - wy * z; applyView();
+}
+function insets() {
+  const topEl = $("#top").getBoundingClientRect();
+  const top = topEl.bottom + 12;
+  let bottom = 14;
+  for (const s of ["#player", "#zoom"]) { const r = $(s).getBoundingClientRect(); if (r.height) bottom = Math.max(bottom, innerHeight - r.top + 10); }
+  return { top, bottom };
+}
+function positionChrome() {
+  const r = $("#top").getBoundingClientRect();
+  document.documentElement.style.setProperty("--sheet-top", Math.round(r.bottom + 12) + "px");
+  document.documentElement.style.setProperty("--busy-top", Math.round(r.bottom + 12) + "px");
+}
+function boundsOf(boxes) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const b of boxes) { x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+  return isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+function fitView(animateIt) {
+  positionChrome();
+  if (!L) return;
+  const b = boundsOf(L.boxes.values()); if (!b) return;
+  const vw = innerWidth, vh = innerHeight, ins = insets();
+  const pad = 30, availH = Math.max(120, vh - ins.top - ins.bottom);
+  const z = clampZ(Math.min((vw - pad * 2) / b.w, availH / b.h, 1));
+  const t = { z, x: (vw - b.w * z) / 2 - b.x * z, y: ins.top + (availH - b.h * z) / 2 - b.y * z };
+  animateIt ? animateView(t, 500) : (Object.assign(view, t), applyView());
+}
+let camRaf = 0;
+function animateView(t, ms) {
+  cancelAnimationFrame(camRaf);
+  if (reduced || !ms) { Object.assign(view, t); applyView(); return; }
+  const s = { ...view }, t0 = performance.now();
+  const tick = (now) => {
+    const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    view.x = s.x + (t.x - s.x) * e; view.y = s.y + (t.y - s.y) * e; view.z = s.z + (t.z - s.z) * e; applyView();
+    if (k < 1) camRaf = requestAnimationFrame(tick);
+  };
+  camRaf = requestAnimationFrame(tick);
+}
+function freeArea() {
+  const ins = insets(), vw = innerWidth, sheetOpen = !sheet.hidden && vw >= 720;
+  return { l: 14, t: ins.top, r: vw - (sheetOpen ? 372 : 14), b: innerHeight - ins.bottom };
+}
+function centerOnBox(b, z, ms) {
+  if (!b) return;
+  const f = freeArea();
+  z = clampZ(z || view.z);
+  const cx = (f.l + f.r) / 2, cy = (f.t + f.b) / 2;
+  animateView({ z, x: cx - (b.x + b.w / 2) * z, y: cy - (b.y + b.h / 2) * z }, ms == null ? 600 : ms);
+}
+function ensureVisible(boxes, ms) {
+  const b = boundsOf(boxes); if (!b) return;
+  const f = freeArea();
+  const x0 = view.x + b.x * view.z, y0 = view.y + b.y * view.z, x1 = x0 + b.w * view.z, y1 = y0 + b.h * view.z;
+  if (x0 >= f.l && y0 >= f.t && x1 <= f.r && y1 <= f.b) return;
+  centerOnBox(b, Math.max(view.z, .55), ms);
+}
+
+/* ---------- Pointer: pan, pinch ---------- */
+const pointers = new Map();
+let drag = null, suppressUntil = 0;
+vp.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 && e.pointerType === "mouse") return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  cancelAnimationFrame(camRaf);
+  touched = true;
+  if (pointers.size === 2) {
+    const [p, q] = [...pointers.values()];
+    drag = { mode: "pinch", d0: Math.hypot(p.x - q.x, p.y - q.y) || 1, z0: view.z };
+    try { vp.setPointerCapture(e.pointerId); } catch (x) {}
+    return;
+  }
+  drag = { mode: "pan", sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: false, id: e.pointerId };
+});
+vp.addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId) || !drag) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (drag.mode === "pinch" && pointers.size === 2) {
+    const [p, q] = [...pointers.values()];
+    zoomAt((p.x + q.x) / 2, (p.y + q.y) / 2, drag.z0 * Math.hypot(p.x - q.x, p.y - q.y) / drag.d0);
+    suppressUntil = performance.now() + 400;
+    return;
+  }
+  if (drag.mode !== "pan") return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  if (!drag.moved && Math.hypot(dx, dy) > 4) {
+    drag.moved = true; vp.classList.add("panning");
+    try { vp.setPointerCapture(e.pointerId); } catch (x) {}   // capture only after a real drag, so plain clicks reach their buttons
+  }
+  if (drag.moved) { view.x = drag.vx + dx; view.y = drag.vy + dy; applyView(); }
+});
+function endPointer(e) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  vp.classList.remove("panning");
+  if (drag && drag.moved) suppressUntil = performance.now() + 60;
+  if (drag && drag.mode === "pinch") { if (pointers.size === 0) drag = null; return; }
+  drag = null;
+}
+// Focusing an off-screen button makes the browser scroll #vp. Turn that scroll into a pan so the board and `view` never disagree.
+vp.addEventListener("scroll", () => {
+  if (!vp.scrollLeft && !vp.scrollTop) return;
+  view.x -= vp.scrollLeft; view.y -= vp.scrollTop;
+  vp.scrollLeft = 0; vp.scrollTop = 0; applyView();
+});
+vp.addEventListener("pointerup", endPointer);
+vp.addEventListener("pointercancel", endPointer);
+vp.addEventListener("wheel", (e) => {
+  e.preventDefault(); cancelAnimationFrame(camRaf); touched = true;
+  const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50);
+  if (e.ctrlKey || e.metaKey || mouseWheel) {
+    const k = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    zoomAt(e.clientX, e.clientY, view.z * Math.exp(-k * (e.ctrlKey ? .01 : .0018)));
+  } else { view.x -= e.deltaX; view.y -= e.deltaY; applyView(); }
+}, { passive: false });
+
+/* ---------- Clicks (native, so buttons and keyboard work) ---------- */
+vp.addEventListener("click", (e) => {
+  if (performance.now() < suppressUntil) { e.stopPropagation(); return; }
+  const t = e.target;
+  const act = t.closest("[data-act]");
+  if (act) {
+    const id = act.dataset.id;
+    if (act.dataset.act === "toggle") toggle(id);
+    else selectEl(id);
+    return;
+  }
+  const lab = t.closest("[data-edge]");
+  if (lab) { selectEdge(lab.dataset.edge); return; }
+  const hit = t.closest(".ehit");
+  if (hit) { selectEdge(hit.parentNode.dataset.id); return; }
+  if (state.sel) deselect();
+});
+
+// A double-click on a card or a frame title also toggles a section (the +/- buttons are the keyboard route).
+vp.addEventListener("dblclick", (e) => {
+  const a = e.target.closest('[data-act="open"]');
+  if (a && LG.isSection(a.dataset.id, state.phase)) toggle(a.dataset.id);
+});
+
+/* ---------- Selection, expand/collapse, reveal ---------- */
+function selBox() {
+  if (!state.sel || !L) return null;
+  if (state.sel.type === "el") { const b = LG.lift(state.sel.id, state.phase, state.expanded); return b && L.boxes.has(b) ? b : null; }
+  return null;
+}
+function selectEl(id) {
+  stopPlay(); closePops();
+  state.sel = { type: "el", id };
+  renderSheet(); applyFocus();
+}
+function selectEdge(id) {
+  stopPlay(); closePops();
+  state.sel = { type: "edge", id };
+  renderSheet(); applyFocus();
+}
+function deselect() { state.sel = null; sheet.hidden = true; applyFocus(); }
+
+async function toggle(id) {
+  stopPlay();
+  if (!LG.isSection(id, state.phase)) return;
+  if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+  persist(); renderLevels();
+  await relayout({ anchor: id });
+  if (state.sel) renderSheet();
+}
+async function setExpanded(set) {
+  stopPlay();
+  state.expanded = set; persist(); renderLevels();
+  await relayout({});
+  if (state.sel) renderSheet();
+}
+function firstPhaseShown(id) { for (let i = 0; i < LG.phases.length; i++) if (LG.shown(id, i)) return i; return -1; }
+async function reveal(id) {
+  const o = LG.els.get(id); if (!o) return;
+  stopPlay(); closePops();
+  let changed = false;
+  if (!LG.shown(id, state.phase)) {
+    const p = firstPhaseShown(id); if (p < 0) return;
+    state.phase = p; changed = true;
+  }
+  for (const a of LG.ancestors(id)) if (!state.expanded.has(a)) { state.expanded.add(a); changed = true; }
+  state.sel = { type: "el", id };
+  if (changed) { persist(); renderPhases(); renderLevels(); renderPlayer(); }
+  renderSheet();
+  if (changed) await relayout({});
+  applyFocus();
+  const b = LG.lift(id, state.phase, state.expanded);
+  if (b && L && L.boxes.has(b)) centerOnBox(L.boxes.get(b), Math.max(view.z, .8), 600);
+}
+async function setPhase(i) {
+  if (i === state.phase) return;
+  stopPlay();
+  state.phase = i;
+  if (state.sel && state.sel.type === "el" && !LG.shown(state.sel.id, i)) { state.sel = null; sheet.hidden = true; }
+  if (state.sel && state.sel.type === "edge") { state.sel = null; sheet.hidden = true; }
+  persist(); renderPhases(); renderPlayer();
+  await relayout({});
+  if (state.sel) renderSheet();
+}
+
+/* ---------- Focus, dim, highlight ---------- */
+let play = null;
+function applyFocus() {
+  if (!L) return;
+  let bright = null, edgeOn = null, edgeHl = null, selEdgeId = null;
+  if (play) { bright = play.bright; edgeOn = play.edges; }
+  else if (state.sel && state.sel.type === "el") {
+    const b = selBox();
+    if (b) {
+      bright = new Set([b]); edgeHl = new Set();
+      for (const e of L.edges) if (e.src === b || e.dst === b) { bright.add(e.src); bright.add(e.dst); edgeHl.add(e.id); }
+    }
+  } else if (state.sel && state.sel.type === "edge") {
+    const e = L.edges.find((x) => x.id === state.sel.id);
+    if (e) { bright = new Set([e.src, e.dst]); edgeHl = new Set([e.id]); selEdgeId = e.id; }
+  }
+  const lit = new Set();   // boxes that must stay readable: bright ones and their frames
+  if (bright) for (const id of bright) { lit.add(id); LG.ancestors(id).forEach((a) => lit.add(a)); }
+  const only = state.only, P = state.phase;
+  const cardSel = state.sel && state.sel.type === "el" ? selBox() : null;
+  for (const [id, el] of cardEls) {
+    const o = LG.els.get(id), st = LG.status(o, P);
+    const inner = LG.isSection(id, P) && !state.expanded.has(id) && innerChanges(id);
+    el.classList.toggle("dim", !!bright && !bright.has(id));
+    el.classList.toggle("faint", only && st === "same" && !inner);
+    el.classList.toggle("sel", id === cardSel && !play);
+    el.classList.toggle("now", !!play && play.current === id);
+  }
+  for (const [id, el] of frameEls) {
+    const o = LG.els.get(id), st = LG.status(o, P);
+    el.classList.toggle("dim", !!bright && !lit.has(id));
+    el.classList.toggle("faint", only && st === "same");
+    el.classList.toggle("sel", id === cardSel && !play);
+  }
+  const statusOfBox = (id) => LG.status(LG.els.get(id), P);
+  for (const g of egG.children) {
+    const id = g.dataset.id, e = L.edges.find((x) => x.id === id);
+    const on = !!edgeOn && edgeOn.has(id), hl = !!edgeHl && edgeHl.has(id);
+    g.classList.toggle("on", on); g.classList.toggle("hl", hl); g.classList.toggle("sel", id === selEdgeId);
+    g.classList.toggle("dim", (!!edgeOn && !on) || (!!edgeHl && !hl));
+    g.classList.toggle("faint", only && !!e && !e.isNew && !e.retired && statusOfBox(e.src) === "same" && statusOfBox(e.dst) === "same");
+  }
+  for (const l of labelsL.querySelectorAll(".elabel")) {
+    const id = l.dataset.edge, e = L.edges.find((x) => x.id === id);
+    l.classList.toggle("dim", (!!edgeOn && !edgeOn.has(id)) || (!!edgeHl && !edgeHl.has(id)));
+    l.classList.toggle("sel", id === selEdgeId);
+    l.classList.toggle("faint", only && !!e && !e.isNew && !e.retired && statusOfBox(e.src) === "same" && statusOfBox(e.dst) === "same");
+  }
+}
+
+/* ---------- Detail sheet ---------- */
+function relItems(id) {
+  const i = state.phase, sub = new Set([id]);
+  if (LG.isSection(id, i)) LG.shownDesc(id, i).forEach((d) => sub.add(d.id));
+  const ins = [], outs = [];
+  for (const r of LG.relsAt(i)) {
+    const s = sub.has(r.src), d = sub.has(r.dst);
+    if (s && !d) outs.push({ r, other: r.dst, via: r.src !== id ? r.src : null });
+    else if (d && !s) ins.push({ r, other: r.src, via: r.dst !== id ? r.dst : null });
+  }
+  return { ins, outs };
+}
+function goBtn(id) { return `<button class="link" type="button" data-go="${esc(id)}">${esc(LG.els.get(id).name)}</button>`; }
+function relLI(it) {
+  const r = it.r, ret = LG.retiredNow(r, state.phase);
+  return `<li class="rel">${goBtn(it.other)}${it.via ? ` <span class="lb">(via ${esc(LG.els.get(it.via).name)})</span>` : ""}<br><span class="lb">${esc(r.label || "link")}${ret ? " (retired)" : ""}</span>${r.tech ? `<span class="tc">${esc(r.tech)}</span>` : ""}</li>`;
+}
+function renderSheet() {
+  if (!state.sel) { sheet.hidden = true; return; }
+  const i = state.phase, P = LG.phases[i].id;
+  let h = "";
+  if (state.sel.type === "el") {
+    const id = state.sel.id, o = LG.els.get(id);
+    if (!o || !LG.shown(id, i)) { sheet.hidden = true; state.sel = null; return; }
+    const st = LG.status(o, i), k = kindOf(o), sec = LG.isSection(id, i), exp = state.expanded.has(id);
+    const crumbs = LG.ancestors(id).reverse().map(goBtn);
+    const { ins, outs } = relItems(id);
+    let stat = "";
+    if (st === "new") stat = `New in ${esc(P)}.`;
+    else if (st === "changed") stat = `Changed in ${esc(P)}.`;
+    else if (st === "retired") stat = `Retired in ${esc(P)}. It is gone from the next phase${o.until ? " (" + esc(o.until) + ")" : ""}.`;
+    else stat = `Unchanged in ${esc(P)}.`;
+    const chg = o.changes ? Object.keys(o.changes).filter((p) => p in LG.pidx).sort((a, b) => LG.pidx[a] - LG.pidx[b]) : [];
+    h += `<div class="sh-head">${stickerHTML(o)}<span class="sh-kind">${esc(k.label)}${sec ? " · section, " + LG.shownKids(id, i).length + " inside" : ""}</span><button class="btn icon sm" id="shClose" type="button" aria-label="Close details">${ICON.close}</button></div>`;
+    h += `<div><h2>${esc(o.name)}</h2>${o.tech ? `<p class="sh-tech">${esc(o.tech)}</p>` : ""}</div>`;
+    h += `<div class="sh-chips">${st !== "same" ? `<span class="chip ${st}">${STATUS_WORD[st]}</span>` : ""}${o.proposed ? '<span class="chip proposed">Proposed</span>' : ""}</div>`;
+    h += `<div class="crumbs">${crumbs.length ? crumbs.join(" / ") + " / " : "Top level / "}<b>${esc(o.name)}</b></div>`;
+    if (o.desc) h += `<p class="sh-p">${esc(o.desc)}</p>`;
+    h += `<div><span class="fl">In ${esc(P)}</span><p class="sh-p">${stat}</p>${st === "changed" ? `<div class="sh-note" style="margin-top:8px">${esc(o.changes[P])}</div>` : ""}</div>`;
+    if (chg.length > (st === "changed" ? 1 : 0)) h += `<div><span class="fl">Changes by phase</span><ul class="sh-list dots">${chg.map((p) => `<li><b>${esc(p)}</b> ${esc(o.changes[p])}</li>`).join("")}</ul></div>`;
+    h += `<div><span class="fl">Exists</span><p class="sh-p">From ${esc(o.since || LG.phases[0].id)}${o.until ? " until " + esc(o.until) + " (first phase without it)" : " onwards"}.</p></div>`;
+    if (o.licence) h += `<div><span class="fl">Licence</span><p class="sh-p">${esc(o.licence)}</p></div>`;
+    if (o.nfr && o.nfr.length) h += `<div><span class="fl">Must hit</span><ul class="sh-list dots">${o.nfr.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></div>`;
+    if (o.refs && o.refs.length) h += `<div><span class="fl">Comes from</span><ul class="sh-list dots">${o.refs.map((n) => `<li>${esc(n)}</li>`).join("")}</ul></div>`;
+    h += `<div><span class="fl">Incoming</span>${ins.length ? `<ul class="sh-list">${ins.map(relLI).join("")}</ul>` : '<span class="none">None in this phase</span>'}</div>`;
+    h += `<div><span class="fl">Outgoing</span>${outs.length ? `<ul class="sh-list">${outs.map(relLI).join("")}</ul>` : '<span class="none">None in this phase</span>'}</div>`;
+    if (sec) h += `<div class="sh-foot"><button class="btn sm" type="button" id="shToggle">${exp ? "Collapse" : "Expand"} this section</button></div>`;
+  } else {
+    const e = L && L.edges.find((x) => x.id === state.sel.id);
+    if (!e) { sheet.hidden = true; state.sel = null; return; }
+    h += `<div class="sh-head"><span class="sh-kind">${e.rels.length > 1 ? e.rels.length + " links merged" : "Link"}${e.retired ? " · retired" : ""}</span><button class="btn icon sm" id="shClose" type="button" aria-label="Close details">${ICON.close}</button></div>`;
+    h += `<div><h2>${esc(LG.els.get(e.src).name)} → ${esc(LG.els.get(e.dst).name)}</h2></div>`;
+    h += `<ul class="sh-list">${e.rels.map((r) => `<li class="rel"><span class="lb">${esc(LG.els.get(r.src).name)} →</span> ${goBtn(r.dst)}<br><span>${esc(r.label || "link")}${LG.retiredNow(r, i) ? " (retired)" : ""}</span>${r.tech ? `<span class="tc">${esc(r.tech)}</span>` : ""}<br><span class="lb">from</span> ${goBtn(r.src)}</li>`).join("")}</ul>`;
+  }
+  const fid = sheet.contains(document.activeElement) ? document.activeElement.id : "";
+  sheet.innerHTML = h; sheet.hidden = false; positionChrome();
+  if (fid) { const n = document.getElementById(fid); if (n) n.focus({ preventScroll: true }); }
+  $("#shClose").onclick = deselect;
+  sheet.querySelectorAll("[data-go]").forEach((b) => { b.onclick = () => reveal(b.dataset.go); });
+  const tg = $("#shToggle"); if (tg) tg.onclick = () => toggle(state.sel.id);
+}
+
+/* ---------- Phase bar, levels, key ---------- */
+function keepFocus(fn) {
+  const a = document.activeElement; let sel = null;
+  if (a && a.dataset) for (const k of ["phase", "level", "flow"]) if (k in a.dataset) sel = `[data-${k}="${CSS.escape(a.dataset[k])}"]`;
+  fn();
+  if (sel) { const n = document.querySelector(sel); if (n) n.focus({ preventScroll: true }); }
+}
+function renderPhases() { keepFocus(renderPhasesNow); positionChrome(); }
+function renderPhasesNow() {
+  $("#phases").innerHTML = LG.phases.map((p, i) =>
+    `<button class="pbtn" type="button" data-phase="${i}" aria-pressed="${i === state.phase}"><span class="l1"><b>${esc(p.id)}</b><span>${esc(p.name)}</span>${p.target ? '<span class="flag">Stage 1 target</span>' : ""}</span><span class="wk">${esc(p.weeks || "")}</span></button>`).join("");
+  $("#phases").querySelectorAll("[data-phase]").forEach((b) => { b.onclick = () => setPhase(+b.dataset.phase); });
+  const p = LG.phases[state.phase];
+  $("#pcap").innerHTML = (p.goal ? `<span><b>Goal</b>${esc(p.goal)}</span>` : "") + (p.exit ? `<span><b>Exit test</b>${esc(p.exit)}</span>` : "");
+  $("#onlyBtn").setAttribute("aria-pressed", state.only);
+}
+const LEVELS = [["context", "Context"], ["containers", "Containers"], ["components", "Components"], ["everything", "Everything"]];
+function activeLevel() {
+  const cur = new Set([...state.expanded].filter((id) => LG.kidsAll.has(id)));
+  for (const [k] of LEVELS) {
+    const s = LG.presetSet(k);
+    if (s.size === cur.size && [...s].every((x) => cur.has(x))) return k;
+  }
+  return null;
+}
+function renderLevels() { keepFocus(renderLevelsNow); }
+function renderLevelsNow() {
+  const a = activeLevel();
+  $("#levels").innerHTML = LEVELS.map(([k, n]) => `<button class="btn sm" type="button" data-level="${k}" aria-pressed="${a === k}">${n}</button>`).join("");
+  $("#levels").querySelectorAll("[data-level]").forEach((b) => { b.onclick = async () => { await setExpanded(LG.presetSet(b.dataset.level)); touched = false; fitView(true); }; });
+}
+$("#expandAll").onclick = () => setExpanded(LG.presetSet("everything"));
+$("#collapseAll").onclick = () => setExpanded(new Set());
+$("#onlyBtn").onclick = () => { state.only = !state.only; $("#onlyBtn").setAttribute("aria-pressed", state.only); applyFocus(); };
+
+function renderKey() {
+  $("#key").innerHTML = `<h3>Kinds</h3>` + Object.entries(KINDS).map(([k, v]) =>
+    `<div class="krow"><span class="stk" style="--c:${v.color}"><svg viewBox="0 0 24 24" aria-hidden="true">${v.glyph}</svg></span><span><span class="t">${esc(v.label)}</span><span class="d">${esc(v.desc)}</span></span></div>`).join("") +
+    `<h3>In the selected phase</h3>` +
+    `<div class="krow"><span class="chip new">New</span><span class="d">First appears in this phase (accent ring)</span></div>` +
+    `<div class="krow"><span class="chip changed">Changed</span><span class="d">Exists before and changes here, see the note</span></div>` +
+    `<div class="krow"><span class="chip retired">Retired</span><span class="d">Faded and struck through, gone after this phase</span></div>` +
+    `<div class="krow"><span class="chip proposed">Proposed</span><span class="d">Our proposal, not in the source documents (dashed outline)</span></div>` +
+    `<h3>Arrows</h3>` +
+    `<div class="krow"><span class="kline"></span><span class="d">A relation. "N links" merges several hidden inside a collapsed box.</span></div>` +
+    `<div class="krow"><span class="kline d"></span><span class="d">A relation that is retired in this phase</span></div>`;
+}
+function closePops() {
+  $("#key").hidden = true; $("#keyBtn").setAttribute("aria-expanded", "false");
+  $("#qpop").hidden = true; $("#q").setAttribute("aria-expanded", "false");
+}
+$("#keyBtn").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("#key").hidden; closePops();
+  $("#key").hidden = !open; $("#keyBtn").setAttribute("aria-expanded", String(open));
+};
+document.addEventListener("click", (e) => { if (!e.target.closest(".srch")) closePops(); });
+
+/* ---------- Search ---------- */
+let qItems = [], qActive = -1;
+function qRender() {
+  const q = $("#q").value.trim().toLowerCase(), ul = $("#qres");
+  if (!q) { $("#qpop").hidden = true; $("#q").setAttribute("aria-expanded", "false"); qItems = []; return; }
+  const scored = [];
+  for (const o of LG.els.values()) {
+    const hay = [o.name, o.tech, o.id].filter(Boolean).join(" ").toLowerCase();
+    const n = (o.name || "").toLowerCase();
+    let s = -1;
+    if (n === q) s = 0; else if (n.startsWith(q)) s = 1; else if (n.includes(q)) s = 2; else if (hay.includes(q)) s = 3; else if ((o.desc || "").toLowerCase().includes(q)) s = 4;
+    if (s >= 0) scored.push([s, !LG.shown(o.id, state.phase), o]);
+  }
+  scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  qItems = scored.slice(0, 8).map((x) => x[2]);
+  qActive = qItems.length ? 0 : -1;
+  ul.innerHTML = qItems.length ? qItems.map((o, n) => {
+    const vis = LG.shown(o.id, state.phase), path = LG.ancestors(o.id).reverse().map((a) => LG.els.get(a).name).join(" / ");
+    return `<li role="presentation"><button class="opt" type="button" role="option" id="qo${n}" data-q="${esc(o.id)}" aria-selected="${n === qActive}"><span class="n">${esc(o.name)}</span><span class="m">${esc(kindOf(o).label)}${path ? " · " + esc(path) : ""}${vis ? "" : " · not in " + esc(LG.phases[state.phase].id) + ", opens " + esc(LG.phases[Math.max(0, firstPhaseShown(o.id))].id)}</span></button></li>`;
+  }).join("") : `<li class="qnone">No element matches "${esc($("#q").value.trim())}".</li>`;
+  $("#qpop").hidden = false; $("#q").setAttribute("aria-expanded", "true");
+  ul.querySelectorAll("[data-q]").forEach((b) => { b.onclick = () => qPick(b.dataset.q); });
+  $("#q").setAttribute("aria-activedescendant", qActive >= 0 ? "qo" + qActive : "");
+}
+function qPick(id) { if (firstPhaseShown(id) < 0) return; $("#q").value = ""; qRender(); $("#q").blur(); reveal(id); }
+function qMove(d) {
+  if (!qItems.length) return;
+  qActive = (qActive + d + qItems.length) % qItems.length;
+  $("#qres").querySelectorAll("[data-q]").forEach((b, n) => b.setAttribute("aria-selected", n === qActive));
+  $("#q").setAttribute("aria-activedescendant", "qo" + qActive);
+}
+$("#q").addEventListener("input", qRender);
+$("#q").addEventListener("focus", () => { if ($("#q").value.trim()) qRender(); });
+$("#q").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); qMove(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); qMove(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); if (qActive >= 0 && qItems[qActive]) qPick(qItems[qActive].id); }
+  else if (e.key === "Escape") { e.stopPropagation(); $("#q").value = ""; qRender(); $("#q").blur(); }
+});
+
+/* ---------- Flow player ---------- */
+const playIcon = $("#playIcon");
+function showToken(on) { if (on) token.removeAttribute("hidden"); else token.setAttribute("hidden", ""); }
+function setPlayIcon(on) { playIcon.innerHTML = on ? ICON.pause : ICON.play; $("#playBtn").setAttribute("aria-label", on ? "Pause" : "Play"); }
+function flowsNow() {
+  return LG.flowsAt(state.phase).map((f) => ({ f, steps: LG.flowSteps(f, state.phase) })).filter((x) => x.steps.length);
+}
+function firstFlowPhase() {
+  for (let i = 0; i < LG.phases.length; i++) if (LG.flowsAt(i).some((f) => LG.flowSteps(f, i).length)) return i;
+  return -1;
+}
+function idleCaption() {
+  const fl = flowsNow();
+  if (!fl.length) {
+    const p = firstFlowPhase();
+    cap.innerHTML = `<b>No flows in ${esc(LG.phases[state.phase].id)}</b>${p > state.phase ? `The first one appears in ${esc(LG.phases[p].id)}.` : "None are defined for this phase."}`;
+  } else cap.innerHTML = `<b>Pick a flow and press play</b>Follow one journey across the map.`;
+}
+function renderPlayer() { keepFocus(renderPlayerNow); }
+function renderPlayerNow() {
+  const fl = flowsNow();
+  if (!fl.some((x) => x.f.id === state.flowId)) state.flowId = fl[0] ? fl[0].f.id : null;
+  $("#flows").innerHTML = fl.length ? fl.map((x) => `<button class="btn sm" type="button" data-flow="${esc(x.f.id)}" aria-pressed="${x.f.id === state.flowId}" title="${esc(x.f.desc || "")}">${esc(x.f.name)}</button>`).join("") : '<span class="none">No flows yet</span>';
+  $("#flows").querySelectorAll("[data-flow]").forEach((b) => { b.onclick = () => { state.flowId = b.dataset.flow; renderPlayer(); startPlay(); }; });
+  for (const id of ["#prevBtn", "#playBtn", "#nextBtn"]) $(id).disabled = !fl.length;
+  setPlayIcon(false);
+  idleCaption();
+}
+function startPlay() {
+  stopPlay(true);
+  const x = flowsNow().find((y) => y.f.id === state.flowId); if (!x) return;
+  closePops();
+  const i = state.phase, exp = state.expanded;
+  const steps = x.steps.map((s) => ({ ...s, a: LG.lift(s.src, i, exp), b: LG.lift(s.dst, i, exp) })).filter((s) => s.a && s.b && L.boxes.has(s.a) && L.boxes.has(s.b));
+  if (!steps.length) return;
+  state.sel = null; sheet.hidden = true;
+  play = { flow: x.f, steps, i: -1, running: true, timer: 0, raf: 0, bright: new Set(), edges: new Set(), current: null };
+  vp.classList.add("playing"); setPlayIcon(true);
+  goStep(0);
+}
+function stopPlay(silent) {
+  if (!play) return;
+  clearTimeout(play.timer); cancelAnimationFrame(play.raf);
+  play = null; showToken(false); tmpl.setAttribute("d", ""); vp.classList.remove("playing");
+  document.querySelectorAll(".pulse").forEach((n) => n.classList.remove("pulse"));
+  if (!silent) { setPlayIcon(false); idleCaption(); applyFocus(); }
+}
+function pausePlay() { if (!play) return; play.running = false; clearTimeout(play.timer); setPlayIcon(false); }
+function resumePlay() {
+  if (!play || play.i >= play.steps.length - 1) return startPlay();
+  play.running = true; setPlayIcon(true); goStep(play.i + 1);
+}
+function goStep(i) {
+  const P = play; if (!P) return;
+  clearTimeout(P.timer); cancelAnimationFrame(P.raf);
+  i = Math.max(0, Math.min(P.steps.length - 1, i));
+  P.bright = new Set(); P.edges = new Set();
+  for (let k = 0; k <= i; k++) {
+    const s = P.steps[k]; P.bright.add(s.a); P.bright.add(s.b);
+    const e = L.byPair.get(s.a + "|" + s.b); if (e) P.edges.add(e.id);
+  }
+  const fwd = i > P.i; P.i = i;
+  const s = P.steps[i]; P.current = s.b;
+  document.querySelectorAll(".pulse").forEach((n) => n.classList.remove("pulse"));
+  tmpl.setAttribute("d", ""); showToken(false);
+  const nm = (id) => LG.els.get(id).name;
+  cap.innerHTML = `<b>${esc(s.note || "Step")}</b><span class="num">Step ${i + 1} of ${P.steps.length}</span> · ${esc(nm(s.src))} → ${esc(nm(s.dst))}`;
+  ensureVisible([L.boxes.get(s.a), L.boxes.get(s.b)], 600);
+  applyFocus();
+  if (s.a === s.b) {
+    const el = (frameEls.get(s.a) || cardEls.get(s.a));
+    if (el) { void el.offsetWidth; el.classList.add("pulse"); }
+  } else if (fwd && !reduced) {
+    const e = L.byPair.get(s.a + "|" + s.b);
+    let path = e && egG.querySelector(`.eg[data-id="${CSS.escape(e.id)}"] .e`);
+    if (!path) {
+      const a = L.boxes.get(s.a), b = L.boxes.get(s.b);
+      const p0 = clipTo(a, [b.x + b.w / 2, b.y + b.h / 2]), p1 = clipTo(b, [a.x + a.w / 2, a.y + a.h / 2]);
+      tmpl.setAttribute("d", `M${p0[0]},${p0[1]} L${p1[0]},${p1[1]}`);
+      path = tmpl;
+    }
+    moveToken(path, 700);
+  }
+  if (P.running) P.timer = setTimeout(() => (i < P.steps.length - 1 ? goStep(i + 1) : finishPlay()), 2200);
+}
+function finishPlay() {
+  const P = play; if (!P) return;
+  P.running = false; setPlayIcon(false); showToken(false);
+  cap.innerHTML = `<b>End of "${esc(P.flow.name)}"</b>${P.steps.length} steps. Press play to run it again.`;
+}
+function moveToken(path, ms) {
+  const len = path.getTotalLength(), t0 = performance.now(), c = token.firstElementChild;
+  showToken(true);
+  const tick = (now) => {
+    const k = Math.min(1, (now - t0) / ms), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    const p = path.getPointAtLength(len * e);
+    c.setAttribute("cx", p.x); c.setAttribute("cy", p.y);
+    if (k < 1 && play) play.raf = requestAnimationFrame(tick); else showToken(false);
+  };
+  play.raf = requestAnimationFrame(tick);
+}
+$("#playBtn").onclick = () => { if (!play) startPlay(); else if (play.running) pausePlay(); else resumePlay(); };
+$("#nextBtn").onclick = () => { if (!play) { startPlay(); pausePlay(); return; } pausePlay(); goStep(play.i + 1); };
+$("#prevBtn").onclick = () => { if (!play) { startPlay(); pausePlay(); return; } pausePlay(); goStep(play.i - 1); };
+
+/* ---------- Zoom bar, keys, resize ---------- */
+$("#zoomIn").onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, view.z * 1.25);
+$("#zoomOut").onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, view.z / 1.25);
+$("#fitBtn").onclick = () => { touched = false; fitView(true); };
+addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
+  if (e.key === "Escape") {
+    if (!$("#key").hidden || !$("#qpop").hidden) { closePops(); return; }
+    if (typing) document.activeElement.blur();
+    if (play) stopPlay(); else deselect();
+    return;
+  }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "+" || e.key === "=") zoomAt(innerWidth / 2, innerHeight / 2, view.z * 1.25);
+  else if (e.key === "-") zoomAt(innerWidth / 2, innerHeight / 2, view.z / 1.25);
+  else if (e.key === "0") { touched = false; fitView(true); }
+  else if (e.key === "/") { e.preventDefault(); $("#q").focus(); }
+});
+let touched = false, rzT = 0;
+addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { positionChrome(); if (!touched && !play) fitView(false); }, 80); });
+
+/* ---------- Start ---------- */
+renderPhases(); renderLevels(); renderKey(); renderPlayer();
+positionChrome();
+relayout({ fit: true, animate: false }).then((ok) => { if (ok) fitView(false); });
+if (document.fonts && document.fonts.addEventListener) {
+  let fontT = 0;
+  document.fonts.addEventListener("loadingdone", () => { clearTimeout(fontT); fontT = setTimeout(() => { if (L && !play) relayout({ animate: false }); }, 120); });
+}
+}
+
+boot();
+})();
+</script>
+</body>
+</html>
