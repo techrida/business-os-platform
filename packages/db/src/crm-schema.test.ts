@@ -1,5 +1,6 @@
-// The Drizzle schema of 0015_crm (src/schema/crm.ts) must describe the SQL exactly: the same tables, columns,
-// foreign keys, unique keys, checks and indexes, by name. tsc cannot see a drift between the two, and the API
+// The Drizzle schema of 0015_crm (src/schema/crm.ts) must describe the SQL: the same tables and columns, and the
+// same foreign keys (name, columns, parent table and parent columns), unique keys and indexes (name and columns)
+// and checks (name only: CHECK bodies are not compared). tsc cannot see a drift between the two, and the API
 // queries through Drizzle while the database enforces the SQL. No database needed: this reads the migration file.
 // Run with: pnpm --filter @bos/db exec vitest run src/crm-schema.test.ts
 import { readFileSync } from 'node:fs';
@@ -34,6 +35,24 @@ const empty = (): Shape => ({
   names: { foreignKey: [], unique: [], check: [], index: [] },
 });
 
+/** `"a", "b"` -> `a,b`. */
+const cols = (list: string) => list.replaceAll('"', '').replaceAll(' ', '');
+
+/** One comparable line per constraint: the name, plus its columns (and parent, for a foreign key). */
+function sqlEntry(kind: Kind, name: string, definition: string): string {
+  if (kind === 'foreignKey') {
+    const m = /^FOREIGN KEY \(([^)]*)\) REFERENCES "app"\."(\w+)"\(([^)]*)\)/.exec(definition);
+    if (!m) throw new Error(`unparsed foreign key ${name}: ${definition}`);
+    return `${name} (${cols(m[1] ?? '')}) -> ${m[2] ?? ''}(${cols(m[3] ?? '')})`;
+  }
+  if (kind === 'unique') {
+    const m = /^UNIQUE\(([^)]*)\)/.exec(definition);
+    if (!m) throw new Error(`unparsed unique key ${name}: ${definition}`);
+    return `${name} (${cols(m[1] ?? '')})`;
+  }
+  return name;
+}
+
 function kindOf(definition: string): Kind {
   if (definition.startsWith('FOREIGN KEY')) return 'foreignKey';
   if (definition.startsWith('UNIQUE')) return 'unique';
@@ -54,7 +73,8 @@ function parseSql(text: string): Map<string, Shape> {
     for (const line of (block[2] ?? '').split('\n')) {
       const constraint = /^\s*CONSTRAINT "(\w+)" (.*)$/.exec(line);
       if (constraint) {
-        shape.names[kindOf(constraint[2] ?? '')].push(constraint[1] ?? '');
+        const kind = kindOf(constraint[2] ?? '');
+        shape.names[kind].push(sqlEntry(kind, constraint[1] ?? '', constraint[2] ?? ''));
         continue;
       }
       const column = /^\s*"(\w+)" /.exec(line);
@@ -62,10 +82,13 @@ function parseSql(text: string): Map<string, Shape> {
     }
   }
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
-    shapeOf(m[1] ?? '').names[kindOf(m[3] ?? '')].push(m[2] ?? '');
+    const kind = kindOf(m[3] ?? '');
+    shapeOf(m[1] ?? '').names[kind].push(sqlEntry(kind, m[2] ?? '', m[3] ?? ''));
   }
-  for (const m of text.matchAll(/CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)"/g)) {
-    shapeOf(m[2] ?? '').names.index.push(m[1] ?? '');
+  for (const m of text.matchAll(
+    /CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)" USING btree \(([^)]*)\)/g,
+  )) {
+    shapeOf(m[2] ?? '').names.index.push(`${m[1] ?? ''} (${cols(m[3] ?? '')})`);
   }
   return tables;
 }
@@ -75,10 +98,23 @@ function drizzleShape(table: PgTable): Shape {
   return {
     columns: config.columns.map((c) => c.name),
     names: {
-      foreignKey: config.foreignKeys.map((fk) => fk.getName()),
-      unique: config.uniqueConstraints.map((u) => u.getName() ?? '(unnamed)'),
+      foreignKey: config.foreignKeys.map((fk) => {
+        const ref = fk.reference();
+        const parent = getTableConfig(ref.foreignTable).name;
+        const own = ref.columns.map((c) => c.name).join(',');
+        const theirs = ref.foreignColumns.map((c) => c.name).join(',');
+        return `${fk.getName()} (${own}) -> ${parent}(${theirs})`;
+      }),
+      unique: config.uniqueConstraints.map(
+        (u) => `${u.getName() ?? '(unnamed)'} (${u.columns.map((c) => c.name).join(',')})`,
+      ),
       check: config.checks.map((c) => c.name),
-      index: config.indexes.map((i) => i.config.name ?? '(unnamed)'),
+      index: config.indexes.map(
+        (i) =>
+          `${i.config.name ?? '(unnamed)'} (${i.config.columns
+            .map((c) => ('name' in c ? c.name : '(sql)'))
+            .join(',')})`,
+      ),
     },
   };
 }
