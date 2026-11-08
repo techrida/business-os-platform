@@ -71,6 +71,7 @@ beforeEach(() => {
     OIDC_AUDIENCE: 'proj-42',
     WORKSPACE_PUBLIC_URL: 'https://app.test',
     VALKEY_URL: 'redis://valkey.test:6379',
+    SESSION_ENC_KEY: Buffer.alloc(32, 5).toString('base64'),
   })) {
     vi.stubEnv(k, v);
   }
