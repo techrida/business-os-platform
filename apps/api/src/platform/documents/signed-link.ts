@@ -1,11 +1,14 @@
 // Short-lived, single-use download links. Serves NFR Security: a link works for 60 s and once, so a link
 // that leaks into a log, a chat or a browser history is useless a minute later.
 //
-// Token = base64url(JSON {v, u, exp}) "." base64url(HMAC-SHA256(secret, first part)).
-//   v   format version, u  document version id, exp  expiry in epoch seconds.
-// The first redemption claims `dl:<signature>` in Valkey with SET NX EX 120; a second try finds the key and
-// is refused. EX is twice the 60 s lifetime, so the key outlives the link even with some clock drift.
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// Token = base64url(JSON {v, u, exp, jti}) "." base64url(HMAC-SHA256(secret, first part)).
+//   v   format version, u  document version id, exp  expiry in epoch seconds,
+//   jti a random id (16 bytes, base64url), unique per link.
+// The jti is what makes each link single-use on its own. Without it the payload (and so the signature) was the
+// same for two links to one version issued in the same second, and the first download burned the second
+// person's link. The first redemption claims `dl:<jti>` in Valkey with SET NX EX 120; a second try finds the
+// key and is refused. EX is twice the 60 s lifetime, so the key outlives the link even with some clock drift.
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { z } from 'zod';
 
@@ -28,7 +31,13 @@ export class LinkError extends Error {
   }
 }
 
-const PayloadSchema = z.object({ v: z.literal(1), u: z.guid(), exp: z.number().int() });
+// 16 random bytes are 22 base64url characters. A token without a well-formed jti is refused.
+const PayloadSchema = z.object({
+  v: z.literal(1),
+  u: z.guid(),
+  exp: z.number().int(),
+  jti: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
+});
 
 const b64url = (data: Buffer | string): string => Buffer.from(data).toString('base64url');
 
@@ -44,7 +53,8 @@ export class SignedLinks {
   issue(versionId: string): { token: string; expiresAt: Date } {
     const secret = this.requireSecret();
     const exp = Math.floor(this.now() / 1000) + LINK_TTL_SECONDS;
-    const payload = b64url(JSON.stringify({ v: 1, u: versionId, exp }));
+    const jti = b64url(randomBytes(16));
+    const payload = b64url(JSON.stringify({ v: 1, u: versionId, exp, jti }));
     return { token: `${payload}.${sign(secret, payload)}`, expiresAt: new Date(exp * 1000) };
   }
 
@@ -68,8 +78,8 @@ export class SignedLinks {
       throw new LinkError('invalid');
     }
     if (Math.floor(this.now() / 1000) > parsed.exp) throw new LinkError('expired');
-    // Claim by the canonical signature (re-encoded), not the caller's spelling of it.
-    if (!(await this.store.claim(`dl:${b64url(expected)}`, CLAIM_TTL_SECONDS))) {
+    // Claim by the jti: it is inside the signed payload, so the caller cannot respell it into a second key.
+    if (!(await this.store.claim(`dl:${parsed.jti}`, CLAIM_TTL_SECONDS))) {
       throw new LinkError('used');
     }
     return parsed.u;
