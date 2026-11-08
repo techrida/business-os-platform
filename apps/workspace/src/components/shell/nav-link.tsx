@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { Icon } from '@/components/ui/icon';
-import type { NavIconName } from '@/lib/nav';
+import { ownsPath, type NavIconName } from '@/lib/nav';
 
 import styles from './sidebar.module.css';
 import { useShell } from './shell-state';
@@ -26,7 +26,7 @@ export function NavLink({
 }) {
   const pathname = usePathname();
   const { closeDrawer } = useShell();
-  const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const active = ownsPath(href, pathname);
 
   return (
     <Link

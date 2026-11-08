@@ -24,7 +24,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <ShellFrame>
-      <Sidebar user={{ name: roles, detail: session.orgKind }} />
+      <Sidebar user={{ name: roles, detail: session.orgKind }} roles={session.roles} />
       <ShellMain>
         <Header orgKind={session.orgKind} roles={session.roles} />
         {children}

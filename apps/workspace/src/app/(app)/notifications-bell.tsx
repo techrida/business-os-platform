@@ -1,16 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FocusEvent } from 'react';
 
+import { Icon } from '@/components/ui/icon';
 import { safeLocalPath } from '@/lib/kernel-ui';
 
-import styles from './shell.module.css';
+import styles from './notifications-bell.module.css';
 
 /**
- * The notifications bell. It polls a BFF route for the unread count every 15 s and whenever the
- * window regains focus, and opens a list from `/api/notifications`. The browser only ever talks
- * to this app's own routes: the API token stays on the server. Serves the NFR "an approver
- * learns about waiting work without reloading".
+ * The notifications bell, in the header. It polls a BFF route for the unread count every 15 s and
+ * whenever the window regains focus, and opens a list from `/api/notifications`. The browser only
+ * ever talks to this app's own routes: the API token stays on the server. Serves the NFR "an
+ * approver learns about waiting work without reloading".
+ *
+ * It is a disclosure, not a menu: a button that shows or hides a region of links, so Tab walks
+ * through the rows. Escape closes it and returns focus to the bell; so does tabbing out or a
+ * click outside.
  */
 
 const POLL_MS = 15_000;
@@ -26,7 +31,7 @@ interface Item {
 
 type Load = 'idle' | 'loading' | 'error';
 
-export function NotificationsBell({ initialCount }: { initialCount: number }) {
+export function NotificationsBell({ initialCount = 0 }: { initialCount?: number }) {
   const [count, setCount] = useState(initialCount);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
@@ -37,7 +42,7 @@ export function NotificationsBell({ initialCount }: { initialCount: number }) {
   const lastCount = useRef(initialCount);
   const panelId = useId();
 
-  const refreshCount = useCallback(async () => {
+  const refreshCount = useCallback(async (quiet = false) => {
     if (document.hidden) return;
     try {
       const res = await fetch('/api/notifications/unread-count', { cache: 'no-store' });
@@ -52,8 +57,8 @@ export function NotificationsBell({ initialCount }: { initialCount: number }) {
       const data = (await res.json()) as { count?: unknown };
       if (typeof data.count !== 'number') return;
       setCount(data.count);
-      // Tell screen readers only about new items, not on every poll.
-      if (data.count > lastCount.current) {
+      // Tell screen readers only about new items, not on every poll or on page load.
+      if (!quiet && data.count > lastCount.current) {
         setAnnounce(`${data.count} unread notification${data.count === 1 ? '' : 's'}`);
       }
       lastCount.current = data.count;
@@ -76,11 +81,14 @@ export function NotificationsBell({ initialCount }: { initialCount: number }) {
   }, []);
 
   useEffect(() => {
+    // The layout does not know the count, so read it once on arrival (quietly), then poll.
+    const first = window.setTimeout(() => void refreshCount(true), 0);
     const timer = window.setInterval(() => void refreshCount(), POLL_MS);
     const onFocus = () => void refreshCount();
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onFocus);
     return () => {
+      window.clearTimeout(first);
       window.clearInterval(timer);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onFocus);
@@ -106,6 +114,13 @@ export function NotificationsBell({ initialCount }: { initialCount: number }) {
       document.removeEventListener('pointerdown', onPointer);
     };
   }, [open]);
+
+  // Tabbing out of the panel closes it. A blur with no target (clicking plain text, switching
+  // windows) is left alone.
+  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget;
+    if (open && next instanceof Node && !e.currentTarget.contains(next)) setOpen(false);
+  };
 
   const toggle = () => {
     const next = !open;
@@ -148,106 +163,86 @@ export function NotificationsBell({ initialCount }: { initialCount: number }) {
   };
 
   return (
-    <div className={styles.bellWrap} ref={wrapRef}>
+    <div className={styles.wrap} ref={wrapRef} onBlur={onBlur}>
       <button
         type="button"
         ref={buttonRef}
-        className={styles.bellButton}
+        className={styles.button}
         aria-expanded={open}
-        aria-controls={panelId}
+        aria-controls={open ? panelId : undefined}
         aria-label={count > 0 ? `Notifications, ${count} unread` : 'Notifications'}
         onClick={toggle}
       >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path d="M6 9a6 6 0 1 1 12 0c0 4.5 1.5 6 2 7H4c.5-1 2-2.5 2-7Z" />
-          <path d="M10 20a2 2 0 0 0 4 0" />
-        </svg>
-        {count > 0 ? (
-          <span className={styles.bellCount} aria-hidden="true">
-            {count > 99 ? '99+' : count}
-          </span>
-        ) : null}
+        <Icon name="bell" size={18} />
+        {count > 0 ? <span className={styles.dot} aria-hidden="true" /> : null}
       </button>
-      {/* Announces only when the count rises; visually hidden by the inline clip. */}
-      <span
-        role="status"
-        aria-live="polite"
-        style={{
-          position: 'absolute',
-          width: 1,
-          height: 1,
-          overflow: 'hidden',
-          clip: 'rect(0 0 0 0)',
-          whiteSpace: 'nowrap',
-        }}
-      >
+      {/* Announces only when the count rises. */}
+      <span role="status" aria-live="polite" className="sr-only">
         {announce}
       </span>
       {open ? (
-        <div id={panelId} className={styles.bellPanel} role="region" aria-label="Notifications">
-          <div className={styles.bellHead}>
-            <h2 className={styles.bellTitle}>Notifications</h2>
+        <div id={panelId} className={styles.panel} role="region" aria-label="Notifications panel">
+          <div className={styles.head}>
+            <p className={styles.title}>Notifications</p>
             <button
               type="button"
-              className={styles.bellAction}
+              className={styles.action}
               onClick={markAll}
               disabled={unreadItems.length === 0}
             >
               Mark all read
             </button>
           </div>
-          {load === 'loading' && items.length === 0 ? (
-            <p className={styles.bellEmpty} role="status">
-              Loading notifications
-            </p>
-          ) : load === 'error' ? (
-            <p className={styles.bellEmpty} role="alert">
-              Notifications did not load.{' '}
-              <button type="button" className={styles.bellAction} onClick={() => void loadItems()}>
-                Try again
-              </button>
-            </p>
-          ) : items.length === 0 ? (
-            <p className={styles.bellEmpty}>You are all caught up.</p>
-          ) : (
-            <ul className={styles.bellList}>
-              {items.map((item) => {
-                const href = safeLocalPath(item.link);
-                const content = (
-                  <>
-                    <span className={styles.bellItemTitle}>{item.title}</span>
-                    <span className={styles.bellItemBody}>{item.body}</span>
-                    <span className={styles.bellItemTime}>{item.createdLabel}</span>
-                  </>
-                );
-                const cls = `${styles.bellItem} ${item.readAt === null ? styles.unread : styles.read}`;
-                return (
-                  <li key={item.id}>
-                    {href !== null ? (
-                      // A plain link, not router.push: the page it opens is server-rendered and
-                      // must see the freshest data after the click marks the item read.
-                      <a href={href} className={cls} onClick={() => onItemClick(item)}>
-                        {content}
-                      </a>
-                    ) : (
-                      <div className={cls}>{content}</div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <div className={styles.list}>
+            {load === 'loading' && items.length === 0 ? (
+              <p className={styles.empty} role="status">
+                Loading notifications
+              </p>
+            ) : load === 'error' ? (
+              <p className={styles.empty} role="alert">
+                Notifications did not load.{' '}
+                <button type="button" className={styles.action} onClick={() => void loadItems()}>
+                  Try again
+                </button>
+              </p>
+            ) : items.length === 0 ? (
+              <p className={styles.empty}>You are all caught up.</p>
+            ) : (
+              <ul>
+                {items.map((item) => {
+                  const href = safeLocalPath(item.link);
+                  const unread = item.readAt === null;
+                  const content = (
+                    <>
+                      <span className={styles.mark} aria-hidden="true" />
+                      <span className={styles.text}>
+                        <span className={styles.itemTitle}>
+                          {unread ? <span className="sr-only">Unread: </span> : null}
+                          {item.title}
+                        </span>
+                        <span className={styles.itemBody}>{item.body}</span>
+                        <span className={styles.itemTime}>{item.createdLabel}</span>
+                      </span>
+                    </>
+                  );
+                  const cls = `${styles.item} ${unread ? styles.unread : ''}`;
+                  return (
+                    <li key={item.id} className={unread ? styles.unread : undefined}>
+                      {href !== null ? (
+                        // A plain link, not router.push: the page it opens is server-rendered
+                        // and must see the freshest data after the click marks the item read.
+                        <a href={href} className={cls} onClick={() => onItemClick(item)}>
+                          {content}
+                        </a>
+                      ) : (
+                        <div className={cls}>{content}</div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

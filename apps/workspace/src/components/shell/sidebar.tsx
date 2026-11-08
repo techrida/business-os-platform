@@ -1,5 +1,6 @@
 import { Icon } from '@/components/ui/icon';
-import { NAV_GROUPS, isBuilt, phaseDescription, phaseTag, type NavItem } from '@/lib/nav';
+import { canSeeAdmin } from '@/lib/kernel-format';
+import { isBuilt, phaseDescription, phaseTag, visibleGroups, type NavItem } from '@/lib/nav';
 
 import { Brand } from './brand';
 import { NavLink } from './nav-link';
@@ -44,11 +45,20 @@ function PlannedItem({ item }: { item: NavItem }) {
 }
 
 /**
- * The sidebar: brand and collapse control, the nav groups from the registry, the user card.
+ * The sidebar: brand and collapse control, the nav groups from the registry (Administration only
+ * for people who can see admin), the user card.
  * One element in every mode. Wide: 220px, or 108px when collapsed. Under 1024px: always the
  * 108px rail. Under 768px: a drawer, hidden (and not focusable) until the menu button opens it.
  */
-export function Sidebar({ user }: { user: SidebarUser }) {
+export function Sidebar({
+  user,
+  roles,
+}: {
+  user: SidebarUser;
+  /** Role keys from the session: they decide whether the Administration items show. */
+  roles: readonly string[];
+}) {
+  const groups = visibleGroups(canSeeAdmin(roles));
   return (
     <div id="app-sidebar" className={styles.sidebar}>
       <div className={styles.top}>
@@ -69,7 +79,7 @@ export function Sidebar({ user }: { user: SidebarUser }) {
       </div>
 
       <nav aria-label="Main" className={styles.nav}>
-        {NAV_GROUPS.map((group, index) => {
+        {groups.map((group, index) => {
           const labelId = `nav-group-${index}`;
           return (
             <div key={group.label} className={styles.group}>
