@@ -4,8 +4,8 @@
 // The container starts with only a superuser, so beforeAll creates the same roles and default privileges that
 // infra/postgres/init-dbs.sh creates in the real stack, then migrates as bos_owner and queries as bos_app.
 // That way the tests walk the same path as production: owner migrates, app role does the daily work.
-import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
