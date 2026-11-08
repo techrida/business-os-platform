@@ -61,11 +61,15 @@ class FakeAuthGuard implements CanActivate {
       .switchToHttp()
       .getRequest<{ headers: Record<string, string>; auth?: unknown }>();
     const match = /^Bearer ([^:]+):(.+)$/.exec(req.headers['authorization'] ?? '');
-    if (!match) throw new UnauthorizedException('Missing bearer token');
+    const zitadelOrgId = match?.[1];
+    const roleList = match?.[2];
+    if (zitadelOrgId === undefined || roleList === undefined) {
+      throw new UnauthorizedException('Missing bearer token');
+    }
     req.auth = {
       userId: 'user-1',
-      zitadelOrgId: match[1],
-      roles: match[2] === 'none' ? [] : match[2].split(','),
+      zitadelOrgId,
+      roles: roleList === 'none' ? [] : roleList.split(','),
       tokenExp: 1_900_000_000,
     };
     return true;
@@ -103,7 +107,9 @@ describe('TenancyInterceptor: staff need a project role (CR-02)', () => {
     // The caller learns nothing about the org it landed in.
     const text = JSON.stringify(res.body);
     expect(text).not.toContain(TENANT);
-    expect(text).not.toContain(ORGS['zit-staff'].organizationId);
+    const staffOrg = ORGS['zit-staff'];
+    if (!staffOrg) throw new Error('fixture: zit-staff org missing');
+    expect(text).not.toContain(staffOrg.organizationId);
   });
 
   it('lets a staff principal with a role through', async () => {
