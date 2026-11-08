@@ -116,7 +116,10 @@ export class DraftingService {
       const done = await withIdempotency(
         tx,
         { command: 'quotation.create', key: idempotencyKey, body },
-        async () => ({ status: 201, response: await this.createInTx(tx, scope, actor, body, now) }),
+        async () => ({
+          status: 201,
+          response: await this.createInTx(tx, scope, actor, principal.userId, body, now),
+        }),
       );
       return done.response;
     });
@@ -126,6 +129,8 @@ export class DraftingService {
     tx: DbTransaction,
     scope: TxScope,
     actor: Actor,
+    /** The owner: the user the quotation.draft check above approved as owner. */
+    ownerUserId: string,
     body: CreateQuotationBody,
     now: Date,
   ): Promise<QuotationDto> {
@@ -156,7 +161,7 @@ export class DraftingService {
         customerPartyId,
         opportunityId: opportunity.id,
         currentVersionId: null,
-        ownerUserId: actor.kind === 'user' ? actor.id : null,
+        ownerUserId,
         createdAt: now,
         updatedAt: now,
       })
