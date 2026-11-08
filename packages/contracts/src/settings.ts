@@ -4,6 +4,7 @@
 import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
+import { AddressSchema, PanVatNoSchema } from './crm.js';
 import { CurrencySchema, DecimalString } from './money.js';
 import { EVIDENCE_KINDS } from './quotations.js';
 
@@ -39,6 +40,10 @@ export const SETTINGS = {
   'quotation.validity_days': z.number().int().min(1).max(365),
   /** What a quotation needs on file before the opportunity may become Won. */
   'sales.evidence_policy': EvidencePolicySchema,
+  /** The selling entity's PAN or VAT number as quotations print it. Per entity; null until an admin sets it. */
+  'entity.pan_vat_no': PanVatNoSchema.nullable(),
+  /** The selling entity's address as quotations print it. Per entity; null until set, and no PDF renders without it. */
+  'entity.address': AddressSchema.nullable(),
 } as const;
 
 /** Defaults of the P2 keys. The API's SETTING_DEFAULTS reuses these, so the two cannot drift apart. */
@@ -46,10 +51,17 @@ export const P2_SETTING_DEFAULTS = {
   'fx.max_rate_age_days': 7,
   'quotation.validity_days': 15,
   'sales.evidence_policy': 'signed_quote',
+  'entity.pan_vat_no': null,
+  'entity.address': null,
 } as const satisfies {
-  [K in 'fx.max_rate_age_days' | 'quotation.validity_days' | 'sales.evidence_policy']: z.infer<
-    (typeof SETTINGS)[K]
-  >;
+  [
+    K in
+      | 'fx.max_rate_age_days'
+      | 'quotation.validity_days'
+      | 'sales.evidence_policy'
+      | 'entity.pan_vat_no'
+      | 'entity.address'
+  ]: z.infer<(typeof SETTINGS)[K]>;
 };
 
 export type SettingKey = keyof typeof SETTINGS;
