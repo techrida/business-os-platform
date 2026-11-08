@@ -1,5 +1,5 @@
-// The Drizzle schema of 0016_quotations (src/schema/quotations.ts) must describe the SQL: the same tables and
-// columns, and the same foreign keys (name, columns, parent table and parent columns), unique keys and indexes
+// The Drizzle schema of 0016_quotations plus the 0018 acceptance-evidence columns (src/schema/quotations.ts) must
+// describe the SQL: the same tables and columns, and the same foreign keys (name, columns, parent table and parent columns), unique keys and indexes
 // (name and columns) and checks (name only: CHECK bodies are not compared). It also pins the two rules the
 // database enforces with plain lists, so the lists and the SQL cannot drift apart:
 //   * the live statuses of the one_live_version index are QUOTATION_LIVE_STATUSES (contracts' liveStatuses);
@@ -31,6 +31,11 @@ import {
 
 const SQL_TEXT = readFileSync(
   new URL('../migrations/0016_quotations.sql', import.meta.url),
+  'utf8',
+);
+/** 0018 adds two columns (and their checks) to quotation_acceptances; the shape check reads both files. */
+const ACCEPTANCE_EVIDENCE_SQL = readFileSync(
+  new URL('../migrations/0018_quotation_acceptance_evidence.sql', import.meta.url),
   'utf8',
 );
 
@@ -93,6 +98,9 @@ function parseSql(text: string): Map<string, Shape> {
       const column = /^\s*"(\w+)" /.exec(line);
       if (column) shape.columns.push(column[1] ?? '');
     }
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
+    shapeOf(m[1] ?? '').columns.push(m[2] ?? '');
   }
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
     if (SQL_ONLY.includes(m[2] ?? '')) continue;
@@ -168,7 +176,8 @@ function functionBody(name: string): string {
 }
 
 describe('0016_quotations and src/schema/quotations.ts', () => {
-  const parsed = parseSql(SQL_TEXT);
+  const parsed = parseSql(`${SQL_TEXT}
+${ACCEPTANCE_EVIDENCE_SQL}`);
 
   it('create the same nine tables, and alter only the three S1 tables', () => {
     const created = [...SQL_TEXT.matchAll(/CREATE TABLE "app"\."(\w+)"/g)].map((m) => m[1]);
@@ -254,6 +263,17 @@ describe('0016_quotations and src/schema/quotations.ts', () => {
       (m) => m[1],
     );
     expect(attached.sort()).toEqual(Object.keys(DRIZZLE).sort());
+  });
+
+  it('0018 adds the name and the evidence document ids to acceptances without touching the append-only trigger', () => {
+    expect(ACCEPTANCE_EVIDENCE_SQL).toContain(
+      `ALTER TABLE "app"."quotation_acceptances" ADD COLUMN "accepted_by_name" text;`,
+    );
+    expect(ACCEPTANCE_EVIDENCE_SQL).toContain(
+      `ALTER TABLE "app"."quotation_acceptances" ADD COLUMN "evidence_document_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL;`,
+    );
+    expect(ACCEPTANCE_EVIDENCE_SQL).toMatch(/char_length\("accepted_by_name"\) <= 200/);
+    expect(ACCEPTANCE_EVIDENCE_SQL).not.toMatch(/TRIGGER|quotation_append_only/);
   });
 
   it('exports the quotation tables from the package', () => {
