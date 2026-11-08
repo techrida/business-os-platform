@@ -328,6 +328,61 @@ importers:
         specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(@vitest/coverage-v8@5.1.0)(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/portal:
+    dependencies:
+      '@bos/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@bos/locale':
+        specifier: workspace:*
+        version: link:../../packages/locale
+      '@fontsource-variable/outfit':
+        specifier: 'catalog:'
+        version: 5.3.0
+      ioredis:
+        specifier: 'catalog:'
+        version: 5.11.1(supports-color@7.2.0)
+      next:
+        specifier: 'catalog:'
+        version: 16.4.5(@babel/core@7.29.13(supports-color@7.2.0))(@opentelemetry/api@1.10.0)(@playwright/test@1.65.0)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      openid-client:
+        specifier: 'catalog:'
+        version: 6.8.9
+      react:
+        specifier: 'catalog:'
+        version: 19.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.1(react@19.3.1)
+      server-only:
+        specifier: 'catalog:'
+        version: 0.0.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@playwright/test':
+        specifier: 'catalog:'
+        version: 1.65.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.3.0(@types/react@19.3.0)
+      ioredis-mock:
+        specifier: 'catalog:'
+        version: 8.13.1(@types/ioredis-mock@8.2.8(ioredis@5.11.1(supports-color@7.2.0)))(ioredis@5.11.1(supports-color@7.2.0))
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(@vitest/coverage-v8@5.1.0)(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
   apps/workspace:
     dependencies:
       '@bos/contracts':
