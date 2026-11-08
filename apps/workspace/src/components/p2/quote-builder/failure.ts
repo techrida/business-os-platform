@@ -20,10 +20,20 @@ interface ErrorLike {
   body?: unknown;
 }
 
-function errorFields(body: unknown): { code: string; message: string; reason: string } {
+interface Fields {
+  code: string;
+  message: string;
+  reason: string;
+  details: Record<string, unknown>;
+}
+
+function errorFields(body: unknown): Fields {
   const e = (body as { error?: Record<string, unknown> } | null | undefined)?.error;
   const s = (v: unknown) => (typeof v === 'string' ? v : '');
-  return { code: s(e?.code), message: s(e?.message), reason: s(e?.reason) };
+  const d = e?.details;
+  const details =
+    typeof d === 'object' && d !== null && !Array.isArray(d) ? (d as Record<string, unknown>) : {};
+  return { code: s(e?.code), message: s(e?.message), reason: s(e?.reason), details };
 }
 
 const FORBIDDEN: Record<string, string> = {
@@ -40,9 +50,57 @@ export const STALE_FX_MESSAGE =
 export const STALE_VERSION_MESSAGE =
   'Someone else changed this quotation after you opened it. Reload to see the latest version. Your unsaved edits on this page will be lost, so copy anything you need first.';
 
+export const NO_APPROVER_MESSAGE =
+  'No one can approve this right now. Ask an admin to check the approvers for this route.';
+
+export const NO_WORKFLOW_MESSAGE = "Approvals for quotations aren't set up yet. Ask an admin.";
+
+export const STILL_SAVING_MESSAGE = 'Still saving — wait a moment and try again.';
+
+export const DIFFERENT_CONTENT_MESSAGE =
+  'This was already submitted with different content. Reload and try again.';
+
 /** A 409 about the exchange rate, told apart from a stale row version by the API's code or text. */
-function isFxConflict(f: { code: string; message: string }): boolean {
+function isFxConflict(f: Pick<Fields, 'code' | 'message'>): boolean {
   return /fx|exchange|rate_stale|stale_rate/i.test(`${f.code} ${f.message}`);
+}
+
+/** The API's idempotency guard (platform/db/idempotency.ts) names the header in its message. */
+function isIdempotency(f: Pick<Fields, 'message'>): boolean {
+  return /idempotency-key/i.test(f.message);
+}
+
+const CURRENCY = /^[A-Z]{3}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The stale-rate sentence, naming the currency and the date of the newest rate when the API sent
+ * them. Only a three-letter code and a plain date are echoed, so nothing else in `details` can
+ * reach the screen.
+ */
+function staleFxMessage(details: Record<string, unknown>): string {
+  const currency =
+    typeof details.currency === 'string' && CURRENCY.test(details.currency)
+      ? details.currency
+      : undefined;
+  const rateDate =
+    typeof details.rateDate === 'string' && DAY.test(details.rateDate)
+      ? details.rateDate
+      : undefined;
+  const maxAge =
+    typeof details.maxAgeDays === 'number' && Number.isInteger(details.maxAgeDays)
+      ? details.maxAgeDays
+      : undefined;
+  if (currency === undefined && rateDate === undefined) return STALE_FX_MESSAGE;
+  const what = currency !== undefined ? `The ${currency} exchange rate` : 'The exchange rate';
+  const from = rateDate !== undefined ? ` on file is from ${rateDate}` : '';
+  const limit = maxAge !== undefined ? `, more than ${maxAge} days old` : ', which is too old';
+  return `${what}${from}${rateDate !== undefined ? limit : ' is too old'}, so the quotation cannot be priced or submitted. Ask Finance to enter today’s rate, then try again. Your changes are still here.`;
+}
+
+/** The API answers 409 `conflict` "No NPR rate for USD on or before ..." when no rate exists at all. */
+function missingRateCurrency(message: string): string | undefined {
+  return /^No NPR rate for ([A-Z]{3})\b/.exec(message)?.[1];
 }
 
 export function describeQuoteFailure(
@@ -71,9 +129,25 @@ export function describeQuoteFailure(
     };
   }
   if (status === 409) {
-    return isFxConflict(f)
-      ? { kind: 'stale_fx', message: STALE_FX_MESSAGE }
-      : { kind: 'stale', message: STALE_VERSION_MESSAGE };
+    if (isIdempotency(f)) return { kind: 'error', message: STILL_SAVING_MESSAGE };
+    if (isFxConflict(f)) return { kind: 'stale_fx', message: staleFxMessage(f.details) };
+    const missing = missingRateCurrency(f.message);
+    if (missing !== undefined) {
+      return {
+        kind: 'stale_fx',
+        message: `There is no exchange rate for ${missing} yet, so the quotation cannot be priced or submitted. Ask Finance to enter one, then try again. Your changes are still here.`,
+      };
+    }
+    if (/no published approval workflow/i.test(f.message)) {
+      return { kind: 'error', message: NO_WORKFLOW_MESSAGE };
+    }
+    return { kind: 'stale', message: STALE_VERSION_MESSAGE };
+  }
+  if (status === 422 && f.code === 'NO_ELIGIBLE_APPROVER') {
+    return { kind: 'error', message: NO_APPROVER_MESSAGE };
+  }
+  if (status === 422 && isIdempotency(f)) {
+    return { kind: 'error', message: DIFFERENT_CONTENT_MESSAGE };
   }
   if (status === 400 || status === 422) {
     return {
