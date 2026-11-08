@@ -31,7 +31,7 @@ export default async function AuthErrorPage({
       >
         <p>Something went wrong while signing in. Please try again.</p>
         <p>
-          Error code{' '}
+          Error code:{' '}
           <Badge tone="error">
             <code>{code}</code>
           </Badge>
