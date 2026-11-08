@@ -1,31 +1,98 @@
 import { describe, expect, it } from 'vitest';
 
-import { runSeed, SEED_TOOL, type OrgRow, type SeedDeps, type TenancyStore } from './index.js';
+import {
+  ACCESS_TOKEN_LIFETIME,
+  BOOTSTRAP_SA_USER,
+  DEFAULT_ADMIN_USERNAME,
+  DEFAULT_WEBHOOK_URL,
+  FOUNDER_ORG_ROLE,
+  LOADTEST_APPROVER_USER,
+  PROVISIONER_ROLES,
+  PROVISIONER_USER,
+  retireBootstrapAdmin,
+  runSeed,
+  SEED_TOOL,
+  TOTP_METHOD,
+  WEBHOOK_TARGET_NAME,
+  type OrgRow,
+  type SeedApi,
+  type SeedDeps,
+  type TenancyStore,
+} from './index.js';
 import { type DevFiles, parseEnv } from './outputs.js';
-import { PERSONAS, PROJECT_ROLES } from './personas.js';
+import { PERSONAS, PROJECT_ROLES, personaUsername, type PersonaEntry } from './personas.js';
+import { totpCode } from './totp.js';
 import type {
   AppInfo,
   AuthorizationInfo,
+  CreatedPat,
+  CreatedTarget,
+  ExecutionCondition,
   GrantInfo,
   HumanSpec,
+  LoginPolicy,
   MachineSpec,
   OidcAppSpec,
+  OidcSettings,
+  PatInfo,
   ProjectInfo,
+  SecondFactorType,
   SmtpSpec,
+  TargetInfo,
+  TargetSpec,
+  TotpRegistration,
   UserInfo,
-  ZitadelApi,
 } from './zitadel-client.js';
 
 const b64 = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url');
+
+/** The seed's clock in tests: a fixed instant, so the fake can check the exact TOTP code. */
+const NOW = new Date('2026-11-08T10:00:00Z');
+
+/** RFC 4648 base32 without padding, the form ZITADEL returns TOTP secrets in. */
+function base32(bytes: Buffer): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
 
 /**
  * In-memory ZITADEL. Every method that changes state bumps `mutations`, so a test can assert that a
  * second run made no mutating call at all (stronger than checking the printed message).
  */
-class FakeZitadel implements ZitadelApi {
+class FakeZitadel implements SeedApi {
   mutations = 0;
   secretsIssued = 0;
   passwordResets = 0;
+  /** Ordered P1 calls (`name:userId`), so tests can check that forceMfa comes last. */
+  readonly calls: string[] = [];
+  /** TOTP secret ZITADEL handed out per user id (pending until verified). */
+  readonly totpIssued = new Map<string, string>();
+  /** Verification throws for this username, to simulate a half-run. */
+  failVerifyFor: string | undefined;
+  loginPolicy: LoginPolicy = {
+    forceMfa: false,
+    forceMfaLocalOnly: false,
+    mfaInitSkipLifetime: '720h',
+  };
+  readonly secondFactors = new Set<SecondFactorType>();
+  oidc: OidcSettings = { accessTokenLifetime: '43200s', idTokenLifetime: '43200s' };
+  private readonly totpVerified = new Set<string>();
+  readonly pats = new Map<string, PatInfo[]>();
+  readonly targets: TargetInfo[] = [];
+  readonly deactivated = new Set<string>();
+  patsIssued = 0;
   tokenClaims: Record<string, unknown> | undefined;
   appTokenType = 'OIDC_TOKEN_TYPE_JWT';
   private seq = 0;
@@ -39,7 +106,7 @@ class FakeZitadel implements ZitadelApi {
   private app: AppInfo | undefined;
   private readonly users = new Map<string, UserInfo & { orgId: string; username: string }>();
   private readonly auths = new Map<string, { id: string; roles: string[] }>(); // user id -> auth
-  private readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
+  readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
   private smtp = false;
   /** Every call, changing or not, so a test can see what the seed asked for. */
   readonly authRequiredCalls: string[] = [];
@@ -53,6 +120,18 @@ class FakeZitadel implements ZitadelApi {
   }
   private mutate(): void {
     this.mutations += 1;
+  }
+  /** Test helper: a user that exists before the seed runs (no mutation is counted). */
+  preexisting(orgId: string, username: string): string {
+    const user = { id: this.id('user'), preferredLoginName: username, hasSecret: false };
+    this.users.set(user.id, { ...user, orgId, username });
+    return user.id;
+  }
+  /** Test helper: the id of the user with this username. */
+  userIdOf(username: string): string {
+    const user = [...this.users.values()].find((u) => u.username === username);
+    if (!user) throw new Error(`no user ${username}`);
+    return user.id;
   }
 
   getDefaultOrgId(): Promise<string> {
@@ -219,6 +298,99 @@ class FakeZitadel implements ZitadelApi {
     };
     return Promise.resolve(`${b64({ alg: 'RS256' })}.${b64(claims)}.sig`);
   }
+
+  // ---- ZitadelP1Api ----
+  registerTotp(userId: string): Promise<TotpRegistration> {
+    this.mutate();
+    this.calls.push(`registerTotp:${userId}`);
+    // 20 bytes like ZITADEL's secrets; unique per user and per registration.
+    const secret = base32(Buffer.from(`totp:${userId}:${this.mutations}`.padEnd(20, '#')));
+    this.totpIssued.set(userId, secret);
+    return Promise.resolve({ uri: `otpauth://totp/bos:${userId}?secret=${secret}`, secret });
+  }
+  verifyTotpRegistration(userId: string, code: string): Promise<void> {
+    this.mutate();
+    this.calls.push(`verifyTotp:${userId}`);
+    const user = this.users.get(userId);
+    if (user && user.username === this.failVerifyFor) {
+      return Promise.reject(new Error('fake: verification failed'));
+    }
+    const secret = this.totpIssued.get(userId);
+    if (!secret || code !== totpCode(secret, NOW)) {
+      return Promise.reject(new Error('fake: invalid TOTP code'));
+    }
+    this.totpVerified.add(userId);
+    return Promise.resolve();
+  }
+  listAuthMethods(userId: string): Promise<string[]> {
+    const methods = ['AUTHENTICATION_METHOD_TYPE_PASSWORD'];
+    if (this.totpVerified.has(userId)) methods.push(TOTP_METHOD);
+    return Promise.resolve(methods);
+  }
+  getLoginPolicy(): Promise<LoginPolicy> {
+    return Promise.resolve({ ...this.loginPolicy });
+  }
+  updateLoginPolicy(patch: LoginPolicy): Promise<boolean> {
+    if (Object.entries(patch).every(([k, v]) => this.loginPolicy[k] === v)) {
+      return Promise.resolve(false);
+    }
+    this.mutate();
+    this.calls.push(`updateLoginPolicy:forceMfa=${String(patch.forceMfa)}`);
+    this.loginPolicy = { ...this.loginPolicy, ...patch };
+    return Promise.resolve(true);
+  }
+  addSecondFactor(type: SecondFactorType): Promise<boolean> {
+    if (this.secondFactors.has(type)) return Promise.resolve(false);
+    this.mutate();
+    this.calls.push(`addSecondFactor:${type}`);
+    this.secondFactors.add(type);
+    return Promise.resolve(true);
+  }
+  getOidcSettings(): Promise<OidcSettings> {
+    return Promise.resolve({ ...this.oidc });
+  }
+  updateOidcSettings(patch: OidcSettings): Promise<boolean> {
+    if (Object.entries(patch).every(([k, v]) => this.oidc[k] === v)) return Promise.resolve(false);
+    this.mutate();
+    this.oidc = { ...this.oidc, ...patch };
+    return Promise.resolve(true);
+  }
+  // Part 2 (B1b) steps use these; simple in-memory versions so the fake is complete.
+  addPat(userId: string, expirationDate: string): Promise<CreatedPat> {
+    this.mutate();
+    this.patsIssued += 1;
+    this.calls.push(`addPat:${userId}:${expirationDate}`);
+    const tokenId = this.id('pat');
+    this.pats.set(userId, [...(this.pats.get(userId) ?? []), { id: tokenId, expirationDate }]);
+    return Promise.resolve({ tokenId, token: `pat-token-${tokenId}` });
+  }
+  listPats(userId: string): Promise<PatInfo[]> {
+    return Promise.resolve(this.pats.get(userId) ?? []);
+  }
+  createTarget(spec: TargetSpec): Promise<CreatedTarget> {
+    this.mutate();
+    const id = this.id('target');
+    this.targets.push({ id, name: spec.name, endpoint: spec.endpoint });
+    return Promise.resolve({ id, signingKey: `signing-${id}` });
+  }
+  listTargets(): Promise<TargetInfo[]> {
+    return Promise.resolve([...this.targets]);
+  }
+  setExecution(): Promise<void> {
+    this.mutate();
+    return Promise.resolve();
+  }
+  // An idempotent PUT the seed sends on every run: recorded in `calls`, not counted as a mutation.
+  setUserEventExecution(targetId: string): Promise<ExecutionCondition> {
+    this.calls.push(`setUserEventExecution:${targetId}`);
+    return Promise.resolve({ event: { group: 'user' } });
+  }
+  deactivateUser(userId: string): Promise<boolean> {
+    if (this.deactivated.has(userId)) return Promise.resolve(false);
+    this.mutate();
+    this.deactivated.add(userId);
+    return Promise.resolve(true);
+  }
 }
 
 class FakeFiles implements DevFiles {
@@ -238,6 +410,12 @@ class FakeFiles implements DevFiles {
 /** Mimics the SQL: first call inserts, later identical calls change nothing. */
 class FakeStore implements TenancyStore {
   rows = new Map<string, OrgRow>();
+  /** Staff org id passed to each seedKernel call; the first call seeds 5 rows, later ones 0. */
+  readonly kernelCalls: string[] = [];
+  seedKernel(staffZitadelOrgId: string): Promise<number> {
+    this.kernelCalls.push(staffZitadelOrgId);
+    return Promise.resolve(this.kernelCalls.length === 1 ? 5 : 0);
+  }
   upsertOrganizations(rows: OrgRow[]): Promise<number> {
     let changed = 0;
     for (const row of rows) {
@@ -257,6 +435,9 @@ function setup(): {
   logs: string[];
 } {
   const api = new FakeZitadel();
+  // What ZITADEL's first-instance setup creates in the staff org before any seed run.
+  api.preexisting(api.staffOrgId, DEFAULT_ADMIN_USERNAME);
+  api.preexisting(api.staffOrgId, BOOTSTRAP_SA_USER);
   const files = new FakeFiles();
   const store = new FakeStore();
   const logs: string[] = [];
@@ -267,9 +448,13 @@ function setup(): {
     log: (line) => logs.push(line),
     issuer: 'https://auth.localhost',
     workspaceUrl: 'https://app.localhost',
+    now: () => NOW,
   };
   return { api, files, store, deps, logs };
 }
+
+const personasOf = (files: FakeFiles): PersonaEntry[] =>
+  JSON.parse(files.data.get('personas.json') ?? '[]') as PersonaEntry[];
 
 describe('@bos/seed-zitadel', () => {
   it('exports its tool name', () => {
@@ -281,7 +466,9 @@ describe('@bos/seed-zitadel', () => {
     const result = await runSeed(deps);
 
     expect(result.changes.length).toBeGreaterThan(10);
+    expect(result.warnings).toEqual([]);
     expect(await api.listProjectRoles()).toHaveLength(PROJECT_ROLES.length);
+    expect(await api.listProjectRoles()).toContain('accountant');
     expect([...files.data.keys()].sort()).toEqual(['k6.env', 'personas.json', 'zitadel.env']);
     expect(files.data.get('zitadel.env')).toContain('OIDC_CLIENT_ID=client-1');
     // The API's azp allow-list: the workspace app plus the k6 machine user, or perf:load gets 401.
@@ -289,11 +476,74 @@ describe('@bos/seed-zitadel', () => {
       'client-1,bos-loadtest',
     );
     expect(result.token.clientId).toBe('bos-loadtest');
-    expect(files.data.get('k6.env')).toContain('K6_CLIENT_ID=bos-loadtest');
+    expect(files.data.get('k6.env')).toContain('K6_CLIENT_ID=bos-loadtest\n');
+    expect(files.data.get('k6.env')).toContain(`K6_APPROVER_CLIENT_ID=${LOADTEST_APPROVER_USER}\n`);
+    expect(files.data.get('k6.env')).toMatch(/^K6_APPROVER_CLIENT_SECRET=secret-\d+$/m);
     expect(store.rows.size).toBe(3);
-    const personas = JSON.parse(files.data.get('personas.json') ?? '[]') as unknown[];
-    expect(personas).toHaveLength(PERSONAS.length);
-    expect(api.secretsIssued).toBe(1);
+    expect(PERSONAS).toHaveLength(7);
+    const personas = personasOf(files);
+    expect(personas).toHaveLength(7);
+    expect(personas.map((p) => p.username)).toContain('accountant@dev.bos.test');
+    // Both k6 machine users got a secret; the approver holds exactly the accountant role.
+    expect(api.secretsIssued).toBe(2);
+    const approverAuth = await api.findAuthorization(api.userIdOf(LOADTEST_APPROVER_USER));
+    expect(approverAuth?.roleKeys).toEqual(['accountant']);
+    const accountantAuth = await api.findAuthorization(api.userIdOf(personaUsername('accountant')));
+    expect(accountantAuth?.roleKeys).toEqual(['accountant']);
+    // Login policy and token lifetime.
+    expect(api.secondFactors.has('SECOND_FACTOR_TYPE_OTP')).toBe(true);
+    expect(api.loginPolicy.forceMfa).toBe(true);
+    expect(api.loginPolicy.mfaInitSkipLifetime).toBe('0s');
+    expect(api.oidc.accessTokenLifetime).toBe(ACCESS_TOKEN_LIFETIME);
+    expect(api.oidc.idTokenLifetime).toBe('43200s');
+  });
+
+  it('registers TOTP per persona, verifies with that secret, and persists it', async () => {
+    const { api, files, deps } = setup();
+    await runSeed(deps);
+
+    const personas = personasOf(files);
+    for (const p of personas) {
+      const userId = api.userIdOf(p.username);
+      // The fake only marks TOTP verified when the code is totpCode(issued secret, NOW).
+      expect(await api.listAuthMethods(userId)).toContain(TOTP_METHOD);
+      expect(p.totpSecret).toBe(api.totpIssued.get(userId));
+      expect(p.totpSecret).toMatch(/^[A-Z2-7]{32}$/);
+    }
+    expect(api.calls.filter((c) => c.startsWith('verifyTotp:'))).toHaveLength(7);
+  });
+
+  it('enables forceMfa only after every persona has TOTP, and OTP before any registration', async () => {
+    const { api, deps } = setup();
+    await runSeed(deps);
+
+    const force = api.calls.indexOf('updateLoginPolicy:forceMfa=true');
+    const lastVerify = api.calls.findLastIndex((c) => c.startsWith('verifyTotp:'));
+    const firstRegister = api.calls.findIndex((c) => c.startsWith('registerTotp:'));
+    expect(force).toBeGreaterThan(lastVerify);
+    expect(api.calls.indexOf('addSecondFactor:SECOND_FACTOR_TYPE_OTP')).toBeLessThan(firstRegister);
+  });
+
+  it('a half-run keeps forceMfa off and the secrets it already verified; the next run finishes', async () => {
+    const { api, files, deps } = setup();
+    api.failVerifyFor = personaUsername('finance');
+    await expect(runSeed(deps)).rejects.toThrow(/verification failed/);
+
+    expect(api.loginPolicy.forceMfa).toBe(false);
+    expect(api.calls.some((c) => c.startsWith('updateLoginPolicy:'))).toBe(false);
+    const saved = new Map(personasOf(files).map((p) => [p.key, p.totpSecret]));
+    // PERSONAS order: founder and management come before finance.
+    expect(saved.get('founder')).toBe(api.totpIssued.get(api.userIdOf(personaUsername('founder'))));
+    expect(saved.get('management')).toBeDefined();
+    expect(saved.get('finance')).toBeUndefined();
+
+    api.failVerifyFor = undefined;
+    const result = await runSeed(deps);
+    expect(result.warnings).toEqual([]);
+    expect(api.loginPolicy.forceMfa).toBe(true);
+    const after = new Map(personasOf(files).map((p) => [p.key, p.totpSecret]));
+    expect(after.get('founder')).toBe(saved.get('founder'));
+    expect(after.get('finance')).toBeDefined();
   });
 
   it('second run makes no mutating call and reports no changes', async () => {
@@ -307,8 +557,9 @@ describe('@bos/seed-zitadel', () => {
     const second = await runSeed(deps);
 
     expect(second.changes).toEqual([]);
+    expect(second.warnings).toEqual([]);
     expect(api.mutations).toBe(mutationsAfterFirst);
-    expect(api.secretsIssued).toBe(1); // the client secret must not rotate
+    expect(api.secretsIssued).toBe(2); // neither k6 client secret may rotate
     expect(files.writes).toBe(writesAfterFirst);
     expect(files.data.get('k6.env')).toBe(k6EnvAfterFirst);
     expect(files.data.get('personas.json')).toBe(personasAfterFirst);
@@ -358,18 +609,25 @@ describe('@bos/seed-zitadel', () => {
     await runSeed(deps);
     expect(files.data.get('personas.json')).toBe(before);
 
-    const secrets = (JSON.parse(before) as { password: string }[]).map((p) => p.password);
-    secrets.push(/K6_CLIENT_SECRET=(.*)/.exec(files.data.get('k6.env') ?? '')?.[1] ?? 'missing');
+    const entries = JSON.parse(before) as PersonaEntry[];
+    const secrets = entries.flatMap((p) => [p.password, p.totpSecret ?? 'missing-totp']);
+    const zitadelEnv = files.data.get('zitadel.env') ?? '';
+    secrets.push(/^ZITADEL_PROVISIONER_TOKEN=(.*)$/m.exec(zitadelEnv)?.[1] ?? 'missing');
+    secrets.push(/^ZITADEL_ACTIONS_SIGNING_KEY=(.*)$/m.exec(zitadelEnv)?.[1] ?? 'missing');
+    const k6 = files.data.get('k6.env') ?? '';
+    secrets.push(/^K6_CLIENT_SECRET=(.*)$/m.exec(k6)?.[1] ?? 'missing');
+    secrets.push(/^K6_APPROVER_CLIENT_SECRET=(.*)$/m.exec(k6)?.[1] ?? 'missing');
     for (const secret of secrets) {
       expect(secret.length).toBeGreaterThan(5);
       for (const line of logs) expect(line).not.toContain(secret);
     }
   });
 
-  it('resets passwords (and only that) when personas.json is lost', async () => {
+  it('resets passwords and loudly reports lost TOTP secrets when personas.json is lost', async () => {
     const { api, files, deps } = setup();
     await runSeed(deps);
     const secretsBefore = api.secretsIssued;
+    const registrationsBefore = api.calls.filter((c) => c.startsWith('registerTotp:')).length;
     files.data.delete('personas.json');
 
     const result = await runSeed(deps);
@@ -377,14 +635,21 @@ describe('@bos/seed-zitadel', () => {
     expect(api.passwordResets).toBe(PERSONAS.length);
     expect(api.secretsIssued).toBe(secretsBefore);
     expect(result.changes.some((c) => c.includes('personas.json'))).toBe(true);
+    // No remove-TOTP call exists, so the seed must not re-register; it names the manual step.
+    expect(api.calls.filter((c) => c.startsWith('registerTotp:'))).toHaveLength(
+      registrationsBefore,
+    );
+    expect(result.warnings).toHaveLength(PERSONAS.length);
+    for (const w of result.warnings) expect(w).toMatch(/TOTP.*no secret.*Remove its authenticator/);
+    expect(personasOf(files).every((p) => p.totpSecret === undefined)).toBe(true);
   });
 
-  it('issues a new client secret only when k6.env lost it', async () => {
+  it('issues new client secrets only when k6.env lost them', async () => {
     const { api, files, deps } = setup();
     await runSeed(deps);
     files.data.delete('k6.env');
     await runSeed(deps);
-    expect(api.secretsIssued).toBe(2);
+    expect(api.secretsIssued).toBe(4);
   });
 
   it('fails when the app issues non-JWT tokens', async () => {
@@ -419,5 +684,164 @@ describe('@bos/seed-zitadel', () => {
     await expect(runSeed(deps)).rejects.toThrow(
       /R7 failed.*token client "someone-else" is not in OIDC_ALLOWED_AZP/,
     );
+  });
+
+  describe('P1 step 5: provisioner PAT', () => {
+    it('grants both org roles, issues one PAT on the first run and reuses it after', async () => {
+      const { api, files, deps } = setup();
+      await runSeed(deps);
+      const provisionerId = api.userIdOf(PROVISIONER_USER);
+      expect(api.members.get(`${api.staffOrgId}:${provisionerId}`)).toEqual([...PROVISIONER_ROLES]);
+      expect(api.patsIssued).toBe(1);
+      // Expiry is now + 1 year, from the pinned clock.
+      expect(api.calls).toContain(`addPat:${provisionerId}:2027-11-08T10:00:00.000Z`);
+      const env = files.data.get('zitadel.env') ?? '';
+      expect(env).toMatch(/^ZITADEL_PROVISIONER_TOKEN=pat-token-pat-\d+$/m);
+
+      const second = await runSeed(deps);
+      expect(second.changes).toEqual([]);
+      expect(api.patsIssued).toBe(1);
+      expect(files.data.get('zitadel.env')).toBe(env);
+    });
+
+    it('issues a new PAT when zitadel.env lost it or ZITADEL no longer lists one', async () => {
+      const { api, files, deps } = setup();
+      await runSeed(deps);
+      files.data.delete('zitadel.env');
+      await runSeed(deps);
+      expect(api.patsIssued).toBe(2);
+
+      api.pats.clear(); // as after `stack:nuke`: the stored token belongs to a dead user
+      const result = await runSeed(deps);
+      expect(api.patsIssued).toBe(3);
+      expect(result.changes.some((c) => c.includes(`PAT for ${PROVISIONER_USER}`))).toBe(true);
+    });
+
+    it('warns instead of re-adding a member that lacks ORG_USER_PERMISSION_EDITOR', async () => {
+      const { api, deps } = setup();
+      const provisionerId = api.preexisting(api.staffOrgId, PROVISIONER_USER);
+      api.members.set(`${api.staffOrgId}:${provisionerId}`, ['ORG_USER_MANAGER']);
+      const result = await runSeed(deps);
+      expect(api.members.get(`${api.staffOrgId}:${provisionerId}`)).toEqual(['ORG_USER_MANAGER']);
+      expect(result.warnings).toEqual([
+        expect.stringMatching(/without ORG_USER_PERMISSION_EDITOR.*Organization > Members/),
+      ]);
+    });
+  });
+
+  describe('P1 step 6: Actions v2', () => {
+    it('creates the target once, keeps its signing key, and sets the execution every run', async () => {
+      const { api, files, deps, logs } = setup();
+      await runSeed(deps);
+      expect(api.targets).toHaveLength(1);
+      expect(api.targets[0]).toMatchObject({
+        name: WEBHOOK_TARGET_NAME,
+        endpoint: DEFAULT_WEBHOOK_URL,
+      });
+      const targetId = api.targets[0]?.id ?? '';
+      const env = files.data.get('zitadel.env') ?? '';
+      expect(env).toContain(`ZITADEL_ACTIONS_SIGNING_KEY=signing-${targetId}\n`);
+      expect(logs).toContain('Actions execution condition accepted: {"event":{"group":"user"}}');
+
+      const second = await runSeed(deps);
+      expect(second.changes).toEqual([]);
+      expect(second.warnings).toEqual([]);
+      expect(api.targets).toHaveLength(1);
+      expect(files.data.get('zitadel.env')).toBe(env);
+      expect(api.calls.filter((c) => c === `setUserEventExecution:${targetId}`)).toHaveLength(2);
+    });
+
+    it('warns loudly when the target exists but the signing key is lost', async () => {
+      const { api, files, deps } = setup();
+      await runSeed(deps);
+      files.data.delete('zitadel.env');
+      const result = await runSeed(deps);
+      expect(api.targets).toHaveLength(1);
+      expect(result.warnings).toEqual([
+        expect.stringMatching(/no ZITADEL_ACTIONS_SIGNING_KEY.*Delete the target/),
+      ]);
+      expect(files.data.get('zitadel.env')).not.toContain('ZITADEL_ACTIONS_SIGNING_KEY');
+    });
+
+    it('warns when ZITADEL_WEBHOOK_URL differs from the stored target endpoint', async () => {
+      const { api, deps } = setup();
+      await runSeed(deps);
+      const result = await runSeed({ ...deps, webhookUrl: 'http://api:3001/v1/hooks/zitadel' });
+      expect(api.targets).toHaveLength(1);
+      expect(result.warnings).toEqual([
+        expect.stringMatching(/points at http:\/\/host\.docker\.internal.*http:\/\/api:3001/),
+      ]);
+    });
+  });
+
+  it('P1 step 8: seeds kernel rows once per run for the staff org; the second run changes none', async () => {
+    const { api, store, deps } = setup();
+    const first = await runSeed(deps);
+    expect(store.kernelCalls).toEqual([api.staffOrgId]);
+    expect(first.changes).toContain('seeded 5 kernel row(s) (grants, workflow, INR peg)');
+    const second = await runSeed(deps);
+    expect(store.kernelCalls).toEqual([api.staffOrgId, api.staffOrgId]);
+    expect(second.changes).toEqual([]);
+  });
+
+  describe('P1 step 9: retire the bootstrap human admin', () => {
+    it('makes the founder ORG_OWNER, deactivates the admin once, then reports already retired', async () => {
+      const { api, deps, logs } = setup();
+      const first = await runSeed(deps);
+      const adminId = api.userIdOf(DEFAULT_ADMIN_USERNAME);
+      const founderId = api.userIdOf(personaUsername('founder'));
+      expect(api.members.get(`${api.staffOrgId}:${founderId}`)).toEqual([FOUNDER_ORG_ROLE]);
+      expect([...api.deactivated]).toEqual([adminId]);
+      expect(first.changes.some((c) => c.startsWith('retired bootstrap admin'))).toBe(true);
+
+      const second = await runSeed(deps);
+      expect(second.changes).toEqual([]);
+      expect(logs).toContain(`bootstrap admin ${DEFAULT_ADMIN_USERNAME}: already retired`);
+      expect(api.deactivated.has(api.userIdOf(BOOTSTRAP_SA_USER))).toBe(false);
+    });
+
+    it('never deactivates the seed service account, even when named as the admin', async () => {
+      const { api, deps } = setup();
+      const result = await runSeed({ ...deps, adminUsername: BOOTSTRAP_SA_USER });
+      expect(api.deactivated.size).toBe(0);
+      expect(result.warnings).toEqual([expect.stringMatching(/NOT retired: refusing/)]);
+    });
+
+    it('skips when the founder is a member without ORG_OWNER', async () => {
+      const { api, deps } = setup();
+      await runSeed({ ...deps, adminUsername: 'nobody@techrida.localhost' });
+      const founderId = api.userIdOf(personaUsername('founder'));
+      api.members.set(`${api.staffOrgId}:${founderId}`, ['ORG_USER_MANAGER']);
+      const result = await runSeed(deps);
+      expect(api.deactivated.size).toBe(0);
+      expect(result.warnings).toEqual([expect.stringMatching(/NOT retired: .*without ORG_OWNER/)]);
+    });
+
+    it('skips without a founder persona or without founder TOTP', async () => {
+      const api = new FakeZitadel();
+      const adminId = api.preexisting(api.staffOrgId, DEFAULT_ADMIN_USERNAME);
+      const founderId = api.preexisting(api.staffOrgId, personaUsername('founder'));
+      const warnings: string[] = [];
+      const deps = {
+        api,
+        changed: (): void => undefined,
+        warn: (w: string): void => {
+          warnings.push(w);
+        },
+        log: (): void => undefined,
+      };
+      const input = { staffOrgId: api.staffOrgId, adminUsername: DEFAULT_ADMIN_USERNAME };
+      await retireBootstrapAdmin(deps, { ...input, founder: undefined });
+      await retireBootstrapAdmin(deps, {
+        ...input,
+        founder: { userId: founderId, orgId: api.staffOrgId, hasTotp: false },
+      });
+      expect(warnings).toEqual([
+        expect.stringMatching(/NOT retired: the founder persona does not exist/),
+        expect.stringMatching(/NOT retired: the founder persona has no TOTP yet/),
+      ]);
+      expect(api.deactivated.has(adminId)).toBe(false);
+      expect(api.mutations).toBe(0);
+    });
   });
 });
