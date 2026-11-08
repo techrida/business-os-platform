@@ -7,6 +7,7 @@ import {
   approvalGroupMembers,
   approvalGroups,
   delegations,
+  users as appUsers,
   workflowDefinitions,
   workflowVersions,
 } from '@bos/db';
@@ -250,6 +251,35 @@ export class ApprovalsAdminService {
       throw new BadRequestException(`Unknown approval group(s): ${missing.join(', ')}`);
   }
 
+  /**
+   * Every id must be an active user of this tenant and org. Group members and delegations hold bare
+   * uuids (no FK to app.users), so without this a typo or another org's user id is stored silently.
+   */
+  private async assertActiveUsers(
+    tx: DbTransaction,
+    scope: TxScope,
+    ids: readonly string[],
+  ): Promise<void> {
+    const wanted = [...new Set(ids)];
+    const rows = await tx
+      .select({ id: appUsers.id })
+      .from(appUsers)
+      .where(
+        and(
+          eq(appUsers.tenantId, scope.tenantId),
+          eq(appUsers.organizationId, scope.organizationId),
+          eq(appUsers.status, 'active'),
+          inArray(appUsers.id, wanted),
+        ),
+      );
+    const missing = wanted.filter((id) => !rows.some((r) => r.id === id));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Not an active user of this organization: ${missing.join(', ')}`,
+      );
+    }
+  }
+
   // ---- groups --------------------------------------------------------------------------------------
 
   async listGroups() {
@@ -331,6 +361,7 @@ export class ApprovalsAdminService {
           ),
         );
       if (g === undefined) throw new NotFoundException('Approval group not found');
+      await this.assertActiveUsers(tx, scope, [userId]);
       await tx
         .insert(approvalGroupMembers)
         .values({ ...scope, groupId, userId })
@@ -346,6 +377,19 @@ export class ApprovalsAdminService {
 
   removeMember(groupId: string, userId: string): Promise<void> {
     return this.write(async (tx, scope) => {
+      // The group must belong to this org: an admin of org A must not edit org B's groups in the
+      // same tenant. 404 either way, so A cannot tell B's group ids from unknown ones.
+      const [g] = await tx
+        .select({ id: approvalGroups.id })
+        .from(approvalGroups)
+        .where(
+          and(
+            eq(approvalGroups.id, groupId),
+            eq(approvalGroups.tenantId, scope.tenantId),
+            eq(approvalGroups.organizationId, scope.organizationId),
+          ),
+        );
+      if (g === undefined) throw new NotFoundException('Approval group not found');
       const deleted = await tx
         .delete(approvalGroupMembers)
         .where(
@@ -353,6 +397,7 @@ export class ApprovalsAdminService {
             eq(approvalGroupMembers.groupId, groupId),
             eq(approvalGroupMembers.userId, userId),
             eq(approvalGroupMembers.tenantId, scope.tenantId),
+            eq(approvalGroupMembers.organizationId, scope.organizationId),
           ),
         )
         .returning({ id: approvalGroupMembers.id });
@@ -402,6 +447,7 @@ export class ApprovalsAdminService {
       throw new BadRequestException('A user cannot delegate to themselves');
     if (b.endsAt <= b.startsAt) throw new BadRequestException('endsAt must be after startsAt');
     return this.write(async (tx, scope, userId) => {
+      await this.assertActiveUsers(tx, scope, [b.fromUserId, b.toUserId]);
       const [d] = await tx
         .insert(delegations)
         .values({ ...scope, ...b, createdBy: userId })
