@@ -9,13 +9,16 @@ import { z } from 'zod';
 
 import { getEnv } from './env';
 import { refreshTokens } from './oidc';
+import { type Keyring, openSessionValue, sealSessionValue } from './session-crypto';
 
 /**
  * Server-side sessions for the workspace BFF.
  *
  * The browser only ever holds an opaque 256-bit id in a `__Host-` cookie. Tokens live in
  * Valkey at `ws:sess:<SHA-256 of the id, hex>` and never reach the browser. The key is hashed so
- * that anyone who can list keys (KEYS, SCAN, an AOF or RDB file) learns no usable cookie value. All timestamps are epoch seconds,
+ * that anyone who can list keys (KEYS, SCAN, an AOF or RDB file) learns no usable cookie value,
+ * and each value is an AES-256-GCM envelope bound to its key (see session-crypto.ts). The ID
+ * token is not kept: nothing uses it after sign-in. All timestamps are epoch seconds,
  * the same unit as a JWT `exp`.
  */
 
@@ -39,7 +42,6 @@ export interface Session {
   roles: string[];
   accessToken: string;
   refreshToken?: string;
-  idToken?: string;
   accessExp: number;
   createdAt: number;
   lastSeenAt: number;
@@ -55,7 +57,6 @@ const StoredSessionSchema = z.object({
   roles: z.array(z.string()),
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
-  idToken: z.string().min(1).optional(),
   accessExp: z.number().int(),
   createdAt: z.number().int(),
   lastSeenAt: z.number().int(),
@@ -127,7 +128,6 @@ function toRecord(data: StoredSession): StoredSession {
     roles: [...data.roles],
     accessToken: data.accessToken,
     ...(data.refreshToken !== undefined ? { refreshToken: data.refreshToken } : {}),
-    ...(data.idToken !== undefined ? { idToken: data.idToken } : {}),
     accessExp: data.accessExp,
     createdAt: data.createdAt,
     lastSeenAt: data.lastSeenAt,
@@ -144,12 +144,35 @@ function parseRecord(raw: string): StoredSession | null {
   }
   const parsed = StoredSessionSchema.safeParse(json);
   if (!parsed.success) return null;
-  const { refreshToken, idToken, ...rest } = parsed.data;
-  return toRecord({
-    ...rest,
-    ...(refreshToken !== undefined ? { refreshToken } : {}),
-    ...(idToken !== undefined ? { idToken } : {}),
-  });
+  const { refreshToken, ...rest } = parsed.data;
+  return toRecord({ ...rest, ...(refreshToken !== undefined ? { refreshToken } : {}) });
+}
+
+/** Built from the env on each call, so it never outlives a reset env in tests. */
+function keyring(): Keyring {
+  const env = getEnv();
+  return {
+    currentId: env.SESSION_ENC_KEY_ID,
+    keys: new Map([[env.SESSION_ENC_KEY_ID, Buffer.from(env.SESSION_ENC_KEY, 'base64')]]),
+  };
+}
+
+/** The stored form of a record: encrypted, and bound to the session's Valkey key. */
+function seal(id: string, record: StoredSession): string {
+  return sealSessionValue(JSON.stringify(record), sessionKey(id), keyring());
+}
+
+/**
+ * Decrypts and parses a stored value, or null. A value that does not decrypt (old plaintext
+ * format, another key, tampering) counts as no session. Only the event name is logged.
+ */
+function unseal(id: string, raw: string): StoredSession | null {
+  const plaintext = openSessionValue(raw, sessionKey(id), keyring());
+  if (plaintext === null) {
+    console.warn(JSON.stringify({ event: 'session.decrypt_failed' }));
+    return null;
+  }
+  return parseRecord(plaintext);
 }
 
 /** Seconds the key may live: whichever of the idle and absolute limits comes first. */
@@ -177,7 +200,7 @@ export async function createSession(
   // NX: a collision on 256 random bits is not a real risk, but never overwrite an existing session.
   const ok = await getRedis().set(
     sessionKey(id),
-    JSON.stringify(record),
+    seal(id, record),
     'EX',
     ttlFor(record, now),
     'NX',
@@ -254,7 +277,7 @@ async function resolveSession(id: string): Promise<Session | null> {
   const raw = await client.get(sessionKey(id));
   if (raw === null) return null;
 
-  const record = parseRecord(raw);
+  const record = unseal(id, raw);
   const now = nowSeconds();
   if (!record || isExpired(record, now)) {
     await destroySession(id);
@@ -272,7 +295,7 @@ async function resolveSession(id: string): Promise<Session | null> {
     1,
     sessionKey(id),
     raw,
-    JSON.stringify(slid),
+    seal(id, slid),
     String(ttlFor(slid, now)),
   );
   if (written === 'OK') return toSession(id, slid);
@@ -280,7 +303,7 @@ async function resolveSession(id: string): Promise<Session | null> {
   // The record changed under us: deleted (logout) or rewritten by a concurrent request, which
   // already slid it. Trust what is there now rather than overwrite it.
   const latestRaw = await client.get(sessionKey(id));
-  const latest = latestRaw === null ? null : parseRecord(latestRaw);
+  const latest = latestRaw === null ? null : unseal(id, latestRaw);
   if (!latest || isExpired(latest, now)) return null;
   return toSession(id, latest);
 }
@@ -305,7 +328,7 @@ async function refreshUnderLock(
   try {
     // Re-read inside the lock: another request may have finished a refresh since our first read.
     const latestRaw = await client.get(sessionKey(id));
-    const latest = latestRaw === null ? null : parseRecord(latestRaw);
+    const latest = latestRaw === null ? null : unseal(id, latestRaw);
     if (!latest || isExpired(latest, now)) {
       await destroySession(id);
       return null;
@@ -333,14 +356,13 @@ async function refreshUnderLock(
       accessExp: tokens.accessExp,
       // Keep the old values when the provider does not send new ones.
       ...(tokens.refreshToken !== undefined ? { refreshToken: tokens.refreshToken } : {}),
-      ...(tokens.idToken !== undefined ? { idToken: tokens.idToken } : {}),
       lastSeenAt: now,
     });
     // XX: only if the session still exists, so a concurrent logout is not undone. We hold the
     // lock and the newest tokens, so overwriting a concurrent slide is correct here.
     const written = await client.set(
       sessionKey(id),
-      JSON.stringify(updated),
+      seal(id, updated),
       'EX',
       ttlFor(updated, now),
       'XX',
