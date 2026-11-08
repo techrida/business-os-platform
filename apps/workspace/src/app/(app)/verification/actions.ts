@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { nextKey } from '@/components/p2/crm/idempotency';
 import { decideVerification } from '@/components/p2/customers/api';
 import { isGuid, parseDecision } from '@/components/p2/customers/format';
 import { failureOf } from '@/lib/api-kernel';
@@ -64,8 +65,9 @@ export async function reviewAction(prev: ReviewState, form: FormData): Promise<R
     const failure = failureOf(err);
     return {
       // A 4xx is a final answer (this click is over), so the next try is a new decision. After a
-      // timeout or 5xx the first call may have landed: send the same key so it cannot apply twice.
-      key: failure.definite ? randomUUID() : key,
+      // timeout, a 5xx or the 409 "this key is still being processed" the first call may have
+      // landed: send the same key so it cannot apply twice.
+      key: nextKey(err, key),
       error: failure.message,
       ...(failure.reload ? { reload: true } : {}),
     };
