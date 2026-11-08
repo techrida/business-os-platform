@@ -7,7 +7,7 @@ import { money, snapshotEntries } from '@/lib/kernel-format';
 
 import styles from './approval-summary.module.css';
 import {
-  exceedsDiscountLimit,
+  discountNeedsApproval,
   parseApprovalSnapshot,
   routeReasons,
   trimPercent,
@@ -55,7 +55,7 @@ export function QuotationApprovalSummary({ request }: { request: SummaryRequest 
   }
 
   const reasons = routeReasons(request.steps);
-  const over = exceedsDiscountLimit(snap.effectiveDiscountPct);
+  const over = discountNeedsApproval(snap);
   const foreign = snap.currency !== 'NPR';
 
   const facts: Fact[] = [
