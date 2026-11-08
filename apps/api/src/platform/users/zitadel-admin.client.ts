@@ -1,0 +1,338 @@
+// The API's only door into ZITADEL's management APIs, used with the `bos-provisioner` PAT.
+// Serves the NFR "role assignment has one source of truth": ZITADEL grants are the truth and this
+// client is how k-users reads and writes them (P1-PLAN §1).
+//
+// One method per ZITADEL call, so a wrong path or field found by the live probe is a one-line fix.
+// Each method says which endpoint it uses and whether that shape is VERIFIED (the same call and body
+// that P0's tools/seed-zitadel runs against a live v4.20.1 instance) or UNVERIFIED (from the docs
+// or a guess; P1-PLAN §3 marks it [unverified]).
+//
+// Fails closed: without ZITADEL_PROVISIONER_TOKEN every call throws ZitadelNotConfiguredError.
+import { ROLE_KEYS, type RoleKey } from '@bos/contracts';
+import { Injectable } from '@nestjs/common';
+import { z } from 'zod';
+
+import { CoreConfig } from '../config/config';
+
+/** Connect-protocol paths (`POST /zitadel.<pkg>.v2.<Service>/<Method>`), as in the seed. */
+export const ZITADEL_ENDPOINTS = {
+  // VERIFIED (seed findProject).
+  listProjects: '/zitadel.project.v2.ProjectService/ListProjects',
+  // UNVERIFIED: user v2 GetUserByID; body { userId }, response { user }.
+  getUser: '/zitadel.user.v2.UserService/GetUserByID',
+  // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object.
+  listUsers: '/zitadel.user.v2.UserService/ListUsers',
+  // VERIFIED (seed createHumanUser), minus the password: an invited user sets their own.
+  createUser: '/zitadel.user.v2.UserService/CreateUser',
+  // UNVERIFIED: user v2 CreateInviteCode; body { userId, sendCode: {} } makes ZITADEL send the mail.
+  createInviteCode: '/zitadel.user.v2.UserService/CreateInviteCode',
+  // VERIFIED (seed findAuthorization / createAuthorization / updateAuthorization).
+  listAuthorizations: '/zitadel.authorization.v2.AuthorizationService/ListAuthorizations',
+  createAuthorization: '/zitadel.authorization.v2.AuthorizationService/CreateAuthorization',
+  updateAuthorization: '/zitadel.authorization.v2.AuthorizationService/UpdateAuthorization',
+  // UNVERIFIED: authorization v2 DeleteAuthorization; body { id }. Used when the role set becomes empty.
+  deleteAuthorization: '/zitadel.authorization.v2.AuthorizationService/DeleteAuthorization',
+} as const;
+
+/** The ZITADEL project that holds the role keys (tools/seed-zitadel/src/personas.ts PROJECT_NAME). */
+export const BOS_PROJECT_NAME = 'business-os';
+
+export class ZitadelNotConfiguredError extends Error {
+  constructor() {
+    super('ZITADEL_PROVISIONER_TOKEN is not set: user sync and admin user calls are disabled');
+    this.name = 'ZitadelNotConfiguredError';
+  }
+}
+
+/** Any non-2xx answer. The message never carries the PAT or the request body. */
+export class ZitadelHttpError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    detail: string,
+  ) {
+    super(`ZITADEL ${path} answered ${status}: ${detail}`);
+    this.name = 'ZitadelHttpError';
+  }
+}
+
+/** Our status vocabulary (app.users.status) derived from ZITADEL's user state. */
+export type MirroredStatus = 'invited' | 'active' | 'inactive';
+
+/** What k-users needs to know about one ZITADEL user. */
+export interface ZitadelUser {
+  id: string;
+  /** The org that owns the user (`details.resourceOwner`). */
+  orgId: string;
+  email: string | null;
+  displayName: string;
+  status: MirroredStatus;
+}
+
+export interface ZitadelUserPage {
+  users: ZitadelUser[];
+  /** Offset of the next page, or null when this was the last one. */
+  nextCursor: string | null;
+}
+
+export interface CreateHumanInput {
+  email: string;
+  givenName: string;
+  familyName: string;
+}
+
+const Str = z.string();
+
+// UNVERIFIED field names: `state` and `details.resourceOwner` on a user v2 object.
+const UserShape = z.object({
+  userId: Str.min(1),
+  state: Str.default('USER_STATE_UNSPECIFIED'),
+  username: Str.default(''),
+  preferredLoginName: Str.default(''),
+  details: z.object({ resourceOwner: Str.default('') }).default({ resourceOwner: '' }),
+  human: z
+    .object({
+      profile: z
+        .object({
+          displayName: Str.default(''),
+          givenName: Str.default(''),
+          familyName: Str.default(''),
+        })
+        .optional(),
+      email: z.object({ email: Str.default('') }).optional(),
+    })
+    .optional(),
+  machine: z.object({ name: Str.default('') }).optional(),
+});
+type UserShape = z.infer<typeof UserShape>;
+
+const GetUserResponse = z.object({ user: UserShape });
+const ListUsersResponse = z.object({ result: z.array(UserShape).default([]) });
+const IdOnly = z.object({ id: Str.min(1) });
+const ProjectList = z.object({
+  projects: z.array(z.object({ projectId: Str.min(1), name: Str })).default([]),
+});
+// VERIFIED: id and roles[].key (seed). UNVERIFIED: which field names the grant's org.
+const AuthorizationList = z.object({
+  authorizations: z
+    .array(
+      z.object({
+        id: Str.min(1),
+        roles: z.array(z.object({ key: Str })).default([]),
+        organization: z.object({ id: Str }).optional(),
+        organizationId: Str.optional(),
+      }),
+    )
+    .default([]),
+});
+const ErrorShape = z.object({ code: Str.optional(), message: Str.optional() });
+
+function parse<S extends z.ZodType>(schema: S, data: unknown, what: string): z.infer<S> {
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    throw new Error(`Unexpected ZITADEL response for ${what}: ${z.prettifyError(result.error)}`);
+  }
+  return result.data;
+}
+
+/** USER_STATE_INITIAL = created but never logged in (an open invite). Anything not active is shut out. */
+export function statusFromState(state: string): MirroredStatus {
+  if (state === 'USER_STATE_ACTIVE') return 'active';
+  if (state === 'USER_STATE_INITIAL') return 'invited';
+  return 'inactive';
+}
+
+function toUser(u: UserShape): ZitadelUser {
+  const profile = u.human?.profile;
+  const email = u.human?.email?.email ?? '';
+  const displayName =
+    profile?.displayName ||
+    [profile?.givenName, profile?.familyName].filter(Boolean).join(' ') ||
+    u.machine?.name ||
+    u.preferredLoginName ||
+    u.username;
+  return {
+    id: u.userId,
+    orgId: u.details.resourceOwner,
+    email: email.length > 0 ? email : null,
+    displayName,
+    status: statusFromState(u.state),
+  };
+}
+
+const ROLE_KEY_SET: ReadonlySet<string> = new Set(ROLE_KEYS);
+
+const PAGE_SIZE = 100;
+
+@Injectable()
+export class ZitadelAdminClient {
+  private projectId: string | undefined;
+
+  constructor(private readonly config: CoreConfig) {}
+
+  /** The user, or null when ZITADEL says it does not exist (deleted). */
+  async getUser(zitadelUserId: string): Promise<ZitadelUser | null> {
+    try {
+      const res = parse(
+        GetUserResponse,
+        await this.post(ZITADEL_ENDPOINTS.getUser, { userId: zitadelUserId }),
+        'GetUserByID',
+      );
+      return toUser(res.user);
+    } catch (error) {
+      if (error instanceof ZitadelHttpError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  /** One page of the org's users, oldest first so offsets stay stable while users are added. */
+  async listUsers(zitadelOrgId: string, cursor?: string | null): Promise<ZitadelUserPage> {
+    const offset = cursor && /^\d+$/.test(cursor) ? Number(cursor) : 0;
+    const res = parse(
+      ListUsersResponse,
+      await this.post(ZITADEL_ENDPOINTS.listUsers, {
+        query: { offset: String(offset), limit: PAGE_SIZE, asc: true },
+        queries: [{ organizationIdQuery: { organizationId: zitadelOrgId } }],
+      }),
+      'ListUsers',
+    );
+    const users = res.result.map(toUser);
+    return {
+      users,
+      nextCursor: res.result.length === PAGE_SIZE ? String(offset + res.result.length) : null,
+    };
+  }
+
+  /**
+   * The user's role keys in our project, counted only for grants made in `zitadelOrgId` and only
+   * when the key is one of ROLE_KEYS. A grant whose org cannot be read is dropped (fail closed).
+   */
+  async listGrants(zitadelUserId: string, zitadelOrgId: string): Promise<RoleKey[]> {
+    const grants = await this.authorizations(zitadelUserId);
+    const roles = new Set<RoleKey>();
+    for (const grant of grants) {
+      const grantOrg = grant.organization?.id ?? grant.organizationId;
+      if (grantOrg !== zitadelOrgId) continue;
+      for (const role of grant.roles) {
+        if (ROLE_KEY_SET.has(role.key)) roles.add(role.key as RoleKey);
+      }
+    }
+    return [...roles].sort();
+  }
+
+  /** Creates a human with an unverified email and no password; returns the ZITADEL user id. */
+  async createHuman(zitadelOrgId: string, input: CreateHumanInput): Promise<string> {
+    const res = parse(
+      IdOnly,
+      await this.post(ZITADEL_ENDPOINTS.createUser, {
+        organizationId: zitadelOrgId,
+        username: input.email,
+        human: {
+          profile: {
+            givenName: input.givenName,
+            familyName: input.familyName,
+            displayName: `${input.givenName} ${input.familyName}`,
+          },
+          email: { email: input.email, isVerified: false },
+        },
+      }),
+      'CreateUser(human)',
+    );
+    return res.id;
+  }
+
+  /** Replaces the user's role set in our project for `zitadelOrgId` (the whole set, not a delta). */
+  async setGrants(
+    zitadelUserId: string,
+    zitadelOrgId: string,
+    roles: readonly RoleKey[],
+  ): Promise<void> {
+    const existing = (await this.authorizations(zitadelUserId)).find(
+      (a) => (a.organization?.id ?? a.organizationId) === zitadelOrgId,
+    );
+    const roleKeys = [...new Set(roles)].sort();
+    if (existing && roleKeys.length === 0) {
+      await this.post(ZITADEL_ENDPOINTS.deleteAuthorization, { id: existing.id });
+    } else if (existing) {
+      await this.post(ZITADEL_ENDPOINTS.updateAuthorization, { id: existing.id, roleKeys });
+    } else if (roleKeys.length > 0) {
+      await this.post(ZITADEL_ENDPOINTS.createAuthorization, {
+        userId: zitadelUserId,
+        projectId: await this.bosProjectId(),
+        organizationId: zitadelOrgId,
+        roleKeys,
+      });
+    }
+  }
+
+  /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
+  async sendInviteCode(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
+  }
+
+  private async authorizations(zitadelUserId: string) {
+    return parse(
+      AuthorizationList,
+      await this.post(ZITADEL_ENDPOINTS.listAuthorizations, {
+        filters: [
+          { inUserIds: { ids: [zitadelUserId] } },
+          { projectId: { id: await this.bosProjectId() } },
+        ],
+      }),
+      'ListAuthorizations',
+    ).authorizations;
+  }
+
+  /** Found by name once per process; the project id never changes after the seed created it. */
+  private async bosProjectId(): Promise<string> {
+    if (this.projectId) return this.projectId;
+    const res = parse(
+      ProjectList,
+      await this.post(ZITADEL_ENDPOINTS.listProjects, {
+        filters: [
+          {
+            projectNameFilter: {
+              projectName: BOS_PROJECT_NAME,
+              method: 'TEXT_FILTER_METHOD_EQUALS',
+            },
+          },
+        ],
+      }),
+      'ListProjects',
+    );
+    const project = res.projects.find((p) => p.name === BOS_PROJECT_NAME);
+    if (!project) throw new Error(`ZITADEL project "${BOS_PROJECT_NAME}" not found; run the seed`);
+    this.projectId = project.projectId;
+    return project.projectId;
+  }
+
+  private async post(path: string, body: unknown): Promise<unknown> {
+    const token = this.config.ZITADEL_PROVISIONER_TOKEN;
+    if (!token) throw new ZitadelNotConfiguredError();
+    const base = this.config.ZITADEL_API_URL.replace(/\/+$/, '');
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'connect-protocol-version': '1',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      // A hung ZITADEL must not hold a worker slot or an admin request forever.
+      signal: AbortSignal.timeout(10_000),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let detail = text.slice(0, 200);
+      try {
+        const parsed = ErrorShape.safeParse(JSON.parse(text));
+        if (parsed.success)
+          detail = `${parsed.data.code ?? ''} ${parsed.data.message ?? ''}`.trim();
+      } catch {
+        // Not JSON (a proxy error page): keep the truncated text.
+      }
+      throw new ZitadelHttpError(path, res.status, detail);
+    }
+    return text.length > 0 ? (JSON.parse(text) as unknown) : {};
+  }
+}

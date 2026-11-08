@@ -1,0 +1,305 @@
+// The k-users core: keeps app.users and app.user_roles equal to what ZITADEL says.
+// Serves the NFR "role assignment has one source of truth" (P1-PLAN §1): ZITADEL grants are the
+// truth, this file only mirrors them so approver lookups (userIdsWithRole) work without a token.
+//
+// Three ways in, all ending in the same apply(): the webhook (users.sync job), the 10-minute
+// reconcile (the backstop for lost webhooks), and the JIT insert on a user's first request.
+// It imports nothing from platform/authz, so the worker (which has no AuthzModule) can use it.
+import type { RoleKey } from '@bos/contracts';
+import { InjectQueue } from '@nestjs/bullmq';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Queue } from 'bullmq';
+
+import { DB, type Db, type DbTransaction } from '../db/db.module';
+import { type TxScope, systemActor, withTx } from '../db/tx';
+import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
+import { type ListedUser, type OrgRow, type UserRow, UsersStore } from './users.store';
+import {
+  ZitadelAdminClient,
+  ZitadelHttpError,
+  ZitadelNotConfiguredError,
+  type ZitadelUser,
+} from './zitadel-admin.client';
+
+/** The audit actor for everything that arrives from ZITADEL (hook, sync, reconcile, JIT). */
+const zitadelActor = () => systemActor('zitadel');
+
+const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
+
+function sameRoles(a: readonly string[], b: readonly string[]): boolean {
+  const left = [...new Set(a)].sort();
+  const right = [...new Set(b)].sort();
+  return left.length === right.length && left.every((v, i) => v === right[i]);
+}
+
+const scopeOf = (o: { tenantId: string; organizationId: string }): TxScope => ({
+  tenantId: o.tenantId,
+  organizationId: o.organizationId,
+});
+
+export interface ResolvedUser {
+  userId: string;
+  status: UserRow['status'];
+  departmentId: string | null;
+}
+
+@Injectable()
+export class UserMirror {
+  private readonly logger = new Logger(UserMirror.name);
+
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly store: UsersStore,
+    private readonly zitadel: ZitadelAdminClient,
+    @InjectQueue(USERS_QUEUE) private readonly queue: Queue<UsersSyncData>,
+  ) {}
+
+  /**
+   * Re-fetches one user and their grants from ZITADEL and upserts the mirror. Returns whether
+   * anything changed. A user ZITADEL reports as inactive is deactivated by apply().
+   *
+   * `getUser` returning nothing is NOT proof the user was deleted: the provisioner token only sees
+   * the orgs it is a member of, so a customer or vendor user looks "not found" to it. Deactivating
+   * on that locked every portal persona out on the real stack (2026-11-08). Only a complete
+   * reconcile pass of the user's org may deactivate a user who is missing from ZITADEL.
+   */
+  async syncUser(zitadelUserId: string): Promise<boolean> {
+    const user = await this.zitadel.getUser(zitadelUserId);
+    if (!user) {
+      this.logger.warn(`users.sync: ZITADEL did not return ${zitadelUserId}; left unchanged`);
+      return false;
+    }
+
+    const org = await this.store.orgByZitadelId(user.orgId);
+    if (!org) {
+      // P2 adds org sync; until then a user of an unknown org has nowhere to live.
+      this.logger.warn(`users.sync skipped ${zitadelUserId}: its org has no app.organizations row`);
+      return false;
+    }
+    const roles = await this.zitadel.listGrants(zitadelUserId, org.zitadelOrgId);
+    return this.apply(org, user, roles);
+  }
+
+  /**
+   * Walks every known org page by page and upserts each user. A user missing from a COMPLETE pass
+   * of its org is deactivated. A partial pass (a page failed, or the run resumed from a saved
+   * cursor) is not proof of absence, so it deactivates nobody; the next full pass will.
+   */
+  async reconcile(): Promise<{ scanned: number; changed: number }> {
+    let scanned = 0;
+    let changed = 0;
+    for (const org of await this.store.listOrgs()) {
+      const name = cursorName(org.zitadelOrgId);
+      const start = await this.store.getCursor(name);
+      const fullPass = start === null || start === '0';
+      const seen = new Set<string>();
+      let cursor: string | null = fullPass ? null : start;
+      try {
+        for (;;) {
+          const page = await this.zitadel.listUsers(org.zitadelOrgId, cursor);
+          for (const user of page.users) {
+            scanned += 1;
+            seen.add(user.id);
+            const roles = await this.zitadel.listGrants(user.id, org.zitadelOrgId);
+            if (await this.apply(org, user, roles)) changed += 1;
+          }
+          if (page.nextCursor === null) break;
+          cursor = page.nextCursor;
+          // Saved after each page, so a crash resumes here instead of starting the org over.
+          await this.store.setCursor(name, cursor);
+        }
+      } catch (error) {
+        if (error instanceof ZitadelNotConfiguredError) {
+          this.logger.warn(`users.reconcile skipped: ${error.message}`);
+          return { scanned, changed };
+        }
+        this.logger.error(
+          `users.reconcile failed for org ${org.zitadelOrgId}: ${(error as Error).message}`,
+        );
+        continue;
+      }
+      await this.store.setCursor(name, '0');
+      if (fullPass) changed += await this.deactivateMissing(org, seen);
+    }
+    return { scanned, changed };
+  }
+
+  /**
+   * UserDirectory.resolve: the app user behind a verified token. The first request of a user the
+   * webhook has not delivered yet inserts a minimal active row (JIT) and asks for a full sync.
+   *
+   * An `invited` row behind a valid token is an accepted invite: ZITADEL only issues tokens to
+   * users that finished it, and can() denies `invited`. So the row turns active here instead of
+   * waiting up to 10 minutes for the webhook or the reconcile.
+   */
+  async resolve(i: {
+    zitadelUserId: string;
+    tenantId: string;
+    organizationId: string;
+  }): Promise<ResolvedUser> {
+    let row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
+    if (!row) {
+      await withTx(this.db, scopeOf(i), zitadelActor(), (tx) =>
+        this.store.insertUser(tx, scopeOf(i), {
+          zitadelUserId: i.zitadelUserId,
+          email: null,
+          displayName: null,
+          status: 'active',
+        }),
+      );
+      await this.enqueueSync(i.zitadelUserId);
+      row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
+      if (!row) throw new Error('JIT user insert left no row');
+    } else if (row.status === 'invited') {
+      const invited = row;
+      await withTx(this.db, scopeOf(invited), zitadelActor(), (tx) =>
+        this.store.updateUser(tx, invited.id, {
+          email: invited.email,
+          displayName: invited.displayName,
+          status: 'active',
+        }),
+      );
+      await this.enqueueSync(i.zitadelUserId);
+      row = { ...invited, status: 'active' };
+    }
+    return { userId: row.id, status: row.status, departmentId: row.departmentId };
+  }
+
+  /** A Valkey hiccup must not fail the user's request: the reconcile fills the row in anyway. */
+  private async enqueueSync(zitadelUserId: string): Promise<void> {
+    await this.queue
+      .add(USERS_SYNC_JOB, { zitadelUserId }, { removeOnComplete: 100, removeOnFail: 500 })
+      .catch((error: Error) => this.logger.warn(`users.sync enqueue failed: ${error.message}`));
+  }
+
+  userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]> {
+    return this.store.userIdsWithRole(scope, role);
+  }
+
+  emailOf(userId: string): Promise<string | null> {
+    return this.store.emailOf(userId);
+  }
+
+  list(scope: TxScope, q: { limit: number; after?: string | undefined }): Promise<ListedUser[]> {
+    return this.store.list(scope, q);
+  }
+
+  /**
+   * Creates the human in ZITADEL, grants the roles there, sends the invite mail, then writes the
+   * mirror in `tx` (the admin's transaction, so the audit row names the admin). If the DB part
+   * fails after ZITADEL succeeded, the webhook or reconcile creates the row later.
+   */
+  async invite(
+    tx: DbTransaction,
+    b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
+  ): Promise<{ userId: string }> {
+    const scope = await this.store.txScope(tx);
+    const org = await this.orgOf(scope);
+    let zitadelUserId: string;
+    try {
+      zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
+    } catch (error) {
+      if (error instanceof ZitadelHttpError && error.status === 409) {
+        throw new ConflictException('A user with this email already exists');
+      }
+      throw error;
+    }
+    await this.zitadel.setGrants(zitadelUserId, org.zitadelOrgId, b.roles);
+    await this.zitadel.sendInviteCode(zitadelUserId);
+
+    const userId = await this.store.insertUser(tx, scope, {
+      zitadelUserId,
+      email: b.email,
+      displayName: `${b.givenName} ${b.familyName}`,
+      status: 'invited',
+    });
+    if (b.roles.length > 0) {
+      await this.store.replaceRoles(tx, scope, userId, b.roles);
+      await this.store.bumpAuthzVersion(tx, scope);
+    }
+    return { userId };
+  }
+
+  /** ZITADEL first (it is the truth), then the mirror. The caller invalidates authz after commit. */
+  async setRoles(tx: DbTransaction, userId: string, roles: RoleKey[]): Promise<void> {
+    const scope = await this.store.txScope(tx);
+    const user = await this.store.findById(tx, scope, userId);
+    if (!user) throw new NotFoundException('User not found');
+    const org = await this.orgOf(scope);
+    await this.zitadel.setGrants(user.zitadelUserId, org.zitadelOrgId, roles);
+    if (!sameRoles(await this.store.rolesOf(tx, userId), roles)) {
+      await this.store.replaceRoles(tx, scope, userId, roles);
+      await this.store.bumpAuthzVersion(tx, scope);
+    }
+  }
+
+  /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
+  private apply(org: OrgRow, user: ZitadelUser, roles: readonly RoleKey[]): Promise<boolean> {
+    const scope = scopeOf(org);
+    return withTx(this.db, scope, zitadelActor(), async (tx) => {
+      let changed = false;
+      const existing = await this.store.findByZitadelId(tx, user.id, true);
+      let userId: string;
+      if (!existing) {
+        userId = await this.store.insertUser(tx, scope, {
+          zitadelUserId: user.id,
+          email: user.email,
+          displayName: user.displayName,
+          status: user.status,
+        });
+        changed = true;
+      } else {
+        userId = existing.id;
+        if (
+          existing.email !== user.email ||
+          existing.displayName !== user.displayName ||
+          existing.status !== user.status
+        ) {
+          await this.store.updateUser(tx, userId, {
+            email: user.email,
+            displayName: user.displayName,
+            status: user.status,
+          });
+          changed = true;
+        }
+      }
+      if (!sameRoles(await this.store.rolesOf(tx, userId), roles)) {
+        await this.store.replaceRoles(tx, scope, userId, roles);
+        await this.store.bumpAuthzVersion(tx, scope);
+        changed = true;
+      }
+      return changed;
+    });
+  }
+
+  private async deactivateMissing(org: OrgRow, seen: ReadonlySet<string>): Promise<number> {
+    const locals = await this.store.notInactiveInOrg(this.db, scopeOf(org));
+    const missing = locals.filter((u) => !seen.has(u.zitadelUserId));
+    if (seen.size === 0 && missing.length > 0) {
+      // Safeguard: an empty list for an org that has users is far more likely a token that cannot
+      // see the org than a real mass deletion. Refuse to lock everyone out on that evidence.
+      this.logger.warn(
+        `users.reconcile: ZITADEL listed no users for org ${org.zitadelOrgId}; not deactivating ${missing.length}`,
+      );
+      return 0;
+    }
+    for (const user of missing) await this.deactivate(user);
+    return missing.length;
+  }
+
+  private deactivate(user: UserRow): Promise<void> {
+    return withTx(this.db, scopeOf(user), zitadelActor(), (tx) =>
+      this.store.updateUser(tx, user.id, {
+        email: user.email,
+        displayName: user.displayName,
+        status: 'inactive',
+      }),
+    );
+  }
+
+  private async orgOf(scope: TxScope): Promise<OrgRow> {
+    const org = await this.store.orgById(scope.organizationId);
+    if (!org) throw new NotFoundException('Organization not found');
+    return org;
+  }
+}
