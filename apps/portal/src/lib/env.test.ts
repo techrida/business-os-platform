@@ -17,10 +17,7 @@ const VALID = {
 } as const;
 
 type Name =
-  | keyof typeof VALID
-  | 'SESSION_ENC_KEY_ID'
-  | 'OIDC_STATE_VALKEY_URL'
-  | 'WORKSPACE_PUBLIC_URL';
+  keyof typeof VALID | 'SESSION_ENC_KEY_ID' | 'OIDC_STATE_VALKEY_URL' | 'WORKSPACE_PUBLIC_URL';
 
 function stubAll(overrides: Partial<Record<Name, string | undefined>> = {}) {
   for (const [name, value] of Object.entries({ ...VALID, ...overrides })) {

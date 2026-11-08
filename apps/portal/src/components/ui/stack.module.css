@@ -1,0 +1,16 @@
+.stack {
+  display: grid;
+  min-width: 0;
+}
+
+.small {
+  gap: 8px;
+}
+
+.medium {
+  gap: 16px;
+}
+
+.large {
+  gap: 24px;
+}

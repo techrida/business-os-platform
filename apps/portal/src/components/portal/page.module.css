@@ -1,0 +1,33 @@
+/* The content column under the top bar, as wide as the workspace page column. */
+.main {
+  width: 100%;
+  max-width: calc(1124px + 2 * var(--margin-page));
+  margin-inline: auto;
+  padding: 36px var(--margin-page) 48px;
+}
+
+.head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 32px;
+}
+
+.title {
+  font-size: 24px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 65ch;
+  color: var(--text-secondary);
+}
+
+.skeleton {
+  height: 160px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+}

@@ -1,0 +1,133 @@
+/* Reset, base type and page background. Loaded after tokens.css and the Outfit font so it can
+   build on both. Colours, sizes and radii come from the Figma tokens; nothing here is a
+   literal colour. */
+
+:root {
+  /* The fontsource package registers the family as "Outfit Variable". tokens.css is a
+     verbatim copy of the Figma export and only names "Outfit", so the stack is redefined here
+     (this file loads later, so it wins). */
+  --font-family-primary:
+    'Outfit Variable', 'Outfit', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Focus ring: a gap in the page colour, then a ring. The gap keeps the ring visible on any
+     background; the transparent outline keeps it visible in forced-colours mode. */
+  --bos-focus-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring);
+
+  /* App shell sizes from Figma (1440 canvas). */
+  --bos-sidebar-width: 220px;
+  --bos-rail-width: 108px;
+  --bos-header-height: 65px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+ul,
+ol,
+dl,
+dd {
+  margin: 0;
+}
+
+ul,
+ol {
+  padding: 0;
+  list-style: none;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: var(--font-weight-semibold);
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  line-height: var(--line-height-h1);
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  line-height: var(--line-height-h2);
+}
+
+h3 {
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+}
+
+a {
+  color: var(--action-primary);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+code {
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+}
+
+:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
+}
+
+/* Text for assistive technology only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
