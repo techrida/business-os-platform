@@ -388,6 +388,8 @@ export const AcceptanceDtoSchema = z.object({
   comment: z.string().nullable(),
   evidenceKinds: z.array(EvidenceKindSchema),
   evidenceDocumentIds: z.array(z.guid()),
+  /** The name the customer signed with; null for a rejection or a staff entry that has none. */
+  acceptedByName: z.string().nullable(),
 });
 export type AcceptanceDto = z.infer<typeof AcceptanceDtoSchema>;
 

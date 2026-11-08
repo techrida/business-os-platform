@@ -1,5 +1,5 @@
 // The quotation expiry job against real Postgres (P2 unit Q3c). The real store, the real AuditService and the
-// real NotifyService (bell only, so its directory, config and queue are never touched), the real migrations
+// real NotifyService (the bell and the email outbox; its directory and queue are never touched), the real migrations
 // with the quotation freeze triggers, under the job's own actor.
 //
 // What it holds:
@@ -11,7 +11,12 @@
 //   * an accepted version past valid_until is never touched;
 //   * an expiry racing an accept leaves exactly one outcome: with the accept uncommitted the job waits on the row
 //     lock, then skips the accepted version; with the expiry committed first the accept's conditional update
-//     matches nothing.
+//     matches nothing;
+//   * the expiring-soon email: a sent version valid from today to today + 2 days (Kathmandu) gets exactly one
+//     `quotation.expiring` outbox row across repeated runs, addressed to the `to_email` of its
+//     `quotation.sent:<versionId>` outbox row (the address that received the quote, whatever the version's
+//     contact_id says, even when it has none), with the portal link; an approved version, one outside the window,
+//     one with no sent outbox row, and an accepted one get none.
 //
 // The sweep reads every tenant of the shared container, so the tests assert on their own version ids, never on
 // the sweep's global totals.
@@ -52,6 +57,13 @@ const NOW = new Date('2026-11-09T06:15:00.000Z');
 const YESTERDAY = '2026-11-08';
 const TODAY = '2026-11-09';
 const NEXT_WEEK = '2026-11-16';
+/** today + 2 days, the last day of the expiring-soon window, and the day after it. */
+const IN_TWO_DAYS = '2026-11-11';
+const IN_THREE_DAYS = '2026-11-12';
+/** Where the quotation was sent (the to_email of its quotation.sent outbox row). */
+const SENT_TO = 'buyer@himal.example';
+/** The email of the version's contact_id contact, which is not where the quote went. */
+const CONTACT_EMAIL = 'sita@himal.example';
 
 interface TestScope extends TxScope {
   customerId: string;
@@ -97,10 +109,14 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
   db = drizzle({ client: pool });
   audit = new AuditService(db);
-  // Bell notices only: the service never reads its config, directory or queue on that path.
+  // The bell path never reads the config, directory or queue; the expiring-soon email renders its link from the
+  // two public URLs, so those are set.
   const notify = new NotifyService(
     db,
-    {} as CoreConfig,
+    {
+      WORKSPACE_PUBLIC_URL: 'https://workspace.example.com',
+      PORTAL_PUBLIC_URL: 'https://portal.example.com',
+    } as CoreConfig,
     {} as unknown as UserDirectory,
     {} as Queue,
   );
@@ -144,12 +160,27 @@ interface Seeded {
 /** One quotation with one version, moved to `status` the way the app does (valid_until is fixed at insert). */
 async function seedVersion(
   scope: TestScope,
-  options: { status: 'approved' | 'sent'; validUntil: string; owner?: boolean },
+  options: {
+    status: 'approved' | 'sent';
+    validUntil: string;
+    owner?: boolean;
+    /** The address the quote was sent to: queues the `quotation.sent:<versionId>` outbox row Send writes. */
+    sentTo?: string;
+    /** Sets the version's contact_id to a contact with CONTACT_EMAIL (no contact at all by default). */
+    contact?: boolean;
+  },
 ): Promise<Seeded> {
   const { tenantId, organizationId } = scope;
   const number = `QT-${randomUUID().slice(0, 8)}`;
   const owner = options.owner === false ? null : scope.ownerUserId;
   return withTx(db, scope, seedActor(), async (tx) => {
+    let contactId: string | null = null;
+    if (options.contact === true) {
+      const contact = await tx.execute<{ id: string }>(sql`
+        INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm)
+        VALUES (${tenantId}::uuid, ${scope.customerId}::uuid, 'Sita Sharma', ${CONTACT_EMAIL}) RETURNING id`);
+      contactId = first(contact.rows).id;
+    }
     const opp = await tx.execute<{ id: string }>(sql`
       INSERT INTO app.opportunities (tenant_id, organization_id, number, name, customer_id)
       VALUES (${tenantId}::uuid, ${organizationId}::uuid, ${`DEAL-${randomUUID().slice(0, 8)}`},
@@ -163,9 +194,10 @@ async function seedVersion(
     const version = await tx.execute<{ id: string }>(sql`
       INSERT INTO app.quotation_versions
         (tenant_id, organization_id, quotation_id, revision_no, currency, issue_date, valid_until, scope,
-         payment_schedule, subtotal, discount_amount, taxable_amount, tax_amount, total)
+         contact_id, payment_schedule, subtotal, discount_amount, taxable_amount, tax_amount, total)
       VALUES (${tenantId}::uuid, ${organizationId}::uuid, ${quotationId}::uuid, 1, 'NPR',
               '2026-10-01', ${options.validUntil}::date, 'Supply and install 12 panels',
+              ${contactId}::uuid,
               ${JSON.stringify([{ label: 'Advance', percent: '100' }])}::jsonb,
               1000, 0, 1000, 130, 1130) RETURNING id`);
     const versionId = first(version.rows).id;
@@ -183,6 +215,14 @@ async function seedVersion(
       await tx.execute(
         sql`UPDATE app.quotation_versions SET status = 'sent', sent_at = now() WHERE id = ${versionId}::uuid`,
       );
+    }
+    if (options.sentTo !== undefined) {
+      // What Send writes (QuotationSendService): one outbox row per version, keyed quotation.sent:<versionId>.
+      await tx.execute(sql`
+        INSERT INTO app.outbox
+          (tenant_id, organization_id, kind, template, to_email, subject, body_text, dedupe_key)
+        VALUES (${tenantId}::uuid, ${organizationId}::uuid, 'email', 'quotation.sent', ${options.sentTo},
+                ${`Quotation ${number}`}, 'sent', ${`quotation.sent:${versionId}`})`);
     }
     return { versionId, quotationId, number };
   });
@@ -408,5 +448,136 @@ describe('quotation expiry job', () => {
     expect(row.status).toBe('expired');
     expect(row.accepted_at).toBeNull();
     expect(await expiredHistory(v.versionId)).toHaveLength(1);
+  });
+});
+
+// ------------------------------------------------------------------------------- expiring soon
+
+async function expiringEmails(scope: TestScope, versionId: string) {
+  const { rows } = await pool.query<{
+    template: string;
+    to_email: string;
+    to_user_id: string | null;
+    subject: string;
+    body_text: string;
+    dedupe_key: string;
+  }>(
+    `SELECT template, to_email, to_user_id, subject, body_text, dedupe_key
+       FROM app.outbox WHERE tenant_id = $1 AND dedupe_key = $2`,
+    [scope.tenantId, `quotation.expiring:${versionId}`],
+  );
+  return rows;
+}
+
+describe('quotation expiring-soon email', () => {
+  it('queues one quotation.expiring email to the address the quote was sent to, with the portal link, and none on later runs', async () => {
+    const scope = await newScope();
+    // The version's contact_id is a different person: the email goes where the quote went.
+    const v = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: IN_TWO_DAYS,
+      sentTo: SENT_TO,
+      contact: true,
+    });
+
+    await sweeper.sweep();
+    await sweeper.sweep();
+    await sweeper.sweep();
+
+    const rows = await expiringEmails(scope, v.versionId);
+    expect(rows).toHaveLength(1);
+    const row = first(rows);
+    expect(row).toMatchObject({
+      template: 'quotation.expiring',
+      to_email: SENT_TO,
+      to_user_id: null,
+      dedupe_key: `quotation.expiring:${v.versionId}`,
+    });
+    expect(row.subject).toContain(v.number);
+    expect(row.body_text).toContain(`https://portal.example.com/quotations/${v.quotationId}`);
+    expect(row.body_text).toContain('Himal Traders Pvt. Ltd.');
+    expect(row.body_text).toContain(IN_TWO_DAYS);
+    // The version itself is untouched: a notice is not a status change.
+    expect((await versionRow(v.versionId)).status).toBe('sent');
+    expect(await expiredHistory(v.versionId)).toEqual([]);
+  });
+
+  it('emails a version that has no contact_id at all, because it has a sent outbox row', async () => {
+    const scope = await newScope();
+    const v = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: IN_TWO_DAYS,
+      sentTo: SENT_TO,
+    });
+
+    await sweeper.sweep();
+
+    expect(await expiringEmails(scope, v.versionId)).toEqual([
+      expect.objectContaining({ to_email: SENT_TO }),
+    ]);
+  });
+
+  it('covers today through today + 2 days and nothing outside that window', async () => {
+    const scope = await newScope();
+    const today = await seedVersion(scope, { status: 'sent', validUntil: TODAY, sentTo: SENT_TO });
+    const edge = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: IN_TWO_DAYS,
+      sentTo: SENT_TO,
+    });
+    const outside = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: IN_THREE_DAYS,
+      sentTo: SENT_TO,
+    });
+
+    await sweeper.sweep();
+
+    expect(await expiringEmails(scope, today.versionId)).toHaveLength(1);
+    expect(await expiringEmails(scope, edge.versionId)).toHaveLength(1);
+    expect(await expiringEmails(scope, outside.versionId)).toHaveLength(0);
+  });
+
+  it('sends nothing for an approved version, a version past its date, or a sent one with no sent outbox row', async () => {
+    const scope = await newScope();
+    const approved = await seedVersion(scope, {
+      status: 'approved',
+      validUntil: IN_TWO_DAYS,
+      sentTo: SENT_TO,
+    });
+    const past = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: YESTERDAY,
+      sentTo: SENT_TO,
+    });
+    // A contact on the version is not enough: the recipient is read from the sent mail.
+    const noSentRow = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: IN_TWO_DAYS,
+      contact: true,
+    });
+
+    const result = await sweeper.sweep();
+
+    expect(result.failed).toBe(0);
+    for (const v of [approved, past, noSentRow]) {
+      expect(await expiringEmails(scope, v.versionId)).toHaveLength(0);
+    }
+    // The one past its date expired instead, as before.
+    expect((await versionRow(past.versionId)).status).toBe('expired');
+  });
+
+  it('sends nothing for a version that was accepted before the sweep', async () => {
+    const scope = await newScope();
+    const v = await seedVersion(scope, {
+      status: 'sent',
+      validUntil: IN_TWO_DAYS,
+      sentTo: SENT_TO,
+    });
+    await withTx(db, scope, seedActor(), (tx) => tx.execute(acceptSql(v.versionId)));
+
+    await sweeper.sweep();
+
+    expect(await expiringEmails(scope, v.versionId)).toHaveLength(0);
   });
 });

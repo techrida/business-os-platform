@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AcceptanceDtoSchema,
   CancelQuotationBodySchema,
   DiscountSchema,
   EVIDENCE_KINDS,
@@ -728,5 +729,30 @@ describe('quote builder lookups and preview', () => {
     expect(UpdateQuotationVersionBodySchema.safeParse({ notes: 'x' }).success).toBe(false);
     expect(UpdateQuotationVersionBodySchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
     expect(UpdateQuotationVersionBodySchema.safeParse({ expectedVersion: 3 }).success).toBe(true);
+  });
+});
+
+describe('AcceptanceDtoSchema', () => {
+  const dto = {
+    id: id(),
+    versionId: id(),
+    outcome: 'accepted',
+    actorKind: 'customer_user',
+    actorId: id(),
+    decidedOn: '2026-11-09',
+    comment: null,
+    evidenceKinds: ['signed_quote'],
+    evidenceDocumentIds: [id()],
+  };
+
+  it('carries the name the customer signed with, or null when there is none', () => {
+    const named = AcceptanceDtoSchema.safeParse({ ...dto, acceptedByName: 'Sita Sharma' });
+    expect(named.success).toBe(true);
+    expect(named.success && named.data.acceptedByName).toBe('Sita Sharma');
+    expect(AcceptanceDtoSchema.safeParse({ ...dto, acceptedByName: null }).success).toBe(true);
+  });
+
+  it('needs acceptedByName to be present (null, not missing) so the column is always read', () => {
+    expect(AcceptanceDtoSchema.safeParse(dto).success).toBe(false);
   });
 });

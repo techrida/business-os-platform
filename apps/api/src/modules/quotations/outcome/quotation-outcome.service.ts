@@ -71,10 +71,10 @@ interface OutcomeInputBase {
 }
 
 export interface AcceptQuotationInput extends OutcomeInputBase {
-  /** The name the customer signed with. No column holds it yet, so it is kept in the audit event. */
+  /** The name the customer signed with; stored on the acceptance row (and in the audit event). */
   acceptedByName?: string;
   evidenceKinds: readonly EvidenceKind[];
-  /** Evidence files uploaded through DocumentsService. No column holds them yet; kept in the audit event. */
+  /** Evidence files uploaded through DocumentsService; stored on the acceptance row (and in the audit event). */
   evidenceDocumentIds?: readonly string[];
   comment?: string | null;
 }
@@ -265,6 +265,7 @@ export class QuotationOutcomeService {
       evidenceKinds: readonly EvidenceKind[];
       comment?: string | null;
       evidenceDocumentIds?: readonly string[];
+      acceptedByName?: string;
     },
   ): Promise<AcceptanceDto> {
     const [row] = await tx
@@ -279,6 +280,8 @@ export class QuotationOutcomeService {
         decidedOn: input.decidedOn,
         comment: input.comment ?? null,
         evidenceKinds: [...input.evidenceKinds],
+        acceptedByName: input.acceptedByName ?? null,
+        evidenceDocumentIds: [...(input.evidenceDocumentIds ?? [])],
       })
       .returning();
     return {
@@ -290,7 +293,8 @@ export class QuotationOutcomeService {
       decidedOn: row!.decidedOn,
       comment: row!.comment,
       evidenceKinds: row!.evidenceKinds,
-      evidenceDocumentIds: [...(input.evidenceDocumentIds ?? [])],
+      evidenceDocumentIds: row!.evidenceDocumentIds,
+      acceptedByName: row!.acceptedByName,
     };
   }
 
