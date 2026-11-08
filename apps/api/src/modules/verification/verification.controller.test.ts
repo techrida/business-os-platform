@@ -1,0 +1,158 @@
+// Unit tests of the verification routes with a fake service: what the edge refuses before any rule runs
+// (400s), the status codes, and that every route names a permission (deny by default).
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import type { Permission } from '@bos/contracts';
+import type { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { configureApp } from '../../app.setup';
+import { CAN_KEY } from '../../platform/authz/decorators';
+import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
+import { VerificationController } from './verification.controller';
+import { VerificationService } from './verification.service';
+
+const ID = randomUUID();
+const dto = { id: ID, status: 'draft' };
+const service = {
+  list: vi.fn(),
+  get: vi.fn(),
+  create: vi.fn(),
+  setChecklistItem: vi.fn(),
+  submit: vi.fn(),
+  decide: vi.fn(),
+};
+
+let app: INestApplication;
+let baseUrl: string;
+
+beforeAll(async () => {
+  const moduleRef = await Test.createTestingModule({
+    controllers: [VerificationController],
+    providers: [{ provide: VerificationService, useValue: service }],
+  }).compile();
+  app = moduleRef.createNestApplication({ rawBody: true, logger: false });
+  configureApp(app);
+  app.useGlobalFilters(new ErrorBodyFilter());
+  await app.listen(0, '127.0.0.1');
+  baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
+});
+afterAll(async () => {
+  await app?.close();
+});
+beforeEach(() => {
+  vi.resetAllMocks();
+  service.create.mockResolvedValue({ case: dto, created: true });
+  service.decide.mockResolvedValue(dto);
+});
+
+describe('route policy', () => {
+  it('names a permission on every route', () => {
+    const proto = VerificationController.prototype as unknown as Record<string, unknown>;
+    const wanted: Record<string, Permission> = {
+      list: 'verification.read',
+      get: 'verification.read',
+      create: 'customer.write',
+      setChecklist: 'customer.write',
+      submit: 'customer.write',
+      decide: 'verification.review',
+    };
+    for (const [method, permission] of Object.entries(wanted)) {
+      expect(Reflect.getMetadata(CAN_KEY, proto[method] as object), method).toBe(permission);
+    }
+  });
+});
+
+describe('POST /v1/verification-cases', () => {
+  it('answers 201 for a new case and 200 for an existing one', async () => {
+    const partyId = randomUUID();
+    const post = () => request(baseUrl).post('/v1/verification-cases').send({ partyId });
+    expect((await post()).status).toBe(201);
+    service.create.mockResolvedValue({ case: dto, created: false });
+    expect((await post()).status).toBe(200);
+  });
+
+  it('is 400 for a missing, malformed or extra field, and never reaches the service', async () => {
+    for (const body of [{}, { partyId: 'x' }, { partyId: randomUUID(), tenantId: randomUUID() }]) {
+      expect((await request(baseUrl).post('/v1/verification-cases').send(body)).status).toBe(400);
+    }
+    expect(service.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /v1/verification-cases/:id/decision', () => {
+  const url = `/v1/verification-cases/${ID}/decision`;
+
+  it('is 400 when a rejection has no reason', async () => {
+    const res = await request(baseUrl).post(url).send({ decision: 'reject', expectedVersion: 2 });
+    expect(res.status).toBe(400);
+    expect(service.decide).not.toHaveBeenCalled();
+  });
+
+  it('is 400 when an approval has no comment either (the UI asks for one)', async () => {
+    const res = await request(baseUrl).post(url).send({ decision: 'approve', expectedVersion: 2 });
+    expect(res.status).toBe(400);
+    expect(service.decide).not.toHaveBeenCalled();
+  });
+
+  it('is 400 for an unknown decision, a missing version, an extra field and a bad id', async () => {
+    const base = { decision: 'approve', comment: 'ok', expectedVersion: 2 };
+    for (const body of [
+      { ...base, decision: 'maybe' },
+      { decision: 'approve', comment: 'ok' },
+      { ...base, reviewedBy: randomUUID() },
+      { ...base, reason: 'old name of comment' },
+    ]) {
+      expect((await request(baseUrl).post(url).send(body)).status).toBe(400);
+    }
+    const badId = await request(baseUrl).post('/v1/verification-cases/nope/decision').send(base);
+    expect(badId.status).toBe(400);
+    expect(service.decide).not.toHaveBeenCalled();
+  });
+
+  it('passes a valid decision and its Idempotency-Key to the service; a malformed key is 400', async () => {
+    const body = { decision: 'reject', comment: 'Expired ID', expectedVersion: 3 };
+    const res = await request(baseUrl).post(url).set('Idempotency-Key', 'key-1').send(body);
+    expect(res.status).toBe(200);
+    expect(service.decide).toHaveBeenCalledWith(ID, body, 'key-1');
+    await request(baseUrl).post(url).send(body);
+    expect(service.decide).toHaveBeenLastCalledWith(ID, body, undefined);
+    service.decide.mockClear();
+    const bad = await request(baseUrl).post(url).set('Idempotency-Key', 'a b').send(body);
+    expect(bad.status).toBe(400);
+    expect(service.decide).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET and PATCH', () => {
+  it('rejects an unknown filter and a malformed checklist body with 400', async () => {
+    const list = (query: Record<string, string>) =>
+      request(baseUrl).get('/v1/verification-cases').query(query);
+    expect((await list({ status: 'bogus' })).status).toBe(400);
+    expect((await list({ owner: 'me' })).status).toBe(400);
+    const url = `/v1/verification-cases/${ID}/checklist`;
+    for (const body of [
+      {},
+      { key: 'nope', documentId: randomUUID(), expectedVersion: 1 },
+      { key: 'other', documentId: randomUUID() },
+    ]) {
+      expect((await request(baseUrl).patch(url).send(body)).status).toBe(400);
+    }
+    expect(service.list).not.toHaveBeenCalled();
+    expect(service.setChecklistItem).not.toHaveBeenCalled();
+  });
+
+  it('answers a list with the service array as it is (a bare array)', async () => {
+    service.list.mockResolvedValue([dto]);
+    const res = await request(baseUrl).get('/v1/verification-cases').query({ status: 'draft' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([dto]);
+    expect(service.list).toHaveBeenCalledWith({ status: 'draft' });
+  });
+});
