@@ -127,7 +127,7 @@ export class TenancyInterceptor implements NestInterceptor {
     const org = await this.orgs.resolve(auth.zitadelOrgId);
     const roles = rolesInOrg(auth, org.orgKind);
     if (org.orgKind === 'staff' && roles.length === 0) {
-      throw new ForbiddenException(NO_ROLE);
+      throw new ForbiddenException({ code: 'forbidden', message: NO_ROLE, reason: 'no_permission' });
     }
     // `ctx().roles` carries the same per-org list as the principal, so `/v1/me` cannot show a role
     // granted in another org either.
