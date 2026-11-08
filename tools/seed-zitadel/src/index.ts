@@ -472,7 +472,8 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   // The API accepts a token only when its client (azp, else client_id) is listed here. k6 sends
   // K6_CLIENT_ID, the machine user's username, as the client-credentials client id, so that is
   // the client its tokens carry. R7 below checks it against a real token.
-  const allowedAzp = [app.clientId, LOADTEST_USER];
+  // P1's approvals gate also signs in as the approver machine user, under its own client id.
+  const allowedAzp = [app.clientId, LOADTEST_USER, LOADTEST_APPROVER_USER];
   const zitadelEnv: Record<string, string> = {
     OIDC_ISSUER: deps.issuer,
     OIDC_AUDIENCE: projectId,
