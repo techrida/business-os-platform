@@ -34,6 +34,9 @@ import { drizzleHeadLoader, QuotationOwnerPolicy } from './quotation-owner.polic
 import { ReferenceCaller } from './reference/reference.caller';
 import { ReferenceController } from './reference/reference.controller';
 import { ReferenceService } from './reference/reference.service';
+import { QuotationSendCaller } from './send/quotation-send.caller';
+import { QuotationSendController } from './send/quotation-send.controller';
+import { QuotationSendService, QuotationSendStore } from './send/quotation-send.service';
 
 @Module({
   imports: [
@@ -51,6 +54,7 @@ import { ReferenceService } from './reference/reference.service';
     ReviseController,
     QuotationSubmitController,
     RecordOutcomeController,
+    QuotationSendController,
   ],
   providers: [
     PricingService,
@@ -66,6 +70,9 @@ import { ReferenceService } from './reference/reference.service';
     QuotationSubmitCaller,
     QuotationOutcomeService,
     RecordOutcomeService,
+    QuotationSendService,
+    QuotationSendStore,
+    QuotationSendCaller,
   ],
   // QuotationOutcomeService is the accept/reject core the portal (unit PA) calls inside its own transaction.
   exports: [PricingService, QuotationOutcomeService],
