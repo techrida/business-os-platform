@@ -3,7 +3,7 @@ import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 
 import { OrgKindSchema } from '@bos/contracts';
-import { Redis } from 'ioredis';
+import { Redis, type RedisOptions } from 'ioredis';
 import { cookies } from 'next/headers';
 import { z } from 'zod';
 
@@ -82,12 +82,51 @@ function nowSeconds(): number {
 // Redis
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Fail fast in a Valkey outage (CR-03): a command gets one second and one retry, and with the
+ * offline queue off nothing piles up waiting for a connection, so a request fails in about a
+ * second instead of hanging. Shared with the OIDC state client.
+ */
+export const VALKEY_CLIENT_OPTIONS = {
+  commandTimeout: 1000,
+  enableOfflineQueue: false,
+  maxRetriesPerRequest: 1,
+} as const satisfies RedisOptions;
+
+/** How long a command waits for a client that is still connecting. */
+const CONNECT_WAIT_MS = 1000;
+const CONNECTING_STATES: ReadonlySet<string> = new Set(['connecting', 'connect', 'reconnecting']);
+
+/**
+ * Resolves once `client` is ready, or after CONNECT_WAIT_MS, whichever comes first. Without the
+ * offline queue ioredis rejects any command sent while it is still connecting, which would fail
+ * the first request after every start (the clients connect lazily, on first use). A client that
+ * is still not ready after the wait gets the command anyway and fails fast.
+ */
+export function whenReady(client: Redis): Promise<Redis> {
+  if (!CONNECTING_STATES.has(client.status)) return Promise.resolve(client);
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      client.off('ready', done);
+      resolve(client);
+    };
+    const timer = setTimeout(done, CONNECT_WAIT_MS);
+    client.once('ready', done);
+  });
+}
+
 let redis: Redis | undefined;
 
 /** One shared connection per process, created on first use (so `next build` needs no Valkey). */
 export function getRedis(): Redis {
-  redis ??= new Redis(getEnv().VALKEY_URL, { maxRetriesPerRequest: 2 });
+  redis ??= new Redis(getEnv().VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
   return redis;
+}
+
+/** `getRedis()` once it can take commands; see `whenReady`. */
+function readyRedis(): Promise<Redis> {
+  return whenReady(getRedis());
 }
 
 /** Tests only: inject an ioredis-mock instance, or pass undefined to drop the injected one. */
@@ -198,13 +237,9 @@ export async function createSession(
   const now = nowSeconds();
   const record = toRecord({ ...data, createdAt: now, lastSeenAt: now });
   // NX: a collision on 256 random bits is not a real risk, but never overwrite an existing session.
-  const ok = await getRedis().set(
-    sessionKey(id),
-    seal(id, record),
-    'EX',
-    ttlFor(record, now),
-    'NX',
-  );
+  const ok = await (
+    await readyRedis()
+  ).set(sessionKey(id), seal(id, record), 'EX', ttlFor(record, now), 'NX');
   if (ok !== 'OK') throw new Error('session id collision');
   return id;
 }
@@ -236,7 +271,7 @@ export async function clearSessionCookie(): Promise<void> {
 
 export async function destroySession(id: string): Promise<void> {
   if (!SESSION_ID_PATTERN.test(id)) return;
-  await getRedis().del(sessionKey(id));
+  await (await readyRedis()).del(sessionKey(id));
 }
 
 /**
@@ -273,7 +308,7 @@ export async function getSession(): Promise<Session | null> {
 
 /** The Valkey part of `getSession`, for an id that already passed the pattern check. */
 async function resolveSession(id: string): Promise<Session | null> {
-  const client = getRedis();
+  const client = await readyRedis();
   const raw = await client.get(sessionKey(id));
   if (raw === null) return null;
 
@@ -318,7 +353,7 @@ async function refreshUnderLock(
   stale: StoredSession,
   now: number,
 ): Promise<StoredSession | null> {
-  const client = getRedis();
+  const client = await readyRedis();
   const lockToken = randomBytes(16).toString('base64url');
   const locked = await client.set(refreshLockKey(id), lockToken, 'PX', REFRESH_LOCK_MS, 'NX');
   if (locked !== 'OK') {
