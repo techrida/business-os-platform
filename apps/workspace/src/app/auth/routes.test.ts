@@ -21,6 +21,18 @@ const m = vi.hoisted(() => ({
   cookieSet: vi.fn(),
 }));
 
+// Stands in for the real ApiError (api.ts imports server-only), so `instanceof` still works.
+const { ApiError } = vi.hoisted(() => ({
+  ApiError: class ApiError extends Error {
+    readonly status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = 'ApiError';
+      this.status = status;
+    }
+  },
+}));
+
 /** The request's cookies, as `cookies().get()` sees them. Reset per test. */
 let requestCookies = new Map<string, string>();
 
@@ -33,8 +45,10 @@ vi.mock('@/lib/oidc', () => ({
   endSessionUrl: m.endSessionUrl,
 }));
 vi.mock('next/headers', () => ({ cookies: m.cookies }));
-vi.mock('@/lib/api', () => ({ getMe: m.getMe }));
+vi.mock('@/lib/api', () => ({ ApiError, getMe: m.getMe }));
 vi.mock('@/lib/session', () => ({
+  // Pinned to the literal, like LOGIN_COOKIE: logout reads this cookie itself.
+  SESSION_COOKIE: '__Host-bos_session',
   createSession: m.createSession,
   setSessionCookie: m.setSessionCookie,
   clearSessionCookie: m.clearSessionCookie,
@@ -61,6 +75,8 @@ const ACCESS = 'secret-access-token';
 const REFRESH = 'secret-refresh-token';
 const ID_TOKEN = 'secret-id-token';
 const LOGIN_COOKIE = '__Host-bos_login';
+const SESSION_COOKIE = '__Host-bos_session';
+const SESSION_ID = 's'.repeat(43);
 const BINDING = 'b'.repeat(43);
 const LOGIN_COOKIE_ATTRS = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' };
 
@@ -342,6 +358,25 @@ describe('GET /auth/callback', () => {
     }
   });
 
+  // CR-02: the API refuses staff without a project role with 403. That is not a broken login,
+  // so it lands on /no-access (which renders without a session) instead of callback_failed.
+  it('sends a 403 from /v1/me to /no-access, with no session and the login cookie cleared', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'u', returnTo: '/orders' });
+    m.getMe.mockRejectedValue(new ApiError(403, 'GET /v1/me failed with 403'));
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    const res = await call('?code=c&state=s');
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://app.localhost/no-access');
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(cookiesWritten()).not.toContain('__Host-bos_session');
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
+  });
+
   it('also fails closed when the state is missing or already used', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     m.completeLogin.mockRejectedValue(new Error('state not found'));
@@ -356,7 +391,7 @@ describe('/auth/logout', () => {
   const post = (headers: Record<string, string> = {}) =>
     logoutPOST(new Request(`${ORIGIN}/auth/logout`, { method: 'POST', headers }));
 
-  const session = { id: 'sid-1', idToken: ID_TOKEN };
+  const END_SESSION = 'https://idp.example/oidc/v1/end_session?x=1';
 
   it('GET shows a confirm form and changes no state', async () => {
     const res = logoutGET();
@@ -369,7 +404,7 @@ describe('/auth/logout', () => {
   });
 
   it('refuses a POST without an Origin header with 403 and changes nothing', async () => {
-    m.getSession.mockResolvedValue(session);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
     const res = await post();
     expect(res.status).toBe(403);
     expect(m.destroySession).not.toHaveBeenCalled();
@@ -377,40 +412,93 @@ describe('/auth/logout', () => {
   });
 
   it('refuses a POST from another origin with 403 and changes nothing', async () => {
-    m.getSession.mockResolvedValue(session);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
     const res = await post({ origin: 'https://evil.example' });
     expect(res.status).toBe(403);
     expect(m.destroySession).not.toHaveBeenCalled();
     expect(m.clearSessionCookie).not.toHaveBeenCalled();
   });
 
-  it('destroys the session, clears the cookie and redirects to end_session with the id token hint', async () => {
-    m.getSession.mockResolvedValue(session);
-    m.endSessionUrl.mockResolvedValue(new URL('https://idp.example/oidc/v1/end_session?x=1'));
+  // CR-05a: the end-session URL is a browser redirect, so an ID token in it would land in
+  // history, proxy logs and Referer headers.
+  it('destroys the session, clears the cookie and redirects to end_session without an id token hint', async () => {
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    m.getSession.mockResolvedValue({ id: SESSION_ID, idToken: ID_TOKEN });
+    m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
 
     const res = await post({ origin: ORIGIN });
 
-    expect(m.destroySession).toHaveBeenCalledWith('sid-1');
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
-    expect(m.endSessionUrl).toHaveBeenCalledWith({ idTokenHint: ID_TOKEN });
+    expect(m.endSessionUrl).toHaveBeenCalledTimes(1);
+    expect(m.endSessionUrl.mock.calls[0]).toEqual([]);
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('https://idp.example/oidc/v1/end_session?x=1');
+    expect(res.headers.get('location')).toBe(END_SESSION);
   });
 
-  it('still clears the cookie and goes home when there is no session', async () => {
+  // CR-06: getSession is null when the record idled out or Valkey is down. The ZITADEL session
+  // must still end, or the next visit signs the user straight back in.
+  it('with a cookie but no live session: destroys by cookie id, clears it and ends the IdP session', async () => {
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
     m.getSession.mockResolvedValue(null);
+    m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
+
     const res = await post({ origin: ORIGIN });
+
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+    expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(END_SESSION);
+  });
+
+  it('without any cookie: clears the cookie and still ends the IdP session', async () => {
+    m.getSession.mockResolvedValue(null);
+    m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
+
+    const res = await post({ origin: ORIGIN });
+
     expect(m.destroySession).not.toHaveBeenCalled();
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('https://app.localhost/');
+    expect(res.headers.get('location')).toBe(END_SESSION);
+  });
+
+  it('when Valkey is down: still clears the cookie, ends the IdP session and logs no id or token', async () => {
+    const spies = [
+      vi.spyOn(console, 'error').mockImplementation(() => undefined),
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+      vi.spyOn(console, 'log').mockImplementation(() => undefined),
+      vi.spyOn(console, 'info').mockImplementation(() => undefined),
+      vi.spyOn(console, 'debug').mockImplementation(() => undefined),
+    ];
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    m.getSession.mockResolvedValue(null);
+    // ioredis puts the command arguments in the error: the key and the stored record.
+    const replyError = new Error(`ERR del bos:session:${SESSION_ID} {"idToken":"${ID_TOKEN}"}`);
+    replyError.name = 'ReplyError';
+    m.destroySession.mockRejectedValue(replyError);
+    m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
+
+    const res = await post({ origin: ORIGIN });
+
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
+    expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(END_SESSION);
+
+    const logged = spies.flatMap((s) => s.mock.calls).map((args) => JSON.stringify(args));
+    expect(logged.join('\n')).toContain('ReplyError');
+    for (const secret of [SESSION_ID, ID_TOKEN]) {
+      expect(logged.join('\n')).not.toContain(secret);
+    }
   });
 
   it('goes home when ZITADEL discovery fails, after the local session is already gone', async () => {
-    m.getSession.mockResolvedValue(session);
+    requestCookies.set(SESSION_COOKIE, SESSION_ID);
+    m.getSession.mockResolvedValue({ id: SESSION_ID, idToken: ID_TOKEN });
     m.endSessionUrl.mockRejectedValue(new Error('discovery down'));
     const res = await post({ origin: ORIGIN });
-    expect(m.destroySession).toHaveBeenCalledWith('sid-1');
+    expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.headers.get('location')).toBe('https://app.localhost/');
   });
