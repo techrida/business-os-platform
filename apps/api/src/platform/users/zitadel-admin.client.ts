@@ -35,8 +35,8 @@ export const ZITADEL_ENDPOINTS = {
   // UNVERIFIED: authorization v2 DeleteAuthorization; body { id }. Used when the role set becomes empty.
   deleteAuthorization: '/zitadel.authorization.v2.AuthorizationService/DeleteAuthorization',
   // K8 (portal access). VERIFIED path and body (seed findOrgByName / createOrg). UNVERIFIED with this
-  // client's PAT: bos-provisioner is only ORG_USER_MANAGER + ORG_USER_PERMISSION_EDITOR on the staff org,
-  // so ZITADEL will likely refuse AddOrganization and users in the new org until it gets an instance role.
+  // client's PAT: the seed makes bos-provisioner IAM_ORG_MANAGER on the instance for these calls
+  // (tools/seed-zitadel PROVISIONER_IAM_ROLES), which no live run has confirmed yet.
   listOrganizations: '/zitadel.org.v2.OrganizationService/ListOrganizations',
   addOrganization: '/zitadel.org.v2.OrganizationService/AddOrganization',
   // VERIFIED path and body (seed createProjectGrant). UNVERIFIED: that a duplicate answers HTTP 409
