@@ -1,6 +1,7 @@
 // Integration tests for the approval engine on a real Postgres (Testcontainers, needs Docker in WSL).
 // Migrations run as bos_owner and the engine runs as bos_app, like production. Only the other units'
-// services are faked: audit, notify, the user directory and the caller.
+// services are faked: audit, notify, the user directory and the caller. The ADR 0027 tests switch the
+// directory to the real SqlUsersStore, so membership role_keys are read from the database.
 // Covers P1-PLAN section 7 U7: spec immutability, new versions, act idempotency, the 409s and 403s,
 // separation of duties, delegation, blocked requests and the SLA tick with a fake clock.
 import { randomUUID } from 'node:crypto';
@@ -17,6 +18,8 @@ import {
   approvalRequests,
   approvalSteps,
   checkTenancy,
+  createStaffUser,
+  createTenantWithEntity,
   runMigrations,
 } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -29,6 +32,7 @@ import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { buildLink, renderEmail } from '../../platform/notify/templates';
+import { SqlUsersStore } from '../../platform/users/users.store';
 import { ApprovalsAdminService } from './admin.service';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import type { ApprovalEmailTemplate } from './ports';
@@ -38,22 +42,27 @@ import { ApprovalsSlaService } from './sla.processor';
 const WORKSPACE_URL = 'http://workspace.test';
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
-const scope = { tenantId: randomUUID(), organizationId: randomUUID() };
+// The ids come from the @bos/db fixtures in beforeAll (they pick their own uuids).
+const scope = { tenantId: '', organizationId: '' };
+let staffIdpOrgId = '';
 const U = {
-  requester: randomUUID(),
-  acc: randomUUID(),
-  fin: randomUUID(),
-  both: randomUUID(), // holds accountant and finance
-  mgmt: randomUUID(),
-  founder: randomUUID(),
-  deputy: randomUUID(),
-  stranger: randomUUID(),
+  requester: '',
+  acc: '',
+  fin: '',
+  both: '', // holds accountant and finance
+  mgmt: '',
+  founder: '',
+  deputy: '',
+  stranger: '',
 };
-// A second org in the same tenant, a user who lives there, and users with other statuses (R10, R22, R24).
-const scopeB = { tenantId: scope.tenantId, organizationId: randomUUID() };
-const userB = randomUUID();
-const inactiveUser = randomUUID();
-const leaver = randomUUID();
+// A second entity in the same tenant, a user who is a member there only, and users with other statuses
+// (R10, R22, R24).
+const scopeB = { tenantId: '', organizationId: randomUUID() };
+let userB = '';
+let inactiveUser = '';
+let leaver = '';
+/** ADR 0027: finance in the mirror (and the token), but the membership in `scope` allows only sales. */
+let narrowFin = '';
 const roles: Partial<Record<RoleKey, string[]>> = {};
 const resetRoles = () => {
   roles.accountant = [U.acc, U.both];
@@ -117,8 +126,13 @@ const notify = {
   notifyRole: vi.fn((_tx: unknown, _role: unknown, n: Notice) => validate(n)),
 };
 const nameOfUser = (id: string) => Object.entries(U).find(([, v]) => v === id)?.[0] ?? 'unknown';
+/** When true, role holders come from the real SqlUsersStore (ADR 0027 tests); beforeEach resets it. */
+let realDirectory = false;
+let store: SqlUsersStore;
 const users = {
-  userIdsWithRole: vi.fn((_s: unknown, role: RoleKey) => Promise.resolve(roles[role] ?? [])),
+  userIdsWithRole: vi.fn((s: { tenantId: string; organizationId: string }, role: RoleKey) =>
+    realDirectory ? store.userIdsWithRole(s, role) : Promise.resolve(roles[role] ?? []),
+  ),
   resolve: vi.fn(),
   emailOf: vi.fn((id: string) => Promise.resolve(`${nameOfUser(id)}@bos.test`)),
 };
@@ -131,6 +145,8 @@ const caller = {
       zitadelUserId: `z-${me}`,
       ...callerScope,
       orgKind: 'staff',
+      partyId: null,
+      idpOrgId: staffIdpOrgId,
       roles: tokenRoles ?? rolesOf(me),
       departmentId: null,
       status: 'active',
@@ -175,28 +191,57 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
   db = drizzle({ client: appPool });
 
-  // The tenant, both orgs and a user row for every test user: admin checks that users exist and
+  // The tenant with its default entity (scope), a second entity (scopeB) and a staff user with a
+  // membership for every test user: admin checks that users are active members of the acting entity and
   // approvers must be active (R22, R24), so the people the tests route to must be real rows.
-  // Through withTx: the audit triggers on these tables refuse a write without bos.actor_id.
+  const t = await createTenantWithEntity(ownerPool);
+  Object.assign(scope, { tenantId: t.tenantId, organizationId: t.organizationId });
+  scopeB.tenantId = t.tenantId;
+  staffIdpOrgId = t.idpOrgId;
+  // No fixture adds a second entity to a tenant. Through withTx: the audit triggers need bos.actor_id.
+  await withTx(db, scopeB, systemActor('test-seed'), (tx) =>
+    tx.execute(
+      sql`INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
+          VALUES (${scopeB.organizationId}, ${scopeB.tenantId}, ${scopeB.organizationId},
+                  ${`B${scopeB.organizationId.slice(0, 8)}`}, 'Entity B', 'Entity B', false)`,
+    ),
+  );
+  // The user_roles mirror matches resetRoles(), so the real store and the fake agree.
+  const mirror: Record<keyof typeof U, RoleKey[]> = {
+    requester: [],
+    acc: ['accountant'],
+    fin: ['finance'],
+    both: ['accountant', 'finance'],
+    mgmt: ['management'],
+    founder: ['founder'],
+    deputy: [],
+    stranger: [],
+  };
+  const staff = async (organizationId: string, roleKeys: RoleKey[] = []) =>
+    (
+      await createStaffUser(ownerPool, {
+        tenantId: scope.tenantId,
+        organizationId,
+        idpOrgId: staffIdpOrgId,
+        roleKeys,
+      })
+    ).userId;
+  for (const key of Object.keys(U) as (keyof typeof U)[]) {
+    U[key] = await staff(scope.organizationId, mirror[key]);
+  }
+  leaver = await staff(scope.organizationId);
+  inactiveUser = await staff(scope.organizationId);
+  userB = await staff(scopeB.organizationId);
+  narrowFin = await staff(scope.organizationId, ['finance', 'sales']);
   await withTx(db, scope, systemActor('test-seed'), async (tx) => {
-    await tx.execute(sql`INSERT INTO app.tenants (id) VALUES (${scope.tenantId})`);
-    for (const org of [scope.organizationId, scopeB.organizationId]) {
-      await tx.execute(
-        sql`INSERT INTO app.organizations (id, tenant_id, organization_id, kind, name, zitadel_org_id)
-            VALUES (${org}, ${scope.tenantId}, ${org}, 'staff', 'Test org', ${`z-org-${org}`})`,
-      );
-    }
-    const seedUser = (id: string, organizationId: string, status: string) =>
-      tx.execute(
-        sql`INSERT INTO app.users (id, tenant_id, organization_id, zitadel_user_id, email, status)
-            VALUES (${id}, ${scope.tenantId}, ${organizationId}, ${`z-${id}`},
-                    ${`${nameOfUser(id)}@bos.test`}, ${status})`,
-      );
-    for (const id of [...Object.values(U), leaver])
-      await seedUser(id, scope.organizationId, 'active');
-    await seedUser(inactiveUser, scope.organizationId, 'inactive');
-    await seedUser(userB, scopeB.organizationId, 'active');
+    await tx.execute(sql`UPDATE app.users SET status = 'inactive' WHERE id = ${inactiveUser}`);
+    await tx.execute(
+      sql`UPDATE app.user_entities SET role_keys = '{sales}'
+          WHERE tenant_id = ${scope.tenantId} AND organization_id = ${scope.organizationId}
+            AND user_id = ${narrowFin}`,
+    );
   });
+  store = new SqlUsersStore(db);
 
   service = new ApprovalsService(db, audit, notify, users, caller, clock);
   admin = new ApprovalsAdminService(db, audit, caller, clock);
@@ -221,6 +266,7 @@ beforeEach(() => {
   grants = allGrants;
   callerScope = scope;
   tokenRoles = undefined;
+  realDirectory = false;
   now = new Date('2026-11-08T04:00:00Z');
 });
 
@@ -1024,5 +1070,79 @@ describe('P1 review fixes (FIX-A2c)', () => {
       await admin.revokeDelegation(viaAcc.id);
       await admin.revokeDelegation(viaFin.id);
     }
+  });
+});
+
+describe('ADR 0027: role steps use the roles of the request entity', () => {
+  it('refuses a token finance holder whose membership in the entity allows only sales, and keeps the step out of their inbox', async () => {
+    realDirectory = true; // role holders from app.user_roles and app.user_entities, not the fake map
+    const { requestId } = await submit();
+    await act(U.acc, requestId, { action: 'approve', expectedVersion: 1 });
+
+    // What the tenancy interceptor binds: token [finance, sales] narrowed by role_keys {sales}.
+    tokenRoles = ['sales'];
+    await expect(
+      act(narrowFin, requestId, { action: 'approve', expectedVersion: 2 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+    me = narrowFin;
+    expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(false);
+
+    // Even a principal that still carried finance is no approver: the directory reads the membership.
+    tokenRoles = ['finance', 'sales'];
+    await expect(
+      act(narrowFin, requestId, { action: 'approve', expectedVersion: 2 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+    expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(false);
+
+    // A finance holder whose membership allows every token role still sees and decides the step.
+    tokenRoles = undefined;
+    me = U.fin;
+    expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(true);
+    // (test_memo v2, published earlier in this file, adds a management step after finance.)
+    const dto = await act(U.fin, requestId, { action: 'approve', expectedVersion: 2 });
+    expect(dto.steps[1]).toMatchObject({ decidedBy: U.fin });
+  });
+
+  it('drops a group member who has no membership in the request entity', async () => {
+    me = U.founder;
+    const moved = (
+      await createStaffUser(ownerPool, {
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        idpOrgId: staffIdpOrgId,
+      })
+    ).userId;
+    const g = await admin.createGroup({ key: 'adr27-signers', name: 'ADR 0027 signers' });
+    await admin.addMember(g.id, U.mgmt);
+    await admin.addMember(g.id, moved);
+    await admin.createWorkflow({
+      key: 'adr27_memo',
+      name: 'ADR 0027 memo',
+      spec: {
+        documentType: 'adr27_memo',
+        steps: [{ id: 'sign', kind: 'group', group: 'adr27-signers', reason: 'Signers sign' }],
+      },
+    });
+    await admin.publish('adr27_memo', 1);
+    service.registerSubject({ documentType: 'adr27_memo', onDecided });
+    // The user leaves the entity: the group row stays, the membership does not.
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`DELETE FROM app.user_entities
+            WHERE tenant_id = ${scope.tenantId} AND organization_id = ${scope.organizationId}
+              AND user_id = ${moved}`,
+      ),
+    );
+
+    const { requestId, status } = await submit({ documentType: 'adr27_memo' });
+    expect(status).toBe('pending');
+    await expect(
+      act(moved, requestId, { action: 'approve', expectedVersion: 1 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+    expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(false);
+    me = U.mgmt;
+    expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(true);
+    const dto = await act(U.mgmt, requestId, { action: 'approve', expectedVersion: 1 });
+    expect(dto.status).toBe('approved');
   });
 });
