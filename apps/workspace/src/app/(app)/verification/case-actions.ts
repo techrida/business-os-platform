@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { UUID } from '@/components/p2/crm/action-helpers';
 import { keyOf, nextKey } from '@/components/p2/crm/idempotency';
 import { kybFailure } from '@/components/p2/crm/kyb-failure';
-import { openVerificationCase } from '@/components/p2/crm/verification-api';
+import { openVerificationCase, submitVerificationCase } from '@/components/p2/crm/verification-api';
 import { requireStaffSession } from '@/lib/bff';
 
 /**
@@ -47,4 +47,31 @@ export async function openCaseAction(_prev: OpenCaseState, form: FormData): Prom
   revalidatePath(`/customers/${partyId}`);
   // `redirect` throws, so it stays outside the try block.
   redirect(`/verification/${caseId}`);
+}
+
+export type SubmitCaseState = CaseFormState;
+
+/** Draft to submitted. The reviewer sees exactly the files that are on the case now. */
+export async function submitCaseAction(
+  _prev: SubmitCaseState,
+  form: FormData,
+): Promise<SubmitCaseState> {
+  const idValue = form.get('caseId');
+  const caseId = typeof idValue === 'string' ? idValue : '';
+  const key = keyOf(form);
+  if (!UUID.test(caseId)) {
+    return { key, error: 'This form is incomplete. Reload the page.', reload: true };
+  }
+  const session = await requireStaffSession(`/verification/${caseId}`);
+
+  try {
+    await submitVerificationCase(session, caseId, key);
+  } catch (err) {
+    const f = kybFailure(err, 'submit');
+    return { key: nextKey(err, key), error: f.message, ...(f.reload ? { reload: true } : {}) };
+  }
+  revalidatePath('/verification');
+  revalidatePath(`/verification/${caseId}`);
+  // `redirect` throws, so it stays outside the try block. The page shows a confirmation.
+  redirect(`/verification/${caseId}?submitted=1`);
 }

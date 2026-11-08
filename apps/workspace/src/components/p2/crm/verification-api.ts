@@ -69,3 +69,20 @@ export function openVerificationCase(
     json('POST', { partyId }, idempotencyKey),
   );
 }
+
+/**
+ * `POST /v1/verification-cases/:id/submit` (needs `customer.write`): draft to submitted. 409 unless
+ * the case is a draft, or while a required item has no document. Answers 200 with the case.
+ */
+export function submitVerificationCase(
+  session: Session,
+  caseId: string,
+  idempotencyKey: string,
+): Promise<VerificationCaseDto> {
+  return call(
+    session,
+    `/v1/verification-cases/${encodeURIComponent(caseId)}/submit`,
+    VerificationCaseDtoSchema,
+    json('POST', {}, idempotencyKey),
+  );
+}

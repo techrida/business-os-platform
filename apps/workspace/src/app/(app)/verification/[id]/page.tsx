@@ -27,6 +27,7 @@ import { when } from '@/lib/kernel-format';
 import { shortId } from '@/lib/kernel-ui';
 
 import { ReviewForm } from './review-form';
+import { SubmitForm } from '../submit-form';
 import styles from '../verification.module.css';
 
 export const metadata: Metadata = { title: 'Verification case · Business OS' };
@@ -40,12 +41,25 @@ function approveBlockedReason(c: VerificationCaseDto): string | null {
   return `Approve opens when every required document is accepted (${p.accepted} of ${p.required} so far). You can still reject.`;
 }
 
+/** Why Submit is closed: the required items that still have no file. Null when it may go. */
+function submitBlockedReason(c: VerificationCaseDto): string | null {
+  const missing = c.checklist.filter((i) => i.required && i.documentId === null);
+  if (missing.length === 0 && c.checklist.some((i) => i.required)) return null;
+  if (missing.length === 0) return 'Submit opens when the case has a required document.';
+  return `Submit opens when every required document has a file. Still missing: ${missing
+    .map((i) => CHECKLIST_LABEL[i.key])
+    .join(', ')}.`;
+}
+
 export default async function VerificationCasePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ submitted?: string | string[] }>;
 }) {
   const { id } = await params;
+  const { submitted } = await searchParams;
   // An id that is not a GUID cannot be a case, so it never reaches the API.
   if (!isGuid(id)) notFound();
   const path = `/verification/${id}`;
@@ -83,6 +97,7 @@ export default async function VerificationCasePage({
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
   const mayReview = hasPermission(session.roles, 'verification.review');
+  const mayEdit = hasPermission(session.roles, 'customer.write');
 
   return (
     <Page>
@@ -96,6 +111,12 @@ export default async function VerificationCasePage({
             : 'The customer record could not be read.'
         }
       />
+
+      {submitted !== undefined && c.status === 'submitted' ? (
+        <Alert tone="success" role="status" title="Submitted for review.">
+          The reviewer can now see the documents. You will see the decision here.
+        </Alert>
+      ) : null}
 
       {c.status === 'approved' || c.status === 'rejected' ? (
         <Alert
@@ -176,8 +197,20 @@ export default async function VerificationCasePage({
           </Panel>
         </div>
 
-        <Panel as="aside" title="Your decision" className={styles.side}>
-          {c.status !== 'submitted' ? (
+        <Panel
+          as="aside"
+          title={c.status === 'draft' && mayEdit ? 'Submit for review' : 'Your decision'}
+          className={styles.side}
+        >
+          {c.status === 'draft' && mayEdit ? (
+            <SubmitForm
+              caseId={c.id}
+              // One key per render of this page, like the decision form's.
+              idempotencyKey={randomUUID()}
+              blockedReason={submitBlockedReason(c)}
+              reloadHref={path}
+            />
+          ) : c.status !== 'submitted' ? (
             <p className={styles.note}>
               {c.status === 'draft'
                 ? 'This case has not been submitted for review yet, so there is nothing to decide.'
