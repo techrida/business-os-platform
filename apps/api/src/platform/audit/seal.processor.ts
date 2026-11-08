@@ -41,7 +41,7 @@ export interface SealRunResult {
 
 /**
  * Seals the previous UTC month for every tenant that has rows in it. One tenant's failure (a broken
- * chain, a tenant without an organization) never stops the others: failures are collected and the job
+ * chain, a tenant without a default entity) never stops the others: failures are collected and the job
  * fails at the end, so BullMQ records it as failed. There is no automatic retry (attempts defaults to 1)
  * and no catch-up (next month's run seals only its own previous month), so an operator re-runs it. A
  * re-run is safe because audit.seal() inserts with ON CONFLICT DO NOTHING: tenants already sealed just
@@ -74,14 +74,15 @@ export class SealProcessor extends WorkerHost {
     const failures: string[] = [];
     for (const tenantId of tenants) {
       try {
-        const organizationId = await this.firstOrganization(tenantId);
+        const organizationId = await this.defaultEntity(tenantId);
         if (organizationId === undefined) {
-          throw new Error('tenant has no organization');
+          throw new Error('tenant has no default entity');
         }
         // withTx needs a full scope even though the seal is tenant-wide: audit.seal() reads neither
         // bos.organization_id nor any org table, and takes chain_seals.organization_id from the month's
-        // last row. So any organization of the tenant is a correct scope. The first one (oldest, ties
-        // broken by id) is used because it is deterministic, which keeps reruns identical.
+        // last row. But the audit fallback needs bos.organization_id for any write to a tenant-scoped table
+        // (ADR 0027), so the scope is the tenant's default entity: there is at most one per tenant, which
+        // keeps reruns identical.
         const result = await withTx(this.db, { tenantId, organizationId }, actor, (tx) =>
           tx.execute<{ sealed: boolean; last_seq: string | null }>(
             sql`SELECT sealed, last_seq FROM audit.seal(${tenantId}::uuid, ${month}::date)`,
@@ -110,10 +111,9 @@ export class SealProcessor extends WorkerHost {
     return { month, tenants: tenants.length, sealed, alreadySealed };
   }
 
-  private async firstOrganization(tenantId: string): Promise<string | undefined> {
+  private async defaultEntity(tenantId: string): Promise<string | undefined> {
     const found = await this.db.execute<{ id: string }>(
-      sql`SELECT id FROM app.organizations WHERE tenant_id = ${tenantId}::uuid
-          ORDER BY created_at, id LIMIT 1`,
+      sql`SELECT id FROM app.organizations WHERE tenant_id = ${tenantId}::uuid AND is_default`,
     );
     return found.rows[0]?.id;
   }
