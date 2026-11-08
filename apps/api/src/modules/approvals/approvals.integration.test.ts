@@ -20,7 +20,7 @@ import {
   runMigrations,
 } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +49,11 @@ const U = {
   deputy: randomUUID(),
   stranger: randomUUID(),
 };
+// A second org in the same tenant, a user who lives there, and users with other statuses (R10, R22, R24).
+const scopeB = { tenantId: scope.tenantId, organizationId: randomUUID() };
+const userB = randomUUID();
+const inactiveUser = randomUUID();
+const leaver = randomUUID();
 const roles: Partial<Record<RoleKey, string[]>> = {};
 const resetRoles = () => {
   roles.accountant = [U.acc, U.both];
@@ -87,6 +92,11 @@ let now = new Date('2026-11-08T04:00:00Z');
 let me: string = U.acc;
 const allGrants = new Map<Permission, Scope>(PERMISSIONS.map((p) => [p, 'all']));
 let grants: Map<Permission, Scope> = allGrants;
+let callerScope = scope;
+/** The token's roles; by default the ones the mirror gives `me`. R2 sets a token that disagrees. */
+let tokenRoles: RoleKey[] | undefined;
+const rolesOf = (id: string) =>
+  (Object.keys(roles) as RoleKey[]).filter((r) => roles[r]?.includes(id) === true);
 
 const audit = { record: vi.fn(() => Promise.resolve(undefined)) };
 // The fakes run the REAL template validation, as NotifyService does at enqueue time. A var the template
@@ -114,14 +124,14 @@ const users = {
 };
 const caller = {
   current: () => ({
-    scope,
+    scope: callerScope,
     actor: { kind: 'user' as const, id: me, correlationId: 'test-corr' },
     principal: {
       userId: me,
       zitadelUserId: `z-${me}`,
-      ...scope,
+      ...callerScope,
       orgKind: 'staff',
-      roles: [],
+      roles: tokenRoles ?? rolesOf(me),
       departmentId: null,
       status: 'active',
       grants,
@@ -165,6 +175,29 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
   db = drizzle({ client: appPool });
 
+  // The tenant, both orgs and a user row for every test user: admin checks that users exist and
+  // approvers must be active (R22, R24), so the people the tests route to must be real rows.
+  // Through withTx: the audit triggers on these tables refuse a write without bos.actor_id.
+  await withTx(db, scope, systemActor('test-seed'), async (tx) => {
+    await tx.execute(sql`INSERT INTO app.tenants (id) VALUES (${scope.tenantId})`);
+    for (const org of [scope.organizationId, scopeB.organizationId]) {
+      await tx.execute(
+        sql`INSERT INTO app.organizations (id, tenant_id, organization_id, kind, name, zitadel_org_id)
+            VALUES (${org}, ${scope.tenantId}, ${org}, 'staff', 'Test org', ${`z-org-${org}`})`,
+      );
+    }
+    const seedUser = (id: string, organizationId: string, status: string) =>
+      tx.execute(
+        sql`INSERT INTO app.users (id, tenant_id, organization_id, zitadel_user_id, email, status)
+            VALUES (${id}, ${scope.tenantId}, ${organizationId}, ${`z-${id}`},
+                    ${`${nameOfUser(id)}@bos.test`}, ${status})`,
+      );
+    for (const id of [...Object.values(U), leaver])
+      await seedUser(id, scope.organizationId, 'active');
+    await seedUser(inactiveUser, scope.organizationId, 'inactive');
+    await seedUser(userB, scopeB.organizationId, 'active');
+  });
+
   service = new ApprovalsService(db, audit, notify, users, caller, clock);
   admin = new ApprovalsAdminService(db, audit, caller, clock);
   sla = new ApprovalsSlaService(db, service, audit, notify, clock);
@@ -186,6 +219,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetRoles();
   grants = allGrants;
+  callerScope = scope;
+  tokenRoles = undefined;
   now = new Date('2026-11-08T04:00:00Z');
 });
 
@@ -584,8 +619,9 @@ describe('versions, inbox and reading', () => {
     grants = new Map([['approvals.requests.read', 'own']]);
     me = U.requester;
     expect((await service.get(requestId)).requestId).toBe(requestId);
+    // R23: out of scope answers like an unknown id, so the id's existence does not leak.
     me = U.stranger;
-    await expect(service.get(requestId)).rejects.toMatchObject({ status: 403 });
+    await expect(service.get(requestId)).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -692,5 +728,141 @@ describe('admin: groups and delegations', () => {
     ).rejects.toMatchObject({
       status: 400,
     });
+  });
+});
+
+describe('P1 review fixes (FIX-A2)', () => {
+  const window = {
+    startsAt: new Date('2026-11-01T00:00:00Z'),
+    endsAt: new Date('2026-11-30T00:00:00Z'),
+    documentType: null,
+  };
+
+  it('R2: refuses a direct approver whose token no longer carries the step role', async () => {
+    const { requestId } = await submit();
+    await act(U.acc, requestId, { action: 'approve', expectedVersion: 1 });
+    roles.finance = [U.fin, U.both, U.mgmt]; // the mirror still lists U.mgmt as finance
+    tokenRoles = ['management']; // the token, which is the truth, no longer does
+    await expect(
+      act(U.mgmt, requestId, { action: 'approve', expectedVersion: 2 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+  });
+
+  it('R9: records submittedByUserId as the actor of the submit row', async () => {
+    const { requestId } = await submit({ submittedByUserId: U.deputy });
+    const rows = await db
+      .select()
+      .from(approvalActions)
+      .where(and(eq(approvalActions.requestId, requestId), eq(approvalActions.action, 'submit')));
+    expect(rows.map((r) => r.actorUserId)).toEqual([U.deputy]);
+  });
+
+  it('R10: removeMember scoped to org A cannot delete a member of an org B group', async () => {
+    me = U.founder;
+    callerScope = scopeB;
+    const g = await admin.createGroup({ key: 'org-b-group', name: 'Org B group' });
+    await admin.addMember(g.id, userB);
+    callerScope = scope;
+    await expect(admin.removeMember(g.id, userB)).rejects.toMatchObject({ status: 404 });
+    const { rows } = await ownerPool.query(
+      'SELECT 1 FROM app.approval_group_members WHERE group_id = $1 AND user_id = $2',
+      [g.id, userB],
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('R13: one SLA candidate that fails does not stop the others', async () => {
+    const bad = await submit();
+    const good = await submit();
+    const original = notify.notifyUser.getMockImplementation()!;
+    notify.notifyUser.mockImplementation((tx: unknown, n: Notice) =>
+      (n as Notice & { dedupeKey: string }).dedupeKey.includes(bad.requestId)
+        ? Promise.reject(new Error('mail is down'))
+        : original(tx, n),
+    );
+    try {
+      await expect(sla.tick(new Date(now.getTime() + 24 * 3_600_000))).resolves.toBeDefined();
+    } finally {
+      notify.notifyUser.mockImplementation(original);
+    }
+    expect(await countActions(bad.requestId, 'remind')).toBe(0);
+    expect(await countActions(good.requestId, 'remind')).toBe(1);
+  });
+
+  it('R22: preview names eligible approvers only to callers who may act', async () => {
+    me = U.requester;
+    grants = new Map([['approvals.requests.read', 'own']]);
+    const facts = { amountNpr: '50000.00' };
+    const redacted = await service.preview(scope, 'test_memo', facts, [U.requester]);
+    expect(redacted.steps.length).toBeGreaterThan(0);
+    expect(redacted.steps.every((s) => s.eligibleUserIds.length === 0)).toBe(true);
+    grants = allGrants;
+    const full = await service.preview(scope, 'test_memo', facts, [U.requester]);
+    expect(full.steps[0]!.eligibleUserIds).toEqual([U.acc, U.both]);
+  });
+
+  it('R22: addMember and createDelegation refuse unknown, inactive and other-org users with 400', async () => {
+    me = U.founder;
+    const g = await admin.createGroup({ key: 'r22-group', name: 'R22' });
+    await expect(admin.addMember(g.id, randomUUID())).rejects.toMatchObject({ status: 400 });
+    await expect(admin.addMember(g.id, inactiveUser)).rejects.toMatchObject({ status: 400 });
+    await expect(admin.addMember(g.id, userB)).rejects.toMatchObject({ status: 400 });
+    expect((await admin.listGroups()).find((x) => x.id === g.id)?.memberUserIds).toEqual([]);
+    await expect(
+      admin.createDelegation({ fromUserId: U.acc, toUserId: randomUUID(), ...window }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      admin.createDelegation({ fromUserId: inactiveUser, toUserId: U.acc, ...window }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      admin.createDelegation({ fromUserId: U.acc, toUserId: userB, ...window }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('R23: act answers an ineligible caller 403 before any version or status conflict', async () => {
+    const open = await submit();
+    await expect(
+      act(U.mgmt, open.requestId, { action: 'approve', expectedVersion: 7 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+    const closed = await submit();
+    await act(U.acc, closed.requestId, { action: 'reject', comment: 'No', expectedVersion: 1 });
+    await expect(
+      act(U.mgmt, closed.requestId, { action: 'approve', expectedVersion: 2 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+  });
+
+  it('R24: a deactivated group member cannot act, nor can their delegate', async () => {
+    me = U.founder;
+    const g = await admin.createGroup({ key: 'ops', name: 'Ops' });
+    await admin.addMember(g.id, U.mgmt);
+    await admin.addMember(g.id, leaver);
+    await admin.createDelegation({
+      fromUserId: leaver,
+      toUserId: U.deputy,
+      ...window,
+      documentType: 'ops_memo',
+    });
+    await admin.createWorkflow({
+      key: 'ops_memo',
+      name: 'Ops memo',
+      spec: {
+        documentType: 'ops_memo',
+        steps: [{ id: 'ops', kind: 'group', group: 'ops', reason: 'Ops signs' }],
+      },
+    });
+    await admin.publish('ops_memo', 1);
+    service.registerSubject({ documentType: 'ops_memo', onDecided });
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(sql`UPDATE app.users SET status = 'inactive' WHERE id = ${leaver}`),
+    );
+
+    const { requestId, status } = await submit({ documentType: 'ops_memo' });
+    expect(status).toBe('pending');
+    await expect(
+      act(leaver, requestId, { action: 'approve', expectedVersion: 1 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
+    await expect(
+      act(U.deputy, requestId, { action: 'approve', expectedVersion: 1 }),
+    ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
   });
 });
