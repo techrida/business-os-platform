@@ -33,6 +33,8 @@ export interface FxSnapshot {
 }
 
 const HUNDRED = new Dec(100);
+/** The widest margin that fits both margin_pct numeric(9,4) and the approval snapshot regex (3 integer digits). */
+const MARGIN_LIMIT = new Dec('999.9999');
 const ZERO = new Dec(0);
 const money = (value: Dec): string => value.toFixed(2);
 
@@ -49,33 +51,44 @@ function unroundedDiscountPct(priced: PricedDoc): string {
   return priced.discountTotal.times(HUNDRED).div(priced.subtotal).toFixed();
 }
 
-/** Internal cost and margin (architect section 2.6 step 8): only when every line has a unit cost. */
-function marginOf(
-  input: PricingInput,
-  taxableTotal: Dec,
-): Pick<PricedColumns, 'internalCostTotal' | 'marginPct'> {
+interface Margin {
+  internalCostTotal: string | null;
+  marginPct: string | null;
+  /** True when a margin was computed but lies beyond -999.9999 (it is then stored and reported as null). */
+  marginOutOfRange: boolean;
+}
+
+/**
+ * Internal cost and margin (architect section 2.6 step 8): only when every line has a unit cost. A margin can
+ * only exceed the limit downwards (cost above about 11x taxable), since it is at most 100%.
+ */
+function marginOf(input: PricingInput, taxableTotal: Dec): Margin {
   const costs = input.lines.map((line) => line.unitCost ?? null);
-  if (costs.some((cost) => cost === null)) return { internalCostTotal: null, marginPct: null };
+  if (costs.some((cost) => cost === null)) {
+    return { internalCostTotal: null, marginPct: null, marginOutOfRange: false };
+  }
   const cost = input.lines.reduce(
     (sum, line) => sum.plus(parseQuantity(line.quantity).times(parseMoney(line.unitCost!))),
     ZERO,
   );
-  const marginPct = taxableTotal.isZero()
-    ? null
-    : taxableTotal
-        .minus(cost)
-        .times(HUNDRED)
-        .div(taxableTotal)
-        .toDecimalPlaces(4, Dec.ROUND_HALF_UP)
-        .toFixed(4);
-  return { internalCostTotal: money(roundMoney(cost)), marginPct };
+  const internalCostTotal = money(roundMoney(cost));
+  if (taxableTotal.isZero()) return { internalCostTotal, marginPct: null, marginOutOfRange: false };
+  const margin = taxableTotal
+    .minus(cost)
+    .times(HUNDRED)
+    .div(taxableTotal)
+    .toDecimalPlaces(4, Dec.ROUND_HALF_UP);
+  if (margin.abs().gt(MARGIN_LIMIT)) {
+    return { internalCostTotal, marginPct: null, marginOutOfRange: true };
+  }
+  return { internalCostTotal, marginPct: margin.toFixed(4), marginOutOfRange: false };
 }
 
 /** The facts the approval provider and the UI read; never derived from rounded text. */
 export function buildFacts(
   priced: PricedDoc,
   currency: PricingInput['currency'],
-  marginPct: string | null,
+  margin: Pick<Margin, 'marginPct' | 'marginOutOfRange'>,
 ): QuoteFacts {
   return {
     amountNpr: money(priced.amountNpr),
@@ -83,7 +96,8 @@ export function buildFacts(
     nprDiscountAmount: money(toNpr(priced.discountTotal, currency, priced.npr.fxRate)),
     effectiveDiscountPct: unroundedDiscountPct(priced),
     discountApprovalRequired: priced.discountApprovalRequired,
-    marginPct,
+    marginPct: margin.marginPct,
+    marginOutOfRange: margin.marginOutOfRange,
     currency,
   };
 }
@@ -166,7 +180,8 @@ export function priceQuotation(
     };
   });
 
-  const { internalCostTotal, marginPct } = marginOf(input, priced.taxableTotal);
+  const margin = marginOf(input, priced.taxableTotal);
+  const { internalCostTotal, marginPct } = margin;
   const foreign = input.currency !== 'NPR';
   const columns: PricedColumns = {
     subtotal: money(priced.subtotal),
@@ -185,5 +200,5 @@ export function priceQuotation(
     marginPct,
   };
 
-  return { lines, taxSummary, columns, facts: buildFacts(priced, input.currency, marginPct) };
+  return { lines, taxSummary, columns, facts: buildFacts(priced, input.currency, margin) };
 }
