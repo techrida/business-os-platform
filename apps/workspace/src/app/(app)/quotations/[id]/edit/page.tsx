@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
+
 import { isQuotationEditable, type CustomerDto, type OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import * as api from '@/components/p2/quote-builder/api';
+import { getQuotation } from '@/components/p2/quotations/api';
 import { ContextCard } from '@/components/p2/quote-builder/context-card';
 import { describeQuoteFailure } from '@/components/p2/quote-builder/failure';
 import { LoadFailure } from '@/components/p2/quote-builder/load-failure';
@@ -32,13 +35,39 @@ export default async function EditQuotationPage({
   const session = await requireStaffSession(path);
   const query = await searchParams;
 
-  let quotation, version;
+  let detail;
   try {
-    quotation = await api.getQuotation(session, id);
-    version = await api.getVersion(session, quotation.id, quotation.currentVersionId);
+    // `GET /v1/quotations/:id` answers the parent with every version, so one call is enough.
+    detail = await getQuotation(session, id);
   } catch (err) {
     if (describeQuoteFailure(err, 'load').kind === 'not_found') notFound();
     return <LoadFailure err={err} title="Edit quotation" retryHref={path} />;
+  }
+  const { quotation } = detail;
+  const version = detail.versions.find((v) => v.id === quotation.currentVersionId);
+  if (version === undefined) {
+    // Never fall back to another revision: editing the wrong one would be worse than stopping.
+    return (
+      <Page width="narrow">
+        <Breadcrumb
+          items={[{ label: 'Quotations', href: '/quotations' }, { label: quotation.number }]}
+        />
+        <PageHeader title={quotation.number} />
+        <Alert
+          tone="warning"
+          role="alert"
+          title="The current revision is missing from this answer."
+          actions={
+            <LinkButton href={path} variant="secondary">
+              Reload
+            </LinkButton>
+          }
+        >
+          The platform did not send the revision this quotation says is current, so it cannot be
+          edited right now. Reload to try again.
+        </Alert>
+      </Page>
+    );
   }
 
   const title = `${version.number} Rev ${version.revisionNo}`;
@@ -102,6 +131,7 @@ export default async function EditQuotationPage({
         contacts={lookups.contacts}
         taxCodes={lookups.taxCodes}
         paymentTerms={lookups.paymentTerms}
+        idempotencyKey={randomUUID()}
         savedNotice={query.saved === '1'}
       />
     </Page>

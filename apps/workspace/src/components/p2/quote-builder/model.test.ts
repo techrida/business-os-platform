@@ -1,3 +1,4 @@
+import { UpdateQuotationDraftBodySchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -76,6 +77,37 @@ describe('toContent', () => {
   });
   it('omits the discount when mode is none', () => {
     expect(toContent(filled())).not.toHaveProperty('discount');
+  });
+
+  it('in update mode sends null for every blank optional field, so the save clears it', () => {
+    const c = toContent(filled(), 'update');
+    expect(c).toMatchObject({
+      contactId: null,
+      scope: null,
+      assumptions: null,
+      exclusions: null,
+      deliveryTimeline: null,
+      paymentTermId: null,
+      discount: null,
+      paymentSchedule: null,
+    });
+    expect(UpdateQuotationDraftBodySchema.safeParse({ ...c, expectedVersion: 2 }).success).toBe(
+      true,
+    );
+  });
+
+  it('in update mode still sends what was typed', () => {
+    const v = filled();
+    v.scope = '  Phase 1  ';
+    v.discountMode = 'amount';
+    v.discountValue = '500';
+    const c = toContent(v, 'update');
+    expect(c.scope).toBe('Phase 1');
+    expect(c.discount).toEqual({ mode: 'amount', value: '500' });
+  });
+
+  it('in create mode never sends null (create refuses it)', () => {
+    expect(Object.values(toContent(filled()))).not.toContain(null);
   });
 });
 
