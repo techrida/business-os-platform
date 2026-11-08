@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@bos/contracts': source('../../packages/contracts/src/index.ts'),
+      '@bos/locale': source('../../packages/locale/src/index.ts'),
       '@': source('./src'),
     },
   },
