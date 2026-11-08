@@ -120,6 +120,13 @@
       "when": 1783000000016,
       "tag": "0016_quotations",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783000000017,
+      "tag": "0017_approvals_cancel",
+      "breakpoints": true
     }
   ]
 }
