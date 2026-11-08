@@ -116,3 +116,26 @@ describe('decideAction ID token (K7)', () => {
     error.mockRestore();
   });
 });
+
+describe('decideAction never leaks the ID token (K7)', () => {
+  it.each([
+    ['a 403', new ApiError(403, 'x', errorBody('forbidden'))],
+    ['a 409', new ApiError(409, 'x', errorBody('conflict'))],
+    ['a 500', new ApiError(500, 'x', errorBody('internal'))],
+    ['a network failure', new TypeError('fetch failed')],
+  ])('never returns the ID token to the browser after %s', async (_n, err) => {
+    peekSession.mockResolvedValue({ idToken: ID_TOKEN });
+    actOnApproval.mockRejectedValue(err);
+    const state = await decideAction({ key: IDEM }, approveForm());
+    expect(state.error).toBeTruthy();
+    expect(JSON.stringify(state)).not.toContain(ID_TOKEN);
+  });
+
+  it('never puts the ID token in the step-up redirect', async () => {
+    peekSession.mockResolvedValue({ idToken: ID_TOKEN });
+    actOnApproval.mockRejectedValue(new ApiError(401, 'x', errorBody('step_up_required')));
+    const err = await decideAction({ key: IDEM }, approveForm()).catch((e: unknown) => e);
+    expect(String((err as Error).message)).toMatch(/^REDIRECT:\/auth\/login/);
+    expect(String((err as Error).message)).not.toContain(ID_TOKEN);
+  });
+});
