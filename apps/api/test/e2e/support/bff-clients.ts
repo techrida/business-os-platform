@@ -174,6 +174,9 @@ export interface BffClients {
 
 // apps/api/test/e2e/support -> apps/workspace/src (four levels up to apps/).
 const WS = '../../../../workspace/src';
+// Dynamic imports with @vite-ignore resolve a relative specifier against the Vite root, not this file,
+// so every import below goes through an absolute file path.
+const wsUrl = (rel: string): string => fileURLToPath(new URL(`${WS}/${rel}`, import.meta.url));
 
 /**
  * Wires the mocks and imports the clients. Call once from `beforeAll`, after the API is listening.
@@ -189,7 +192,7 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
   // The clients import `@/lib/api`; point that alias at the real file.
   vi.doMock(
     '@/lib/api',
-    async () => (await import(/* @vite-ignore */ `${WS}/lib/api.ts`)) as object,
+    async () => (await import(/* @vite-ignore */ wsUrl('lib/api.ts'))) as object,
   );
   // The real `apiFetch` reads its base URL through `getEnv()`.
   vi.doMock(apiModule.replace(/api\.ts$/, 'env.ts'), () => ({
@@ -198,7 +201,7 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
   }));
 
   const load = async <T>(rel: string): Promise<T> =>
-    (await import(/* @vite-ignore */ `${WS}/${rel}`)) as T;
+    (await import(/* @vite-ignore */ wsUrl(rel))) as T;
   const [crm, verification, customers, builder, quotations, api] = await Promise.all([
     load<CrmClient>('components/p2/crm/crm-api.ts'),
     load<VerificationClient>('components/p2/crm/verification-api.ts'),
