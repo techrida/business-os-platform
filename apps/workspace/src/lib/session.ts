@@ -217,12 +217,33 @@ export async function destroySession(id: string): Promise<void> {
  * the key TTL, and refreshes the access token when fewer than 60 s remain. A failed refresh
  * destroys the session. It never writes cookies: Server Components may not, so a dead cookie is
  * left for the next sign-in or logout to overwrite.
+ *
+ * Fails closed and never throws on Valkey errors (CR-03): Valkey runs `noeviction`, so when it is
+ * full every write is refused, and a throw here would turn every page into a 500. The user is
+ * treated as signed out instead.
  */
 export async function getSession(): Promise<Session | null> {
   const id = (await cookies()).get(SESSION_COOKIE)?.value;
   // Validate before building a Redis key from browser input.
   if (!id || !SESSION_ID_PATTERN.test(id)) return null;
 
+  try {
+    return await resolveSession(id);
+  } catch (err) {
+    // Only the error name: ioredis errors carry the command arguments, which here include the
+    // session id and the stored record with its tokens.
+    console.warn(
+      JSON.stringify({
+        event: 'session.valkey_unavailable',
+        error: err instanceof Error ? err.name : typeof err,
+      }),
+    );
+    return null;
+  }
+}
+
+/** The Valkey part of `getSession`, for an id that already passed the pattern check. */
+async function resolveSession(id: string): Promise<Session | null> {
   const client = getRedis();
   const raw = await client.get(sessionKey(id));
   if (raw === null) return null;
