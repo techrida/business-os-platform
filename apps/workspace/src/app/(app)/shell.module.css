@@ -10,14 +10,6 @@
   padding: 32px var(--margin-page);
 }
 
-.head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px 24px;
-}
-
 .headText {
   display: grid;
   gap: 4px;
@@ -37,7 +29,7 @@
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-  gap: 16px;
+  gap: 16px 24px;
   margin-top: 24px;
 }
 
@@ -45,10 +37,8 @@
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 16px;
-  border: var(--border-width-thin) solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-subtle);
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
 }
 
 .term {

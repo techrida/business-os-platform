@@ -1,7 +1,6 @@
 import type { MeResponse } from '@bos/contracts';
 import { redirect } from 'next/navigation';
 
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { getMe } from '@/lib/api';
 import { getSession } from '@/lib/session';
@@ -45,16 +44,13 @@ export default async function ShellPage() {
   return (
     <main className={styles.main}>
       <Card as="section" aria-labelledby="ready-heading">
-        <div className={styles.head}>
-          <div className={styles.headText}>
-            <h1 id="ready-heading" className={styles.heading}>
-              P0: platform ready
-            </h1>
-            <p className={styles.lede}>
-              You are signed in. These values come straight from the API for this request.
-            </p>
-          </div>
-          <Badge tone="success">API connected</Badge>
+        <div className={styles.headText}>
+          <h1 id="ready-heading" className={styles.heading}>
+            P0: platform ready
+          </h1>
+          <p className={styles.lede}>
+            You are signed in. These values come straight from the API for this request.
+          </p>
         </div>
         <dl className={styles.facts}>
           {facts.map(([term, value]) => (
