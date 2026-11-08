@@ -10,12 +10,14 @@
 //
 // Expiring soon (second pass of every run, after the expiry pass): a version with status `sent` only (a customer
 // cannot see an approved one) and valid_until from today to today + 2 days (Kathmandu) gets one K5
-// `quotation.expiring` email to its customer contact (the contact on the version, through
-// `NotifyService.notifyEmail`, because a contact is not a user). Once per version: the dedupe key
-// `quotation.expiring:<versionId>` makes a second insert a no-op, and the candidate query leaves out versions whose
-// outbox row already exists, so the hourly runs of the two days do not keep re-reading them. A version with no
-// contact, or a contact with no email, is not a candidate and is never emailed. Each notice is its own transaction,
-// and the version row is locked FOR SHARE and re-read inside it, so an accept that commits first is not emailed.
+// `quotation.expiring` email through `NotifyService.notifyEmail` (the recipient is a customer contact, not a
+// user). It goes to the address the quote was sent to: the `to_email` of the `quotation.sent:<versionId>` outbox
+// row Send wrote. The version's own contact_id is not used: it is optional and Send may have been given another
+// contact. A sent version with no such outbox row is not a candidate and is never emailed. Once per version: the
+// dedupe key `quotation.expiring:<versionId>` makes a second insert a no-op, and the candidate query leaves out
+// versions whose expiring row already exists, so the hourly runs of the two days do not keep re-reading them. Each
+// notice is its own transaction, and the version row is locked FOR SHARE and re-read inside it, so an accept that
+// commits first is not emailed.
 // The link is the portal path `/quotations/<quotationId>`; the template adds PORTAL_PUBLIC_URL, which the worker
 // must have.
 //
@@ -26,17 +28,22 @@
 // The tests drive the sweeper through an ExpiryStore fake; the drizzle store below is checked by the integration
 // test against a real database.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import {
-  customerContacts,
-  customers,
-  outbox,
-  quotations,
-  quotationStatusHistory,
-  quotationVersions,
-} from '@bos/db';
+import { customers, outbox, quotations, quotationStatusHistory, quotationVersions } from '@bos/db';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
-import { and, asc, eq, gte, inArray, lt, lte, notExists, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  gte,
+  inArray,
+  lt,
+  lte,
+  notExists,
+  sql,
+  type SQLWrapper,
+} from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
@@ -81,7 +88,7 @@ export interface ExpiringNotice {
   quotationNumber: string;
   customerName: string;
   validUntil: string;
-  /** The contact's normalised email address. */
+  /** The address the quote was sent to (the to_email of its `quotation.sent` outbox row). */
   toEmail: string;
 }
 
@@ -100,13 +107,14 @@ export interface ExpiryStore {
     now: Date,
   ): Promise<ExpiredVersion | undefined>;
   /**
-   * Sent versions with valid_until from `from` to `until` (YYYY-MM-DD, both included) whose contact has an email
-   * and that have no expiring-soon email queued yet, soonest first, across tenants.
+   * Sent versions with valid_until from `from` to `until` (YYYY-MM-DD, both included) that have a
+   * `quotation.sent:<versionId>` outbox row and no expiring-soon email queued yet, soonest first, across tenants.
    */
   expiringCandidates(from: string, until: string, limit: number): Promise<ExpiryCandidate[]>;
   /**
-   * Locks the version (shared) and reads what the email needs. Undefined when the version is no longer sent or no
-   * longer in the window (accepted, rejected or revised meanwhile), or its contact has no email: nothing to send.
+   * Locks the version (shared) and reads what the email needs, the recipient being the to_email of the version's
+   * `quotation.sent:<versionId>` outbox row. Undefined when the version is no longer sent or no longer in the window
+   * (accepted, rejected or revised meanwhile), or has no such row: nothing to send.
    */
   expiringNotice(
     tx: DbTransaction,
@@ -279,6 +287,9 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
       lt(quotationVersions.validUntil, today),
     );
 
+  /** The dedupe key Send gave the quote's outbox row (QuotationSendService). */
+  const sentKey = (versionId: SQLWrapper) => sql`'quotation.sent:' || ${versionId}::text`;
+
   /** Sent, and valid from `from` to `until` inclusive. */
   const inWindow = (from: string, until: string) =>
     and(
@@ -365,52 +376,44 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
     },
 
     async expiringCandidates(from, until, limit) {
-      return (
-        db
-          .select({
-            tenantId: quotationVersions.tenantId,
-            organizationId: quotationVersions.organizationId,
-            versionId: quotationVersions.id,
-          })
-          .from(quotationVersions)
-          .innerJoin(
-            quotations,
-            and(
-              eq(quotations.tenantId, quotationVersions.tenantId),
-              eq(quotations.organizationId, quotationVersions.organizationId),
-              eq(quotations.id, quotationVersions.quotationId),
-            ),
-          )
-          // Only versions expiringNotice can send (same join: a contact of the quotation's customer, with an
-          // email): the others would be re-read every hour of the window for nothing.
-          .innerJoin(
-            customerContacts,
-            and(
-              eq(customerContacts.tenantId, quotationVersions.tenantId),
-              eq(customerContacts.id, quotationVersions.contactId),
-              eq(customerContacts.customerId, quotations.customerPartyId),
-            ),
-          )
-          .where(
-            and(
-              inWindow(from, until),
-              sql`${customerContacts.emailNorm} IS NOT NULL`,
-              notExists(
-                db
-                  .select({ one: sql`1` })
-                  .from(outbox)
-                  .where(
-                    and(
-                      eq(outbox.tenantId, quotationVersions.tenantId),
-                      sql`${outbox.dedupeKey} = 'quotation.expiring:' || ${quotationVersions.id}::text`,
-                    ),
+      return db
+        .select({
+          tenantId: quotationVersions.tenantId,
+          organizationId: quotationVersions.organizationId,
+          versionId: quotationVersions.id,
+        })
+        .from(quotationVersions)
+        .where(
+          and(
+            inWindow(from, until),
+            // Only versions expiringNotice can send: the quote went out by email (its outbox row exists), and
+            // the notice is not queued yet. The others would be re-read every hour of the window for nothing.
+            exists(
+              db
+                .select({ one: sql`1` })
+                .from(outbox)
+                .where(
+                  and(
+                    eq(outbox.tenantId, quotationVersions.tenantId),
+                    sql`${outbox.dedupeKey} = ${sentKey(quotationVersions.id)}`,
                   ),
-              ),
+                ),
             ),
-          )
-          .orderBy(asc(quotationVersions.validUntil), asc(quotationVersions.id))
-          .limit(limit)
-      );
+            notExists(
+              db
+                .select({ one: sql`1` })
+                .from(outbox)
+                .where(
+                  and(
+                    eq(outbox.tenantId, quotationVersions.tenantId),
+                    sql`${outbox.dedupeKey} = 'quotation.expiring:' || ${quotationVersions.id}::text`,
+                  ),
+                ),
+            ),
+          ),
+        )
+        .orderBy(asc(quotationVersions.validUntil), asc(quotationVersions.id))
+        .limit(limit);
     },
 
     async expiringNotice(tx, c, from, until) {
@@ -420,7 +423,7 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
           quotationNumber: quotations.number,
           validUntil: quotationVersions.validUntil,
           customerName: customers.legalName,
-          toEmail: customerContacts.emailNorm,
+          toEmail: outbox.toEmail,
         })
         .from(quotationVersions)
         .innerJoin(
@@ -431,13 +434,13 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
             eq(quotations.id, quotationVersions.quotationId),
           ),
         )
-        // The contact must be one of the quotation's customer, as the send route checks.
+        // The recipient is the address the quote went to: the to_email of the outbox row Send wrote for this
+        // version (unique per tenant and key). Not the version's contact_id, which is optional and may differ.
         .innerJoin(
-          customerContacts,
+          outbox,
           and(
-            eq(customerContacts.tenantId, quotationVersions.tenantId),
-            eq(customerContacts.id, quotationVersions.contactId),
-            eq(customerContacts.customerId, quotations.customerPartyId),
+            eq(outbox.tenantId, quotationVersions.tenantId),
+            sql`${outbox.dedupeKey} = ${sentKey(quotationVersions.id)}`,
           ),
         )
         .leftJoin(
@@ -452,7 +455,7 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
         // Shared, on the version only (the outer-joined customer cannot be locked): an accept waits for this
         // transaction, or has committed first and the WHERE above no longer matches.
         .for('share', { of: quotationVersions });
-      if (row === undefined || row.toEmail === null) return undefined;
+      if (row === undefined) return undefined;
       return {
         quotationId: row.quotationId,
         quotationNumber: row.quotationNumber,
