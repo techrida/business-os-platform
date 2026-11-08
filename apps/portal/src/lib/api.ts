@@ -3,6 +3,7 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 
 import {
+  CUSTOMER_VISIBLE_STATUSES,
   type CustomerQuotationView,
   CustomerQuotationViewSchema,
   MeResponseSchema,
@@ -159,7 +160,23 @@ export function getPortalQuotation(
   session: Pick<Session, 'accessToken'>,
   id: string,
 ): Promise<CustomerQuotationView> {
-  return call(session, `/v1/portal/quotations/${seg(id)}`, CustomerQuotationViewSchema);
+  // A body in a state the customer may not see is answered as "not found", never as a 502: an
+  // error page would tell the customer that something exists behind the id.
+  const NotVisible = z
+    .looseObject({ status: z.string() })
+    .refine((b) => !(CUSTOMER_VISIBLE_STATUSES as readonly string[]).includes(b.status));
+  const VisibleView = z.unknown().transform((body, ctx) => {
+    if (NotVisible.safeParse(body).success) {
+      throw new ApiError(404, `GET /v1/portal/quotations/:id returned a non-visible status`);
+    }
+    const parsed = CustomerQuotationViewSchema.safeParse(body);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) ctx.addIssue({ ...issue, code: 'custom' });
+      return z.NEVER;
+    }
+    return parsed.data;
+  });
+  return call(session, `/v1/portal/quotations/${seg(id)}`, VisibleView);
 }
 
 /** `GET /v1/portal/quotations/:id/document`: a short-lived signed link to the frozen PDF. */
