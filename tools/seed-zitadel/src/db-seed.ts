@@ -81,8 +81,12 @@ const INR_PEG_DATE = '2000-01-01';
 
 async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Promise<number> {
   let changed = 0;
+  const keptRoles: string[] = [];
+  const keptPermissions: string[] = [];
   for (const [roleKey, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
     for (const [permission, permissionScope] of Object.entries(grants)) {
+      keptRoles.push(roleKey);
+      keptPermissions.push(permission);
       // WHERE ... IS DISTINCT FROM makes an unchanged row a no-op, so rowCount is 0 on a re-run.
       const result = await client.query(
         `INSERT INTO app.role_permissions (tenant_id, organization_id, role_key, permission, scope)
@@ -96,6 +100,17 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
       changed += result.rowCount ?? 0;
     }
   }
+  // Review R25: a grant dropped from the defaults must also leave the table, or it keeps granting
+  // forever. P1 has no roles editor, so every row in this org came from an earlier seed run. The
+  // keep-list goes in as two parallel arrays; once the stale rows are gone a re-run deletes nothing.
+  const stale = await client.query(
+    `DELETE FROM app.role_permissions
+     WHERE tenant_id = $1 AND organization_id = $2
+       AND (role_key, permission) NOT IN (SELECT * FROM unnest($3::text[], $4::text[]))
+     RETURNING id`,
+    [scope.tenantId, scope.organizationId, keptRoles, keptPermissions],
+  );
+  changed += stale.rowCount ?? 0;
   if (changed > 0) {
     // The API caches grants per authz version; without a bump, running instances keep stale roles.
     const bump = await client.query(
