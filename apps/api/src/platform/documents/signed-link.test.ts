@@ -31,6 +31,14 @@ function setup(secret: string | undefined = SECRET) {
   };
 }
 
+/** The jti claim of a token (the payload is not secret, only signed). */
+const jtiOf = (token: string): string =>
+  (
+    JSON.parse(Buffer.from(token.split('.')[0] ?? '', 'base64url').toString('utf8')) as {
+      jti: string;
+    }
+  ).jti;
+
 const kind = async (p: Promise<unknown>) => {
   try {
     await p;
@@ -46,10 +54,45 @@ describe('SignedLinks', () => {
     const { token, expiresAt } = links.issue(VERSION);
     expect(expiresAt.getTime() - Date.UTC(2026, 10, 8, 10, 0, 0)).toBe(60_000);
     expect(await links.redeem(token)).toBe(VERSION);
-    // The claim key is dl:<signature>, kept for 120 s (twice the lifetime).
+    // The claim key is dl:<jti>, kept for 120 s (twice the lifetime).
     const [key, ttl] = [...store.keys.entries()][0] ?? [];
-    expect(key).toBe(`dl:${token.split('.')[1]}`);
+    expect(key).toBe(`dl:${jtiOf(token)}`);
     expect(ttl).toBe(CLAIM_TTL_SECONDS);
+  });
+
+  it('gives two links for the same version in the same second different tokens, each usable once', async () => {
+    const { links, store } = setup();
+    // The clock is frozen, so exp and the version id are identical: only the random jti can tell them apart.
+    const a = links.issue(VERSION);
+    const b = links.issue(VERSION);
+    expect(a.expiresAt).toEqual(b.expiresAt);
+    expect(a.token).not.toBe(b.token);
+    expect(jtiOf(a.token)).not.toBe(jtiOf(b.token));
+    // 16 random bytes, base64url without padding.
+    expect(jtiOf(a.token)).toMatch(/^[A-Za-z0-9_-]{22}$/);
+
+    // Redeeming one must not burn the other, and each only works once.
+    expect(await links.redeem(a.token)).toBe(VERSION);
+    expect(await kind(links.redeem(a.token))).toBe('used');
+    expect(await links.redeem(b.token)).toBe(VERSION);
+    expect(await kind(links.redeem(b.token))).toBe('used');
+    expect(store.keys.size).toBe(2);
+  });
+
+  it('refuses a correctly signed payload that has no jti or a malformed one', async () => {
+    const { links, store } = setup();
+    const exp = Math.floor(Date.UTC(2026, 10, 8, 10, 0, 0) / 1000) + 60;
+    const signed = (claims: Record<string, unknown>) => {
+      const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+      const sig = createHmac('sha256', SECRET).update(payload).digest('base64url');
+      return `${payload}.${sig}`;
+    };
+    expect(await kind(links.redeem(signed({ v: 1, u: VERSION, exp })))).toBe('invalid');
+    expect(await kind(links.redeem(signed({ v: 1, u: VERSION, exp, jti: '' })))).toBe('invalid');
+    expect(await kind(links.redeem(signed({ v: 1, u: VERSION, exp, jti: 'short' })))).toBe(
+      'invalid',
+    );
+    expect(store.keys.size).toBe(0);
   });
 
   it('refuses the second use', async () => {
@@ -87,7 +130,12 @@ describe('SignedLinks', () => {
 
     // Same signature, but the payload now names another version.
     const forged = Buffer.from(
-      JSON.stringify({ v: 1, u: '00000000-0000-4000-8000-000000000000', exp: 9_999_999_999 }),
+      JSON.stringify({
+        v: 1,
+        u: '00000000-0000-4000-8000-000000000000',
+        exp: 9_999_999_999,
+        jti: jtiOf(token),
+      }),
     ).toString('base64url');
     expect(await kind(links.redeem(`${forged}.${signature}`))).toBe('invalid');
     // A flipped signature character.
