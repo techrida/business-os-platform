@@ -40,6 +40,8 @@ services:
     <<: *restart
   worker:
     <<: *restart
+  gotenberg:
+    <<: *restart
   workspace:
     <<: *restart
     environment:
