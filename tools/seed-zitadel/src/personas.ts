@@ -1,4 +1,7 @@
-// The dev personas and the password handling for `.dev/personas.json`.
+// The dev personas and the password and TOTP-secret handling for `.dev/personas.json`.
+//
+// P1 adds the Accountant persona (approval step 1, NFR separation of duties) and a per-persona
+// `totpSecret`, because the login policy forces MFA and Playwright must be able to type codes.
 import { randomInt } from 'node:crypto';
 
 import type { OrgKind } from '@bos/contracts';
@@ -11,6 +14,7 @@ export const PROJECT_ROLES = [
   'management',
   'finance',
   'sales',
+  'accountant',
   'customer_user',
   'vendor_user',
 ] as const;
@@ -46,6 +50,14 @@ export const PERSONAS: readonly PersonaSpec[] = [
     role: 'customer_user',
   },
   { key: 'vendor', givenName: 'Dev', familyName: 'Vendor', orgKind: 'vendor', role: 'vendor_user' },
+  // Frozen contract (P1): Playwright logs in as accountant@dev.bos.test.
+  {
+    key: 'accountant',
+    givenName: 'Dev',
+    familyName: 'Accountant',
+    orgKind: 'staff',
+    role: 'accountant',
+  },
 ];
 
 /** `.test` is reserved (RFC 2606), so these addresses can never reach a real mailbox. */
@@ -62,6 +74,11 @@ export const PersonaEntrySchema = z.object({
   /** The name ZITADEL itself reports (may carry an org domain suffix). */
   preferredLoginName: z.string(),
   password: z.string().min(8),
+  /**
+   * Base32 TOTP secret registered in ZITADEL (P1, frozen contract: the Playwright helper reads it).
+   * Optional: absent until the seed has registered TOTP for this persona. Secret: never log it.
+   */
+  totpSecret: z.string().min(1).optional(),
 });
 export type PersonaEntry = z.infer<typeof PersonaEntrySchema>;
 export const PersonasFileSchema = z.array(PersonaEntrySchema);
@@ -101,6 +118,21 @@ export function passwordsFromFile(text: string | undefined): Map<string, string>
     if (parsed.success) for (const p of parsed.data) out.set(p.key, p.password);
   } catch {
     // Corrupt JSON: regenerate. Existing ZITADEL users get a new password through SetPassword.
+  }
+  return out;
+}
+
+/** Stored TOTP secrets by persona key; same tolerance for bad files as `passwordsFromFile`. */
+export function totpSecretsFromFile(text: string | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  if (text === undefined) return out;
+  try {
+    const parsed = PersonasFileSchema.safeParse(JSON.parse(text));
+    if (parsed.success) {
+      for (const p of parsed.data) if (p.totpSecret !== undefined) out.set(p.key, p.totpSecret);
+    }
+  } catch {
+    // Corrupt JSON: no secrets known. The seed then reports registered-but-lost TOTPs loudly.
   }
   return out;
 }
