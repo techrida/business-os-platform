@@ -83,7 +83,8 @@ export default defineConfig({
   projects: [
     {
       name: 'dev',
-      testMatch: ['personas.spec.ts'],
+      // P1: the full-stack exit story (exit.spec.ts) runs after the persona logins, then the inbox checks.
+      testMatch: ['personas.spec.ts', 'exit.spec.ts', 'inbox.spec.ts'],
       use: { ...common, baseURL: devBaseURL },
     },
     {
