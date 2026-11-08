@@ -299,10 +299,15 @@ export class ApprovalsService {
       const spec = await this.frozenSpec(tx, request.workflowVersionId);
       const data = await this.loadDirectory(tx, scope, spec);
       const sod = new Set(request.sodUserIds);
+      const earlier = spec.distinctApprovers
+        ? earlierDeciders(decisionsOf(steps), current.seq)
+        : new Set<string>();
+      // A delegate for several approvers acts for one who may decide: not an SoD person and, under
+      // distinctApprovers, not someone who decided an earlier step (else the check below refuses them).
       const who = this.directory(data, now, request.documentType).resolveActor(
         stepSpecOf(current, data),
         userId,
-        sod,
+        new Set([...sod, ...earlier]),
       );
       if (!who.eligible)
         throw forbidden('out_of_scope', 'You are not an approver for the active step');
@@ -322,19 +327,11 @@ export class ApprovalsService {
           'You prepared this document, so you cannot approve it',
         );
       }
-      if (spec.distinctApprovers) {
-        const earlier = new Set(
-          steps
-            .filter((s) => s.seq < current.seq)
-            .flatMap((s) => [s.decidedBy, s.decidedOnBehalfOf])
-            .filter((id): id is string => id !== null),
+      if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
+        throw forbidden(
+          'separation_of_duties',
+          'You already decided an earlier step of this request',
         );
-        if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
-          throw forbidden(
-            'separation_of_duties',
-            'You already decided an earlier step of this request',
-          );
-        }
       }
 
       // 4. Stale view.
@@ -368,12 +365,36 @@ export class ApprovalsService {
         .where(eq(approvalSteps.id, active.id));
       const next = steps.find((s) => s.seq === active.seq + 1);
       const decided = action.action !== 'approve' || next === undefined;
+      // Who may decide the next step, routed like reroute() with this decision counted: under
+      // distinctApprovers a step left with only earlier deciders would stay pending with nobody able to
+      // act, so it blocks instead (founders are told, and reroute reopens it once someone is added).
+      let nextEligible: readonly string[] = [];
+      let blockReason: string | null = null;
       if (action.action === 'approve' && next !== undefined) {
-        await tx
-          .update(approvalSteps)
-          .set(activation(now, spec))
-          .where(eq(approvalSteps.id, next.id));
+        const plan = this.plan(
+          spec,
+          request.facts as Record<string, unknown>,
+          data,
+          request.sodUserIds,
+          decisionsOf(
+            steps.map((s) =>
+              s.id === active.id
+                ? { ...s, decidedBy: userId, decidedOnBehalfOf: who.onBehalfOf }
+                : s,
+            ),
+          ),
+        );
+        nextEligible = plan.steps.find((s) => s.seq === next.seq)?.eligibleUserIds ?? [];
+        if (nextEligible.length === 0) {
+          blockReason = plan.blockReason ?? 'No eligible approver';
+        } else {
+          await tx
+            .update(approvalSteps)
+            .set(activation(now, spec))
+            .where(eq(approvalSteps.id, next.id));
+        }
       }
+      const blocked = blockReason !== null;
       if (action.action !== 'approve') {
         await tx
           .update(approvalSteps)
@@ -388,6 +409,7 @@ export class ApprovalsService {
           version: newVersion,
           currentSeq: next !== undefined && !decided ? next.seq : request.currentSeq,
           ...(decided ? { status: outcome, decidedAt: now } : {}),
+          ...(blocked ? { status: 'blocked' as const, blockReason } : {}),
         })
         .where(eq(approvalRequests.id, requestId));
 
@@ -400,6 +422,16 @@ export class ApprovalsService {
         comment: action.comment ?? null,
         createdAt: now.toISOString(),
       });
+      // The block row, as submit() writes it, is in the stored result too so a replay shows it.
+      if (blocked) {
+        dto.actions.push({
+          action: 'block',
+          actorUserId: userId,
+          onBehalfOfUserId: null,
+          comment: blockReason,
+          createdAt: now.toISOString(),
+        });
+      }
       try {
         await this.writeAction(tx, scope, {
           requestId,
@@ -424,12 +456,28 @@ export class ApprovalsService {
         }
         throw error;
       }
+      if (blocked) {
+        await this.writeAction(tx, scope, {
+          requestId,
+          stepId: next!.id,
+          actorUserId: userId,
+          action: 'block',
+          comment: blockReason,
+          requestVersion: newVersion,
+          now,
+        });
+      }
       await this.audit.record(tx, {
         action: `approvals.${action.action}`,
         entityType: 'approval_request',
         entityId: requestId,
         before: { status: request.status, version: request.version, seq: active.seq },
-        after: { status: dto.status, version: newVersion, seq: dto.currentSeq },
+        after: {
+          status: dto.status,
+          version: newVersion,
+          seq: dto.currentSeq,
+          ...(blocked ? { blockReason } : {}),
+        },
         meta: { onBehalfOf: who.onBehalfOf },
       });
       if (decided) {
@@ -456,19 +504,16 @@ export class ApprovalsService {
         });
         // 7. Tell the document. Same transaction: if it fails, the decision rolls back too.
         await this.subjectOf(request.documentType).onDecided(tx, request.documentId, outcome);
+      } else if (blocked) {
+        await this.notifyBlocked(tx, requestId, request.documentNumber, blockReason, newVersion);
       } else if (next !== undefined) {
-        const eligible = this.directory(
-          data,
-          now,
-          request.documentType,
-          request.sodUserIds,
-        ).eligible(stepSpecOf(next, data));
+        // From the plan, so under distinctApprovers whoever decided an earlier step is not asked.
         await this.notifyApprovers(
           tx,
           requestId,
           request.documentNumber,
           request.title,
-          eligible,
+          nextEligible,
           next.seq,
           'pending',
         );
@@ -531,10 +576,13 @@ export class ApprovalsService {
       // never lists an item act() would refuse (and both pick the same principal for a delegate).
       const userId = principal.userId;
       const sod = new Set(request.sodUserIds);
+      const earlier = entry.spec.distinctApprovers
+        ? earlierDeciders(decided.get(request.id) ?? [], step.seq)
+        : new Set<string>();
       const who = this.directory(entry.data, now, request.documentType).resolveActor(
         stepSpecOf(step, entry.data),
         userId,
-        sod,
+        new Set([...sod, ...earlier]),
       );
       if (!who.eligible) continue;
       // The token's roles, not the lagging mirror, decide a direct approver of a role step.
@@ -546,15 +594,8 @@ export class ApprovalsService {
         continue;
       }
       if (sod.has(userId) || (who.onBehalfOf !== null && sod.has(who.onBehalfOf))) continue;
-      if (entry.spec.distinctApprovers) {
-        const earlier = new Set(
-          (decided.get(request.id) ?? [])
-            .filter((d) => d.seq < step.seq)
-            .flatMap((d) => [...d.deciders]),
-        );
-        if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
-          continue;
-        }
+      if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
+        continue;
       }
       const amount = (request.facts as Record<string, unknown>)['amountNpr'];
       items.push({
@@ -1066,6 +1107,11 @@ function decisionsOf(
     const deciders = [s.decidedBy, s.decidedOnBehalfOf].filter((id): id is string => id !== null);
     return deciders.length === 0 ? [] : [{ seq: s.seq, deciders }];
   });
+}
+
+/** Everyone who decided a step before `seq` (the distinctApprovers exclusion for that step). */
+function earlierDeciders(decisions: readonly StepDecision[], seq: number): Set<string> {
+  return new Set(decisions.filter((d) => d.seq < seq).flatMap((d) => [...d.deciders]));
 }
 
 /** Rebuilds the routing view of a stored step (group id back to its key) for the directory. */
