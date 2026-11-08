@@ -2,23 +2,33 @@
 // with the documents module, provides PricingService and serves the reference lists (tax codes, payment terms).
 // The drafting controller, the drafting service and the render job
 // join it in later parts. Imports DocumentsModule for DocumentsService and SettingsModule for MoneyService
-// (PricingService's FX snapshot); the database is global. Only AppModule imports this module.
+// (PricingService's FX snapshot) and ApprovalsModule for ApprovalsService (the preview's route); the database is global. Only AppModule imports this module.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
 import { DocumentsModule } from '../../platform/documents/documents.module';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { PricingService } from './pricing/pricing.service';
+import { QuotationPreviewCaller } from './preview/quotation-preview.caller';
+import { QuotationPreviewController } from './preview/quotation-preview.controller';
+import { QuotationPreviewService } from './preview/quotation-preview.service';
 import { drizzleHeadLoader, QuotationOwnerPolicy } from './quotation-owner.policy';
 import { ReferenceCaller } from './reference/reference.caller';
 import { ReferenceController } from './reference/reference.controller';
 import { ReferenceService } from './reference/reference.service';
 
 @Module({
-  imports: [DocumentsModule, SettingsModule],
-  controllers: [ReferenceController],
-  providers: [PricingService, ReferenceCaller, ReferenceService],
+  imports: [ApprovalsModule, DocumentsModule, SettingsModule],
+  controllers: [ReferenceController, QuotationPreviewController],
+  providers: [
+    PricingService,
+    ReferenceCaller,
+    ReferenceService,
+    QuotationPreviewService,
+    QuotationPreviewCaller,
+  ],
   exports: [PricingService],
 })
 export class QuotationsModule implements OnModuleInit {
