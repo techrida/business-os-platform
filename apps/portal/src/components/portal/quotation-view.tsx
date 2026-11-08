@@ -56,13 +56,9 @@ export function QuotationView({
           </dl>
           {view.file ? (
             <div className={styles.download}>
-              {/* A plain anchor: the target is a route handler, and a prefetch would fetch the PDF. */}
-              <LinkButton
-                variant="secondary"
-                size="small"
-                href={`/quotations/${view.id}/document`}
-                download={view.file.filename}
-              >
+              {/* A plain anchor: the target is a route handler, and a prefetch would fetch the PDF. No
+                  `download` attribute: the API sends attachment, and an error must read as text. */}
+              <LinkButton variant="secondary" size="small" href={`/quotations/${view.id}/document`}>
                 Download PDF
               </LinkButton>
               <p className={styles.checksum}>
