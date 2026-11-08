@@ -1,0 +1,57 @@
+import { getMe } from '@/lib/api';
+import { getEnv } from '@/lib/env';
+import { completeLogin } from '@/lib/oidc';
+import { createSession, setSessionCookie } from '@/lib/session';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+// Redirects are built against the public URL, not req.url: behind Caddy the request reaches
+// Next over plain http on an internal host, so req.url would point at the wrong origin.
+function redirectTo(path: string): Response {
+  return new Response(null, {
+    status: 303,
+    headers: {
+      location: new URL(path, getEnv().WORKSPACE_PUBLIC_URL).toString(),
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+export async function GET(req: Request): Promise<Response> {
+  const incoming = new URL(req.url);
+
+  // ZITADEL reports the user cancelling or a failed login as ?error=...&error_description=...
+  // The description is untrusted text, so it is neither logged nor forwarded.
+  if (incoming.searchParams.has('error')) {
+    return redirectTo('/auth/error?code=idp_error');
+  }
+
+  try {
+    // openid-client derives redirect_uri from the URL it is given and ZITADEL compares it with
+    // the registered one. req.url has the internal scheme and host (see above), so keep only the
+    // query (code, state) and graft it onto the configured redirect URI.
+    const callbackUrl = new URL(getEnv().OIDC_REDIRECT_URI);
+    callbackUrl.search = incoming.search;
+
+    const { tokens, sub, returnTo } = await completeLogin(callbackUrl);
+    // The API is the authority on org and roles, not the token claims.
+    const me = await getMe({ accessToken: tokens.accessToken });
+    const id = await createSession({
+      sub,
+      orgId: me.organizationId,
+      orgKind: me.orgKind,
+      roles: me.roles,
+      ...tokens,
+    });
+    await setSessionCookie(id);
+    // returnTo went through safeReturnTo in /auth/login and was stored server-side with the state.
+    return redirectTo(returnTo);
+  } catch {
+    // Log a correlation id only. Error messages and stacks from the OIDC library can contain
+    // the code, state or tokens, so nothing from the error itself goes to the log.
+    const correlationId = crypto.randomUUID();
+    console.error(JSON.stringify({ event: 'auth.callback_failed', correlationId }));
+    return redirectTo('/auth/error?code=callback_failed');
+  }
+}
