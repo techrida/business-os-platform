@@ -178,7 +178,7 @@ services:
 
   valkey:
     profiles: [core]
-    image: valkey/valkey:9.1-alpine
+    image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     command:
       - valkey-server
       - --maxmemory
@@ -211,7 +211,7 @@ services:
   # and nothing is written to disk.
   valkey-oidc:
     profiles: [core]
-    image: valkey/valkey:9.1-alpine
+    image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     command:
       - valkey-server
       - --maxmemory
@@ -238,7 +238,7 @@ services:
 
   zitadel-api:
     profiles: [core]
-    image: ghcr.io/zitadel/zitadel:v4.20.1
+    image: ghcr.io/zitadel/zitadel:v4.20.1@sha256:4817dbd8896306867f28bba63e7dc3526b2d2646ac7111db9524eb3ab6e82301
     # user "0": the bootstrap volume is root-owned and the image runs as a non-root user, which could not write
     # the PAT (personal access token) files. Same as ZITADEL's official compose.
     user: '0'
@@ -295,7 +295,7 @@ services:
 
   zitadel-login:
     profiles: [core]
-    image: ghcr.io/zitadel/zitadel-login:v4.20.1
+    image: ghcr.io/zitadel/zitadel-login:v4.20.1@sha256:1508e83275f1471b20ed42b159174e6b3e10e6c2481e64c0aee7ed5bfeeec18b
     user: '0' # same reason as zitadel-api; also lets it read the root-owned PAT file
     environment:
       ZITADEL_API_URL: http://zitadel-api:8080
@@ -330,7 +330,7 @@ services:
 
   caddy:
     profiles: [core]
-    image: caddy:2.11-alpine
+    image: caddy:2.11-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
     environment:
       AUTH_HOST: ${AUTH_HOST:-auth.localhost}
       APP_HOST: ${APP_HOST:-app.localhost}
@@ -513,7 +513,7 @@ services:
   # ---------------------------------------------------------------- tools (one-shot: docker compose run --rm <name>)
   seed-zitadel:
     profiles: [tools]
-    image: node:24-bookworm-slim
+    image: node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
     user: '0' # admin.pat in the bootstrap volume is root-owned
     working_dir: /repo
     # ASSUMPTION: U6 builds tools/seed-zitadel to dist/index.js. Override the command if it runs through tsx.
@@ -537,7 +537,7 @@ services:
 
   k6:
     profiles: [tools]
-    image: grafana/k6:2.3.0
+    image: grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
     command: ['run', '/perf/load.js']
     environment:
       SSL_CERT_FILE: /certs/caddy-root.crt # Go trusts Caddy's root CA through this
@@ -586,7 +586,7 @@ services:
   # ---------------------------------------------------------------- obs
   prometheus:
     profiles: [obs]
-    image: prom/prometheus:v3.16.0
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=7d

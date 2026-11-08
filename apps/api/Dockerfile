@@ -7,7 +7,7 @@
 # Build context is the REPO ROOT (the workspace needs pnpm-lock.yaml and packages/*):
 #   docker build -f apps/api/Dockerfile -t bos/api:dev .
 
-ARG NODE_IMAGE=node:24-bookworm-slim
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 ARG PNPM_VERSION=11.28.11
 
 # ---------------------------------------------------------------- build
