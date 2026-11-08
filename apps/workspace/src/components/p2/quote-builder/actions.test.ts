@@ -177,6 +177,11 @@ describe('saveDraftAction', () => {
       values: values(),
     });
     expect(res).toEqual({ ok: true, version: 4 });
-    expect(api.updateDraft.mock.calls[0]?.[3]).toMatchObject({ expectedVersion: 3 });
+    // A blank field is sent as null so the save clears it; the API keeps any key it is not sent.
+    expect(api.updateDraft.mock.calls[0]?.[3]).toMatchObject({
+      expectedVersion: 3,
+      discount: null,
+      scope: null,
+    });
   });
 });

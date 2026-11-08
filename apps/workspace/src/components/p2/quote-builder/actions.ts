@@ -140,7 +140,7 @@ export async function saveDraftAction(
   const blocked = scheduleFailure(input.values);
   if (blocked) return withKey(blocked);
 
-  const content = toContent(input.values);
+  const content = toContent(input.values, input.mode);
 
   if (input.mode === 'create') {
     const parsed = CreateQuotationBodySchema.safeParse({
