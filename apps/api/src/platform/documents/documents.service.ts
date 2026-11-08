@@ -46,12 +46,12 @@ import {
   AUTHZ_PORT,
   DOCS_SCAN_JOB,
   DOCS_SCAN_QUEUE,
-  SCAN_ATTEMPTS,
   type AuditPort,
   type AuthzPort,
   type DocumentOwnerPolicy,
   type ScanJobData,
 } from './documents.ports';
+import { SCAN_JOB_OPTIONS } from './scan.processor';
 import { LinkError, SignedLinks } from './signed-link';
 import {
   PayloadTooLargeError,
@@ -372,11 +372,9 @@ export class DocumentsService {
     try {
       await this.queue.add(DOCS_SCAN_JOB, job, {
         // The version id as job id: queueing the same version twice is a no-op, not two scans.
+        // Seven attempts with exponential backoff (~30 min) ride out a short ClamAV outage (R7).
+        ...SCAN_JOB_OPTIONS,
         jobId: versionId,
-        attempts: SCAN_ATTEMPTS,
-        backoff: { type: 'exponential', delay: 5_000 },
-        removeOnComplete: 100,
-        removeOnFail: 500,
       });
     } catch (error) {
       // Without a job the file would sit in quarantine forever. Undo, so the client can simply retry.
