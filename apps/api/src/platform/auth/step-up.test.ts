@@ -8,6 +8,7 @@ import {
   isAuthRecent,
   STEP_UP_REQUIRED,
   StepUpRequiredException,
+  stepUpMaxAgeFromEnv,
 } from './step-up';
 
 const NOW_MS = 1_800_000_000_000;
@@ -77,4 +78,22 @@ describe('assertRecentAuth', () => {
     expect(ex.getStatus()).toBe(401);
     expect(ex.getResponse()).toMatchObject({ code: STEP_UP_REQUIRED, maxAge: MAX });
   });
+});
+
+describe('stepUpMaxAgeFromEnv', () => {
+  it('defaults to 300 when unset or empty', () => {
+    expect(stepUpMaxAgeFromEnv(undefined)).toBe(300);
+    expect(stepUpMaxAgeFromEnv('')).toBe(300);
+  });
+
+  it('reads a positive whole number of seconds', () => {
+    expect(stepUpMaxAgeFromEnv('120')).toBe(120);
+  });
+
+  it.each(['0', '-5', '1.5', 'abc', '1e3', ' 60', '86401'])(
+    'refuses %s at startup instead of guessing',
+    (raw) => {
+      expect(() => stepUpMaxAgeFromEnv(raw)).toThrow(/STEP_UP_MAX_AGE_SECONDS/);
+    },
+  );
 });
