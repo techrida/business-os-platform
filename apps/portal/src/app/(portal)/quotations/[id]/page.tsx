@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { formatMoney } from '@bos/locale';
+import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
 import { Alert } from '@/components/portal/alert';
@@ -57,7 +58,7 @@ export default async function QuotationPage({
   return (
     <main className={styles.main}>
       <p className={styles.back}>
-        <a href="/">← Your quotations</a>
+        <Link href="/">← Your quotations</Link>
       </p>
       {confirmation ? (
         <Alert tone="success" role="status" className={styles.confirmation}>
