@@ -25,7 +25,7 @@ import type { Session } from '@/lib/session';
  * carries the user's access token. Each response is parsed with the contracts' schemas, so an API
  * that drifts from the contract fails here (502) instead of rendering `undefined`.
  *
- * The routes do not exist on the API yet. The list envelope is not in the contracts, so a list may
+ * The routes are on the API. The list envelope is not in the contracts, so a list may
  * come back as a bare array (like `/v1/approvals/inbox`) or as `{ items, total? }` (like the audit
  * log); both parse. Failures are worded by `failureOf` from `@/lib/api-kernel`.
  */

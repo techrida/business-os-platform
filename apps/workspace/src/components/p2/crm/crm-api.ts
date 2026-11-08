@@ -19,17 +19,14 @@ import type { Session } from '@/lib/session';
 /**
  * Typed calls from the workspace BFF to the CRM routes. Every response is parsed with the
  * contracts' schemas, so an API that drifts fails loudly (502) instead of rendering `undefined`.
- * The CRM endpoints are new; the guesses about their wire shape are named below, each in one place.
+ * Lists answer a bare array today; the envelope is read in one place (`listOf`).
  */
 
-/**
- * ASSUMED: a list answers a bare array (like the approvals inbox) or `{ items }` (like the audit
- * list). Both are accepted here, so only this constant changes once the API fixes one.
- */
+/** A list answers a bare array (the API's CRM lists do); `{ items }` is accepted too. */
 const listOf = <T extends z.ZodType>(item: T) =>
   z.union([z.array(item), z.object({ items: z.array(item) }).transform((o) => o.items)]);
 
-/** ASSUMED: a successful convert names the new opportunity (and the customer) it made or linked. */
+/** A successful convert answers `{ opportunityId, customerId }`. */
 const ConvertResultSchema = z.object({
   opportunityId: z.guid(),
   customerId: z.guid().optional(),
@@ -90,16 +87,24 @@ export function listLeads(
   return call(session, `/v1/leads${query(opts)}`, listOf(LeadDtoSchema));
 }
 
-/** ASSUMED: `GET /v1/leads/:id` exists (the brief lists only the list route). */
 export function getLead(session: Session, id: string) {
   return call(session, `/v1/leads/${seg(id)}`, LeadDtoSchema);
 }
 
-export function createLead(session: Session, body: CreateLeadBody) {
-  return call(session, '/v1/leads', LeadDtoSchema, json('POST', body));
+/**
+ * The API dedupes on the `idempotency-key` header, so a double click or a retry after a timeout
+ * creates one lead, not two.
+ */
+export function createLead(session: Session, body: CreateLeadBody, idempotencyKey: string) {
+  return call(
+    session,
+    '/v1/leads',
+    LeadDtoSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
 }
 
-/** ASSUMED: the stage route answers the updated lead. */
+/** The stage route answers the updated lead. */
 export function changeLeadStage(session: Session, id: string, body: LeadStageChangeBody) {
   return call(session, `/v1/leads/${seg(id)}/stage`, LeadDtoSchema, json('PATCH', body));
 }
@@ -138,7 +143,7 @@ export function getOpportunity(session: Session, id: string) {
   return call(session, `/v1/opportunities/${seg(id)}`, OpportunityDtoSchema);
 }
 
-/** ASSUMED: the stage route answers the updated opportunity. */
+/** The stage route answers the updated opportunity. */
 export function changeOpportunityStage(
   session: Session,
   id: string,
@@ -156,10 +161,7 @@ export function changeOpportunityStage(
 // Activities
 // ---------------------------------------------------------------------------------------------
 
-/**
- * ASSUMED query params: one subject id (`leadId` or `opportunityId`), `kind`, `limit`. The API
- * may filter more; these are the ones the screens send.
- */
+/** Query params the screens send: one subject id (`leadId` or `opportunityId`), `kind`, `limit`. */
 export function listActivities(
   session: Session,
   opts: { leadId?: string; opportunityId?: string; kind?: ActivityKind; limit?: number } = {},
@@ -167,6 +169,12 @@ export function listActivities(
   return call(session, `/v1/activities${query(opts)}`, listOf(ActivityDtoSchema));
 }
 
-export function createActivity(session: Session, body: CreateActivityBody) {
-  return call(session, '/v1/activities', ActivityDtoSchema, json('POST', body));
+/** Sent with an `idempotency-key`, so a double click logs the activity once. */
+export function createActivity(session: Session, body: CreateActivityBody, idempotencyKey: string) {
+  return call(
+    session,
+    '/v1/activities',
+    ActivityDtoSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
 }
