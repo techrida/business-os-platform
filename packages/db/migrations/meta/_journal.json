@@ -92,6 +92,20 @@
       "when": 1783000000012,
       "tag": "0012_idempotency_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783000000013,
+      "tag": "0013_legal_entities",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783000000014,
+      "tag": "0014_composite_keys",
+      "breakpoints": true
     }
   ]
 }
