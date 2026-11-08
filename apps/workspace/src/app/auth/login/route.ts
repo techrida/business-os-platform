@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 
 import { beginLogin, LOGIN_COOKIE, LOGIN_COOKIE_MAX_AGE } from '@/lib/oidc';
+import { checkLoginRateLimit } from '@/lib/rate-limit';
 import { safeReturnTo } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -24,6 +25,19 @@ function parseLoginHint(raw: string | null): string | undefined {
 }
 
 export async function GET(req: Request): Promise<Response> {
+  // CR-03: before beginLogin, so a blocked request writes no OIDC state to Valkey and no cookie.
+  const limit = await checkLoginRateLimit(req);
+  if (!limit.allowed) {
+    return new Response('Too many sign-in attempts. Try again shortly.', {
+      status: 429,
+      headers: {
+        'retry-after': String(limit.retryAfter),
+        'cache-control': 'no-store',
+        'content-type': 'text/plain; charset=utf-8',
+      },
+    });
+  }
+
   const params = new URL(req.url).searchParams;
   const loginHint = parseLoginHint(params.get('login_hint'));
   const prompt = parsePrompt(params.get('prompt'));
