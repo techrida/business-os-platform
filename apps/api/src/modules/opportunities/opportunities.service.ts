@@ -122,12 +122,12 @@ export class OpportunitiesService {
 
   // ------------------------------------------------------------------------------------------ stage change
 
-  /** A user's move. Only user edges (and manager edges for a manager); won and quotation_sent are refused. */
+  /** A user's move. Only edges marked `user` are open: won, quotation_sent and the manager reopen are refused. */
   async changeStage(id: string, body: OpportunityStageChangeBody): Promise<OpportunityDto> {
-    const { scope, actor, principal } = this.caller.current();
-    // A write grant at scope `all` is what makes someone a manager: the role table stays the one source of truth.
-    const by: StageCaller =
-      principal.grants.get('crm.opportunity.write') === 'all' ? 'manager' : 'user';
+    const { scope, actor } = this.caller.current();
+    // Every HTTP caller is a plain user: only edges the table marks `user` are open. The manager edge (reopening a
+    // lost opportunity) stays closed until the product names who a manager is; the planner already supports it.
+    const by: StageCaller = 'user';
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
