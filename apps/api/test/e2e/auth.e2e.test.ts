@@ -126,6 +126,7 @@ describe('GET /v1/me with a valid token', () => {
       tenantId: e2e.tenantId,
       organizationId: e2e.staff.organizationId,
       orgKind: 'staff',
+      partyId: null,
       roles: ['founder'],
       correlationId: 'e2e-correlation-0001',
     });
@@ -142,7 +143,10 @@ describe('GET /v1/me with a valid token', () => {
     expect(res.status).toBe(200);
     const me = MeResponseSchema.parse(res.body);
     expect(me.orgKind).toBe('customer');
+    // A portal user acts in the tenant's default entity and is identified by its party (ADR 0027).
     expect(me.organizationId).toBe(e2e.customer.organizationId);
+    expect(me.partyId).toBe(e2e.customer.partyId);
+    expect(me.partyId).not.toBeNull();
     expect(me.tenantId).toBe(e2e.tenantId);
     expect(me.roles).toEqual(['customer_user']);
   });
