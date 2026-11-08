@@ -14,7 +14,7 @@ function classes({ variant = 'primary', size = 'medium' }: Look, extra?: string)
   return [styles.button, styles[variant], styles[size], extra].filter(Boolean).join(' ');
 }
 
-/** Figma Button: Primary / Secondary / Ghost, Small 34 / Medium 40 / Large 48. */
+/** Figma Button: Primary / Secondary / Ghost, Small 36 / Medium 40 / Large 48. */
 export function Button({
   variant,
   size,
