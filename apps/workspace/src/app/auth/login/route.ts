@@ -28,6 +28,8 @@ export async function GET(req: Request): Promise<Response> {
   // CR-03: before beginLogin, so a blocked request writes no OIDC state to Valkey and no cookie.
   const limit = await checkLoginRateLimit(req);
   if (!limit.allowed) {
+    // Without this a 429 leaves no server trace. Only the delay: no client IP, no session id.
+    console.warn(JSON.stringify({ event: 'auth.login_rate_limited', retryAfter: limit.retryAfter }));
     return new Response('Too many sign-in attempts. Try again shortly.', {
       status: 429,
       headers: {

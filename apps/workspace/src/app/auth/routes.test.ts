@@ -216,6 +216,29 @@ describe('GET /auth/login', () => {
       expect(cookiesWritten()).toEqual([]);
     });
 
+    // Without this line a 429 leaves no trace on the server, so a flaky e2e run cannot be told
+    // from a real failure. The line must never carry the client IP or a session id.
+    it('logs the 429 as auth.login_rate_limited with the retry delay, and nothing that identifies the client', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      requestCookies.set(SESSION_COOKIE, SESSION_ID);
+      for (let i = 0; i < 20; i++) await from('203.0.113.7');
+      expect(warn).not.toHaveBeenCalled();
+
+      const res = await loginGET(
+        new Request(`${ORIGIN}/auth/login`, {
+          headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.2', 'x-real-ip': '203.0.113.7' },
+        }),
+      );
+
+      expect(res.status).toBe(429);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]?.[0]);
+      expect(JSON.parse(line)).toEqual({ event: 'auth.login_rate_limited', retryAfter: 60 });
+      expect(line).not.toContain('203.0.113.7');
+      expect(line).not.toContain('10.0.0.2');
+      expect(line).not.toContain(SESSION_ID);
+    });
+
     it('still lets another IP sign in', async () => {
       for (let i = 0; i < 21; i++) await from('203.0.113.7');
       expect((await from('198.51.100.1')).status).toBe(303);
