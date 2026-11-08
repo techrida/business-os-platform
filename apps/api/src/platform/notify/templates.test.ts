@@ -206,6 +206,25 @@ describe('renderEmail', () => {
     expect(text).toContain('https://app.example.com/memos/abc-123');
   });
 
+  it('accepts a /quotations/ link on the decided email only (a quotation subject links its page)', () => {
+    const { text } = renderEmail(
+      'approval.decided',
+      { ...sample, linkPath: '/quotations/abc-123' },
+      opts,
+    );
+    expect(text).toContain(`${WORKSPACE}/quotations/abc-123`);
+    for (const template of [
+      'approval.pending',
+      'approval.reminder',
+      'approval.escalated',
+      'approval.blocked',
+    ] as const) {
+      expect(() =>
+        renderEmail(template, { ...varsFor(template), linkPath: '/quotations/abc-123' }, opts),
+      ).toThrow(EmailTemplateError);
+    }
+  });
+
   it.each([
     'https://evil.example.com/inbox/1',
     '//evil.example.com/inbox/1',
