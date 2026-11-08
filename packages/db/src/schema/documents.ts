@@ -1,20 +1,24 @@
 // Drizzle tables for migration 0004_documents (uploaded files). Owner: U4.
 // The SQL in migrations/0004_documents.sql stays the source of truth: it also holds the two triggers that
 // freeze a clean version and block its deletion, which Drizzle cannot model. Keep the two in step.
+// ADR 0027 section 8 (migration 0014_composite_keys): parent keys and composite foreign keys that carry
+// tenant_id and organization_id, so a child can never point at another entity's row.
 import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
   customType,
+  foreignKey,
   index,
   integer,
+  type PgTableExtraConfigValue,
   text,
   timestamp,
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { appSchema } from './platform.js';
+import { appSchema, organizations } from './platform.js';
 
 /** Postgres bytea as a Node Buffer (used for the SHA-256 of the content). */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -51,7 +55,27 @@ export const documents = appSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('documents_owner_idx').on(t.tenantId, t.organizationId, t.ownerType, t.ownerId)],
+  (t): PgTableExtraConfigValue[] => [
+    index('documents_owner_idx').on(t.tenantId, t.organizationId, t.ownerType, t.ownerId),
+    // Parent keys for the composite FKs (ADR 0027 section 8).
+    unique('documents_tenant_id_unique').on(t.tenantId, t.id),
+    unique('documents_tenant_org_id_unique').on(t.tenantId, t.organizationId, t.id),
+    foreignKey({
+      name: 'documents_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    // MATCH SIMPLE: not checked while current_version_id is NULL.
+    foreignKey({
+      name: 'documents_current_version_fk',
+      columns: [t.tenantId, t.organizationId, t.currentVersionId],
+      foreignColumns: [
+        documentVersions.tenantId,
+        documentVersions.organizationId,
+        documentVersions.id,
+      ],
+    }),
+  ],
 );
 
 /** One uploaded content with its own scan status. The bytes live on the files volume, not here. */
@@ -61,9 +85,7 @@ export const documentVersions = appSchema.table(
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: uuid('tenant_id').notNull(),
     organizationId: uuid('organization_id').notNull(),
-    documentId: uuid('document_id')
-      .notNull()
-      .references(() => documents.id),
+    documentId: uuid('document_id').notNull(),
     version: integer('version').notNull(),
     filename: text('filename').notNull(),
     declaredMime: text('declared_mime').notNull(),
@@ -80,8 +102,25 @@ export const documentVersions = appSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [
-    unique('document_versions_document_version_unique').on(t.documentId, t.version),
+  (t): PgTableExtraConfigValue[] => [
+    unique('document_versions_tenant_document_version_unique').on(
+      t.tenantId,
+      t.documentId,
+      t.version,
+    ),
+    // Parent keys for the composite FKs (ADR 0027 section 8).
+    unique('document_versions_tenant_id_unique').on(t.tenantId, t.id),
+    unique('document_versions_tenant_org_id_unique').on(t.tenantId, t.organizationId, t.id),
+    foreignKey({
+      name: 'document_versions_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'document_versions_document_fk',
+      columns: [t.tenantId, t.organizationId, t.documentId],
+      foreignColumns: [documents.tenantId, documents.organizationId, documents.id],
+    }),
     index('document_versions_document_idx').on(t.tenantId, t.organizationId, t.documentId),
     check('document_versions_size_check', sql`${t.sizeBytes} >= 0 AND ${t.sizeBytes} <= 26214400`),
   ],

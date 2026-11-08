@@ -8,6 +8,7 @@ import {
   char,
   check,
   date,
+  foreignKey,
   integer,
   jsonb,
   numeric,
@@ -30,9 +31,7 @@ export const settings = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    organizationId: uuid('organization_id').notNull(),
     key: text('key').notNull(),
     version: integer('version').notNull(),
     value: jsonb('value').notNull(),
@@ -48,6 +47,12 @@ export const settings = appSchema.table(
       t.version,
     ),
     check('settings_version_check', sql`${t.version} >= 1`),
+    // ADR 0027 section 8 (migration 0014_composite_keys).
+    foreignKey({
+      name: 'settings_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
   ],
 );
 
@@ -59,9 +64,7 @@ export const numberSeries = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    organizationId: uuid('organization_id').notNull(),
     key: text('key').notNull(),
     /** Nepali fiscal year such as `2082/83`. */
     fiscalYear: text('fiscal_year').notNull(),
@@ -79,10 +82,16 @@ export const numberSeries = appSchema.table(
     ),
     check('number_series_next_value_check', sql`${t.nextValue} >= 1`),
     check('number_series_pad_check', sql`${t.pad} >= 1`),
+    // ADR 0027 section 8 (migration 0014_composite_keys).
+    foreignKey({
+      name: 'number_series_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
   ],
 );
 
-/** Manual exchange rate to NPR for one currency on one date. */
+/** Manual exchange rate to NPR for one currency on one date. Tenant-scoped: a rate is a market fact (ADR 0027). */
 export const fxRates = appSchema.table(
   'fx_rates',
   {
@@ -90,9 +99,6 @@ export const fxRates = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
     currency: char('currency', { length: 3, enum: FX_CURRENCIES }).notNull(),
     /** numeric as a string, so no float ever touches a rate. Wrap it in decimal.js. */
     rateNpr: numeric('rate_npr', { precision: 18, scale: 6 }).notNull(),
@@ -103,12 +109,7 @@ export const fxRates = appSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    unique('fx_rates_tenant_org_currency_date_unique').on(
-      t.tenantId,
-      t.organizationId,
-      t.currency,
-      t.rateDate,
-    ),
+    unique('fx_rates_tenant_currency_date_unique').on(t.tenantId, t.currency, t.rateDate),
     check('fx_rates_currency_check', sql`${t.currency} in ('INR', 'USD')`),
     check('fx_rates_rate_npr_check', sql`${t.rateNpr} > 0`),
   ],

@@ -1,27 +1,31 @@
-// Drizzle tables for migration 0002_identity_authz: people (users, departments), what they may do
-// (user_roles, role_permissions), the cache key for that (authz_versions) and the ZITADEL sync bookkeeping
-// (ops.zitadel_events, ops.sync_cursors). Serves the authorization NFR: every decision rests on these rows.
-// The SQL in migrations/0002_identity_authz.sql is the source of truth; this file only types the queries,
-// so keep the two in step (a change is a new migration, never an edit of 0002).
+// Drizzle tables for migration 0002_identity_authz, reshaped by 0013_legal_entities (ADR 0027): people (users,
+// departments, user_entities), what they may do (user_roles, role_permissions), the cache key for that
+// (authz_versions) and the ZITADEL sync bookkeeping (ops.zitadel_events, ops.sync_cursors).
+// Serves the authorization NFR: every decision rests on these rows.
+// The SQL in migrations/0002_identity_authz.sql and 0013_legal_entities.sql is the source of truth; this file
+// only types the queries, so keep the two in step (a change is a new migration, never an edit of an old one).
+// users, user_roles, role_permissions and authz_versions are tenant-scoped: they have no organization_id.
 import { sql } from 'drizzle-orm';
 import {
-  type AnyPgColumn,
   bigint,
+  boolean,
   check,
+  foreignKey,
   index,
   primaryKey,
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { appSchema, opsSchema, organizations, tenants } from './platform.js';
+import { appSchema, idpOrgs, opsSchema, organizations, tenants } from './platform.js';
 
 /** Lifecycle of a user row. `invited` = created in ZITADEL, never logged in; `inactive` = may not act. */
 export const USER_STATUSES = ['invited', 'active', 'inactive'] as const;
 
-/** How far a role's permission reaches: the user's own records, their department, one customer org, everything. */
+/** How far a role's permission reaches: the user's own records, their department, rows naming the caller's party, everything. */
 export const ROLE_PERMISSION_SCOPES = ['own', 'department', 'customer_org', 'all'] as const;
 
 export const departments = appSchema.table(
@@ -31,18 +35,37 @@ export const departments = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    organizationId: uuid('organization_id').notNull(),
     name: text('name').notNull(),
-    /** The department head. Departments and users point at each other, so both sides name AnyPgColumn. */
-    headUserId: uuid('head_user_id').references((): AnyPgColumn => users.id),
+    /** The department head. NULL until one is named; the composite FK below keeps the head in the same tenant. */
+    headUserId: uuid('head_user_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('departments_tenant_org_idx').on(t.tenantId, t.organizationId)],
+  (t) => [
+    index('departments_tenant_org_idx').on(t.tenantId, t.organizationId),
+    // Parent keys for composite FKs (user_entities, memos), ADR 0027 section 8.
+    unique('departments_tenant_id_unique').on(t.tenantId, t.id),
+    unique('departments_tenant_org_id_unique').on(t.tenantId, t.organizationId, t.id),
+    // ADR 0027 section 8 (migration 0014_composite_keys). MATCH SIMPLE: head_user_id may be NULL.
+    foreignKey({
+      name: 'departments_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'departments_head_user_fk',
+      columns: [t.tenantId, t.headUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+  ],
 );
 
+/**
+ * People. Tenant-scoped (ADR 0027 section 3): no organization_id and no department (the department moved to
+ * user_entities). A staff user belongs to the tenant through the staff IdP org; a portal user belongs to a party
+ * through its IdP org (the party comes from idp_orgs.party_id and is not copied here).
+ */
 export const users = appSchema.table(
   'users',
   {
@@ -50,54 +73,64 @@ export const users = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    /** The user's own organization: a customer's user belongs to the customer organization. */
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    /** The ZITADEL org the user logs in through. The tenant follows from it (R26 checks the two match). */
+    idpOrgId: uuid('idp_org_id').notNull(),
     /** The ZITADEL `sub`. How a token finds its row. */
     zitadelUserId: text('zitadel_user_id').notNull().unique('users_zitadel_user_id_unique'),
     /** Nullable: the first-request upsert only knows what the token carries; the sync fills these in. */
     email: text('email'),
     displayName: text('display_name'),
     status: text('status', { enum: USER_STATUSES }).notNull(),
-    departmentId: uuid('department_id').references((): AnyPgColumn => departments.id),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check('users_status_check', sql`${t.status} in ('invited', 'active', 'inactive')`),
-    index('users_tenant_org_status_idx').on(t.tenantId, t.organizationId, t.status),
-    index('users_tenant_org_department_idx').on(t.tenantId, t.organizationId, t.departmentId),
+    index('users_tenant_status_idx').on(t.tenantId, t.status),
+    index('users_tenant_idp_org_idx').on(t.tenantId, t.idpOrgId),
+    // Parent key for composite FKs (tenant_id, user_id), ADR 0027 section 8.
+    unique('users_tenant_id_unique').on(t.tenantId, t.id),
+    // The IdP org must belong to the same tenant (ADR 0027 section 8, migration 0014_composite_keys).
+    foreignKey({
+      name: 'users_idp_org_fk',
+      columns: [t.tenantId, t.idpOrgId],
+      foreignColumns: [idpOrgs.tenantId, idpOrgs.id],
+    }),
   ],
 );
 
-/** Mirror of the ZITADEL grants (ZITADEL is the truth). Primary key is the natural key, not id. */
+/** Mirror of the ZITADEL grants (ZITADEL is the truth). Tenant-scoped. Primary key is the natural key, not id. */
 export const userRoles = appSchema.table(
   'user_roles',
   {
-    /** Not the primary key (that is user_id + role_key) but unique: the audit trigger identifies rows by id. */
+    /** Not the primary key (that is tenant_id + user_id + role_key) but unique: the audit trigger identifies rows by id. */
     id: uuid('id').notNull().defaultRandom(),
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id),
+    userId: uuid('user_id').notNull(),
     roleKey: text('role_key').notNull(),
     source: text('source').notNull().default('zitadel'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    primaryKey({ name: 'user_roles_user_id_role_key_pk', columns: [t.userId, t.roleKey] }),
+    primaryKey({
+      name: 'user_roles_tenant_id_user_id_role_key_pk',
+      columns: [t.tenantId, t.userId, t.roleKey],
+    }),
     unique('user_roles_id_unique').on(t.id),
-    index('user_roles_tenant_org_role_idx').on(t.tenantId, t.organizationId, t.roleKey),
+    // The user must belong to the same tenant (ADR 0027 section 8, migration 0014_composite_keys).
+    foreignKey({
+      name: 'user_roles_user_fk',
+      columns: [t.tenantId, t.userId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    index('user_roles_tenant_role_idx').on(t.tenantId, t.roleKey),
   ],
 );
 
+/** What a role may do. Company policy, so tenant-scoped (ADR 0027 section 7); membership narrows it per entity. */
 export const rolePermissions = appSchema.table(
   'role_permissions',
   {
@@ -105,18 +138,14 @@ export const rolePermissions = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
     roleKey: text('role_key').notNull(),
     permission: text('permission').notNull(),
     scope: text('scope', { enum: ROLE_PERMISSION_SCOPES }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    unique('role_permissions_tenant_org_role_permission_unique').on(
+    unique('role_permissions_tenant_role_permission_unique').on(
       t.tenantId,
-      t.organizationId,
       t.roleKey,
       t.permission,
     ),
@@ -127,7 +156,7 @@ export const rolePermissions = appSchema.table(
   ],
 );
 
-/** One row per organization: the cache key for the in-memory role cache. Not audited (check-audit allowlist). */
+/** One row per tenant: the cache key for the in-memory role cache. Not audited (check-audit allowlist). */
 export const authzVersions = appSchema.table(
   'authz_versions',
   {
@@ -135,13 +164,57 @@ export const authzVersions = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
     version: bigint('version', { mode: 'number' }).notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [unique('authz_versions_tenant_org_unique').on(t.tenantId, t.organizationId)],
+  (t) => [unique('authz_versions_tenant_unique').on(t.tenantId)],
+);
+
+/**
+ * Which legal entities a staff user may act for (ADR 0027 section 3). Entity-owned: the department lives here
+ * because a department belongs to one entity. Effective roles in entity E = the token's roles intersected with
+ * `roleKeys` of the membership for E (NULL means all token roles). BOS can only narrow, never widen.
+ */
+export const userEntities = appSchema.table(
+  'user_entities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    organizationId: uuid('organization_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    /** The entity used when a request names none. At most one per user. */
+    isDefault: boolean('is_default').notNull().default(false),
+    /** The roles this membership allows; NULL = every role in the token. */
+    roleKeys: text('role_keys').array(),
+    departmentId: uuid('department_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('user_entities_tenant_org_user_unique').on(t.tenantId, t.organizationId, t.userId),
+    // PostgreSQL has no partial unique constraint, so this is a unique index: one default entity per user.
+    uniqueIndex('user_entities_tenant_user_default_unique')
+      .on(t.tenantId, t.userId)
+      .where(sql`${t.isDefault}`),
+    foreignKey({
+      name: 'user_entities_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'user_entities_tenant_user_fk',
+      columns: [t.tenantId, t.userId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    // MATCH SIMPLE: not checked while department_id is NULL.
+    foreignKey({
+      name: 'user_entities_tenant_org_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    index('user_entities_tenant_user_idx').on(t.tenantId, t.userId),
+  ],
 );
 
 /** ZITADEL events already seen; the primary key makes a replay a no-op. No tenancy columns (ops). */

@@ -1,12 +1,13 @@
 // Drizzle table for migration 0007_test_memo: the throwaway memo that exercises the kernel (P2 deletes it).
 // Serves the audit NFR (the table is audited) and the money NFR (the NPR snapshot is stored on the row).
-// The SQL in migrations/0007_test_memo.sql is the source of truth, including the assert_org_kind trigger that
-// Drizzle cannot model; this file only types the queries, so keep the two in step.
+// The SQL in migrations/0007_test_memo.sql and 0013_legal_entities.sql is the source of truth (0013 drops the
+// assert_org_kind trigger: the kind is now an FK to parties); this file only types the queries, so keep them in step.
 import { sql } from 'drizzle-orm';
 import {
   char,
   check,
   date,
+  foreignKey,
   index,
   integer,
   numeric,
@@ -16,7 +17,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { appSchema, organizations, tenants } from './platform.js';
+import { departments, users } from './identity.js';
+import { appSchema, organizations, parties, tenants } from './platform.js';
 
 /** Mirrors MEMO_STATUSES in @bos/contracts (the db package does not depend on contracts). */
 export const MEMO_STATUSES = ['draft', 'submitted', 'approved', 'returned', 'rejected'] as const;
@@ -28,10 +30,8 @@ export const testMemos = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    /** The owning (staff) org, never the customer's (ADR 0017). */
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    /** The owning legal entity, never the customer (ADR 0027). */
+    organizationId: uuid('organization_id').notNull(),
     number: text('number').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),
@@ -43,12 +43,19 @@ export const testMemos = appSchema.table(
     /** `YYYY-MM-DD`, kept as a string so no time zone can shift the day. */
     fxDate: date('fx_date', { mode: 'string' }).notNull(),
     status: text('status', { enum: MEMO_STATUSES }).notNull().default('draft'),
-    /** Record scope `own`. References app.users(id) in SQL; the foreign key lives only in the migration. */
+    /** Record scope `own`. Composite FK test_memos_owner_user_fk (tenant_id, owner_user_id) -> users, below. */
     ownerUserId: uuid('owner_user_id').notNull(),
     /** Record scope `department`. */
     departmentId: uuid('department_id'),
-    /** The counterparty a portal would show this memo to; the trigger checks it has kind `customer`. */
-    customerOrganizationId: uuid('customer_organization_id').references(() => organizations.id),
+    /** The customer party a portal would show this memo to (ADR 0027 section 5). Nullable. */
+    customerPartyId: uuid('customer_party_id'),
+    /**
+     * Always 'customer' (a stored generated column), so the composite FK below makes the database check the
+     * party's kind. This replaces the assert_org_kind trigger. Drizzle models it with generatedAlwaysAs; the
+     * column is left out of inserts. PostgreSQL allows the FK only with the default NO ACTION (never CASCADE
+     * or SET NULL on a generated column), and the type must be text to match parties.kind.
+     */
+    customerPartyKind: text('customer_party_kind').generatedAlwaysAs(sql`'customer'`),
     editorUserIds: uuid('editor_user_ids')
       .array()
       .notNull()
@@ -59,7 +66,30 @@ export const testMemos = appSchema.table(
   },
   (t) => [
     unique('test_memos_org_number_unique').on(t.tenantId, t.organizationId, t.number),
-    index('test_memos_tenant_customer_org_idx').on(t.tenantId, t.customerOrganizationId),
+    // ADR 0027 section 8 (migration 0014_composite_keys). The department FK is MATCH SIMPLE: not checked while NULL.
+    foreignKey({
+      name: 'test_memos_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'test_memos_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    foreignKey({
+      name: 'test_memos_owner_user_fk',
+      columns: [t.tenantId, t.ownerUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    // Created by 0007 as test_memos_tenant_customer_org_idx; it follows the renamed column, so 0013 renames it too.
+    index('test_memos_tenant_customer_party_idx').on(t.tenantId, t.customerPartyId),
+    // MATCH SIMPLE: not checked while customer_party_id is NULL.
+    foreignKey({
+      name: 'test_memos_customer_party_fk',
+      columns: [t.tenantId, t.customerPartyId, t.customerPartyKind],
+      foreignColumns: [parties.tenantId, parties.id, parties.kind],
+    }),
     index('test_memos_tenant_org_owner_idx').on(t.tenantId, t.organizationId, t.ownerUserId),
     check(
       'test_memos_status_check',

@@ -3,8 +3,19 @@
 // The SQL in migrations/0005_notify.sql is the source of truth; this file only types the queries, so keep
 // the two in step (a change is a new migration, never an edit of 0005). Both tables are on the check-audit
 // allowlist, so neither has an audit trigger.
+// ADR 0027 section 8 (migration 0014_composite_keys): composite FKs carry tenant_id, so a row can only point at
+// an entity and a user of its own tenant.
 import { sql } from 'drizzle-orm';
-import { check, index, integer, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 import { users } from './identity.js';
 import { appSchema, organizations, tenants } from './platform.js';
@@ -20,12 +31,8 @@ export const notifications = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id),
+    organizationId: uuid('organization_id').notNull(),
+    userId: uuid('user_id').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),
     /** A workspace path such as /inbox/<id>; never an absolute URL. */
@@ -37,6 +44,16 @@ export const notifications = appSchema.table(
   },
   (t) => [
     unique('notifications_tenant_user_dedupe_unique').on(t.tenantId, t.userId, t.dedupeKey),
+    foreignKey({
+      name: 'notifications_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    foreignKey({
+      name: 'notifications_user_fk',
+      columns: [t.tenantId, t.userId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
     index('notifications_tenant_user_read_idx').on(t.tenantId, t.userId, t.readAt),
     index('notifications_tenant_user_created_idx').on(
       t.tenantId,
@@ -54,12 +71,10 @@ export const outbox = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    organizationId: uuid('organization_id').notNull(),
     kind: text('kind', { enum: ['email'] }).notNull(),
     template: text('template').notNull(),
-    toUserId: uuid('to_user_id').references(() => users.id),
+    toUserId: uuid('to_user_id'),
     toEmail: text('to_email').notNull(),
     subject: text('subject').notNull(),
     bodyText: text('body_text').notNull(),
@@ -78,6 +93,17 @@ export const outbox = appSchema.table(
   },
   (t) => [
     unique('outbox_tenant_dedupe_unique').on(t.tenantId, t.dedupeKey),
+    foreignKey({
+      name: 'outbox_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+    // MATCH SIMPLE: not checked while to_user_id is NULL.
+    foreignKey({
+      name: 'outbox_to_user_fk',
+      columns: [t.tenantId, t.toUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
     check('outbox_kind_check', sql`${t.kind} in ('email')`),
     check('outbox_status_check', sql`${t.status} in ('pending', 'sending', 'sent', 'dead')`),
     // Not tenant-leading on purpose: the drainer looks for due rows across all tenants.
