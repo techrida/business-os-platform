@@ -171,6 +171,14 @@ describe('GET /auth/login', () => {
   // CR-03: each login stores OIDC state in Valkey, which runs noeviction. Unlimited logins fill
   // it and then every session write fails.
   describe('rate limit', () => {
+    // Fake only Date (ioredis-mock needs real timers), so the window TTL cannot tick to 59.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     const from = (ip: string) =>
       loginGET(
         new Request(`${ORIGIN}/auth/login`, { headers: { 'x-forwarded-for': `${ip}, 10.0.0.2` } }),
