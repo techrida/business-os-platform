@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { ApprovalsWorkerModule } from './modules/approvals/approvals.worker.module';
+import { QuotationRenderWorkerModule } from './modules/quotations/render/quotation-render.worker.module';
 import { AuditWorkerModule } from './platform/audit/audit.worker.module';
 import { ConfigModule } from './platform/config/config.module';
 import { DbModule } from './platform/db/db.module';
@@ -31,6 +32,7 @@ import { WorkerHealth } from './platform/queue/worker-health';
     NotifyWorkerModule,
     UsersWorkerModule,
     ApprovalsWorkerModule,
+    QuotationRenderWorkerModule,
   ],
   providers: [SystemProcessor, HeartbeatScheduler, WorkerHealth],
 })
