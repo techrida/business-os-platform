@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ActivityDtoSchema,
+  type ChecklistItem,
   ConvertLeadBodySchema,
   CreateActivityBodySchema,
   CreateCustomerBodySchema,
@@ -135,6 +136,12 @@ describe('stage transition table', () => {
     for (const t of into) expect(t.by).toBe('system');
     expect(findTransition('opportunity', 'negotiation', 'won')?.by).toBe('system');
     expect(findTransition('opportunity', 'quotation_sent', 'won')?.by).toBe('system');
+  });
+
+  it('lets a quote be sent from qualified: a system edge straight to quotation_sent', () => {
+    const edge = findTransition('opportunity', 'qualified', 'quotation_sent');
+    expect(edge?.by).toBe('system');
+    expect(edge?.needsReason).toBe(false);
   });
 
   it('makes reopening a lost record a manager action', () => {
@@ -319,7 +326,11 @@ describe('activities: exactly one primary subject', () => {
 
 describe('verification case', () => {
   const doc = crypto.randomUUID();
-  const item = (key: string, status: string, required = true) => ({
+  const item = (
+    key: ChecklistItem['key'],
+    status: ChecklistItem['status'],
+    required = true,
+  ): ChecklistItem => ({
     key,
     required,
     status,
