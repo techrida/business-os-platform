@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import type { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { __resetEnvForTests } from './env';
 import { getOidcRedis } from './oidc';
 import { checkLoginRateLimit, clientIp, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_S } from './rate-limit';
 import { getRedis } from './session';
@@ -20,10 +21,25 @@ const T0 = Date.UTC(2026, 10, 8, 12, 0, 0);
 let redis: Redis;
 let sessionRedis: Redis;
 
+/** The env the limiter reads through `getEnv()`: the real schema, so the override is validated too. */
+const ENV = {
+  OIDC_ISSUER: 'https://auth.localhost',
+  OIDC_CLIENT_ID: 'client-123',
+  OIDC_REDIRECT_URI: 'https://app.localhost/auth/callback',
+  OIDC_AUDIENCE: 'project-1',
+  WORKSPACE_PUBLIC_URL: 'https://app.localhost',
+  API_INTERNAL_URL: 'http://api:3001',
+  VALKEY_URL: 'redis://:pw@valkey:6379',
+  SESSION_ENC_KEY: Buffer.alloc(32, 7).toString('base64'),
+};
+
 const req = (headers: Record<string, string> = {}) =>
   new Request('https://app.localhost/auth/login', { headers });
 
 beforeEach(async () => {
+  for (const [name, value] of Object.entries(ENV)) vi.stubEnv(name, value);
+  vi.stubEnv('BOS_DEV_LOGIN_RATE_LIMIT', undefined);
+  __resetEnvForTests();
   // Fake only Date: ioredis-mock schedules its own work on real timers.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(T0);
@@ -35,6 +51,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
+  __resetEnvForTests();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -54,6 +72,33 @@ describe('checkLoginRateLimit', () => {
     const blocked = await checkLoginRateLimit(req(ip));
     expect(blocked).toEqual({ allowed: false, retryAfter: LOGIN_RATE_WINDOW_S });
     expect(await redis.ttl('ws:rl:login:203.0.113.7')).toBe(LOGIN_RATE_WINDOW_S);
+  });
+
+  it('blocks the 21st login when BOS_DEV_LOGIN_RATE_LIMIT is not set', async () => {
+    for (let i = 1; i <= 20; i++)
+      expect(await checkLoginRateLimit(req(ip))).toEqual({ allowed: true });
+    expect(await checkLoginRateLimit(req(ip))).toMatchObject({ allowed: false });
+  });
+
+  describe('with BOS_DEV_LOGIN_RATE_LIMIT=50', () => {
+    beforeEach(() => {
+      vi.stubEnv('BOS_DEV_LOGIN_RATE_LIMIT', '50');
+      __resetEnvForTests();
+    });
+
+    it('allows the 21st login and blocks the 51st', async () => {
+      for (let i = 1; i <= 50; i++) {
+        expect(await checkLoginRateLimit(req(ip)), `login ${i}`).toEqual({ allowed: true });
+      }
+      expect(await checkLoginRateLimit(req(ip))).toEqual({
+        allowed: false,
+        retryAfter: LOGIN_RATE_WINDOW_S,
+      });
+    });
+
+    it('leaves the exported production constant at 20', () => {
+      expect(LOGIN_RATE_LIMIT).toBe(20);
+    });
   });
 
   it('keeps the counter on the OIDC-state Valkey, with a TTL, and never on the session Valkey', async () => {
