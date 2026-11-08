@@ -20,8 +20,10 @@ export interface MintOptions {
   /** Seconds since the epoch. Default: five minutes from now. */
   expiresAt?: number;
   /**
-   * `auth_time`, seconds since the epoch. Default: none, like a token whose sign-in time is
-   * unknown, which step-up (K7) treats as stale. Pass `nowSeconds()` for a Founder decision.
+   * `auth_time`, seconds since the epoch. Default: none, like a real ZITADEL access token. Step-up
+   * (K7) never reads it from an access token: a Founder decision needs {@link
+   * TestIssuer.mintIdToken} in `x-bos-id-token`. Set it only to prove an access token with a
+   * fresh `auth_time` is still refused as an ID token.
    */
   authTime?: number;
   /**
