@@ -90,6 +90,7 @@ export class NotifyService {
     // and should fail the caller's transaction, not die quietly in a background job.
     const rendered = renderEmail(n.email.template, n.email.vars, {
       workspaceUrl: this.config.WORKSPACE_PUBLIC_URL,
+      portalUrl: this.config.PORTAL_PUBLIC_URL,
     });
 
     await tx
