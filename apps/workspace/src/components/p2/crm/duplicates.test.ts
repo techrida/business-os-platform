@@ -24,12 +24,20 @@ describe('duplicatesFrom', () => {
       },
     };
     expect(duplicatesFrom(body)).toEqual([
-      { kind: 'contact', id: CONTACT, label: 'Sunita Shrestha', matchedOn: 'email', customerId: CUSTOMER },
+      {
+        kind: 'contact',
+        id: CONTACT,
+        label: 'Sunita Shrestha',
+        matchedOn: 'email',
+        customerId: CUSTOMER,
+      },
     ]);
   });
 
   it('returns null for any other error body, so a real failure is never shown as a duplicate', () => {
-    expect(duplicatesFrom({ error: { code: 'conflict', message: 'x', correlationId: 'y' } })).toBeNull();
+    expect(
+      duplicatesFrom({ error: { code: 'conflict', message: 'x', correlationId: 'y' } }),
+    ).toBeNull();
     expect(duplicatesFrom('plain text')).toBeNull();
     expect(duplicatesFrom(undefined)).toBeNull();
   });
