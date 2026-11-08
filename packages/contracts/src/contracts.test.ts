@@ -7,6 +7,7 @@ const validMe = {
   tenantId: '00000000-0000-4000-8000-000000000001',
   organizationId: '00000000-0000-4000-8000-000000000002',
   orgKind: 'staff',
+  partyId: null,
   roles: ['founder', 'management'],
   correlationId: 'req-12345678',
 };
