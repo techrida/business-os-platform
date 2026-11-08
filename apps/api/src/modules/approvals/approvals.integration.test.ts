@@ -246,7 +246,12 @@ beforeAll(async () => {
   service = new ApprovalsService(db, audit, notify, users, caller, clock);
   admin = new ApprovalsAdminService(db, audit, caller, clock);
   sla = new ApprovalsSlaService(db, service, audit, notify, clock);
-  service.registerSubject({ documentType: 'test_memo', onDecided });
+  // The memo's own registration (TestMemoService) gives the same link hook.
+  service.registerSubject({
+    documentType: 'test_memo',
+    onDecided,
+    link: (documentId) => `/memos/${documentId}`,
+  });
 
   resetRoles();
   me = U.founder;
@@ -284,6 +289,8 @@ const submit = (over: Partial<SubmitInput> = {}) =>
       ...over,
     }),
   );
+
+const submitMemo = submit;
 
 const act = (as: string, requestId: string, body: object, key = randomUUID()) => {
   me = as;
@@ -1144,5 +1151,215 @@ describe('ADR 0027: role steps use the roles of the request entity', () => {
     expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(true);
     const dto = await act(U.mgmt, requestId, { action: 'approve', expectedVersion: 1 });
     expect(dto.status).toBe('approved');
+  });
+});
+
+describe('cancel (K1, kernel gap M5)', () => {
+  const REASON = 'Quotation revised while pending';
+  const asRequester = { kind: 'user' as const, id: '', correlationId: 'test-corr' };
+  const cancel = (requestId: string, reason = REASON) =>
+    withTx(db, scope, systemActor('test'), (tx) =>
+      service.cancel(tx, requestId, reason, { ...asRequester, id: U.requester }),
+    );
+  // Its own document type: other tests publish new test_memo versions with more steps.
+  const submit = (over: Partial<SubmitInput> = {}) =>
+    submitMemo({ documentType: 'k1_cancel', ...over });
+  beforeAll(async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'k1_cancel',
+      name: 'K1 cancel',
+      spec: { documentType: 'k1_cancel', steps: seedSpec.steps },
+    });
+    await admin.publish('k1_cancel', 1);
+    service.registerSubject({ documentType: 'k1_cancel', onDecided });
+  });
+
+  it('cancels a pending request: status, version, skipped steps, a cancel row and an audit event', async () => {
+    const { requestId } = await submit();
+    const dto = await cancel(requestId);
+    expect(dto).toMatchObject({ status: 'cancelled', version: 2 });
+    expect(dto.decidedAt).not.toBeNull();
+    expect(dto.steps.map((s) => s.status)).toEqual(['skipped', 'skipped']);
+    // find, not the last row: the fake clock gives submit and cancel the same createdAt, and ids are random.
+    expect(dto.actions.find((a) => a.action === 'cancel')).toMatchObject({
+      action: 'cancel',
+      actorUserId: U.requester,
+      comment: REASON,
+    });
+    expect(await countActions(requestId, 'cancel')).toBe(1);
+    expect(audit.record).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'approvals.cancel',
+        entityType: 'approval_request',
+        entityId: requestId,
+        before: { status: 'pending', version: 1 },
+        after: { status: 'cancelled', version: 2, reason: REASON },
+      }),
+    );
+    // No longer open: it leaves the inbox, and the subject is not told it was decided.
+    me = U.acc;
+    expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(false);
+    expect(onDecided).not.toHaveBeenCalled();
+  });
+
+  it('cancels a blocked request too', async () => {
+    roles.accountant = [];
+    const { requestId, status } = await submit();
+    expect(status).toBe('blocked');
+    const dto = await cancel(requestId);
+    expect(dto.status).toBe('cancelled');
+    expect(dto.steps.every((s) => s.status === 'skipped')).toBe(true);
+  });
+
+  it('frees the document for a new submission', async () => {
+    const documentId = randomUUID();
+    const first = await submit({ documentId });
+    await expect(submit({ documentId })).rejects.toMatchObject({ status: 409 });
+    await cancel(first.requestId);
+    expect((await submit({ documentId })).status).toBe('pending');
+  });
+
+  it('answers 409 to a second cancel and writes nothing more', async () => {
+    const { requestId } = await submit();
+    await cancel(requestId);
+    vi.clearAllMocks();
+    await expect(cancel(requestId)).rejects.toMatchObject({ status: 409 });
+    expect(await countActions(requestId, 'cancel')).toBe(1);
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 to a cancel of a decided request', async () => {
+    const { requestId } = await submit();
+    await act(U.acc, requestId, { action: 'reject', comment: 'No', expectedVersion: 1 });
+    await expect(cancel(requestId)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('answers 409 to an approver who acts after the cancel, with the old or the new version', async () => {
+    const { requestId } = await submit();
+    await cancel(requestId);
+    await expect(
+      act(U.acc, requestId, { action: 'approve', expectedVersion: 1 }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      act(U.acc, requestId, { action: 'approve', expectedVersion: 2 }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await countActions(requestId, 'approve')).toBe(0);
+  });
+
+  it('refuses a blank reason with 400', async () => {
+    const { requestId } = await submit();
+    await expect(cancel(requestId, '   ')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('answers 404 for a request of another entity', async () => {
+    const { requestId } = await submit();
+    await expect(
+      withTx(db, scopeB, systemActor('test'), (tx) =>
+        service.cancel(tx, requestId, REASON, systemActor('test')),
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('records a system cancel with no actor user (approval_actions_actor_check allows it)', async () => {
+    const { requestId } = await submit();
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      service.cancel(tx, requestId, 'Quotation expired', systemActor('quotation-expiry')),
+    );
+    const [row] = await db
+      .select()
+      .from(approvalActions)
+      .where(and(eq(approvalActions.requestId, requestId), eq(approvalActions.action, 'cancel')));
+    expect(row).toMatchObject({ actorUserId: null, comment: 'Quotation expired' });
+  });
+});
+
+describe('subject hooks (K1): link and onCancelled', () => {
+  const onCancelled = vi.fn((_tx: unknown, _documentId: string, _reason: string) =>
+    Promise.resolve(undefined),
+  );
+  beforeAll(async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'k1_quote',
+      name: 'K1 quote',
+      spec: { documentType: 'k1_quote', steps: [seedSpec.steps[0]!] },
+    });
+    await admin.publish('k1_quote', 1);
+    service.registerSubject({
+      documentType: 'k1_quote',
+      onDecided,
+      onCancelled,
+      link: (documentId) => `/quotations/${documentId}`,
+    });
+    service.registerSubject({ documentType: 'k1_nolink', onDecided });
+    await admin.createWorkflow({
+      key: 'k1_nolink',
+      name: 'K1 no link',
+      spec: { documentType: 'k1_nolink', steps: [seedSpec.steps[0]!] },
+    });
+    await admin.publish('k1_nolink', 1);
+  });
+
+  it('sends the decided notice to the link the subject gives', async () => {
+    const { requestId } = await submit({ documentType: 'k1_quote' });
+    const done = await act(U.acc, requestId, { action: 'approve', expectedVersion: 1 });
+    expect(done.status).toBe('approved');
+    const path = `/quotations/${done.documentId}`;
+    expect(notify.notifyUser).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: U.requester, link: path }),
+    );
+    const email = notify.notifyUser.mock.lastCall![1].email!;
+    expect(email.template).toBe('approval.decided');
+    expect(email.vars['linkPath']).toBe(path);
+  });
+
+  it('keeps the memo link for test_memo through its link hook', async () => {
+    const { requestId } = await submit();
+    const done = await act(U.acc, requestId, {
+      action: 'reject',
+      comment: 'No',
+      expectedVersion: 1,
+    });
+    expect(notify.notifyUser).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ link: `/memos/${done.documentId}` }),
+    );
+  });
+
+  it('falls back to the inbox for a subject without a link', async () => {
+    const { requestId } = await submit({ documentType: 'k1_nolink' });
+    await act(U.acc, requestId, { action: 'reject', comment: 'No', expectedVersion: 1 });
+    expect(notify.notifyUser).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ link: `/inbox/${requestId}` }),
+    );
+  });
+
+  it('tells the subject about a cancel with the reason, and not onDecided', async () => {
+    const documentId = randomUUID();
+    const { requestId } = await submit({ documentType: 'k1_quote', documentId });
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      service.cancel(tx, requestId, 'Revised', systemActor('test')),
+    );
+    expect(onCancelled).toHaveBeenCalledWith(expect.anything(), documentId, 'Revised');
+    expect(onDecided).not.toHaveBeenCalled();
+  });
+
+  it('rolls the cancel back when onCancelled throws (same transaction)', async () => {
+    const { requestId } = await submit({ documentType: 'k1_quote' });
+    onCancelled.mockRejectedValueOnce(new Error('subject refused'));
+    await expect(
+      withTx(db, scope, systemActor('test'), (tx) =>
+        service.cancel(tx, requestId, 'Revised', systemActor('test')),
+      ),
+    ).rejects.toThrow('subject refused');
+    const [row] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId));
+    expect(row).toMatchObject({ status: 'pending', version: 1 });
   });
 });

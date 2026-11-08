@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ALLOWED_MIME,
   ApprovalActionBodySchema,
+  ApprovalActionKindSchema,
+  ApprovalRequestStatusSchema,
   ConditionSchema,
   CreateDocumentBodySchema,
   CreateMemoBodySchema,
@@ -150,6 +152,20 @@ describe('ApprovalActionBodySchema', () => {
       ApprovalActionBodySchema.safeParse({ action: 'approve', expectedVersion: 1.5 }).success,
     ).toBe(false);
     expect(ApprovalActionBodySchema.safeParse({ action: 'approve' }).success).toBe(false);
+  });
+});
+
+describe('approval action kinds and request statuses (K1 cancel)', () => {
+  it('logs a cancel action and lets a request be cancelled', () => {
+    expect(ApprovalActionKindSchema.safeParse('cancel').success).toBe(true);
+    expect(ApprovalRequestStatusSchema.safeParse('cancelled').success).toBe(true);
+  });
+
+  it('does not offer cancel as an approver decision', () => {
+    expect(
+      ApprovalActionBodySchema.safeParse({ action: 'cancel', comment: 'x', expectedVersion: 1 })
+        .success,
+    ).toBe(false);
   });
 });
 

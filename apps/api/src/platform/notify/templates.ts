@@ -125,7 +125,8 @@ const TEMPLATE_LINKS: Record<
   'approval.pending': APPROVAL_LINK,
   'approval.reminder': APPROVAL_LINK,
   'approval.escalated': APPROVAL_LINK,
-  'approval.decided': APPROVAL_LINK,
+  // The requester opens the decided document itself: a memo, or a quotation (ApprovalSubject.link).
+  'approval.decided': { ...APPROVAL_LINK, areas: ['inbox', 'memos', 'quotations'] },
   'approval.blocked': APPROVAL_LINK,
   'document.infected': APPROVAL_LINK,
   'outbox.dead_letter': APPROVAL_LINK,

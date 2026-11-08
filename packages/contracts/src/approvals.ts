@@ -175,6 +175,8 @@ export const ApprovalActionKindSchema = z.enum([
   'remind',
   'block',
   'reroute',
+  /** A module withdrew the request (e.g. its quotation was revised); not an approver decision. */
+  'cancel',
 ]);
 
 export const ApprovalStepDtoSchema = z.object({

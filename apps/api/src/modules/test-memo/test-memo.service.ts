@@ -177,6 +177,8 @@ export class TestMemoService implements OnModuleInit {
     this.approvals.registerSubject({
       documentType: MEMO_OWNER_TYPE,
       onDecided: (tx, documentId, outcome) => this.onDecided(tx, documentId, outcome),
+      // The requester opens the memo itself when its approval is decided.
+      link: (documentId) => `/memos/${documentId}`,
     });
   }
 
