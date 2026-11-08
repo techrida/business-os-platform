@@ -7,7 +7,11 @@ import { CLOCK, OrgResolver } from './org-resolver';
 import { TenancyInterceptor } from './tenancy.interceptor';
 
 /**
- * Request context, org resolution and the error body.
+ * Request context, org resolution, the route-level permission check and the error body.
+ *
+ * TenancyInterceptor also needs `Reflector` (from Nest core), `UserDirectory` (provided by the
+ * global UsersModule) and `RoleCache` (exported by the global AuthzModule). They are global, so this
+ * module does not import them; an app or test that uses TenancyModule must provide both ports.
  *
  * Import this module BEFORE the logging module in AppModule: Nest runs middleware in registration
  * order, and pino-http's id generator reads `req.correlationId`, which only exists once
