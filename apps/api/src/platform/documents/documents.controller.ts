@@ -10,6 +10,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpException,
@@ -29,6 +30,19 @@ import { requestTx, withTx } from '../db/tx';
 import { DocumentsService, type DocumentDto } from './documents.service';
 
 const Id = z.guid();
+
+/** A new version names only the file: the owner and the document already exist. */
+const NewVersionBodySchema = CreateDocumentBodySchema.pick({
+  filename: true,
+  declaredMime: true,
+  sizeBytes: true,
+});
+
+/** Field names only: echoing values back would reflect attacker-controlled text. */
+function invalidFields(error: z.ZodError, what: string): BadRequestException {
+  const fields = [...new Set(error.issues.map((i) => i.path.join('.') || 'body'))];
+  return new BadRequestException(`Invalid ${what}: ${fields.join(', ')}`);
+}
 
 /** 411 Length Required. The body is streamed, so the size must be announced up front. */
 export class LengthRequiredException extends HttpException {
@@ -63,13 +77,32 @@ export class DocumentsController {
     @Body() body: unknown,
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
     const parsed = CreateDocumentBodySchema.safeParse(body);
-    if (!parsed.success) {
-      // Field names only: echoing values back would reflect attacker-controlled text.
-      const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || 'body'))];
-      throw new BadRequestException(`Invalid document: ${fields.join(', ')}`);
-    }
+    if (!parsed.success) throw invalidFields(parsed.error, 'document');
     const { scope, actor } = requestTx();
     return withTx(this.db, scope, actor, (tx) => this.docs.create(tx, parsed.data));
+  }
+
+  /** A new version of an existing document. Works on top of an infected or failed one: the way out of it. */
+  @Post(':id/versions')
+  @Can('documents.upload')
+  async createVersion(
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
+    idOrBadRequest(id, 'id');
+    const parsed = NewVersionBodySchema.safeParse(body);
+    if (!parsed.success) throw invalidFields(parsed.error, 'version');
+    const { scope, actor } = requestTx();
+    return withTx(this.db, scope, actor, (tx) => this.docs.createVersion(tx, id, parsed.data));
+  }
+
+  /** Soft remove. Same permission as the upload; the owner's canAttach decides whether it is still allowed. */
+  @Delete(':id')
+  @Can('documents.upload')
+  @HttpCode(204)
+  async remove(@Param('id') id: string): Promise<void> {
+    idOrBadRequest(id, 'id');
+    await this.docs.remove(id);
   }
 
   /**

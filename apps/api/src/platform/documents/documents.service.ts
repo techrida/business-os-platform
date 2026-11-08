@@ -2,6 +2,9 @@
 // Serves NFR Security ("no unscanned file is ever served"): every state change goes through here, and a
 // download link is only ever issued for a version whose status is `clean`.
 //
+// Removal is soft: documents.removed_at is set, nothing is deleted, and a removed document is invisible to every
+// read here. Only the owner's `canAttach` decides whether someone may add to or remove from its attachments.
+//
 // Lifecycle of one version (status):
 //   create()          -> awaiting_content   a row exists, no bytes yet
 //   receiveContent()  -> quarantined        bytes on disk under quarantine/, type checked, docs.scan queued
@@ -32,7 +35,7 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull, max } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
@@ -71,6 +74,9 @@ export interface DocumentDto {
   createdAt: string;
   versions: DocumentVersionDto[];
 }
+
+/** What a new version needs from the client: the owner and the document already exist. */
+export type NewVersionBody = Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>;
 
 export interface DownloadHandle {
   stream: Readable;
@@ -132,14 +138,9 @@ export class DocumentsService {
     }
     // Permission first: someone who may not upload learns nothing about types or limits.
     await this.assertOwner(who.scope, b.ownerType, b.ownerId, 'documents.upload');
-    if (!isAllowedMime(b.declaredMime)) {
-      throw new UnsupportedMediaTypeException(
-        `File type ${b.declaredMime} is not allowed. Allowed: ${ALLOWED_MIME.join(', ')}`,
-      );
-    }
-    if (b.sizeBytes > MAX_UPLOAD_BYTES) {
-      throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
-    }
+    // Before anything is written: a record that stopped taking attachments gets no row and no file.
+    await this.assertCanAttach(who.scope, b.ownerType, b.ownerId, tx);
+    assertUploadAllowed(b);
 
     const s = scoped(who.scope);
     const actor = actorUuid(who);
@@ -173,6 +174,101 @@ export class DocumentsService {
     };
   }
 
+  /**
+   * Adds version N+1 to an existing document (status awaiting_content). Runs in the caller's transaction.
+   * Allowed on top of any earlier version, in particular an infected or scan_failed one: that is the way out
+   * of a bad attachment. `allClean` only looks at the newest version that was not rejected.
+   */
+  async createVersion(
+    tx: DbTransaction,
+    documentId: string,
+    b: NewVersionBody,
+  ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
+    const who = await readTxContext(tx);
+    const s = scoped(who.scope);
+    // The row lock serializes concurrent new versions of one document, so the numbers stay 1, 2, 3, ...
+    const doc = await this.loadDocument(tx, who.scope, documentId, true);
+    await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
+    await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx);
+    assertUploadAllowed(b);
+
+    const [top] = await tx
+      .select({ latest: max(documentVersions.version) })
+      .from(documentVersions)
+      .where(s.where(documentVersions, eq(documentVersions.documentId, documentId)));
+    const versionId = randomUUID();
+    await tx.insert(documentVersions).values(
+      s.values({
+        id: versionId,
+        documentId,
+        version: (top?.latest ?? 0) + 1,
+        filename: b.filename,
+        declaredMime: b.declaredMime,
+        sizeBytes: b.sizeBytes,
+        storageKey: `${who.scope.tenantId}/${versionId}`,
+        status: 'awaiting_content' as const,
+        uploadedBy: actorUuid(who),
+      }),
+    );
+    return {
+      documentId,
+      versionId,
+      uploadPath: `/v1/documents/${documentId}/versions/${versionId}/content`,
+    };
+  }
+
+  /**
+   * Soft-removes a document: whoever may upload to the owner can remove an attachment while the owner still
+   * takes attachments. That covers the stuck ones (infected, scan_failed, interrupted upload, quarantined
+   * and never scanned) and a clean file on a draft. There is no age limit for a quarantined version: the
+   * owner's canAttach is the gate, and a scan finishing on a removed document changes nothing anyone can see.
+   * Rows are kept (audit); only the not-yet-clean bytes are deleted.
+   * `opts.who` is the request's scope and actor (default: requestTx(), HTTP only); tests pass their own.
+   */
+  async remove(
+    documentId: string,
+    opts: { who?: { scope: TxScope; actor: Actor } } = {},
+  ): Promise<void> {
+    const who = opts.who ?? requestTx();
+    const s = scoped(who.scope);
+    const unclean = await withTx(this.db, who.scope, who.actor, async (tx) => {
+      const doc = await this.loadDocument(tx, who.scope, documentId, true);
+      await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
+      await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx);
+      const versions = await tx
+        .select()
+        .from(documentVersions)
+        .where(s.where(documentVersions, eq(documentVersions.documentId, documentId)))
+        .orderBy(asc(documentVersions.version));
+      const now = new Date();
+      await tx
+        .update(documents)
+        .set({ removedAt: now, updatedAt: now })
+        .where(s.where(documents, eq(documents.id, documentId)));
+      await this.audit.record(tx, {
+        action: 'document.removed',
+        entityType: 'document',
+        entityId: documentId,
+        meta: {
+          ownerType: doc.ownerType,
+          ownerId: doc.ownerId,
+          versions: versions.map((v) => ({ id: v.id, version: v.version, status: v.status })),
+        },
+      });
+      return versions.filter((v) => v.status === 'quarantined' || v.status === 'scan_failed');
+    });
+    // After the commit, like the scan queueing: a failed delete leaves an unreachable file, never a live row.
+    for (const v of unclean) {
+      try {
+        await this.storage.removeQuarantine(v.storageKey);
+      } catch (error) {
+        this.logger.warn(
+          `removed document ${documentId}: could not delete the file of ${v.id}: ${describe(error)}`,
+        );
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------------------- receive
 
   /**
@@ -200,6 +296,8 @@ export class DocumentsService {
     const row = await withTx(this.db, who.scope, who.actor, async (tx) => {
       const found = await this.loadVersion(tx, who.scope, versionId, opts.documentId, true);
       await this.assertOwner(who.scope, found.ownerType, found.ownerId, 'documents.upload');
+      // The memo may have been submitted since the document was created: no bytes are written then.
+      await this.assertCanAttach(who.scope, found.ownerType, found.ownerId, tx);
       if (found.version.status !== 'awaiting_content') {
         throw new ConflictException('Content was already received for this version');
       }
@@ -299,7 +397,7 @@ export class DocumentsService {
     const [doc] = await this.db
       .select()
       .from(documents)
-      .where(s.where(documents, eq(documents.id, documentId)))
+      .where(s.where(documents, and(eq(documents.id, documentId), isNull(documents.removedAt))))
       .limit(1);
     if (doc === undefined) throw new NotFoundException('Document not found');
     await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.read');
@@ -318,7 +416,10 @@ export class DocumentsService {
     };
   }
 
-  /** Versions of every document of one owner, oldest first. For the owning module, which authorized already. */
+  /**
+   * Versions of every live (not removed) document of one owner, oldest first. For the owning module, which
+   * authorized already.
+   */
   async listForOwner(
     scope: TxScope,
     ownerType: string,
@@ -330,7 +431,14 @@ export class DocumentsService {
       .from(documentVersions)
       .innerJoin(documents, eq(documents.id, documentVersions.documentId))
       .where(
-        s.where(documents, and(eq(documents.ownerType, ownerType), eq(documents.ownerId, ownerId))),
+        s.where(
+          documents,
+          and(
+            eq(documents.ownerType, ownerType),
+            eq(documents.ownerId, ownerId),
+            isNull(documents.removedAt),
+          ),
+        ),
       )
       .orderBy(asc(documentVersions.createdAt));
     return rows.map((r) => toVersionDto(r.v));
@@ -339,7 +447,8 @@ export class DocumentsService {
   /**
    * True when every attachment of the owner is usable: for each document the newest version that was not
    * rejected must be `clean`. A rejected upload (wrong type, too big) was never an attachment, so it does not
-   * block. An infected, failed or still-scanning one does.
+   * block. An infected, failed or still-scanning one does, until it is removed or a newer version replaces it.
+   * Removed documents are not looked at.
    */
   async allClean(scope: TxScope, ownerType: string, ownerId: string): Promise<boolean> {
     const versions = await this.listForOwner(scope, ownerType, ownerId);
@@ -388,12 +497,14 @@ export class DocumentsService {
         throw new UnauthorizedException('Invalid or expired download link');
       throw error;
     }
-    const [v] = await this.db
-      .select()
+    const [found] = await this.db
+      .select({ v: documentVersions })
       .from(documentVersions)
-      .where(eq(documentVersions.id, versionId))
+      .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+      .where(and(eq(documentVersions.id, versionId), isNull(documents.removedAt)))
       .limit(1);
-    // The status is checked again here, not only when the link was issued.
+    const v = found?.v;
+    // The status and the removal are checked again here, not only when the link was issued.
     if (v === undefined || v.status !== 'clean') throw new NotFoundException('File not found');
     try {
       const stream = await this.storage.openClean(v.storageKey);
@@ -427,6 +538,46 @@ export class DocumentsService {
     this.authz.assert(action, ref);
   }
 
+  /** 409 when the owner no longer takes attachments. No canAttach on the policy means always allowed. */
+  private async assertCanAttach(
+    scope: TxScope,
+    ownerType: string,
+    ownerId: string,
+    tx: DbTransaction,
+  ): Promise<void> {
+    const policy = this.owners.get(ownerType);
+    if (policy?.canAttach === undefined) return;
+    // Called as a method, not detached: a policy class may use `this`.
+    if (!(await policy.canAttach(scope, ownerId, tx))) {
+      throw new ConflictException({
+        code: 'conflict',
+        message: 'This record no longer accepts attachments',
+      });
+    }
+  }
+
+  /** A live (not removed) document of the caller's scope, optionally locked for the rest of the transaction. */
+  private async loadDocument(
+    tx: DbTransaction,
+    scope: TxScope,
+    documentId: string,
+    lock = false,
+  ): Promise<{ id: string; ownerType: string; ownerId: string }> {
+    const query = tx
+      .select({ id: documents.id, ownerType: documents.ownerType, ownerId: documents.ownerId })
+      .from(documents)
+      .where(
+        scoped(scope).where(
+          documents,
+          and(eq(documents.id, documentId), isNull(documents.removedAt)),
+        ),
+      )
+      .limit(1);
+    const [doc] = await (lock ? query.for('update') : query);
+    if (doc === undefined) throw new NotFoundException('Document not found');
+    return doc;
+  }
+
   private async loadVersion(
     q: Reader,
     scope: TxScope,
@@ -448,6 +599,7 @@ export class DocumentsService {
           documentVersions,
           and(
             eq(documentVersions.id, versionId),
+            isNull(documents.removedAt),
             documentId === undefined ? undefined : eq(documentVersions.documentId, documentId),
           ),
         ),
@@ -501,6 +653,18 @@ export class DocumentsService {
         .set({ status: 'awaiting_content', updatedAt: new Date() })
         .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
     });
+  }
+}
+
+/** The type and size rules for a declared upload, the same for a new document and a new version. */
+function assertUploadAllowed(b: { declaredMime: string; sizeBytes: number }): void {
+  if (!isAllowedMime(b.declaredMime)) {
+    throw new UnsupportedMediaTypeException(
+      `File type ${b.declaredMime} is not allowed. Allowed: ${ALLOWED_MIME.join(', ')}`,
+    );
+  }
+  if (b.sizeBytes > MAX_UPLOAD_BYTES) {
+    throw new PayloadTooLargeException(`File is larger than ${MAX_UPLOAD_BYTES} bytes`);
   }
 }
 
