@@ -166,7 +166,11 @@ jobs:
       - name: Check no dev routes in the production build
         run: node apps/workspace/scripts/check-no-dev-routes.mjs
 
-  # Proves both production images still build. Nothing is pushed anywhere.
+      # The portal has no dev-route checker yet, so this step proves only that it builds.
+      - name: Build the portal app (production)
+        run: pnpm --filter '@bos/portal...' build
+
+  # Proves the three production images still build. Nothing is pushed anywhere.
   docker:
     name: docker (build both images)
     runs-on: ubuntu-24.04
@@ -210,3 +214,13 @@ jobs:
             --entrypoint node \
             bos/workspace:ci \
             /check/check-no-dev-routes.mjs /app/apps/workspace/.next
+
+      # Same shape as the workspace image, with its own cache scope. Not loaded or tagged: nothing inspects it yet.
+      - name: Build portal image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/portal/Dockerfile
+          push: false
+          cache-from: type=gha,scope=portal
+          cache-to: type=gha,scope=portal,mode=max
