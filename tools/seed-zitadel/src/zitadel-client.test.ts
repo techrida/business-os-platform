@@ -147,6 +147,26 @@ describe('ZitadelClient request shapes', () => {
     expect(calls[0]?.headers).toEqual({ 'x-zitadel-orgid': 'org1' });
   });
 
+  it('reads and adds instance (IAM) members through admin v1, with no org header', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.listIamMembers]: {
+        result: [
+          { userId: 'u0', roles: ['IAM_OWNER'] },
+          { userId: 'u1', roles: ['IAM_ORG_MANAGER'] },
+        ],
+      },
+    });
+    const api = client(transport);
+    await expect(api.listIamMemberRoles('u1')).resolves.toEqual(['IAM_ORG_MANAGER']);
+    await expect(api.listIamMemberRoles('u9')).resolves.toBeUndefined();
+    await api.addIamMember('u2', ['IAM_ORG_MANAGER']);
+    expect(calls.map((c) => [c.method, c.path, c.body, c.headers])).toEqual([
+      ['POST', '/admin/v1/members/_search', {}, undefined],
+      ['POST', '/admin/v1/members/_search', {}, undefined],
+      ['POST', '/admin/v1/members', { userId: 'u2', roles: ['IAM_ORG_MANAGER'] }, undefined],
+    ]);
+  });
+
   it('rejects responses that do not match the expected shape', async () => {
     const { transport } = recording({ [ENDPOINTS.createProject]: { nope: true } });
     await expect(client(transport).createProject('o', 'n')).rejects.toThrow(/CreateProject/);
