@@ -1,6 +1,11 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+// Order matters: tokens first, then the self-hosted font, then the base styles that use both.
+import '@/styles/tokens.css';
+import '@fontsource-variable/outfit';
+import '@/styles/globals.css';
+
 import { WebVitals } from '@/components/web-vitals';
 
 export const metadata: Metadata = {
@@ -10,8 +15,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      {/* Inline margin reset: CSS modules cannot style `body` (their selectors must be local). */}
-      <body style={{ margin: 0 }}>
+      <body>
         <WebVitals />
         {children}
       </body>
