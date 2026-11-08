@@ -126,7 +126,8 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     // We do not silently rewrite an app someone changed: the API needs JWTs, so say it loudly.
     throw new Error(
       `OIDC app "${APP_NAME}" exists with access token type ${app.accessTokenType}, expected JWT. ` +
-        'Switch it in the console (Token Settings) or run `pnpm stack:nuke` and seed again.',
+        'Switch it in the console (Token Settings), or delete the app there and run `pnpm seed` again (it recreates it). ' +
+        'Last resort only: `BOS_CONFIRM_NUKE=yes pnpm stack:nuke` deletes the whole stack, including the database AND its backups.',
     );
   }
 
