@@ -1,6 +1,10 @@
 'use client';
 
-import { useActionState, useEffect, useId, useRef, useState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
+
+import { Alert } from '@/components/ui/alert';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
 
 import styles from '../kit.module.css';
 import type { MemoFormState, MemoValues } from './actions';
@@ -21,18 +25,20 @@ export function MemoForm({
   initial,
   submitLabel,
   memoId,
+  cancelHref,
 }: {
   action: (prev: MemoFormState, form: FormData) => Promise<MemoFormState>;
   initial: MemoValues;
   submitLabel: string;
   memoId?: string;
+  /** Adds a Cancel link beside the submit button (the create page; the edit card has none). */
+  cancelHref?: string;
 }) {
   const [state, formAction, pending] = useActionState<MemoFormState, FormData>(action, {
     values: initial,
     fieldErrors: {},
   });
   const [values, setValues] = useState<MemoValues>(initial);
-  const id = useId();
   const summaryRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -50,126 +56,90 @@ export function MemoForm({
   const err = state.fieldErrors;
 
   return (
-    <form action={formAction} noValidate>
+    <form action={formAction} noValidate className={styles.form}>
       {memoId ? <input type="hidden" name="memoId" value={memoId} /> : null}
 
       {state.error ? (
-        <div
-          ref={summaryRef}
-          tabIndex={-1}
-          role="alert"
-          className={`${styles.notice} ${styles.noticeBad}`}
-          style={{ marginBottom: '1rem' }}
-        >
-          <p>{state.error}</p>
-        </div>
+        <Alert ref={summaryRef} tabIndex={-1} tone="error" role="alert">
+          {state.error}
+        </Alert>
       ) : null}
 
-      <div className={styles.field}>
-        <label htmlFor={`${id}-title`} className={styles.label}>
-          Title
-        </label>
-        <input
-          ref={titleRef}
-          id={`${id}-title`}
-          name="title"
-          className={styles.input}
-          value={values.title}
-          onChange={set('title')}
-          maxLength={200}
-          required
-          aria-invalid={err.title ? true : undefined}
-          aria-describedby={err.title ? `${id}-title-err` : undefined}
-        />
-        {err.title ? (
-          <span id={`${id}-title-err`} className={styles.fieldError}>
-            {err.title}
-          </span>
-        ) : null}
-      </div>
-
-      <div className={styles.field}>
-        <label htmlFor={`${id}-body`} className={styles.label}>
-          Details
-        </label>
-        <textarea
-          id={`${id}-body`}
-          name="body"
-          className={styles.input}
-          rows={6}
-          value={values.body}
-          onChange={set('body')}
-          maxLength={10000}
-          aria-invalid={err.body ? true : undefined}
-          aria-describedby={err.body ? `${id}-body-err` : undefined}
-        />
-        {err.body ? (
-          <span id={`${id}-body-err`} className={styles.fieldError}>
-            {err.body}
-          </span>
-        ) : null}
-      </div>
-
-      <div className={styles.row2}>
-        <div className={styles.field}>
-          <label htmlFor={`${id}-amount`} className={styles.label}>
-            Amount
-          </label>
-          <input
-            ref={amountRef}
-            id={`${id}-amount`}
-            name="amount"
-            className={styles.input}
-            inputMode="decimal"
-            autoComplete="off"
-            value={values.amount}
-            onChange={set('amount')}
+      <Field label="Title" error={err.title}>
+        {(control) => (
+          <Input
+            ref={titleRef}
+            name="title"
+            value={values.title}
+            onChange={set('title')}
+            maxLength={200}
             required
-            aria-invalid={err.amount ? true : undefined}
-            aria-describedby={err.amount ? `${id}-amount-err` : `${id}-amount-hint`}
-            style={{ fontVariantNumeric: 'tabular-nums' }}
+            {...control}
           />
-          <span id={`${id}-amount-hint`} className={styles.hint}>
-            For example 1250.50. The NPR value is frozen when you save, using that day&apos;s rate.
-          </span>
-          {err.amount ? (
-            <span id={`${id}-amount-err`} className={styles.fieldError}>
-              {err.amount}
-            </span>
-          ) : null}
-        </div>
+        )}
+      </Field>
 
-        <div className={styles.field}>
-          <label htmlFor={`${id}-currency`} className={styles.label}>
-            Currency
-          </label>
-          <select
-            id={`${id}-currency`}
-            name="currency"
-            className={styles.input}
-            value={values.currency}
-            onChange={set('currency')}
-            aria-invalid={err.currency ? true : undefined}
-            aria-describedby={err.currency ? `${id}-currency-err` : undefined}
-          >
-            {CURRENCY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          {err.currency ? (
-            <span id={`${id}-currency-err`} className={styles.fieldError}>
-              {err.currency}
-            </span>
-          ) : null}
-        </div>
+      <Field label="Details" error={err.body}>
+        {(control) => (
+          <Textarea
+            name="body"
+            rows={6}
+            value={values.body}
+            onChange={set('body')}
+            maxLength={10000}
+            {...control}
+          />
+        )}
+      </Field>
+
+      <div className={styles.amountRow}>
+        <Field
+          label="Amount"
+          hint="For example 1250.50. The NPR value is frozen when you save, using that day's rate."
+          error={err.amount}
+        >
+          {(control) => (
+            <Input
+              ref={amountRef}
+              name="amount"
+              inputMode="decimal"
+              autoComplete="off"
+              value={values.amount}
+              onChange={set('amount')}
+              required
+              className={styles.numeric}
+              {...control}
+            />
+          )}
+        </Field>
+
+        <Field label="Currency" error={err.currency}>
+          {(control) => (
+            <Select
+              name="currency"
+              value={values.currency}
+              onChange={set('currency')}
+              {...control}
+            >
+              {CURRENCY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
       </div>
 
-      <div className={styles.actions}>
-        <button type="submit" className={styles.btn} disabled={pending}>
+      <div className={styles.formActions}>
+        <Button type="submit" disabled={pending}>
           {pending ? 'Saving' : submitLabel}
-        </button>
+        </Button>
+        {cancelHref ? (
+          <LinkButton href={cancelHref} variant="secondary">
+            Cancel
+          </LinkButton>
+        ) : null}
       </div>
     </form>
   );
