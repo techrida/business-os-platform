@@ -45,6 +45,29 @@ describe('parseSettingInput', () => {
   });
 });
 
+describe('parseSettingInput: the P2 keys', () => {
+  it.each(['fx.max_rate_age_days', 'quotation.validity_days'] as const)(
+    'parses %s as a strict whole number',
+    (key) => {
+      expect(parseSettingInput(key, [' 7 '])).toEqual({ ok: true, value: 7 });
+      expect(parseSettingInput(key, ['365'])).toEqual({ ok: true, value: 365 });
+      expect(parseSettingInput(key, ['007'])).toEqual({ ok: true, value: 7 });
+      for (const bad of ['7.5', '1e1', '07x', '', ' ', '-1', '+7', '0x10', '0', '366']) {
+        expect(parseSettingInput(key, [bad]).ok, JSON.stringify(bad)).toBe(false);
+      }
+      expect(parseSettingInput(key, []).ok).toBe(false);
+    },
+  );
+
+  it('accepts only the four evidence policies', () => {
+    for (const ok of ['contract', 'purchase_order', 'both', 'signed_quote']) {
+      expect(parseSettingInput('sales.evidence_policy', [ok])).toEqual({ ok: true, value: ok });
+    }
+    expect(parseSettingInput('sales.evidence_policy', ['po']).ok).toBe(false);
+    expect(parseSettingInput('sales.evidence_policy', ['']).ok).toBe(false);
+  });
+});
+
 describe('settingValueText', () => {
   it('prints strings, string lists and objects', () => {
     expect(settingValueText('13')).toBe('13');
