@@ -363,7 +363,11 @@ describe('no attachment and no foreign host (ADR 0023: email a portal link, neve
   const allowed = [new URL(WORKSPACE).host, new URL(PORTAL).host];
 
   function urlsIn(part: string): string[] {
-    return part.match(/\b(?:https?:)?\/\/[^\s"'<>)]+/gi) ?? [];
+    // Links with a scheme, plus protocol-relative ones in an attribute (href="//host"). A bare a//b is not a link.
+    const relative = [...part.matchAll(/\b(?:href|src|action)\s*=\s*["']?(\/\/[^\s"'<>]+)/gi)].map(
+      (m) => m[1] ?? '',
+    );
+    return [...(part.match(/\bhttps?:\/\/[^\s"'<>)]+/gi) ?? []), ...relative];
   }
 
   it.each(EMAIL_TEMPLATES)(
@@ -387,6 +391,37 @@ describe('no attachment and no foreign host (ADR 0023: email a portal link, neve
       expect(rendered.html).not.toMatch(/\bsrc\s*=/i);
     },
   );
+
+  // Harmless text a caller may pass through (a reason, a filename). It must never make a render throw,
+  // because the render runs inside the caller's transaction and a throw would roll the business change back.
+  it.each([
+    'javascript: off',
+    'cid: 12',
+    'data : sheet',
+    'src=main',
+    'href=//x.com',
+    'action = "//x.com"',
+    'a//b',
+    'see www.x',
+    'Report: data: Q3, src= and cid:',
+  ])('%s as a value does not make any template throw or add a foreign host', (value) => {
+    for (const template of EMAIL_TEMPLATES) {
+      const vars = Object.fromEntries(
+        EMAIL_TEMPLATE_VARS[template].map((k) => [
+          k,
+          k === 'linkPath' ? LINK_PATH_OF[template] : value,
+        ]),
+      );
+      const rendered = renderEmail(template, vars, opts);
+      const base = new URL(baseOf(template)).host;
+      for (const part of [rendered.subject, rendered.text, rendered.html]) {
+        for (const url of urlsIn(part)) {
+          const full = url.startsWith('//') ? `https:${url}` : url;
+          expect(new URL(full).host).toBe(base);
+        }
+      }
+    }
+  });
 
   const good: RenderedEmail = {
     subject: 'Quotation ready',
@@ -414,8 +449,6 @@ describe('no attachment and no foreign host (ADR 0023: email a portal link, neve
     ['an extra key', { ...good, headers: { Bcc: 'x@example.com' } }],
     ['a line break in the subject', { ...good, subject: 'a\r\nBcc: x@example.com' }],
   ])('assertSafeEmail rejects %s', (_name, email) => {
-    expect(() => assertSafeEmail(email, allowed)).toThrow(
-      EmailTemplateError,
-    );
+    expect(() => assertSafeEmail(email, allowed)).toThrow(EmailTemplateError);
   });
 });
