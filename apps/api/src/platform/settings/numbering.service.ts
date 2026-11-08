@@ -21,10 +21,23 @@ import type { DbTransaction } from '../db/db.module';
 export class NumberingService {
   /**
    * Takes the next number of `seriesKey` for the fiscal year that contains `at`, e.g. `MEMO-2082/83-00001`.
+   * A thin wrapper over `issue` for callers that only need the formatted string.
+   */
+  async next(tx: DbTransaction, seriesKey: string, at: Date): Promise<string> {
+    return (await this.issue(tx, seriesKey, at)).number;
+  }
+
+  /**
+   * Like `next`, but also returns the raw counter and the fiscal year, so a caller that stores them in
+   * their own columns (an invoice's `seq`, a report grouped by fiscal year) never parses the string back.
    * Scope comes from the transaction (set by withTx), never from the request: the worker has no request.
    * The number is only real once `tx` commits; if it rolls back, the next call returns the same number.
    */
-  async next(tx: DbTransaction, seriesKey: string, at: Date): Promise<string> {
+  async issue(
+    tx: DbTransaction,
+    seriesKey: string,
+    at: Date,
+  ): Promise<{ number: string; seq: number; fiscalYear: string }> {
     const scope = await tx.execute<{ tenant_id: string | null; organization_id: string | null }>(
       sql`SELECT current_setting('bos.tenant_id', true) AS tenant_id,
                  current_setting('bos.organization_id', true) AS organization_id`,
@@ -34,7 +47,7 @@ export class NumberingService {
     // Unset gives NULL; a setting that was set and then reverted at COMMIT gives ''.
     if (!tenantId || !organizationId) {
       throw new Error(
-        'NumberingService.next needs a transaction opened with withTx: bos.tenant_id and bos.organization_id are not set',
+        'NumberingService.issue needs a transaction opened with withTx: bos.tenant_id and bos.organization_id are not set',
       );
     }
 
@@ -61,6 +74,11 @@ export class NumberingService {
       throw new Error(`number series ${seriesKey} ${fy} vanished between insert and update`);
     }
     // bigint comes back from pg as a string; document counters stay far below 2^53.
-    return `${row.prefix}-${fy}-${String(row.n).padStart(row.pad, '0')}`;
+    const seq = Number(row.n);
+    return {
+      number: `${row.prefix}-${fy}-${String(row.n).padStart(row.pad, '0')}`,
+      seq,
+      fiscalYear: fy,
+    };
   }
 }
