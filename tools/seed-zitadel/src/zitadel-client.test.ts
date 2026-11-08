@@ -224,7 +224,7 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
 
 describe('createFetchTransport', () => {
   it('uses GET without a body and PUT with a JSON body for the REST endpoints', async () => {
-    const seen: { method?: string; body?: unknown; org?: string }[] = [];
+    const seen: { method: string | undefined; body: unknown; org: string | undefined }[] = [];
     const fetchImpl: typeof fetch = (_input, init) => {
       const headers = init?.headers as Record<string, string>;
       seen.push({ method: init?.method, body: init?.body, org: headers['x-zitadel-orgid'] });
