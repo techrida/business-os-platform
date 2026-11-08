@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import { documentVersions, organizations, runMigrations, tenants } from '@bos/db';
+import { createTenantWithEntity, documentVersions, runMigrations } from '@bos/db';
 import { Logger } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Job, Queue } from 'bullmq';
@@ -111,20 +111,8 @@ beforeAll(async () => {
   pool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
   db = drizzle({ client: pool });
 
-  const [tenant] = await db.insert(tenants).values({}).returning({ id: tenants.id });
-  if (tenant === undefined) throw new Error('no tenant');
-  const orgId = randomUUID();
-  scope = { tenantId: tenant.id, organizationId: orgId };
-  await withTx(db, scope, systemActor('test'), (tx) =>
-    tx.insert(organizations).values({
-      id: orgId,
-      tenantId: tenant.id,
-      organizationId: orgId,
-      kind: 'staff',
-      name: 'Test staff org',
-      zitadelOrgId: `zitadel-${orgId}`,
-    }),
-  );
+  const { tenantId, organizationId } = await createTenantWithEntity(pool);
+  scope = { tenantId, organizationId };
 
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-scan-test-'));
   storage = new DiskStorageAdapter(storageRoot);
