@@ -1,7 +1,8 @@
 // Quotations module (P2 unit Q1): registers how quotation-version files are authorized, provides PricingService,
 // DraftingService and ReviseService, and serves drafting, revise, preview and reference routes. Imports
 // DocumentsModule, SettingsModule (MoneyService, NumberingService, SettingsService), ApprovalsModule (preview
-// route, approval cancel on revise) and AuditModule; the database is global.
+// route, approval cancel on revise), AuditModule, OpportunitiesModule (Won on acceptance) and NotifyModule (the
+// owner's notice); the database is global. Q3b adds the outcome route and exports its accept/reject core.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -9,8 +10,10 @@ import { DocumentsModule } from '../../platform/documents/documents.module';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { AuditModule } from '../../platform/audit/audit.module';
+import { NotifyModule } from '../../platform/notify/notify.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { ApprovalsService } from '../approvals/requests.service';
+import { OpportunitiesModule } from '../opportunities/opportunities.module';
 import { QuotationVersionSubject } from './approval/quotation-version.subject';
 import { QuotationSubmitCaller } from './approval/quotation-submit.caller';
 import { QuotationSubmitController } from './approval/quotation-submit.controller';
@@ -24,19 +27,30 @@ import { PricingService } from './pricing/pricing.service';
 import { QuotationPreviewCaller } from './preview/quotation-preview.caller';
 import { QuotationPreviewController } from './preview/quotation-preview.controller';
 import { QuotationPreviewService } from './preview/quotation-preview.service';
+import { QuotationOutcomeService } from './outcome/quotation-outcome.service';
+import { RecordOutcomeController } from './outcome/record-outcome.controller';
+import { RecordOutcomeService } from './outcome/record-outcome.service';
 import { drizzleHeadLoader, QuotationOwnerPolicy } from './quotation-owner.policy';
 import { ReferenceCaller } from './reference/reference.caller';
 import { ReferenceController } from './reference/reference.controller';
 import { ReferenceService } from './reference/reference.service';
 
 @Module({
-  imports: [ApprovalsModule, AuditModule, DocumentsModule, SettingsModule],
+  imports: [
+    ApprovalsModule,
+    AuditModule,
+    DocumentsModule,
+    NotifyModule,
+    OpportunitiesModule,
+    SettingsModule,
+  ],
   controllers: [
     DraftingController,
     ReferenceController,
     QuotationPreviewController,
     ReviseController,
     QuotationSubmitController,
+    RecordOutcomeController,
   ],
   providers: [
     PricingService,
@@ -50,8 +64,11 @@ import { ReferenceService } from './reference/reference.service';
     QuotationSubmitService,
     QuotationSubmitStore,
     QuotationSubmitCaller,
+    QuotationOutcomeService,
+    RecordOutcomeService,
   ],
-  exports: [PricingService],
+  // QuotationOutcomeService is the accept/reject core the portal (unit PA) calls inside its own transaction.
+  exports: [PricingService, QuotationOutcomeService],
 })
 export class QuotationsModule implements OnModuleInit {
   constructor(
