@@ -9,14 +9,12 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
  * once those exist; see the hand-back for the command.
  *
  * (1) The founder sees the CRM nav entries and the customer list loads, search included.
- * (2) A person with no customer permission gets the 403 in words, not a blank page.
+ * (2) The 403 wording is a fixme: K3 gives every staff persona `customer.read`, so no seeded persona
+ *     can reach it. Add a persona without it (or a role-edit step) to turn it on.
  * (3) The KYB queue opens a case, and deciding without a reason is refused in place.
  */
 
-test('the customer list loads, searches, and a 403 is explained in words', async ({
-  browser,
-  baseURL,
-}) => {
+test('the customer list loads and searches', async ({ browser, baseURL }) => {
   test.setTimeout(120_000);
   const appBase = baseURL ?? 'https://app.localhost';
   const opened: Signed[] = [];
@@ -45,17 +43,13 @@ test('the customer list loads, searches, and a 403 is explained in words', async
       ).toBeVisible();
       await expect(founder.page.getByLabel('Search customers')).toHaveValue('no-such-customer-xyz');
     });
-
-    const accountant = await signInAs(browser, appBase, 'accountant');
-    opened.push(accountant);
-
-    await test.step('a role without customer access sees words, not a blank page', async () => {
-      await accountant.page.goto('/customers');
-      await expect(accountant.page.getByText('Your roles do not include customers')).toBeVisible();
-    });
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }
+});
+
+test.fixme('a role without customer access sees words, not a blank page', () => {
+  // Needs a seeded staff persona with no `customer.read`; none exists after K3.
 });
 
 test('the KYB queue opens a case and refuses a decision without a reason', async ({

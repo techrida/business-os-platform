@@ -3,10 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { hasPermission, permissionChecker } from './permissions';
 
 describe('hasPermission', () => {
-  it('denies every P2 permission to every role until the contracts grant it (deny by default)', () => {
+  it('denies a permission no role grants (deny by default), whatever the role', () => {
     for (const role of ['founder', 'management', 'finance', 'accountant', 'sales']) {
-      expect(hasPermission([role], 'customer.read'), role).toBe(false);
-      expect(hasPermission([role], 'verification.review'), role).toBe(false);
+      expect(hasPermission([role], 'not.a.real.permission'), role).toBe(false);
     }
   });
 
