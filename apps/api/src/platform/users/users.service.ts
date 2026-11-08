@@ -1,19 +1,24 @@
 // UsersService: the UserDirectory port (U1) plus the k-users API from P1-PLAN §6.2.
 // Serves the NFR "authorization decisions use current data": the tenancy interceptor resolves every
 // caller through resolve() here. The logic lives in UserMirror (no authz imports, so the worker can
-// use it); this class only adapts it to the port U1 injects.
+// use it); this class adapts it to the port U1 injects, and repairs a half-finished invite.
 import type { RoleKey } from '@bos/contracts';
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { UserDirectory } from '../authz/user-directory';
 import type { DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
 import { type ResolvedUser, UserMirror } from './user-mirror';
-import type { ListedUser } from './users.store';
+import { type ListedUser, UsersStore } from './users.store';
+import { ZitadelAdminClient, type ZitadelUser } from './zitadel-admin.client';
 
 @Injectable()
 export class UsersService extends UserDirectory {
-  constructor(private readonly mirror: UserMirror) {
+  constructor(
+    private readonly mirror: UserMirror,
+    private readonly store: UsersStore,
+    private readonly zitadel: ZitadelAdminClient,
+  ) {
     super();
   }
 
@@ -45,14 +50,69 @@ export class UsersService extends UserDirectory {
     return this.mirror.list(scope, q);
   }
 
-  invite(
+  /**
+   * Invites a user. If ZITADEL already holds that email as a still-open invite (an earlier attempt
+   * created the user, then failed before the grant or the mirror write), this finishes the missing
+   * steps instead of failing with "already exists". An email that belongs to a user who finished
+   * sign-up stays a 409: an invite must never re-grant roles to a live account.
+   */
+  async invite(
     tx: DbTransaction,
     b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
   ): Promise<{ userId: string }> {
-    return this.mirror.invite(tx, b);
+    try {
+      return await this.mirror.invite(tx, b);
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      return this.finishInvite(tx, b, error);
+    }
   }
 
   setRoles(tx: DbTransaction, userId: string, roles: RoleKey[]): Promise<void> {
     return this.mirror.setRoles(tx, userId, roles);
+  }
+
+  private async finishInvite(
+    tx: DbTransaction,
+    b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
+    conflict: ConflictException,
+  ): Promise<{ userId: string }> {
+    const scope = await this.store.txScope(tx);
+    const org = await this.store.orgById(scope.organizationId);
+    if (!org) throw new NotFoundException('Organization not found');
+
+    const open = await this.findOpenInvite(org.zitadelOrgId, b.email);
+    if (!open) throw conflict;
+    const row = await this.store.findByZitadelId(tx, open.id);
+    if (row && row.status !== 'invited') throw conflict;
+
+    // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants
+    // replaces the whole set, insertUser returns the row that exists, replaceRoles diffs.
+    await this.zitadel.setGrants(open.id, org.zitadelOrgId, b.roles);
+    await this.zitadel.sendInviteCode(open.id);
+    const userId = await this.store.insertUser(tx, scope, {
+      zitadelUserId: open.id,
+      email: b.email,
+      displayName: `${b.givenName} ${b.familyName}`,
+      status: 'invited',
+    });
+    if (b.roles.length > 0) {
+      await this.store.replaceRoles(tx, scope, userId, b.roles);
+      await this.store.bumpAuthzVersion(tx, scope);
+    }
+    return { userId };
+  }
+
+  /** ZITADEL has no lookup by email in our client, so walk the org's pages for an open invite. */
+  private async findOpenInvite(zitadelOrgId: string, email: string): Promise<ZitadelUser | null> {
+    const wanted = email.toLowerCase();
+    let cursor: string | null = null;
+    do {
+      const page = await this.zitadel.listUsers(zitadelOrgId, cursor);
+      const hit = page.users.find((u) => u.email?.toLowerCase() === wanted);
+      if (hit) return hit.status === 'invited' ? hit : null;
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    return null;
   }
 }
