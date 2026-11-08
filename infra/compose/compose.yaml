@@ -9,7 +9,7 @@
 #   All relative paths below (../postgres, ../../.dev, ...) are relative to infra/compose.
 #
 # Profiles:
-#   core   postgres, valkey, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
+#   core   postgres, backup-scheduler, valkey, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
 #   app    migrate, api, worker, workspace   (images bos/api:dev and bos/workspace:dev, built by U3/U5)
 #   tools  seed-zitadel, k6, restore-drill   (one-shot, started with `docker compose run --rm`)
 #   obs    prometheus
@@ -23,13 +23,14 @@
 #
 #   service         profile   limit     notes
 #   postgres        core      1024 MiB  shared_buffers=256MB, max_connections=100
+#   backup-scheduler core       64 MiB  sleeps; pgbackrest runs for a few minutes a day
 #   valkey          core       256 MiB  maxmemory 192mb, noeviction (BullMQ needs it)
 #   zitadel-api     core       960 MiB  measure with `docker stats` after seed + k6, then tighten
 #   zitadel-login   core       512 MiB  Next.js Login V2 UI
 #   caddy           core       128 MiB
 #   mailpit         core        64 MiB  dev file only
 #   --------------------------------------------------------------
-#   core total                2944 MiB  = 2.875 GiB = 3.09 GB decimal
+#   core total                3008 MiB  = 2.9375 GiB = 3.15 GB decimal
 #
 #   migrate         app        256 MiB  one-shot
 #   api             app        512 MiB
@@ -66,6 +67,7 @@ networks:
 volumes:
   pgdata: {}
   pgbackrest-repo: {}
+  pgsocket: {}
   pgdata-drill: {}
   valkey-data: {}
   zitadel-bootstrap: {}
@@ -107,6 +109,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - pgbackrest-repo:/var/lib/pgbackrest
+      # Shared with backup-scheduler: a second container needs this socket to run `pgbackrest backup` against us.
+      - pgsocket:/var/run/postgresql
       # U2 owns this file. long syntax + create_host_path false: if it is missing, compose fails instead of
       # creating a directory called pgbackrest.conf on the host.
       - type: bind
@@ -130,6 +134,44 @@ services:
       resources:
         limits:
           memory: 1024M
+
+  # Scheduled backups: one incr a day, one full a week (infra/backup/backup-scheduler.sh). Same image as postgres
+  # (it has pgbackrest). It reads the data directory (read-only) and talks to Postgres over the shared socket volume,
+  # so `pgbackrest backup` runs here, not inside the database container. Same paths as in the postgres service, which
+  # pgbackrest.conf needs.
+  backup-scheduler:
+    profiles: [core]
+    image: bos/postgres:16
+    entrypoint: ['/bin/bash']
+    command: ['/opt/backup/backup-scheduler.sh']
+    user: postgres
+    environment:
+      BOS_BACKUP_IN_CONTAINER: '1'
+      PGBACKREST_REPO1_CIPHER_PASS: ${PGBACKREST_REPO1_CIPHER_PASS:?set PGBACKREST_REPO1_CIPHER_PASS in .env (backups are encrypted)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:ro
+      - pgsocket:/var/run/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - type: bind
+        source: ../postgres/pgbackrest.conf
+        target: /etc/pgbackrest/pgbackrest.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../backup
+        target: /opt/backup
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
 
   valkey:
     profiles: [core]

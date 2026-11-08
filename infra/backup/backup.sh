@@ -8,6 +8,7 @@
 #   incr  only what changed since the last backup of any kind
 #
 # Run it from anywhere; it moves to the repo root first. Needs the stack up (`pnpm stack:up`) and a .env file.
+# The backup-scheduler service (infra/backup/backup-scheduler.sh) runs it on a timer: incr daily, full weekly.
 # Between backups, Postgres keeps shipping its write-ahead log (WAL) to the same repository by itself
 # (archive_command in infra/postgres/postgresql.conf), which is what allows restoring to a point in time.
 set -euo pipefail
@@ -18,31 +19,44 @@ case "$TYPE" in
   *) echo "usage: backup.sh [full|diff|incr]" >&2; exit 2 ;;
 esac
 
-cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# Two ways to run this script:
+#   - from the host (default): it reaches the postgres container through `docker compose exec`.
+#   - inside the backup-scheduler container (BOS_BACKUP_IN_CONTAINER=1, set by compose.yaml): there is no docker
+#     there, and the container already is the postgres OS user with the data directory and repository mounted, so
+#     pgBackRest is called directly.
+IN_CONTAINER="${BOS_BACKUP_IN_CONTAINER:-}"
 
-[[ -f .env ]] || { echo "backup: .env not found in $(pwd). Copy .env.example to .env first." >&2; exit 1; }
+if [[ -z "$IN_CONTAINER" ]]; then
+  cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-# Run from the repo root. The compose project directory is infra/compose (the default), so .env is passed explicitly.
-compose() {
-  docker compose --env-file .env \
-    -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml \
-    --profile core "$@"
-}
+  [[ -f .env ]] || { echo "backup: .env not found in $(pwd). Copy .env.example to .env first." >&2; exit 1; }
 
-if ! compose ps --status running --services | grep -qx postgres; then
-  echo "backup: the postgres service is not running. Start it with: pnpm stack:up" >&2
-  exit 1
+  # Run from the repo root. The compose project directory is infra/compose (the default), so .env is passed explicitly.
+  compose() {
+    docker compose --env-file .env \
+      -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml \
+      --profile core "$@"
+  }
+
+  if ! compose ps --status running --services | grep -qx postgres; then
+    echo "backup: the postgres service is not running. Start it with: pnpm stack:up" >&2
+    exit 1
+  fi
+
+  # pgBackRest must run as the postgres OS user inside the container: it reads the data directory directly.
+  in_pg() { compose exec -T -u postgres postgres "$@"; }
+else
+  in_pg() { "$@"; }
 fi
 
-# pgBackRest must run as the postgres OS user inside the container: it reads the data directory directly.
-pgbr() { compose exec -T -u postgres postgres pgbackrest --stanza=bos "$@"; }
+pgbr() { in_pg pgbackrest --stanza=bos "$@"; }
 
 # The repository is encrypted (repo1-cipher-type in infra/postgres/pgbackrest.conf). pgBackRest cannot switch an
 # existing stanza from plain to encrypted, and its own error for that is cryptic. An encrypted pgBackRest file starts
 # with the 8 bytes "Salted__"; a plain backup.info is text. Exit code 3 from the check below means "plain repository".
 # (Skipped when the repository has no backup.info yet, i.e. a fresh repository: stanza-create makes it encrypted.)
 check_rc=0
-compose exec -T -u postgres postgres sh -c '
+in_pg sh -c '
   f=/var/lib/pgbackrest/backup/bos/backup.info
   [ -n "${PGBACKREST_REPO1_CIPHER_PASS:-}" ] && [ -f "$f" ] && [ "$(head -c 8 "$f")" != "Salted__" ] && exit 3
   exit 0' || check_rc=$?

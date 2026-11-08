@@ -17,6 +17,8 @@ x-restart: &restart
 services:
   postgres:
     <<: *restart
+  backup-scheduler:
+    <<: *restart
   valkey:
     <<: *restart
   zitadel-api:
