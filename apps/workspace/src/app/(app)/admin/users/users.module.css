@@ -1,0 +1,274 @@
+/* Users screens (list, invite, edit-roles dialog), on the shared tokens only. The table's row-head
+   override and the shared components live in admin.module.css and src/components/ui. */
+
+/* ---- list ------------------------------------------------------------------------------------- */
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: var(--border-width-thin) solid var(--avatar-border);
+  border-radius: var(--radius-full);
+  background: var(--avatar-bg);
+  color: var(--avatar-text);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-medium);
+  text-transform: uppercase;
+}
+
+.personText {
+  display: grid;
+  min-width: 0;
+}
+
+.name {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.email {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.status {
+  text-transform: capitalize;
+}
+
+.roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pagerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.count {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pagerLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: var(--border-width-thin) solid var(--pagination-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  color: var(--pagination-text-active);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  text-decoration: none;
+  transition: background-color 120ms ease;
+}
+
+.pagerLink:hover {
+  background: var(--pagination-bg-hover);
+}
+
+/* ---- invite form ------------------------------------------------------------------------------ */
+
+/* The form wraps the page header too, so its Save button submits it; it takes over the page grid. */
+.form {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+/* Panel titles are an h2 on a small type step; the invite sections use the larger Figma step. */
+.sectionPanel h2 {
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-caption);
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 24px;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .fieldGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- role checkboxes (invite form and dialog) ------------------------------------------------- */
+
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 4px;
+  padding: 8px;
+  border: var(--border-width-thin) solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+}
+
+.checkLabel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.checkLabel:hover {
+  background: var(--interactive-hover);
+}
+
+.checkbox {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--action-primary);
+  cursor: pointer;
+}
+
+/* ---- edit-roles dialog ------------------------------------------------------------------------ */
+
+.dialog {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+  border: var(--border-width-thin) solid var(--modal-border);
+  border-radius: var(--radius-xl);
+  background: var(--modal-bg);
+  color: var(--modal-text);
+  box-shadow: 0 24px 48px color-mix(in srgb, var(--modal-overlay) 18%, transparent);
+}
+
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--modal-overlay) 50%, transparent);
+}
+
+.dialogForm {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: calc(100dvh - 32px);
+}
+
+.dialogHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.dialogTitle {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dialogTitle h2 {
+  font-size: var(--font-size-body-large);
+  line-height: var(--line-height-body-large);
+}
+
+.dialogSub {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.dialogClose {
+  flex: none;
+  padding-inline: 8px;
+  color: var(--modal-close-icon);
+}
+
+.dialogBody {
+  display: grid;
+  gap: 16px;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.dialogFoot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+}

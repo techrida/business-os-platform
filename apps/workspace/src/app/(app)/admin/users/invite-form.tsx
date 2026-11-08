@@ -2,14 +2,32 @@
 
 import { useActionState } from 'react';
 
-import styles from '../admin.module.css';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Field, Input } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
+import { Panel } from '@/components/ui/panel';
+
 import { IDLE } from '../action-state';
 import { FormStatus } from '../ui';
 import { inviteUserAction } from './actions';
 import { RoleCheckboxes } from './role-checkboxes';
+import styles from './users.module.css';
 
-// A Client Component for useActionState only: it shows the result next to the button without a
-// page reload. The write itself is the Server Action.
+/** The Figma section title: a small grey step label over the title. The label is decoration. */
+function SectionTitle({ step, children }: { step: string; children: string }) {
+  return (
+    <>
+      <span aria-hidden="true" className={styles.eyebrow}>
+        {step}
+      </span>
+      {children}
+    </>
+  );
+}
+
+// A Client Component for useActionState only: it shows the result without a page reload. The write
+// itself is the Server Action. The form wraps the page header so its Save button submits the form
+// and is disabled while the request runs.
 export function InviteForm() {
   const [state, formAction, pending] = useActionState(inviteUserAction, IDLE);
   const fields = state.fields ?? {};
@@ -18,56 +36,77 @@ export function InviteForm() {
 
   return (
     <form action={formAction} className={styles.form}>
-      <div className={styles.formRow}>
-        <div className={styles.field}>
-          <label htmlFor="invite-email">Email</label>
-          <input
-            id="invite-email"
-            className={styles.input}
-            type="email"
-            name="email"
-            autoComplete="off"
-            required
-            defaultValue={kept.email ?? ''}
-          />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="invite-given">Given name</label>
-          <input
-            id="invite-given"
-            className={styles.input}
-            name="givenName"
-            autoComplete="off"
-            required
-            defaultValue={kept.givenName ?? ''}
-          />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="invite-family">Family name</label>
-          <input
-            id="invite-family"
-            className={styles.input}
-            name="familyName"
-            autoComplete="off"
-            required
-            defaultValue={kept.familyName ?? ''}
-          />
-        </div>
-      </div>
-      <RoleCheckboxes
-        idPrefix="invite-role"
-        legend="Roles"
-        checked={(kept.roles ?? '').split(',').filter(Boolean)}
+      <PageHeader
+        title="Invite user"
+        description="Add a colleague and choose the roles they hold. They get an email to set up their sign-in."
+        actions={
+          <>
+            <LinkButton href="/admin/users" variant="secondary">
+              {state.status === 'ok' ? 'Back to users' : 'Cancel'}
+            </LinkButton>
+            <Button type="submit" disabled={pending}>
+              Send invitation
+            </Button>
+          </>
+        }
       />
-      <p className={styles.hint}>
-        The person gets an email with a link to set up their sign-in. Roles can be changed later.
-      </p>
-      <div className={styles.actions}>
-        <button type="submit" className={styles.btn} disabled={pending}>
-          Send invitation
-        </button>
-        <FormStatus state={state} pending={pending} />
-      </div>
+
+      <FormStatus state={state} pending={pending} />
+
+      <Panel
+        className={styles.sectionPanel ?? ''}
+        title={<SectionTitle step="01 · The basics">User profile & identity</SectionTitle>}
+      >
+        <div className={styles.fieldGrid}>
+          <Field label="Given name">
+            {(control) => (
+              <Input
+                name="givenName"
+                autoComplete="off"
+                required
+                defaultValue={kept.givenName ?? ''}
+                {...control}
+              />
+            )}
+          </Field>
+          <Field label="Family name">
+            {(control) => (
+              <Input
+                name="familyName"
+                autoComplete="off"
+                required
+                defaultValue={kept.familyName ?? ''}
+                {...control}
+              />
+            )}
+          </Field>
+          <Field label="Email" className={styles.wide ?? ''}>
+            {(control) => (
+              <Input
+                type="email"
+                name="email"
+                autoComplete="off"
+                required
+                defaultValue={kept.email ?? ''}
+                {...control}
+              />
+            )}
+          </Field>
+        </div>
+      </Panel>
+
+      <Panel
+        className={styles.sectionPanel ?? ''}
+        title={<SectionTitle step="02 · Roles">Role & access configuration</SectionTitle>}
+        description="Tick every role this person holds. Roles can be changed later."
+      >
+        <RoleCheckboxes
+          idPrefix="invite-role"
+          legend="Roles"
+          hideLegend
+          checked={(kept.roles ?? '').split(',').filter(Boolean)}
+        />
+      </Panel>
     </form>
   );
 }
