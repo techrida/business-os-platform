@@ -8,5 +8,6 @@ export * from './me.js';
 export * from './memo.js';
 export * from './money.js';
 export * from './notify.js';
+export * from './quotations.js';
 export * from './settings.js';
 export * from './vitals.js';
