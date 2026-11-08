@@ -17,9 +17,10 @@ import {
   type Money,
   type Permission,
 } from '@bos/contracts';
-import { approvalRequests, scoped, testMemos } from '@bos/db';
+import { approvalRequests, parties, scoped, testMemos } from '@bos/db';
 import { Dec } from '@bos/locale';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -33,7 +34,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
-import { type ResourceRef } from '../../platform/authz/can';
+import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
@@ -115,7 +116,7 @@ export function toMemoDto(row: MemoRow): MemoDto {
     status: row.status,
     ownerUserId: row.ownerUserId,
     departmentId: row.departmentId,
-    customerOrganizationId: row.customerOrganizationId,
+    customerPartyId: row.customerPartyId,
     editorUserIds: row.editorUserIds,
     version: row.version,
     createdAt: iso(row.createdAt),
@@ -130,7 +131,7 @@ export function memoRef(row: MemoRow): ResourceRef {
     organizationId: row.organizationId,
     ownerUserId: row.ownerUserId,
     departmentId: row.departmentId,
-    customerOrganizationId: row.customerOrganizationId,
+    customerPartyId: row.customerPartyId,
   };
 }
 
@@ -185,6 +186,26 @@ export class TestMemoService implements OnModuleInit {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
+      // The FK also refuses a vendor or foreign party, but as a 500; name the problem as a 400 instead.
+      if (body.customerPartyId) {
+        const [party] = await tx
+          .select({ id: parties.id })
+          .from(parties)
+          .where(
+            and(
+              eq(parties.tenantId, scope.tenantId),
+              eq(parties.id, body.customerPartyId),
+              eq(parties.kind, 'customer'),
+            ),
+          )
+          .limit(1);
+        if (!party) {
+          throw new BadRequestException({
+            code: 'bad_request',
+            message: 'customerPartyId is not a customer of this tenant',
+          });
+        }
+      }
       const number = await this.numbering.next(tx, MEMO_SERIES, now);
       const snap = await this.money.toNprSnapshot(
         tx,
@@ -208,6 +229,7 @@ export class TestMemoService implements OnModuleInit {
             status: 'draft' as const,
             ownerUserId: principal.userId,
             departmentId: principal.departmentId,
+            customerPartyId: body.customerPartyId ?? null,
             version: 1,
             createdAt: now,
             updatedAt: now,
@@ -221,9 +243,10 @@ export class TestMemoService implements OnModuleInit {
   // -------------------------------------------------------------------------------------------------- read
 
   async get(id: string): Promise<MemoDetailDto> {
-    const { scope } = this.caller.current();
-    // A memo of another org, or one outside the caller's scope, is invisible, not forbidden.
-    const row = await this.require(this.db, scope, id);
+    const { scope, principal } = this.caller.current();
+    // A memo of another entity, of another party, or outside the caller's scope is invisible, not forbidden.
+    const row = await this.findFor(principal, scope, id);
+    if (row === undefined) throw memoNotFound();
     this.assertVisible('memo.read', row);
     const attachments: DocumentVersionDto[] = await this.documents.listForOwner(
       scope,
@@ -319,7 +342,7 @@ export class TestMemoService implements OnModuleInit {
           fxSource: snap.rateSource,
           fxDate: snap.rateDate,
           ownerUserId: row.ownerUserId,
-          customerOrganizationId: row.customerOrganizationId,
+          customerPartyId: row.customerPartyId,
           memoVersion: row.version,
           attachments,
         },
@@ -431,9 +454,29 @@ export class TestMemoService implements OnModuleInit {
     return row;
   }
 
-  private async require(q: Q, scope: TxScope, id: string): Promise<MemoRow> {
-    const row = await this.find(q, scope, id);
-    if (row === undefined) throw memoNotFound();
+  /**
+   * The memo as `principal` may look it up. Staff read by entity, and authz then narrows by scope. A customer
+   * portal user reads only the memos of the acting entity that name their own party (ADR 0027 §5), so another
+   * party's memo is not found at all. Memos have no vendor column, so a vendor finds none.
+   */
+  private async findFor(
+    principal: Principal,
+    scope: TxScope,
+    id: string,
+  ): Promise<MemoRow | undefined> {
+    if (principal.orgKind === 'staff') return this.find(this.db, scope, id);
+    if (principal.orgKind !== 'customer' || principal.partyId === null) return undefined;
+    const [row] = await this.db
+      .select()
+      .from(testMemos)
+      .where(
+        scoped(scope).forCounterparty(
+          testMemos,
+          'customer',
+          principal.partyId,
+          eq(testMemos.id, id),
+        ),
+      );
     return row;
   }
 
