@@ -4,6 +4,7 @@
 // The container starts with only a superuser, so beforeAll creates the same roles and default privileges that
 // infra/postgres/init-dbs.sh creates in the real stack, then migrates as bos_owner and queries as bos_app.
 // That way the tests walk the same path as production: owner migrates, app role does the daily work.
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -48,6 +49,14 @@ async function insertOrg(kind: 'staff' | 'customer' | 'vendor', name: string, te
     zitadelOrgId: `zitadel-${id}`,
   });
   return { tenantId: tenant, organizationId: id };
+}
+
+/** How many migrations the journal lists; every one must be recorded after a migrate. */
+function journalEntryCount(): number {
+  const journal = JSON.parse(
+    readFileSync(new URL('../migrations/meta/_journal.json', import.meta.url), 'utf8'),
+  ) as { entries: unknown[] };
+  return journal.entries.length;
 }
 
 beforeAll(async () => {
@@ -114,8 +123,8 @@ describe('migrations', () => {
     const { rows } = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM drizzle.__drizzle_migrations',
     );
-    // 0000_platform plus the seven P1 migrations (0001 to 0007) that F1 registered.
-    expect(rows[0]?.n).toBe('8');
+    // One row per journal entry, so the count follows the journal instead of a hard-coded number.
+    expect(rows[0]?.n).toBe(String(journalEntryCount()));
   });
 });
 
