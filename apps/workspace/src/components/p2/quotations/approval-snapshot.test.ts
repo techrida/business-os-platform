@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  discountNeedsApproval,
   exceedsDiscountLimit,
   parseApprovalSnapshot,
   routeReasons,
@@ -17,6 +18,7 @@ const valid = () => ({
   customerName: 'Big Kahuna Burger Ltd.',
   quotationNumber: 'QT-2082-0042',
   revisionNo: 2,
+  discountApprovalRequired: true,
 });
 
 describe('parseApprovalSnapshot', () => {
@@ -40,6 +42,9 @@ describe('parseApprovalSnapshot', () => {
     const { nprTotal, ...rest } = valid();
     expect(nprTotal).toBe('2690999.99');
     expect(parseApprovalSnapshot(rest)).toBeNull();
+    const { discountApprovalRequired, ...noFlag } = valid();
+    expect(discountApprovalRequired).toBe(true);
+    expect(parseApprovalSnapshot(noFlag)).toBeNull();
     const { marginPct, ...noMargin } = valid();
     expect(marginPct).toBe('22.5000');
     expect(parseApprovalSnapshot(noMargin)).toBeNull();
@@ -54,11 +59,35 @@ describe('parseApprovalSnapshot', () => {
     expect(parseApprovalSnapshot({ ...valid(), revisionNo: '2' })).toBeNull();
     expect(parseApprovalSnapshot({ ...valid(), currency: 'EUR' })).toBeNull();
     expect(parseApprovalSnapshot({ ...valid(), marginPct: 22.5 })).toBeNull();
+    expect(parseApprovalSnapshot({ ...valid(), discountApprovalRequired: 'yes' })).toBeNull();
   });
 
   it('does not read snake_case keys', () => {
     const { nprTotal, ...rest } = valid();
     expect(parseApprovalSnapshot({ ...rest, npr_total: nprTotal })).toBeNull();
+  });
+});
+
+describe('discountNeedsApproval', () => {
+  const snap = (over: Partial<ReturnType<typeof valid>>) => {
+    const parsed = parseApprovalSnapshot({ ...valid(), ...over });
+    if (!parsed) throw new Error('fixture must parse');
+    return parsed;
+  };
+
+  it('follows the server flag, not the four-decimal text', () => {
+    // 12.00004 rounds to "12.0000" in the text, yet the server compared it unrounded and flagged it.
+    expect(
+      discountNeedsApproval(
+        snap({ effectiveDiscountPct: '12.0000', discountApprovalRequired: true }),
+      ),
+    ).toBe(true);
+    // The flag wins the other way too: a stale text above 12 does not highlight a cleared flag.
+    expect(
+      discountNeedsApproval(
+        snap({ effectiveDiscountPct: '13.0000', discountApprovalRequired: false }),
+      ),
+    ).toBe(false);
   });
 });
 

@@ -558,6 +558,11 @@ export const QuotationApprovalSnapshotSchema = z.object({
   customerName: z.string().min(1),
   quotationNumber: z.string().min(1).max(32),
   revisionNo: z.number().int().min(1),
+  /**
+   * The server's verdict on the discount rule (strictly above 12%, compared unrounded). The inbox
+   * reads this flag and never re-derives the rule from the rounded `effectiveDiscountPct` text.
+   */
+  discountApprovalRequired: z.boolean(),
 });
 export type QuotationApprovalSnapshot = z.infer<typeof QuotationApprovalSnapshotSchema>;
 
