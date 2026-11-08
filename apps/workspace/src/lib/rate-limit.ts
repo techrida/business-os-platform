@@ -1,14 +1,17 @@
 import { isIP } from 'node:net';
 
-import { getRedis } from './session';
+import { getOidcRedis } from './oidc';
 
 /**
  * Fixed-window rate limit for `/auth/login` (CR-03).
  *
- * Every login stores about 2.3 KB of OIDC state in Valkey for 10 minutes. Valkey runs
- * `noeviction` at 192 MB, shared with sessions and BullMQ, so unlimited anonymous logins fill it
- * and then every write fails. This caps logins per client IP. The counter itself costs one small
- * key per IP per window.
+ * Every login stores about 2.3 KB of OIDC state in Valkey for 10 minutes. That state lives on its
+ * own server (`valkey-oidc`, 32 MB, `volatile-ttl`), so unlimited anonymous logins can fill only
+ * that one and never the memory sessions need. This caps logins per client IP. The counter lives
+ * on the same server: if the limiter used the session Valkey, an outage there would switch it off
+ * (it fails open) while `valkey-oidc` could still be filled. The counter costs one small key per
+ * IP per window, and `volatile-ttl` evicts only keys that have a TTL, which `HIT_SCRIPT` always
+ * sets.
  *
  * Constants, not env vars: `lib/env.ts` owns the env schema. `LOGIN_RATE_LIMIT` and
  * `LOGIN_RATE_WINDOW_S` are the intended names if they ever become configurable.
@@ -19,7 +22,8 @@ export const LOGIN_RATE_WINDOW_S = 60;
 const loginKey = (ip: string) => `ws:rl:login:${ip}`;
 
 /**
- * INCR and EXPIRE as one step, so a crash between them cannot leave a counter without an expiry.
+ * INCR and EXPIRE as one step, so a crash between them cannot leave a counter without an expiry
+ * (and so `volatile-ttl` can always evict it).
  * The TTL check (not `n == 1`) also repairs a key that lost its expiry some other way, which
  * would otherwise block that IP forever. Returns the count and the seconds left in the window.
  */
@@ -53,8 +57,8 @@ export function clientIp(headers: Headers): string {
 /**
  * Counts this login attempt and says whether it may go ahead.
  *
- * Fails OPEN on Valkey errors: this guard exists to protect Valkey, and when Valkey is down or
- * full the login cannot store its OIDC state anyway, so blocking adds nothing but a second
+ * Fails OPEN on Valkey errors: this guard exists to protect `valkey-oidc`, and when that server is
+ * down or full the login cannot store its OIDC state anyway, so blocking adds nothing but a second
  * outage mode. The warning carries only the error name, never the error itself: ioredis errors
  * hold the command arguments.
  */
@@ -63,7 +67,7 @@ export async function checkLoginRateLimit(req: Request): Promise<RateLimitResult
   let count: number;
   let ttl: number;
   try {
-    const reply = (await getRedis().eval(HIT_SCRIPT, 1, key, String(LOGIN_RATE_WINDOW_S))) as [
+    const reply = (await getOidcRedis().eval(HIT_SCRIPT, 1, key, String(LOGIN_RATE_WINDOW_S))) as [
       number,
       number,
     ];

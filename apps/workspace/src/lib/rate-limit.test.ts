@@ -3,9 +3,13 @@ import { createRequire } from 'node:module';
 import type { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getOidcRedis } from './oidc';
 import { checkLoginRateLimit, clientIp, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_S } from './rate-limit';
 import { getRedis } from './session';
 
+// The counter lives on the OIDC-state Valkey (CR-03), so it is that client the limiter must use.
+// The session client is mocked too, only to prove the limiter never touches it.
+vi.mock('./oidc', () => ({ getOidcRedis: vi.fn() }));
 vi.mock('./session', () => ({ getRedis: vi.fn() }));
 
 // Loaded through require for the same reason as in session.test.ts: no reachable types.
@@ -14,6 +18,7 @@ const RedisMock = createRequire(import.meta.url)('ioredis-mock') as new () => Re
 const T0 = Date.UTC(2026, 10, 8, 12, 0, 0);
 
 let redis: Redis;
+let sessionRedis: Redis;
 
 const req = (headers: Record<string, string> = {}) =>
   new Request('https://app.localhost/auth/login', { headers });
@@ -23,8 +28,10 @@ beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(T0);
   redis = new RedisMock();
+  sessionRedis = new RedisMock();
   await redis.flushall(); // ioredis-mock instances share data
-  vi.mocked(getRedis).mockReturnValue(redis);
+  vi.mocked(getOidcRedis).mockReturnValue(redis);
+  vi.mocked(getRedis).mockReturnValue(sessionRedis);
 });
 
 afterEach(() => {
@@ -47,6 +54,24 @@ describe('checkLoginRateLimit', () => {
     const blocked = await checkLoginRateLimit(req(ip));
     expect(blocked).toEqual({ allowed: false, retryAfter: LOGIN_RATE_WINDOW_S });
     expect(await redis.ttl('ws:rl:login:203.0.113.7')).toBe(LOGIN_RATE_WINDOW_S);
+  });
+
+  it('keeps the counter on the OIDC-state Valkey, with a TTL, and never on the session Valkey', async () => {
+    const sessionEval = vi.spyOn(sessionRedis, 'eval');
+    expect(await checkLoginRateLimit(req(ip))).toEqual({ allowed: true });
+    expect(getRedis).not.toHaveBeenCalled();
+    expect(sessionEval).not.toHaveBeenCalled();
+    // volatile-ttl only evicts keys that have a TTL, so the counter must carry one.
+    expect(await redis.get('ws:rl:login:203.0.113.7')).toBe('1');
+    expect(await redis.ttl('ws:rl:login:203.0.113.7')).toBe(LOGIN_RATE_WINDOW_S);
+  });
+
+  it('stays on when the session Valkey is down, because it does not use it', async () => {
+    vi.mocked(getRedis).mockImplementation(() => {
+      throw new Error('session valkey down');
+    });
+    for (let i = 0; i < LOGIN_RATE_LIMIT; i++) await checkLoginRateLimit(req(ip));
+    expect(await checkLoginRateLimit(req(ip))).toMatchObject({ allowed: false });
   });
 
   it('counts each IP separately', async () => {
