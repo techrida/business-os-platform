@@ -54,6 +54,9 @@ type AuditRow = {
   before: unknown;
   after: unknown;
   meta: unknown;
+  before_text: string | null;
+  after_text: string | null;
+  meta_text: string | null;
   ip: string | null;
   user_agent: string | null;
   correlation_id: string;
@@ -65,6 +68,8 @@ type VerifyRow = {
   ok: boolean;
   rows: string;
   first_bad_seq: string | null;
+  /** Absent from rows until verify_chain has a `reason` column (migration 0008). */
+  reason?: string | null;
 };
 
 /** `undefined` and `null` both mean "no value" (SQL NULL); anything else is sent as JSON text. */
@@ -94,12 +99,17 @@ export class AuditService {
     // Date (milliseconds) and date into a Date at local midnight, but the stored hash covers microseconds
     // and a date without a time zone. Formatting in SQL keeps the exposed values equal to what was hashed,
     // so an outside verifier can recompute them.
+    //
+    // The jsonb columns come twice: parsed (before/after/meta, for display) and as Postgres's own ::text
+    // (*_text, returned as `canonical`). The hash covers the ::text form, which sorts keys and keeps numbers
+    // like 1.50; parsing in node and re-serialising loses both, so only the text can be hashed again.
     const result = await this.db.execute<AuditRow>(sql`
       SELECT id, tenant_id, organization_id,
              to_char(chain_month, 'YYYY-MM-DD') AS chain_month,
              seq,
              to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at,
              actor_kind, actor_id, action, entity_type, entity_id, before, after, meta,
+             before::text AS before_text, after::text AS after_text, meta::text AS meta_text,
              host(ip) AS ip, user_agent, correlation_id, prev_hash, hash
         FROM audit.read_events(
           ${scope.tenantId}::uuid, ${scope.organizationId}::uuid,
@@ -115,9 +125,11 @@ export class AuditService {
    * count and sequence numbers stay far below 2^53).
    */
   async verifyChain(tenantId: string, month: string): Promise<ChainVerifyDto> {
+    // `reason` (why the chain failed) is read through to_jsonb(v) instead of by column name: that gives the
+    // value once verify_chain returns it and NULL before, so this query does not depend on migration order.
     const result = await this.db.execute<VerifyRow>(
-      sql`SELECT ok, "rows", first_bad_seq
-            FROM audit.verify_chain(${tenantId}::uuid, ${`${month}-01`}::date)`,
+      sql`SELECT v.ok, v."rows", v.first_bad_seq, to_jsonb(v)->>'reason' AS reason
+            FROM audit.verify_chain(${tenantId}::uuid, ${`${month}-01`}::date) v`,
     );
     // verify_chain always returns exactly one row, even for a month with no events (ok, 0 rows).
     const row = result.rows[0];
@@ -128,6 +140,7 @@ export class AuditService {
       ok: row.ok,
       rows: Number(row.rows),
       firstBadSeq: row.first_bad_seq === null ? null : Number(row.first_bad_seq),
+      reason: row.reason ?? null,
     });
   }
 }
@@ -148,6 +161,7 @@ function toDto(r: AuditRow): AuditEventDto {
     before: r.before,
     after: r.after,
     meta: r.meta,
+    canonical: { before: r.before_text, after: r.after_text, meta: r.meta_text },
     ip: r.ip,
     userAgent: r.user_agent,
     correlationId: r.correlation_id,
