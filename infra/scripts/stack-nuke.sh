@@ -24,4 +24,4 @@ fi
 echo "stack:nuke: BOS_CONFIRM_NUKE=yes, deleting the stack and all its volumes (database AND backups)" >&2
 exec docker compose --env-file .env \
   -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml \
-  --profile core --profile app --profile tools down --volumes --remove-orphans
+  --profile core --profile files --profile app --profile tools down --volumes --remove-orphans
