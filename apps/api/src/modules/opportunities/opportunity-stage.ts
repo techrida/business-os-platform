@@ -44,8 +44,7 @@ export type StageChangeRefusal =
   | 'reason_required';
 
 export type StagePlan =
-  | { ok: true; set: StageFields }
-  | { ok: false; kind: StageChangeRefusal; message: string };
+  { ok: true; set: StageFields } | { ok: false; kind: StageChangeRefusal; message: string };
 
 const refuse = (kind: StageChangeRefusal, message: string): StagePlan => ({
   ok: false,
@@ -54,7 +53,10 @@ const refuse = (kind: StageChangeRefusal, message: string): StagePlan => ({
 });
 
 /** Does a caller of this kind may take an edge of this kind? A manager may take user edges too. */
-function mayTake(by: StageCaller, edge: StageTransition<OpportunityStage>): StageChangeRefusal | null {
+function mayTake(
+  by: StageCaller,
+  edge: StageTransition<OpportunityStage>,
+): StageChangeRefusal | null {
   if (by === 'system') return edge.by === 'system' ? null : 'not_system';
   if (edge.by === 'system') return 'system_only';
   if (edge.by === 'manager' && by !== 'manager') return 'manager_only';
@@ -81,7 +83,10 @@ export function planStageChange(input: StageChangeInput): StagePlan {
     return refuse(refusal, `The move from ${input.current} to ${input.to} is not a system move`);
   }
   if (refusal === 'manager_only') {
-    return refuse(refusal, `Only a manager may move an opportunity from ${input.current} to ${input.to}`);
+    return refuse(
+      refusal,
+      `Only a manager may move an opportunity from ${input.current} to ${input.to}`,
+    );
   }
 
   if (input.by === 'system') {
