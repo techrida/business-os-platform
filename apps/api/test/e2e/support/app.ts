@@ -63,7 +63,11 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
   // the lifecycle hooks, including the JWKS warm-up). The tests never call listen().
   let app: NestExpressApplication;
   try {
-    app = await NestFactory.create<NestExpressApplication>(root, { bufferLogs: true });
+    // rawBody: true as in main.ts (the ZITADEL webhook HMAC needs the unparsed body).
+    app = await NestFactory.create<NestExpressApplication>(root, {
+      bufferLogs: true,
+      rawBody: true,
+    });
   } catch (error) {
     await issuer.close();
     throw error;
