@@ -77,6 +77,7 @@ export class AuthGuard implements CanActivate {
       userId: claims.userId,
       zitadelOrgId: claims.zitadelOrgId,
       roles: claims.roles,
+      rolesByOrg: claims.rolesByOrg,
       tokenExp: payload.exp,
     };
     return true;
