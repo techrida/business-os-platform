@@ -1,7 +1,7 @@
 import { WorkflowSpecSchema } from '@bos/contracts';
 
-import styles from '../admin.module.css';
 import { describeCondition, describeStepTarget } from './spec-form';
+import styles from './workflows.module.css';
 
 /**
  * A read-only description of a spec: used for published and retired versions, which can never be
@@ -11,15 +11,18 @@ import { describeCondition, describeStepTarget } from './spec-form';
 export function SpecSummary({ spec }: { spec: unknown }) {
   const parsed = WorkflowSpecSchema.safeParse(spec);
   if (!parsed.success) {
-    return <pre className={styles.pre}>{JSON.stringify(spec, null, 2)}</pre>;
+    // Scrollable, so it must be reachable by keyboard.
+    return (
+      <pre className={styles.pre} tabIndex={0}>
+        {JSON.stringify(spec, null, 2)}
+      </pre>
+    );
   }
   const s = parsed.data;
   return (
-    <div className={styles.stack}>
+    <div className={styles.specStack}>
       <div>
-        <h4 className={styles.sub} style={{ marginTop: 0 }}>
-          Steps
-        </h4>
+        <h4 className={styles.specHeading}>Steps</h4>
         <ol className={styles.steps}>
           {s.steps.map((step) => (
             <li key={step.id}>
@@ -31,9 +34,7 @@ export function SpecSummary({ spec }: { spec: unknown }) {
       </div>
       {s.rules.length > 0 ? (
         <div>
-          <h4 className={styles.sub} style={{ marginTop: 0 }}>
-            Rules
-          </h4>
+          <h4 className={styles.specHeading}>Rules</h4>
           <ul className={styles.steps}>
             {s.rules.map((rule) => (
               <li key={rule.id}>
