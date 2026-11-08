@@ -23,7 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { checkAudit } from './check-audit.js';
 import { checkTenancy, describeViolations } from './check-tenancy.js';
 import { runMigrations } from './migrate.js';
-import { createParty, createTenantWithEntity } from './testing/fixtures.js';
+import { createParty, createStaffUser, createTenantWithEntity } from './testing/fixtures.js';
 
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
@@ -286,6 +286,42 @@ describe('activities have exactly one subject', () => {
     await expect(insertActivity(scope, { leadId, customerId })).rejects.toMatchObject(failure);
     await expect(insertActivity(scope, { leadId })).resolves.toBeDefined();
     await expect(insertActivity(scope, { customerId })).resolves.toBeDefined();
+  });
+});
+
+describe('verification cases name their submitter', () => {
+  it('refuses a submitted, approved or rejected case without submitter and time (23514)', async () => {
+    const tenant = await createTenantWithEntity(app);
+    const scope = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
+    const { userId } = await createStaffUser(app, { ...scope, idpOrgId: tenant.idpOrgId });
+    const insertCase = (status: string, submitted: boolean, decided: boolean) =>
+      insertCustomer(scope).then((partyId) =>
+        inTx(scope.organizationId, (c) =>
+          c.query(
+            `INSERT INTO app.verification_cases
+               (tenant_id, party_id, status, submitted_by_user_id, submitted_at, reviewer_user_id, decided_at, reason)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              scope.tenantId,
+              partyId,
+              status,
+              submitted ? userId : null,
+              submitted ? new Date() : null,
+              decided ? userId : null,
+              decided ? new Date() : null,
+              status === 'rejected' ? 'no' : null,
+            ],
+          ),
+        ),
+      );
+    const failure = { code: '23514', constraint: 'verification_cases_submission_check' };
+
+    await expect(insertCase('submitted', false, false)).rejects.toMatchObject(failure);
+    await expect(insertCase('approved', false, true)).rejects.toMatchObject(failure);
+    await expect(insertCase('rejected', false, true)).rejects.toMatchObject(failure);
+    await expect(insertCase('draft', false, false)).resolves.toBeDefined();
+    await expect(insertCase('submitted', true, false)).resolves.toBeDefined();
+    await expect(insertCase('approved', true, true)).resolves.toBeDefined();
   });
 });
 
