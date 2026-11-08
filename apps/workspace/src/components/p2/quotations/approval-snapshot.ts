@@ -2,8 +2,9 @@ import { QuotationApprovalSnapshotSchema, type QuotationApprovalSnapshot } from 
 
 /**
  * A discount strictly above this percentage adds the Management approval step. The server decides
- * the route; this number only decides which figure the page highlights. It mirrors
- * `DISCOUNT_APPROVAL_THRESHOLD_PCT` in @bos/money-rules, which the workspace does not depend on.
+ * the route and writes its verdict in `discountApprovalRequired`; this number is only the fallback
+ * for the rounded text. It mirrors `DISCOUNT_APPROVAL_THRESHOLD_PCT` in @bos/money-rules, which the
+ * workspace does not depend on.
  */
 const DISCOUNT_LIMIT_PCT = 12;
 
@@ -17,7 +18,15 @@ export function parseApprovalSnapshot(raw: unknown): QuotationApprovalSnapshot |
   return parsed.success ? parsed.data : null;
 }
 
-/** True when the stored effective discount is strictly above 12 (so 12.0000 is not). */
+/**
+ * Whether to highlight the discount: the server's `discountApprovalRequired` flag. It compares the
+ * unrounded discount, so it can be true while the stored four-decimal text still reads "12.0000".
+ */
+export function discountNeedsApproval(snapshot: QuotationApprovalSnapshot): boolean {
+  return snapshot.discountApprovalRequired;
+}
+
+/** True when the stored four-decimal text is strictly above 12 (so 12.0000 is not). Text only. */
 export function exceedsDiscountLimit(effectiveDiscountPct: string): boolean {
   return Number(effectiveDiscountPct) > DISCOUNT_LIMIT_PCT;
 }
