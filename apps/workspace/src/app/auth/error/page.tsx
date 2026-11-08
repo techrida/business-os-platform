@@ -1,3 +1,8 @@
+import { NoticeCard } from '@/components/shell/notice-card';
+import { Badge } from '@/components/ui/badge';
+import { CenteredPage } from '@/components/ui/centered-page';
+import { LinkButton } from '@/components/ui/button';
+
 export const dynamic = 'force-dynamic';
 
 // The code comes from the URL, so it is only shown when it is one we issue. Anything else would
@@ -16,16 +21,22 @@ export default async function AuthErrorPage({
 }) {
   const code = knownCode((await searchParams).code);
   return (
-    <main>
-      <h1>We could not sign you in</h1>
-      <p>Something went wrong while signing in. Please try again.</p>
-      <p>
-        Error code: <code>{code}</code>
-      </p>
-      {/* A plain link on purpose: /auth/login is a route handler, not a page to prefetch. */}
-      <p>
-        <a href="/auth/login">Try again</a>
-      </p>
-    </main>
+    <CenteredPage>
+      <NoticeCard
+        title="We could not sign you in"
+        actions={
+          // A plain link on purpose: /auth/login is a route handler, not a page to prefetch.
+          <LinkButton href="/auth/login">Try again</LinkButton>
+        }
+      >
+        <p>Something went wrong while signing in. Please try again.</p>
+        <p>
+          Error code{' '}
+          <Badge tone="error">
+            <code>{code}</code>
+          </Badge>
+        </p>
+      </NoticeCard>
+    </CenteredPage>
   );
 }
