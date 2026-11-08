@@ -2,11 +2,12 @@ import 'server-only';
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
+import { Redis } from 'ioredis';
 import * as client from 'openid-client';
 import { z } from 'zod';
 
 import { getEnv } from './env';
-import { getRedis, safeReturnTo } from './session';
+import { safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
 
 /**
  * OIDC against ZITADEL with openid-client v6 (functional API).
@@ -126,6 +127,27 @@ export function __resetOidcForTests(): void {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Login state Valkey
+// ---------------------------------------------------------------------------------------------
+
+let oidcRedis: Redis | undefined;
+
+/**
+ * Login state lives on its own Valkey (OIDC_STATE_VALKEY_URL, CR-03), so anonymous logins can
+ * fill only that server and never the memory sessions need. One connection per process, created
+ * on first use, with the same fail-fast options as the session client.
+ */
+export function getOidcRedis(): Redis {
+  oidcRedis ??= new Redis(getEnv().OIDC_STATE_VALKEY_URL, { ...VALKEY_CLIENT_OPTIONS });
+  return oidcRedis;
+}
+
+/** Tests only: inject an ioredis-mock instance, or pass undefined to drop the injected one. */
+export function __setOidcRedisForTests(redis: Redis | undefined): void {
+  oidcRedis = redis;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Login
 // ---------------------------------------------------------------------------------------------
 
@@ -152,7 +174,8 @@ export async function beginLogin(o: {
   const binding = randomBytes(LOGIN_BINDING_BYTES).toString('base64url');
   const bindingHash = sha256(binding).toString('hex');
 
-  await getRedis().set(
+  const redis = await whenReady(getOidcRedis());
+  await redis.set(
     oidcKey(state),
     JSON.stringify({ codeVerifier, nonce, returnTo, bindingHash }),
     'EX',
@@ -205,7 +228,8 @@ export async function completeLogin(
   const state = callbackUrl.searchParams.get('state');
   if (!state || !STATE_PATTERN.test(state)) throw new Error('oidc: missing or malformed state');
 
-  const raw = await getRedis().getdel(oidcKey(state));
+  const redis = await whenReady(getOidcRedis());
+  const raw = await redis.getdel(oidcKey(state));
   if (raw === null) throw new Error('oidc: unknown, expired or already used state');
 
   let pending: z.infer<typeof PendingLoginSchema>;
