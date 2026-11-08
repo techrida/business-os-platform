@@ -899,3 +899,130 @@ describe('P1 review fixes (FIX-A2b)', () => {
     expect(await inboxHas(U.fin, requestId)).toBe(true);
   });
 });
+
+describe('P1 review fixes (FIX-A2c)', () => {
+  const window = {
+    startsAt: new Date('2026-11-01T00:00:00Z'),
+    endsAt: new Date('2026-11-30T00:00:00Z'),
+  };
+  // Accountant then finance, with distinctApprovers on and off. Own document types, so the test_memo
+  // versions other tests publish do not change these routes.
+  beforeAll(async () => {
+    me = U.founder;
+    for (const [documentType, distinctApprovers] of [
+      ['r12_on', true],
+      ['r12_off', false],
+    ] as const) {
+      await admin.createWorkflow({
+        key: documentType,
+        name: documentType,
+        spec: { documentType, distinctApprovers, steps: seedSpec.steps },
+      });
+      await admin.publish(documentType, 1);
+      service.registerSubject({ documentType, onDecided });
+    }
+  });
+
+  it('R12: an approve that leaves the next step only earlier deciders blocks the request', async () => {
+    roles.finance = [U.both]; // finance's only member is the person who will decide step 1
+    const { requestId, status } = await submit({ documentType: 'r12_on' });
+    expect(status).toBe('pending');
+    vi.clearAllMocks();
+
+    const dto = await act(U.both, requestId, { action: 'approve', expectedVersion: 1 });
+    expect(dto).toMatchObject({ status: 'blocked', currentSeq: 2, version: 2, decidedAt: null });
+    expect(dto.blockReason).toContain('Step 2');
+    expect(dto.steps.map((s) => s.status)).toEqual(['approved', 'waiting']);
+    expect(notify.notifyRole).toHaveBeenCalledWith(
+      expect.anything(),
+      'founder',
+      expect.objectContaining({
+        dedupeKey: `approval:${requestId}:blocked:2`,
+        email: {
+          template: 'approval.blocked',
+          vars: {
+            documentNumber: 'MEMO-2082/83-00001',
+            documentType: 'r12_on',
+            linkPath: `/inbox/${requestId}`,
+          },
+        },
+      }),
+    );
+    expect(notify.notifyUser).not.toHaveBeenCalled();
+    expect(onDecided).not.toHaveBeenCalled();
+    expect(await countActions(requestId, 'block')).toBe(1);
+    const approveAudit = (
+      audit.record.mock.calls as unknown as [unknown, { action: string; after: unknown }][]
+    )
+      .map((c) => c[1])
+      .find((e) => e.action === 'approvals.approve');
+    expect(approveAudit?.after).toMatchObject({ status: 'blocked', seq: 2 });
+
+    // Once finance has another member, reroute reopens step 2 (currentSeq already points at it).
+    roles.finance = [U.both, U.fin];
+    me = U.founder;
+    const reopened = await service.reroute(requestId);
+    expect(reopened).toMatchObject({ status: 'pending', currentSeq: 2, blockReason: null });
+    expect(reopened.steps[1]).toMatchObject({ status: 'active' });
+    const done = await act(U.fin, requestId, { action: 'approve', expectedVersion: 3 });
+    expect(done.status).toBe('approved');
+  });
+
+  it('R12 control: with distinctApprovers off the same flow leaves step 2 pending for that person', async () => {
+    roles.finance = [U.both];
+    const { requestId } = await submit({ documentType: 'r12_off' });
+    vi.clearAllMocks();
+
+    const dto = await act(U.both, requestId, { action: 'approve', expectedVersion: 1 });
+    expect(dto).toMatchObject({ status: 'pending', currentSeq: 2, blockReason: null });
+    expect(dto.steps[1]).toMatchObject({ status: 'active' });
+    expect(notify.notifyRole).not.toHaveBeenCalled();
+    expect(notify.notifyUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: U.both, dedupeKey: `approval:${requestId}:2:pending` }),
+    );
+    const done = await act(U.both, requestId, { action: 'approve', expectedVersion: 2 });
+    expect(done.status).toBe('approved');
+  });
+
+  it('R12: the next step is announced only to people who may still decide it', async () => {
+    const { requestId } = await submit({ documentType: 'r12_on' });
+    vi.clearAllMocks();
+    await act(U.both, requestId, { action: 'approve', expectedVersion: 1 });
+    const told = notify.notifyUser.mock.calls.map(
+      (c) => (c[1] as Notice & { userId: string }).userId,
+    );
+    expect(told).toEqual([U.fin]);
+  });
+
+  it('R12: a delegate for two approvers acts for the one who did not decide an earlier step', async () => {
+    roles.finance = [U.acc, U.fin]; // U.acc decides step 1 and also holds finance
+    me = U.founder;
+    // U.acc's delegation first, so a lookup that ignores earlier deciders picks U.acc.
+    const viaAcc = await admin.createDelegation({
+      fromUserId: U.acc,
+      toUserId: U.deputy,
+      ...window,
+      documentType: 'r12_on',
+    });
+    const viaFin = await admin.createDelegation({
+      fromUserId: U.fin,
+      toUserId: U.deputy,
+      ...window,
+      documentType: 'r12_on',
+    });
+    try {
+      const { requestId } = await submit({ documentType: 'r12_on' });
+      await act(U.acc, requestId, { action: 'approve', expectedVersion: 1 });
+      me = U.deputy;
+      expect((await service.inbox()).some((i) => i.requestId === requestId)).toBe(true);
+      const dto = await act(U.deputy, requestId, { action: 'approve', expectedVersion: 2 });
+      expect(dto.status).toBe('approved');
+      expect(dto.steps[1]).toMatchObject({ decidedBy: U.deputy, decidedOnBehalfOf: U.fin });
+    } finally {
+      me = U.founder;
+      await admin.revokeDelegation(viaAcc.id);
+      await admin.revokeDelegation(viaFin.id);
+    }
+  });
+});
