@@ -21,7 +21,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
-import { DB, type Db } from '../../platform/db/db.module';
+import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import type { CustomerViewInput } from '../quotations/render/customer-view';
 
 type VersionRow = typeof quotationVersions.$inferSelect;
@@ -48,6 +48,24 @@ export const PORTAL_QUOTATION_STORE = Symbol('PORTAL_QUOTATION_STORE');
 
 const ACTION = 'portal.quotation.read' as const;
 
+/**
+ * The read behind accept and reject (P2 unit PA-3): one version head of a quotation `p` may answer, scoped by
+ * `portal.quotation.respond` the same way the reads are scoped by `portal.quotation.read`. It runs on the caller's
+ * transaction, so the check and the answer see the same rows; QuotationOutcomeService then locks and re-checks.
+ */
+export interface PortalRespondStore {
+  /** The head of one version of a quotation `p` may answer, whatever its status; undefined when out of reach. */
+  findHead(
+    tx: DbTransaction,
+    p: Principal,
+    versionId: string,
+  ): Promise<PortalVersionHead | undefined>;
+}
+
+export const PORTAL_RESPOND_STORE = Symbol('PORTAL_RESPOND_STORE');
+
+const RESPOND_ACTION = 'portal.quotation.respond' as const;
+
 /** Versions joined to the quotation they belong to, in the same tenant and entity. */
 const versionOfQuotation = and(
   eq(quotations.tenantId, quotationVersions.tenantId),
@@ -55,24 +73,44 @@ const versionOfQuotation = and(
   eq(quotations.id, quotationVersions.quotationId),
 );
 
+/** Versions of a quotation `p` may read, as heads; shared by the list and the respond read. */
+const headColumns = {
+  versionId: quotationVersions.id,
+  quotationId: quotationVersions.quotationId,
+  number: quotations.number,
+  revisionNo: quotationVersions.revisionNo,
+  status: quotationVersions.status,
+  rejectionSource: quotationVersions.rejectionSource,
+  issueDate: quotationVersions.issueDate,
+  validUntil: quotationVersions.validUntil,
+  currency: quotationVersions.currency,
+  total: quotationVersions.total,
+};
+
+@Injectable()
+export class DrizzlePortalRespondStore implements PortalRespondStore {
+  async findHead(
+    tx: DbTransaction,
+    p: Principal,
+    versionId: string,
+  ): Promise<PortalVersionHead | undefined> {
+    const [head] = await tx
+      .select(headColumns)
+      .from(quotationVersions)
+      .innerJoin(quotations, versionOfQuotation)
+      .where(and(scopeWhereFor(p, quotations, RESPOND_ACTION), eq(quotationVersions.id, versionId)))
+      .limit(1);
+    return head;
+  }
+}
+
 @Injectable()
 export class DrizzlePortalQuotationStore implements PortalQuotationStore {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async listVersions(p: Principal): Promise<PortalVersionHead[]> {
     return this.db
-      .select({
-        versionId: quotationVersions.id,
-        quotationId: quotationVersions.quotationId,
-        number: quotations.number,
-        revisionNo: quotationVersions.revisionNo,
-        status: quotationVersions.status,
-        rejectionSource: quotationVersions.rejectionSource,
-        issueDate: quotationVersions.issueDate,
-        validUntil: quotationVersions.validUntil,
-        currency: quotationVersions.currency,
-        total: quotationVersions.total,
-      })
+      .select(headColumns)
       .from(quotationVersions)
       .innerJoin(quotations, versionOfQuotation)
       .where(
