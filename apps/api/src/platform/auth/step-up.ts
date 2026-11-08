@@ -5,7 +5,6 @@
 // verify it here. Anything we cannot read as a recent sign-in is stale: "sign in again".
 import { UnauthorizedException } from '@nestjs/common';
 
-import type { AuthIdentity } from './claims';
 import type { JwtVerifier } from './jwt-verifier';
 
 /** The request header the BFF puts the user's raw ID token in, on a decision call only. */
@@ -66,17 +65,6 @@ export function isAuthRecent(
   const nowSeconds = nowMs / 1000;
   if (authTime > nowSeconds + CLOCK_SKEW_SECONDS) return false;
   return nowSeconds - authTime <= maxAgeSeconds;
-}
-
-/** Throws StepUpRequiredException unless the caller signed in within the window. */
-export function assertRecentAuth(
-  auth: AuthIdentity | undefined,
-  nowMs: number,
-  maxAgeSeconds: number,
-): void {
-  if (!isAuthRecent(auth?.authTime, nowMs, maxAgeSeconds)) {
-    throw new StepUpRequiredException(maxAgeSeconds);
-  }
 }
 
 /** Three base64url parts. Anything else (empty, a list of joined headers, junk) is no ID token. */

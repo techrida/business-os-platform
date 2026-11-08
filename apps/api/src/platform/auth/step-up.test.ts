@@ -4,9 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startTestIssuer, type TestIssuer } from '../../../test/e2e/support/test-issuer';
 import { JwtVerifier } from './jwt-verifier';
 
-import type { AuthIdentity } from './claims';
 import {
-  assertRecentAuth,
   assertRecentIdToken,
   DEFAULT_STEP_UP_MAX_AGE_SECONDS,
   isAuthRecent,
@@ -18,14 +16,6 @@ import {
 const NOW_MS = 1_800_000_000_000;
 const NOW_S = NOW_MS / 1000;
 const MAX = DEFAULT_STEP_UP_MAX_AGE_SECONDS;
-
-const identity = (authTime?: number | null): AuthIdentity => ({
-  userId: 'u',
-  zitadelOrgId: 'o',
-  roles: ['founder'],
-  tokenExp: NOW_S + 600,
-  ...(authTime === undefined ? {} : { authTime }),
-});
 
 describe('isAuthRecent', () => {
   it('defaults to a 5 minute window', () => {
@@ -59,31 +49,6 @@ describe('isAuthRecent', () => {
   );
 });
 
-describe('assertRecentAuth', () => {
-  it('passes a fresh sign-in', () => {
-    expect(() => assertRecentAuth(identity(NOW_S - 60), NOW_MS, MAX)).not.toThrow();
-  });
-
-  it.each([
-    ['stale', identity(NOW_S - MAX - 1)],
-    ['missing', identity()],
-    ['null', identity(null)],
-    ['unauthenticated', undefined],
-  ])('throws 401 step_up_required when auth_time is %s', (_label, auth) => {
-    let thrown: unknown;
-    try {
-      assertRecentAuth(auth, NOW_MS, MAX);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(StepUpRequiredException);
-    expect(thrown).toBeInstanceOf(UnauthorizedException);
-    const ex = thrown as StepUpRequiredException;
-    expect(ex.getStatus()).toBe(401);
-    expect(ex.getResponse()).toMatchObject({ code: STEP_UP_REQUIRED, maxAge: MAX });
-  });
-});
-
 // The real producer (the e2e test issuer, serving discovery and a JWKS on 127.0.0.1) through the
 // real consumer (JwtVerifier): every case differs from the valid token in exactly one way.
 describe('assertRecentIdToken', () => {
@@ -113,6 +78,7 @@ describe('assertRecentIdToken', () => {
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(StepUpRequiredException);
+    expect(err).toBeInstanceOf(UnauthorizedException);
     const ex = err as StepUpRequiredException;
     expect(ex.getStatus()).toBe(401);
     expect(ex.getResponse()).toMatchObject({ code: STEP_UP_REQUIRED, maxAge: MAX });
