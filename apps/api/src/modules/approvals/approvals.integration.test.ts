@@ -866,3 +866,36 @@ describe('P1 review fixes (FIX-A2)', () => {
     ).rejects.toMatchObject({ status: 403, response: { reason: 'out_of_scope' } });
   });
 });
+
+describe('P1 review fixes (FIX-A2b)', () => {
+  const inboxHas = async (as: string, requestId: string) => {
+    me = as;
+    return (await service.inbox()).some((i) => i.requestId === requestId);
+  };
+
+  it('R12: reroute after a decision does not keep the decider eligible for a later step', async () => {
+    const { requestId } = await submit();
+    await act(U.both, requestId, { action: 'approve', expectedVersion: 1 });
+    roles.finance = [U.both]; // finance's only member is the person who already decided step 1
+    me = U.founder;
+    const dto = await service.reroute(requestId);
+    expect(dto.status).toBe('blocked');
+    expect(dto.blockReason).toContain('Step 2');
+    expect(notify.notifyRole).toHaveBeenCalled();
+  });
+
+  it('R12: the inbox hides an item whose role the token no longer carries', async () => {
+    const { requestId } = await submit();
+    expect(await inboxHas(U.acc, requestId)).toBe(true);
+    tokenRoles = ['management'];
+    expect(await inboxHas(U.acc, requestId)).toBe(false);
+  });
+
+  it('R12: the inbox hides a later step from the person who decided an earlier one', async () => {
+    const { requestId } = await submit();
+    expect(await inboxHas(U.both, requestId)).toBe(true);
+    await act(U.both, requestId, { action: 'approve', expectedVersion: 1 });
+    expect(await inboxHas(U.both, requestId)).toBe(false);
+    expect(await inboxHas(U.fin, requestId)).toBe(true);
+  });
+});
