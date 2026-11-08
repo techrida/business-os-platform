@@ -5,10 +5,13 @@ import {
   defaultDates,
   discountAboveThreshold,
   emptyValues,
+  newLine,
   scheduleState,
   submitBlocker,
   toContent,
+  valuesFromVersion,
   type BuilderValues,
+  type VersionLike,
 } from './model';
 
 const TAX = '33333333-3333-4333-8333-333333333333';
@@ -108,6 +111,80 @@ describe('toContent', () => {
 
   it('in create mode never sends null (create refuses it)', () => {
     expect(Object.values(toContent(filled()))).not.toContain(null);
+  });
+});
+
+describe('hidden line fields (unitCost, catalogItemId)', () => {
+  const CAT = '66666666-6666-4666-8666-666666666666';
+  const version = (): VersionLike => ({
+    contactId: null,
+    currency: 'NPR',
+    issueDate: '2026-11-08',
+    validUntil: '2026-12-08',
+    paymentTermId: null,
+    scope: null,
+    assumptions: null,
+    exclusions: null,
+    deliveryTimeline: null,
+    discount: null,
+    lines: [
+      {
+        description: 'HRMS implementation',
+        uom: 'lot',
+        quantity: '1',
+        unitPrice: '180000.00',
+        taxCodeId: TAX,
+        unitCost: '120000.00',
+        catalogItemId: CAT,
+      },
+      {
+        description: 'Training',
+        uom: 'day',
+        quantity: '2',
+        unitPrice: '5000.00',
+        taxCodeId: TAX,
+        unitCost: null,
+        catalogItemId: null,
+      },
+    ],
+    paymentSchedule: [],
+  });
+
+  it('survive valuesFromVersion then toContent, per line, in update mode', () => {
+    const c = toContent(valuesFromVersion(version()), 'update');
+    expect(c.lines[0]).toMatchObject({ unitCost: '120000.00', catalogItemId: CAT });
+    // A line that had none sends none (the API reads a missing key as null).
+    expect(c.lines[1]).not.toHaveProperty('unitCost');
+    expect(c.lines[1]).not.toHaveProperty('catalogItemId');
+    expect(UpdateQuotationDraftBodySchema.safeParse({ ...c, expectedVersion: 2 }).success).toBe(
+      true,
+    );
+  });
+
+  it('survive in create mode too', () => {
+    const c = toContent(valuesFromVersion(version()));
+    expect(c.lines[0]).toMatchObject({ unitCost: '120000.00', catalogItemId: CAT });
+    expect(c.lines[1]).not.toHaveProperty('unitCost');
+  });
+
+  it('stay with a line when its visible fields are edited', () => {
+    const v = valuesFromVersion(version());
+    const edited = v.lines.map((l, i) => (i === 0 ? { ...l, unitPrice: '1,90,000.00' } : l));
+    const c = toContent({ ...v, lines: edited }, 'update');
+    expect(c.lines[0]).toMatchObject({
+      unitPrice: '190000.00',
+      unitCost: '120000.00',
+      catalogItemId: CAT,
+    });
+  });
+
+  it('are null on a newly added line, which sends neither', () => {
+    expect(newLine('l9')).toMatchObject({ unitCost: null, catalogItemId: null });
+    const v = filled();
+    v.lines = [...v.lines, newLine('l2')];
+    const c = toContent(v, 'update');
+    expect(c.lines[1]).not.toHaveProperty('unitCost');
+    expect(c.lines[1]).not.toHaveProperty('catalogItemId');
   });
 });
 
