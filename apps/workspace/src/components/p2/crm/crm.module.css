@@ -1,0 +1,418 @@
+/* Layout and small pieces for the CRM screens (leads, opportunities, activities). Everything else
+   comes from components/ui. Colours and sizes are the Figma tokens. */
+
+.quiet {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.long {
+  overflow-wrap: anywhere;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Toolbar: view switch and filters ---- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.filters > * {
+  min-width: 160px;
+}
+
+.views {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+}
+
+.view {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.view:hover {
+  color: var(--text-primary);
+}
+
+.view[aria-current='page'] {
+  background: var(--surface-default);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 12%);
+}
+
+/* ---- Board ---- */
+
+.boardHint {
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+}
+
+.board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(250px, 280px);
+  gap: 12px;
+  padding-bottom: 12px;
+  overflow-x: auto;
+  align-items: start;
+}
+
+.column {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-subtle);
+}
+
+.columnHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.columnTitle {
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
+
+.columnNote {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.columnEmpty {
+  padding: 8px 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+}
+
+.cards {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+}
+
+.card[draggable='true'] {
+  cursor: grab;
+}
+
+.cardDragging {
+  opacity: 0.5;
+}
+
+.cardTitle {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.cardMeta,
+.cardSub {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.cardValue {
+  font-size: var(--font-size-body-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.cardMove {
+  margin-top: 4px;
+}
+
+.cardMove summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--brand-700);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.dropAllowed {
+  outline: 2px dashed var(--brand-500);
+  outline-offset: -2px;
+}
+
+.dropOver {
+  outline: 2px solid var(--brand-600);
+  outline-offset: -2px;
+  background: var(--brand-50);
+}
+
+.dropBlocked {
+  opacity: 0.6;
+}
+
+/* ---- Move form ---- */
+
+.moveForm,
+.moveCompact {
+  display: grid;
+  gap: 12px;
+}
+
+.moveCompact {
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.moved {
+  color: var(--success-700);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ---- Forms ---- */
+
+.form {
+  display: grid;
+  gap: 20px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 16px;
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: var(--font-size-body);
+}
+
+.choice input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-600);
+}
+
+/* ---- Detail layout ---- */
+
+.columns {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.main {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.side {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+
+.reasonBox {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  font-size: var(--font-size-body-small);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Activity list ---- */
+
+.timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry {
+  display: grid;
+  gap: 4px;
+  padding: 12px 0;
+  border-top: var(--border-width-thin) solid var(--border-default);
+  min-width: 0;
+}
+
+.entry:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.entryHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.entryTitle {
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.entryBody {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.entryWhen {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+/* ---- Convert dialog ---- */
+
+.dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-default);
+  color: var(--text-primary);
+  box-shadow: 0 24px 48px rgb(15 23 42 / 18%);
+  overflow: auto;
+}
+
+.dialog::backdrop {
+  background: rgb(15 23 42 / 45%);
+}
+
+.dialogHead {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-default);
+}
+
+.dialogBody {
+  display: grid;
+  gap: 20px;
+  padding: 20px 24px;
+}
+
+.dialogFoot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px 20px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+
+.candidates {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.candidate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+}
+
+.candidateText {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
