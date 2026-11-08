@@ -344,3 +344,86 @@ describe('JwtVerifier warm-up and readiness', () => {
     await expect(verifier.isJwksReady()).resolves.toBe(false);
   });
 });
+
+describe('JwtVerifier.verifyIdToken: proof of a recent sign-in for step-up (K7)', () => {
+  /** A ZITADEL-shaped ID token: `aud` is the client, `auth_time` the sign-in, no `at+jwt` typ. */
+  const idClaims = (extra: JWTPayload = {}): JWTPayload => ({
+    iss: ISSUER,
+    aud: [CLIENT_ID],
+    azp: CLIENT_ID,
+    sub: 'user-1',
+    iat: now(),
+    exp: now() + 300,
+    auth_time: now() - 10,
+    ...extra,
+  });
+
+  const signId = (payload: JWTPayload, typ?: string, key: CryptoKey = trusted.privateKey) =>
+    new SignJWT(payload)
+      .setProtectedHeader(
+        typ === undefined ? { alg: 'RS256', kid: KID } : { alg: 'RS256', kid: KID, typ },
+      )
+      .sign(key);
+
+  it('accepts a valid ID token for the expected user and returns its payload', async () => {
+    stubIdp();
+    const payload = await newVerifier().verifyIdToken(await signId(idClaims(), 'JWT'), 'user-1');
+    expect(payload.auth_time).toBeTypeOf('number');
+  });
+
+  it('accepts a second allowed client in aud, and an ID token without azp', async () => {
+    stubIdp();
+    const token = await signId(idClaims({ aud: K6_CLIENT_ID, azp: undefined }));
+    await expect(newVerifier().verifyIdToken(token, 'user-1')).resolves.toBeDefined();
+  });
+
+  it('tolerates an expired exp (auth_time decides freshness)', async () => {
+    stubIdp();
+    const token = await signId(idClaims({ exp: now() - 3600 }));
+    await expect(newVerifier().verifyIdToken(token, 'user-1')).resolves.toBeDefined();
+  });
+
+  it.each<[string, () => Promise<string>]>([
+    ['an access token (typ at+jwt)', () => signId(idClaims(), 'at+jwt')],
+    ['an access token (typ application/at+jwt)', () => signId(idClaims(), 'application/at+jwt')],
+    ['an exp more than 24 h in the past', () => signId(idClaims({ exp: now() - 86_400 - 120 }))],
+    ['an nbf in the future', () => signId(idClaims({ nbf: now() + 600 }))],
+    ['no auth_time', () => signId(idClaims({ auth_time: undefined }))],
+    ['another user', () => signId(idClaims({ sub: 'user-2' }))],
+    ['an aud with no allowed client', () => signId(idClaims({ aud: [AUDIENCE, 'other-client'] }))],
+    ['an azp that is not an allowed client', () => signId(idClaims({ azp: 'other-client' }))],
+    ['another issuer', () => signId(idClaims({ iss: 'https://evil.test' }))],
+    ['a signature by a key not in the JWKS', () => signId(idClaims(), 'JWT', attacker.privateKey)],
+  ])('rejects %s as a token error', async (_label, token) => {
+    stubIdp();
+    const err: unknown = await newVerifier()
+      .verifyIdToken(await token(), 'user-1')
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(errors.JOSEError);
+  });
+
+  it('rejects every ID token when no client is allowed', async () => {
+    stubIdp();
+    const err: unknown = await newVerifier([1], [])
+      .verifyIdToken(await signId(idClaims()), 'user-1')
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(errors.JOSEError);
+  });
+
+  it('rejects an empty expected user', async () => {
+    stubIdp();
+    const err: unknown = await newVerifier()
+      .verifyIdToken(await signId(idClaims({ sub: '' })), '')
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(Error);
+  });
+});
