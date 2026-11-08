@@ -11,6 +11,27 @@ import { expectZitadelCredentialForm, signInOnZitadel } from './helpers/zitadel-
 const SESSION_COOKIE = '__Host-bos_session';
 const authOrigin = process.env.BOS_E2E_AUTH_ORIGIN ?? 'https://auth.localhost';
 
+// A login answered with 429 (CR-03) makes a sign-in look broken for no reason in the app. Name it
+// in the test that hit it: every `/auth/login` response is checked, whichever step caused it.
+test.beforeEach(({ page, baseURL }) => {
+  const appOrigin = new URL(baseURL ?? '').origin;
+  page.on('response', (res) => {
+    const url = new URL(res.url());
+    if (url.origin === appOrigin && url.pathname === '/auth/login' && res.status() === 429) {
+      test.info().annotations.push({ type: 'rate-limited', description: res.url() });
+    }
+  });
+});
+
+test.afterEach(() => {
+  const limited = test.info().annotations.filter((a) => a.type === 'rate-limited');
+  expect(
+    limited,
+    'Workspace login rate limit (CR-03) answered 429: 20 logins per minute per client IP; ' +
+      'all local traffic shares one IP through Caddy. Run fewer tests per minute (lower --repeat-each or --workers).',
+  ).toHaveLength(0);
+});
+
 // Read at collection time, so a missing `.dev/personas.json` fails loudly with "run pnpm seed".
 const personas = loadPersonas();
 
@@ -51,19 +72,32 @@ test.describe('persona sign-in and sign-out', () => {
       });
 
       await test.step('sign out ends the session', async () => {
+        // The chain after the click is: POST /auth/logout, ZITADEL end_session, back to
+        // `${appOrigin}/` (the post_logout_redirect_uri), then `/` sends the cookie-less browser
+        // to /auth/login and on to ZITADEL. Both waits start before the click so neither is missed.
+        // The navigation to exactly `${appOrigin}/` proves ZITADEL processed end_session. Asking
+        // for `/` again by hand would abort that chain, and if end_session had not been processed
+        // the next login would silently sign the user back in.
+        const backOnApp = page.waitForRequest(
+          (req) => req.isNavigationRequest() && req.url() === `${appOrigin}/`,
+        );
+        const nextLogin = page.waitForResponse((res) => {
+          const url = new URL(res.url());
+          return url.origin === appOrigin && url.pathname === '/auth/login';
+        });
         await page.getByRole('button', { name: 'Sign out' }).click();
-        // Back on the app or still on ZITADEL's logout page: either way the cookie must be gone.
-        await expect
-          .poll(async () => {
-            const cookies = await page.context().cookies(appOrigin);
-            return cookies.some((c) => c.name === SESSION_COOKIE && c.value !== '');
-          })
-          .toBe(false);
+        await backOnApp;
+        // A 303 to ZITADEL is a fresh login starting. A 429 would be the login rate limit.
+        expect((await nextLogin).status(), 'Workspace login rate limit (CR-03) answered 429').toBe(
+          303,
+        );
 
-        // The real proof: asking for `/` again must reach a credential form. If the session
-        // survived (here, or at ZITADEL, which would sign the user straight back in), the
-        // browser would end up on the app instead.
-        await page.goto('/');
+        const cookies = await page.context().cookies(appOrigin);
+        expect(cookies.some((c) => c.name === SESSION_COOKIE && c.value !== '')).toBe(false);
+
+        // The real proof: the redirect chain ends on a credential form. If the session survived
+        // (here, or at ZITADEL, which would sign the user straight back in), the browser would
+        // end up on the app instead.
         await expect(page).toHaveURL((url) => url.origin === authOrigin);
         // ZITADEL Login V2 remembers which accounts used this browser and may show an
         // "Accounts / Select the account you want to use" chooser. Listing the account is fine;
