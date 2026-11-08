@@ -151,6 +151,16 @@ export function __setOidcRedisForTests(redis: Redis | undefined): void {
 // Login
 // ---------------------------------------------------------------------------------------------
 
+/** The largest `max_age` we pass on: one day. Anything else is dropped, like an unknown prompt. */
+export const MAX_LOGIN_MAX_AGE = 86_400;
+
+/** A whole number of seconds from 0 to MAX_LOGIN_MAX_AGE. */
+export function isMaxAge(value: unknown): value is number {
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_LOGIN_MAX_AGE
+  );
+}
+
 /**
  * Starts a login: stores `ws:oidc:<state>` = { codeVerifier, nonce, returnTo, bindingHash } for
  * 10 minutes and returns the ZITADEL authorization URL to redirect to, plus the `binding` value
@@ -160,6 +170,11 @@ export function __setOidcRedisForTests(redis: Redis | undefined): void {
 export async function beginLogin(o: {
   loginHint?: string;
   prompt?: 'login' | 'none' | 'consent' | 'select_account';
+  /**
+   * OIDC `max_age` in seconds. Step-up (K7) sends 0 with `prompt=login`: the spec then obliges the
+   * IdP to re-authenticate and to report `auth_time`, which the API checks on Founder approvals.
+   */
+  maxAge?: number;
   returnTo: string;
 }): Promise<{ url: URL; binding: string }> {
   const env = getEnv();
@@ -194,6 +209,7 @@ export async function beginLogin(o: {
   // These come from the query string at runtime, whatever the static type says.
   if (o.loginHint && o.loginHint.length <= MAX_LOGIN_HINT_LENGTH) params.login_hint = o.loginHint;
   if (o.prompt && PROMPTS.has(o.prompt)) params.prompt = o.prompt;
+  if (isMaxAge(o.maxAge)) params.max_age = String(o.maxAge);
 
   return { url: client.buildAuthorizationUrl(config, params), binding };
 }
