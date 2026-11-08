@@ -14,7 +14,7 @@ import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
 
 import * as api from './api';
-import { describeQuoteFailure, type FailureKind } from './failure';
+import { describeQuoteFailure, isIdempotencyInProgress, type FailureKind } from './failure';
 import { scheduleMessage, scheduleState, toContent, type BuilderValues } from './model';
 import type { PreviewResult } from './schemas';
 
@@ -46,9 +46,15 @@ export type ActionFailure = {
 
 const keyOf = (submitted: string): string => (KEY.test(submitted) ? submitted : randomUUID());
 
-/** A 4xx is a final answer, so the next click is a new request; anything else may have landed. */
+/**
+ * A 4xx is a final answer, so the next click is a new request; anything else may have landed. The one
+ * 4xx that is not final is the 409 saying the first request with this key is still being processed:
+ * a new key there would make the retry a second request and could create a duplicate.
+ */
 const nextKey = (err: unknown, key: string): string =>
-  err instanceof ApiError && err.status >= 400 && err.status < 500 ? randomUUID() : key;
+  err instanceof ApiError && err.status >= 400 && err.status < 500 && !isIdempotencyInProgress(err)
+    ? randomUUID()
+    : key;
 
 interface Ref {
   quotationId: string;

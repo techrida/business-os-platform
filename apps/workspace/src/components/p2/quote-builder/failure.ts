@@ -70,6 +70,17 @@ function isIdempotency(f: Pick<Fields, 'message'>): boolean {
   return /idempotency-key/i.test(f.message);
 }
 
+/**
+ * True for the 409s that say the first request with this Idempotency-Key has not settled yet (the API's
+ * code for both is the generic `conflict`; only the message names the header). The next try must send
+ * the same key so it replays that request instead of starting a second one.
+ */
+export function isIdempotencyInProgress(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if (Number((err as ErrorLike).status) !== 409) return false;
+  return isIdempotency(errorFields((err as ErrorLike).body));
+}
+
 const CURRENCY = /^[A-Z]{3}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
