@@ -13,8 +13,11 @@ const IDENTITY = {
   tenantId: '11111111-1111-4111-8111-111111111111',
   organizationId: '22222222-2222-4222-8222-222222222222',
   orgKind: 'staff' as const,
+  partyId: null,
+  idpOrgId: '99999999-9999-4999-8999-999999999999',
   userId: 'user-1',
   roles: ['admin'],
+  departmentId: null,
   tokenExp: 1_900_000_000,
 };
 
