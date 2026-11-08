@@ -19,6 +19,8 @@ export const REDACT_PATHS = [
   '*.password',
   '*.headers.authorization',
   '*.headers.cookie',
+  // The user's ID token, sent on Founder decisions for step-up (K7). A sign-in proof, never logged.
+  '*.headers["x-bos-id-token"]',
   'res.headers["set-cookie"]',
 ];
 

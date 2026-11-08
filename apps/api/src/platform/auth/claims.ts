@@ -31,12 +31,6 @@ export interface AuthIdentity {
   readonly rolesByOrg?: RolesByOrg;
   /** Token expiry, seconds since the epoch (`exp`). */
   readonly tokenExp: number;
-  /**
-   * When the user last signed in, seconds since the epoch (`auth_time`), or null when the token
-   * carries no usable value. Step-up (K7) treats null and absent alike: stale. Optional only so the
-   * guard compiles until it copies `MappedClaims.authTime` across.
-   */
-  readonly authTime?: number | null;
 }
 
 /** An Express request after the AuthGuard ran. `auth` is unset on public routes. */
@@ -56,11 +50,6 @@ export interface MappedClaims {
    * Only keys in `ROLE_KEYS` count: an unknown key in the token grants nothing.
    */
   readonly rolesByOrg: RolesByOrg;
-  /**
-   * `auth_time` in seconds since the epoch, or `null` when absent or not a positive finite number.
-   * Never defaulted to `iat`: a refreshed token is new, but the sign-in behind it is not.
-   */
-  readonly authTime: number | null;
 }
 
 /** Thrown when a verified token still lacks a usable `sub`. The guard maps it to 401. */
@@ -103,11 +92,6 @@ function groupRolesByOrg(claims: readonly unknown[]): RolesByOrg {
   return out;
 }
 
-/** A usable `auth_time`: a positive finite number of seconds. Anything else is unknown (null). */
-function authTimeOf(claim: unknown): number | null {
-  return typeof claim === 'number' && Number.isFinite(claim) && claim > 0 ? claim : null;
-}
-
 /**
  * Maps a verified ZITADEL access token payload to our identity fields.
  *
@@ -141,6 +125,5 @@ export function mapClaims(payload: JWTPayload, projectId: string): MappedClaims 
     zitadelOrgId,
     roles: [...roles].sort(),
     rolesByOrg: groupRolesByOrg([scopedClaim]),
-    authTime: authTimeOf(payload['auth_time']),
   };
 }
