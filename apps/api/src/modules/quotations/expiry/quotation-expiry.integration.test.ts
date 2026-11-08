@@ -238,6 +238,19 @@ async function auditEvents(scope: TestScope, versionId: string) {
   return events.filter((e) => e.action === 'quotation.expired');
 }
 
+/** Waits until some session is blocked on a lock: the sweep has read its candidates and is queued behind the accept. */
+async function waitForBlockedLock(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const { rows } = await pool.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted',
+    );
+    if (first(rows).n > 0) return;
+    if (Date.now() > deadline) throw new Error('the sweep never blocked on the accepted version');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /** The accept's own conditional update (Q3a's accept does the same): only a sent version becomes accepted. */
 const acceptSql = (versionId: string) => sql`
   UPDATE app.quotation_versions SET status = 'accepted', accepted_at = now()
@@ -366,12 +379,14 @@ describe('quotation expiry job', () => {
 
     // The sweep reads the version as still sent (the accept is uncommitted), then blocks on its row lock.
     const sweep = sweeper.sweep();
-    await new Promise((resolve) => setTimeout(resolve, 750));
+    await waitForBlockedLock();
     release();
     await accept;
     const result = await sweep;
 
     expect(result.failed).toBe(0);
+    // This tenant's version was the only one due, so the one skip is the lock path of this test.
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
     const row = await versionRow(v.versionId);
     expect(row.status).toBe('accepted');
     expect(row.expired_at).toBeNull();
