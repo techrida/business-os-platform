@@ -185,6 +185,50 @@ describe('seedKernelRows', () => {
   });
 });
 
+describe('seedKernelRows: stale role grants (R25)', () => {
+  /** First run against a table that still holds one grant the defaults no longer list. */
+  const staleRow: Script = (call) =>
+    call.text.startsWith('DELETE FROM app.role_permissions')
+      ? { rowCount: 1, rows: [{ id: 'stale-1' }] }
+      : nothingChanged(call);
+
+  it('deletes role_permissions rows the defaults no longer list, then bumps authz_versions', async () => {
+    const { client, calls } = fakeClient(staleRow);
+    const changed = await seedKernelRows(client, scope);
+
+    const del = calls.filter((c) => c.text.startsWith('DELETE FROM app.role_permissions'));
+    expect(del).toHaveLength(1);
+    expect(del[0]?.values.slice(0, 2)).toEqual(['tenant-1', 'org-1']);
+    // The keep-list holds every default (role, permission) pair, in two parallel arrays.
+    const [roles, permissions] = [del[0]?.values[2], del[0]?.values[3]] as [string[], string[]];
+    const kept = new Set(roles.map((role, i) => `${role}|${String(permissions[i])}`));
+    expect(kept.size).toBe(grantCount);
+    for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+      for (const permission of Object.keys(grants)) {
+        expect(kept.has(`${role}|${permission}`)).toBe(true);
+      }
+    }
+
+    const index = (needle: string) => calls.findIndex((c) => c.text.includes(needle));
+    expect(index('DELETE FROM app.role_permissions')).toBeGreaterThan(
+      index('INTO app.role_permissions'),
+    );
+    expect(index('INTO app.authz_versions')).toBeGreaterThan(
+      index('DELETE FROM app.role_permissions'),
+    );
+    // Only the deleted row counts: this fake answers the authz bump with rowCount 0.
+    expect(changed).toBe(1);
+    expect(calls.at(-1)?.text).toBe('COMMIT');
+  });
+
+  it('deletes nothing and bumps nothing on a second run', async () => {
+    const { client, calls } = fakeClient(nothingChanged);
+    expect(await seedKernelRows(client, scope)).toBe(0);
+    expect(calls.filter((c) => c.text.startsWith('DELETE'))).toHaveLength(1);
+    expect(calls.some((c) => c.text.includes('INTO app.authz_versions'))).toBe(false);
+  });
+});
+
 describe('PgTenancyStore (R5)', () => {
   /** A store over one fake client; counts how often the connection is closed. */
   function storeOver(script: Script) {
