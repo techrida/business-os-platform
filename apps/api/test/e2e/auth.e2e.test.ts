@@ -4,7 +4,7 @@
 import { ErrorBodySchema, MeResponseSchema } from '@bos/contracts';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
-import { PROJECT_ID, startApp, type TestApp } from './support/app';
+import { CLIENT_ID, PROJECT_ID, startApp, type TestApp } from './support/app';
 import { zitadelClaims } from './support/test-issuer';
 
 const e2e = inject('e2e');
@@ -34,7 +34,9 @@ function expectErrorBody(
 const staffClaims = () =>
   zitadelClaims({
     projectId: PROJECT_ID,
-    clientId: 'client-e2e',
+    // Must be the client the API allow-lists (OIDC_CLIENT_ID), or every case below is rejected on
+    // `azp` and the one thing it means to test is never reached.
+    clientId: CLIENT_ID,
     userId: 'user-e2e-1',
     orgId: e2e.staff.zitadelOrgId,
     roles: ['staff_admin'],
@@ -78,8 +80,14 @@ describe('authentication: GET /v1/me must answer 401', () => {
     expectErrorBody(res, 401, 'unauthenticated');
   });
 
+  it('with an azp that is not an allowed client (trusted key, otherwise valid claims)', async () => {
+    const token = await t.issuer.mint({ ...staffClaims(), azp: 'some-other-client' });
+    const res = await t.http().get('/v1/me').set('authorization', `Bearer ${token}`);
+    expectErrorBody(res, 401, 'unauthenticated');
+  });
+
   it('with alg: none (unsigned, otherwise valid claims)', async () => {
-    const token = t.issuer.mintUnsigned(staffClaims(), { audience: [PROJECT_ID, 'client-e2e'] });
+    const token = t.issuer.mintUnsigned(staffClaims(), { audience: [PROJECT_ID, CLIENT_ID] });
     // Sanity: this really is an unsigned token, so the test cannot pass by accident of format.
     const header = JSON.parse(
       Buffer.from(token.split('.')[0] ?? '', 'base64url').toString('utf8'),
