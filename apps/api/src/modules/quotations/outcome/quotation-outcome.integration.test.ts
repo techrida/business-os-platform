@@ -74,6 +74,7 @@ let scopeA: TxScope;
 let drafting: DraftingService;
 let opportunitiesService: OpportunitiesService;
 let service: RecordOutcomeService;
+let outcomes: QuotationOutcomeService;
 let now = NOW;
 
 const grantsOf = (role: RoleKey) =>
@@ -166,7 +167,7 @@ beforeAll(async () => {
     audit,
     caller,
   );
-  const outcomes = new QuotationOutcomeService(
+  outcomes = new QuotationOutcomeService(
     new SettingsService(db),
     opportunitiesService,
     notify as unknown as NotifyService,
@@ -337,6 +338,80 @@ describe('RecordOutcomeService.record', () => {
       }),
     );
     expect(notify.nudge).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores the evidence document ids on the acceptance row and returns them from the column', async () => {
+    const q = await createQuotation();
+    const expectedVersion = await advance(q, 'sent');
+    const docA = randomUUID();
+    const docB = randomUUID();
+
+    const dto = await record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [docA, docB] }));
+
+    expect(dto.evidenceDocumentIds).toEqual([docA, docB]);
+    const [row] = await acceptanceRows(q.currentVersionId);
+    expect(row).toMatchObject({ evidenceDocumentIds: [docA, docB], acceptedByName: null });
+  });
+
+  it('stores the name the customer signed with and the ids when the core is called directly (the portal path)', async () => {
+    const q = await createQuotation();
+    await advance(q, 'sent');
+    const doc = randomUUID();
+
+    const dto = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      outcomes.accept(tx, {
+        versionId: q.currentVersionId,
+        actorKind: 'customer_user',
+        actorUserId: f.ownerUserId,
+        decidedOn: DECIDED_ON,
+        acceptedByName: 'Sita Sharma',
+        evidenceKinds: ['signed_quote'],
+        evidenceDocumentIds: [doc],
+      }),
+    );
+
+    expect(dto.evidenceDocumentIds).toEqual([doc]);
+    expect(await acceptanceRows(q.currentVersionId)).toEqual([
+      expect.objectContaining({
+        actorKind: 'customer_user',
+        acceptedByName: 'Sita Sharma',
+        evidenceDocumentIds: [doc],
+      }),
+    ]);
+  });
+
+  it('refuses a signer name over 200 characters (the table CHECK) and keeps the version Sent', async () => {
+    const q = await createQuotation();
+    await advance(q, 'sent');
+
+    await expect(
+      withTx(db, scopeA, systemActor('test'), (tx) =>
+        outcomes.accept(tx, {
+          versionId: q.currentVersionId,
+          actorKind: 'customer_user',
+          actorUserId: f.ownerUserId,
+          decidedOn: DECIDED_ON,
+          acceptedByName: 'x'.repeat(201),
+          evidenceKinds: ['signed_quote'],
+        }),
+      ),
+    ).rejects.toThrow();
+    expect((await versionRow(q.currentVersionId)).status).toBe('sent');
+    expect(await acceptanceRows(q.currentVersionId)).toEqual([]);
+  });
+
+  it('keeps the acceptance append-only: the new columns cannot be rewritten afterwards', async () => {
+    const q = await createQuotation();
+    const expectedVersion = await advance(q, 'sent');
+    await record(q, acceptBody(expectedVersion, { evidenceDocumentIds: [randomUUID()] }));
+
+    await expect(
+      withTx(db, scopeA, systemActor('test'), (tx) =>
+        tx.execute(
+          sql`UPDATE app.quotation_acceptances SET evidence_document_ids = '{}' WHERE version_id = ${q.currentVersionId}`,
+        ),
+      ),
+    ).rejects.toThrow(/append-only/);
   });
 
   it('answers 422 to evidence the policy (signed_quote by default) does not accept, and changes nothing', async () => {
