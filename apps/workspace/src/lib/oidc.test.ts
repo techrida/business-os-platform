@@ -13,6 +13,7 @@ import {
   endSessionUrl,
   getOidcConfig,
   LOGIN_COOKIE,
+  LOGIN_COOKIE_MAX_AGE,
   LoginBindingError,
   OIDC_SCOPES,
   refreshTokens,
@@ -118,6 +119,10 @@ const sha256Hex = (v: string) => createHash('sha256').update(v).digest('hex');
 describe('LOGIN_COOKIE', () => {
   it('is a __Host- cookie, so only this exact origin can set or read it', () => {
     expect(LOGIN_COOKIE).toBe('__Host-bos_login');
+  });
+
+  it('lives exactly as long as the stored login state', () => {
+    expect(LOGIN_COOKIE_MAX_AGE).toBe(600);
   });
 });
 

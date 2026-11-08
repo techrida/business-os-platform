@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+
 import * as client from 'openid-client';
 import { z } from 'zod';
 
@@ -12,6 +14,12 @@ import { getRedis, safeReturnTo } from './session';
  * The workspace is a public client: Authorization Code + PKCE (S256), no client secret, so
  * client authentication is `None()`. State, nonce and the PKCE verifier stay server-side in
  * Valkey; the browser only carries `state` through the redirect.
+ *
+ * PKCE does not tie a login to a browser: anyone holding a valid `code&state` link could finish
+ * it, so an attacker could send a victim their own callback link and sign the victim into the
+ * attacker's account (login CSRF, CR-01). /auth/login therefore also sets the LOGIN_COOKIE with
+ * a random value whose SHA-256 is stored with the state, and the callback only completes when
+ * the browser presents that cookie.
  */
 
 /**
@@ -29,13 +37,47 @@ const STATE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const MAX_LOGIN_HINT_LENGTH = 256;
 const PROMPTS = new Set(['login', 'none', 'consent', 'select_account']);
 
+/**
+ * Browser binding for a login in progress. `__Host-` makes the browser insist on Secure, Path=/
+ * and no Domain. Set by /auth/login for LOGIN_STATE_TTL_SECONDS, read and cleared by the callback.
+ */
+export const LOGIN_COOKIE = '__Host-bos_login';
+/** Max-Age of LOGIN_COOKIE: the same 10 minutes as the stored state. */
+export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
+const LOGIN_BINDING_BYTES = 32;
+
 const oidcKey = (state: string) => `ws:oidc:${state}`;
 
 const PendingLoginSchema = z.object({
   codeVerifier: z.string().min(43),
   nonce: z.string().min(1),
   returnTo: z.string(),
+  /** SHA-256 (hex) of the LOGIN_COOKIE value. The raw value is never stored. */
+  bindingHash: z.string().regex(/^[0-9a-f]{64}$/),
 });
+
+/**
+ * The callback was not presented by the browser that started the login: the LOGIN_COOKIE is
+ * missing or belongs to another login. Thrown before any token request.
+ */
+export class LoginBindingError extends Error {
+  constructor() {
+    super('oidc: login is not bound to this browser');
+    this.name = 'LoginBindingError';
+  }
+}
+
+function sha256(value: string): Buffer {
+  return createHash('sha256').update(value, 'utf8').digest();
+}
+
+/** Constant-time check that `cookie` hashes to `bindingHash`. Both sides are 32-byte digests. */
+function bindingMatches(cookie: string | undefined, bindingHash: string): boolean {
+  if (!cookie) return false;
+  const expected = Buffer.from(bindingHash, 'hex');
+  const actual = sha256(cookie);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 
 export interface OidcTokens {
   accessToken: string;
@@ -88,14 +130,16 @@ export function __resetOidcForTests(): void {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Starts a login: stores `ws:oidc:<state>` = { codeVerifier, nonce, returnTo } for 10 minutes
- * and returns the ZITADEL authorization URL to redirect to.
+ * Starts a login: stores `ws:oidc:<state>` = { codeVerifier, nonce, returnTo, bindingHash } for
+ * 10 minutes and returns the ZITADEL authorization URL to redirect to, plus the `binding` value
+ * the caller must set as LOGIN_COOKIE (HttpOnly, Secure, SameSite=Lax, Path=/,
+ * Max-Age=LOGIN_COOKIE_MAX_AGE) on that redirect.
  */
 export async function beginLogin(o: {
   loginHint?: string;
   prompt?: 'login' | 'none' | 'consent' | 'select_account';
   returnTo: string;
-}): Promise<URL> {
+}): Promise<{ url: URL; binding: string }> {
   const env = getEnv();
   const config = await getOidcConfig();
 
@@ -105,10 +149,12 @@ export async function beginLogin(o: {
   const nonce = client.randomNonce();
   // Sanitised again here so no caller can store an open redirect, even by mistake.
   const returnTo = safeReturnTo(o.returnTo);
+  const binding = randomBytes(LOGIN_BINDING_BYTES).toString('base64url');
+  const bindingHash = sha256(binding).toString('hex');
 
   await getRedis().set(
     oidcKey(state),
-    JSON.stringify({ codeVerifier, nonce, returnTo }),
+    JSON.stringify({ codeVerifier, nonce, returnTo, bindingHash }),
     'EX',
     LOGIN_STATE_TTL_SECONDS,
   );
@@ -126,16 +172,22 @@ export async function beginLogin(o: {
   if (o.loginHint && o.loginHint.length <= MAX_LOGIN_HINT_LENGTH) params.login_hint = o.loginHint;
   if (o.prompt && PROMPTS.has(o.prompt)) params.prompt = o.prompt;
 
-  return client.buildAuthorizationUrl(config, params);
+  return { url: client.buildAuthorizationUrl(config, params), binding };
 }
 
 /**
  * Finishes a login from the callback URL.
  *
  * The stored state is read with GETDEL, so it works once: a replayed or forged callback finds
- * nothing and fails. The code exchange checks the PKCE verifier, state and ID token nonce.
+ * nothing and fails. `bindingCookie` is the LOGIN_COOKIE value from the request; if it is
+ * missing or does not match the one set by beginLogin, this throws LoginBindingError before
+ * any token request (the state is consumed all the same). The code exchange then checks the
+ * PKCE verifier, state and ID token nonce.
  */
-export async function completeLogin(callbackUrl: URL): Promise<{
+export async function completeLogin(
+  callbackUrl: URL,
+  bindingCookie: string | undefined,
+): Promise<{
   tokens: OidcTokens;
   sub: string;
   returnTo: string;
@@ -162,6 +214,9 @@ export async function completeLogin(callbackUrl: URL): Promise<{
   } catch {
     throw new Error('oidc: corrupt login state');
   }
+
+  // CR-01: only the browser that started this login may finish it.
+  if (!bindingMatches(bindingCookie, pending.bindingHash)) throw new LoginBindingError();
 
   const config = await getOidcConfig();
   const response = await client.authorizationCodeGrant(config, callbackUrl, {
