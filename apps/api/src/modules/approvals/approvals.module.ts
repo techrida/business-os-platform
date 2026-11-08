@@ -15,6 +15,7 @@ import { ApprovalsAdminService } from './admin.service';
 import { ApprovalsController } from './approvals.controller';
 import { AuditModule } from '../../platform/audit/audit.module';
 import { AuditService } from '../../platform/audit/audit.service';
+import { STEP_UP_MAX_AGE_SECONDS, stepUpMaxAgeFromEnv } from '../../platform/auth/step-up';
 import { NotifyModule } from '../../platform/notify/notify.module';
 import { NotifyService } from '../../platform/notify/notify.service';
 import {
@@ -39,6 +40,11 @@ import { ApprovalsService } from './requests.service';
     ApprovalsAdminService,
     ApprovalsCaller,
     { provide: APPROVALS_CLOCK, useValue: (() => new Date()) satisfies Clock },
+    // K7: how recent a sign-in a Founder decision needs. Read once at startup; a bad value stops boot.
+    {
+      provide: STEP_UP_MAX_AGE_SECONDS,
+      useFactory: () => stepUpMaxAgeFromEnv(process.env.STEP_UP_MAX_AGE_SECONDS),
+    },
     { provide: ApprovalsAudit, useExisting: AuditService },
     { provide: ApprovalsNotify, useExisting: NotifyService },
   ],
