@@ -28,7 +28,7 @@ export class TestMemoController {
     return this.memos.get(id);
   }
 
-  /** 200 with the updated MemoDto. 403 for a record outside the caller's scope, 409 unless draft or returned. */
+  /** 200 with the updated MemoDto. 404 for a record outside the caller's scope, 409 unless draft or returned. */
   @Patch(':id')
   @Can('memo.update')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<MemoDto> {
