@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { assertTenancy, checkTenancy } from './check-tenancy.js';
@@ -17,6 +17,7 @@ import { createDb, type DbHandle } from './client.js';
 import { runMigrations } from './migrate.js';
 import { organizations, restoreCanary, tenants } from './schema/platform.js';
 import { scoped } from './scoped.js';
+import { createTenantWithEntity } from './testing/fixtures.js';
 
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
@@ -34,8 +35,8 @@ function urlFor(user: string, password: string, database: string): string {
   return url.toString();
 }
 
-/** Inserts a tenant and one organization (as bos_app) and returns their ids. */
-async function insertOrg(kind: 'staff' | 'customer' | 'vendor', name: string, tenantId?: string) {
+/** Inserts a tenant and one organization, a legal entity (as bos_app), and returns their ids. */
+async function insertOrg(name: string, tenantId?: string) {
   const tenant =
     tenantId ?? (await app.db.insert(tenants).values({}).returning({ id: tenants.id }))[0]?.id;
   if (tenant === undefined) throw new Error('tenant insert returned no row');
@@ -44,11 +45,34 @@ async function insertOrg(kind: 'staff' | 'customer' | 'vendor', name: string, te
     id,
     tenantId: tenant,
     organizationId: id,
-    kind,
+    code: `E-${id}`,
     name,
-    zitadelOrgId: `zitadel-${id}`,
+    legalName: name,
   });
   return { tenantId: tenant, organizationId: id };
+}
+
+/**
+ * Runs fn in one transaction as bos_app with bos.organization_id set. A write to a tenant-scoped table (idp_orgs,
+ * parties) has no organization_id of its own, so the audit trigger takes the acting entity from this setting.
+ */
+async function inEntityTx<T>(
+  organizationId: string,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await app.pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('bos.organization_id', $1, true)`, [organizationId]);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** How many migrations the journal lists; every one must be recorded after a migrate. */
@@ -174,9 +198,15 @@ describe('check-tenancy', () => {
     expect(message).toContain('app.bad_no_org');
   });
 
+  // checkTenancy() is strict by default (ADR 0027): besides the two columns, a table with tenant_id needs the
+  // foreign key to app.tenants (rule 1) and, with organization_id, the composite foreign key to
+  // app.organizations (rule 2). The fixtures below carry both, so each case isolates the one problem it tests.
+  const GOOD_KEYS =
+    'FOREIGN KEY (tenant_id) REFERENCES app.tenants (id), FOREIGN KEY (tenant_id, organization_id) REFERENCES app.organizations (tenant_id, id)';
+
   it('fails when a column is nullable', async () => {
     const { violations } = await violationsFor(
-      'CREATE TABLE app.bad_nullable (id uuid PRIMARY KEY, tenant_id uuid REFERENCES app.tenants (id), organization_id uuid NOT NULL)',
+      `CREATE TABLE app.bad_nullable (id uuid PRIMARY KEY, tenant_id uuid, organization_id uuid NOT NULL, ${GOOD_KEYS})`,
     );
     expect(violations).toEqual([
       { table: 'app.bad_nullable', column: 'tenant_id', problem: 'nullable' },
@@ -184,11 +214,18 @@ describe('check-tenancy', () => {
   });
 
   it('fails when a column is not a uuid', async () => {
+    // A text organization_id cannot reference organizations (id), so the strict rule 2 reports the missing
+    // foreign key as well: that is the same fault seen twice, not a second problem. The tenant key stays valid.
     const { violations } = await violationsFor(
       'CREATE TABLE app.bad_type (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES app.tenants (id), organization_id text NOT NULL)',
     );
     expect(violations).toEqual([
       { table: 'app.bad_type', column: 'organization_id', problem: 'not uuid' },
+      {
+        table: 'app.bad_type',
+        column: 'organization_id',
+        problem: 'no foreign key to app.organizations from organization_id',
+      },
     ]);
   });
 
@@ -208,7 +245,7 @@ describe('check-tenancy', () => {
 
 describe('roles', () => {
   it('lets bos_app read and write app tables', async () => {
-    const { organizationId } = await insertOrg('staff', 'Techrida');
+    const { organizationId } = await insertOrg('Techrida');
     const rows = await app.db
       .select()
       .from(organizations)
@@ -252,9 +289,9 @@ describe('organizations constraints', () => {
     );
     const tenantId = tenant.rows[0]?.id;
     const { rows } = await app.pool.query<{ id: string; organization_id: string }>(
-      `INSERT INTO app.organizations (tenant_id, kind, name, zitadel_org_id)
-       VALUES ($1, 'customer', 'Acme', $2) RETURNING id, organization_id`,
-      [tenantId, `zitadel-${randomUUID()}`],
+      `INSERT INTO app.organizations (tenant_id, code, name, legal_name)
+       VALUES ($1, 'ACME', 'Acme', 'Acme Ltd') RETURNING id, organization_id`,
+      [tenantId],
     );
     expect(rows[0]?.organization_id).toBe(rows[0]?.id);
   });
@@ -265,38 +302,95 @@ describe('organizations constraints', () => {
     );
     await expect(
       app.pool.query(
-        `INSERT INTO app.organizations (tenant_id, organization_id, kind, name, zitadel_org_id)
-         VALUES ($1, gen_random_uuid(), 'customer', 'Acme', $2)`,
-        [tenant.rows[0]?.id, `zitadel-${randomUUID()}`],
+        `INSERT INTO app.organizations (tenant_id, organization_id, code, name, legal_name)
+         VALUES ($1, gen_random_uuid(), 'ACME', 'Acme', 'Acme Ltd')`,
+        [tenant.rows[0]?.id],
       ),
     ).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('rejects an unknown kind and a repeated zitadel_org_id', async () => {
-    const tenant = await app.pool.query<{ id: string }>(
-      'INSERT INTO app.tenants DEFAULT VALUES RETURNING id',
+  // ADR 0027 removed organizations.kind and organizations.zitadel_org_id, and with them the old checks "an unknown
+  // kind is refused" and "a zitadel_org_id is unique". The same two rules now live on idp_orgs
+  // (idp_orgs_kind_check, idp_orgs_zitadel_org_id_unique); the organizations table has two new ones, below.
+  it('has no kind and no zitadel_org_id column any more', async () => {
+    const { rows } = await owner.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'app' AND table_name = 'organizations'`,
     );
-    const tenantId = tenant.rows[0]?.id;
+    const columns = rows.map((r) => r.column_name);
+    expect(columns).not.toContain('kind');
+    expect(columns).not.toContain('zitadel_org_id');
+    expect(columns).toEqual(expect.arrayContaining(['code', 'legal_name', 'is_default']));
+  });
+
+  it('rejects an unknown IdP org kind (idp_orgs_kind_check, was organizations_kind_check)', async () => {
+    const { tenantId, organizationId } = await createTenantWithEntity(app.pool);
+    await expect(
+      inEntityTx(organizationId, (c) =>
+        c.query(
+          `INSERT INTO app.idp_orgs (tenant_id, zitadel_org_id, kind, name) VALUES ($1, $2, 'alien', 'X')`,
+          [tenantId, `zitadel-${randomUUID()}`],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'idp_orgs_kind_check' });
+  });
+
+  it('rejects a repeated zitadel_org_id, even across tenants (idp_orgs_zitadel_org_id_unique)', async () => {
+    const a = await createTenantWithEntity(app.pool);
+    const b = await createTenantWithEntity(app.pool);
+    const { rows } = await owner.query<{ zitadel_org_id: string }>(
+      'SELECT zitadel_org_id FROM app.idp_orgs WHERE tenant_id = $1',
+      [a.tenantId],
+    );
+    // The login looks the org up before it knows the tenant, so the id is global. Tenant b's staff IdP org is
+    // replaced by one that reuses tenant a's id; b has no staff org of its own to clash with after the delete.
+    await expect(
+      inEntityTx(b.organizationId, async (c) => {
+        await c.query('DELETE FROM app.idp_orgs WHERE tenant_id = $1', [b.tenantId]);
+        await c.query(
+          `INSERT INTO app.idp_orgs (tenant_id, zitadel_org_id, kind, name) VALUES ($1, $2, 'staff', 'B')`,
+          [b.tenantId, rows[0]?.zitadel_org_id],
+        );
+      }),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'idp_orgs_zitadel_org_id_unique' });
+  });
+
+  it('rejects a repeated code within a tenant (organizations_tenant_code_unique)', async () => {
+    const { tenantId, organizationId } = await createTenantWithEntity(app.pool, { code: 'TR' });
     await expect(
       app.pool.query(
-        `INSERT INTO app.organizations (tenant_id, kind, name, zitadel_org_id) VALUES ($1, 'alien', 'X', $2)`,
-        [tenantId, `zitadel-${randomUUID()}`],
+        `INSERT INTO app.organizations (tenant_id, code, name, legal_name) VALUES ($1, 'TR', 'Other', 'Other Ltd')`,
+        [tenantId],
       ),
-    ).rejects.toMatchObject({ code: '23514' });
+    ).rejects.toMatchObject({ code: '23505', constraint: 'organizations_tenant_code_unique' });
+    // The same code is free in another tenant.
+    const other = await createTenantWithEntity(app.pool, { code: 'TR' });
+    expect(other.organizationId).not.toBe(organizationId);
+  });
 
-    const zitadelOrgId = `zitadel-${randomUUID()}`;
-    const insert = `INSERT INTO app.organizations (tenant_id, kind, name, zitadel_org_id) VALUES ($1, 'vendor', 'V', $2)`;
-    await app.pool.query(insert, [tenantId, zitadelOrgId]);
-    await expect(app.pool.query(insert, [tenantId, zitadelOrgId])).rejects.toMatchObject({
-      code: '23505',
-    });
+  it('allows one default entity per tenant (organizations_tenant_default_unique)', async () => {
+    const { tenantId } = await createTenantWithEntity(app.pool);
+    await expect(
+      app.pool.query(
+        `INSERT INTO app.organizations (tenant_id, code, name, legal_name, is_default)
+         VALUES ($1, 'SECOND', 'Second', 'Second Ltd', true)`,
+        [tenantId],
+      ),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'organizations_tenant_default_unique' });
+    // A non-default second entity is fine.
+    await expect(
+      app.pool.query(
+        `INSERT INTO app.organizations (tenant_id, code, name, legal_name) VALUES ($1, 'SECOND', 'Second', 'Second Ltd')`,
+        [tenantId],
+      ),
+    ).resolves.toBeDefined();
   });
 });
 
 describe('scoped() against a real database', () => {
   it('only sees and changes rows of its own organization, even inside the same tenant', async () => {
-    const a = await insertOrg('customer', 'Org A');
-    const b = await insertOrg('customer', 'Org B', a.tenantId);
+    const a = await insertOrg('Org A');
+    const b = await insertOrg('Org B', a.tenantId);
     const sa = scoped(a);
 
     const seen = await app.db.select().from(organizations).where(sa.where(organizations));
