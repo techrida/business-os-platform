@@ -167,6 +167,59 @@ describe('toCustomerQuotationView', () => {
     }
   });
 
+  it('refuses an approved version for the portal, also when the purpose is named', () => {
+    const base = input();
+    const approved = { ...base, version: { ...base.version, status: 'approved' as const } };
+    expect(() => toCustomerQuotationView(approved)).toThrow(QuotationNotCustomerVisibleError);
+    expect(() => toCustomerQuotationView(approved, {})).toThrow(QuotationNotCustomerVisibleError);
+    expect(() => toCustomerQuotationView(approved, { purpose: 'portal' })).toThrow(
+      QuotationNotCustomerVisibleError,
+    );
+  });
+
+  it('draws an approved version as the document that will be sent, for the render purpose only', () => {
+    const base = input();
+    const approved = { ...base, version: { ...base.version, status: 'approved' as const } };
+    const view = toCustomerQuotationView(approved, { purpose: 'render' });
+    // `approved` is not a customer-visible status; the PDF shows what the customer will receive.
+    expect(view.status).toBe('sent');
+    expect(view.number).toBe('QT-2082-0042');
+    // The same content as the sent version: nothing in the view depends on the approved state.
+    expect(view).toEqual(toCustomerQuotationView(base, { purpose: 'render' }));
+    expect(view).toEqual(toCustomerQuotationView(base));
+  });
+
+  it('keeps every other hidden state hidden for the render purpose', () => {
+    for (const status of ['draft', 'submitted', 'returned', 'cancelled'] as const) {
+      const base = input();
+      expect(
+        () =>
+          toCustomerQuotationView(
+            { ...base, version: { ...base.version, status } },
+            { purpose: 'render' },
+          ),
+        status,
+      ).toThrow(QuotationNotCustomerVisibleError);
+    }
+    const base = input();
+    expect(() =>
+      toCustomerQuotationView(
+        {
+          ...base,
+          version: { ...base.version, status: 'rejected', rejectionSource: 'internal' },
+        },
+        { purpose: 'render' },
+      ),
+    ).toThrow(QuotationNotCustomerVisibleError);
+    // The states a customer may see keep their own status under the render purpose.
+    expect(
+      toCustomerQuotationView(
+        { ...base, version: { ...base.version, status: 'accepted' } },
+        { purpose: 'render' },
+      ).status,
+    ).toBe('accepted');
+  });
+
   it('hides an internal rejection and shows only a customer rejection', () => {
     const base = input();
     const rejected = (rejectionSource: 'internal' | 'customer' | null) => ({
