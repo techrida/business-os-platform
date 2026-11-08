@@ -16,7 +16,7 @@ if [[ -n "$BRANCH" ]]; then
   # The WSL clone is a mirror: commits are made on Windows. Reset tracked files to the branch
   # (untracked .env and .dev/ are kept). A changed lockfile is copied back by hand when needed.
   git fetch -q origin "$BRANCH"
-  git checkout -q -B "$BRANCH" "origin/$BRANCH"
+  git checkout -q -f -B "$BRANCH" "origin/$BRANCH"
   git reset -q --hard "origin/$BRANCH"
 fi
 # shellcheck disable=SC1091
