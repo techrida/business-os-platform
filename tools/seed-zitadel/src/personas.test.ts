@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PERSONAS,
+  PROJECT_ROLES,
   generatePassword,
   passwordsFromFile,
   personaUsername,
   renderPersonasFile,
+  totpSecretsFromFile,
   type PersonaEntry,
 } from './personas.js';
 
@@ -28,16 +30,50 @@ describe('generatePassword', () => {
 });
 
 describe('personas', () => {
-  it('has six personas: four staff, one customer, one vendor', () => {
+  it('has seven personas: five staff, one customer, one vendor', () => {
     expect(PERSONAS.map((p) => p.orgKind).sort()).toEqual([
       'customer',
       'staff',
       'staff',
       'staff',
       'staff',
+      'staff',
       'vendor',
     ]);
-    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(6);
+    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(7);
+  });
+
+  it('includes the frozen Accountant persona and its project role', () => {
+    expect(PERSONAS).toContainEqual({
+      key: 'accountant',
+      givenName: 'Dev',
+      familyName: 'Accountant',
+      orgKind: 'staff',
+      role: 'accountant',
+    });
+    expect(personaUsername('accountant')).toBe('accountant@dev.bos.test');
+    expect(PROJECT_ROLES).toContain('accountant');
+  });
+
+  it('round-trips TOTP secrets and treats entries without one as unknown', () => {
+    const base: PersonaEntry = {
+      key: 'sales',
+      label: 'Dev Sales',
+      orgKind: 'staff',
+      role: 'sales',
+      username: personaUsername('sales'),
+      preferredLoginName: personaUsername('sales'),
+      password: 'Abcdefgh1!abcdefgh1!abcd',
+    };
+    const file = renderPersonasFile([
+      { ...base, totpSecret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' },
+      { ...base, key: 'finance' },
+    ]);
+    const secrets = totpSecretsFromFile(file);
+    expect(secrets.get('sales')).toBe('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
+    expect(secrets.has('finance')).toBe(false);
+    expect(totpSecretsFromFile('{not json').size).toBe(0);
+    expect(totpSecretsFromFile(undefined).size).toBe(0);
   });
 
   it('round-trips passwords through the file format and ignores corrupt files', () => {
