@@ -16,8 +16,28 @@ const PersonaSchema = z.object({
   username: z.string().min(1),
   preferredLoginName: z.string(),
   password: z.string().min(8),
+  /**
+   * Base32 TOTP seed the seed script registered with ZITADEL (SHA-1, 6 digits, 30 s). Optional so
+   * a `.dev/personas.json` written before MFA was turned on still parses; the login helper then
+   * fails with a clear message instead of this file rejecting the whole list.
+   */
+  totpSecret: z
+    .string()
+    .regex(/^[A-Za-z2-7]+=*$/, 'totpSecret must be a base32 string')
+    .optional(),
 });
 export type Persona = z.infer<typeof PersonaSchema>;
+
+/** The seven personas `pnpm seed` creates (tools/seed-zitadel/src/personas.ts). */
+export const PERSONA_KEYS = [
+  'founder',
+  'management',
+  'finance',
+  'accountant',
+  'sales',
+  'customer',
+  'vendor',
+] as const;
 
 /** Playwright runs with `apps/workspace` as the working directory. */
 export function personasFile(): string {
