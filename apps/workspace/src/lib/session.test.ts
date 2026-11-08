@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 
 import type { Redis, RedisKey } from 'ioredis';
@@ -474,16 +475,19 @@ describe('Valkey client', () => {
   });
 
   it('waits for a connecting client to be ready instead of failing the first command', async () => {
-    const id = await signedIn();
-    const getSpy = vi.spyOn(redis, 'get');
     // Without the offline queue, ioredis rejects a command sent before the connection is ready.
-    Object.defineProperty(redis, 'status', { value: 'connecting', configurable: true });
+    // A plain emitter stands in for the client: ioredis-mock emits its own late 'ready'.
+    const get = vi.fn().mockResolvedValue(null);
+    const cold = Object.assign(new EventEmitter(), { status: 'connecting', get });
+    __setRedisForTests(cold as unknown as Redis);
+    jar.values.set(SESSION_COOKIE, 'C'.repeat(43));
     const pending = getSession();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(getSpy).not.toHaveBeenCalled();
-    Object.defineProperty(redis, 'status', { value: 'ready', configurable: true });
-    redis.emit('ready');
-    expect(await pending).toMatchObject({ id });
+    expect(get).not.toHaveBeenCalled();
+    cold.status = 'ready';
+    cold.emit('ready');
+    expect(await pending).toBeNull();
+    expect(get).toHaveBeenCalledWith(keyFor('C'.repeat(43)));
   });
 });
 
