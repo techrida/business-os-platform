@@ -88,6 +88,7 @@ export abstract class UsersStore {
   abstract bumpAuthzVersion(tx: DbTransaction, scope: TxScope): Promise<void>;
 
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
+  /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
   abstract emailOf(userId: string): Promise<string | null>;
   abstract list(
     scope: TxScope,
@@ -283,7 +284,7 @@ export class SqlUsersStore extends UsersStore {
   async emailOf(userId: string): Promise<string | null> {
     const [row] = await rows<{ email: string | null }>(
       this.db,
-      sql`SELECT email FROM app.users WHERE id = ${userId}`,
+      sql`SELECT email FROM app.users WHERE id = ${userId} AND status = 'active'`,
     );
     return row?.email ?? null;
   }
