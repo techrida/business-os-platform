@@ -79,6 +79,8 @@ export class AuthGuard implements CanActivate {
       roles: claims.roles,
       rolesByOrg: claims.rolesByOrg,
       tokenExp: payload.exp,
+      // Step-up (K7) needs it; null (no usable auth_time) counts as a stale sign-in there.
+      authTime: claims.authTime,
     };
     return true;
   }
