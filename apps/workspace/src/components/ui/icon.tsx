@@ -5,6 +5,8 @@ import type { NavIconName } from '@/lib/nav';
 /** Sidebar icons plus the few the shell itself needs. */
 export type IconName =
   | NavIconName
+  | 'user'
+  | 'check-circle'
   | 'star'
   | 'search'
   | 'menu'
@@ -185,7 +187,6 @@ const DRAWINGS: Record<IconName, ReactNode> = {
       <path d="m13 17 5-5-5-5" />
     </>
   ),
-  'chevron-right': <path d="m9 18 6-6-6-6" />,
   'chevron-down': <path d="m6 9 6 6 6-6" />,
   bell: (
     <>
