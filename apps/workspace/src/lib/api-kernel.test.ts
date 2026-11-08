@@ -442,6 +442,7 @@ describe('audit', () => {
             before: null,
             after: { title: 'x' },
             meta: null,
+            canonical: { before: null, after: '{"title": "x"}', meta: null },
             ip: null,
             userAgent: null,
             correlationId: 'req-12345678',
