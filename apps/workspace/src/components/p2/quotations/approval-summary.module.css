@@ -1,0 +1,113 @@
+/* The inbox summary of a quotation. Everything else comes from components/ui. Colours are
+   Figma tokens. Customer names and reasons are free text: they wrap instead of widening the page. */
+
+.summary {
+  display: grid;
+  gap: 24px;
+}
+
+.identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.number {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+  overflow-wrap: anywhere;
+}
+
+.revision {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+}
+
+.customer {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.figure {
+  font-variant-numeric: tabular-nums;
+}
+
+.total {
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* The over-limit discount: the number in bold, the badge says why in words. */
+.over {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.reasonsHead {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.reasons {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reason {
+  padding-block: 8px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.reason:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.reason:last-child {
+  padding-bottom: 0;
+}
+
+/* The fallback: the stored values as they are, same block style as the rest of the inbox. */
+.note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.pre {
+  max-height: 24rem;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  font-family: inherit;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
