@@ -84,7 +84,8 @@ const forbidden = (reason: DenyReason): ForbiddenException =>
 
 /**
  * Completes the request context and enforces the route-level permission, in this order:
- * resolve org → bindIdentity → UserDirectory.resolve (cached 60 s) → roles of this org only →
+ * resolve org → bindIdentity → UserDirectory.resolve (cached 60 s) → the row must belong to that
+ * tenant and org → roles of this org only →
  * grants from RoleCache → bindPrincipal → `@Can` / `@AnyAuthenticated` / deny.
  *
  * Why an interceptor and not a second APP_GUARD (finding 3): Nest runs all guards before any
@@ -140,6 +141,12 @@ export class TenancyInterceptor implements NestInterceptor {
     });
 
     const user = await this.resolveUser(auth.userId, org.tenantId, org.organizationId);
+    // The directory finds the row by ZITADEL id alone, and a cached answer is keyed by tenant only,
+    // so the row may live in another tenant or org than the token resolved to. Acting as that row
+    // here would cross the boundary, so refuse before any principal exists (review R26).
+    if (user.tenantId !== org.tenantId || user.organizationId !== org.organizationId) {
+      throw forbidden('no_permission');
+    }
     const grants = await this.roleCache.grantsFor(org.tenantId, org.organizationId, roles);
     const principal: Principal = {
       userId: user.userId,

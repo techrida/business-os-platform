@@ -55,6 +55,9 @@ export interface ResolvedUser {
   userId: string;
   status: UserRow['status'];
   departmentId: string | null;
+  /** Where the row lives; the tenancy interceptor checks it against the token's org (R26). */
+  tenantId: string;
+  organizationId: string;
 }
 
 @Injectable()
@@ -213,7 +216,13 @@ export class UserMirror {
       await this.enqueueSync(i.zitadelUserId);
       row = { ...invited, status: 'active' };
     }
-    return { userId: row.id, status: row.status, departmentId: row.departmentId };
+    return {
+      userId: row.id,
+      status: row.status,
+      departmentId: row.departmentId,
+      tenantId: row.tenantId,
+      organizationId: row.organizationId,
+    };
   }
 
   /** A Valkey hiccup must not fail the user's request: the reconcile fills the row in anyway. */
