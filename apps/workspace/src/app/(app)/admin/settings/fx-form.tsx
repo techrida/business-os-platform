@@ -2,10 +2,13 @@
 
 import { useActionState } from 'react';
 
-import styles from '../admin.module.css';
+import { Button } from '@/components/ui/button';
+import { Field, Input, Select } from '@/components/ui/field';
+
 import { IDLE } from '../action-state';
 import { FormStatus } from '../ui';
 import { addFxRateAction } from './actions';
+import styles from './settings.module.css';
 
 export function FxForm({ today }: { today: string }) {
   const [state, formAction, pending] = useActionState(addFxRateAction, IDLE);
@@ -14,64 +17,58 @@ export function FxForm({ today }: { today: string }) {
   return (
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
-        <div className={styles.field}>
-          <label htmlFor="fx-currency">Currency</label>
-          <select
-            id="fx-currency"
-            className={styles.select}
-            name="currency"
-            defaultValue={kept.currency ?? 'USD'}
-          >
-            <option value="USD">USD</option>
-            <option value="INR">INR</option>
-          </select>
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="fx-rate">Rate (NPR for 1 unit)</label>
-          <input
-            id="fx-rate"
-            className={styles.input}
-            name="rateNpr"
-            inputMode="decimal"
-            autoComplete="off"
-            required
-            pattern="\d{1,12}(\.\d{1,6})?"
-            title="A number with up to 6 decimals, for example 133.5"
-            aria-describedby="fx-rate-hint"
-            defaultValue={kept.rateNpr ?? ''}
-          />
-          <span id="fx-rate-hint" className={styles.hint}>
-            Up to 6 decimals.
-          </span>
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="fx-date">Applies from</label>
-          <input
-            id="fx-date"
-            className={styles.input}
-            type="date"
-            name="rateDate"
-            required
-            defaultValue={kept.rateDate ?? today}
-          />
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="fx-source">Source</label>
-          <input
-            id="fx-source"
-            className={styles.input}
-            name="source"
-            autoComplete="off"
-            placeholder="manual"
-            defaultValue={kept.source ?? ''}
-          />
-        </div>
+        <Field label="Currency">
+          {(control) => (
+            <Select name="currency" defaultValue={kept.currency ?? 'USD'} {...control}>
+              <option value="USD">USD</option>
+              <option value="INR">INR</option>
+            </Select>
+          )}
+        </Field>
+        <Field label="Rate (NPR for 1 unit)" hint="Up to 6 decimals.">
+          {(control) => (
+            <Input
+              name="rateNpr"
+              inputMode="decimal"
+              autoComplete="off"
+              required
+              pattern="\d{1,12}(\.\d{1,6})?"
+              title="A number with up to 6 decimals, for example 133.5"
+              defaultValue={kept.rateNpr ?? ''}
+              {...control}
+            />
+          )}
+        </Field>
+        <Field label="Applies from">
+          {(control) => (
+            <Input
+              type="date"
+              name="rateDate"
+              required
+              defaultValue={kept.rateDate ?? today}
+              {...control}
+            />
+          )}
+        </Field>
+        <Field label="Source">
+          {(control) => (
+            <Input
+              name="source"
+              autoComplete="off"
+              placeholder="manual"
+              defaultValue={kept.source ?? ''}
+              {...control}
+            />
+          )}
+        </Field>
       </div>
       <div className={styles.actions}>
-        <button type="submit" className={styles.btn} disabled={pending}>
+        <Button type="submit" disabled={pending}>
           Add rate
-        </button>
-        <FormStatus state={state} pending={pending} />
+        </Button>
+        <div className={styles.status}>
+          <FormStatus state={state} pending={pending} />
+        </div>
       </div>
     </form>
   );

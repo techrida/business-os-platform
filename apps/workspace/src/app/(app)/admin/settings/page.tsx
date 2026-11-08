@@ -1,15 +1,21 @@
 import { SETTING_KEYS, type SettingKey } from '@bos/contracts';
 
+import { Alert } from '@/components/ui/alert';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Page, PageHeader } from '@/components/ui/page';
+import { Panel } from '@/components/ui/panel';
+import { Table, Td, Th } from '@/components/ui/table';
 import { getSetting, listFxRates, listNumberSeries } from '@/lib/api-admin';
 
-import styles from '../admin.module.css';
+import admin from '../admin.module.css';
 import { requireSession } from '../guard';
 import { todayInKathmandu, trimRate } from '../format';
 import { section } from '../section';
-import { Notice, PageHead, SectionError } from '../ui';
+import { SectionError } from '../ui';
 import { FxForm } from './fx-form';
 import { SettingForm } from './setting-form';
 import { settingValueText } from './setting-input';
+import styles from './settings.module.css';
 
 const SETTING_COPY: Record<SettingKey, { label: string; help: string }> = {
   'approvals.sla_defaults': {
@@ -30,6 +36,12 @@ const SETTING_COPY: Record<SettingKey, { label: string; help: string }> = {
   },
 };
 
+const SECTIONS = [
+  { id: 'fx-rates', label: 'FX rates' },
+  { id: 'number-series', label: 'Number series' },
+  { id: 'values', label: 'Values' },
+] as const;
+
 export default async function SettingsPage() {
   const session = await requireSession('/admin/settings');
 
@@ -44,153 +56,154 @@ export default async function SettingsPage() {
   ]);
 
   return (
-    <>
-      <PageHead title="Settings">
-        Rates, numbering and defaults. Every change is saved as a new version and recorded in the
-        audit trail.
-      </PageHead>
+    <Page>
+      <PageHeader
+        title="Settings"
+        description="Rates, numbering and defaults. Every change is saved as a new version and recorded in the audit trail."
+      />
 
-      <section className={styles.section} style={{ marginTop: 0 }} aria-labelledby="fx-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="fx-heading">FX rates</h2>
-          <p>
-            How much NPR one unit of a foreign currency is worth. A document keeps the rate that was
-            in force when it was written, so adding a rate never changes old documents.
-          </p>
-        </div>
-        <FxForm today={todayInKathmandu()} />
-        <h3 className={styles.sub}>Recent rates</h3>
-        {!rates.ok ? (
-          <SectionError message={rates.message} />
-        ) : rates.data.length === 0 ? (
-          <p className={styles.empty}>No FX rates yet. Add the first one above.</p>
-        ) : (
-          <div className={styles.tableWrap} role="region" aria-labelledby="fx-caption" tabIndex={0}>
-            <table className={styles.table}>
-              <caption id="fx-caption" className={styles.srOnly}>
-                FX rates, newest first
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Applies from</th>
-                  <th scope="col">Currency</th>
-                  <th scope="col" className={styles.num}>
-                    Rate (NPR)
-                  </th>
-                  <th scope="col">Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rates.data.map((rate) => (
-                  <tr key={rate.id}>
-                    <th scope="row">{rate.rateDate}</th>
-                    <td>{rate.currency}</td>
-                    <td className={styles.num}>{trimRate(rate.rateNpr)}</td>
-                    <td className={styles.cellWrap}>
-                      {rate.source ?? <span className={styles.muted}>Not recorded</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <div className={styles.layout}>
+        <nav aria-label="Settings sections" className={styles.sections}>
+          <p className={styles.sectionsTitle}>Sections</p>
+          <ul className={styles.sectionList}>
+            {SECTIONS.map((item) => (
+              <li key={item.id}>
+                <a href={`#${item.id}`} className={styles.sectionLink}>
+                  {item.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
-      <section className={styles.section} aria-labelledby="series-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="series-heading">Number series</h2>
-          <p>
-            Document numbers are handed out by the system, one counter per series and fiscal year.
-            Counters are read-only here.
-          </p>
-        </div>
-        {!series.ok ? (
-          <SectionError message={series.message} />
-        ) : series.data.length === 0 ? (
-          <p className={styles.empty}>
-            No number series yet. One is created when its first document is numbered.
-          </p>
-        ) : (
-          <div
-            className={styles.tableWrap}
-            role="region"
-            aria-labelledby="series-caption"
-            tabIndex={0}
+        <div className={styles.column}>
+          <Panel
+            id="fx-rates"
+            className={styles.anchor}
+            title="FX rates"
+            description="How much NPR one unit of a foreign currency is worth. A document keeps the rate that was in force when it was written, so adding a rate never changes old documents."
           >
-            <table className={styles.table}>
-              <caption id="series-caption" className={styles.srOnly}>
-                Number series
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Series</th>
-                  <th scope="col">Fiscal year</th>
-                  <th scope="col">Prefix</th>
-                  <th scope="col" className={styles.num}>
-                    Next value
-                  </th>
-                  <th scope="col" className={styles.num}>
-                    Digits
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {series.data.map((row) => (
-                  <tr key={`${row.key}:${row.fiscalYear}`}>
-                    <th scope="row">{row.key}</th>
-                    <td>{row.fiscalYear}</td>
-                    <td className={styles.mono}>{row.prefix}</td>
-                    <td className={styles.num}>{row.nextValue}</td>
-                    <td className={styles.num}>{row.pad}</td>
+            <FxForm today={todayInKathmandu()} />
+            <h3 className={styles.sub}>Recent rates</h3>
+            {!rates.ok ? (
+              <SectionError message={rates.message} />
+            ) : rates.data.length === 0 ? (
+              <EmptyState title="No FX rates yet" headingLevel={3}>
+                Add the first one above.
+              </EmptyState>
+            ) : (
+              <Table caption="FX rates, newest first" className={admin.local ?? ''}>
+                <thead>
+                  <tr>
+                    <Th>Applies from</Th>
+                    <Th>Currency</Th>
+                    <Th align="end">Rate (NPR)</Th>
+                    <Th>Source</Th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                </thead>
+                <tbody>
+                  {rates.data.map((rate) => (
+                    <tr key={rate.id}>
+                      <Th scope="row" className={admin.rowHead}>
+                        {rate.rateDate}
+                      </Th>
+                      <Td>{rate.currency}</Td>
+                      <Td align="end">{trimRate(rate.rateNpr)}</Td>
+                      <Td>{rate.source ?? <span className={styles.muted}>Not recorded</span>}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Panel>
 
-      <section className={styles.section} aria-labelledby="values-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="values-heading">Values</h2>
-          <p>Each save adds a new version; the latest one is in force.</p>
+          <Panel
+            id="number-series"
+            className={styles.anchor}
+            title="Number series"
+            description="Document numbers are handed out by the system, one counter per series and fiscal year. Counters are read-only here."
+          >
+            {!series.ok ? (
+              <SectionError message={series.message} />
+            ) : series.data.length === 0 ? (
+              <EmptyState title="No number series yet" headingLevel={3}>
+                One is created when its first document is numbered.
+              </EmptyState>
+            ) : (
+              <Table caption="Number series" className={admin.local ?? ''}>
+                <thead>
+                  <tr>
+                    <Th>Series</Th>
+                    <Th>Fiscal year</Th>
+                    <Th>Prefix</Th>
+                    <Th align="end">Next value</Th>
+                    <Th align="end">Digits</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {series.data.map((row) => (
+                    <tr key={`${row.key}:${row.fiscalYear}`}>
+                      <Th scope="row" className={admin.rowHead}>
+                        {row.key}
+                      </Th>
+                      <Td>{row.fiscalYear}</Td>
+                      <Td>
+                        <span className={styles.mono}>{row.prefix}</span>
+                      </Td>
+                      <Td align="end">{row.nextValue}</Td>
+                      <Td align="end">{row.pad}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Panel>
+
+          <Panel
+            id="values"
+            className={styles.anchor}
+            title="Values"
+            description="Each save adds a new version; the latest one is in force."
+          >
+            <Alert tone="info">
+              The version history is not shown yet: the API keeps every version but has no route to
+              list them. Only the current version number is shown.
+            </Alert>
+            <ul className={styles.rows}>
+              {settings.map(({ key, result }) => {
+                const copy = SETTING_COPY[key];
+                return (
+                  <li key={key} className={styles.row}>
+                    <div className={styles.rowText}>
+                      <h3 className={styles.rowTitle}>{copy.label}</h3>
+                      <p className={styles.caption}>{copy.help}</p>
+                      <p className={`${styles.caption} ${styles.mono}`}>{key}</p>
+                      {result.ok ? (
+                        <p className={styles.caption}>
+                          {result.data.version === null
+                            ? 'Built-in default, never saved.'
+                            : `Current: version ${result.data.version}.`}
+                        </p>
+                      ) : null}
+                    </div>
+                    {result.ok ? (
+                      <SettingForm
+                        settingKey={key}
+                        label={copy.label}
+                        current={settingValueText(result.data.value)}
+                      />
+                    ) : (
+                      <div className={styles.rowError}>
+                        <SectionError message={result.message} />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </Panel>
         </div>
-        <Notice>
-          The version history is not shown yet: the API keeps every version but has no route to list
-          them. Only the current version number is shown.
-        </Notice>
-        <div className={styles.stack}>
-          {settings.map(({ key, result }) => {
-            const copy = SETTING_COPY[key];
-            return (
-              <article key={key} className={styles.workflow} aria-labelledby={`h-${key}`}>
-                <div className={styles.workflowHead}>
-                  <h3 id={`h-${key}`}>{copy.label}</h3>
-                  <span className={`${styles.mono} ${styles.muted}`}>{key}</span>
-                </div>
-                <p className={styles.hint}>{copy.help}</p>
-                {!result.ok ? (
-                  <SectionError message={result.message} />
-                ) : (
-                  <>
-                    <p className={styles.hint} style={{ margin: '0.5rem 0' }}>
-                      {result.data.version === null
-                        ? 'Built-in default, never saved.'
-                        : `Current: version ${result.data.version}.`}
-                    </p>
-                    <SettingForm
-                      settingKey={key}
-                      label={copy.label}
-                      current={settingValueText(result.data.value)}
-                    />
-                  </>
-                )}
-              </article>
-            );
-          })}
-        </div>
-      </section>
-    </>
+      </div>
+    </Page>
   );
 }
