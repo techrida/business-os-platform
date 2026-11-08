@@ -348,7 +348,12 @@ describe('can(): separation of duties', () => {
     const p = principalWith({ [ACT]: 'all' });
     expect(can(p, ACT, rec({ sodUserIds: [SOMEONE_ELSE] }))).toEqual(ALLOWED('all'));
     expect(can(p, ACT, rec({ sodUserIds: [] }))).toEqual(ALLOWED('all'));
-    expect(can(p, ACT, rec())).toEqual(ALLOWED('all'));
+  });
+
+  // R14: a caller that forgets to load who prepared the record must not skip the check.
+  it('refuses a record check whose sodUserIds were not supplied (fails closed)', () => {
+    const p = principalWith({ [ACT]: 'all' });
+    expect(can(p, ACT, rec())).toEqual(DENIED('separation_of_duties'));
   });
 
   it('ignores sodUserIds for permissions outside SOD_PERMISSIONS', () => {
