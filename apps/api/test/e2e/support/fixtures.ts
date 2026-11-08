@@ -1,7 +1,17 @@
 // Seed data and small helpers for the approvals exit e2e. Seeds exactly what production seeds (the kernel
 // rows from tools/seed-zitadel) plus the users ZITADEL would mirror, so the scenario runs on real data and
 // not on test-only shortcuts (NFR "authorization is deny-by-default": an unseeded role table denies everyone).
-import { createTenantWithEntity, userEntities, userRoles, users } from '@bos/db';
+import { randomUUID } from 'node:crypto';
+
+import {
+  createPortalUser,
+  createTenantWithEntity,
+  idpOrgs,
+  userEntities,
+  userRoles,
+  users,
+} from '@bos/db';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
@@ -179,4 +189,67 @@ export async function pollUntil<T>(
   throw new Error(
     `timed out after ${timeoutMs} ms waiting for ${what}; last: ${JSON.stringify(last)}`,
   );
+}
+
+/** A customer's portal login as a token needs it: the ZITADEL org and `sub`, plus the `app.users.id`. */
+export interface PortalLogin {
+  zitadelOrgId: string;
+  idpOrgId: string;
+  /** The token `sub` (`app.users.zitadel_user_id`). */
+  sub: string;
+  userId: string;
+}
+
+/**
+ * One active portal user for a customer party, the state "portal access granted" leaves behind. The party's
+ * customer IdP org is reused when one exists (createParty makes one) and inserted otherwise (a customer made by
+ * lead conversion has none). A SHORTCUT: P2 has no HTTP route that grants portal access (it waits for a verified
+ * KYB case), so this writes the two rows the grant would, through withTx so the audit trigger sees an actor.
+ */
+export async function seedPortalLogin(
+  e2e: Pick<E2eContext, 'databaseUrl'>,
+  scope: { tenantId: string; organizationId: string },
+  partyId: string,
+): Promise<PortalLogin> {
+  const pool = new Pool({ connectionString: e2e.databaseUrl, max: 1 });
+  try {
+    const db = drizzle({ client: pool });
+    const idp = await withTx(db, scope, systemActor('e2e-portal-login'), async (tx) => {
+      const [existing] = await tx
+        .select({ id: idpOrgs.id, zitadelOrgId: idpOrgs.zitadelOrgId })
+        .from(idpOrgs)
+        .where(
+          and(
+            eq(idpOrgs.tenantId, scope.tenantId),
+            eq(idpOrgs.partyId, partyId),
+            eq(idpOrgs.kind, 'customer'),
+          ),
+        );
+      if (existing !== undefined) return existing;
+      const [row] = await tx
+        .insert(idpOrgs)
+        .values({
+          tenantId: scope.tenantId,
+          zitadelOrgId: `e2e-customer-${randomUUID()}`,
+          kind: 'customer',
+          partyId,
+          name: `e2e customer login ${partyId.slice(0, 8)}`,
+        })
+        .returning({ id: idpOrgs.id, zitadelOrgId: idpOrgs.zitadelOrgId });
+      if (row === undefined)
+        throw new Error(`idp_orgs insert for party ${partyId} returned no row`);
+      return row;
+    });
+    const { userId } = await createPortalUser(pool, { tenantId: scope.tenantId, idpOrgId: idp.id });
+    // createPortalUser mints a random ZITADEL id; the token must carry the stored one.
+    const { rows } = await pool.query<{ zitadel_user_id: string }>(
+      'SELECT zitadel_user_id FROM app.users WHERE id = $1',
+      [userId],
+    );
+    const sub = rows[0]?.zitadel_user_id;
+    if (sub === undefined) throw new Error(`portal user ${userId} was not seeded`);
+    return { zitadelOrgId: idp.zitadelOrgId, idpOrgId: idp.id, sub, userId };
+  } finally {
+    await pool.end();
+  }
 }
