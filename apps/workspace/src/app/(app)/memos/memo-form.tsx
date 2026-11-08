@@ -115,12 +115,7 @@ export function MemoForm({
 
         <Field label="Currency" error={err.currency}>
           {(control) => (
-            <Select
-              name="currency"
-              value={values.currency}
-              onChange={set('currency')}
-              {...control}
-            >
+            <Select name="currency" value={values.currency} onChange={set('currency')} {...control}>
               {CURRENCY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}

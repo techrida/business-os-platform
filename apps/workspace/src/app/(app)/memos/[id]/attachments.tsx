@@ -228,11 +228,15 @@ export function Attachments({
           </div>
         </form>
       ) : (
-        <p className={styles.note}>Files can only be added while the memo is a draft or returned.</p>
+        <p className={styles.note}>
+          Files can only be added while the memo is a draft or returned.
+        </p>
       )}
 
       <div aria-live="polite">
-        {message ? <Alert tone={message.tone === 'ok' ? 'success' : 'error'}>{message.text}</Alert> : null}
+        {message ? (
+          <Alert tone={message.tone === 'ok' ? 'success' : 'error'}>{message.text}</Alert>
+        ) : null}
       </div>
     </div>
   );
