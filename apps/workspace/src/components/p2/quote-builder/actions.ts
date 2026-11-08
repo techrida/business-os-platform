@@ -191,20 +191,27 @@ export async function saveDraftAction(
 // ---------------------------------------------------------------------------------------------
 
 export async function submitQuoteAction(
-  input: Ref & { expectedVersion: number; values: BuilderValues },
+  input: Ref & { expectedVersion: number; idempotencyKey: string; values: BuilderValues },
 ): Promise<{ ok: true } | ActionFailure> {
   if (!refOk(input)) return invalid(INCOMPLETE);
   const session = await requireStaffSession(`/quotations/${input.quotationId}/edit`);
+  const key = keyOf(input.idempotencyKey);
 
   // Blocked here, before any call: a schedule that does not total 100% never reaches the API.
   const blocked = scheduleFailure(input.values);
-  if (blocked) return blocked;
+  if (blocked) return { ...blocked, key };
 
   try {
-    await api.submitVersion(session, input.quotationId, input.versionId, input.expectedVersion);
+    await api.submitVersion(
+      session,
+      input.quotationId,
+      input.versionId,
+      input.expectedVersion,
+      key,
+    );
   } catch (err) {
     const f = describeQuoteFailure(err, 'submit');
-    return { ok: false, kind: f.kind, message: f.message };
+    return { ok: false, kind: f.kind, message: f.message, key: nextKey(err, key) };
   }
   revalidatePath(`/quotations/${input.quotationId}/edit`);
   return { ok: true };

@@ -126,17 +126,19 @@ export function previewVersion(
   );
 }
 
+/** Like create, submit needs an Idempotency-Key (400 without one). */
 export function submitVersion(
   session: Session,
   quotationId: string,
   versionId: string,
   expectedVersion: number,
+  idempotencyKey: string,
 ): Promise<unknown> {
   return call(
     session,
     `/v1/quotations/${seg(quotationId)}/versions/${seg(versionId)}/submit`,
     z.unknown(),
-    json('POST', { expectedVersion }),
+    json('POST', { expectedVersion }, { 'idempotency-key': idempotencyKey }),
   );
 }
 

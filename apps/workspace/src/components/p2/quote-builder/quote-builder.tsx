@@ -325,6 +325,7 @@ export function QuoteBuilder({
         quotationId: target.quotationId,
         versionId: target.versionId,
         expectedVersion: rowVersion,
+        idempotencyKey: key,
         values,
       });
       if (res.ok) {
@@ -332,6 +333,7 @@ export function QuoteBuilder({
         router.push(`/quotations/${target.quotationId}/edit?submitted=1`);
         router.refresh();
       } else {
+        if (res.key) setKey(res.key);
         fail(res.kind, res.message, res.fieldErrors);
       }
     } catch {
