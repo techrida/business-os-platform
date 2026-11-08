@@ -155,10 +155,13 @@ beforeAll(async () => {
   staffIdpOrgId = tenant.idpOrgId;
   scopeA = { tenantId, organizationId: tenant.organizationId };
   const entityB = randomUUID();
-  await appPool.query(
-    `INSERT INTO app.organizations (id, tenant_id, organization_id, name, code, legal_name, is_default)
-     VALUES ($1, $2, $1, $3, $3, $3, false)`,
-    [entityB, tenantId, `E-${entityB}`],
+  // The audit trigger refuses a write without bos.actor_id, so the second entity is inserted through withTx
+  // (audited under entity A, the acting entity), never with a bare pool query.
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`INSERT INTO app.organizations (id, tenant_id, organization_id, name, code, legal_name, is_default)
+          VALUES (${entityB}, ${tenantId}, ${entityB}, ${`E-${entityB}`}, ${`E-${entityB}`}, ${`E-${entityB}`}, false)`,
+    ),
   );
   scopeB = { tenantId, organizationId: entityB };
   acting = scopeA;
