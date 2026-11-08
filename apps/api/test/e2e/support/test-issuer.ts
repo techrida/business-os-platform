@@ -125,6 +125,7 @@ export function zitadelClaims(input: ZitadelClaimsInput): JWTPayload {
   return {
     sub: input.userId,
     aud: [input.projectId, input.clientId],
+    azp: input.clientId,
     [`urn:zitadel:iam:org:project:${input.projectId}:roles`]: Object.fromEntries(
       input.roles.map((role) => [role, { [input.orgId]: 'org.example.test' }]),
     ),
