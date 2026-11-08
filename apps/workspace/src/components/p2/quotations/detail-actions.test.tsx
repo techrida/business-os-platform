@@ -1,0 +1,176 @@
+import type { QuotationContact, QuotationStatus, QuotationVersionDto } from '@bos/contracts';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+
+import { DetailActions } from './detail-actions';
+
+// The dialogs import the server actions, which import server-only modules.
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+
+const Q = '11111111-1111-4111-8111-111111111111';
+const V = '22222222-2222-4222-8222-222222222222';
+const ADA = '44444444-4444-4444-8444-444444444441';
+const BOB = '44444444-4444-4444-8444-444444444442';
+const TODAY = '2026-11-08';
+
+const contacts: QuotationContact[] = [
+  { id: ADA, name: 'Ada Lovelace', email: 'ada@example.com' },
+  { id: BOB, name: 'Bob NoMail', email: null },
+];
+
+function current(over: Partial<QuotationVersionDto> = {}): QuotationVersionDto {
+  return {
+    id: V,
+    version: 7,
+    status: 'approved',
+    renderedScanStatus: 'clean',
+    validUntil: '2026-11-23',
+    contactId: ADA,
+    ...over,
+  } as QuotationVersionDto;
+}
+
+function render(
+  over: Partial<QuotationVersionDto> = {},
+  list: QuotationContact[] = contacts,
+): string {
+  return renderToStaticMarkup(
+    <DetailActions
+      quotationId={Q}
+      number="QT-2082-0042"
+      current={current(over)}
+      contacts={list}
+      reloadHref={`/quotations/${Q}`}
+      today={TODAY}
+    />,
+  );
+}
+
+const triggers = (html: string): string[] =>
+  [...html.matchAll(/<button[^>]*>(Send to customer|Record outcome|Revise)<\/button>/g)].map(
+    (m) => m[1] ?? '',
+  );
+
+describe('which actions a status offers', () => {
+  const cases: [QuotationStatus, string[]][] = [
+    ['draft', []],
+    ['submitted', []],
+    ['returned', []],
+    ['approved', ['Send to customer', 'Revise']],
+    ['sent', ['Record outcome', 'Revise']],
+    ['accepted', []],
+    ['rejected', ['Revise']],
+    ['expired', ['Send to customer', 'Revise']],
+    ['cancelled', []],
+    ['superseded', []],
+  ];
+  it.each(cases)('%s offers %j', (status, expected) => {
+    const html = render({ status, rejectionSource: status === 'rejected' ? 'customer' : null });
+    // The trigger button is the first button of each dialog with that label.
+    expect([...new Set(triggers(html))]).toEqual(expected);
+  });
+
+  it('renders nothing at all when no action applies, so the slot stays empty', () => {
+    expect(render({ status: 'accepted' })).toBe('');
+  });
+});
+
+describe('Send', () => {
+  it('opens a dialog that says the customer gets a portal link, never a file', () => {
+    const html = render();
+    expect(html).toContain('link to their portal');
+    expect(html).toContain('never attached and never sent as a file');
+    expect(html).not.toContain('aria-disabled');
+  });
+
+  it('preselects the version contact and disables contacts without an email', () => {
+    const html = render();
+    expect(html).toMatch(
+      new RegExp(`<option value="${ADA}" selected="">Ada Lovelace \\(ada@example.com\\)`),
+    );
+    expect(html).toMatch(
+      new RegExp(`<option value="${BOB}" disabled="">Bob NoMail \\(no email address\\)`),
+    );
+  });
+
+  it('does not preselect a version contact that has no email', () => {
+    const html = render({ contactId: BOB });
+    expect(html).toContain('<option value="" selected="">Choose a contact</option>');
+    expect(html.match(/selected=""/g)).toHaveLength(1);
+  });
+
+  it('sends the version row version, not the quotation one, and its own idempotency key', () => {
+    const html = render();
+    expect(html).toContain('name="expectedVersion" value="7"');
+    expect(html).toContain(`name="versionId" value="${V}"`);
+    const keys = [...html.matchAll(/name="idempotencyKey" value="([^"]+)"/g)].map((m) => m[1]);
+    expect(keys.length).toBe(2);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it.each([
+    ['a file not yet clean', { renderedScanStatus: 'quarantined' as const }, /still being scanned/],
+    ['a past validity date', { validUntil: '2026-11-07' }, /has expired/],
+    ['the expired status', { status: 'expired' as const }, /has expired/],
+  ])('is off for %s, with the reason linked by aria-describedby', (_name, over, words) => {
+    const html = render(over);
+    const described = /<button[^>]*aria-describedby="([^"]+)"[^>]*>Send to customer/.exec(html);
+    expect(described?.[1]).toBeTruthy();
+    expect(html).toMatch(new RegExp(`aria-disabled="true"`));
+    const reason = new RegExp(`<p id="${described?.[1]}"[^>]*>([^<]+)</p>`).exec(html);
+    expect(reason?.[1]).toMatch(words);
+    // Off means no form to submit: the dialog and its fields are not in the page.
+    expect(html).not.toContain('name="recipientContactId"');
+  });
+
+  it('is off, with one line of words, when no contact has an email', () => {
+    const html = render({}, [{ id: BOB, name: 'Bob NoMail', email: null }]);
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('No contact for this customer has an email address');
+  });
+
+  it('keeps a very long contact name as text', () => {
+    const name = 'N'.repeat(300);
+    expect(render({}, [{ id: ADA, name, email: 'a@example.com' }])).toContain(name);
+  });
+});
+
+describe('Record outcome', () => {
+  const html = () => render({ status: 'sent' });
+
+  it('asks for the answer, the date (today, no later), evidence and a comment', () => {
+    const out = html();
+    expect(out).toContain('What did the customer say?');
+    expect(out).toMatch(/type="radio" name="outcome" value="accepted"/);
+    expect(out).toMatch(/type="radio" name="outcome" value="rejected"/);
+    expect(out).toMatch(/type="date"[^>]*name="decidedOn"[^>]*/);
+    expect(out).toContain(`value="${TODAY}"`);
+    expect(out).toContain(`max="${TODAY}"`);
+    for (const kind of ['signed_quote', 'purchase_order', 'contract']) {
+      expect(out).toContain(`type="checkbox" name="evidenceKinds" value="${kind}"`);
+    }
+    expect(out).toContain('Required to record an accepted quotation.');
+    expect(out).toContain('Required when the customer rejected.');
+  });
+
+  it('sends the version row version', () => {
+    expect(html()).toContain('name="expectedVersion" value="7"');
+  });
+});
+
+describe('Revise', () => {
+  it('needs a reason and says what happens to the current revision', () => {
+    const out = render({ status: 'sent' });
+    expect(out).toContain('Why are you revising it?');
+    expect(out).toContain('marks the current one Superseded');
+  });
+
+  it('does not claim a rejected revision becomes Superseded', () => {
+    const out = render({ status: 'rejected', rejectionSource: 'customer' });
+    expect(out).not.toContain('Superseded');
+    expect(out).toContain('The current one stays in the revision list as a record.');
+  });
+});
