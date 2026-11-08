@@ -1,7 +1,12 @@
 import {
+  findTransition,
+  LEAD_STAGES,
   LEAD_TRANSITIONS,
+  OPPORTUNITY_STAGES,
   OPPORTUNITY_TRANSITIONS,
   STAGE_CATALOGUE,
+  type LeadStage,
+  type OpportunityStage,
   type RecordKind,
 } from '@bos/contracts';
 
@@ -51,13 +56,20 @@ export function isSetBySystem(kind: RecordKind, stage: string): boolean {
  * purpose (deny by default: the UI has no manager check), and `converted` is the Convert action.
  */
 export function userMoves(kind: RecordKind, from: string): Move[] {
-  return table(kind)
-    .filter((t) => t.from === from && t.by === 'user' && !isSetBySystem(kind, t.to))
-    .map((t) => ({
-      stage: t.to,
-      label: stageLabel(kind, t.to),
+  const targets: readonly string[] = kind === 'lead' ? LEAD_STAGES : OPPORTUNITY_STAGES;
+  return targets
+    .filter((to) => {
+      const edge =
+        kind === 'lead'
+          ? findTransition('lead', from as LeadStage, to as LeadStage)
+          : findTransition('opportunity', from as OpportunityStage, to as OpportunityStage);
+      return edge !== undefined && edge.by === 'user' && !isSetBySystem(kind, to);
+    })
+    .map((to) => ({
+      stage: to,
+      label: stageLabel(kind, to),
       needsReason: STAGE_CATALOGUE.some(
-        (s) => s.recordKind === kind && s.code === t.to && s.needsReason,
+        (s) => s.recordKind === kind && s.code === to && s.needsReason,
       ),
     }));
 }
