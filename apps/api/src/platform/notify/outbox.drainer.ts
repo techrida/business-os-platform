@@ -8,10 +8,11 @@
 //   2. claim     lock up to 20 due rows and mark them `sending` (FOR UPDATE SKIP LOCKED);
 //   3. send      each claimed row through the EmailProvider, OUTSIDE any transaction;
 //   4. update    each row in its own small transaction: `sent`, back to `pending` with a backoff, or `dead`.
+//                only if this worker still holds the claim (see claimGuard); otherwise the update is skipped.
 // The claim commits before any email is sent, so the row lock is never held across a slow SMTP call.
 import { Logger } from '@nestjs/common';
 import { outbox } from '@bos/db';
-import { eq, sql } from 'drizzle-orm';
+import { type SQL, and, eq, sql } from 'drizzle-orm';
 
 import { type Db, type DbTransaction, inTransaction } from '../db/db.module';
 import { systemActor, withTx } from '../db/tx';
@@ -102,7 +103,26 @@ type DeadRef = {
   organizationId: string;
   template: string;
   attempts: number;
+  /** The claim time this worker wrote in step 2. Absent for a reclaimed row, which is not ours to update. */
+  claimedAt?: Date;
 };
+
+/**
+ * The WHERE clause of every update that follows a send. The claim token is the pair (attempts, claimed_at)
+ * and the row must still be `sending`: attempts goes up on every claim and a reclaim clears claimed_at, so
+ * once another worker has reclaimed the row the pair no longer matches and this worker's late result
+ * updates nothing. That also means a `sent` or `dead` row can never be moved back to retry. app.outbox has
+ * no claim-token column; a dedicated token would be stricter, but this pair already differs per claim.
+ */
+function claimGuard(ref: DeadRef): SQL {
+  if (ref.claimedAt === undefined) throw new Error(`outbox row ${ref.id} has no claim to guard`);
+  return and(
+    eq(outbox.id, ref.id),
+    eq(outbox.status, 'sending'),
+    eq(outbox.attempts, ref.attempts),
+    eq(outbox.claimedAt, ref.claimedAt),
+  ) as SQL;
+}
 
 export class OutboxDrainer {
   private readonly logger = new Logger(OutboxDrainer.name);
@@ -178,6 +198,7 @@ export class OutboxDrainer {
         organizationId: row.organization_id,
         template: row.template,
         attempts: row.attempts,
+        claimedAt: now,
       };
       let outcome: { providerMessageId: string } | { error: string };
       try {
@@ -197,7 +218,7 @@ export class OutboxDrainer {
         const messageId = outcome.providerMessageId;
         const ok = await this.settle(ref, () =>
           this.inRowTx(ref, async (tx) => {
-            await tx
+            const updated = await tx
               .update(outbox)
               .set({
                 status: 'sent',
@@ -206,7 +227,9 @@ export class OutboxDrainer {
                 claimedAt: null,
                 lastError: null,
               })
-              .where(eq(outbox.id, ref.id));
+              .where(claimGuard(ref))
+              .returning({ id: outbox.id });
+            return updated.length > 0;
           }),
         );
         if (ok) result.sent += 1;
@@ -225,10 +248,12 @@ export class OutboxDrainer {
         );
         await this.settle(ref, () =>
           this.inRowTx(ref, async (tx) => {
-            await tx
+            const updated = await tx
               .update(outbox)
               .set({ status: 'pending', nextAttemptAt, claimedAt: null, lastError: error })
-              .where(eq(outbox.id, ref.id));
+              .where(claimGuard(ref))
+              .returning({ id: outbox.id });
+            return updated.length > 0;
           }),
         );
       }
@@ -251,20 +276,27 @@ export class OutboxDrainer {
    * Marks a row dead (when `lastError` is given; a reclaimed row is already dead) and tells the founder.
    * Both happen in one transaction, so a committed `dead` row always has its notice. The log line and the
    * metric come after the commit, so a rollback never counts a dead letter that did not happen.
+   * Returns false, with no notice and no metric, when this worker no longer holds the claim: whoever took
+   * the row over owns its outcome (and its dead-letter notice).
    */
-  private async announceDead(ref: DeadRef, lastError: string | undefined): Promise<void> {
-    await this.inRowTx(ref, async (tx) => {
+  private async announceDead(ref: DeadRef, lastError: string | undefined): Promise<boolean> {
+    const held = await this.inRowTx(ref, async (tx) => {
       if (lastError !== undefined) {
-        await tx
+        const updated = await tx
           .update(outbox)
           .set({ status: 'dead', claimedAt: null, lastError })
-          .where(eq(outbox.id, ref.id));
+          .where(claimGuard(ref))
+          .returning({ id: outbox.id });
+        if (updated.length === 0) return false;
       }
       await this.notifyFounder(tx, ref);
+      return true;
     });
+    if (!held) return false;
     // The row id and the template identify the email. The address and the error text stay out of the log.
     this.logger.error(`outbox row ${ref.id} is dead (template ${ref.template})`);
     this.metrics.recordDeadLetter();
+    return true;
   }
 
   private async notifyFounder(tx: DbTransaction, ref: DeadRef): Promise<void> {
@@ -294,11 +326,16 @@ export class OutboxDrainer {
     }
   }
 
-  /** Runs one row's update; a failure is logged and the pass goes on. Returns whether it worked. */
-  private async settle(ref: DeadRef, fn: () => Promise<void>): Promise<boolean> {
+  /**
+   * Runs one row's update; a failure is logged and the pass goes on. `fn` returns false when the update
+   * matched no row because the claim was lost; that is logged and nothing is overwritten. Returns whether
+   * the row was updated.
+   */
+  private async settle(ref: DeadRef, fn: () => Promise<boolean>): Promise<boolean> {
     try {
-      await fn();
-      return true;
+      if (await fn()) return true;
+      this.logger.warn(`outbox row ${ref.id} was claimed by another worker, its result is dropped`);
+      return false;
     } catch (err) {
       this.logger.error(`could not update outbox row ${ref.id}: ${redactError(err)}`);
       return false;
