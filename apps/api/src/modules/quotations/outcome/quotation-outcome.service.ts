@@ -294,6 +294,7 @@ export class QuotationOutcomeService {
       comment: row!.comment,
       evidenceKinds: row!.evidenceKinds,
       evidenceDocumentIds: row!.evidenceDocumentIds,
+      acceptedByName: row!.acceptedByName,
     };
   }
 
