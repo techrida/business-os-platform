@@ -6,6 +6,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 
 import { principal, type Principal } from '../../platform/authz/principal';
+import { requestTx, type Actor } from '../../platform/db/tx';
 
 /** 403 unless `p` is a customer portal principal with a party. Same body as AuthzService.assert. */
 export function assertCustomerCaller(p: Principal): void {
@@ -23,5 +24,16 @@ export class PortalCaller {
   /** The current principal. PortalService checks it with assertCustomerCaller before it reads anything. */
   current(): Principal {
     return principal();
+  }
+}
+
+/**
+ * The actor withTx stamps on the audit row of a portal answer: the request's user (the principal's app.users id),
+ * with its IP, user agent and correlation id. Its own class so the PA-2 read tests keep their one-method caller.
+ */
+@Injectable()
+export class PortalTxActor {
+  current(): Actor {
+    return requestTx().actor;
   }
 }
