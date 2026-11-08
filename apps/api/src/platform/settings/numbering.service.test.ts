@@ -85,7 +85,8 @@ describe('NumberingService.next', () => {
     expect(counters).toEqual(Array.from({ length: 50 }, (_, i) => i + 1));
     expect(results).toContain('MEMO-2082/83-00001');
     expect(results).toContain('MEMO-2082/83-00050');
-  });
+    // 50 real transactions against Testcontainers Postgres: give a loaded machine room.
+  }, 30_000);
 
   it('leaves no gap when a transaction rolls back: the same number is handed out again', async () => {
     expect(await take('ROLL')).toBe('ROLL-2082/83-00001');
