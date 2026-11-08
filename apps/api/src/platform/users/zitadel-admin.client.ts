@@ -34,6 +34,14 @@ export const ZITADEL_ENDPOINTS = {
   updateAuthorization: '/zitadel.authorization.v2.AuthorizationService/UpdateAuthorization',
   // UNVERIFIED: authorization v2 DeleteAuthorization; body { id }. Used when the role set becomes empty.
   deleteAuthorization: '/zitadel.authorization.v2.AuthorizationService/DeleteAuthorization',
+  // K8 (portal access). VERIFIED path and body (seed findOrgByName / createOrg). UNVERIFIED with this
+  // client's PAT: bos-provisioner is only ORG_USER_MANAGER + ORG_USER_PERMISSION_EDITOR on the staff org,
+  // so ZITADEL will likely refuse AddOrganization and users in the new org until it gets an instance role.
+  listOrganizations: '/zitadel.org.v2.OrganizationService/ListOrganizations',
+  addOrganization: '/zitadel.org.v2.OrganizationService/AddOrganization',
+  // VERIFIED path and body (seed createProjectGrant). UNVERIFIED: that a duplicate answers HTTP 409
+  // (Connect maps already_exists to 409) and that the provisioner may grant the project.
+  createProjectGrant: '/zitadel.project.v2.ProjectService/CreateProjectGrant',
 } as const;
 
 /** The ZITADEL project that holds the role keys (tools/seed-zitadel/src/personas.ts PROJECT_NAME). */
@@ -122,6 +130,10 @@ const ListUsersResponse = z.object({
   details: z.object({ totalResult: z.union([Str, z.number()]).optional() }).optional(),
 });
 const IdOnly = z.object({ id: Str.min(1) });
+const OrgList = z.object({ result: z.array(z.object({ id: Str.min(1), name: Str })).default([]) });
+const AddOrgResponse = z.object({ organizationId: Str.min(1) });
+/** ZITADEL's exact-match method for user and org queries (the seed's EQ_QUERY). */
+const EQ_QUERY = 'TEXT_QUERY_METHOD_EQUALS';
 const ProjectList = z.object({
   projects: z.array(z.object({ projectId: Str.min(1), name: Str })).default([]),
 });
@@ -309,6 +321,63 @@ export class ZitadelAdminClient {
         roleKeys,
       });
     }
+  }
+
+  /** The id of the org whose name is exactly `name`, or null. Org names are unique in a ZITADEL instance. */
+  async findOrganizationByName(name: string): Promise<string | null> {
+    const res = parse(
+      OrgList,
+      await this.post(ZITADEL_ENDPOINTS.listOrganizations, {
+        queries: [{ nameQuery: { name, method: EQ_QUERY } }],
+      }),
+      'ListOrganizations(name)',
+    );
+    return res.result.find((o) => o.name === name)?.id ?? null;
+  }
+
+  /** Creates an org and returns its id. A taken name answers ZitadelHttpError 409. */
+  async createOrganization(name: string): Promise<string> {
+    return parse(
+      AddOrgResponse,
+      await this.post(ZITADEL_ENDPOINTS.addOrganization, { name }),
+      'AddOrganization',
+    ).organizationId;
+  }
+
+  /**
+   * Grants our project to `zitadelOrgId` with `roles`, so users of that org can hold those roles (the seed
+   * does the same for its customer and vendor orgs). An existing grant counts as done: it is left as it is.
+   */
+  async ensureProjectGrant(zitadelOrgId: string, roles: readonly RoleKey[]): Promise<void> {
+    try {
+      await this.post(ZITADEL_ENDPOINTS.createProjectGrant, {
+        projectId: await this.bosProjectId(),
+        grantedOrganizationId: zitadelOrgId,
+        roleKeys: [...new Set(roles)].sort(),
+      });
+    } catch (error) {
+      if (error instanceof ZitadelHttpError && error.status === 409) return;
+      throw error;
+    }
+  }
+
+  /** The user of `zitadelOrgId` whose username is exactly `username`, or null. */
+  async findHumanByUsername(zitadelOrgId: string, username: string): Promise<ZitadelUser | null> {
+    const res = parse(
+      ListUsersResponse,
+      await this.post(ZITADEL_ENDPOINTS.listUsers, {
+        queries: [
+          { userNameQuery: { userName: username, method: EQ_QUERY } },
+          { organizationIdQuery: { organizationId: zitadelOrgId } },
+        ],
+      }),
+      'ListUsers(username)',
+    );
+    // Checked again here: a query field ZITADEL ignored must not hand back somebody else.
+    const found = res.result.find(
+      (u) => u.username === username && u.details.resourceOwner === zitadelOrgId,
+    );
+    return found ? toUser(found) : null;
   }
 
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
