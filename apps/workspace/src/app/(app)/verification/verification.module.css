@@ -157,3 +157,17 @@
 .openCase > * {
   max-width: 100%;
 }
+
+/* ---- Detail: one attached file in the checklist table ---- */
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.file .itemName {
+  min-width: 0;
+}

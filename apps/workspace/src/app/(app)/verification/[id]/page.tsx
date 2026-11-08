@@ -4,6 +4,8 @@ import type { CustomerDto, VerificationCaseDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { getDocument } from '@/components/p2/crm/verification-api';
+import { downloadHref, fileOf, type FileView } from '@/components/p2/crm/verification-file';
 import { getCustomer, getVerificationCase } from '@/components/p2/customers/api';
 import {
   canApprove,
@@ -18,13 +20,14 @@ import {
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
+import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
 
 import { ReviewForm } from './review-form';
 import { SubmitForm } from '../submit-form';
@@ -32,6 +35,51 @@ import styles from '../verification.module.css';
 
 export const metadata: Metadata = { title: 'Verification case · Business OS' };
 export const dynamic = 'force-dynamic';
+
+/** One attached file: its name, scan result and, once the scan passed, a link that opens it. */
+function AttachedFile({
+  documentId,
+  file,
+}: {
+  documentId: string;
+  file: FileView | null | 'unavailable';
+}) {
+  const ref = (
+    <span className={styles.ref} title={documentId}>
+      Attached, ref {shortId(documentId)}
+    </span>
+  );
+  if (file === null || file === 'unavailable') {
+    return (
+      <div className={styles.file}>
+        {ref}
+        <span className={styles.quiet}>
+          {file === null ? 'No readable version.' : 'The file details could not be read.'}
+        </span>
+      </div>
+    );
+  }
+  const scan = scanLabel(file.status);
+  return (
+    <div className={styles.file}>
+      <span className={styles.itemName}>{file.filename}</span>
+      <span className={styles.quiet}>{formatBytes(file.sizeBytes)}</span>
+      <Badge tone={{ good: 'success', wait: 'warning', bad: 'error' }[scan.tone]}>
+        {scan.text}
+      </Badge>
+      {file.status === 'clean' ? (
+        <LinkButton
+          variant="secondary"
+          size="small"
+          href={downloadHref(file)}
+          aria-label={`Open ${file.filename}`}
+        >
+          Open file
+        </LinkButton>
+      ) : null}
+    </div>
+  );
+}
 
 function approveBlockedReason(c: VerificationCaseDto): string | null {
   if (canApprove(c)) return null;
@@ -93,6 +141,17 @@ export default async function VerificationCasePage({
   } catch {
     customer = undefined;
   }
+  // Each attached file is looked up on its own: one refusal (the reviewer may not read it) or one
+  // failure leaves the other rows and the decision form working. No signed link is issued here;
+  // it is issued by the download route when the link is clicked.
+  const documentIds = c.checklist.flatMap((i) => (i.documentId !== null ? [i.documentId] : []));
+  const lookups = await Promise.allSettled(documentIds.map((d) => getDocument(session, d)));
+  const files = new Map<string, FileView | null | 'unavailable'>();
+  lookups.forEach((r, i) => {
+    const documentId = documentIds[i];
+    if (documentId === undefined) return;
+    files.set(documentId, r.status === 'fulfilled' ? fileOf(r.value) : 'unavailable');
+  });
   const name = customerLabel(customer, c.partyId);
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
@@ -175,9 +234,10 @@ export default async function VerificationCasePage({
                       </Td>
                       <Td>
                         {item.documentId !== null ? (
-                          <span className={styles.ref} title={item.documentId}>
-                            Attached, ref {shortId(item.documentId)}
-                          </span>
+                          <AttachedFile
+                            documentId={item.documentId}
+                            file={files.get(item.documentId) ?? 'unavailable'}
+                          />
                         ) : (
                           <span className={styles.quiet}>Nothing attached</span>
                         )}
