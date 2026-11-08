@@ -1,0 +1,719 @@
+// Integration tests of the quotation approval round trip on a real Postgres (Testcontainers, needs Docker in WSL).
+// Real: migrations as bos_owner, queries as bos_app (so every 0016 CHECK and freeze trigger runs), DraftingService
+// (create, PUT), QuotationSubmitService with its store, PricingService (NPR only: FX is a stub that fails if asked),
+// the real ApprovalsService with the seed's quotation_version workflow published through ApprovalsAdminService, the
+// real QuotationVersionSubject (so the M10 hash re-check runs on rows read back from Postgres) and the real
+// AuditService. Faked: notify (it still runs the real link and template validation, as NotifyService does at
+// enqueue), the user directory (role -> users; the users themselves are real staff users of entity A), the request
+// context, and authz.assert, which still runs the real pure can() on a fake principal. The founder step's step-up
+// is an HTTP concern (approvals.controller); the API e2e covers it, so the service is called directly here.
+// Run: pnpm --filter @bos/api exec vitest run src/modules/quotations/approval/quotation-approval.integration.test.ts
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  QuotationApprovalSnapshotSchema,
+  type ApprovalRequestDto,
+  type CreateQuotationBody,
+  type Discount,
+  type Permission,
+  type QuotationVersionDto,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
+import {
+  approvalRequests,
+  approvalSteps,
+  createStaffUser,
+  idempotencyKeys,
+  quotationLines,
+  quotationStatusHistory,
+  quotationTaxSummary,
+  quotationVersions,
+  runMigrations,
+  users,
+} from '@bos/db';
+import { ForbiddenException, HttpException } from '@nestjs/common';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AuditService } from '../../../platform/audit/audit.service';
+import type { AuthzService } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
+import type { Principal } from '../../../platform/authz/principal';
+import type { DbTransaction } from '../../../platform/db/db.module';
+import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { buildLink, renderEmail } from '../../../platform/notify/templates';
+import type { MoneyService } from '../../../platform/settings/money.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
+import { ApprovalsAdminService } from '../../approvals/admin.service';
+import type { ApprovalEmailTemplate } from '../../approvals/ports';
+import { ApprovalsService } from '../../approvals/requests.service';
+import { DraftingService } from '../drafting/drafting.service';
+import {
+  GOLDEN_ISSUE_DATE,
+  seedQuotationFixture,
+  type QuotationFixture,
+  type QuotationFixtureDb,
+} from '../drafting/quotation.fixture';
+import { PricingService } from '../pricing/pricing.service';
+import { contentSha256, materialFieldsOf } from './quotation-approval-snapshot';
+import { QuotationSubmitService, QuotationSubmitStore } from './quotation-submit.service';
+import {
+  QUOTATION_VERSION_DOCUMENT_TYPE,
+  QuotationVersionSubject,
+} from './quotation-version.subject';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+const WORKSPACE_URL = 'http://workspace.test';
+const now = new Date('2026-11-09T04:00:00Z');
+
+// Copied word for word from tools/seed-zitadel/src/db-seed.ts (QUOTATION_VERSION_WORKFLOW_SPEC, v1 of the
+// quotation route). apps/api does not depend on the seed package, so it is not imported; keep the two in step.
+const QUOTATION_VERSION_WORKFLOW_SPEC: unknown = {
+  documentType: 'quotation_version',
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: 'Base route: accountant checks the quotation',
+    },
+    { id: 'finance', kind: 'role', role: 'finance', reason: 'Base route: finance approves' },
+  ],
+  rules: [
+    {
+      id: 'management',
+      when: {
+        any: [
+          { field: 'amountNpr', op: 'gt', value: '100000' },
+          { field: 'discountApprovalRequired', op: 'eq', value: true },
+        ],
+      },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason:
+          'Management approval: above 1,00,000 NPR or a discount above 12% ({effectiveDiscountPct}%)',
+      },
+      position: 'end',
+      reason: 'Amount over NPR 1,00,000 or discount above 12%',
+    },
+    {
+      id: 'over-10-lakh',
+      when: { field: 'amountNpr', op: 'gt', value: '1000000' },
+      add: {
+        id: 'founder',
+        kind: 'role',
+        role: 'founder',
+        reason: 'Founder approval because the NPR amount exceeds 10,00,000',
+      },
+      position: 'end',
+      reason: 'Amount over NPR 10,00,000',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: QuotationFixtureDb;
+let f: QuotationFixture;
+let scopeA: TxScope;
+let scopeB: TxScope;
+let approvals: ApprovalsService;
+let drafting: DraftingService;
+let submitter: QuotationSubmitService;
+
+/** Real staff users of entity A, one per approver role, plus the admin who publishes the workflow. */
+const U = { acc: '', fin: '', mgmt: '', founder: '', admin: '' };
+/** The fake directory's role members (the engine still checks each one is active in the entity). */
+const roles: Partial<Record<RoleKey, string[]>> = {};
+const resetRoles = () => {
+  roles.accountant = [U.acc];
+  roles.finance = [U.fin];
+  roles.management = [U.mgmt];
+  roles.founder = [U.founder];
+};
+
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+/** Who calls: by default the fixture's owner, a sales user of entity A. */
+const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+  userId: '',
+  role: 'sales',
+  scope: null,
+};
+const as = (userId: string, role: RoleKey) => {
+  current.userId = userId;
+  current.role = role;
+};
+const scopeNow = (): TxScope => current.scope ?? scopeA;
+
+const principalNow = (): Principal => ({
+  userId: current.userId,
+  zitadelUserId: `z-${current.userId}`,
+  ...scopeNow(),
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: 'unused',
+  // act() checks the token's roles hold the step's role, so the principal carries the role too.
+  roles: [current.role],
+  departmentId: null,
+  status: 'active',
+  grants: grantsOf(current.role),
+});
+/** One caller for every service, so switching the user or the entity switches it everywhere. */
+const caller = {
+  current: () => ({
+    scope: scopeNow(),
+    actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const authz = {
+  assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+    const d = can(principalNow(), action, ref);
+    if (!d.allowed) {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+    }
+  },
+};
+/** NPR needs no rate; a call here means pricing took the FX path by mistake. */
+const money = {
+  toNprSnapshot: () => Promise.reject(new Error('MoneyService is not used for NPR quotations')),
+} as unknown as MoneyService;
+
+// The fakes run the REAL link and template validation, as NotifyService does at enqueue time: a decided notice
+// linking outside the areas approval.decided allows fails here.
+type Notice = {
+  link: string;
+  email?: { template: ApprovalEmailTemplate; vars: Record<string, string> };
+};
+const validate = (n: Notice) => {
+  buildLink(WORKSPACE_URL, n.link);
+  if (n.email !== undefined) {
+    renderEmail(n.email.template, n.email.vars, { workspaceUrl: WORKSPACE_URL });
+  }
+  return Promise.resolve(undefined);
+};
+const notify = {
+  notifyUser: vi.fn((_tx: unknown, n: Notice) => validate(n)),
+  notifyRole: vi.fn((_tx: unknown, _role: unknown, n: Notice) => validate(n)),
+};
+const directory = {
+  userIdsWithRole: vi.fn((_s: unknown, role: RoleKey) => Promise.resolve(roles[role] ?? [])),
+  resolve: vi.fn(),
+  emailOf: vi.fn(() => Promise.resolve(null)),
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  db = drizzle({ client: appPool });
+
+  f = await seedQuotationFixture(db);
+  scopeA = { tenantId: f.tenantId, organizationId: f.entityId };
+  scopeB = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+  const [owner] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .select({ idpOrgId: users.idpOrgId })
+      .from(users)
+      .where(and(eq(users.tenantId, f.tenantId), eq(users.id, f.ownerUserId))),
+  );
+  const staff = async (roleKey: RoleKey) =>
+    (
+      await createStaffUser(appPool, {
+        ...scopeA,
+        idpOrgId: owner!.idpOrgId,
+        roleKeys: [roleKey],
+      })
+    ).userId;
+  U.acc = await staff('accountant');
+  U.fin = await staff('finance');
+  U.mgmt = await staff('management');
+  U.founder = await staff('founder');
+  U.admin = await staff('founder');
+  resetRoles();
+
+  const audit = new AuditService(db);
+  // The seed's workflow, published in entity A as an admin would.
+  as(U.admin, 'founder');
+  const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  await admin.createWorkflow({
+    key: 'quotation_version',
+    name: 'Quotation',
+    spec: QUOTATION_VERSION_WORKFLOW_SPEC,
+  });
+  await admin.publish('quotation_version', 1);
+
+  approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
+  approvals.registerSubject(new QuotationVersionSubject(() => now));
+  const pricing = new PricingService(money);
+  drafting = new DraftingService(
+    db,
+    new NumberingService(),
+    pricing,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+  );
+  submitter = new QuotationSubmitService(
+    db,
+    authz as unknown as AuthzService,
+    pricing,
+    approvals,
+    notify,
+    audit,
+    new QuotationSubmitStore(),
+    caller,
+    () => now,
+  );
+});
+
+afterAll(async () => {
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetRoles();
+  current.scope = null;
+  as(f.ownerUserId, 'sales');
+});
+
+// ---------------------------------------------------------------------------------------- helpers
+
+/** The HttpException `promise` rejects with; fails the test when it resolves. */
+async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpException) return error;
+    throw error;
+  }
+  throw new Error('expected the call to fail');
+}
+
+/** The pg error behind `error` (drizzle may wrap it as `cause`). */
+function pgErrorOf(error: unknown): { code?: string; constraint?: string } {
+  let e: unknown = error;
+  for (let depth = 0; typeof e === 'object' && e !== null && depth < 3; depth++) {
+    const { code, constraint, cause } = e as {
+      code?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
+    if (typeof code === 'string' && code.length === 5) {
+      return { code, ...(typeof constraint === 'string' ? { constraint } : {}) };
+    }
+    e = cause;
+  }
+  return {};
+}
+
+/** Reads (and the tamper write) in entity A as the system, under RLS like the services. */
+const read = <T>(fn: (tx: DbTransaction) => Promise<T>) =>
+  withTx(db, scopeA, systemActor('test'), fn);
+
+/** A draft of entity A owned by the fixture's owner: one VAT 13% line at `unitPrice`, NPR. */
+async function draft(
+  unitPrice: string,
+  discount?: Discount,
+): Promise<{ quotationId: string; versionId: string; rowVersion: number }> {
+  const body: CreateQuotationBody = {
+    opportunityId: f.opportunityId,
+    currency: 'NPR',
+    issueDate: GOLDEN_ISSUE_DATE,
+    validUntil: '2026-12-09',
+    lines: [
+      {
+        description: 'Implementation',
+        uom: 'job',
+        quantity: '1',
+        unitPrice,
+        taxCodeId: f.taxCodeVat13Id,
+      },
+    ],
+    ...(discount === undefined ? {} : { discount }),
+  };
+  const created = await drafting.create(body, randomUUID());
+  const version = await drafting.getVersion(created.id, created.currentVersionId);
+  return {
+    quotationId: created.id,
+    versionId: created.currentVersionId,
+    rowVersion: version.version,
+  };
+}
+
+const submit = (
+  d: { quotationId: string; versionId: string },
+  expectedVersion: number,
+  key: string = randomUUID(),
+): Promise<QuotationVersionDto> =>
+  submitter.submit(d.quotationId, d.versionId, { expectedVersion }, key);
+
+const versionRow = async (versionId: string) => {
+  const [row] = await read((tx) =>
+    tx.select().from(quotationVersions).where(eq(quotationVersions.id, versionId)),
+  );
+  return row!;
+};
+
+const requestsOf = (versionId: string) =>
+  read((tx) =>
+    tx
+      .select()
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.documentType, QUOTATION_VERSION_DOCUMENT_TYPE),
+          eq(approvalRequests.documentId, versionId),
+        ),
+      ),
+  );
+
+const stepRolesOf = async (requestId: string) =>
+  (
+    await read((tx) =>
+      tx
+        .select({ roleKey: approvalSteps.roleKey })
+        .from(approvalSteps)
+        .where(eq(approvalSteps.requestId, requestId))
+        .orderBy(asc(approvalSteps.seq)),
+    )
+  ).map((s) => s.roleKey);
+
+const requestVersionOf = async (requestId: string) => {
+  const [row] = await read((tx) =>
+    tx
+      .select({ version: approvalRequests.version })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId)),
+  );
+  return row!.version;
+};
+
+/** `user` (holding `role`) acts on the request's active step at its current version. */
+async function act(
+  user: string,
+  role: RoleKey,
+  requestId: string,
+  action: 'approve' | 'return' | 'reject',
+): Promise<ApprovalRequestDto> {
+  const expectedVersion = await requestVersionOf(requestId);
+  as(user, role);
+  try {
+    return await approvals.act(
+      requestId,
+      {
+        action,
+        expectedVersion,
+        ...(action === 'approve' ? {} : { comment: `${action} for the test` }),
+      },
+      randomUUID(),
+    );
+  } finally {
+    as(f.ownerUserId, 'sales');
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ tests
+
+describe('quotation approval: submit', () => {
+  it('routes NPR 15,00,000 to accountant, finance, management and founder, with matching hashes', async () => {
+    const d = await draft('1500000.00');
+    const dto = await submit(d, d.rowVersion);
+    expect(dto.status).toBe('submitted');
+
+    const [request, ...others] = await requestsOf(d.versionId);
+    expect(others).toEqual([]);
+    expect(request!.status).toBe('pending');
+    expect(await stepRolesOf(request!.id)).toEqual([
+      'accountant',
+      'finance',
+      'management',
+      'founder',
+    ]);
+    const snapshot = QuotationApprovalSnapshotSchema.parse(request!.snapshot);
+    // 15,00,000 + 13% VAT: the NPR grand total the founder band compares with.
+    expect(snapshot).toMatchObject({
+      nprTotal: expect.stringMatching(/^1695000(\.0+)?$/) as unknown,
+      currency: 'NPR',
+      discountApprovalRequired: false,
+    });
+
+    // A fresh read of the version, its lines and tax summary hashes to the stored content hash.
+    const version = await versionRow(d.versionId);
+    const lines = await read((tx) =>
+      tx
+        .select()
+        .from(quotationLines)
+        .where(eq(quotationLines.versionId, d.versionId))
+        .orderBy(asc(quotationLines.lineNo)),
+    );
+    const taxSummary = await read((tx) =>
+      tx.select().from(quotationTaxSummary).where(eq(quotationTaxSummary.versionId, d.versionId)),
+    );
+    const recomputed = contentSha256(materialFieldsOf(version, lines, taxSummary));
+    expect(version.contentSha256).not.toBeNull();
+    expect(Buffer.from(version.contentSha256!).equals(recomputed)).toBe(true);
+    expect(version.snapshotSha256).not.toBeNull();
+    expect(Buffer.from(version.snapshotSha256!).equals(Buffer.from(request!.snapshotSha256))).toBe(
+      true,
+    );
+    expect(version.approvalRequestId).toBe(request!.id);
+
+    const history = await read((tx) =>
+      tx
+        .select({ from: quotationStatusHistory.fromStatus, to: quotationStatusHistory.toStatus })
+        .from(quotationStatusHistory)
+        .where(eq(quotationStatusHistory.versionId, d.versionId)),
+    );
+    expect(history).toEqual([{ from: 'draft', to: 'submitted' }]);
+
+    const { rows: quoteAudit } = await ownerPool.query<{ action: string }>(
+      `SELECT action FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 ORDER BY id`,
+      [f.tenantId, d.quotationId],
+    );
+    expect(quoteAudit.map((r) => r.action)).toContain('quotation.submitted');
+    const { rows: requestAudit } = await ownerPool.query<{ action: string }>(
+      `SELECT action FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 ORDER BY id`,
+      [f.tenantId, request!.id],
+    );
+    expect(requestAudit.length).toBeGreaterThan(0);
+  });
+
+  it('adds management, and only management, for a 13% discount on NPR 50,000', async () => {
+    const d = await draft('50000.00', { mode: 'pct', value: '13' });
+    await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    expect(await stepRolesOf(request!.id)).toEqual(['accountant', 'finance', 'management']);
+    expect(QuotationApprovalSnapshotSchema.parse(request!.snapshot).discountApprovalRequired).toBe(
+      true,
+    );
+  });
+
+  it('answers 409 for a version that is already approved, and for a stale expectedVersion', async () => {
+    const approved = await draft('50000.00');
+    await submit(approved, approved.rowVersion);
+    const [request] = await requestsOf(approved.versionId);
+    await act(U.acc, 'accountant', request!.id, 'approve');
+    await act(U.fin, 'finance', request!.id, 'approve');
+    const after = await versionRow(approved.versionId);
+    expect(after.status).toBe('approved');
+    expect((await httpErrorOf(submit(approved, after.version))).getStatus()).toBe(409);
+
+    const stale = await draft('50000.00');
+    await drafting.updateDraft(stale.quotationId, stale.versionId, {
+      expectedVersion: stale.rowVersion,
+      scope: 'Phase 1 only',
+    });
+    expect((await httpErrorOf(submit(stale, stale.rowVersion))).getStatus()).toBe(409);
+    expect((await versionRow(stale.versionId)).status).toBe('draft');
+  });
+
+  it('answers 422 NO_ELIGIBLE_APPROVER without writing anything but the admins notice', async () => {
+    roles.finance = [];
+    const d = await draft('50000.00');
+    const key = randomUUID();
+    const error = await httpErrorOf(submit(d, d.rowVersion, key));
+    expect(error.getStatus()).toBe(422);
+    expect(error.getResponse()).toMatchObject({ code: 'NO_ELIGIBLE_APPROVER' });
+
+    expect(await requestsOf(d.versionId)).toEqual([]);
+    const claims = await read((tx) =>
+      tx
+        .select()
+        .from(idempotencyKeys)
+        .where(and(eq(idempotencyKeys.command, 'quotation.submit'), eq(idempotencyKeys.key, key))),
+    );
+    expect(claims).toEqual([]);
+    const version = await versionRow(d.versionId);
+    expect(version.status).toBe('draft');
+    expect(version.version).toBe(d.rowVersion);
+    expect(notify.notifyRole).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.objectContaining({
+        email: expect.objectContaining({ template: 'approval.blocked' }) as unknown,
+      }),
+    );
+  });
+
+  it('answers 404 for a version of another entity', async () => {
+    const d = await draft('50000.00');
+    current.scope = scopeB;
+    expect((await httpErrorOf(submit(d, d.rowVersion))).getStatus()).toBe(404);
+    current.scope = null;
+    expect((await versionRow(d.versionId)).status).toBe('draft');
+  });
+
+  it('replays the same answer for the same Idempotency-Key, with one request row', async () => {
+    const d = await draft('50000.00');
+    const key = randomUUID();
+    const first = await submit(d, d.rowVersion, key);
+    const second = await submit(d, d.rowVersion, key);
+    expect(second).toEqual(JSON.parse(JSON.stringify(first)) as unknown);
+    expect(await requestsOf(d.versionId)).toHaveLength(1);
+  });
+});
+
+describe('quotation approval: decisions', () => {
+  it('approves every step of NPR 15,00,000 and links the decided notice to the quotation', async () => {
+    const d = await draft('1500000.00');
+    await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    await act(U.acc, 'accountant', request!.id, 'approve');
+    await act(U.fin, 'finance', request!.id, 'approve');
+    await act(U.mgmt, 'management', request!.id, 'approve');
+    const done = await act(U.founder, 'founder', request!.id, 'approve');
+    expect(done.status).toBe('approved');
+
+    // The subject's M10 re-check ran on the rows read back from Postgres and let the outcome through.
+    const version = await versionRow(d.versionId);
+    expect(version.status).toBe('approved');
+    expect(version.approvedAt).not.toBeNull();
+    const path = `/quotations/${d.quotationId}`;
+    expect(notify.notifyUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: f.ownerUserId,
+        link: path,
+        email: expect.objectContaining({
+          template: 'approval.decided',
+          vars: expect.objectContaining({ linkPath: path, decision: 'approved' }) as unknown,
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('returns the version, which can then be edited and submitted again', async () => {
+    const d = await draft('50000.00');
+    await submit(d, d.rowVersion);
+    const [first] = await requestsOf(d.versionId);
+    await act(U.acc, 'accountant', first!.id, 'return');
+    const returned = await versionRow(d.versionId);
+    expect(returned.status).toBe('returned');
+
+    const { version: edited } = await drafting.updateDraft(d.quotationId, d.versionId, {
+      expectedVersion: returned.version,
+      scope: 'Phase 1 only',
+    });
+    expect(edited).toBe(returned.version + 1);
+    const again = await submit(d, edited);
+    expect(again.status).toBe('submitted');
+    const requests = await requestsOf(d.versionId);
+    expect(requests).toHaveLength(2);
+    expect(requests.filter((r) => r.status === 'pending').map((r) => r.id)).not.toContain(
+      first!.id,
+    );
+    expect((await versionRow(d.versionId)).approvalRequestId).not.toBe(first!.id);
+  });
+
+  it('rejects the version with rejection_source internal', async () => {
+    const d = await draft('50000.00');
+    await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    await act(U.acc, 'accountant', request!.id, 'reject');
+    const version = await versionRow(d.versionId);
+    expect(version.status).toBe('rejected');
+    expect(version.rejectionSource).toBe('internal');
+  });
+
+  it('refuses the owner, who submitted it, on a step whose role they hold (SoD)', async () => {
+    roles.accountant = [f.ownerUserId, U.acc];
+    const d = await draft('50000.00');
+    await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    const error = await httpErrorOf(act(f.ownerUserId, 'accountant', request!.id, 'approve'));
+    expect(error.getStatus()).toBe(403);
+    expect(error.getResponse()).toMatchObject({ reason: 'separation_of_duties' });
+  });
+});
+
+describe('quotation approval: tamper after submit', () => {
+  it('the freeze trigger refuses a line price change on a submitted version', async () => {
+    const d = await draft('50000.00');
+    await submit(d, d.rowVersion);
+    const error = await read((tx) =>
+      tx.execute(
+        sql`UPDATE app.quotation_lines SET unit_price = unit_price + 1 WHERE version_id = ${d.versionId}`,
+      ),
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(pgErrorOf(error)).toEqual({ code: '23514', constraint: 'quotation_lines_frozen_check' });
+  });
+
+  it('a change that bypasses the triggers fails the final approval with 409 (M10)', async () => {
+    const d = await draft('50000.00');
+    await submit(d, d.rowVersion);
+    const [request] = await requestsOf(d.versionId);
+    await act(U.acc, 'accountant', request!.id, 'approve');
+
+    // A superuser session with triggers off (replica) stands in for a write that got past the freeze.
+    const superPool = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+    try {
+      const client = await superPool.connect();
+      try {
+        await client.query(`SET session_replication_role = replica`);
+        const { rowCount } = await client.query(
+          `UPDATE app.quotation_lines SET description = 'Tampered' WHERE version_id = $1`,
+          [d.versionId],
+        );
+        expect(rowCount).toBe(1);
+      } finally {
+        client.release();
+      }
+    } finally {
+      await superPool.end();
+    }
+
+    const error = await httpErrorOf(act(U.fin, 'finance', request!.id, 'approve'));
+    expect(error.getStatus()).toBe(409);
+    // The refusal rolled the decision back: the version waits and the request is still pending.
+    expect((await versionRow(d.versionId)).status).toBe('submitted');
+    const [after] = await requestsOf(d.versionId);
+    expect(after!.status).toBe('pending');
+  });
+});
