@@ -281,10 +281,11 @@ async function insertDraft(
 ): Promise<string> {
   const version = await tx.execute<{ id: string }>(sql`
     INSERT INTO app.quotation_versions
-      (tenant_id, organization_id, quotation_id, revision_no, supersedes_version_id, currency, issue_date,
-       valid_until, scope, delivery_timeline, payment_schedule, subtotal, discount_amount, taxable_amount,
-       tax_amount, total)
+      (tenant_id, organization_id, quotation_id, revision_no, supersedes_version_id, revision_reason, currency,
+       issue_date, valid_until, scope, delivery_timeline, payment_schedule, subtotal, discount_amount,
+       taxable_amount, tax_amount, total)
     VALUES (${w.tenantId}::uuid, ${entity}::uuid, ${quotationId}::uuid, ${revisionNo}, ${supersedes}::uuid,
+            ${revisionNo > 1 ? 'Customer asked for a lower price' : null},
             'NPR', '2026-11-09', '2026-12-09', 'Supply and install 12 panels', '6 weeks',
             ${JSON.stringify([{ label: 'Advance', percent: '100' }])}::jsonb,
             1000, 0, 1000, 130, 1130) RETURNING id`);
