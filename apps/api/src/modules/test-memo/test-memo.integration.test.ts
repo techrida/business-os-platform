@@ -143,12 +143,16 @@ const as = (userId: string, role: RoleKey) => {
   current.grants = grantsOf(role);
 };
 
+/** The token's roles match the mirror's (the fake directory): act() checks a role step against the token. */
+const rolesOf = (id: string) =>
+  (Object.keys(roles) as RoleKey[]).filter((r) => roles[r]?.includes(id) === true);
+
 const principalNow = (): Principal => ({
   userId: current.userId,
   zitadelUserId: `z-${current.userId}`,
   ...scope,
   orgKind: 'staff',
-  roles: [],
+  roles: rolesOf(current.userId),
   departmentId: null,
   status: 'active',
   grants: current.grants,
