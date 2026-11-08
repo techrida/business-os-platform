@@ -1,0 +1,178 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+import { __resetEnvForTests } from '@/lib/env';
+import type { Session } from '@/lib/session';
+
+import {
+  decideVerification,
+  getCustomer,
+  getVerificationCase,
+  listCustomers,
+  listVerificationCases,
+} from './api';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+
+const TOKEN = 'eyJ.secret-access-token.sig';
+const ID_A = '11111111-1111-4111-8111-111111111111';
+const ID_B = '22222222-2222-4222-8222-222222222222';
+const WHEN = '2026-11-08T05:45:00.000Z';
+
+const session: Session = {
+  id: 'A'.repeat(43),
+  sub: 'user-1',
+  orgId: ID_A,
+  orgKind: 'staff',
+  roles: ['sales'],
+  accessToken: TOKEN,
+  accessExp: 2_000_000_000,
+  createdAt: 1_700_000_000,
+  lastSeenAt: 1_700_000_000,
+};
+
+const customer = {
+  id: ID_A,
+  number: 'CUS-0001',
+  legalName: 'Himalayan Construction Pvt. Ltd.',
+  panVatNo: '301234567',
+  industry: 'Construction',
+  relationship: 'prospect',
+  ownerUserId: null,
+  defaultCurrency: 'NPR',
+  address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+  mergedIntoId: null,
+  version: 2,
+  createdAt: WHEN,
+  updatedAt: WHEN,
+};
+
+const verificationCase = {
+  id: ID_B,
+  partyId: ID_A,
+  status: 'submitted',
+  checklist: [
+    {
+      key: 'registration_certificate',
+      required: true,
+      status: 'provided',
+      documentId: ID_A,
+      expiresOn: null,
+    },
+    { key: 'other', required: false, status: 'missing', documentId: null, expiresOn: null },
+  ],
+  reviewedBy: null,
+  decidedAt: null,
+  decisionNote: null,
+  version: 4,
+};
+
+const fetchMock = vi.fn<typeof fetch>();
+const reply = (body: unknown, status = 200): Response =>
+  new Response(body === undefined ? null : JSON.stringify(body), { status });
+
+function lastCall() {
+  const [url, init] = fetchMock.mock.calls.at(-1) ?? [];
+  const requestInit = init ?? {};
+  const href = url instanceof Request ? url.url : url instanceof URL ? url.href : (url ?? '');
+  return { url: href, init: requestInit, headers: new Headers(requestInit.headers) };
+}
+
+beforeEach(() => {
+  vi.stubEnv('API_INTERNAL_URL', 'http://api:3001');
+  for (const [k, v] of Object.entries({
+    OIDC_ISSUER: 'https://auth.test',
+    OIDC_CLIENT_ID: 'client-123',
+    OIDC_REDIRECT_URI: 'https://app.test/auth/callback',
+    OIDC_AUDIENCE: 'proj-42',
+    WORKSPACE_PUBLIC_URL: 'https://app.test',
+    VALKEY_URL: 'redis://valkey.test:6379',
+    SESSION_ENC_KEY: Buffer.alloc(32, 5).toString('base64'),
+  })) {
+    vi.stubEnv(k, v);
+  }
+  __resetEnvForTests();
+  fetchMock.mockReset();
+  vi.stubGlobal('fetch', fetchMock);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+describe('customers', () => {
+  it('lists customers from a bare array or an items envelope, with the search as a query', async () => {
+    fetchMock.mockResolvedValue(reply([customer]));
+    const bare = await listCustomers(session, { q: 'Himalayan & Co', limit: 25, offset: 50 });
+    expect(bare.items).toHaveLength(1);
+    expect(bare.total).toBeNull();
+    const { url, headers } = lastCall();
+    expect(url).toBe('http://api:3001/v1/customers?q=Himalayan+%26+Co&limit=25&offset=50');
+    expect(headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+
+    fetchMock.mockResolvedValue(reply({ items: [customer], total: 41 }));
+    const wrapped = await listCustomers(session, {});
+    expect(wrapped.total).toBe(41);
+    expect(lastCall().url).toBe('http://api:3001/v1/customers');
+  });
+
+  it('encodes the id so a path cannot climb out of the route', async () => {
+    fetchMock.mockResolvedValue(reply(customer));
+    await getCustomer(session, '../admin');
+    expect(lastCall().url).toBe('http://api:3001/v1/customers/..%2Fadmin');
+  });
+
+  it('answers 502 when the API drifts from the contract and never leaks the token', async () => {
+    fetchMock.mockResolvedValue(reply([{ ...customer, relationship: 'vip' }]));
+    const err = await listCustomers(session, {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
+    expect(JSON.stringify(err)).not.toContain(TOKEN);
+  });
+});
+
+describe('verification cases', () => {
+  it('filters the queue by status and party', async () => {
+    fetchMock.mockResolvedValue(reply({ items: [verificationCase] }));
+    const out = await listVerificationCases(session, { status: 'submitted', partyId: ID_A });
+    expect(out.items[0]?.checklist).toHaveLength(2);
+    expect(lastCall().url).toBe(
+      `http://api:3001/v1/verification-cases?status=submitted&partyId=${ID_A}`,
+    );
+  });
+
+  it('reads one case', async () => {
+    fetchMock.mockResolvedValue(reply(verificationCase));
+    const got = await getVerificationCase(session, ID_B);
+    expect(got.version).toBe(4);
+    expect(lastCall().url).toBe(`http://api:3001/v1/verification-cases/${ID_B}`);
+  });
+
+  it('posts the decision with the version and an Idempotency-Key', async () => {
+    fetchMock.mockResolvedValue(reply({ ...verificationCase, status: 'approved', version: 5 }));
+    const out = await decideVerification(
+      session,
+      ID_B,
+      { decision: 'approve', comment: 'All documents match.', expectedVersion: 4 },
+      'key-12345678',
+    );
+    expect(out.status).toBe('approved');
+    const { url, init, headers } = lastCall();
+    expect(url).toBe(`http://api:3001/v1/verification-cases/${ID_B}/decision`);
+    expect(init.method).toBe('POST');
+    expect(headers.get('idempotency-key')).toBe('key-12345678');
+    expect(JSON.parse(init.body as string)).toEqual({
+      decision: 'approve',
+      comment: 'All documents match.',
+      expectedVersion: 4,
+    });
+  });
+
+  it('carries a 409 as an ApiError the caller can word', async () => {
+    fetchMock.mockResolvedValue(reply({ error: { code: 'conflict', message: 'stale' } }, 409));
+    const err = await getVerificationCase(session, ID_B).catch((e: unknown) => e);
+    expect((err as ApiError).status).toBe(409);
+  });
+});
