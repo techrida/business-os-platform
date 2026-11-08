@@ -74,7 +74,7 @@ function messageOf(exception: HttpException): string | undefined {
 }
 
 /**
- * The optional `reason` a 403 can carry, e.g. `new ForbiddenException({ code: 'forbidden',
+ * The optional `reason` a 403 or a 400 can carry, e.g. `new ForbiddenException({ code: 'forbidden',
  * reason: 'out_of_scope' })`. Only the known reasons pass, so the body always satisfies
  * ErrorBodySchema and a stray string from a thrown object never reaches the client.
  */
@@ -118,7 +118,8 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
-      if (status === 403) reason = reasonOf(exception);
+      // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
+      if (status === 403 || status === 400) reason = reasonOf(exception);
     } else {
       status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
     }
