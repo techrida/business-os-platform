@@ -30,6 +30,8 @@ const VID = '22222222-2222-4222-8222-222222222222';
 const TAX = '33333333-3333-4333-8333-333333333333';
 const OPP = '55555555-5555-4555-8555-555555555555';
 const ref = { quotationId: QID, versionId: VID };
+const KEY = '44444444-4444-4444-8444-444444444444';
+const create = { mode: 'create', opportunityId: OPP, idempotencyKey: KEY } as const;
 
 function values(): BuilderValues {
   const v = emptyValues({ currency: 'NPR', issueDate: '2026-11-08', validUntil: '2026-12-08' });
@@ -114,16 +116,43 @@ describe('saveDraftAction', () => {
   it('refuses to save a schedule that does not total 100%', async () => {
     const v = values();
     v.schedule = [m('50')];
-    const res = await saveDraftAction({ mode: 'create', opportunityId: OPP, values: v });
+    const res = await saveDraftAction({ ...create, values: v });
     expect(res.ok).toBe(false);
     expect(api.createQuotation).not.toHaveBeenCalled();
   });
 
-  it('creates the draft and goes to its edit page', async () => {
+  it('creates the draft with the page key and goes to its edit page', async () => {
     api.createQuotation.mockResolvedValue({ id: QID });
-    await expect(
-      saveDraftAction({ mode: 'create', opportunityId: OPP, values: values() }),
-    ).rejects.toThrow(`NEXT_REDIRECT /quotations/${QID}/edit?saved=1`);
+    await expect(saveDraftAction({ ...create, values: values() })).rejects.toThrow(
+      `NEXT_REDIRECT /quotations/${QID}/edit?saved=1`,
+    );
+    expect(api.createQuotation).toHaveBeenCalledWith(expect.anything(), expect.anything(), KEY);
+  });
+
+  it('keeps the key after a 5xx or a timeout, so a retry cannot create a second quotation', async () => {
+    api.createQuotation.mockRejectedValueOnce(new ApiError(503, 'down'));
+    const first = await saveDraftAction({ ...create, values: values() });
+    expect(first).toMatchObject({ ok: false, key: KEY });
+
+    api.createQuotation.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const second = await saveDraftAction({ ...create, values: values() });
+    expect(second).toMatchObject({ ok: false, key: KEY });
+  });
+
+  it('rotates the key after a definite 4xx, so the next try is a new request', async () => {
+    api.createQuotation.mockRejectedValue(apiError(422, 'VALIDATION'));
+    const res = await saveDraftAction({ ...create, values: values() });
+    expect(res.ok).toBe(false);
+    const next = res.ok ? '' : (res.key ?? '');
+    expect(next).toMatch(/^[0-9a-f-]{36}$/);
+    expect(next).not.toBe(KEY);
+  });
+
+  it('keeps the unused key when the form is refused before any call', async () => {
+    const v = values();
+    v.schedule = [m('50')];
+    const res = await saveDraftAction({ ...create, values: v });
+    expect(res).toMatchObject({ ok: false, key: KEY });
   });
 
   it('updates with expectedVersion and returns the new row version', async () => {

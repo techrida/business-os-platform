@@ -68,9 +68,13 @@ async function call<T>(
   return parsed.data;
 }
 
-const json = (method: string, body: unknown): RequestInit => ({
+const json = (
+  method: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): RequestInit => ({
   method,
-  headers: { 'content-type': 'application/json' },
+  headers: { 'content-type': 'application/json', ...headers },
   body: JSON.stringify(body),
 });
 
@@ -80,11 +84,18 @@ const list = <T extends z.ZodType>(item: T) =>
 
 // ---- Writes and preview (paths from the brief) ----------------------------------------------
 
+/** The API refuses a create without an Idempotency-Key (400); a retry with the same key returns the first answer. */
 export function createQuotation(
   session: Session,
   body: CreateQuotationBody,
+  idempotencyKey: string,
 ): Promise<QuotationDto> {
-  return call(session, '/v1/quotations', QuotationDtoSchema, json('POST', body));
+  return call(
+    session,
+    '/v1/quotations',
+    QuotationDtoSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
 }
 
 export function updateDraft(

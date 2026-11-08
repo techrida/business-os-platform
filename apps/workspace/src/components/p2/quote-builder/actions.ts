@@ -1,5 +1,7 @@
 'use server';
 
+import { randomUUID } from 'node:crypto';
+
 import {
   CreateQuotationBodySchema,
   QuotationPreviewBodySchema,
@@ -8,6 +10,7 @@ import {
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
 
 import * as api from './api';
@@ -24,6 +27,8 @@ import type { PreviewResult } from './schemas';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INCOMPLETE = 'This form is incomplete. Reload the page.';
+/** The page's key is a UUID; anything else was tampered with or lost, so a fresh one is used. */
+const KEY = /^[A-Za-z0-9-]{8,64}$/;
 
 export type ActionFailure = {
   ok: false;
@@ -31,7 +36,19 @@ export type ActionFailure = {
   message: string;
   /** Field path (for example `lines.0.quantity`) to a short message, when the cause is a field. */
   fieldErrors?: Record<string, string>;
+  /**
+   * The Idempotency-Key the next try must send, on the actions that take one. The same key when the
+   * request never reached the API or its outcome is unknown (timeout, 5xx), a new one after a definite
+   * refusal (4xx), so a retry can never apply twice and a new decision is never mistaken for a retry.
+   */
+  key?: string;
 };
+
+const keyOf = (submitted: string): string => (KEY.test(submitted) ? submitted : randomUUID());
+
+/** A 4xx is a final answer, so the next click is a new request; anything else may have landed. */
+const nextKey = (err: unknown, key: string): string =>
+  err instanceof ApiError && err.status >= 400 && err.status < 500 ? randomUUID() : key;
 
 interface Ref {
   quotationId: string;
@@ -102,7 +119,7 @@ export async function previewQuoteAction(input: {
 // ---------------------------------------------------------------------------------------------
 
 export type SaveInput =
-  | { mode: 'create'; opportunityId: string; values: BuilderValues }
+  | { mode: 'create'; opportunityId: string; idempotencyKey: string; values: BuilderValues }
   | (Ref & { mode: 'update'; expectedVersion: number; values: BuilderValues });
 
 export async function saveDraftAction(
@@ -116,9 +133,12 @@ export async function saveDraftAction(
     return invalid(INCOMPLETE);
   }
   const session = await requireStaffSession(returnTo);
+  // Only a create takes a key; an update is guarded by expectedVersion instead.
+  const key = input.mode === 'create' ? keyOf(input.idempotencyKey) : '';
+  const withKey = (f: ActionFailure): ActionFailure => (key === '' ? f : { ...f, key });
 
   const blocked = scheduleFailure(input.values);
-  if (blocked) return blocked;
+  if (blocked) return withKey(blocked);
 
   const content = toContent(input.values);
 
@@ -128,17 +148,19 @@ export async function saveDraftAction(
       opportunityId: input.opportunityId,
     });
     if (!parsed.success) {
-      return invalid(
-        'Some fields need attention before this can be saved.',
-        issuesToFields(parsed.error.issues),
+      return withKey(
+        invalid(
+          'Some fields need attention before this can be saved.',
+          issuesToFields(parsed.error.issues),
+        ),
       );
     }
     let id: string;
     try {
-      id = (await api.createQuotation(session, parsed.data)).id;
+      id = (await api.createQuotation(session, parsed.data, key)).id;
     } catch (err) {
       const f = describeQuoteFailure(err, 'save');
-      return { ok: false, kind: f.kind, message: f.message };
+      return { ok: false, kind: f.kind, message: f.message, key: nextKey(err, key) };
     }
     revalidatePath('/quotations');
     redirect(`/quotations/${id}/edit?saved=1`);
