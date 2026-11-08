@@ -10,7 +10,17 @@ const base = {
   OIDC_CLIENT_ID: 'workspace-client',
 };
 
-const prod = { ...base, NODE_ENV: 'production' };
+// Production must state every kernel value itself (no dev defaults, no optional secrets).
+const kernelProd = {
+  SMTP_URL: 'smtp://smtp.example.com:587',
+  MAIL_FROM: 'Business OS <no-reply@example.com>',
+  ZITADEL_API_URL: 'https://auth.example.com',
+  ZITADEL_PROVISIONER_TOKEN: 'provisioner-token-value',
+  WORKSPACE_PUBLIC_URL: 'https://app.example.com',
+  DOCS_LINK_SECRET: 'd'.repeat(32),
+  ZITADEL_ACTIONS_SIGNING_KEY: 'signing-key-value',
+};
+const prod = { ...base, ...kernelProd, NODE_ENV: 'production' };
 
 function problems(fn: () => unknown): string[] {
   try {
@@ -150,7 +160,100 @@ describe('loadAppConfig', () => {
   });
 });
 
+describe('P1 kernel settings', () => {
+  it('gives dev-safe defaults outside production', () => {
+    expect(loadAppConfig(base)).toMatchObject({
+      FILES_ROOT: '/var/lib/bos/files',
+      CLAMD_HOST: 'clamav',
+      CLAMD_PORT: 3310,
+      SMTP_URL: 'smtp://mailpit:1025',
+      MAIL_FROM: 'Business OS <noreply@bos.localhost>',
+      ZITADEL_API_URL: 'https://auth.localhost',
+    });
+  });
+
+  it('leaves the secrets undefined outside production', () => {
+    const config = loadAppConfig(base);
+    expect(config.DOCS_LINK_SECRET).toBeUndefined();
+    expect(config.ZITADEL_PROVISIONER_TOKEN).toBeUndefined();
+    expect(config.ZITADEL_ACTIONS_SIGNING_KEY).toBeUndefined();
+  });
+
+  it('reads explicit values and coerces CLAMD_PORT', () => {
+    const config = loadAppConfig({
+      ...base,
+      ...kernelProd,
+      FILES_ROOT: '/data/files',
+      CLAMD_HOST: 'localhost',
+      CLAMD_PORT: '3311',
+    });
+    expect(config).toMatchObject({
+      FILES_ROOT: '/data/files',
+      CLAMD_HOST: 'localhost',
+      CLAMD_PORT: 3311,
+      SMTP_URL: kernelProd.SMTP_URL,
+      DOCS_LINK_SECRET: kernelProd.DOCS_LINK_SECRET,
+    });
+  });
+
+  it('requires every kernel value in production and names the missing ones', () => {
+    const list = problems(() => loadAppConfig({ ...base, NODE_ENV: 'production' }));
+    expect(list).toEqual([
+      'SMTP_URL: is required in production',
+      'MAIL_FROM: is required in production',
+      'ZITADEL_API_URL: is required in production',
+      'ZITADEL_PROVISIONER_TOKEN: is required in production',
+      'WORKSPACE_PUBLIC_URL: is required in production',
+      'DOCS_LINK_SECRET: is required in production',
+    ]);
+  });
+
+  it('rejects a DOCS_LINK_SECRET under 32 characters without echoing it', () => {
+    const list = problems(() => loadAppConfig({ ...base, DOCS_LINK_SECRET: 'short-secret' }));
+    expect(list.map((p) => p.split(':')[0])).toEqual(['DOCS_LINK_SECRET']);
+    expect(list.join('\n')).not.toContain('short-secret');
+  });
+
+  it('rejects a bad SMTP_URL and a bad ZITADEL_API_URL without echoing them', () => {
+    const list = problems(() =>
+      loadAppConfig({
+        ...base,
+        SMTP_URL: 'http://user:smtp-pw@mail:25',
+        ZITADEL_API_URL: 'ftp://auth',
+        MAIL_FROM: 'nobody',
+      }),
+    );
+    expect(list.map((p) => p.split(':')[0])).toEqual(['SMTP_URL', 'MAIL_FROM', 'ZITADEL_API_URL']);
+    expect(list.join('\n')).not.toContain('smtp-pw');
+  });
+});
+
 describe('loadCoreConfig (worker)', () => {
+  it('carries the kernel settings the worker needs, but not the API-only secrets', () => {
+    const config = loadCoreConfig(
+      { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL },
+      'worker',
+    );
+    expect(config).toMatchObject({ FILES_ROOT: '/var/lib/bos/files', CLAMD_PORT: 3310 });
+    expect('DOCS_LINK_SECRET' in config).toBe(false);
+  });
+
+  it('requires the worker-side kernel values in production only', () => {
+    const list = problems(() =>
+      loadCoreConfig(
+        { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL, NODE_ENV: 'production' },
+        'worker',
+      ),
+    );
+    expect(list.map((p) => p.split(':')[0])).toEqual([
+      'SMTP_URL',
+      'MAIL_FROM',
+      'ZITADEL_API_URL',
+      'ZITADEL_PROVISIONER_TOKEN',
+      'WORKSPACE_PUBLIC_URL',
+    ]);
+  });
+
   it('needs no OIDC settings and defaults the metrics port to 9465', () => {
     const config = loadCoreConfig(
       { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL },
