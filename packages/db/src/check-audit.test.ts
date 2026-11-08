@@ -49,6 +49,24 @@ const trigger = (table: string, fn = 'audit.capture_row', name = 'audit_capture'
   `CREATE TRIGGER ${name} AFTER INSERT OR UPDATE OR DELETE ON app.${table}
      FOR EACH ROW EXECUTE FUNCTION ${fn}()`;
 
+/** Same as offendersFor, but returns the message assertAudit throws ('' when it does not throw). */
+async function messageFor(setupSql: string[]): Promise<string> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const sql of setupSql) await client.query(sql);
+    try {
+      await assertAudit(client);
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+}
+
 describe('check-audit', () => {
   it('passes on an empty app schema', async () => {
     await expect(checkAudit(pool)).resolves.toEqual([]);
@@ -106,6 +124,75 @@ describe('check-audit', () => {
     ]);
     expect(offenders).toEqual(['app.parted']);
   });
+
+  it('passes the real trigger shape in both always-on enabled modes', async () => {
+    // tgenabled 'O' (default, fires unless session_replication_role = replica) and 'A' (fires always).
+    const offenders = await offendersFor([
+      'CREATE TABLE app.on_default (id uuid PRIMARY KEY)',
+      trigger('on_default'),
+      'CREATE TABLE app.on_always (id uuid PRIMARY KEY)',
+      trigger('on_always'),
+      'ALTER TABLE app.on_always ENABLE ALWAYS TRIGGER audit_capture',
+    ]);
+    expect(offenders).toEqual([]);
+  });
+
+  it('flags a disabled audit trigger and says it is disabled', async () => {
+    const setup = [
+      'CREATE TABLE app.disabled_t (id uuid PRIMARY KEY)',
+      trigger('disabled_t'),
+      'ALTER TABLE app.disabled_t DISABLE TRIGGER audit_capture',
+    ];
+    expect(await offendersFor(setup)).toEqual(['app.disabled_t']);
+    expect(await messageFor(setup)).toMatch(/app\.disabled_t.*disabled/);
+  });
+
+  it('flags an ENABLE REPLICA trigger: it is silent in a normal session', async () => {
+    const setup = [
+      'CREATE TABLE app.replica_t (id uuid PRIMARY KEY)',
+      trigger('replica_t'),
+      'ALTER TABLE app.replica_t ENABLE REPLICA TRIGGER audit_capture',
+    ];
+    expect(await offendersFor(setup)).toEqual(['app.replica_t']);
+    expect(await messageFor(setup)).toMatch(/app\.replica_t.*replica/);
+  });
+
+  it('flags a statement-level audit trigger', async () => {
+    const setup = [
+      'CREATE TABLE app.stmt_t (id uuid PRIMARY KEY)',
+      `CREATE TRIGGER audit_capture AFTER INSERT OR UPDATE OR DELETE ON app.stmt_t
+         FOR EACH STATEMENT EXECUTE FUNCTION audit.capture_row()`,
+    ];
+    expect(await offendersFor(setup)).toEqual(['app.stmt_t']);
+    expect(await messageFor(setup)).toMatch(/app\.stmt_t.*statement-level/);
+  });
+
+  it('flags a BEFORE audit trigger', async () => {
+    // BEFORE would record a row a later trigger or a constraint can still change or reject.
+    const setup = [
+      'CREATE TABLE app.before_t (id uuid PRIMARY KEY)',
+      `CREATE TRIGGER audit_capture BEFORE INSERT OR UPDATE OR DELETE ON app.before_t
+         FOR EACH ROW EXECUTE FUNCTION audit.capture_row()`,
+    ];
+    expect(await offendersFor(setup)).toEqual(['app.before_t']);
+    expect(await messageFor(setup)).toMatch(/app\.before_t.*BEFORE/);
+  });
+
+  it.each(['INSERT', 'UPDATE', 'DELETE', 'INSERT OR UPDATE', 'UPDATE OR DELETE'])(
+    'flags a trigger that fires on %s only',
+    async (events) => {
+      const name = `only_${events.toLowerCase().replaceAll(' ', '_')}`;
+      const setup = [
+        `CREATE TABLE app.${name} (id uuid PRIMARY KEY)`,
+        `CREATE TRIGGER audit_capture AFTER ${events} ON app.${name}
+         FOR EACH ROW EXECUTE FUNCTION audit.capture_row()`,
+      ];
+      expect(await offendersFor(setup)).toEqual([`app.${name}`]);
+      expect(await messageFor(setup)).toMatch(
+        new RegExp(`app\\.${name}.*INSERT, UPDATE and DELETE`),
+      );
+    },
+  );
 
   it('names the offending tables in assertAudit and leaves other schemas alone', async () => {
     const client = await pool.connect();
