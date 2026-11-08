@@ -34,6 +34,9 @@ export type ErrorCode =
   | 'quotation_not_sent'
   | 'quotation_expired'
   | 'quotation_pdf_not_ready'
+  | 'kyb_not_verified'
+  | 'customer_merged'
+  | 'idp_org_taken'
   | 'NO_ELIGIBLE_APPROVER'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
@@ -78,6 +81,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   quotation_not_sent: 'This quotation is not open for an answer',
   quotation_expired: 'This quotation has expired',
   quotation_pdf_not_ready: 'The PDF of this quotation version is not ready to download',
+  kyb_not_verified: 'Portal access needs an approved KYB verification case',
+  customer_merged: 'This customer was merged into another',
+  idp_org_taken: 'The portal organization is already used by another party',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
@@ -139,6 +145,11 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'quotation_expired',
   // The staff PDF download: the version has no rendered file yet, or it has not scanned clean.
   'quotation_pdf_not_ready',
+  // K8 portal access grant: the customer's KYB case is not approved, the customer was merged away, or the
+  // portal org found by name is already linked to another party.
+  'kyb_not_verified',
+  'customer_merged',
+  'idp_org_taken',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
