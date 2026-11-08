@@ -8,6 +8,7 @@ import { redirect } from 'next/navigation';
 
 import { actOnApproval, failureOf } from '@/lib/api-kernel';
 import { isStepUpRequired, redirectToStepUp, requireStaffSession } from '@/lib/bff';
+import { peekSession } from '@/lib/session';
 
 /**
  * The approve, return and reject action. Serves the NFR "no double decisions": the form carries an
@@ -39,6 +40,28 @@ function text(form: FormData, name: string): string {
   return typeof v === 'string' ? v : '';
 }
 
+/**
+ * K7: the session's ID token, read server-side, for the API's recent-sign-in check. It goes only
+ * to `actOnApproval` and never into the returned state. No record or a failed read means no
+ * token: the API then answers `step_up_required` for a step that needs one, and the approver signs
+ * in again. Not exported: a `'use server'` file may export only server actions.
+ */
+async function readIdToken(sessionId: string): Promise<string | undefined> {
+  try {
+    return (await peekSession(sessionId))?.idToken;
+  } catch (err) {
+    // Only the error name: ioredis errors carry the command arguments (the session key and the
+    // stored record with its tokens).
+    console.warn(
+      JSON.stringify({
+        event: 'approval.id_token_read_failed',
+        error: err instanceof Error ? err.name : 'unknown',
+      }),
+    );
+    return undefined;
+  }
+}
+
 export async function decideAction(prev: DecisionState, form: FormData): Promise<DecisionState> {
   const requestId = text(form, 'requestId');
   if (!UUID.test(requestId))
@@ -65,7 +88,7 @@ export async function decideAction(prev: DecisionState, form: FormData): Promise
   }
 
   try {
-    await actOnApproval(session, requestId, parsed.data, key);
+    await actOnApproval(session, requestId, parsed.data, key, await readIdToken(session.id));
   } catch (err) {
     // K7: a Founder step needs a recent sign-in. Nothing was decided, so after signing in again the
     // approver lands back on this request and decides with a fresh form. `redirect` throws.
