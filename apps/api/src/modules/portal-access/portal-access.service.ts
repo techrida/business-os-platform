@@ -10,7 +10,8 @@
 //   1. preflight read (customer, contact, KYB case, existing portal org) and a "requested" audit row;
 //   2. org: reuse idp_orgs, else find the ZITADEL org by its deterministic name, else create it; then link it
 //      in idp_orgs (its own transaction, insert-or-reuse);
-//   3. project grant to the org, user find-or-create by email, role grant, invite mail;
+//   3. the org's login policy pinned, project grant to the org, user find-or-create by email, role grant,
+//      invite mail;
 //   4. one transaction under the Idempotency-Key that mirrors the user and writes the step audit rows.
 // A pending row cannot be written before step 2: idp_orgs.zitadel_org_id and users.zitadel_user_id are NOT
 // NULL and neither table has a pending state. Retries are safe instead because every step is find-or-create:
@@ -18,8 +19,10 @@
 // lookup. The invite is mailed when the user was created now, or when an earlier attempt created the user but
 // died before mirroring it (the user is still invited in ZITADEL and has no app.users row).
 //
-// MFA for portal admins (D23 = C): the seed sets forceMfa on the instance login policy, and a new org inherits
-// it, so no per-org policy call is made here.
+// Login policy (D23 = C): a new org inherits the instance login policy, which may allow self-registration, so
+// every grant pins PORTAL_LOGIN_POLICY on the org (registration off, MFA forced and never skippable) before
+// any user exists in it. It runs on a reused org too, so orgs made before this call get fixed on their next
+// grant. If it fails, no user is created.
 import type { RoleKey } from '@bos/contracts';
 import {
   BadRequestException,
@@ -33,6 +36,7 @@ import {
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
 import {
+  PORTAL_LOGIN_POLICY,
   ZitadelAdminClient,
   ZitadelHttpError,
   ZitadelNotConfiguredError,
@@ -147,7 +151,13 @@ export class PortalAccessService {
         }));
       }
 
-      // --- 3. Project grant, user, role, invite. ---
+      // --- 3. Login policy, project grant, user, role, invite. ---
+      const policy = await this.zitadel.ensureOrgLoginPolicy(zitadelOrgId, PORTAL_LOGIN_POLICY);
+      steps.push({
+        action: 'portal_access.login_policy_pinned',
+        meta: { zitadelOrgId, result: policy },
+      });
+
       await this.zitadel.ensureProjectGrant(zitadelOrgId, PORTAL_ROLES);
       steps.push({
         action: 'portal_access.project_granted',

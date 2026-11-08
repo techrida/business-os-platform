@@ -53,6 +53,7 @@ import {
   createFetchTransport,
   type MachineSpec,
   type ZitadelApi,
+  type ZitadelInstanceApi,
   type ZitadelP1Api,
 } from './zitadel-client.js';
 
@@ -67,6 +68,25 @@ export const PROVISIONER_USER = 'bos-provisioner';
  * Never IAM_OWNER: a leaked API token must not own the instance.
  */
 export const PROVISIONER_ROLES = ['ORG_USER_MANAGER', 'ORG_USER_PERMISSION_EDITOR'] as const;
+/**
+ * Instance (IAM) role of `bos-provisioner`, for K8 portal access. Granting a customer portal access makes the
+ * API create a ZITADEL org for the customer, create and invite a user in it, grant it the BOS project and pin
+ * the org's login policy (no self-registration, forced MFA). Org roles on the staff org cannot do the first
+ * one (creating an org is an instance permission) nor reach users or policies in other orgs.
+ *
+ * IAM_ORG_MANAGER is the narrowest built-in role found that covers all four: in ZITADEL's default
+ * InternalAuthZ role mapping it carries org.create plus org-wide user, user-grant, policy and project-grant
+ * write permissions on every org. IAM_OWNER would also cover them but owns the instance (IAM members,
+ * instance settings, IDPs), so it stays excluded. IAM_USER_MANAGER manages users but cannot create orgs.
+ *
+ * Tradeoff: an instance role reaches every org, the staff org included, so a leaked provisioner PAT can now
+ * manage all orgs' users and policies. Keep the PAT in the API's secret store only.
+ *
+ * UNVERIFIED (no live probe, no docs fetched): the role name and its permission set are from ZITADEL's
+ * defaults.yaml as remembered, not read in this repo. If CreateProjectGrant still answers 403, the
+ * fallback is ORG_PROJECT_PERMISSION_EDITOR on the staff org (the BOS project's owner), not PROJECT_OWNER.
+ */
+export const PROVISIONER_IAM_ROLES = ['IAM_ORG_MANAGER'] as const;
 /** A fresh provisioner PAT lives one year; a re-run reuses it while ZITADEL still lists it. */
 export const PROVISIONER_PAT_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 /** The Actions v2 target that pushes user events to the API (`POST /v1/hooks/zitadel`). */
@@ -87,8 +107,8 @@ export const TOTP_METHOD = 'AUTHENTICATION_METHOD_TYPE_TOTP';
 /** NFR security: a role revoked in ZITADEL reaches the API within one token lifetime. */
 export const ACCESS_TOKEN_LIFETIME = '900s';
 
-/** Everything the seed calls on ZITADEL: the P0 surface plus the P1 additions. */
-export type SeedApi = ZitadelApi & ZitadelP1Api;
+/** Everything the seed calls on ZITADEL: the P0 surface plus the P1 and K8 additions. */
+export type SeedApi = ZitadelApi & ZitadelP1Api & ZitadelInstanceApi;
 
 /** A legal entity (`app.organizations`, ADR 0027 section 2). The seed upserts it on (tenant, code). */
 export interface EntitySeed {
@@ -422,7 +442,8 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     changed('wrote .dev/k6.env');
   }
 
-  // --- Machine user for staff invites in P1: ORG_USER_MANAGER on staff only, never IAM_OWNER. ---
+  // --- Machine user for staff invites (P1) and portal access (K8): ORG_USER_MANAGER +
+  // ORG_USER_PERMISSION_EDITOR on staff, IAM_ORG_MANAGER on the instance, never IAM_OWNER. ---
   let provisioner = await api.findUser(staffOrgId, PROVISIONER_USER);
   if (!provisioner) {
     provisioner = await api.createMachineUser({
@@ -445,6 +466,21 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
       warn(
         `${PROVISIONER_USER} is a staff org member without ${missing.join(', ')}. Add the role in ` +
           'the ZITADEL console (Organization > Members), or remove the member and run `pnpm seed` again.',
+      );
+    }
+  }
+  // K8 portal access: the instance role that lets the API create customer orgs (see PROVISIONER_IAM_ROLES).
+  const iamRoles = await api.listIamMemberRoles(provisioner.id);
+  if (iamRoles === undefined) {
+    await api.addIamMember(provisioner.id, [...PROVISIONER_IAM_ROLES]);
+    changed(`made ${PROVISIONER_USER} ${PROVISIONER_IAM_ROLES.join(' + ')} on the instance`);
+  } else {
+    // Same as the org member above: the client only adds, so an existing member is fixed by hand.
+    const missing = PROVISIONER_IAM_ROLES.filter((r) => !iamRoles.includes(r));
+    if (missing.length > 0) {
+      warn(
+        `${PROVISIONER_USER} is an instance member without ${missing.join(', ')}. Add the role in the ` +
+          'ZITADEL console (Instance > Members), or remove the member and run `pnpm seed` again.',
       );
     }
   }

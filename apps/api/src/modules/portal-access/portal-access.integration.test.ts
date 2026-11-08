@@ -12,7 +12,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { DEFAULT_ROLE_PERMISSIONS, type Permission, type Scope } from '@bos/contracts';
-import { createParty, createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import { createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -62,6 +62,10 @@ class FakeZitadel {
     const id = `z-org-${randomUUID()}`;
     this.orgs.set(name, id);
     return Promise.resolve(id);
+  }
+  ensureOrgLoginPolicy() {
+    this.calls.push('ensureOrgLoginPolicy');
+    return Promise.resolve('created' as const);
   }
   ensureProjectGrant() {
     this.calls.push('ensureProjectGrant');
@@ -191,15 +195,23 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------------------------- helpers
 
-/** A customer in `s`'s tenant with one contact, and its KYB case in `kyb` (none when null). */
+/**
+ * A customer in `s`'s tenant with one contact, and its KYB case in `kyb` (none when null). No portal org yet:
+ * the party is inserted here rather than with the `createParty` fixture, because that fixture also links an
+ * idp_orgs row, which would make every grant take the reused-org path (no org created, linked or audited).
+ */
 async function newCustomer(
   kyb: 'approved' | 'submitted' | null,
   s = scope,
   email: string | null = `ana-${randomUUID().slice(0, 8)}@acme.test`,
 ): Promise<{ customerId: string; contactId: string }> {
-  const { partyId } = await createParty(appPool, { tenantId: s.tenantId, kind: 'customer' });
+  const partyId = randomUUID();
   const contactId = randomUUID();
   await withTx(db, s, systemActor('test'), async (tx) => {
+    await tx.execute(
+      sql`INSERT INTO app.parties (id, tenant_id, kind, code, name)
+          VALUES (${partyId}, ${s.tenantId}, 'customer', ${`P-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.')`,
+    );
     await tx.execute(
       sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
           VALUES (${partyId}, ${s.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
@@ -275,6 +287,7 @@ describe('POST /v1/customers/:id/portal-access', () => {
       'portal_access.requested',
       'portal_access.org_linked',
       'portal_access.zitadel_org_created',
+      'portal_access.login_policy_pinned',
       'portal_access.project_granted',
       'portal_access.zitadel_user_created',
       'portal_access.role_granted',
@@ -334,8 +347,7 @@ describe('POST /v1/customers/:id/portal-access', () => {
       const { customerId, contactId } = await newCustomer(kyb);
       const res = await grant(customerId, contactId);
       expect(res.status).toBe(409);
-      // Needs kyb_not_verified in ErrorBodyFilter's CONFLICT_CODES (and the contracts' code list); until
-      // then the filter answers plain `conflict` and this line fails, which is the gap it guards.
+      // ErrorBodyFilter keeps the code only because kyb_not_verified is in its CONFLICT_CODES.
       expect((res.body as { error: { code: string } }).error.code).toBe('kyb_not_verified');
       expect(
         await rows('SELECT 1 FROM app.idp_orgs WHERE party_id = $1', [customerId]),

@@ -13,8 +13,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Principal } from '../../platform/authz/principal';
 import type { Actor, TxScope } from '../../platform/db/tx';
 import {
+  PORTAL_LOGIN_POLICY,
   ZitadelHttpError,
   type CreateHumanInput,
+  type OrgLoginPolicyPatch,
   type ZitadelAdminClient,
   type ZitadelUser,
 } from '../../platform/users/zitadel-admin.client';
@@ -56,6 +58,16 @@ class FakeZitadel {
     const id = `z-org-${this.orgs.size + 1}`;
     this.orgs.set(name, id);
     return Promise.resolve(id);
+  }
+  /** Each org whose login policy was pinned, with the settings asked for. */
+  policies: Array<{ orgId: string; patch: Readonly<OrgLoginPolicyPatch> }> = [];
+  ensureOrgLoginPolicy(
+    orgId: string,
+    patch: Readonly<OrgLoginPolicyPatch>,
+  ): Promise<'created' | 'updated' | 'unchanged'> {
+    this.calls.push('ensureOrgLoginPolicy');
+    this.policies.push({ orgId, patch });
+    return Promise.resolve('created');
   }
   ensureProjectGrant(): Promise<void> {
     this.calls.push('ensureProjectGrant');
@@ -267,6 +279,7 @@ describe('first grant', () => {
     expect(zitadel.calls).toEqual([
       'findOrganizationByName',
       'createOrganization',
+      'ensureOrgLoginPolicy',
       'ensureProjectGrant',
       'findHumanByUsername',
       'createHuman',
@@ -274,6 +287,10 @@ describe('first grant', () => {
       'sendInviteCode',
     ]);
     expect(zitadel.orgs.get(portalOrgName('Acme Traders', CUSTOMER))).toBe('z-org-1');
+    // A new org inherits the instance login policy, which may allow self-registration: it is pinned before any
+    // user exists in it, with registration off and MFA forced (D23 = C).
+    expect(zitadel.policies).toEqual([{ orgId: 'z-org-1', patch: PORTAL_LOGIN_POLICY }]);
+    expect(PORTAL_LOGIN_POLICY).toMatchObject({ allowRegister: false, forceMfa: true });
     expect(zitadel.users[0]).toMatchObject({
       email: 'ana@acme.test',
       displayName: 'Ana Maria Bista',
@@ -305,6 +322,7 @@ describe('first grant', () => {
       'portal_access.requested',
       'portal_access.org_linked',
       'portal_access.zitadel_org_created',
+      'portal_access.login_policy_pinned',
       'portal_access.project_granted',
       'portal_access.zitadel_user_created',
       'portal_access.role_granted',
@@ -335,6 +353,8 @@ describe('first grant', () => {
     const error = await grant().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConflictException);
     expect(zitadel.calls).not.toContain('createHuman');
+    // Another party's org is never changed, not even its login policy.
+    expect(zitadel.calls).not.toContain('ensureOrgLoginPolicy');
   });
 });
 
@@ -344,7 +364,14 @@ describe('retries', () => {
     zitadel.calls = [];
     const again = await grant('key-2');
 
-    expect(zitadel.calls).toEqual(['ensureProjectGrant', 'findHumanByUsername', 'setGrants']);
+    // The linked org's login policy is pinned again, so orgs made before the policy call get fixed too.
+    expect(zitadel.calls).toEqual([
+      'ensureOrgLoginPolicy',
+      'ensureProjectGrant',
+      'findHumanByUsername',
+      'setGrants',
+    ]);
+    expect(zitadel.policies.at(-1)).toEqual({ orgId: 'z-org-1', patch: PORTAL_LOGIN_POLICY });
     expect(zitadel.orgs.size).toBe(1);
     expect(zitadel.users).toHaveLength(1);
     expect(store.idpOrgs).toHaveLength(1);
@@ -366,6 +393,7 @@ describe('retries', () => {
 
     expect(zitadel.calls).toEqual([
       'findOrganizationByName',
+      'ensureOrgLoginPolicy',
       'ensureProjectGrant',
       'findHumanByUsername',
       'setGrants',
@@ -391,6 +419,14 @@ describe('retries', () => {
     const result = await grant();
     expect(zitadel.calls).not.toContain('sendInviteCode');
     expect(result.response.inviteSent).toBe(false);
+  });
+
+  it('creates no user when the login policy cannot be pinned', async () => {
+    zitadel.ensureOrgLoginPolicy = () =>
+      Promise.reject(new ZitadelHttpError('/management/v1/policies/login', 403, 'denied'));
+    await expect(grant()).rejects.toBeInstanceOf(ZitadelHttpError);
+    expect(zitadel.calls).not.toContain('ensureProjectGrant');
+    expect(zitadel.calls).not.toContain('createHuman');
   });
 
   it('falls back to the lookup when createHuman answers 409', async () => {
