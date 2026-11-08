@@ -12,7 +12,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import { DEFAULT_ROLE_PERMISSIONS, type Permission, type Scope } from '@bos/contracts';
-import { createParty, createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import { createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -195,15 +195,23 @@ afterAll(async () => {
 
 // ---------------------------------------------------------------------------------------------- helpers
 
-/** A customer in `s`'s tenant with one contact, and its KYB case in `kyb` (none when null). */
+/**
+ * A customer in `s`'s tenant with one contact, and its KYB case in `kyb` (none when null). No portal org yet:
+ * the party is inserted here rather than with the `createParty` fixture, because that fixture also links an
+ * idp_orgs row, which would make every grant take the reused-org path (no org created, linked or audited).
+ */
 async function newCustomer(
   kyb: 'approved' | 'submitted' | null,
   s = scope,
   email: string | null = `ana-${randomUUID().slice(0, 8)}@acme.test`,
 ): Promise<{ customerId: string; contactId: string }> {
-  const { partyId } = await createParty(appPool, { tenantId: s.tenantId, kind: 'customer' });
+  const partyId = randomUUID();
   const contactId = randomUUID();
   await withTx(db, s, systemActor('test'), async (tx) => {
+    await tx.execute(
+      sql`INSERT INTO app.parties (id, tenant_id, kind, code, name)
+          VALUES (${partyId}, ${s.tenantId}, 'customer', ${`P-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.')`,
+    );
     await tx.execute(
       sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
           VALUES (${partyId}, ${s.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
