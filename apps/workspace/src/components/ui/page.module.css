@@ -1,0 +1,101 @@
+.page {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+  width: 100%;
+  max-width: calc(1124px + 2 * var(--margin-page));
+  margin-inline: auto;
+  padding: 32px var(--margin-page);
+}
+
+.page > * {
+  min-width: 0;
+}
+
+.narrow {
+  max-width: calc(720px + 2 * var(--margin-page));
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.headText {
+  display: grid;
+  flex: 1 1 320px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.title {
+  font-size: var(--font-size-h2);
+  line-height: var(--line-height-h2);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.description {
+  max-width: 65ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.crumbs {
+  min-width: 0;
+}
+
+.crumbList {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.crumbLink {
+  color: var(--text-secondary);
+  text-underline-offset: 0.2em;
+}
+
+.crumbLink:hover {
+  color: var(--action-primary);
+}
+
+.crumbCurrent {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.crumbSep {
+  flex: none;
+  color: var(--icon-secondary);
+}

@@ -3,8 +3,8 @@ import type { HTMLAttributes } from 'react';
 import styles from './card.module.css';
 
 type CardProps = HTMLAttributes<HTMLElement> & {
-  /** The element to render. Use `section` with a heading, `main` for a page that is one card. */
-  as?: 'div' | 'section' | 'main' | 'article';
+  /** The element to render. Use `section` with a heading, `main` for a page that is one card, `aside` for a side card. */
+  as?: 'div' | 'section' | 'main' | 'article' | 'aside';
   tone?: 'default' | 'error';
 };
 

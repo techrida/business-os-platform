@@ -11,7 +11,12 @@ export type IconName =
   | 'x'
   | 'chevrons-left'
   | 'chevrons-right'
-  | 'chevron-right';
+  | 'chevron-right'
+  | 'chevron-down'
+  | 'bell'
+  | 'info'
+  | 'alert-triangle'
+  | 'x-circle';
 
 // Lucide-style drawings (24x24 grid, 2px round strokes), inlined so there is no icon package
 // and no request. Each entry is the inside of the <svg>.
@@ -178,6 +183,55 @@ const DRAWINGS: Record<IconName, ReactNode> = {
     <>
       <path d="m6 17 5-5-5-5" />
       <path d="m13 17 5-5-5-5" />
+    </>
+  ),
+  'chevron-right': <path d="m9 18 6-6-6-6" />,
+  'chevron-down': <path d="m6 9 6 6 6-6" />,
+  bell: (
+    <>
+      <path d="M10.268 21a2 2 0 0 0 3.464 0" />
+      <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </>
+  ),
+  'alert-triangle': (
+    <>
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </>
+  ),
+  'x-circle': (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="m15 9-6 6" />
+      <path d="m9 9 6 6" />
+    </>
+  ),
+  inbox: (
+    <>
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </>
+  ),
+  'shield-check': (
+    <>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="m9 12 2 2 4-4" />
+    </>
+  ),
+  'git-branch': (
+    <>
+      <line x1="6" x2="6" y1="3" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
     </>
   ),
 };
