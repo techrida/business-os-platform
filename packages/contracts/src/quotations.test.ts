@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CreateQuotationBodySchema,
   AcceptanceDtoSchema,
   CancelQuotationBodySchema,
   DiscountSchema,
@@ -692,6 +693,53 @@ describe('QuotationApprovalSnapshotSchema', () => {
   it('is what the inbox renderer reads: a stored JSON snapshot round-trips', () => {
     const stored = JSON.parse(JSON.stringify(snapshot())) as unknown;
     expect(QuotationApprovalSnapshotSchema.parse(stored)).toEqual(snapshot());
+  });
+});
+
+describe('UpdateQuotationDraftBodySchema clears with null', () => {
+  const cleared = [
+    'contactId',
+    'scope',
+    'assumptions',
+    'exclusions',
+    'deliveryTimeline',
+    'paymentTermId',
+    'discount',
+    'paymentSchedule',
+  ] as const;
+
+  it.each(cleared)('accepts %s: null, meaning "clear the saved value"', (key) => {
+    const parsed = UpdateQuotationDraftBodySchema.safeParse({ expectedVersion: 2, [key]: null });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.[key]).toBeNull();
+  });
+
+  it('accepts an empty payment schedule as a clear too', () => {
+    expect(
+      UpdateQuotationDraftBodySchema.safeParse({ expectedVersion: 2, paymentSchedule: [] }).success,
+    ).toBe(true);
+  });
+
+  it('keeps null out of the required fields and out of create', () => {
+    for (const key of ['currency', 'issueDate', 'validUntil', 'lines', 'templateId']) {
+      expect(
+        UpdateQuotationDraftBodySchema.safeParse({ expectedVersion: 2, [key]: null }).success,
+      ).toBe(false);
+    }
+    const create = {
+      opportunityId: id(),
+      currency: 'NPR',
+      issueDate: '2026-11-08',
+      validUntil: '2026-11-23',
+      lines: [{ description: 'x', uom: 'lot', quantity: '1', unitPrice: '1', taxCodeId: id() }],
+    };
+    expect(CreateQuotationBodySchema.safeParse(create).success).toBe(true);
+    for (const key of cleared) {
+      expect(CreateQuotationBodySchema.safeParse({ ...create, [key]: null }).success).toBe(false);
+    }
+    expect(QuotationVersionContentSchema.safeParse({ ...create, discount: null }).success).toBe(
+      false,
+    );
   });
 });
 
