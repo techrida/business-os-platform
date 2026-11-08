@@ -1,0 +1,45 @@
+/* Layout and small pieces that belong to the quotations list only. Everything else comes from
+   components/ui. Colours are Figma tokens. */
+
+.count {
+  white-space: nowrap;
+}
+
+/* The filter is a plain GET form: it works without script, and the URL carries the choice. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.filterField {
+  flex: 0 1 240px;
+  min-width: min(100%, 200px);
+}
+
+.toolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.number {
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* A long customer name wraps inside its column instead of widening the table. */
+.customer {
+  min-width: 12ch;
+  max-width: 36ch;
+}
+
+.amount {
+  font-weight: var(--font-weight-medium);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
