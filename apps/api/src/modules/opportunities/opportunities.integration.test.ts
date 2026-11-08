@@ -215,7 +215,32 @@ interface SeedOptions {
   stage?: OpportunityStage;
   name?: string;
   entity?: 'A' | 'B';
-  wonQuotationVersionId?: string;
+}
+
+/**
+ * A quotation on the opportunity with one Draft version, and the version's id. 0016 makes
+ * won_quotation_version_id a foreign key to quotation_versions in the same entity, so a won row needs a real
+ * version. A draft is enough for the key; each call makes its own quotation because a quotation has only one
+ * live version.
+ */
+async function seedVersion(opportunityId: string, entity: 'A' | 'B' = 'A'): Promise<string> {
+  const inScope = entity === 'B' ? scopeB : scopeA;
+  return withTx(db, inScope, systemActor('test'), async (tx) => {
+    const quotation = await tx.execute<{ id: string }>(
+      sql`INSERT INTO app.quotations (tenant_id, organization_id, number, customer_party_id, opportunity_id)
+          VALUES (${inScope.tenantId}, ${inScope.organizationId}, ${`QT-${randomUUID().slice(0, 8)}`},
+                  ${entity === 'B' ? customerB : customerA}, ${opportunityId})
+          RETURNING id`,
+    );
+    const version = await tx.execute<{ id: string }>(
+      sql`INSERT INTO app.quotation_versions
+            (tenant_id, organization_id, quotation_id, revision_no, currency, issue_date, valid_until)
+          VALUES (${inScope.tenantId}, ${inScope.organizationId}, ${quotation.rows[0]!.id}, 1, 'NPR',
+                  '2026-11-09', '2026-12-09')
+          RETURNING id`,
+    );
+    return version.rows[0]!.id;
+  });
 }
 
 async function seed(options: SeedOptions = {}): Promise<string> {
@@ -230,17 +255,26 @@ async function seed(options: SeedOptions = {}): Promise<string> {
         name: options.name ?? 'Acme website',
         customerId: options.entity === 'B' ? customerB : customerA,
         ownerUserId: options.owner ?? U.salesA,
-        stage,
+        // A won row needs the version it was won with, and the version needs the opportunity: insert at
+        // quotation_sent, then move it to won below.
+        stage: stage === 'won' ? 'quotation_sent' : stage,
         ...(stage === 'lost' || stage === 'on_hold'
           ? { stageReason: 'seeded', stageNote: 'seeded note' }
-          : {}),
-        ...(options.wonQuotationVersionId
-          ? { wonQuotationVersionId: options.wonQuotationVersionId }
           : {}),
       })
       .returning({ id: opportunities.id }),
   );
-  return row!.id;
+  const id = row!.id;
+  if (stage === 'won') {
+    const wonQuotationVersionId = await seedVersion(id, options.entity);
+    await withTx(db, inScope, systemActor('test'), (tx) =>
+      tx
+        .update(opportunities)
+        .set({ stage: 'won', wonQuotationVersionId })
+        .where(eq(opportunities.id, id)),
+    );
+  }
+  return id;
 }
 
 const rowOf = async (id: string) => {
@@ -529,10 +563,7 @@ describe('markQuotationSent and markWon (system only, no HTTP route)', () => {
 
   it('refuses markQuotationSent from won, lost and on_hold with 409', async () => {
     for (const stage of ['won', 'lost', 'on_hold'] as const) {
-      const id = await seed({
-        stage,
-        ...(stage === 'won' ? { wonQuotationVersionId: randomUUID() } : {}),
-      });
+      const id = await seed({ stage });
       await expect(
         asSystem(scopeA, (tx) => service.markQuotationSent(tx, id)),
       ).rejects.toMatchObject({ status: 409 });
@@ -543,7 +574,7 @@ describe('markQuotationSent and markWon (system only, no HTTP route)', () => {
   it('sets won with the accepted quotation version, from quotation_sent and from negotiation', async () => {
     const id = await seed();
     await asSystem(scopeA, (tx) => service.markQuotationSent(tx, id));
-    const versionId = randomUUID();
+    const versionId = await seedVersion(id);
     const won = await asSystem(scopeA, (tx) => service.markWon(tx, id, versionId));
     expect(won).toMatchObject({ stage: 'won', wonQuotationVersionId: versionId, version: 3 });
     expect(dto(won)).toMatchObject({ stage: 'won' });
@@ -551,7 +582,7 @@ describe('markQuotationSent and markWon (system only, no HTTP route)', () => {
     expect((await auditOf(id)).map((e) => e.action)).toContain('opportunity.won');
 
     const negotiating = await seed({ stage: 'negotiation' });
-    const v2 = randomUUID();
+    const v2 = await seedVersion(negotiating);
     expect(await asSystem(scopeA, (tx) => service.markWon(tx, negotiating, v2))).toMatchObject({
       stage: 'won',
       wonQuotationVersionId: v2,
@@ -559,16 +590,18 @@ describe('markQuotationSent and markWon (system only, no HTTP route)', () => {
   });
 
   it('is idempotent for the same version and a 409 for another one, or from qualified', async () => {
-    const versionId = randomUUID();
     const id = await seed({ stage: 'quotation_sent' });
+    const versionId = await seedVersion(id);
+    const otherVersionId = await seedVersion(id);
     await asSystem(scopeA, (tx) => service.markWon(tx, id, versionId));
     const again = await asSystem(scopeA, (tx) => service.markWon(tx, id, versionId));
     expect(again).toMatchObject({ stage: 'won', version: 2 });
     await expect(
-      asSystem(scopeA, (tx) => service.markWon(tx, id, randomUUID())),
+      asSystem(scopeA, (tx) => service.markWon(tx, id, otherVersionId)),
     ).rejects.toMatchObject({
       status: 409,
     });
+    expect((await rowOf(id)).wonQuotationVersionId).toBe(versionId);
 
     // qualified has no edge to won: the quotation must be sent first.
     const fresh = await seed();
@@ -597,9 +630,10 @@ describe('markQuotationSent and markWon (system only, no HTTP route)', () => {
 
   it('rolls back with the caller transaction', async () => {
     const id = await seed({ stage: 'quotation_sent' });
+    const versionId = await seedVersion(id);
     await expect(
       asSystem(scopeA, async (tx) => {
-        await service.markWon(tx, id, randomUUID());
+        await service.markWon(tx, id, versionId);
         throw new Error('the quotation write failed');
       }),
     ).rejects.toThrow('the quotation write failed');
