@@ -32,7 +32,6 @@ const nextConfig: NextConfig = {
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
 
-
   headers() {
     return Promise.resolve([
       {

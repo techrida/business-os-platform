@@ -1,0 +1,12 @@
+.card {
+  padding: 24px;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  color: var(--card-text);
+}
+
+.error {
+  border-color: var(--status-error);
+  background: var(--status-error-subtle);
+}

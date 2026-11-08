@@ -386,7 +386,11 @@ describe('GET /auth/callback', () => {
   // Only customer users may hold a portal session. Everyone else signed in fine at ZITADEL, so
   // they get a page that says where to go, never a session.
   it.each([
-    ['a staff principal', { orgKind: 'staff', partyId: null, roles: ['founder'] }, '/use-workspace'],
+    [
+      'a staff principal',
+      { orgKind: 'staff', partyId: null, roles: ['founder'] },
+      '/use-workspace',
+    ],
     ['a vendor principal', { orgKind: 'vendor', partyId: PARTY_ID }, '/not-available'],
     ['a customer with no party', { partyId: null }, '/no-access'],
     ['a customer when /v1/me has no partyId', { partyId: undefined }, '/no-access'],

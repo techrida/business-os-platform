@@ -1,0 +1,33 @@
+/* Deliberate deviations from the Figma token export. tokens.css stays a verbatim copy; anything
+   that differs from Figma is written here and loaded right after it.
+
+   Form-control borders: Figma's border/default (neutral-200, #E2E8F0) is 1.2:1 on white. WCAG
+   1.4.11 needs 3:1 for the edge of an input, so control borders use neutral-500 (#64748B,
+   about 4.8:1 on white). Decision: Kuu, 2026-11-08. Card, divider and table borders keep
+   border/default; they are decoration, not control boundaries.
+
+   Hover must stay visibly different from rest. Figma's hover border (neutral-300) is now lighter
+   than the resting one, so hover goes one step darker than rest instead. Focus keeps the brand
+   border and the focus ring from globals.css. */
+
+:root {
+  --input-border: var(--neutral-500);
+  --input-hover-border: var(--neutral-700);
+  --search-border: var(--neutral-500);
+  --select-border: var(--neutral-500);
+  --select-hover-border: var(--neutral-700);
+  --checkbox-border: var(--neutral-500);
+  --radio-border: var(--neutral-500);
+  --date-picker-border: var(--neutral-500);
+}
+
+[data-theme='dark'] {
+  --input-border: var(--neutral-400);
+  --input-hover-border: var(--neutral-200);
+  --search-border: var(--neutral-400);
+  --select-border: var(--neutral-400);
+  --select-hover-border: var(--neutral-200);
+  --checkbox-border: var(--neutral-400);
+  --radio-border: var(--neutral-400);
+  --date-picker-border: var(--neutral-400);
+}

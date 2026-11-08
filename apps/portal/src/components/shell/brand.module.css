@@ -1,0 +1,32 @@
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+}
+
+/* The Figma mark is a solid white star. */
+.mark svg {
+  fill: currentColor;
+}
+
+.name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
