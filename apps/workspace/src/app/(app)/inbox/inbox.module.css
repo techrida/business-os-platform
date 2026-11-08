@@ -1,0 +1,160 @@
+/* Layout and small pieces that belong to the inbox only. Everything else comes from
+   components/ui. Colours are Figma tokens. */
+
+.count {
+  white-space: nowrap;
+}
+
+.amount {
+  font-weight: var(--font-weight-medium);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+.reasonLabel {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ---- Detail: timeline across the top, then main column and the 373px decision card ---- */
+
+.columns {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.main {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr) 373px;
+  }
+
+  /* The header is sticky too, so the card stops below it. */
+  .side {
+    position: sticky;
+    top: calc(var(--bos-header-height) + 16px);
+  }
+}
+
+.note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.pre {
+  max-height: 24rem;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  font-family: inherit;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- History ---- */
+
+.history {
+  display: grid;
+}
+
+.event {
+  display: grid;
+  gap: 4px;
+  padding-block: 12px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.event:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.event:last-child {
+  padding-bottom: 0;
+}
+
+.eventHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
+.eventName {
+  font-weight: var(--font-weight-semibold);
+}
+
+.eventMeta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.comment {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Decision card ---- */
+
+.decision {
+  display: grid;
+  gap: 16px;
+}
+
+.buttons {
+  display: grid;
+  gap: 8px;
+}
+
+.buttons > * {
+  width: 100%;
+}
+
+/* Reject: the Figma danger button, built from its tokens. Two classes beat the Button's one. */
+.buttons .danger {
+  border-color: var(--button-danger-bg);
+  background: var(--button-danger-bg);
+  color: var(--button-danger-text);
+}
+
+.buttons .danger:hover {
+  border-color: var(--button-danger-bg-hover);
+  background: var(--button-danger-bg-hover);
+}
+
+.buttons .danger:active {
+  border-color: var(--button-danger-bg-active);
+  background: var(--button-danger-bg-active);
+}
+
+.buttons .danger:disabled {
+  border-color: var(--button-disabled-bg);
+  background: var(--button-disabled-bg);
+}
+
+.status {
+  min-height: var(--line-height-caption);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}

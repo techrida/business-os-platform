@@ -2,12 +2,16 @@ import type { InboxItemDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Page, PageHeader } from '@/components/ui/page';
+import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getInbox, failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 
-import { Notice } from '../kit';
-import styles from '../kit.module.css';
+import styles from './inbox.module.css';
 
 export const metadata: Metadata = { title: 'Inbox · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -21,31 +25,36 @@ const DECIDED: Record<string, string> = {
 
 function InboxRow({ item }: { item: InboxItemDto }) {
   return (
-    <li className={styles.item}>
-      <div>
-        <Link href={`/inbox/${encodeURIComponent(item.requestId)}`} className={styles.rowLink}>
-          {item.title}
-        </Link>
-        <span className={styles.docNumber}>{item.documentNumber}</span>
-      </div>
-      {/* The reason is the point of the inbox: why this one is yours. */}
-      <p className={styles.reason}>
-        <span className={styles.visuallyHidden}>Why it is yours: </span>
-        {item.reason}
-      </p>
-      <div className={`${styles.numeric} ${styles.amount}`}>
-        <span className={styles.visuallyHidden}>Amount: </span>
+    <tr>
+      <Td>
+        <CellTitle
+          title={<Link href={`/inbox/${encodeURIComponent(item.requestId)}`}>{item.title}</Link>}
+          meta={
+            <>
+              <span className="sr-only">Document number: </span>
+              {item.documentNumber}
+            </>
+          }
+          // The reason is the point of the inbox: why this one is yours.
+          note={
+            <>
+              <span className="sr-only">Why it is yours: </span>
+              {item.reason}
+            </>
+          }
+        />
+      </Td>
+      <Td align="end" nowrap>
         {item.amountNpr !== null ? (
-          money(item.amountNpr, 'NPR')
+          <span className={styles.amount}>{money(item.amountNpr, 'NPR')}</span>
         ) : (
-          <span className={styles.meta}>No amount</span>
+          <span className={styles.quiet}>No amount</span>
         )}
-      </div>
-      <div className={`${styles.meta} ${styles.numeric}`}>
-        <span className={styles.visuallyHidden}>Submitted: </span>
+      </Td>
+      <Td nowrap>
         <time dateTime={item.submittedAt}>{when(item.submittedAt)}</time>
-      </div>
-    </li>
+      </Td>
+    </tr>
   );
 }
 
@@ -69,61 +78,60 @@ export default async function InboxPage({
   }
 
   return (
-    <main id="main" className={styles.page}>
-      <div className={styles.pageHead}>
-        <div>
-          <h1 className={styles.title}>Inbox</h1>
-          <p className={styles.sub}>
-            Documents waiting for your decision. Each shows why the approval route sent it to you.
-          </p>
-        </div>
-        {items !== null && items.length > 0 ? (
-          <p className={styles.meta} role="status">
-            {items.length} waiting
-          </p>
-        ) : null}
-      </div>
+    <Page>
+      <PageHeader
+        title="Inbox"
+        description="Documents waiting for your decision. Each shows why the approval route sent it to you."
+        actions={
+          items !== null && items.length > 0 ? (
+            <Badge tone="info" role="status" className={styles.count}>
+              {items.length} waiting
+            </Badge>
+          ) : null
+        }
+      />
 
       {banner !== undefined ? (
-        <div className={styles.stack} style={{ marginBottom: '1rem' }}>
-          <Notice tone="ok" role="status">
-            <p>{banner}</p>
-          </Notice>
-        </div>
+        <Alert tone="success" role="status">
+          {banner}
+        </Alert>
       ) : null}
 
       {problem !== null ? (
-        <Notice tone="bad" role="alert">
-          <p>
-            <strong>
-              {problem.status === 403
-                ? 'Your roles do not include approvals'
-                : 'The inbox did not load'}
-            </strong>
-          </p>
-          <p>
-            {problem.status === 403
-              ? 'The inbox is for people who approve documents. If you prepare documents, open Memos to follow yours.'
-              : problem.message}
-          </p>
-          {problem.status !== 403 ? (
-            <p>
-              <Link href="/inbox">Reload the inbox</Link>
-            </p>
-          ) : null}
-        </Notice>
+        <Alert
+          tone={problem.status === 403 ? 'info' : 'error'}
+          role="alert"
+          title={
+            problem.status === 403
+              ? 'Your roles do not include approvals'
+              : 'The inbox did not load'
+          }
+          actions={problem.status !== 403 ? <Link href="/inbox">Reload the inbox</Link> : null}
+        >
+          {problem.status === 403
+            ? 'The inbox is for people who approve documents. If you prepare documents, open Memos to follow yours.'
+            : problem.message}
+        </Alert>
       ) : items !== null && items.length === 0 ? (
-        <p className={styles.empty}>
-          <strong>Nothing is waiting for you.</strong>
+        <EmptyState title="Nothing is waiting for you.">
           New approvals appear here, and the bell above tells you when one arrives.
-        </p>
+        </EmptyState>
       ) : items !== null ? (
-        <ul className={styles.list} aria-label="Waiting approvals">
-          {items.map((item) => (
-            <InboxRow key={item.requestId} item={item} />
-          ))}
-        </ul>
+        <Table caption="Waiting approvals" minWidth={640}>
+          <thead>
+            <tr>
+              <Th>Document</Th>
+              <Th align="end">Amount</Th>
+              <Th>Submitted</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <InboxRow key={item.requestId} item={item} />
+            ))}
+          </tbody>
+        </Table>
       ) : null}
-    </main>
+    </Page>
   );
 }
