@@ -236,7 +236,7 @@ describe('attachDocumentAction', () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it.each([
+  it.each<[string, Record<string, string>]>([
     ['a case id that is not a GUID', { caseId: 'nope' }],
     ['a document id that is not a GUID', { documentId: 'nope' }],
     ['an item key the checklist does not have', { key: 'passport' }],
