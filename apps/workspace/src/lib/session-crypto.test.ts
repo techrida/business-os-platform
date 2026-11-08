@@ -6,7 +6,10 @@ const KEY_1 = Buffer.alloc(32, 1);
 const KEY_2 = Buffer.alloc(32, 2);
 const RING: Keyring = { currentId: 'k1', keys: new Map([['k1', KEY_1]]) };
 const AAD = 'ws:sess:' + 'a'.repeat(64);
-const PLAINTEXT = JSON.stringify({ accessToken: 'access-secret-1', refreshToken: 'refresh-secret-1' });
+const PLAINTEXT = JSON.stringify({
+  accessToken: 'access-secret-1',
+  refreshToken: 'refresh-secret-1',
+});
 
 /** Replace one dot-separated part of a stored value. */
 function withPart(stored: string, index: number, value: string): string {
