@@ -253,8 +253,9 @@ describe('row trigger audit_capture', () => {
     return id;
   }
 
-  const insertOrg = `INSERT INTO app.organizations (tenant_id, kind, name, zitadel_org_id)
-                     VALUES ($1, 'customer', 'Acme', $2) RETURNING id`;
+  // A legal entity (ADR 0027): code and legal_name are required, kind and zitadel_org_id are gone.
+  const insertOrg = `INSERT INTO app.organizations (tenant_id, code, name, legal_name)
+                     VALUES ($1, $2, 'Acme', 'Acme Ltd') RETURNING id`;
 
   it('is installed on app.organizations under the name audit_capture', async () => {
     const { rows } = await owner.query<{ tgname: string }>(
@@ -266,14 +267,14 @@ describe('row trigger audit_capture', () => {
 
   it('raises when a write to app.organizations has no bos.actor_id', async () => {
     const tenantId = await newTenant();
-    await expect(app.query(insertOrg, [tenantId, `z-${randomUUID()}`])).rejects.toThrow(
+    await expect(app.query(insertOrg, [tenantId, `E-${randomUUID()}`])).rejects.toThrow(
       /bos\.actor_id is not set/,
     );
     // An explicitly empty actor (what a pooled connection reads after an earlier withTx) also fails.
     const scope = { tenantId, organizationId: randomUUID() };
     await expect(
       inTx(app, settingsFor(scope, { 'bos.actor_id': '' }), (c) =>
-        c.query(insertOrg, [tenantId, `z-${randomUUID()}`]),
+        c.query(insertOrg, [tenantId, `E-${randomUUID()}`]),
       ),
     ).rejects.toThrow(/bos\.actor_id is not set/);
   });
@@ -285,7 +286,7 @@ describe('row trigger audit_capture', () => {
       { 'bos.actor_kind': 'user', 'bos.actor_id': 'user-42', 'bos.ip': '10.0.0.7' },
     );
     const orgId = await inTx(app, settings, async (c) => {
-      const { rows } = await c.query<{ id: string }>(insertOrg, [tenantId, `z-${randomUUID()}`]);
+      const { rows } = await c.query<{ id: string }>(insertOrg, [tenantId, `E-${randomUUID()}`]);
       const id = rows[0]?.id;
       await c.query(`UPDATE app.organizations SET name = 'Acme 2' WHERE id = $1`, [id]);
       await c.query('DELETE FROM app.organizations WHERE id = $1', [id]);
