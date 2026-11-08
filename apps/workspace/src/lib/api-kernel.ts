@@ -151,18 +151,28 @@ export function getApprovalRequest(session: Session, id: string): Promise<Approv
 /**
  * `POST /v1/approvals/requests/:id/actions`. The API refuses a call without `Idempotency-Key`
  * (400), so the key is a required argument here: a missing key is a compile error, not a runtime one.
+ *
+ * K7: `idToken` is the session's OIDC ID token, the only token that carries `auth_time`. It goes
+ * in `x-bos-id-token` so the API can check a step that needs a recent sign-in. This is the only
+ * call that sends it. Without one the header is left out and the API answers `step_up_required`
+ * for such a step. The token is never put in an error: `call` builds messages from the method,
+ * path and status only.
  */
 export function actOnApproval(
   session: Session,
   id: string,
   body: ApprovalActionBody,
   idempotencyKey: string,
+  idToken?: string,
 ): Promise<ApprovalRequestDto> {
   return call(
     session,
     `/v1/approvals/requests/${seg(id)}/actions`,
     ApprovalRequestDtoSchema,
-    json('POST', body, { 'idempotency-key': idempotencyKey }),
+    json('POST', body, {
+      'idempotency-key': idempotencyKey,
+      ...(idToken ? { 'x-bos-id-token': idToken } : {}),
+    }),
   );
 }
 

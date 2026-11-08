@@ -104,6 +104,30 @@ const version = {
   createdAt: WHEN,
 };
 
+/** An ID token: only decision calls may carry it, in `x-bos-id-token` (K7 step-up). */
+const ID_TOKEN = 'eyJ.secret-id-token-auth-time.sig';
+
+const decided = {
+  requestId: ID_A,
+  documentType: 'test_memo',
+  documentId: ID_B,
+  documentNumber: 'MEMO-1',
+  status: 'pending',
+  blockReason: null,
+  currentSeq: 2,
+  version: 4,
+  requesterUserId: ID_B,
+  snapshot: { title: 'x' },
+  steps: [step],
+  actions: [],
+  submittedAt: WHEN,
+  decidedAt: null,
+};
+
+const stepUpBody = {
+  error: { code: 'step_up_required', message: 'Sign in again', correlationId: 'c-1' },
+};
+
 const fetchMock = vi.fn<typeof fetch>();
 
 const reply = (body: unknown, status = 200): Response =>
@@ -194,6 +218,52 @@ describe('approvals', () => {
       comment: 'Add the quote',
       expectedVersion: 3,
     });
+  });
+
+  it('sends the ID token as x-bos-id-token on a decision when one is given (K7)', async () => {
+    fetchMock.mockResolvedValue(reply(decided));
+    await actOnApproval(session, ID_A, { action: 'approve', expectedVersion: 3 }, 'k-1', ID_TOKEN);
+    expect(lastCall().headers.get('x-bos-id-token')).toBe(ID_TOKEN);
+    expect(lastCall().headers.get('idempotency-key')).toBe('k-1');
+  });
+
+  it('omits x-bos-id-token on a decision without an ID token, so the API asks for step-up', async () => {
+    // A fresh Response per call: a body can be read only once.
+    fetchMock.mockImplementation(() => Promise.resolve(reply(decided)));
+    await actOnApproval(session, ID_A, { action: 'approve', expectedVersion: 3 }, 'k-1');
+    expect(lastCall().headers.has('x-bos-id-token')).toBe(false);
+    await actOnApproval(session, ID_A, { action: 'approve', expectedVersion: 3 }, 'k-1', '');
+    expect(lastCall().headers.has('x-bos-id-token')).toBe(false);
+  });
+
+  it('never puts the ID token in a thrown error or its on-screen wording', async () => {
+    const failures: (() => void)[] = [
+      () => fetchMock.mockResolvedValue(reply(stepUpBody, 401)),
+      () => fetchMock.mockResolvedValue(reply({ ...decided, version: 'four' })),
+      () => fetchMock.mockRejectedValue(new TypeError('fetch failed')),
+    ];
+    for (const arrange of failures) {
+      arrange();
+      const err = await actOnApproval(
+        session,
+        ID_A,
+        { action: 'approve', expectedVersion: 3 },
+        'k-1',
+        ID_TOKEN,
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      const e = err as Error;
+      for (const text of [
+        e.message,
+        e.stack ?? '',
+        JSON.stringify(e),
+        JSON.stringify(failureOf(e, 'approval')),
+      ]) {
+        expect(text).not.toContain(ID_TOKEN);
+      }
+      // The request did carry it, so the absence above is not because it was never sent.
+      expect(lastCall().headers.get('x-bos-id-token')).toBe(ID_TOKEN);
+    }
   });
 
   it('encodes an id so it cannot climb out of the route', async () => {
