@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 
+import { CreateDocumentBodySchema } from '@bos/contracts';
+import { BadRequestException } from '@nestjs/common';
+
 import type { DbTransaction } from '../../../platform/db/db.module';
 import type { Actor, TxScope } from '../../../platform/db/tx';
 import { describe, expect, it, vi } from 'vitest';
@@ -32,7 +35,7 @@ const candidate = (n: number): RenderCandidate => ({
 });
 
 /** Rows of an approved version, as the store's `load` returns them. */
-const source = (versionId: string): RenderSource => ({
+const source = (versionId: string, number = 'QT-2082-0042'): RenderSource => ({
   version: {
     id: versionId,
     revisionNo: 2,
@@ -55,7 +58,7 @@ const source = (versionId: string): RenderSource => ({
     renderedDocumentId: null,
     renderedSha256: null,
   },
-  quotation: { number: 'QT-2082-0042' },
+  quotation: { number },
   customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, address },
   contact: null,
   paymentTerm: null,
@@ -83,6 +86,8 @@ function setup(
     pdf?: () => Promise<Buffer>;
     settings?: Record<string, unknown>;
     missing?: boolean;
+    /** The quotation number `load` returns; default QT-2082-0042. */
+    number?: string;
   } = {},
 ) {
   const calls: string[] = [];
@@ -98,7 +103,7 @@ function setup(
     }),
     load: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`load:${c.versionId}`);
-      return Promise.resolve(opts.missing === true ? undefined : source(c.versionId));
+      return Promise.resolve(opts.missing === true ? undefined : source(c.versionId, opts.number));
     }),
     markRendered: vi.fn((_tx: DbTransaction, c: RenderCandidate) => {
       calls.push(`rendered:${c.versionId}`);
@@ -120,10 +125,27 @@ function setup(
     return fn(TX);
   };
   const documents = {
-    createGenerated: vi.fn((_tx: DbTransaction, owner: { ownerId: string }) => {
-      calls.push(`create:${owner.ownerId}`);
-      return Promise.resolve({ documentId: 'doc-1', versionId: 'docver-1' });
-    }),
+    createGenerated: vi.fn(
+      (
+        _tx: DbTransaction,
+        owner: { ownerType: string; ownerId: string },
+        file: { filename: string; declaredMime: string; bytes: Buffer },
+      ) => {
+        calls.push(`create:${owner.ownerId}`);
+        // The schema the real createGenerated parses before it writes (documents.service.ts), with the same
+        // exception: a file the documents module refuses is refused here too.
+        const parsed = CreateDocumentBodySchema.safeParse({
+          ...owner,
+          filename: file.filename,
+          declaredMime: file.declaredMime,
+          sizeBytes: file.bytes.length,
+        });
+        if (!parsed.success) {
+          return Promise.reject(new BadRequestException('Invalid generated file'));
+        }
+        return Promise.resolve({ documentId: 'doc-1', versionId: 'docver-1' });
+      },
+    ),
     receiveGenerated: vi.fn(() => {
       calls.push('receive');
       return Promise.resolve({} as never);
@@ -161,6 +183,7 @@ describe('QuotationRenderSweeper', () => {
       failed: 0,
       skipped: 0,
       orphansRemoved: 0,
+      failures: [],
     });
     expect(calls.filter((x) => !x.startsWith('candidates'))).toEqual([
       `claim:${c.versionId}`,
@@ -254,6 +277,32 @@ describe('QuotationRenderSweeper', () => {
     expect(htmlToPdf).not.toHaveBeenCalled();
   });
 
+  it('renders a version whose number carries the fiscal year (QT-2083/84-00001): the PDF name has no slash', async () => {
+    const c = candidate(1);
+    const { sweeper, documents } = setup({ candidates: [c], number: 'QT-2083/84-00001' });
+    await expect(sweeper.sweep()).resolves.toEqual({
+      rendered: 1,
+      failed: 0,
+      skipped: 0,
+      orphansRemoved: 0,
+      failures: [],
+    });
+    expect(documents.createGenerated).toHaveBeenCalledWith(
+      TX,
+      { ownerType: 'quotation_version', ownerId: c.versionId },
+      { filename: 'QT-2083-84-00001-R2.pdf', declaredMime: 'application/pdf', bytes: PDF },
+    );
+  });
+
+  it('reports each failed version with its kind in the result, so a caller need not read the log', async () => {
+    const noAddress = candidate(1);
+    const { sweeper } = setup({ candidates: [noAddress], settings: { 'entity.address': null } });
+    await expect(sweeper.sweep()).resolves.toMatchObject({
+      failed: 1,
+      failures: [{ versionId: noAddress.versionId, kind: 'issuer_incomplete' }],
+    });
+  });
+
   it('fails the version when its rows are gone', async () => {
     const c = candidate(1);
     const { sweeper, calls } = setup({ candidates: [c], missing: true });
@@ -287,6 +336,7 @@ describe('failureKind', () => {
   it('maps errors to fixed words', () => {
     expect(failureKind(new GotenbergError('x', 'too_large'))).toBe('gotenberg_too_large');
     expect(failureKind(new Error('secret'))).toBe('error');
+    expect(failureKind(new BadRequestException('Invalid generated file: QT-1'))).toBe('http_400');
   });
 });
 

@@ -26,7 +26,13 @@ import {
   quotationTaxSummary,
   quotationVersions,
 } from '@bos/db';
-import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  HttpException,
+  Inject,
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+} from '@nestjs/common';
 import { type Job, Queue } from 'bullmq';
 import { and, asc, eq, isNull, lt, or } from 'drizzle-orm';
 
@@ -35,7 +41,11 @@ import { type Actor, systemActor, type TxScope } from '../../../platform/db/tx';
 import type { DocumentsService } from '../../../platform/documents/documents.service';
 import type { SettingsService } from '../../../platform/settings/settings.service';
 import { QUOTATION_OWNER_TYPE, QUOTATION_RENDER_JOB_PREFIX } from '../quotation-owner.policy';
-import { toCustomerQuotationView, type CustomerViewInput } from './customer-view';
+import {
+  quotationPdfFilename,
+  toCustomerQuotationView,
+  type CustomerViewInput,
+} from './customer-view';
 import { GotenbergError } from './gotenberg.client';
 import { buildIssuer, IssuerIncompleteError } from './issuer';
 import { renderQuotationHtml } from './quotation-html';
@@ -109,11 +119,18 @@ export interface PdfRenderer {
 export type Clock = () => Date;
 
 export type RenderOutcome = 'rendered' | 'failed' | 'skipped';
+export interface RenderFailure {
+  versionId: string;
+  /** The fixed word the log line carries (failureKind), never a message. */
+  kind: string;
+}
 export interface SweepResult {
   rendered: number;
   failed: number;
   skipped: number;
   orphansRemoved: number;
+  /** Each version that failed in this pass, so a caller (a test, an admin tool) can say why without the log. */
+  failures: RenderFailure[];
 }
 
 /** The version's rows are gone or incomplete (for example no customer), so there is nothing to render. */
@@ -131,6 +148,8 @@ export function failureKind(error: unknown): string {
   if (error instanceof IssuerIncompleteError || error instanceof RenderSourceMissingError) {
     return error.kind;
   }
+  // A Nest service on the way refused (the documents module answers 400, 403 or 404): its status, not its text.
+  if (error instanceof HttpException) return `http_${error.getStatus()}`;
   return 'error';
 }
 
@@ -149,24 +168,36 @@ export class QuotationRenderSweeper {
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
   async sweep(): Promise<SweepResult> {
-    const result: SweepResult = { rendered: 0, failed: 0, skipped: 0, orphansRemoved: 0 };
+    const result: SweepResult = {
+      rendered: 0,
+      failed: 0,
+      skipped: 0,
+      orphansRemoved: 0,
+      failures: [],
+    };
     const candidates = await this.store.candidates(this.clock(), BATCH);
     // One at a time: Chromium is the scarce resource, and a version's failure must not touch the next one.
     for (const c of candidates) {
-      const outcome = await this.renderOne(c);
+      const { outcome, kind } = await this.attempt(c);
       result[outcome] += 1;
+      if (kind !== undefined) result.failures.push({ versionId: c.versionId, kind });
     }
     result.orphansRemoved = await this.removeOrphans();
     return result;
   }
 
   async renderOne(c: RenderCandidate): Promise<RenderOutcome> {
+    return (await this.attempt(c)).outcome;
+  }
+
+  /** One version: its outcome and, for a failure, the kind that was logged. */
+  private async attempt(c: RenderCandidate): Promise<{ outcome: RenderOutcome; kind?: string }> {
     const scope: TxScope = { tenantId: c.tenantId, organizationId: c.organizationId };
     const actor = systemActor(QUOTATION_RENDER_JOB_PREFIX);
 
     // The claim is its own transaction, committed before the slow part, so other workers see `pending`.
     const claimed = await this.runTx(scope, actor, (tx) => this.store.claim(tx, c, this.clock()));
-    if (!claimed) return 'skipped';
+    if (!claimed) return { outcome: 'skipped' };
 
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
@@ -181,7 +212,7 @@ export class QuotationRenderSweeper {
       );
       const bytes = await this.pdf.htmlToPdf(renderQuotationHtml(view));
       const file = {
-        filename: `${rows.quotation.number}-R${rows.version.revisionNo}.pdf`,
+        filename: quotationPdfFilename(rows.quotation.number, rows.version.revisionNo),
         declaredMime: 'application/pdf',
         bytes,
       };
@@ -200,11 +231,10 @@ export class QuotationRenderSweeper {
       await this.runTx(scope, actor, (tx) =>
         this.store.markRendered(tx, c, { documentId: created.documentId, sha256 }, this.clock()),
       );
-      return 'rendered';
+      return { outcome: 'rendered' };
     } catch (error) {
-      this.logger.warn(
-        `quotation render failed: version=${c.versionId} kind=${failureKind(error)}`,
-      );
+      const kind = failureKind(error);
+      this.logger.warn(`quotation render failed: version=${c.versionId} kind=${kind}`);
       try {
         await this.runTx(scope, actor, (tx) => this.store.markFailed(tx, c, this.clock()));
       } catch (markError) {
@@ -212,7 +242,7 @@ export class QuotationRenderSweeper {
           `quotation render: could not record the failure: version=${c.versionId} kind=${failureKind(markError)}`,
         );
       }
-      return 'failed';
+      return { outcome: 'failed', kind };
     }
   }
 

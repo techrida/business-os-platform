@@ -283,7 +283,8 @@ interface Seeded extends RenderCandidate {
 /** One quotation with one version, one line and one tax row, moved to `status` the way the app does. */
 async function seedVersion(scope: TestScope, options: SeedOptions = {}): Promise<Seeded> {
   const status = options.status ?? 'approved';
-  const number = `QT-${randomUUID().slice(0, 8)}`;
+  // The form NumberingService issues: the fiscal year carries a slash, which a file name may not.
+  const number = `QT-2083/84-${randomUUID().slice(0, 8)}`;
   const { tenantId, organizationId } = scope;
   const versionId = await withTx(db, scope, seedActor(), async (tx) => {
     const opp = await tx.execute<{ id: string }>(sql`

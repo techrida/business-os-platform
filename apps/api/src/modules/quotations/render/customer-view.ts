@@ -22,6 +22,15 @@ import type {
 
 type Row<T extends { $inferSelect: object }> = T['$inferSelect'];
 
+/**
+ * The file name of a quotation PDF, as the render job stores it and the portal shows it. Document numbers carry
+ * the fiscal year as `2083/84`, and the documents module takes a bare file name only (no path separator, see
+ * CreateDocumentBodySchema), so each `/` becomes `-`: QT-2083/84-00001 revision 1 is QT-2083-84-00001-R1.pdf.
+ */
+export function quotationPdfFilename(number: string, revisionNo: number): string {
+  return `${number.replaceAll('/', '-')}-R${revisionNo}.pdf`;
+}
+
 /** The columns of a version the mapper reads. Everything else on the row (cost, margin, FX, NPR) is never touched. */
 export type CustomerViewVersion = Pick<
   Row<typeof quotationVersions>,
@@ -131,7 +140,7 @@ export function toCustomerQuotationView(
     version.renderedSha256 !== null
       ? {
           documentId: version.renderedDocumentId,
-          filename: `${quotation.number}-R${version.revisionNo}.pdf`,
+          filename: quotationPdfFilename(quotation.number, version.revisionNo),
           sha256: version.renderedSha256.toString('hex'),
         }
       : null;

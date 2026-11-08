@@ -1,8 +1,13 @@
-import { CUSTOMER_VIEW_FORBIDDEN_WORDS, CustomerQuotationViewSchema } from '@bos/contracts';
+import {
+  CreateDocumentBodySchema,
+  CUSTOMER_VIEW_FORBIDDEN_WORDS,
+  CustomerQuotationViewSchema,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   QuotationNotCustomerVisibleError,
+  quotationPdfFilename,
   toCustomerQuotationView,
   type CustomerViewInput,
 } from './customer-view.js';
@@ -256,6 +261,13 @@ describe('toCustomerQuotationView', () => {
     expect(
       toCustomerQuotationView({ ...base, version: rendered, renderedScanClean: true }).file,
     ).toEqual({ documentId, filename: 'QT-2082-0042-R2.pdf', sha256: 'ab'.repeat(32) });
+  });
+
+  it('names the PDF of a real fiscal-year number (QT-2083/84-00001) in a form the documents module accepts', () => {
+    const name = quotationPdfFilename('QT-2083/84-00001', 1);
+    expect(name).toBe('QT-2083-84-00001-R1.pdf');
+    expect(CreateDocumentBodySchema.shape.filename.safeParse(name).success).toBe(true);
+    expect(quotationPdfFilename('QT-2082-0042', 2)).toBe('QT-2082-0042-R2.pdf');
   });
 
   it('allows a missing contact, payment term and PAN', () => {
