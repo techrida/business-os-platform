@@ -23,8 +23,11 @@ function run(headers: Record<string, string | string[]>, ip?: string) {
       tenantId: 't',
       organizationId: 'o',
       orgKind: 'staff',
+      partyId: null,
+      idpOrgId: 'i',
       userId: 'u',
       roles: [],
+      departmentId: null,
       tokenExp: 1,
     });
     seenClient = { ip: ctx().ip, userAgent: ctx().userAgent };
