@@ -26,19 +26,20 @@ import {
   approvalRequests,
   approvalSteps,
   checkTenancy,
+  createParty,
+  createPortalUser,
+  createStaffUser,
+  createTenantWithEntity,
   documentVersions,
-  organizations,
   runMigrations,
-  tenants,
   testMemos,
-  users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -109,12 +110,17 @@ let service: TestMemoService;
 let documents: DocumentsService;
 let approvals: ApprovalsService;
 let scope: { tenantId: string; organizationId: string };
-let customerOrgId: string;
-let vendorOrgId: string;
+/** The staff IdP org of the tenant: every staff principal below logs in through it. */
+let staffIdpOrgId: string;
+/** Two customer parties (P1, P2) and a vendor party, each with its portal IdP org (ADR 0027). */
+let p1: { partyId: string; idpOrgId: string; userId: string };
+let p2: { partyId: string; idpOrgId: string; userId: string };
+let vendorPartyId: string;
 let now = new Date('2026-11-08T04:00:00Z');
 
-// Users that own memos need an app.users row (foreign key). Approvers only appear in the fake directory.
-const U = {
+// Users that own memos need an app.users row (foreign key): beforeAll replaces salesA, salesB and boss with the
+// ids createStaffUser returns. Approvers only appear in the fake directory.
+const U: Record<'salesA' | 'salesB' | 'boss' | 'acc' | 'fin' | 'mgmt' | 'founder', string> = {
   salesA: randomUUID(),
   salesB: randomUUID(),
   boss: randomUUID(),
@@ -133,14 +139,37 @@ const resetRoles = () => {
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-/** Who is calling: `as()` switches it. Sales hold memo permissions with scope `own`; founder holds `all`. */
-const current: { userId: string; grants: Map<Permission, Scope> } = {
+/**
+ * Who is calling: `as()` switches to a staff user, `asCustomer()` to a portal user of a customer party. Sales hold
+ * memo permissions with scope `own`; founder holds `all`.
+ */
+const current: {
+  userId: string;
+  grants: Map<Permission, Scope>;
+  orgKind: Principal['orgKind'];
+  partyId: string | null;
+  idpOrgId: string | null;
+} = {
   userId: U.salesA,
   grants: grantsOf('sales'),
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.grants = grantsOf(role);
+  current.orgKind = 'staff';
+  current.partyId = null;
+  current.idpOrgId = null;
+};
+/** customer_user has no default grants, so the portal caller gets `memo.read` at `customer_org` here. */
+const asCustomer = (party: { partyId: string; idpOrgId: string; userId: string }) => {
+  current.userId = party.userId;
+  current.grants = new Map<Permission, Scope>([['memo.read', 'customer_org']]);
+  current.orgKind = 'customer';
+  current.partyId = party.partyId;
+  current.idpOrgId = party.idpOrgId;
 };
 
 /** The token's roles match the mirror's (the fake directory): act() checks a role step against the token. */
@@ -151,7 +180,9 @@ const principalNow = (): Principal => ({
   userId: current.userId,
   zitadelUserId: `z-${current.userId}`,
   ...scope,
-  orgKind: 'staff',
+  orgKind: current.orgKind,
+  partyId: current.partyId,
+  idpOrgId: current.idpOrgId ?? staffIdpOrgId,
   roles: rolesOf(current.userId),
   departmentId: null,
   status: 'active',
@@ -214,34 +245,26 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 6 });
   db = drizzle({ client: appPool });
 
-  // One tenant with a staff org (owns the memos), a customer org and a vendor org (ADR 0017 trigger).
-  const [tenant] = await db.insert(tenants).values({}).returning({ id: tenants.id });
-  if (tenant === undefined) throw new Error('no tenant');
-  const staffOrgId = randomUUID();
-  customerOrgId = randomUUID();
-  vendorOrgId = randomUUID();
-  scope = { tenantId: tenant.id, organizationId: staffOrgId };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    for (const [id, kind] of [
-      [staffOrgId, 'staff'],
-      [customerOrgId, 'customer'],
-      [vendorOrgId, 'vendor'],
-    ] as const) {
-      await tx.insert(organizations).values({
-        id,
-        tenantId: tenant.id,
-        organizationId: id,
-        kind,
-        name: `Test ${kind} org`,
-        zitadelOrgId: `zitadel-${id}`,
-      });
-    }
-    for (const id of [U.salesA, U.salesB, U.boss]) {
-      await tx
-        .insert(users)
-        .values({ id, ...scope, zitadelUserId: `z-${id}`, status: 'active' as const });
-    }
-  });
+  // One tenant with its default legal entity (owns the memos), two customer parties and a vendor party, each
+  // with a portal user (ADR 0027): the memo's customer is a party, never an organization.
+  const tenant = await createTenantWithEntity(appPool);
+  staffIdpOrgId = tenant.idpOrgId;
+  scope = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
+  const customer = async () => {
+    const party = await createParty(appPool, { tenantId: tenant.tenantId, kind: 'customer' });
+    const { userId } = await createPortalUser(appPool, {
+      tenantId: tenant.tenantId,
+      idpOrgId: party.idpOrgId,
+    });
+    return { ...party, userId };
+  };
+  p1 = await customer();
+  p2 = await customer();
+  vendorPartyId = (await createParty(appPool, { tenantId: tenant.tenantId, kind: 'vendor' }))
+    .partyId;
+  for (const key of ['salesA', 'salesB', 'boss'] as const) {
+    U[key] = (await createStaffUser(appPool, { ...scope, idpOrgId: tenant.idpOrgId })).userId;
+  }
 
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-memo-it-'));
   documents = new DocumentsService(
@@ -382,8 +405,8 @@ describe('migration 0007', () => {
     expect(rows[0]?.n).toBe('1');
   });
 
-  it('only lets a memo name a customer-kind organization as its customer (assert_org_kind)', async () => {
-    const insert = (customerOrganizationId: string | null) =>
+  it('only lets a memo name a customer party of its tenant as its customer (test_memos_customer_party_fk)', async () => {
+    const insert = (customerPartyId: string | null) =>
       withTx(db, scope, systemActor('test'), (tx) =>
         tx.insert(testMemos).values({
           ...scope,
@@ -397,14 +420,24 @@ describe('migration 0007', () => {
           fxSource: 'NPR',
           fxDate: '2026-11-08',
           ownerUserId: U.salesA,
-          customerOrganizationId,
+          customerPartyId,
         }),
       );
-    await expect(insert(customerOrgId)).resolves.toBeDefined();
+    /** The constraint that refused the insert; Drizzle wraps the pg error in `cause`. */
+    const refusedBy = async (customerPartyId: string) => {
+      const error: unknown = await insert(customerPartyId).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      const pgError = (error as { cause?: unknown } | undefined)?.cause ?? error;
+      return (pgError as { constraint?: string } | undefined)?.constraint;
+    };
+    await expect(insert(p1.partyId)).resolves.toBeDefined();
     await expect(insert(null)).resolves.toBeDefined();
-    // The staff org and the vendor org exist but have the wrong kind.
-    await expect(insert(scope.organizationId)).rejects.toThrow(/customer/);
-    await expect(insert(vendorOrgId)).rejects.toThrow(/customer/);
+    // A vendor party has the wrong kind; the legal entity and a random id are not parties at all.
+    for (const wrong of [vendorPartyId, scope.organizationId, randomUUID()]) {
+      expect(await refusedBy(wrong)).toBe('test_memos_customer_party_fk');
+    }
   });
 });
 
@@ -438,7 +471,7 @@ describe('POST /v1/test-memos', () => {
       fxDate: '2026-11-08',
       ownerUserId: U.salesA,
       departmentId: null,
-      customerOrganizationId: null,
+      customerPartyId: null,
       editorUserIds: [],
     });
     const second = MemoDtoSchema.parse(
@@ -497,6 +530,82 @@ describe('GET /v1/test-memos/:id', () => {
     expect((await request(baseUrl).get('/v1/test-memos/not-a-uuid')).status).toBe(400);
     // Founder holds memo.read with scope all, so the same memo opens.
     expect((await request(baseUrl).get(`/v1/test-memos/${id}`)).status).toBe(200);
+  });
+});
+
+describe('the customer of a memo is a party (ADR 0027 section 5)', () => {
+  it('lets staff name the customer by party id when they create a memo', async () => {
+    const res = await request(baseUrl)
+      .post('/v1/test-memos')
+      .send(draftBody({ customerPartyId: p1.partyId }));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(MemoDtoSchema.parse(res.body).customerPartyId).toBe(p1.partyId);
+    expect((await statusOf((res.body as { id: string }).id)).customerPartyId).toBe(p1.partyId);
+  });
+
+  it('answers 400, not 500, when staff name a vendor, an entity or an unknown id as the customer', async () => {
+    for (const wrong of [vendorPartyId, scope.organizationId, randomUUID()]) {
+      const res = await request(baseUrl)
+        .post('/v1/test-memos')
+        .send(draftBody({ customerPartyId: wrong }));
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
+      expect(res.body).toMatchObject({ error: { code: 'bad_request' } });
+    }
+  });
+
+  it('shows a customer of party P1 only the memos of the acting entity that name P1; P2 gets 404, not 403', async () => {
+    const forP1 = await createMemo({ customerPartyId: p1.partyId });
+    const forP2 = await createMemo({ customerPartyId: p2.partyId });
+    const internal = await createMemo();
+    // A memo of a second legal entity of the same tenant that also names P1: the portal acts in the default
+    // entity, so it must not see it. No fixture makes a second entity yet, hence the raw insert.
+    const otherEntity = randomUUID();
+    const otherScope = { tenantId: scope.tenantId, organizationId: otherEntity };
+    const elsewhere = await withTx(db, otherScope, systemActor('test'), async (tx) => {
+      await tx.execute(
+        sql`INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
+            VALUES (${otherEntity}, ${scope.tenantId}, ${otherEntity}, 'E2', 'Entity two', 'Entity two', false)`,
+      );
+      const [row] = await tx
+        .insert(testMemos)
+        .values({
+          ...otherScope,
+          number: `RAW-${randomUUID()}`,
+          title: 'other entity',
+          body: '',
+          amount: '1.00',
+          currency: 'NPR',
+          amountNpr: '1.00',
+          fxRate: '1',
+          fxSource: 'NPR',
+          fxDate: '2026-11-08',
+          ownerUserId: U.salesA,
+          customerPartyId: p1.partyId,
+        })
+        .returning({ id: testMemos.id });
+      return row!;
+    });
+
+    asCustomer(p1);
+    const own = await request(baseUrl).get(`/v1/test-memos/${forP1.id}`);
+    expect(own.status, JSON.stringify(own.body)).toBe(200);
+    expect(own.body).toMatchObject({ id: forP1.id, customerPartyId: p1.partyId });
+
+    const answer = async (id: string) => {
+      const res = await request(baseUrl).get(`/v1/test-memos/${id}`);
+      const { code, message, reason } = ErrorBodySchema.parse(res.body).error;
+      return { status: res.status, code, message, reason };
+    };
+    const unknown = await answer(randomUUID());
+    expect(unknown).toMatchObject({ status: 404, code: 'not_found' });
+    // P2's memo, an internal memo and P1's memo in another entity all look like an unknown id.
+    for (const id of [forP2.id, internal.id, elsewhere.id]) {
+      expect(await answer(id)).toEqual(unknown);
+    }
+
+    asCustomer(p2);
+    expect((await request(baseUrl).get(`/v1/test-memos/${forP2.id}`)).status).toBe(200);
+    expect(await answer(forP1.id)).toEqual(unknown);
   });
 });
 
