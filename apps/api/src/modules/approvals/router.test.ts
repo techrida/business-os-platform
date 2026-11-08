@@ -251,3 +251,61 @@ describe('route: groups, users, delegation and separation of duties', () => {
     expect(d.eligible(step('acc-1'))).toEqual(['acc-1']);
   });
 });
+
+describe('route: distinct approvers across a request (R12)', () => {
+  // u-1 holds both roles and is finance's only member, so after u-1 decides step 1, step 2 has nobody.
+  const spec = (distinctApprovers: boolean) =>
+    WorkflowSpecSchema.parse({
+      documentType: 'test_memo',
+      distinctApprovers,
+      steps: [
+        { id: 'a', kind: 'role', role: 'accountant', reason: 'A' },
+        { id: 'b', kind: 'role', role: 'finance', reason: 'B' },
+      ],
+    });
+  const twoHats: DirectoryData = {
+    roleMembers: new Map([
+      ['accountant', ['u-1', 'u-2']],
+      ['finance', ['u-1']],
+    ]),
+    groups: new Map(),
+    delegations: [],
+  };
+  const decided = [{ seq: 1, deciders: ['u-1'] }];
+
+  it('a later step whose only candidate decided an earlier step has no approver', () => {
+    const d = buildDirectory(twoHats, { now: NOW, documentType: 'test_memo' });
+    const plan = route(spec(true), {}, d, [], decided);
+    expect(plan.steps[0]?.eligibleUserIds).toEqual(['u-1', 'u-2']);
+    expect(plan.steps[1]).toMatchObject({ eligibleUserIds: [], blocked: true });
+    expect(plan.blocked).toBe(true);
+    expect(plan.blockReason).toContain('Step 2 (role finance)');
+  });
+
+  it('keeps the earlier decider eligible when distinctApprovers is off', () => {
+    const d = buildDirectory(twoHats, { now: NOW, documentType: 'test_memo' });
+    const plan = route(spec(false), {}, d, [], decided);
+    expect(plan.steps[1]).toMatchObject({ eligibleUserIds: ['u-1'], blocked: false });
+  });
+
+  it("does not let the earlier decider's delegate fill the step on their behalf", () => {
+    const d = buildDirectory(
+      {
+        ...twoHats,
+        delegations: [
+          {
+            fromUserId: 'u-1',
+            toUserId: 'deputy-1',
+            startsAt: new Date('2026-11-01T00:00:00Z'),
+            endsAt: new Date('2026-11-30T00:00:00Z'),
+            documentType: null,
+            revokedAt: null,
+          },
+        ],
+      },
+      { now: NOW, documentType: 'test_memo' },
+    );
+    const plan = route(spec(true), {}, d, [], decided);
+    expect(plan.steps[1]).toMatchObject({ eligibleUserIds: [], blocked: true });
+  });
+});
