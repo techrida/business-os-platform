@@ -14,9 +14,10 @@ import {
   createTenantWithEntity,
   opportunities,
   taxCodes,
+  users,
   type FixturePool,
 } from '@bos/db';
-import { sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
@@ -192,4 +193,24 @@ export function goldenCreateBody(
     discount: GOLDEN_DISCOUNT,
     ...overrides,
   };
+}
+
+/**
+ * Another active staff user of entity A (same IdP org as `ownerUserId`), for "another owner" cases under `own`
+ * scope. Added for Q1b-B part 2; the seed above stays as it was.
+ */
+export async function seedOtherStaffUser(
+  db: QuotationFixtureDb,
+  f: Pick<QuotationFixture, 'tenantId' | 'entityId' | 'ownerUserId'>,
+): Promise<string> {
+  const [owner] = await db
+    .select({ idpOrgId: users.idpOrgId })
+    .from(users)
+    .where(and(eq(users.tenantId, f.tenantId), eq(users.id, f.ownerUserId)));
+  const { userId } = await createStaffUser(db.$client, {
+    tenantId: f.tenantId,
+    organizationId: f.entityId,
+    idpOrgId: owner!.idpOrgId,
+  });
+  return userId;
 }
