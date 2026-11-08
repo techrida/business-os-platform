@@ -1,0 +1,441 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  CancelQuotationBodySchema,
+  DiscountSchema,
+  EVIDENCE_KINDS,
+  NonNegativeDecimalString,
+  QUOTATION_REVISION_RULES,
+  QUOTATION_STATUSES,
+  QUOTATION_TRANSITIONS,
+  QuantityString,
+  QuotationLineInputSchema,
+  QuotationTaxSummaryItemSchema,
+  QuotationVersionContentSchema,
+  QuotationVersionDtoSchema,
+  RecordOutcomeBodySchema,
+  ReviseQuotationBodySchema,
+  canReviseQuotation,
+  isQuotationEditable,
+  quotationTransitionsFrom,
+} from './index.js';
+
+const id = () => crypto.randomUUID();
+
+describe('QuantityString (numeric(18,4), above zero)', () => {
+  it('accepts up to 4 decimals', () => {
+    for (const q of ['1', '1.5', '0.0001', '2.2500', '99999999999999.9999']) {
+      expect(QuantityString.safeParse(q).success, q).toBe(true);
+    }
+  });
+
+  it('rejects a JS number, a fifth decimal, zero, a negative and junk', () => {
+    expect(QuantityString.safeParse(1.5).success).toBe(false);
+    for (const q of ['1.23456', '0', '0.0000', '-1', '1e3', '', ' 1', '1.']) {
+      expect(QuantityString.safeParse(q).success, q).toBe(false);
+    }
+  });
+});
+
+describe('NonNegativeDecimalString (numeric(18,2), zero or more)', () => {
+  it('accepts zero and 2-decimal amounts', () => {
+    for (const p of ['0', '0.00', '10', '1234567.89']) {
+      expect(NonNegativeDecimalString.safeParse(p).success, p).toBe(true);
+    }
+  });
+
+  it('rejects a negative, a third decimal and a JS number', () => {
+    expect(NonNegativeDecimalString.safeParse('-1').success).toBe(false);
+    expect(NonNegativeDecimalString.safeParse('-0.01').success).toBe(false);
+    expect(NonNegativeDecimalString.safeParse('10.005').success).toBe(false);
+    expect(NonNegativeDecimalString.safeParse(10).success).toBe(false);
+  });
+});
+
+describe('QuotationLineInputSchema', () => {
+  const line = {
+    description: 'Solar panel 550W',
+    uom: 'pcs',
+    quantity: '12',
+    unitPrice: '45000.00',
+    taxCodeId: id(),
+  };
+
+  it('parses a line and takes an optional internal unit cost', () => {
+    expect(QuotationLineInputSchema.safeParse(line).success).toBe(true);
+    expect(QuotationLineInputSchema.safeParse({ ...line, unitCost: '30000.00' }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects numbers for quantity and price, zero quantity, and a negative price', () => {
+    expect(QuotationLineInputSchema.safeParse({ ...line, quantity: 12 }).success).toBe(false);
+    expect(QuotationLineInputSchema.safeParse({ ...line, unitPrice: 45000 }).success).toBe(false);
+    expect(QuotationLineInputSchema.safeParse({ ...line, quantity: '0' }).success).toBe(false);
+    expect(QuotationLineInputSchema.safeParse({ ...line, unitPrice: '-1.00' }).success).toBe(false);
+  });
+
+  it('has no per-line discount: the discount is on the quotation (C5)', () => {
+    expect(QuotationLineInputSchema.safeParse({ ...line, discount: '5' }).success).toBe(false);
+  });
+});
+
+describe('DiscountSchema', () => {
+  it('takes a percentage from 0 to 100 and a non-negative amount', () => {
+    for (const value of ['0', '12', '12.0001', '100', '100.0000']) {
+      expect(DiscountSchema.safeParse({ mode: 'pct', value }).success, value).toBe(true);
+    }
+    expect(DiscountSchema.safeParse({ mode: 'amount', value: '2500.50' }).success).toBe(true);
+  });
+
+  it('rejects a percentage over 100, a negative, and a number', () => {
+    for (const value of ['100.0001', '101', '-1', '12.00001']) {
+      expect(DiscountSchema.safeParse({ mode: 'pct', value }).success, value).toBe(false);
+    }
+    expect(DiscountSchema.safeParse({ mode: 'amount', value: '-5.00' }).success).toBe(false);
+    expect(DiscountSchema.safeParse({ mode: 'pct', value: 12 }).success).toBe(false);
+  });
+});
+
+describe('quotation statuses and the transition table', () => {
+  it('has ten statuses, including Superseded', () => {
+    expect([...QUOTATION_STATUSES]).toEqual([
+      'draft',
+      'submitted',
+      'returned',
+      'approved',
+      'sent',
+      'accepted',
+      'rejected',
+      'expired',
+      'cancelled',
+      'superseded',
+    ]);
+  });
+
+  it('allows exactly the edges of the state machine', () => {
+    const edges = QUOTATION_TRANSITIONS.map((t) => `${t.from}>${t.to}`);
+    expect([...new Set(edges)].sort()).toEqual(
+      [
+        'draft>submitted',
+        'draft>cancelled',
+        'submitted>returned',
+        'submitted>rejected',
+        'submitted>approved',
+        'returned>submitted',
+        'returned>cancelled',
+        'approved>sent',
+        'approved>expired',
+        'approved>superseded',
+        'approved>rejected',
+        'sent>accepted',
+        'sent>rejected',
+        'sent>expired',
+        'sent>superseded',
+      ].sort(),
+    );
+  });
+
+  it('has no way out of accepted, rejected, expired, cancelled or superseded', () => {
+    for (const s of ['accepted', 'rejected', 'expired', 'cancelled', 'superseded'] as const) {
+      expect(quotationTransitionsFrom(s), s).toEqual([]);
+    }
+  });
+
+  it('supersedes only on a revision of an approved or sent version', () => {
+    const into = QUOTATION_TRANSITIONS.filter((t) => t.to === 'superseded');
+    expect(into.map((t) => t.from).sort()).toEqual(['approved', 'sent']);
+    for (const t of into) expect(t.action).toBe('revise');
+  });
+
+  it('needs a reason to return, reject, or cancel, and none to approve or submit', () => {
+    const needs = (action: string) =>
+      QUOTATION_TRANSITIONS.filter((t) => t.action === action).map((t) => t.reasonRequired);
+    for (const a of ['return', 'reject', 'customer_reject', 'cancel', 'revise']) {
+      expect(needs(a).length, a).toBeGreaterThan(0);
+      expect(needs(a).every(Boolean), a).toBe(true);
+    }
+    for (const a of ['submit', 'approve', 'send', 'accept']) {
+      expect(needs(a).some(Boolean), a).toBe(false);
+    }
+  });
+
+  it('lets only the system expire a version', () => {
+    for (const t of QUOTATION_TRANSITIONS.filter((x) => x.action === 'expire')) {
+      expect(t.by).toBe('system');
+    }
+  });
+});
+
+describe('revision rules as data', () => {
+  it('edits only in draft and returned', () => {
+    expect([...QUOTATION_REVISION_RULES.editableStatuses].sort()).toEqual(['draft', 'returned']);
+    expect(isQuotationEditable('draft')).toBe(true);
+    expect(isQuotationEditable('submitted')).toBe(false);
+    expect(isQuotationEditable('approved')).toBe(false);
+  });
+
+  it('revises from approved, sent, rejected and expired, never from accepted', () => {
+    expect([...QUOTATION_REVISION_RULES.reviseFrom].sort()).toEqual([
+      'approved',
+      'expired',
+      'rejected',
+      'sent',
+    ]);
+    expect(canReviseQuotation('sent')).toBe(true);
+    expect(canReviseQuotation('rejected')).toBe(true);
+    expect(canReviseQuotation('accepted')).toBe(false);
+    expect(canReviseQuotation('draft')).toBe(false);
+  });
+
+  it('supersedes only approved and sent, and keeps one live version per quotation', () => {
+    expect([...QUOTATION_REVISION_RULES.supersededOnRevise].sort()).toEqual(['approved', 'sent']);
+    expect([...QUOTATION_REVISION_RULES.liveStatuses].sort()).toEqual([
+      'approved',
+      'draft',
+      'returned',
+      'sent',
+      'submitted',
+    ]);
+    expect(QUOTATION_REVISION_RULES.reasonRequired).toBe(true);
+    expect(QUOTATION_REVISION_RULES.newVersionStatus).toBe('draft');
+  });
+
+  it('agrees with the transition table: a status is superseded on revise exactly when an edge says so', () => {
+    for (const s of QUOTATION_STATUSES) {
+      const edge = quotationTransitionsFrom(s).some((t) => t.action === 'revise');
+      expect(QUOTATION_REVISION_RULES.supersededOnRevise.includes(s as never), s).toBe(edge);
+    }
+  });
+
+  it('requires a reason to revise or cancel', () => {
+    expect(ReviseQuotationBodySchema.safeParse({ expectedVersion: 1 }).success).toBe(false);
+    expect(ReviseQuotationBodySchema.safeParse({ reason: '  ', expectedVersion: 1 }).success).toBe(
+      false,
+    );
+    expect(
+      ReviseQuotationBodySchema.safeParse({ reason: 'Customer changed scope', expectedVersion: 1 })
+        .success,
+    ).toBe(true);
+    expect(CancelQuotationBodySchema.safeParse({ expectedVersion: 1 }).success).toBe(false);
+  });
+});
+
+describe('QuotationVersionContentSchema', () => {
+  const line = {
+    description: 'Panel',
+    uom: 'pcs',
+    quantity: '2',
+    unitPrice: '100.00',
+    taxCodeId: id(),
+  };
+  const content = {
+    currency: 'NPR',
+    issueDate: '2026-11-08',
+    validUntil: '2026-11-23',
+    lines: [line],
+    discount: { mode: 'pct', value: '5' },
+    paymentSchedule: [
+      { label: 'Advance', percent: '60' },
+      { label: 'Delivery', percent: '20' },
+      { label: 'Handover', percent: '20' },
+    ],
+  };
+
+  it('parses a full draft', () => {
+    expect(QuotationVersionContentSchema.safeParse(content).success).toBe(true);
+  });
+
+  it('allows validity to end the day it starts, but not before', () => {
+    expect(
+      QuotationVersionContentSchema.safeParse({ ...content, validUntil: '2026-11-08' }).success,
+    ).toBe(true);
+    expect(
+      QuotationVersionContentSchema.safeParse({ ...content, validUntil: '2026-11-07' }).success,
+    ).toBe(false);
+  });
+
+  it('needs at least one line', () => {
+    expect(QuotationVersionContentSchema.safeParse({ ...content, lines: [] }).success).toBe(false);
+  });
+
+  it('needs a payment schedule that adds up to 100 percent', () => {
+    const short = [
+      { label: 'Advance', percent: '60' },
+      { label: 'Delivery', percent: '20' },
+    ];
+    expect(
+      QuotationVersionContentSchema.safeParse({ ...content, paymentSchedule: short }).success,
+    ).toBe(false);
+    expect(
+      QuotationVersionContentSchema.safeParse({
+        ...content,
+        paymentSchedule: [
+          { label: 'A', percent: '33.33' },
+          { label: 'B', percent: '33.33' },
+          { label: 'C', percent: '33.34' },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('only INR, NPR and USD', () => {
+    expect(QuotationVersionContentSchema.safeParse({ ...content, currency: 'EUR' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('QuotationTaxSummaryItemSchema', () => {
+  it('keeps base and tax as strings', () => {
+    const item = {
+      taxCodeId: id(),
+      label: 'VAT 13%',
+      rate: '13.0000',
+      base: '2300000.00',
+      tax: '299000.00',
+    };
+    expect(QuotationTaxSummaryItemSchema.safeParse(item).success).toBe(true);
+    expect(QuotationTaxSummaryItemSchema.safeParse({ ...item, base: 2300000 }).success).toBe(false);
+    expect(QuotationTaxSummaryItemSchema.safeParse({ ...item, tax: '299000.001' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('acceptance evidence', () => {
+  it('names the three kinds; "both" is a policy, not a kind', () => {
+    expect([...EVIDENCE_KINDS]).toEqual(['contract', 'purchase_order', 'signed_quote']);
+  });
+
+  const accepted = {
+    outcome: 'accepted',
+    decidedOn: '2026-11-20',
+    evidenceKinds: ['signed_quote'],
+    expectedVersion: 4,
+  };
+
+  it('parses an acceptance with evidence, and a combination of kinds', () => {
+    expect(RecordOutcomeBodySchema.safeParse(accepted).success).toBe(true);
+    expect(
+      RecordOutcomeBodySchema.safeParse({
+        ...accepted,
+        evidenceKinds: ['signed_quote', 'purchase_order'],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects an acceptance with no evidence kind, an unknown kind, or a repeated kind', () => {
+    expect(RecordOutcomeBodySchema.safeParse({ ...accepted, evidenceKinds: [] }).success).toBe(
+      false,
+    );
+    expect(
+      RecordOutcomeBodySchema.safeParse({ ...accepted, evidenceKinds: ['verbal'] }).success,
+    ).toBe(false);
+    expect(
+      RecordOutcomeBodySchema.safeParse({ ...accepted, evidenceKinds: ['contract', 'contract'] })
+        .success,
+    ).toBe(false);
+  });
+
+  it('lets a rejection carry no evidence, but needs a comment', () => {
+    const rejected = {
+      outcome: 'rejected',
+      decidedOn: '2026-11-20',
+      evidenceKinds: [],
+      expectedVersion: 4,
+    };
+    expect(
+      RecordOutcomeBodySchema.safeParse({ ...rejected, comment: 'Chose a rival' }).success,
+    ).toBe(true);
+    expect(RecordOutcomeBodySchema.safeParse(rejected).success).toBe(false);
+  });
+});
+
+describe('QuotationVersionDtoSchema', () => {
+  const iso = '2026-11-08T10:00:00+05:45';
+  const version = () => ({
+    id: id(),
+    quotationId: id(),
+    number: 'QT-2082-0042',
+    revisionNo: 2,
+    status: 'superseded',
+    rejectionSource: null,
+    customerId: id(),
+    contactId: null,
+    templateId: null,
+    currency: 'USD',
+    issueDate: '2026-11-08',
+    validUntil: '2026-11-23',
+    scope: null,
+    assumptions: null,
+    exclusions: null,
+    deliveryTimeline: null,
+    paymentTermId: null,
+    paymentSchedule: [],
+    discount: { mode: 'pct', value: '13' },
+    lines: [],
+    taxSummary: [],
+    totals: {
+      subtotal: '2599999.99',
+      discountAmount: '208000.00',
+      taxableAmount: '2391999.99',
+      taxAmount: '299000.00',
+      total: '2690999.99',
+      effectiveDiscountPct: '8.0000',
+    },
+    internalCostTotal: null,
+    marginPct: null,
+    nprSnapshot: null,
+    approvalRequestId: null,
+    snapshotSha256: null,
+    renderedDocumentId: null,
+    renderedSha256: null,
+    supersedesVersionId: null,
+    supersededByVersionId: id(),
+    revisionReason: 'Customer changed scope',
+    cancelReason: null,
+    submittedAt: iso,
+    approvedAt: iso,
+    sentAt: iso,
+    acceptedAt: null,
+    rejectedAt: null,
+    expiredAt: null,
+    cancelledAt: null,
+    version: 7,
+    createdAt: iso,
+    updatedAt: iso,
+  });
+
+  it('parses a superseded version with its rejection source and money as strings', () => {
+    expect(QuotationVersionDtoSchema.safeParse(version()).success).toBe(true);
+    expect(
+      QuotationVersionDtoSchema.safeParse({
+        ...version(),
+        status: 'rejected',
+        rejectionSource: 'customer',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a JS number for a total, and an unknown rejection source', () => {
+    const v = version();
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...v, totals: { ...v.totals, total: 2690999.99 } })
+        .success,
+    ).toBe(false);
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...v, status: 'rejected', rejectionSource: 'nobody' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('needs a rejection source when rejected, and none otherwise', () => {
+    expect(QuotationVersionDtoSchema.safeParse({ ...version(), status: 'rejected' }).success).toBe(
+      false,
+    );
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...version(), rejectionSource: 'internal' }).success,
+    ).toBe(false);
+  });
+});
