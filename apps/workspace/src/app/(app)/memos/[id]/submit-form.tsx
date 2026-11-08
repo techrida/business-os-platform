@@ -2,6 +2,9 @@
 
 import { useActionState } from 'react';
 
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+
 import styles from '../../kit.module.css';
 import { submitMemoAction, type SubmitState } from '../actions';
 
@@ -12,27 +15,22 @@ import { submitMemoAction, type SubmitState } from '../actions';
 export function SubmitForm({ memoId, blocker }: { memoId: string; blocker: string | null }) {
   const [state, formAction, pending] = useActionState<SubmitState, FormData>(submitMemoAction, {});
   return (
-    <form action={formAction}>
+    <form action={formAction} className={styles.submit}>
       <input type="hidden" name="memoId" value={memoId} />
       {state.error ? (
-        <div
-          className={`${styles.notice} ${styles.noticeBad}`}
-          role="alert"
-          style={{ marginBottom: '0.75rem' }}
-        >
-          <p>{state.error}</p>
-        </div>
+        <Alert tone="error" role="alert">
+          {state.error}
+        </Alert>
       ) : null}
-      <button
+      <Button
         type="submit"
-        className={styles.btn}
         disabled={pending || blocker !== null}
         aria-describedby={blocker !== null ? 'submit-blocker' : undefined}
       >
         {pending ? 'Submitting' : 'Submit for approval'}
-      </button>
+      </Button>
       {blocker !== null ? (
-        <p id="submit-blocker" className={styles.hint} style={{ margin: '0.5rem 0 0' }}>
+        <p id="submit-blocker" className={styles.note}>
           {blocker}
         </p>
       ) : null}
