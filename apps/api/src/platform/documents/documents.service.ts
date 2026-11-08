@@ -10,11 +10,16 @@
 //   receiveContent()  -> quarantined        bytes on disk under quarantine/, type checked, docs.scan queued
 //                     -> rejected           wrong type or too big (file deleted)
 //   scan processor    -> clean | infected | scan_failed
+//
+// Generated files (a quotation PDF a job rendered) take the same road under the system actor:
+//   createGenerated() -> receiveGenerated() -> the same receiveContent, scan and `clean` gate as an upload.
+// The only difference is who is asked: the owner's `allowsSystemActor`, not the request principal's authz.
 import { randomUUID } from 'node:crypto';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 
 import {
   ALLOWED_MIME,
+  CreateDocumentBodySchema,
   MAX_UPLOAD_BYTES,
   type CreateDocumentBody,
   type DocumentVersionDto,
@@ -77,6 +82,13 @@ export interface DocumentDto {
 
 /** What a new version needs from the client: the owner and the document already exist. */
 export type NewVersionBody = Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>;
+
+/** A file a job generated: its bytes are in memory, so the size is known and nothing is declared by a client. */
+export interface GeneratedFile {
+  filename: string;
+  declaredMime: string;
+  bytes: Buffer;
+}
 
 export interface DownloadHandle {
   stream: Readable;
@@ -172,6 +184,96 @@ export class DocumentsService {
       versionId,
       uploadPath: `/v1/documents/${documentId}/versions/${versionId}/content`,
     };
+  }
+
+  /**
+   * Creates the document and its version 1 (awaiting_content) for a file a background job generated, in the
+   * caller's transaction. That transaction must run under the system actor (`withTx(db, scope,
+   * systemActor('<job>'), ...)`): a user transaction is refused, so this can never be used to skip the
+   * principal's authz check. The owner's `allowsSystemActor` must say yes (it is absent by default, which is
+   * no), and an owner that does not exist in this scope is a 404. A refusal writes no row.
+   *
+   * The bytes are NOT written here: the row must be committed first, because the content step opens its own
+   * transactions and the scan worker reads the row. Call `receiveGenerated` after the commit.
+   */
+  async createGenerated(
+    tx: DbTransaction,
+    owner: { ownerType: string; ownerId: string },
+    file: GeneratedFile,
+  ): Promise<{ documentId: string; versionId: string }> {
+    const who = await readTxContext(tx);
+    if (who.actorKind !== 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    const parsed = CreateDocumentBodySchema.safeParse({
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      filename: file.filename,
+      declaredMime: file.declaredMime,
+      // A zero-byte file fails `positive()`: an empty generated file is a bug in the job, not a document.
+      sizeBytes: file.bytes.length,
+    });
+    if (!parsed.success) {
+      throw new BadRequestException(`Invalid generated file: ${parsed.error.message}`);
+    }
+    const b = parsed.data;
+    if (!this.owners.has(b.ownerType)) {
+      throw new BadRequestException(`Unknown owner type: ${b.ownerType}`);
+    }
+    await this.assertSystemOwner(
+      who.scope,
+      b.ownerType,
+      b.ownerId,
+      { kind: 'system', id: who.actorId },
+      tx,
+    );
+    assertUploadAllowed(b);
+
+    const s = scoped(who.scope);
+    const documentId = randomUUID();
+    const versionId = randomUUID();
+    await tx.insert(documents).values(
+      s.values({
+        id: documentId,
+        ownerType: b.ownerType,
+        ownerId: b.ownerId,
+        createdBy: actorUuid(who),
+      }),
+    );
+    await tx.insert(documentVersions).values(
+      s.values({
+        id: versionId,
+        documentId,
+        version: 1,
+        filename: b.filename,
+        declaredMime: b.declaredMime,
+        sizeBytes: b.sizeBytes,
+        storageKey: `${who.scope.tenantId}/${versionId}`,
+        status: 'awaiting_content' as const,
+        uploadedBy: actorUuid(who),
+      }),
+    );
+    return { documentId, versionId };
+  }
+
+  /**
+   * Hands the bytes of a generated file (from `createGenerated`, after its transaction committed) to the
+   * ordinary `receiveContent` pipeline: quarantine, type check against the declared type, sha256, and the
+   * queued virus scan. The version is downloadable only once the scan marks it `clean`, like an upload.
+   * `who` must be a system actor; the owner is asked again through `allowsSystemActor`.
+   */
+  async receiveGenerated(
+    created: { documentId: string; versionId: string },
+    file: GeneratedFile,
+    who: { scope: TxScope; actor: Actor },
+  ): Promise<DocumentVersionDto> {
+    if (who.actor.kind !== 'system') {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    return this.receiveContent(created.versionId, Readable.from(file.bytes), file.bytes.length, {
+      documentId: created.documentId,
+      who,
+    });
   }
 
   /**
@@ -295,9 +397,14 @@ export class DocumentsService {
     // two uploads of the same version cannot both pass: the second sees `quarantined` and gets 409.
     const row = await withTx(this.db, who.scope, who.actor, async (tx) => {
       const found = await this.loadVersion(tx, who.scope, versionId, opts.documentId, true);
-      await this.assertOwner(who.scope, found.ownerType, found.ownerId, 'documents.upload');
-      // The memo may have been submitted since the document was created: no bytes are written then.
-      await this.assertCanAttach(who.scope, found.ownerType, found.ownerId, tx);
+      if (who.actor.kind === 'system') {
+        // A generated file: the owner's system policy decides, never the request principal (there is none).
+        await this.assertSystemOwner(who.scope, found.ownerType, found.ownerId, who.actor, tx);
+      } else {
+        await this.assertOwner(who.scope, found.ownerType, found.ownerId, 'documents.upload');
+        // The memo may have been submitted since the document was created: no bytes are written then.
+        await this.assertCanAttach(who.scope, found.ownerType, found.ownerId, tx);
+      }
       if (found.version.status !== 'awaiting_content') {
         throw new ConflictException('Content was already received for this version');
       }
@@ -534,6 +641,30 @@ export class DocumentsService {
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
     this.authz.assert(action, ref);
+  }
+
+  /**
+   * The system path's twin of assertOwner: the owner must exist in this scope (404) and its policy must
+   * allow the system actor (403). No policy, or a policy without `allowsSystemActor`, refuses.
+   */
+  private async assertSystemOwner(
+    scope: TxScope,
+    ownerType: string,
+    ownerId: string,
+    actor: Pick<Actor, 'kind' | 'id'>,
+    tx: DbTransaction,
+  ): Promise<void> {
+    const policy = this.owners.get(ownerType);
+    if (policy?.allowsSystemActor === undefined) {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
+    const ref: ResourceRef | null = await policy.resource(scope, ownerId);
+    if (ref === null) throw new NotFoundException('Owner record not found');
+    // Called as a method, not detached: a policy class may use `this`.
+    // Only who the actor is, not its request details (ip, correlation id): that is all a policy decides on.
+    if (!(await policy.allowsSystemActor(scope, ownerId, { kind: actor.kind, id: actor.id }, tx))) {
+      throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+    }
   }
 
   /** 409 when the owner no longer takes attachments. No canAttach on the policy means always allowed. */

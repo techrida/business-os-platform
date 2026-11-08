@@ -3,7 +3,7 @@
 // notify (U5) are still being written. The module file wires each token to the real service with
 // `useExisting`, so this file is the only place that states what documents really calls.
 import type { Permission } from '@bos/contracts';
-import type { DbTransaction, TxScope } from '../db/tx';
+import type { Actor, DbTransaction, TxScope } from '../db/tx';
 import type { ResourceRef } from '../authz/can';
 
 /** The BullMQ queue and job name for the virus scan. */
@@ -33,6 +33,19 @@ export interface DocumentOwnerPolicy {
    * part of what was approved and cannot be taken away.
    */
   canAttach?(scope: TxScope, ownerId: string, tx?: DbTransaction): Promise<boolean>;
+  /**
+   * Whether the system actor (`system:<job>`, a background job with no user) may add generated files to this
+   * owner, for example a quotation PDF. `createGenerated` and the receive step of a generated file ask it
+   * instead of the request principal's authz check, and a refusal means no row and no bytes. Absent means
+   * no: an owner that does not implement it never takes generated files (deny by default). It replaces
+   * `canAttach` for the system path: `canAttach` models a user adding to a draft, this models a job.
+   */
+  allowsSystemActor?(
+    scope: TxScope,
+    ownerId: string,
+    actor: Pick<Actor, 'kind' | 'id'>,
+    tx?: DbTransaction,
+  ): Promise<boolean>;
 }
 
 export const AUTHZ_PORT = Symbol('DOCUMENTS_AUTHZ_PORT');
