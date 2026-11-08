@@ -8,20 +8,25 @@
 //   and the create is an audit event;
 // - "authorization is deny-by-default": staff only, `quotation.draft` on a quotation the caller will own, and the
 //   opportunity is read through scoped(), so another entity's opportunity is a 404.
-// list, detail and getVersion arrive in Part 2, updateDraft in Part 3.
+// - list, detail and getVersion (Part 2) are staff-only and read through scopeWhereFor(), the SQL twin of can(),
+//   so a quotation of another entity, or of another owner under `own` scope, is a 404 and never in the list.
+// - updateDraft (Part 3) re-prices the merged draft content and guards the write with the row version.
 import {
   type CreateQuotationBody,
+  type DocumentVersionStatus,
   type Permission,
   type QuotationDetail,
   type QuotationDto,
   type QuotationListItem,
   type QuotationStatus,
+  QuotationVersionContentSchema,
   type QuotationVersionDto,
   type UpdateQuotationDraftBody,
 } from '@bos/contracts';
 import {
   customerContacts,
   customers,
+  documentVersions,
   opportunities,
   paymentTerms,
   quotationLines,
@@ -30,29 +35,41 @@ import {
   quotationTaxSummary,
   quotationVersions,
   scoped,
+  users,
 } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
-  NotImplementedException,
   Optional,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
-import { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
 import { type Principal } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
-import { withIdempotency } from '../../../platform/db/idempotency';
+import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { PricingService } from '../pricing/pricing.service';
 import type { PricingInput } from '../pricing/pricing.types';
 import { DraftingCaller } from './drafting.caller';
-import { toQuotationDto } from './mapping';
+import {
+  toQuotationDetail,
+  toQuotationDto,
+  toQuotationListItem,
+  toQuotationVersionDto,
+  type QuotationRow,
+  type QuotationVersionParts,
+  type QuotationVersionRow,
+} from './mapping';
+
+/** A version with its own rows; the parent quotation is added by the caller. */
+type VersionWithParts = Omit<QuotationVersionParts, 'quotation'>;
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const DRAFTING_CLOCK = Symbol('DRAFTING_CLOCK');
@@ -65,7 +82,78 @@ const AUDIT_ENTITY = 'quotations';
 const opportunityNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Opportunity not found' });
 
+const quotationNotFound = () =>
+  new NotFoundException({ code: 'not_found', message: 'Quotation not found' });
+
+const forbidden = () =>
+  new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: 'no_permission' });
+
 const badRequest = (message: string) => new BadRequestException({ code: 'bad_request', message });
+
+const notEditable = () =>
+  new ConflictException({
+    code: 'conflict',
+    message: 'Only a Draft or Returned version can be edited; revise it instead',
+  });
+
+/** The pg error behind `error` (drizzle may wrap it as `cause`): its SQLSTATE and, when named, the constraint. */
+function pgError(error: unknown): { code: string; constraint?: string } | undefined {
+  for (
+    let e: unknown = error, depth = 0;
+    typeof e === 'object' && e !== null && depth < 3;
+    depth++
+  ) {
+    const { code, constraint, cause } = e as {
+      code?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
+    if (typeof code === 'string' && code.length === 5) {
+      return { code, ...(typeof constraint === 'string' ? { constraint } : {}) };
+    }
+    e = cause;
+  }
+  return undefined;
+}
+
+/** `o` without its undefined and null fields: a partial body names only what it changes. */
+function definedOnly<T extends object>(o: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(o).filter(([, v]) => v !== undefined && v !== null),
+  ) as Partial<T>;
+}
+
+/**
+ * The saved content of a version in the body's shape, read off its DTO (whose discount is already trimmed to
+ * the contract's decimals), so a partial update can be merged over it and parsed with the contract.
+ */
+function contentOf(v: QuotationVersionDto): Record<string, unknown> {
+  return definedOnly({
+    contactId: v.contactId,
+    templateId: v.templateId,
+    currency: v.currency,
+    issueDate: v.issueDate,
+    validUntil: v.validUntil,
+    scope: v.scope,
+    assumptions: v.assumptions,
+    exclusions: v.exclusions,
+    deliveryTimeline: v.deliveryTimeline,
+    paymentTermId: v.paymentTermId,
+    paymentSchedule: v.paymentSchedule,
+    discount: v.discount,
+    lines: v.lines.map((l) =>
+      definedOnly({
+        catalogItemId: l.catalogItemId,
+        description: l.description,
+        uom: l.uom,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        unitCost: l.unitCost,
+        taxCodeId: l.taxCodeId,
+      }),
+    ),
+  });
+}
 
 /** The pricing input of a version's content: lines numbered from 1 in the order the client sent them. */
 export function pricingInputOf(
@@ -235,51 +323,373 @@ export class DraftingService {
     return toQuotationDto(row!, 'draft');
   }
 
-  // ------------------------------------------------------------------------------------- later parts (stubs)
+  // -------------------------------------------------------------------------------------------------- reads
 
-  list(status?: QuotationStatus): Promise<QuotationListItem[]> {
-    void status;
-    return Promise.reject(new NotImplementedException('DraftingService.list (Q1b-B part 2)'));
+  /** The quotations of the acting entity the caller may read, newest first; `status` is the current version's. */
+  async list(status?: QuotationStatus): Promise<QuotationListItem[]> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    const visible = scopeWhereFor(principal, quotations, 'quotation.read');
+    return withTx(this.db, scope, actor, async (tx) => {
+      const rows = await tx
+        .select({
+          quotation: quotations,
+          current: quotationVersions,
+          customerName: customers.legalName,
+          ownerName: users.displayName,
+        })
+        .from(quotations)
+        .innerJoin(
+          quotationVersions,
+          and(
+            eq(quotationVersions.tenantId, quotations.tenantId),
+            eq(quotationVersions.id, quotations.currentVersionId),
+          ),
+        )
+        .innerJoin(
+          customers,
+          and(
+            eq(customers.tenantId, quotations.tenantId),
+            eq(customers.id, quotations.customerPartyId),
+          ),
+        )
+        .leftJoin(
+          users,
+          and(eq(users.tenantId, quotations.tenantId), eq(users.id, quotations.ownerUserId)),
+        )
+        .where(status === undefined ? visible : and(visible, eq(quotationVersions.status, status)))
+        .orderBy(desc(quotations.createdAt), desc(quotations.id));
+      return rows.map((r) =>
+        toQuotationListItem(r.quotation, r.current, {
+          customerName: r.customerName,
+          ownerName: r.ownerName,
+        }),
+      );
+    });
   }
 
-  detail(id: string): Promise<QuotationDetail> {
-    void id;
-    return Promise.reject(new NotImplementedException('DraftingService.detail (Q1b-B part 2)'));
+  /** Every version (Superseded included) with lines, tax summary and scan status, the history and the contacts. */
+  async detail(id: string): Promise<QuotationDetail> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const quotation = await this.findVisible(tx, principal, id);
+      const versionRows = await tx
+        .select()
+        .from(quotationVersions)
+        .where(
+          and(
+            eq(quotationVersions.tenantId, quotation.tenantId),
+            eq(quotationVersions.organizationId, quotation.organizationId),
+            eq(quotationVersions.quotationId, quotation.id),
+          ),
+        );
+      const versions = await this.withParts(tx, quotation.tenantId, versionRows);
+      const statusHistory = await tx
+        .select()
+        .from(quotationStatusHistory)
+        .where(
+          and(
+            eq(quotationStatusHistory.tenantId, quotation.tenantId),
+            inArray(
+              quotationStatusHistory.versionId,
+              versionRows.map((v) => v.id),
+            ),
+          ),
+        )
+        .orderBy(asc(quotationStatusHistory.at), asc(quotationStatusHistory.id));
+      const customerPartyId = quotation.customerPartyId;
+      if (customerPartyId === null) {
+        throw new Error(`quotation ${quotation.number} has no customer`);
+      }
+      const [customer] = await tx
+        .select({ legalName: customers.legalName })
+        .from(customers)
+        .where(and(eq(customers.tenantId, quotation.tenantId), eq(customers.id, customerPartyId)))
+        .limit(1);
+      if (customer === undefined) {
+        throw new Error(`quotation ${quotation.number} has no customer record`);
+      }
+      const contacts = await tx
+        .select({
+          id: customerContacts.id,
+          fullName: customerContacts.fullName,
+          emailNorm: customerContacts.emailNorm,
+        })
+        .from(customerContacts)
+        .where(
+          and(
+            eq(customerContacts.tenantId, quotation.tenantId),
+            eq(customerContacts.customerId, customerPartyId),
+          ),
+        )
+        .orderBy(asc(customerContacts.fullName), asc(customerContacts.id));
+      return toQuotationDetail({
+        quotation,
+        versions,
+        statusHistory,
+        customerName: customer.legalName,
+        contacts,
+      });
+    });
   }
 
-  getVersion(id: string, versionId: string): Promise<QuotationVersionDto> {
-    void id;
-    void versionId;
-    return Promise.reject(new NotImplementedException('DraftingService.getVersion (Q1b-B part 2)'));
+  /** One version of a visible quotation; a version of another quotation is a 404 like a missing one. */
+  async getVersion(id: string, versionId: string): Promise<QuotationVersionDto> {
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const quotation = await this.findVisible(tx, principal, id);
+      const version = await this.findVersion(tx, quotation, versionId);
+      const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
+      return toQuotationVersionDto({ ...parts!, quotation });
+    });
   }
 
-  updateDraft(
+  // ------------------------------------------------------------------------------------------- update draft
+
+  /**
+   * Saves draft content onto a Draft or Returned version: the body's fields over the saved content, re-priced in
+   * full (a new issue date or currency changes rates even when the lines stay), the lines and tax summary
+   * replaced, and the version row bumped through updateVersioned(), all in one transaction. 404 outside the
+   * caller's read scope, 403 without quotation.draft on this quotation, 409 for any other status or a stale
+   * expectedVersion, 400 for merged content the contract refuses.
+   */
+  async updateDraft(
     id: string,
     versionId: string,
     body: UpdateQuotationDraftBody,
   ): Promise<{ version: number }> {
-    void id;
-    void versionId;
-    void body;
-    return Promise.reject(
-      new NotImplementedException('DraftingService.updateDraft (Q1b-B part 3)'),
-    );
+    const { scope, actor, principal } = this.caller.current();
+    this.assertStaff(principal);
+    try {
+      return await withTx(this.db, scope, actor, (tx) =>
+        this.updateDraftInTx(tx, scope, principal, id, versionId, body),
+      );
+    } catch (error) {
+      // The freeze triggers refuse what slipped past the status check (a submit committed in between).
+      const pg = pgError(error);
+      if (
+        pg?.code === '23514' &&
+        pg.constraint !== undefined &&
+        (pg.constraint.endsWith('_frozen_check') || pg.constraint.endsWith('_transition_check'))
+      ) {
+        throw notEditable();
+      }
+      throw error;
+    }
+  }
+
+  private async updateDraftInTx(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    id: string,
+    versionId: string,
+    body: UpdateQuotationDraftBody,
+  ): Promise<{ version: number }> {
+    const quotation = await this.findVisible(tx, principal, id);
+    // The record check uses the stored owner: under `own`, a colleague's quotation is read-only.
+    const action: Permission = 'quotation.draft';
+    this.authz.assert(action, {
+      tenantId: quotation.tenantId,
+      organizationId: quotation.organizationId,
+      ownerUserId: quotation.ownerUserId,
+      customerPartyId: quotation.customerPartyId,
+    });
+    const version = await this.findVersion(tx, quotation, versionId, true);
+    if (version.status !== 'draft' && version.status !== 'returned') throw notEditable();
+
+    const { expectedVersion, ...patch } = body;
+    if (patch.attachmentDocumentIds !== undefined && patch.attachmentDocumentIds.length > 0) {
+      throw badRequest('attachmentDocumentIds are not supported yet');
+    }
+    const [parts] = await this.withParts(tx, scope.tenantId, [version]);
+    const saved = toQuotationVersionDto({ ...parts!, quotation });
+    const parsed = QuotationVersionContentSchema.safeParse({
+      ...contentOf(saved),
+      ...definedOnly(patch),
+    });
+    if (!parsed.success) {
+      throw badRequest(parsed.error.issues.map((i) => i.message).join('; '));
+    }
+    const content = parsed.data;
+    if (patch.contactId !== undefined && quotation.customerPartyId !== null) {
+      await this.assertContactOf(tx, scope.tenantId, patch.contactId, quotation.customerPartyId);
+    }
+    if (patch.paymentTermId !== undefined) {
+      await this.assertPaymentTerm(tx, scope.tenantId, patch.paymentTermId);
+    }
+
+    const priced = await this.pricing.priceVersion(tx, scope, pricingInputOf(content));
+    const owned = { tenantId: quotation.tenantId, organizationId: quotation.organizationId };
+    await tx
+      .delete(quotationLines)
+      .where(
+        and(eq(quotationLines.tenantId, scope.tenantId), eq(quotationLines.versionId, versionId)),
+      );
+    await tx
+      .delete(quotationTaxSummary)
+      .where(
+        and(
+          eq(quotationTaxSummary.tenantId, scope.tenantId),
+          eq(quotationTaxSummary.versionId, versionId),
+        ),
+      );
+    await tx
+      .insert(quotationLines)
+      .values(priced.lines.map((line) => ({ ...owned, versionId, ...line })));
+    if (priced.taxSummary.length > 0) {
+      await tx
+        .insert(quotationTaxSummary)
+        .values(priced.taxSummary.map((row) => ({ ...owned, versionId, ...row })));
+    }
+    const updated = await updateVersioned(tx, quotationVersions, versionId, expectedVersion, {
+      contactId: content.contactId ?? null,
+      templateId: content.templateId ?? null,
+      currency: content.currency,
+      issueDate: content.issueDate,
+      validUntil: content.validUntil,
+      scope: content.scope ?? null,
+      assumptions: content.assumptions ?? null,
+      exclusions: content.exclusions ?? null,
+      deliveryTimeline: content.deliveryTimeline ?? null,
+      paymentTermId: content.paymentTermId ?? null,
+      paymentSchedule: content.paymentSchedule ?? [],
+      discountMode: content.discount?.mode ?? null,
+      discountInput: content.discount?.value ?? null,
+      ...priced.columns,
+      updatedAt: this.clock(),
+    });
+
+    await this.audit.record(tx, {
+      action: 'quotation.draft_updated',
+      entityType: AUDIT_ENTITY,
+      entityId: quotation.id,
+      before: { versionId, version: version.version, total: version.total },
+      after: {
+        versionId,
+        version: updated.version,
+        currency: updated.currency,
+        total: updated.total,
+        fields: Object.keys(definedOnly(patch)),
+      },
+    });
+    return { version: updated.version };
   }
 
   // ----------------------------------------------------------------------------------------------- helpers
+
+  /**
+   * The workspace routes are for staff: a version carries the internal cost and margin, so a portal user holding
+   * quotation.read by mistake is refused here and reads through the portal routes instead.
+   */
+  private assertStaff(p: Principal): void {
+    if (p.orgKind !== 'staff') throw forbidden();
+  }
+
+  /**
+   * The quotation, when the caller may read it: the same scopeWhereFor() rule as the list, so another entity's
+   * quotation, or another owner's under `own` scope, is a 404 rather than a 403 that would confirm it exists.
+   */
+  private async findVisible(tx: DbTransaction, p: Principal, id: string): Promise<QuotationRow> {
+    const [row] = await tx
+      .select()
+      .from(quotations)
+      .where(and(scopeWhereFor(p, quotations, 'quotation.read'), eq(quotations.id, id)))
+      .limit(1);
+    if (row === undefined) throw quotationNotFound();
+    return row;
+  }
+
+  /**
+   * A version of `quotation`; one of another quotation is a 404. `forUpdate` locks the row, so a submit cannot
+   * commit between the status check and the write.
+   */
+  private async findVersion(
+    tx: DbTransaction,
+    quotation: QuotationRow,
+    versionId: string,
+    forUpdate = false,
+  ): Promise<QuotationVersionRow> {
+    const query = tx
+      .select()
+      .from(quotationVersions)
+      .where(
+        and(
+          eq(quotationVersions.tenantId, quotation.tenantId),
+          eq(quotationVersions.organizationId, quotation.organizationId),
+          eq(quotationVersions.quotationId, quotation.id),
+          eq(quotationVersions.id, versionId),
+        ),
+      )
+      .limit(1);
+    const [row] = forUpdate ? await query.for('update') : await query;
+    if (row === undefined) {
+      throw new NotFoundException({ code: 'not_found', message: 'Quotation version not found' });
+    }
+    return row;
+  }
+
+  /** The lines, tax summary and rendered-PDF scan status of each version, read in three queries. */
+  private async withParts(
+    tx: DbTransaction,
+    tenantId: string,
+    versions: readonly QuotationVersionRow[],
+  ): Promise<VersionWithParts[]> {
+    const ids = versions.map((v) => v.id);
+    if (ids.length === 0) return [];
+    const lines = await tx
+      .select()
+      .from(quotationLines)
+      .where(and(eq(quotationLines.tenantId, tenantId), inArray(quotationLines.versionId, ids)));
+    const taxSummary = await tx
+      .select()
+      .from(quotationTaxSummary)
+      .where(
+        and(
+          eq(quotationTaxSummary.tenantId, tenantId),
+          inArray(quotationTaxSummary.versionId, ids),
+        ),
+      );
+    const documentIds = versions.flatMap((v) =>
+      v.renderedDocumentId === null ? [] : [v.renderedDocumentId],
+    );
+    // The newest upload of each rendered document, whatever its scan status: documents.current_version_id is the
+    // newest *clean* one, so reading through it would show a pending or infected scan as "no PDF".
+    const scanStatus = new Map<string, DocumentVersionStatus>();
+    if (documentIds.length > 0) {
+      const docVersions = await tx
+        .select({ documentId: documentVersions.documentId, status: documentVersions.status })
+        .from(documentVersions)
+        .where(
+          and(
+            eq(documentVersions.tenantId, tenantId),
+            inArray(documentVersions.documentId, documentIds),
+          ),
+        )
+        .orderBy(desc(documentVersions.version));
+      for (const d of docVersions) {
+        if (!scanStatus.has(d.documentId)) scanStatus.set(d.documentId, d.status);
+      }
+    }
+    return versions.map((version) => ({
+      version,
+      lines: lines.filter((l) => l.versionId === version.id),
+      taxSummary: taxSummary.filter((t) => t.versionId === version.id),
+      renderedScanStatus:
+        version.renderedDocumentId === null
+          ? null
+          : (scanStatus.get(version.renderedDocumentId) ?? null),
+    }));
+  }
 
   /**
    * Quotations are drafted by staff only (a portal user holding the key by mistake is still refused), and the
    * caller becomes the owner, so the record checked is "a quotation of the acting entity owned by the caller".
    */
   private assertMayDraft(p: Principal, scope: TxScope): void {
-    if (p.orgKind !== 'staff') {
-      throw new ForbiddenException({
-        code: 'forbidden',
-        message: 'Forbidden',
-        reason: 'no_permission',
-      });
-    }
+    this.assertStaff(p);
     const action: Permission = 'quotation.draft';
     this.authz.assert(action, {
       tenantId: scope.tenantId,
