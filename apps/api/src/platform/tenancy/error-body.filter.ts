@@ -13,6 +13,7 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { z } from 'zod';
 
 import { STEP_UP_REQUIRED } from '../auth/step-up';
 import { newCorrelationId } from '../obs/correlation';
@@ -28,6 +29,7 @@ export type ErrorCode =
   | 'conflict'
   | 'fx_rate_stale'
   | 'duplicate_pan_vat'
+  | 'duplicate_found'
   | 'primary_contact_exists'
   | 'payload_too_large'
   | 'unsupported_media_type'
@@ -65,6 +67,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   conflict: 'Conflict',
   fx_rate_stale: 'The exchange rate is too old',
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
+  duplicate_found: 'This looks like a record that already exists',
   primary_contact_exists: 'This customer already has a primary contact',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
@@ -116,6 +119,7 @@ function isStepUp(exception: HttpException): boolean {
 const CONFLICT_CODES: readonly ErrorCode[] = [
   'fx_rate_stale',
   'duplicate_pan_vat',
+  'duplicate_found',
   'primary_contact_exists',
 ];
 
@@ -131,6 +135,35 @@ function detailsOf(exception: HttpException): Record<string, string | number> | 
   const response = exception.getResponse();
   if (typeof response !== 'object' || !('details' in response)) return undefined;
   const parsed = ErrorBodySchema.shape.error.shape.details.safeParse(response.details);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * One possible duplicate of a lead's customer or contact. The same shape the workspace parses in
+ * `apps/workspace/src/components/p2/crm/duplicates.ts`: for a contact, `customerId` names the customer it
+ * belongs to, so "use existing" can link both.
+ */
+export const DuplicateCandidateSchema = z.strictObject({
+  kind: z.enum(['customer', 'contact']),
+  id: z.guid(),
+  label: z.string().max(300),
+  /** What matched: name, pan, email or phone. */
+  matchedOn: z.string().max(50),
+  customerId: z.guid().optional(),
+});
+export type DuplicateCandidate = z.infer<typeof DuplicateCandidateSchema>;
+
+const DuplicateListSchema = z.array(DuplicateCandidateSchema).min(1).max(50);
+
+/**
+ * The candidates of a `duplicate_found` 409, validated so a stray object never reaches the client. They go to
+ * `error.duplicates` (a sibling of `code`, not inside `details`, which only holds strings and numbers).
+ * ErrorBodySchema is not strict, so a client that parses with it still accepts the body.
+ */
+function duplicatesOf(exception: HttpException): DuplicateCandidate[] | undefined {
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('duplicates' in response)) return undefined;
+  const parsed = DuplicateListSchema.safeParse(response.duplicates);
   return parsed.success ? parsed.data : undefined;
 }
 
@@ -167,6 +200,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
     let stepUp = false;
     let conflictCode: ErrorCode | undefined;
     let details: Record<string, string | number> | undefined;
+    let duplicates: DuplicateCandidate[] | undefined;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
@@ -175,6 +209,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
       stepUp = isStepUp(exception);
       conflictCode = conflictCodeOf(exception);
       if (conflictCode !== undefined) details = detailsOf(exception);
+      if (conflictCode === 'duplicate_found') duplicates = duplicatesOf(exception);
     } else {
       status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
     }
@@ -199,13 +234,14 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (res.headersSent) {
       return;
     }
-    const body: ErrorBody = {
+    const body: ErrorBody & { error: { duplicates?: DuplicateCandidate[] } } = {
       error: {
         code,
         message,
         correlationId,
         ...(reason === undefined ? {} : { reason }),
         ...(details === undefined ? {} : { details }),
+        ...(duplicates === undefined ? {} : { duplicates }),
       },
     };
     res.setHeader(REQUEST_ID_HEADER, correlationId);

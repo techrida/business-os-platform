@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 /**
- * The duplicate warning a convert call answers with. ASSUMED SHAPE: the contracts name no response
- * for it (A2 only says the server "returns a duplicate warning naming that contact"), so this one
- * local schema is the single place to change when the API fixes it:
+ * The duplicate warning a convert call answers with:
  * `409 { error: { code: 'duplicate_found', duplicates: [{ kind, id, label, matchedOn, customerId? }] } }`.
+ * The API's error filter (apps/api/src/platform/tenancy/error-body.filter.ts) sends exactly this; its
+ * `DuplicateCandidateSchema` must stay in step with the one below.
  */
 const CandidateSchema = z.object({
   kind: z.enum(['customer', 'contact']),
