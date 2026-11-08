@@ -10,8 +10,6 @@ import {
   type QuotationDto,
   QuotationDtoSchema,
   type QuotationPreviewBody,
-  type QuotationVersionDto,
-  QuotationVersionDtoSchema,
   type CreateQuotationBody,
   type UpdateQuotationDraftBody,
 } from '@bos/contracts';
@@ -143,22 +141,8 @@ export function submitVersion(
 }
 
 // ---- Reads (assumed paths) -------------------------------------------------------------------
-
-export function getQuotation(session: Session, id: string): Promise<QuotationDto> {
-  return call(session, `/v1/quotations/${seg(id)}`, QuotationDtoSchema);
-}
-
-export function getVersion(
-  session: Session,
-  quotationId: string,
-  versionId: string,
-): Promise<QuotationVersionDto> {
-  return call(
-    session,
-    `/v1/quotations/${seg(quotationId)}/versions/${seg(versionId)}`,
-    QuotationVersionDtoSchema,
-  );
-}
+// The quotation itself is read with `components/p2/quotations/api.ts` `getQuotation`, which parses
+// the QuotationDetail that `GET /v1/quotations/:id` returns (parent plus every version).
 
 export function getOpportunity(session: Session, id: string): Promise<OpportunityDto> {
   return call(session, `/v1/opportunities/${seg(id)}`, OpportunityDtoSchema);
