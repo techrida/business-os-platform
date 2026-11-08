@@ -409,6 +409,19 @@ describe('a frozen version', () => {
     ).resolves.toBe('');
   });
 
+  it('cannot be unfrozen in two hops through submitted (23514)', async () => {
+    const scope = await newScope();
+    const quotationId = await insertQuotation(scope);
+    const versionId = await insertVersion(scope, quotationId);
+    await approve(scope, versionId);
+    // approved -> submitted -> returned would make it editable again; only draft and returned reach submitted.
+    await expect(
+      exec(scope, `UPDATE app.quotation_versions SET status = 'submitted' WHERE id = $1`, [
+        versionId,
+      ]),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'quotation_versions_transition_check' });
+  });
+
   it('refuses a version that starts in any status but draft (23514)', async () => {
     const scope = await newScope();
     const quotationId = await insertQuotation(scope);
