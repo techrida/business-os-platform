@@ -1,0 +1,275 @@
+// The builder's form model and the pure rules around it. No React, no server imports, so the
+// client island, the server actions and the tests share one definition. Nothing here computes a
+// money total: the only arithmetic is adding milestone percentages (integer hundredths, the same
+// rule the contract applies) and a string comparison for the 12% discount trigger.
+
+export type Currency = 'NPR' | 'INR' | 'USD';
+export const CURRENCY_OPTIONS: readonly Currency[] = ['NPR', 'INR', 'USD'];
+
+export type DiscountMode = 'none' | 'pct' | 'amount';
+
+export interface LineValues {
+  /** Local identity for React keys and focus; never sent. */
+  key: string;
+  description: string;
+  uom: string;
+  quantity: string;
+  unitPrice: string;
+  taxCodeId: string;
+}
+
+export interface MilestoneValues {
+  key: string;
+  label: string;
+  percent: string;
+  dueDescription: string;
+}
+
+export interface BuilderValues {
+  contactId: string;
+  currency: Currency;
+  issueDate: string;
+  validUntil: string;
+  paymentTermId: string;
+  scope: string;
+  assumptions: string;
+  exclusions: string;
+  deliveryTimeline: string;
+  discountMode: DiscountMode;
+  discountValue: string;
+  lines: LineValues[];
+  schedule: MilestoneValues[];
+}
+
+/** The 12% rule of the approval workflow, as a display hint only; the server decides the route. */
+export const DISCOUNT_APPROVAL_THRESHOLD_PCT = '12';
+
+export function emptyValues(
+  init: { currency?: Currency; issueDate?: string; validUntil?: string } = {},
+): BuilderValues {
+  return {
+    contactId: '',
+    currency: init.currency ?? 'NPR',
+    issueDate: init.issueDate ?? '',
+    validUntil: init.validUntil ?? '',
+    paymentTermId: '',
+    scope: '',
+    assumptions: '',
+    exclusions: '',
+    deliveryTimeline: '',
+    discountMode: 'none',
+    discountValue: '',
+    lines: [],
+    schedule: [],
+  };
+}
+
+export const newLine = (key: string): LineValues => ({
+  key,
+  description: '',
+  uom: '',
+  quantity: '1',
+  unitPrice: '',
+  taxCodeId: '',
+});
+
+export const newMilestone = (key: string): MilestoneValues => ({
+  key,
+  label: '',
+  percent: '',
+  dueDescription: '',
+});
+
+/** People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop grouping and spaces. */
+export function plainNumber(raw: string): string {
+  return raw.replace(/[\s,]/g, '');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Payment schedule: must total exactly 100%
+// ---------------------------------------------------------------------------------------------
+
+const PERCENT = /^(?:\d{1,3})(?:\.\d{1,2})?$/;
+
+function hundredths(percent: string): number | null {
+  const p = plainNumber(percent);
+  if (!PERCENT.test(p)) return null;
+  const [whole = '0', frac = ''] = p.split('.');
+  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+}
+
+const fromHundredths = (n: number): string =>
+  `${Math.floor(n / 100)}.${String(n % 100).padStart(2, '0')}`;
+
+export type ScheduleState =
+  | { kind: 'empty' }
+  | { kind: 'ok' }
+  | { kind: 'short'; by: string }
+  | { kind: 'over'; by: string }
+  | { kind: 'invalid' };
+
+/** An empty schedule is allowed (the payment term applies); a filled one must total 100%. */
+export function scheduleState(
+  milestones: readonly Pick<MilestoneValues, 'percent'>[],
+): ScheduleState {
+  if (milestones.length === 0) return { kind: 'empty' };
+  let sum = 0;
+  for (const m of milestones) {
+    const h = hundredths(m.percent);
+    if (h === null) return { kind: 'invalid' };
+    sum += h;
+  }
+  if (sum === 10000) return { kind: 'ok' };
+  return sum < 10000
+    ? { kind: 'short', by: fromHundredths(10000 - sum) }
+    : { kind: 'over', by: fromHundredths(sum - 10000) };
+}
+
+export function scheduleMessage(state: ScheduleState): string | null {
+  switch (state.kind) {
+    case 'short':
+      return `The payment schedule must add up to 100%. It is ${state.by}% short.`;
+    case 'over':
+      return `The payment schedule must add up to 100%. It is ${state.by}% over.`;
+    case 'invalid':
+      return 'The payment schedule must add up to 100%. Enter each milestone as a percentage such as 40 or 33.33.';
+    default:
+      return null;
+  }
+}
+
+/** Why Submit is unavailable, in words; null when it may go. */
+export function submitBlocker(values: BuilderValues, opts: { dirty: boolean }): string | null {
+  const schedule = scheduleMessage(scheduleState(values.schedule));
+  if (schedule) return schedule;
+  if (values.lines.length === 0) return 'Add at least one line before submitting.';
+  if (opts.dirty) return 'Save the draft before submitting, so the approvers see what you see.';
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Discount trigger (display only)
+// ---------------------------------------------------------------------------------------------
+
+/** `pct` is the server's 4-decimal string. True only when it is strictly above 12, exactly. */
+export function discountAboveThreshold(pct: string): boolean {
+  const [whole = '0', frac = ''] = pct.split('.');
+  const w = Number(whole);
+  const threshold = Number(DISCOUNT_APPROVAL_THRESHOLD_PCT);
+  if (w !== threshold) return w > threshold;
+  return /[1-9]/.test(frac);
+}
+
+// ---------------------------------------------------------------------------------------------
+// To and from the contract
+// ---------------------------------------------------------------------------------------------
+
+/** The editable content in the shape of `QuotationVersionContentSchema`; the server action parses it. */
+export function toContent(v: BuilderValues) {
+  const opt = (s: string): string | undefined => (s.trim() === '' ? undefined : s.trim());
+  const discount =
+    v.discountMode === 'none' || plainNumber(v.discountValue) === ''
+      ? undefined
+      : ({ mode: v.discountMode, value: plainNumber(v.discountValue) } as const);
+  return {
+    ...(opt(v.contactId) ? { contactId: v.contactId } : {}),
+    currency: v.currency,
+    issueDate: v.issueDate,
+    validUntil: v.validUntil,
+    ...(opt(v.scope) ? { scope: v.scope.trim() } : {}),
+    ...(opt(v.assumptions) ? { assumptions: v.assumptions.trim() } : {}),
+    ...(opt(v.exclusions) ? { exclusions: v.exclusions.trim() } : {}),
+    ...(opt(v.deliveryTimeline) ? { deliveryTimeline: v.deliveryTimeline.trim() } : {}),
+    ...(opt(v.paymentTermId) ? { paymentTermId: v.paymentTermId } : {}),
+    ...(v.schedule.length > 0
+      ? {
+          paymentSchedule: v.schedule.map((m) => ({
+            label: m.label.trim(),
+            percent: plainNumber(m.percent),
+            ...(opt(m.dueDescription) ? { dueDescription: m.dueDescription.trim() } : {}),
+          })),
+        }
+      : {}),
+    ...(discount ? { discount } : {}),
+    lines: v.lines.map((l) => ({
+      description: l.description.trim(),
+      uom: l.uom.trim(),
+      quantity: plainNumber(l.quantity),
+      unitPrice: plainNumber(l.unitPrice),
+      taxCodeId: l.taxCodeId,
+    })),
+  };
+}
+
+/** The slice of a version DTO the form is filled from (structural, so no runtime import). */
+export interface VersionLike {
+  contactId: string | null;
+  currency: Currency;
+  issueDate: string;
+  validUntil: string;
+  paymentTermId: string | null;
+  scope: string | null;
+  assumptions: string | null;
+  exclusions: string | null;
+  deliveryTimeline: string | null;
+  discount: { mode: 'pct' | 'amount'; value: string } | null;
+  lines: readonly {
+    description: string;
+    uom: string;
+    quantity: string;
+    unitPrice: string;
+    taxCodeId: string;
+  }[];
+  paymentSchedule: readonly {
+    label: string;
+    percent: string;
+    dueDescription?: string | undefined;
+  }[];
+}
+
+export function valuesFromVersion(d: VersionLike): BuilderValues {
+  return {
+    contactId: d.contactId ?? '',
+    currency: d.currency,
+    issueDate: d.issueDate,
+    validUntil: d.validUntil,
+    paymentTermId: d.paymentTermId ?? '',
+    scope: d.scope ?? '',
+    assumptions: d.assumptions ?? '',
+    exclusions: d.exclusions ?? '',
+    deliveryTimeline: d.deliveryTimeline ?? '',
+    discountMode: d.discount?.mode ?? 'none',
+    discountValue: d.discount?.value ?? '',
+    lines: d.lines.map((l, i) => ({
+      key: `l${i + 1}`,
+      description: l.description,
+      uom: l.uom,
+      quantity: l.quantity,
+      unitPrice: l.unitPrice,
+      taxCodeId: l.taxCodeId,
+    })),
+    schedule: d.paymentSchedule.map((m, i) => ({
+      key: `m${i + 1}`,
+      label: m.label,
+      percent: m.percent,
+      dueDescription: m.dueDescription ?? '',
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Defaults for a new quotation
+// ---------------------------------------------------------------------------------------------
+
+/** Issue date today in Kathmandu and a 30-day validity, both as ISO dates (`YYYY-MM-DD`). */
+export function defaultDates(now: Date = new Date()): { issueDate: string; validUntil: string } {
+  const issueDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kathmandu',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  const [y = 1970, m = 1, d = 1] = issueDate.split('-').map(Number);
+  const until = new Date(Date.UTC(y, m - 1, d + 30)).toISOString().slice(0, 10);
+  return { issueDate, validUntil: until };
+}

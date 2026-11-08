@@ -1,0 +1,140 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+
+import { emptyValues, type BuilderValues } from './model';
+
+vi.mock('server-only', () => ({}));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  redirect: vi.fn((to: string) => {
+    throw new Error(`NEXT_REDIRECT ${to}`);
+  }),
+}));
+vi.mock('@/lib/bff', () => ({
+  requireStaffSession: vi.fn(() => Promise.resolve({ accessToken: 't', roles: ['sales'] })),
+}));
+
+const api = vi.hoisted(() => ({
+  createQuotation: vi.fn(),
+  updateDraft: vi.fn(),
+  previewVersion: vi.fn(),
+  submitVersion: vi.fn(),
+}));
+vi.mock('./api', () => api);
+
+import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './actions';
+
+const QID = '11111111-1111-4111-8111-111111111111';
+const VID = '22222222-2222-4222-8222-222222222222';
+const TAX = '33333333-3333-4333-8333-333333333333';
+const OPP = '55555555-5555-4555-8555-555555555555';
+const ref = { quotationId: QID, versionId: VID };
+
+function values(): BuilderValues {
+  const v = emptyValues({ currency: 'NPR', issueDate: '2026-11-08', validUntil: '2026-12-08' });
+  v.lines = [
+    { key: 'l1', description: 'Work', uom: 'lot', quantity: '1', unitPrice: '100', taxCodeId: TAX },
+  ];
+  return v;
+}
+
+const m = (percent: string) => ({ key: percent, label: 'Milestone', percent, dueDescription: '' });
+
+const apiError = (status: number, code: string) =>
+  new ApiError(status, 'x', { error: { code, message: 'm', correlationId: 'c' } });
+
+beforeEach(() => vi.clearAllMocks());
+
+describe('submitQuoteAction', () => {
+  it('does not call the API when the payment schedule does not total 100%', async () => {
+    const v = values();
+    v.schedule = [m('60'), m('30')];
+    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: v });
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.message).toMatch(/100%/);
+    expect(api.submitVersion).not.toHaveBeenCalled();
+  });
+
+  it('submits a complete draft with the row version the page saw', async () => {
+    const v = values();
+    v.schedule = [m('60'), m('40')];
+    api.submitVersion.mockResolvedValue({ status: 'submitted' });
+    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: v });
+    expect(res.ok).toBe(true);
+    expect(api.submitVersion).toHaveBeenCalledWith(expect.anything(), QID, VID, 3);
+  });
+
+  it('asks for a reload on a stale row version (409)', async () => {
+    api.submitVersion.mockRejectedValue(apiError(409, 'VERSION_CONFLICT'));
+    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: values() });
+    expect(res).toMatchObject({ ok: false, kind: 'stale' });
+  });
+
+  it('gives a clear message for a stale exchange rate (409)', async () => {
+    api.submitVersion.mockRejectedValue(apiError(409, 'FX_RATE_STALE'));
+    const v = values();
+    v.currency = 'USD';
+    const res = await submitQuoteAction({ ...ref, expectedVersion: 3, values: v });
+    expect(res).toMatchObject({ ok: false, kind: 'stale_fx' });
+    expect(res.ok ? '' : res.message).toMatch(/exchange rate/i);
+  });
+});
+
+describe('previewQuoteAction', () => {
+  it('returns the server preview and sends the lines as typed, never a total', async () => {
+    api.previewVersion.mockResolvedValue({
+      totals: {
+        subtotal: '100.00',
+        discountAmount: '0.00',
+        taxableAmount: '100.00',
+        taxAmount: '13.00',
+        total: '113.00',
+        effectiveDiscountPct: '0.0000',
+      },
+      taxSummary: [],
+      route: { steps: [], blocked: false },
+    });
+    const res = await previewQuoteAction({ ...ref, values: values() });
+    expect(res.ok).toBe(true);
+    const body = api.previewVersion.mock.calls[0]?.[3] as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(['currency', 'lines']);
+  });
+
+  it('reports incomplete lines without calling the API', async () => {
+    const v = values();
+    v.lines[0]!.quantity = '';
+    const res = await previewQuoteAction({ ...ref, values: v });
+    expect(res).toMatchObject({ ok: false, kind: 'invalid' });
+    expect(api.previewVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveDraftAction', () => {
+  it('refuses to save a schedule that does not total 100%', async () => {
+    const v = values();
+    v.schedule = [m('50')];
+    const res = await saveDraftAction({ mode: 'create', opportunityId: OPP, values: v });
+    expect(res.ok).toBe(false);
+    expect(api.createQuotation).not.toHaveBeenCalled();
+  });
+
+  it('creates the draft and goes to its edit page', async () => {
+    api.createQuotation.mockResolvedValue({ id: QID });
+    await expect(
+      saveDraftAction({ mode: 'create', opportunityId: OPP, values: values() }),
+    ).rejects.toThrow(`NEXT_REDIRECT /quotations/${QID}/edit?saved=1`);
+  });
+
+  it('updates with expectedVersion and returns the new row version', async () => {
+    api.updateDraft.mockResolvedValue({ version: 4 });
+    const res = await saveDraftAction({
+      mode: 'update',
+      ...ref,
+      expectedVersion: 3,
+      values: values(),
+    });
+    expect(res).toEqual({ ok: true, version: 4 });
+    expect(api.updateDraft.mock.calls[0]?.[3]).toMatchObject({ expectedVersion: 3 });
+  });
+});
