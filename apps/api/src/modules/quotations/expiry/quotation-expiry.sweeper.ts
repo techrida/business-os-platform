@@ -1,0 +1,297 @@
+// The quotation expiry job (worker only): every hour it finds quotation versions that were sent or approved and
+// whose valid_until is before today in Asia/Kathmandu, and moves each one to `expired`. Serves the rule "an expired
+// quotation can no longer be accepted" without anyone having to remember to close it.
+//
+// Safe to repeat and to run on two workers at once. Every version is its own transaction: the row is locked
+// (SELECT ... FOR UPDATE) and the status is changed by one UPDATE that still requires `sent` or `approved`. A
+// version that finished another way meanwhile (accepted, rejected, revised) is therefore never touched: the lock
+// makes the job wait for that transaction, re-read the row and skip it. A second run finds nothing left to do.
+// The status history row, the audit event and the owner's bell notice commit with the status change or not at all.
+//
+// "Expiring soon" is not here yet. It needs `NotifyService.notifyEmail` (an email to a customer contact, who is not
+// a user), which Q3a adds. TODO(q3c, expiring-soon): once notifyEmail exists, add a second pass here that picks
+// versions with status `sent` only (a customer cannot see an approved one) and valid_until from today to today + 2
+// days, and sends the K5 `quotation.expiring` template to the version's customer contact, once per version through
+// dedupe key `quotation.expiring:<versionId>`.
+//
+// The owner is told in the bell only. K5's `quotation.expired` template is customer-facing (it links to the portal
+// through PORTAL_PUBLIC_URL and says the customer can no longer accept), so it is not sent to staff, and K5 has no
+// staff template for this event. Adding one is a change to platform/notify/templates.ts, which this unit does not own.
+//
+// The tests drive the sweeper through an ExpiryStore fake; the drizzle store below is checked by the integration
+// test against a real database.
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { quotations, quotationStatusHistory, quotationVersions } from '@bos/db';
+import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import { type Job, Queue } from 'bullmq';
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
+
+import type { AuditService } from '../../../platform/audit/audit.service';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import { type Actor, systemActor, type TxScope } from '../../../platform/db/tx';
+import type { NotifyService } from '../../../platform/notify/notify.service';
+
+export const QUOTATION_EXPIRY_QUEUE = 'quotation.expiry';
+export const QUOTATION_EXPIRY_SWEEP_JOB = 'quotation.expiry.sweep';
+/** The job name after the `system:` prefix of the actor id; the audit log shows `system:quotation-expiry`. */
+export const QUOTATION_EXPIRY_JOB_PREFIX = 'quotation-expiry';
+export const EXPIRY_EVERY_MS = 60 * 60_000;
+/** Versions handled per run. A larger backlog (the job was down for days) drains over the following hours. */
+export const EXPIRY_BATCH = 500;
+
+export const EXPIRY_STORE = Symbol('QUOTATION_EXPIRY_STORE');
+export const EXPIRY_TX = Symbol('QUOTATION_EXPIRY_TX');
+export const EXPIRY_AUDIT = Symbol('QUOTATION_EXPIRY_AUDIT');
+export const EXPIRY_NOTIFY = Symbol('QUOTATION_EXPIRY_NOTIFY');
+export const EXPIRY_CLOCK = Symbol('QUOTATION_EXPIRY_CLOCK');
+
+export interface ExpiryCandidate {
+  tenantId: string;
+  organizationId: string;
+  versionId: string;
+}
+
+/** What the audit event and the notice need, read inside the transaction that expired the version. */
+export interface ExpiredVersion {
+  quotationId: string;
+  quotationNumber: string;
+  /** The staff owner of the quotation; null when it has none, and then nobody is notified. */
+  ownerUserId: string | null;
+  validUntil: string;
+  fromStatus: 'sent' | 'approved';
+}
+
+/** The job's database access, as a port. `tx` is the transaction `EXPIRY_TX` opened for the version's scope. */
+export interface ExpiryStore {
+  /** Sent or approved versions with valid_until before `today` (YYYY-MM-DD), oldest first, across tenants. */
+  candidates(today: string, limit: number): Promise<ExpiryCandidate[]>;
+  /**
+   * Locks the version, then expires it and writes its status history row. Undefined when the version is no
+   * longer sent or approved and past its date (it was accepted, rejected or revised meanwhile): nothing is written.
+   */
+  expire(
+    tx: DbTransaction,
+    c: ExpiryCandidate,
+    today: string,
+    now: Date,
+  ): Promise<ExpiredVersion | undefined>;
+}
+
+export type RunInTx = <T>(
+  scope: TxScope,
+  actor: Actor,
+  fn: (tx: DbTransaction) => Promise<T>,
+) => Promise<T>;
+export type ExpiryAudit = Pick<AuditService, 'record'>;
+export type ExpiryNotify = Pick<NotifyService, 'notifyUser'>;
+export type Clock = () => Date;
+
+export type ExpiryOutcome = 'expired' | 'skipped';
+export interface SweepResult {
+  expired: number;
+  skipped: number;
+  failed: number;
+}
+
+const KATHMANDU_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kathmandu',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/**
+ * Today's calendar date (YYYY-MM-DD) in Asia/Kathmandu, which is UTC+5:45 all year. A quotation valid until
+ * today stays valid until Kathmandu midnight, so a version expires when valid_until is before this date.
+ */
+export function kathmanduToday(now: Date): string {
+  return KATHMANDU_DATE.format(now);
+}
+
+@Injectable()
+export class QuotationExpirySweeper {
+  private readonly logger = new Logger(QuotationExpirySweeper.name);
+
+  constructor(
+    @Inject(EXPIRY_STORE) private readonly store: ExpiryStore,
+    @Inject(EXPIRY_TX) private readonly runTx: RunInTx,
+    @Inject(EXPIRY_AUDIT) private readonly audit: ExpiryAudit,
+    @Inject(EXPIRY_NOTIFY) private readonly notify: ExpiryNotify,
+    @Inject(EXPIRY_CLOCK) private readonly clock: Clock,
+  ) {}
+
+  /** One pass over every tenant. A version that fails is logged and left for the next run; the rest go on. */
+  async sweep(): Promise<SweepResult> {
+    const result: SweepResult = { expired: 0, skipped: 0, failed: 0 };
+    const today = kathmanduToday(this.clock());
+    const candidates = await this.store.candidates(today, EXPIRY_BATCH);
+    for (const c of candidates) {
+      try {
+        const outcome = await this.expireOne(c, today);
+        result[outcome] += 1;
+      } catch (error) {
+        result.failed += 1;
+        // The version id and a fixed word only: an error message can carry customer data.
+        this.logger.error(
+          `quotation expiry failed: version=${c.versionId} kind=${error instanceof Error ? error.name : 'error'}`,
+        );
+      }
+    }
+    return result;
+  }
+
+  async expireOne(c: ExpiryCandidate, today: string): Promise<ExpiryOutcome> {
+    const scope: TxScope = { tenantId: c.tenantId, organizationId: c.organizationId };
+    const actor = systemActor(QUOTATION_EXPIRY_JOB_PREFIX);
+    return this.runTx(scope, actor, async (tx) => {
+      const expired = await this.store.expire(tx, c, today, this.clock());
+      if (expired === undefined) return 'skipped';
+
+      await this.audit.record(tx, {
+        action: 'quotation.expired',
+        entityType: 'quotation_version',
+        entityId: c.versionId,
+        meta: {
+          quotationId: expired.quotationId,
+          from: expired.fromStatus,
+          validUntil: expired.validUntil,
+        },
+      });
+      if (expired.ownerUserId !== null) {
+        // Bell only (no `email`): see the file header. The dedupe key makes a replayed transaction a no-op.
+        await this.notify.notifyUser(tx, {
+          userId: expired.ownerUserId,
+          title: `Quotation ${expired.quotationNumber} has expired`,
+          body: `Quotation ${expired.quotationNumber} was valid until ${expired.validUntil} and can no longer be accepted. Revise it to offer the customer a new validity date.`,
+          link: `/quotations/${expired.quotationId}`,
+          dedupeKey: `quotation.expired:${c.versionId}`,
+        });
+      }
+      return 'expired';
+    });
+  }
+}
+
+/** The store on the real tables. Every query names the tenant and the acting entity. */
+export function drizzleExpiryStore(db: Db): ExpiryStore {
+  const ownVersion = (c: ExpiryCandidate) =>
+    and(
+      eq(quotationVersions.tenantId, c.tenantId),
+      eq(quotationVersions.organizationId, c.organizationId),
+      eq(quotationVersions.id, c.versionId),
+    );
+  /** Still sent or approved, and past its last day. */
+  const due = (today: string) =>
+    and(
+      inArray(quotationVersions.status, ['sent', 'approved']),
+      lt(quotationVersions.validUntil, today),
+    );
+
+  return {
+    async candidates(today, limit) {
+      return db
+        .select({
+          tenantId: quotationVersions.tenantId,
+          organizationId: quotationVersions.organizationId,
+          versionId: quotationVersions.id,
+        })
+        .from(quotationVersions)
+        .where(due(today))
+        .orderBy(asc(quotationVersions.validUntil), asc(quotationVersions.id))
+        .limit(limit);
+    },
+
+    async expire(tx, c, today, now) {
+      // The lock is the race guard. Under READ COMMITTED a row another transaction changed (an accept that is
+      // committing) is re-checked against `due` once that transaction ends, so an accepted version is not returned.
+      const [locked] = await tx
+        .select({
+          status: quotationVersions.status,
+          quotationId: quotationVersions.quotationId,
+          validUntil: quotationVersions.validUntil,
+        })
+        .from(quotationVersions)
+        .where(and(ownVersion(c), due(today)))
+        .limit(1)
+        .for('update');
+      if (locked === undefined) return undefined;
+
+      const updated = await tx
+        .update(quotationVersions)
+        .set({
+          status: 'expired',
+          expiredAt: now,
+          version: sql`${quotationVersions.version} + 1`,
+          updatedAt: now,
+        })
+        // The status is named again so the UPDATE is safe on its own, whatever the lock above did.
+        .where(and(ownVersion(c), due(today)))
+        .returning({ id: quotationVersions.id });
+      if (updated.length !== 1) return undefined;
+
+      const fromStatus = locked.status === 'sent' ? 'sent' : 'approved';
+      // actor_id is NULL for the system (see the column's comment in 0016_quotations.sql).
+      await tx.insert(quotationStatusHistory).values({
+        tenantId: c.tenantId,
+        organizationId: c.organizationId,
+        versionId: c.versionId,
+        fromStatus,
+        toStatus: 'expired',
+        actorId: null,
+        reason: 'valid_until passed',
+        at: now,
+      });
+
+      const [quotation] = await tx
+        .select({ number: quotations.number, ownerUserId: quotations.ownerUserId })
+        .from(quotations)
+        .where(
+          and(
+            eq(quotations.tenantId, c.tenantId),
+            eq(quotations.organizationId, c.organizationId),
+            eq(quotations.id, locked.quotationId),
+          ),
+        )
+        .limit(1);
+      if (quotation === undefined) throw new Error('quotation of the expired version not found');
+
+      return {
+        quotationId: locked.quotationId,
+        quotationNumber: quotation.number,
+        ownerUserId: quotation.ownerUserId,
+        validUntil: locked.validUntil,
+        fromStatus,
+      };
+    },
+  };
+}
+
+@Processor(QUOTATION_EXPIRY_QUEUE)
+export class QuotationExpiryProcessor extends WorkerHost {
+  constructor(private readonly sweeper: QuotationExpirySweeper) {
+    super();
+  }
+
+  async process(job: Job): Promise<void> {
+    if (job.name === QUOTATION_EXPIRY_SWEEP_JOB) {
+      await this.sweeper.sweep();
+      return;
+    }
+    // A job name nobody handles is a bug; failing keeps it visible instead of silently dropping it.
+    throw new Error(`Unknown quotation expiry job: ${job.name}`);
+  }
+}
+
+/** Registers the hourly sweep. upsertJobScheduler is idempotent, so restarts never stack schedules. */
+@Injectable()
+export class QuotationExpiryScheduler implements OnApplicationBootstrap {
+  constructor(@InjectQueue(QUOTATION_EXPIRY_QUEUE) private readonly queue: Queue) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.queue.upsertJobScheduler(
+      QUOTATION_EXPIRY_SWEEP_JOB,
+      { every: EXPIRY_EVERY_MS },
+      { name: QUOTATION_EXPIRY_SWEEP_JOB, opts: { removeOnComplete: 5, removeOnFail: 20 } },
+    );
+  }
+}

@@ -307,4 +307,9 @@ describe('quotationLinkOf', () => {
     const { tx } = fakeTx({ versions: [] });
     await expect(quotationLinkOf(tx, VERSION_ID)).resolves.toBeUndefined();
   });
+
+  it('is the subject link hook, so the decided notice opens the quotation', async () => {
+    const { tx } = fakeTx({ versions: [submittedRow()] });
+    await expect(subject().link(tx, VERSION_ID)).resolves.toBe(`/quotations/${QUOTATION_ID}`);
+  });
 });

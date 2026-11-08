@@ -138,3 +138,78 @@ describe('NotifyService.notifyUser email links', () => {
     expect(outboxRows[0]?.bodyText).not.toContain('portal.example.com');
   });
 });
+
+describe('NotifyService.notifyEmail (an address that is not a user, such as a customer contact)', () => {
+  /** A transaction that answers the scope query and records every insert, with its conflict target. */
+  function fakeTx() {
+    const inserts: { row: Record<string, unknown>; target: unknown }[] = [];
+    const tx = {
+      execute: vi
+        .fn()
+        .mockResolvedValue({ rows: [{ tenant_id: 'tenant-1', organization_id: 'org-1' }] }),
+      insert: vi.fn(() => ({
+        values: (row: Record<string, unknown>) => ({
+          onConflictDoNothing: (opts: { target: unknown }) => {
+            inserts.push({ row, target: opts.target });
+            return Promise.resolve();
+          },
+        }),
+      })),
+    };
+    return { tx: tx as unknown as DbTransaction, inserts };
+  }
+
+  const config = {
+    WORKSPACE_PUBLIC_URL: 'https://app.example.com',
+    PORTAL_PUBLIC_URL: 'https://portal.example.com',
+  } as CoreConfig;
+  const emailOf = vi.fn();
+  const notifier = (c: CoreConfig = config): NotifyService =>
+    new NotifyService(
+      {} as Db,
+      c,
+      { emailOf } as unknown as UserDirectory,
+      { add: vi.fn() } as unknown as Queue,
+    );
+
+  it('writes one outbox row to the address, with no user, no bell row and a portal link', async () => {
+    const { tx, inserts } = fakeTx();
+
+    await notifier().notifyEmail(tx, {
+      toEmail: 'buyer@acme.example',
+      template: 'quotation.sent',
+      data: { quotationNumber: 'QT-1', linkPath: '/quotations/q-1' },
+      dedupeKey: 'quotation.sent:v-1',
+    });
+
+    expect(inserts).toHaveLength(1);
+    const row = inserts[0]!.row;
+    expect(row).toMatchObject({
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+      kind: 'email',
+      template: 'quotation.sent',
+      toUserId: null,
+      toEmail: 'buyer@acme.example',
+      dedupeKey: 'quotation.sent:v-1',
+    });
+    expect(row.bodyText).toContain('https://portal.example.com/quotations/q-1');
+    expect(row.bodyText).toContain('QT-1');
+    expect(emailOf).not.toHaveBeenCalled();
+  });
+
+  it('refuses a customer template without PORTAL_PUBLIC_URL and writes nothing', async () => {
+    const { tx, inserts } = fakeTx();
+    const service = notifier({ WORKSPACE_PUBLIC_URL: 'https://app.example.com' } as CoreConfig);
+
+    await expect(
+      service.notifyEmail(tx, {
+        toEmail: 'buyer@acme.example',
+        template: 'quotation.sent',
+        data: { linkPath: '/quotations/q-1' },
+        dedupeKey: 'quotation.sent:v-1',
+      }),
+    ).rejects.toThrow(/PORTAL_PUBLIC_URL/);
+    expect(inserts).toHaveLength(0);
+  });
+});
