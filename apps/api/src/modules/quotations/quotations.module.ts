@@ -1,5 +1,5 @@
 // Quotations module (P2 unit Q1): registers how quotation-version files are authorized, provides PricingService,
-// DraftingService and ReviseService, and serves drafting, revise, preview and reference routes. Imports
+// DraftingService and ReviseService, and serves drafting, revise, preview, reference and PDF download routes. Imports
 // DocumentsModule, SettingsModule (MoneyService, NumberingService, SettingsService), ApprovalsModule (preview
 // route, approval cancel on revise), AuditModule, OpportunitiesModule (Won on acceptance) and NotifyModule (the
 // owner's notice); the database is global. Q3b adds the outcome route and exports its accept/reject core.
@@ -18,6 +18,11 @@ import { QuotationVersionSubject } from './approval/quotation-version.subject';
 import { QuotationSubmitCaller } from './approval/quotation-submit.caller';
 import { QuotationSubmitController } from './approval/quotation-submit.controller';
 import { QuotationSubmitService, QuotationSubmitStore } from './approval/quotation-submit.service';
+import { QuotationDocumentController } from './document/quotation-document.controller';
+import {
+  QuotationDocumentService,
+  QuotationDocumentStore,
+} from './document/quotation-document.service';
 import { DraftingCaller } from './drafting/drafting.caller';
 import { DraftingController } from './drafting/drafting.controller';
 import { DraftingService } from './drafting/drafting.service';
@@ -55,6 +60,7 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
     QuotationSubmitController,
     RecordOutcomeController,
     QuotationSendController,
+    QuotationDocumentController,
   ],
   providers: [
     PricingService,
@@ -73,6 +79,8 @@ import { QuotationSendService, QuotationSendStore } from './send/quotation-send.
     QuotationSendService,
     QuotationSendStore,
     QuotationSendCaller,
+    QuotationDocumentService,
+    QuotationDocumentStore,
   ],
   // QuotationOutcomeService is the accept/reject core the portal (unit PA) calls inside its own transaction.
   exports: [PricingService, QuotationOutcomeService],
