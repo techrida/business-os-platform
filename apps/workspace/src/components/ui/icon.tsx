@@ -4,13 +4,7 @@ import type { NavIconName } from '@/lib/nav';
 
 /** Sidebar icons plus the few the shell itself needs. */
 export type IconName =
-  | NavIconName
-  | 'star'
-  | 'search'
-  | 'menu'
-  | 'x'
-  | 'chevrons-left'
-  | 'chevrons-right';
+  NavIconName | 'star' | 'search' | 'menu' | 'x' | 'chevrons-left' | 'chevrons-right';
 
 // Lucide-style drawings (24x24 grid, 2px round strokes), inlined so there is no icon package
 // and no request. Each entry is the inside of the <svg>.

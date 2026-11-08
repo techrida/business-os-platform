@@ -77,8 +77,8 @@ export default async function DevPersonasPage() {
         <Stack gap="small">
           <h1>Dev personas</h1>
           <p>
-            Development only. Each link starts a real ZITADEL login for that user. The passwords
-            are in <code>.dev/personas.json</code>, which this page never reads out.
+            Development only. Each link starts a real ZITADEL login for that user. The passwords are
+            in <code>.dev/personas.json</code>, which this page never reads out.
           </p>
         </Stack>
         {loaded.ok ? (
