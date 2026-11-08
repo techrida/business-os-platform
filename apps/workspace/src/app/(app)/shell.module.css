@@ -1,0 +1,128 @@
+/* Calm, neutral look: system fonts, one accent colour, generous spacing.
+   Colours pass WCAG AA on their backgrounds (text #1f2933 on #f5f7fa and on white,
+   button text white on #1d4ed8). */
+
+.frame {
+  min-height: 100vh;
+  background: #f5f7fa;
+  color: #1f2933;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  line-height: 1.5;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding: 0.875rem 1.5rem;
+  background: #ffffff;
+  border-bottom: 1px solid #d9e0e8;
+}
+
+.brand {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.badge {
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  background: #e5edff;
+  color: #1e3a8a;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.roles {
+  color: #3e4c59;
+}
+
+.button {
+  padding: 0.5rem 1rem;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: #1e40af;
+}
+
+.button:focus-visible {
+  outline: 3px solid #93b4ff;
+  outline-offset: 2px;
+}
+
+.main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+.card {
+  padding: 1.5rem;
+  background: #ffffff;
+  border: 1px solid #d9e0e8;
+  border-radius: 10px;
+}
+
+.card h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.375rem;
+}
+
+.card p {
+  margin: 0 0 1rem;
+  color: #3e4c59;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+}
+
+.facts dt {
+  font-weight: 600;
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+}
+
+.alert {
+  border-color: #b42318;
+  background: #fff5f4;
+}
+
+.centered {
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
