@@ -82,8 +82,10 @@ export interface ApprovalSubject {
    * Optional: the workspace page of the document, for the decided notice to the requester (for example
    * `/memos/<id>`). Without it the requester is sent to the request in the inbox. The path must be an area
    * the `approval.decided` email allows (notify/templates.ts), else the notice fails at enqueue.
+   * Runs in the deciding transaction, before onDecided, so it may read the document (a quotation version
+   * links to its quotation). Undefined also falls back to the inbox.
    */
-  link?(documentId: string): string;
+  link?(tx: DbTransaction, documentId: string): string | undefined | Promise<string | undefined>;
 }
 
 export interface SubmitInput {
@@ -495,7 +497,8 @@ export class ApprovalsService {
       if (decided) {
         // The requester opens the document itself when it has a page (a memo); else the request in the inbox.
         const requesterLink =
-          this.subjectOf(request.documentType).link?.(request.documentId) ?? inboxLink(requestId);
+          (await this.subjectOf(request.documentType).link?.(tx, request.documentId)) ??
+          inboxLink(requestId);
         await this.notify.notifyUser(tx, {
           userId: request.requesterUserId,
           title: `${request.documentNumber} was ${outcome}`,
