@@ -11,7 +11,8 @@
 # Profiles:
 #   core   postgres, backup-scheduler, valkey, valkey-oidc, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
 #   files  clamav   (virus scanner for uploaded documents, P1; opt-in because it needs about 1.2-1.4 GB real RAM)
-#   app    migrate, api, worker, workspace   (images bos/api:dev and bos/workspace:dev, built by U3/U5)
+#   app    migrate, api, worker, workspace, gotenberg   (images bos/api:dev and bos/workspace:dev, built by U3/U5;
+#          gotenberg is the PDF renderer, an official image)
 #   tools  seed-zitadel, k6, restore-drill   (one-shot, started with `docker compose run --rm`)
 #   obs    prometheus
 #
@@ -45,9 +46,10 @@
 #   api             app        512 MiB
 #   worker          app        512 MiB  was 384 MiB; P1 adds the scan, mail and approval-timer processors
 #   workspace       app        512 MiB
-#   app total                 1792 MiB  (core + app = 4840 MiB = 4.73 GiB, dev)
+#   gotenberg       app        512 MiB  PDF rendering (headless Chromium); raise to 768 MiB if a render is OOM-killed
+#   app total                 2304 MiB  (core + app = 5352 MiB = 5.23 GiB, dev)
 #
-#   core + files + app        6632 MiB  = 6.48 GiB (about 6.5 GiB of limits, dev; real use is about 2 GB)
+#   core + files + app        7144 MiB  = 6.98 GiB (about 7.0 GiB of limits, dev; real use is about 2.3 GB)
 #
 #   seed-zitadel    tools      256 MiB  transient
 #   k6              tools      512 MiB  transient
@@ -584,6 +586,27 @@ services:
       valkey-oidc:
         condition: service_healthy
     networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # PDF rendering (HTML to PDF through headless Chromium). The worker calls it as http://gotenberg:3000.
+  # Pinned to 8.40.0, the newest 8.x when this was written (the `8` tag pointed at the same digest). The stock image
+  # already carries Noto Devanagari (it installs fonts-noto-core on Debian trixie), so no custom Dockerfile.
+  # Internal only: `backend` has no route out and nothing is published, in dev or prod. Chromium therefore cannot
+  # fetch a remote URL, so render templates must be self-contained (inline CSS, no external images).
+  gotenberg:
+    profiles: [app]
+    image: gotenberg/gotenberg:8.40.0@sha256:53073e798c8ef39ea2187e44cb67bab77894ea2509100b94c4fe3b461f7b2996
+    healthcheck:
+      # The image has no HEALTHCHECK of its own, but it ships curl.
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [backend]
     deploy:
       resources:
         limits:
