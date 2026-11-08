@@ -639,6 +639,7 @@ describe('QuotationApprovalSnapshotSchema', () => {
     customerName: 'Big Kahuna Burger Ltd.',
     quotationNumber: 'QT-2082-0042',
     revisionNo: 2,
+    discountApprovalRequired: true,
   });
 
   it('parses the camelCase snapshot with money and percentages as strings', () => {
@@ -671,6 +672,20 @@ describe('QuotationApprovalSnapshotSchema', () => {
     expect(
       QuotationApprovalSnapshotSchema.safeParse({ ...snapshot(), revisionNo: 0 }).success,
     ).toBe(false);
+  });
+
+  it('requires the server flag, a boolean, so the 12% rule is never re-derived from text', () => {
+    const { discountApprovalRequired, ...rest } = snapshot();
+    expect(discountApprovalRequired).toBe(true);
+    expect(QuotationApprovalSnapshotSchema.safeParse(rest).success).toBe(false);
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({ ...snapshot(), discountApprovalRequired: 'true' })
+        .success,
+    ).toBe(false);
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({ ...snapshot(), discountApprovalRequired: false })
+        .success,
+    ).toBe(true);
   });
 
   it('is what the inbox renderer reads: a stored JSON snapshot round-trips', () => {
