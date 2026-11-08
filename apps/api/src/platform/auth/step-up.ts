@@ -1,10 +1,15 @@
 // Step-up authentication (K7, kernel gap M24): some decisions, such as approving a Founder step,
-// need the user to have signed in recently, not just to hold a valid token. The token's `auth_time`
-// says when that sign-in happened. Anything we cannot read as a recent sign-in is stale, so the
-// default is "sign in again".
+// need the user to have signed in recently, not just to hold a valid token. ZITADEL puts the
+// sign-in time (`auth_time`) only in the ID token, never in access tokens, introspection or
+// userinfo, so the BFF forwards the user's ID token in `x-bos-id-token` on a decision call and we
+// verify it here. Anything we cannot read as a recent sign-in is stale: "sign in again".
 import { UnauthorizedException } from '@nestjs/common';
 
 import type { AuthIdentity } from './claims';
+import type { JwtVerifier } from './jwt-verifier';
+
+/** The request header the BFF puts the user's raw ID token in, on a decision call only. */
+export const ID_TOKEN_HEADER = 'x-bos-id-token';
 
 /** The error code a client switches on to send the user through a fresh sign-in. */
 export const STEP_UP_REQUIRED = 'step_up_required';
@@ -70,6 +75,45 @@ export function assertRecentAuth(
   maxAgeSeconds: number,
 ): void {
   if (!isAuthRecent(auth?.authTime, nowMs, maxAgeSeconds)) {
+    throw new StepUpRequiredException(maxAgeSeconds);
+  }
+}
+
+/** Three base64url parts. Anything else (empty, a list of joined headers, junk) is no ID token. */
+const COMPACT_JWT = /^[\w-]+\.[\w-]+\.[\w-]+$/;
+
+/** Far above a real ZITADEL ID token; stops us parsing an oversized header. */
+const MAX_ID_TOKEN_LENGTH = 16_384;
+
+/**
+ * Throws StepUpRequiredException unless `rawHeader` is a valid ID token (see
+ * {@link JwtVerifier.verifyIdToken}) for `accessSub`, the access token's `sub`, whose `auth_time`
+ * is within `maxAgeSeconds` of `nowSec`. Every failure, including an unreachable identity
+ * provider, is a step-up: the decision never proceeds without proof.
+ */
+export async function assertRecentIdToken(
+  verifier: Pick<JwtVerifier, 'verifyIdToken'>,
+  rawHeader: string | undefined,
+  accessSub: string | undefined,
+  nowSec: number,
+  maxAgeSeconds: number,
+): Promise<void> {
+  if (
+    typeof rawHeader !== 'string' ||
+    rawHeader.length > MAX_ID_TOKEN_LENGTH ||
+    !COMPACT_JWT.test(rawHeader) ||
+    typeof accessSub !== 'string' ||
+    accessSub.length === 0
+  ) {
+    throw new StepUpRequiredException(maxAgeSeconds);
+  }
+  let authTime: unknown;
+  try {
+    authTime = (await verifier.verifyIdToken(rawHeader, accessSub))['auth_time'];
+  } catch {
+    throw new StepUpRequiredException(maxAgeSeconds);
+  }
+  if (!isAuthRecent(typeof authTime === 'number' ? authTime : null, nowSec * 1000, maxAgeSeconds)) {
     throw new StepUpRequiredException(maxAgeSeconds);
   }
 }
