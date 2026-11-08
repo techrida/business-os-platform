@@ -34,6 +34,14 @@ export function ActivityForm({
   });
   const [values, setValues] = useState<Record<string, string>>(EMPTY);
   const summary = useRef<HTMLDivElement>(null);
+  // Made on the first submit (not on render, so server and browser HTML agree). After that the
+  // action hands back the key to use: the same one when the outcome is unknown, a new one after a
+  // save or a refusal.
+  const firstKey = useRef<string | null>(null);
+  const submit = (data: FormData) => {
+    data.set('idempotencyKey', state.key ?? (firstKey.current ??= crypto.randomUUID()));
+    formAction(data);
+  };
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
   const err = state.fieldErrors;
@@ -49,7 +57,7 @@ export function ActivityForm({
   }, [state]);
 
   return (
-    <form action={formAction} noValidate className={styles.form}>
+    <form action={submit} noValidate className={styles.form}>
       <input type="hidden" name="subjectKind" value={subjectKind} />
       <input type="hidden" name="subjectId" value={subjectId} />
 
