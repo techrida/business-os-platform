@@ -3,7 +3,8 @@
 // Only Draft and Returned versions are editable; every later change is a revision with a reason.
 import { z } from 'zod';
 
-import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
+import { DocumentVersionStatusSchema } from './documents.js';
+import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const isoDate = z.iso.date();
@@ -445,6 +446,12 @@ export const QuotationVersionDtoSchema = z
     snapshotSha256: sha256Hex.nullable(),
     renderedDocumentId: z.guid().nullable(),
     renderedSha256: sha256Hex.nullable(),
+    /**
+     * The scan status of the rendered PDF's document version, null when none is rendered. Required on
+     * purpose: a producer that omits it fails the parse, and a screen offers the PDF link and Send only
+     * when it is `clean` (deny by default).
+     */
+    renderedScanStatus: DocumentVersionStatusSchema.nullable(),
     supersedesVersionId: z.guid().nullable(),
     supersededByVersionId: z.guid().nullable(),
     revisionReason: z.string().nullable(),
@@ -490,3 +497,58 @@ export const QuotationStatusHistoryDtoSchema = z.object({
   at: isoDateTime,
 });
 export type QuotationStatusHistoryDto = z.infer<typeof QuotationStatusHistoryDtoSchema>;
+
+/**
+ * One row of `GET /v1/quotations`: the parent plus what a list needs, so the screen never makes a
+ * call per row. `total` is the current version's total, in `currency`. The endpoint returns an array.
+ */
+export const QuotationListItemSchema = QuotationDtoSchema.extend({
+  customerName: z.string().min(1),
+  currency: CurrencySchema,
+  total: NonNegativeDecimalString,
+  validUntil: isoDate,
+  ownerName: z.string().nullable(),
+});
+export type QuotationListItem = z.infer<typeof QuotationListItemSchema>;
+
+/** A customer contact the send dialog can offer as a recipient. */
+export const QuotationContactSchema = z.object({
+  id: z.guid(),
+  name: z.string().min(1),
+  /** A contact with no email cannot receive a quotation; the dialog shows it as unusable. */
+  email: z.string().nullable(),
+});
+export type QuotationContact = z.infer<typeof QuotationContactSchema>;
+
+/** `GET /v1/quotations/:id`: the parent, every version (Superseded included), history and recipients. */
+export const QuotationDetailSchema = z.object({
+  quotation: QuotationDtoSchema,
+  versions: z.array(QuotationVersionDtoSchema),
+  statusHistory: z.array(QuotationStatusHistoryDtoSchema),
+  customerName: z.string().min(1),
+  contacts: z.array(QuotationContactSchema),
+});
+export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
+
+/**
+ * What an approver sees in the inbox for a quotation, frozen at submission. The API writes it when
+ * the version is submitted; the inbox renderer reads it. camelCase, and every money amount and
+ * percentage is a string.
+ */
+export const QuotationApprovalSnapshotSchema = z.object({
+  nprTotal: NonNegativeDecimalString,
+  effectiveDiscountPct: z.string().regex(/^\d{1,3}(\.\d{1,4})?$/),
+  /** Null when no internal cost is recorded, so the margin is unknown rather than zero. */
+  marginPct: z
+    .string()
+    .regex(/^-?\d{1,3}(\.\d{1,4})?$/)
+    .nullable(),
+  nprDiscountAmount: NonNegativeDecimalString,
+  currency: CurrencySchema,
+  /** The rate to NPR; "1" for an NPR document. */
+  fxRate: RateString,
+  customerName: z.string().min(1),
+  quotationNumber: z.string().min(1).max(32),
+  revisionNo: z.number().int().min(1),
+});
+export type QuotationApprovalSnapshot = z.infer<typeof QuotationApprovalSnapshotSchema>;
