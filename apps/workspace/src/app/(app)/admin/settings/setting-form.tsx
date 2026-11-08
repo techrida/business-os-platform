@@ -24,8 +24,9 @@ const EVIDENCE_LABEL: Record<EvidencePolicy, string> = {
 };
 
 // One row per setting key: the current value and an Edit button; Edit opens the form. The control
-// depends on the value's shape: a list of currencies is checkboxes, the SLA object is JSON text,
-// and the rest are short text fields. The Server Action validates against the shared SETTINGS
+// depends on the value's shape: a list of currencies is checkboxes, the SLA object and the entity address
+// are JSON text, and the rest are short text fields (the entity PAN/VAT number may be cleared, so it is not
+// required). The Server Action validates against the shared SETTINGS
 // schema, and the API validates again.
 //
 // It renders the row's cells (value, button, form, status) as siblings: the page's list item is
@@ -93,7 +94,7 @@ export function SettingForm({
         </div>
       </fieldset>
     );
-  } else if (settingKey === 'approvals.sla_defaults') {
+  } else if (settingKey === 'approvals.sla_defaults' || settingKey === 'entity.address') {
     control = (
       <Field label={`${label} (JSON)`}>
         {(field) => (
@@ -129,7 +130,7 @@ export function SettingForm({
           <Input
             name="value"
             autoComplete="off"
-            required
+            required={settingKey !== 'entity.pan_vat_no'}
             defaultValue={kept ?? current}
             {...field}
           />

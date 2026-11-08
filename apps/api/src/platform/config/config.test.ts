@@ -282,6 +282,7 @@ describe('loadCoreConfig (worker)', () => {
       'ZITADEL_PROVISIONER_TOKEN',
       'WORKSPACE_PUBLIC_URL',
       'PORTAL_PUBLIC_URL',
+      'GOTENBERG_URL',
     ]);
   });
 
@@ -309,5 +310,56 @@ describe('isLoopbackHost', () => {
     expect(isLoopbackHost('auth.localhost')).toBe(false);
     expect(isLoopbackHost('auth.example.com')).toBe(false);
     expect(isLoopbackHost('10.0.0.5')).toBe(false);
+  });
+});
+
+describe('the PDF renderer (Gotenberg)', () => {
+  const worker = { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL };
+  const workerProd = { ...worker, ...kernelProd, NODE_ENV: 'production' };
+
+  it('defaults to the compose service and sane limits outside production', () => {
+    expect(loadCoreConfig(worker, 'worker')).toMatchObject({
+      GOTENBERG_URL: 'http://gotenberg:3000',
+      GOTENBERG_TIMEOUT_MS: 30_000,
+      GOTENBERG_MAX_BYTES: 20_971_520,
+    });
+    expect(loadAppConfig(base).GOTENBERG_URL).toBe('http://gotenberg:3000');
+  });
+
+  it('is required in the worker in production, and never falls back to the dev URL there', () => {
+    expect(problems(() => loadCoreConfig(workerProd, 'worker'))).toEqual([
+      'GOTENBERG_URL: is required in production',
+    ]);
+    const config = loadCoreConfig({ ...workerProd, GOTENBERG_URL: 'http://pdf:3000' }, 'worker');
+    expect(config.GOTENBERG_URL).toBe('http://pdf:3000');
+  });
+
+  it('is not required of the API in production, which never calls it, and stays undefined there', () => {
+    expect(loadAppConfig(prod).GOTENBERG_URL).toBeUndefined();
+  });
+
+  it('coerces the limits and refuses a bad URL, a short timeout or a size above the upload cap', () => {
+    expect(
+      loadCoreConfig(
+        { ...worker, GOTENBERG_TIMEOUT_MS: '5000', GOTENBERG_MAX_BYTES: '1048576' },
+        'worker',
+      ),
+    ).toMatchObject({ GOTENBERG_TIMEOUT_MS: 5000, GOTENBERG_MAX_BYTES: 1_048_576 });
+    expect(
+      problems(() =>
+        loadCoreConfig(
+          {
+            ...worker,
+            GOTENBERG_URL: 'ftp://pdf',
+            GOTENBERG_TIMEOUT_MS: '10',
+            GOTENBERG_MAX_BYTES: '26214401',
+          },
+          'worker',
+        ),
+      ).map((p) => p.split(':')[0]),
+    ).toEqual(['GOTENBERG_URL', 'GOTENBERG_TIMEOUT_MS', 'GOTENBERG_MAX_BYTES']);
+    expect(
+      loadCoreConfig({ ...worker, GOTENBERG_MAX_BYTES: '26214400' }, 'worker').GOTENBERG_MAX_BYTES,
+    ).toBe(26_214_400);
   });
 });
