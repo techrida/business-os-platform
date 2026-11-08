@@ -1,4 +1,5 @@
-// Documents worker module (owner: U4): the docs.scan processor. Imported only by WorkerModule.
+// Documents worker module (owner: U4): the docs.scan processor and its 10-minute sweeper. Imported only by
+// WorkerModule.
 // Serves NFR Availability: scanning runs in the worker process, so a slow scan never blocks an API request.
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
@@ -10,11 +11,20 @@ import { NotifyModule } from '../notify/notify.module';
 import { NotifyService } from '../notify/notify.service';
 import { ClamdClient } from './clamd.client';
 import { AUDIT_PORT, DOCS_SCAN_QUEUE, NOTIFY_PORT } from './documents.ports';
-import { ScanProcessor } from './scan.processor';
+import {
+  DOCS_SCAN_SWEEP_QUEUE,
+  ScanProcessor,
+  ScanSweepProcessor,
+  ScanSweepScheduler,
+} from './scan.processor';
 import { DiskStorageAdapter, STORAGE_ADAPTER } from './storage.adapter';
 
 @Module({
-  imports: [AuditModule, NotifyModule, BullModule.registerQueue({ name: DOCS_SCAN_QUEUE })],
+  imports: [
+    AuditModule,
+    NotifyModule,
+    BullModule.registerQueue({ name: DOCS_SCAN_QUEUE }, { name: DOCS_SCAN_SWEEP_QUEUE }),
+  ],
   providers: [
     {
       provide: STORAGE_ADAPTER,
@@ -30,6 +40,8 @@ import { DiskStorageAdapter, STORAGE_ADAPTER } from './storage.adapter';
     { provide: AUDIT_PORT, useExisting: AuditService },
     { provide: NOTIFY_PORT, useExisting: NotifyService },
     ScanProcessor,
+    ScanSweepProcessor,
+    ScanSweepScheduler,
   ],
 })
 export class DocumentsWorkerModule {}

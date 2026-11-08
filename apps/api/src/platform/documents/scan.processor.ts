@@ -1,6 +1,7 @@
 // The docs.scan worker: streams a quarantined file to clamd and acts on the verdict.
 // Serves NFR Security (nothing is downloadable before this says `clean`) and Availability (a down
-// scanner means retries, then `scan_failed`; it never means "treat as clean").
+// scanner means retries over about half an hour, then `scan_failed`; it never means "treat as clean"; a
+// sweeper keeps trying versions the retries gave up on, ADR 0022).
 //
 // Decision, infected files: the file is DELETED from quarantine, not kept. The row keeps the SHA-256 and the
 // signature name, which is the evidence anyone needs. Keeping live malware on the volume buys nothing and
@@ -10,16 +11,17 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 
 import { documents, documentVersions, scoped } from '@bos/db';
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Inject, Logger } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
-import type { Job } from 'bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { and, asc, eq, isNull, lt, sql } from 'drizzle-orm';
+import type { Job, Queue } from 'bullmq';
 
 import { DB, type Db } from '../db/db.module';
 import { systemActor, withTx } from '../db/tx';
 import { ClamdClient } from './clamd.client';
 import {
   AUDIT_PORT,
+  DOCS_SCAN_JOB,
   DOCS_SCAN_QUEUE,
   NOTIFY_PORT,
   type AuditPort,
@@ -27,6 +29,36 @@ import {
   type ScanJobData,
 } from './documents.ports';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage.adapter';
+
+/**
+ * How a scan job is queued: 7 tries, waiting 30 s, 60 s, 120 s ... 960 s between them (BullMQ's exponential
+ * backoff is delay * 2^(attemptsMade - 1)), about 31 minutes in all. A short ClamAV outage (a restart, a
+ * signature reload, an OOM kill and restart) then ends in a successful scan, not a permanent scan_failed.
+ * The upload path (documents.service.ts) and the sweeper must queue with these same options.
+ */
+export const SCAN_JOB_OPTIONS = {
+  attempts: 7,
+  backoff: { type: 'exponential' as const, delay: 30_000 },
+  removeOnComplete: 100,
+  removeOnFail: 500,
+};
+
+/** Total time BullMQ waits between the attempts of one scan job, in ms. */
+export function scanBackoffTotalMs(options = SCAN_JOB_OPTIONS): number {
+  let total = 0;
+  for (let made = 1; made < options.attempts; made += 1) {
+    total += Math.round(2 ** (made - 1) * options.backoff.delay);
+  }
+  return total;
+}
+
+/**
+ * Written to `scan_engine` of a `scan_failed` version when the scanner was unreachable (as opposed to clamd
+ * answering with an error about this file). The sweeper re-queues exactly these. `scan_engine` is used
+ * because it is not part of the version DTO and is otherwise empty on a failed scan; a dedicated column
+ * would be cleaner (see the handback).
+ */
+export const SCAN_FAILED_INFRA = 'infra-error';
 
 /** What one run did. `retry` means "try again later": the processor throws so BullMQ retries with backoff. */
 export type ScanOutcome = 'clean' | 'infected' | 'scan_failed' | 'skipped' | 'retry';
@@ -66,18 +98,27 @@ export class ScanProcessor extends WorkerHost {
       this.logger.warn(`scan skipped for version ${data.versionId}: ${v?.status ?? 'not found'}`);
       return 'skipped';
     }
+    // A removed document's quarantine bytes are deleted with it. A job that still arrives for it has nothing
+    // to scan: no verdict (a missing file must not become scan_failed) and no infected notice.
+    if (await this.documentRemoved(s, v.documentId)) {
+      this.logger.warn(`scan skipped for version ${v.id}: its document was removed`);
+      return 'skipped';
+    }
 
     const path = this.storage.quarantinePath(v.storageKey);
     if (!(await exists(path))) {
       // Either a previous run already promoted it (the database update then failed), or it is really gone.
       try {
         await this.storage.promote(v.storageKey); // idempotent: succeeds only if clean/ already holds it
-        await this.markClean(scope, v, await this.engine());
-        return 'clean';
-      } catch {
-        await this.markFailed(scope, v.id, 'file missing from quarantine');
-        return 'scan_failed';
+      } catch (error) {
+        // Only "in neither folder" is a verdict. Any other error (disk I/O, permissions, a mount that is
+        // briefly away) says nothing about the file, so it propagates and BullMQ retries.
+        if (!isNotFound(error)) throw error;
+        const applied = await this.markFailed(scope, v.id, 'file missing from quarantine', false);
+        return applied ? 'scan_failed' : 'skipped';
       }
+      // Outside the try: a database error here must fail the job, not turn into "file missing".
+      return (await this.markClean(scope, v, await this.engine())) ? 'clean' : 'skipped';
     }
 
     const stream = createReadStream(path);
@@ -85,15 +126,14 @@ export class ScanProcessor extends WorkerHost {
 
     if (result.verdict === 'clean') {
       await this.storage.promote(v.storageKey);
-      await this.markClean(scope, v, await this.engine());
-      return 'clean';
+      return (await this.markClean(scope, v, await this.engine())) ? 'clean' : 'skipped';
     }
 
     if (result.verdict === 'infected') {
       const engine = await this.engine();
       const linkPath = await this.noticeLink(s, v.documentId);
-      await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
-        await tx
+      const applied = await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
+        const updated = await tx
           .update(documentVersions)
           .set({
             status: 'infected',
@@ -102,7 +142,11 @@ export class ScanProcessor extends WorkerHost {
             scannedAt: new Date(),
             updatedAt: new Date(),
           })
-          .where(s.where(documentVersions, eq(documentVersions.id, v.id)));
+          .where(s.where(documentVersions, stillQuarantined(v.id)))
+          .returning({ id: documentVersions.id });
+        // Zero rows: the version was rejected, finished by another run or otherwise moved on since we read
+        // it. Our verdict is stale, so it writes nothing, audits nothing and notifies nobody.
+        if (updated.length === 0) return false;
         await this.audit.record(tx, {
           action: 'document.infected',
           entityType: 'document_version',
@@ -122,7 +166,12 @@ export class ScanProcessor extends WorkerHost {
             dedupeKey: `document.infected:${v.id}`,
           });
         }
+        return true;
       });
+      if (!applied) {
+        this.noOp(v.id, 'infected verdict');
+        return 'skipped';
+      }
       // Deleted only after the status is committed. Deleting first meant a failed transaction left a
       // quarantined row with no file, and the BullMQ retry then marked it scan_failed. If the delete
       // itself fails the file is still unreachable (no link is issued for an infected version), so we
@@ -137,13 +186,36 @@ export class ScanProcessor extends WorkerHost {
       return 'infected';
     }
 
-    // verdict 'error': timeout, connection refused, clamd ERROR line. Not a verdict on the file.
+    // verdict 'error'. Not a verdict on the file, but two different things:
+    //  - transient: the scanner was unreachable (refused, reset, timeout, no reply). Retry with backoff; only
+    //    after the last attempt is it `scan_failed`, marked so the sweeper keeps trying later (R7).
+    //  - definite: clamd answered with an ERROR line (for example "size limit exceeded"). Retrying cannot
+    //    change that, so it is final at once and the sweeper leaves it alone.
+    const transient = result.transient === true;
     this.logger.warn(
-      `scan of version ${v.id} failed (attempt final=${finalAttempt}): ${result.detail ?? ''}`,
+      `scan of version ${v.id} failed (transient=${transient}, final attempt=${finalAttempt}): ${result.detail ?? ''}`,
     );
-    if (!finalAttempt) return 'retry';
-    await this.markFailed(scope, v.id, result.detail ?? 'scanner error');
-    return 'scan_failed';
+    if (transient && !finalAttempt) return 'retry';
+    const applied = await this.markFailed(scope, v.id, result.detail ?? 'scanner error', transient);
+    return applied ? 'scan_failed' : 'skipped';
+  }
+
+  private noOp(versionId: string, what: string): void {
+    this.logger.warn(
+      `${what} for version ${versionId} was not applied: it is no longer quarantined (another run or a state change got there first)`,
+    );
+  }
+
+  private async documentRemoved(
+    s: ReturnType<typeof scoped>,
+    documentId: string,
+  ): Promise<boolean> {
+    const [doc] = await this.db
+      .select({ removedAt: documents.removedAt })
+      .from(documents)
+      .where(s.where(documents, eq(documents.id, documentId)))
+      .limit(1);
+    return doc?.removedAt != null;
   }
 
   /**
@@ -173,10 +245,12 @@ export class ScanProcessor extends WorkerHost {
     scope: { tenantId: string; organizationId: string },
     v: typeof documentVersions.$inferSelect,
     engine: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const s = scoped(scope);
-    await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
-      await tx
+    // Errors propagate on purpose: the job fails and BullMQ retries; swallowing one here once turned a
+    // database blip into a permanent scan_failed.
+    const applied = await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
+      const updated = await tx
         .update(documentVersions)
         .set({
           status: 'clean',
@@ -185,7 +259,10 @@ export class ScanProcessor extends WorkerHost {
           scannedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(s.where(documentVersions, eq(documentVersions.id, v.id)));
+        .where(s.where(documentVersions, stillQuarantined(v.id)))
+        .returning({ id: documentVersions.id });
+      // Zero rows: the version moved on since we read it. Do not point the document at it or audit a scan.
+      if (updated.length === 0) return false;
       // The document points at its newest clean version: set it when it has none, or only an older one.
       await tx
         .update(documents)
@@ -207,30 +284,223 @@ export class ScanProcessor extends WorkerHost {
         entityId: v.id,
         meta: { result: 'clean', engine, sha256: v.sha256?.toString('hex') ?? null },
       });
+      return true;
     });
+    if (!applied) this.noOp(v.id, 'clean verdict');
+    return applied;
   }
 
   private async markFailed(
     scope: { tenantId: string; organizationId: string },
     versionId: string,
     detail: string,
-  ): Promise<void> {
+    transient: boolean,
+  ): Promise<boolean> {
     const s = scoped(scope);
-    this.logger.error(`version ${versionId} is now scan_failed: ${detail}`);
-    await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
-      await tx
+    const applied = await withTx(this.db, scope, systemActor('docs.scan'), async (tx) => {
+      const updated = await tx
         .update(documentVersions)
-        .set({ status: 'scan_failed', updatedAt: new Date() })
-        .where(s.where(documentVersions, eq(documentVersions.id, versionId)));
+        .set({
+          status: 'scan_failed',
+          // The marker is what lets the sweeper tell "scanner was down" from "clamd said ERROR".
+          ...(transient ? { scanEngine: SCAN_FAILED_INFRA } : {}),
+          updatedAt: new Date(),
+        })
+        .where(s.where(documentVersions, stillQuarantined(versionId)))
+        .returning({ id: documentVersions.id });
+      return updated.length > 0;
     });
+    if (applied) this.logger.error(`version ${versionId} is now scan_failed: ${detail}`);
+    else this.noOp(versionId, 'scan_failed verdict');
+    return applied;
   }
 }
 
+/** Every verdict update carries this: it only applies to a version that is still waiting for its scan. */
+function stillQuarantined(versionId: string) {
+  return and(eq(documentVersions.id, versionId), eq(documentVersions.status, 'quarantined'));
+}
+
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT'
+  );
+}
+
+/** Only ENOENT means "not there". Any other stat error (I/O, permissions) is not an answer, so it throws. */
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    throw error;
+  }
+}
+
+// ------------------------------------------------------------------------------------------ sweeper
+
+/** The sweeper has its own queue so `ScanProcessor` stays a plain scan worker. */
+export const DOCS_SCAN_SWEEP_QUEUE = 'docs.scan.sweep';
+export const DOCS_SCAN_SWEEP_JOB = 'docs.scan.sweep';
+export const DOCS_SCAN_SWEEP_SCHEDULER_ID = 'docs.scan.sweep.every10min';
+export const SWEEP_EVERY_MS = 10 * 60_000;
+/** A quarantined version this old with no live job lost its job (Valkey flushed, a crash between commit and queue). */
+export const SWEEP_STALE_MS = 15 * 60_000;
+/** One sweep re-queues at most this many versions per list, so a long outage cannot flood the queue at once. */
+const SWEEP_BATCH = 200;
+/** Job states that mean "a worker will still look at this version". */
+const LIVE_STATES = [
+  'active',
+  'waiting',
+  'delayed',
+  'prioritized',
+  'paused',
+  'waiting-children',
+] as const;
+
+export interface SweepResult {
+  /** Jobs added to the scan queue. */
+  requeued: number;
+  /** Of those, versions moved from scan_failed back to quarantined first. */
+  reset: number;
+}
+
+type VersionRow = typeof documentVersions.$inferSelect;
+
+/**
+ * Every 10 minutes it re-queues, so no file stays stuck:
+ *  - versions `quarantined` for over 15 minutes with no live scan job;
+ *  - `scan_failed` versions whose failure was the scanner being unreachable (see SCAN_FAILED_INFRA). They go
+ *    back to `quarantined` first (the trigger allows scan_failed -> quarantined), because scanVersion skips
+ *    anything that is not quarantined.
+ * Versions of a removed document are never touched (their bytes are gone). Versions are listed across
+ * tenants on purpose (this is the system, not a request); each state change then runs in its own tenant's
+ * scope through withTx.
+ */
+@Processor(DOCS_SCAN_SWEEP_QUEUE)
+export class ScanSweepProcessor extends WorkerHost {
+  private readonly logger = new Logger(ScanSweepProcessor.name);
+
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    @InjectQueue(DOCS_SCAN_QUEUE) private readonly scanQueue: Queue,
+  ) {
+    super();
+  }
+
+  async process(job: Job): Promise<SweepResult> {
+    if (job.name !== DOCS_SCAN_SWEEP_JOB) throw new Error(`Unknown scan sweep job: ${job.name}`);
+    return this.sweep();
+  }
+
+  /** One pass. `now` is a parameter so tests need no waiting. */
+  async sweep(now: Date = new Date()): Promise<SweepResult> {
+    const cutoff = new Date(now.getTime() - SWEEP_STALE_MS);
+    const stale = await this.list(
+      and(eq(documentVersions.status, 'quarantined'), lt(documentVersions.updatedAt, cutoff)),
+    );
+    const failed = await this.list(
+      and(
+        eq(documentVersions.status, 'scan_failed'),
+        eq(documentVersions.scanEngine, SCAN_FAILED_INFRA),
+      ),
+    );
+    if (stale.length === 0 && failed.length === 0) return { requeued: 0, reset: 0 };
+
+    // A version that is waiting out a backoff has a delayed job, so it is live and left alone. Matching is by
+    // the job's data, not its id: a re-queued job's id is not the version id.
+    const live = new Set(
+      (await this.scanQueue.getJobs([...LIVE_STATES], 0, -1))
+        .filter((j) => j.name === DOCS_SCAN_JOB)
+        .map((j) => (j.data as ScanJobData).versionId),
+    );
+
+    const result: SweepResult = { requeued: 0, reset: 0 };
+    const failures: string[] = [];
+    const attempt = async (v: VersionRow, resetFirst: boolean) => {
+      if (live.has(v.id)) return;
+      try {
+        const scope = { tenantId: v.tenantId, organizationId: v.organizationId };
+        if (resetFirst && !(await this.resetToQuarantined(scope, v.id))) return;
+        const data: ScanJobData = { versionId: v.id, ...scope };
+        await this.scanQueue.add(DOCS_SCAN_JOB, data, {
+          ...SCAN_JOB_OPTIONS,
+          // Not the bare version id: the upload's job (same id) may still be retained by BullMQ, and an add()
+          // under a used id is silently dropped. The timestamp makes each re-queue its own job. No ':' either:
+          // BullMQ rejects it in custom ids.
+          jobId: `${v.id}-${now.getTime()}`,
+        });
+        result.requeued += 1;
+        if (resetFirst) result.reset += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`could not re-queue the scan of version ${v.id}: ${message}`);
+        failures.push(`${v.id}: ${message}`);
+      }
+    };
+    for (const v of stale) await attempt(v, false);
+    for (const v of failed) await attempt(v, true);
+
+    this.logger.log(
+      `scan sweep: ${result.requeued} re-queued (${result.reset} were scan_failed), ${failures.length} failed`,
+    );
+    // A version whose reset committed but whose add() failed is quarantined with no job: the next sweep finds
+    // it as stale, so failing the job here is for visibility, not for recovery.
+    if (failures.length > 0) throw new Error(`scan sweep: ${failures.join('; ')}`);
+    return result;
+  }
+
+  /** Oldest first, only versions whose document is not removed. */
+  private async list(where: ReturnType<typeof and>): Promise<VersionRow[]> {
+    const rows = await this.db
+      .select({ v: documentVersions })
+      .from(documentVersions)
+      .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+      .where(and(where, isNull(documents.removedAt)))
+      .orderBy(asc(documentVersions.updatedAt))
+      .limit(SWEEP_BATCH);
+    return rows.map((r) => r.v);
+  }
+
+  private resetToQuarantined(
+    scope: { tenantId: string; organizationId: string },
+    versionId: string,
+  ): Promise<boolean> {
+    const s = scoped(scope);
+    return withTx(this.db, scope, systemActor('docs.scan.sweep'), async (tx) => {
+      const updated = await tx
+        .update(documentVersions)
+        .set({ status: 'quarantined', scanEngine: null, updatedAt: new Date() })
+        .where(
+          s.where(
+            documentVersions,
+            and(
+              eq(documentVersions.id, versionId),
+              eq(documentVersions.status, 'scan_failed'),
+              eq(documentVersions.scanEngine, SCAN_FAILED_INFRA),
+            ),
+          ),
+        )
+        .returning({ id: documentVersions.id });
+      return updated.length > 0;
+    });
+  }
+}
+
+/**
+ * Registers the sweep at worker start. `upsertJobScheduler` is idempotent, like the audit seal's: restarting
+ * the worker (or running two) updates the one schedule instead of stacking duplicates.
+ */
+@Injectable()
+export class ScanSweepScheduler implements OnModuleInit {
+  constructor(@InjectQueue(DOCS_SCAN_SWEEP_QUEUE) private readonly queue: Queue) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.queue.upsertJobScheduler(
+      DOCS_SCAN_SWEEP_SCHEDULER_ID,
+      { every: SWEEP_EVERY_MS },
+      { name: DOCS_SCAN_SWEEP_JOB, opts: { removeOnComplete: 20, removeOnFail: 50 } },
+    );
   }
 }
