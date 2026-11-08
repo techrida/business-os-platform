@@ -5,7 +5,10 @@ import type { JWTPayload } from 'jose';
 /** ZITADEL puts the id of the user's own organization (its "resource owner") in this claim. */
 export const ORG_ID_CLAIM = 'urn:zitadel:iam:user:resourceowner:id';
 
-/** Roles for the project(s) in the token audience: `{ [roleKey]: { [orgId]: orgDomain } }`. */
+/**
+ * Roles for the project(s) in the token audience: `{ [roleKey]: { [orgId]: orgDomain } }`. It names
+ * no project, so it feeds only P0's flat `roles` list and never `rolesByOrg` (review R3).
+ */
 export const PROJECT_ROLES_CLAIM = 'urn:zitadel:iam:org:project:roles';
 
 /** The same shape, scoped to one project id. */
@@ -95,13 +98,15 @@ function groupRolesByOrg(claims: readonly unknown[]): RolesByOrg {
  * All the ZITADEL claim names live here, in one function with fixtures, because they are the part
  * most likely to differ from the docs (plan risk R7).
  *
- * Roles are the union of the generic project roles claim and the claim scoped to `projectId`
- * (our API's project id, which is also `OIDC_AUDIENCE`). Claims scoped to any other project are
- * ignored on purpose: a token minted for another project must not grant roles here.
+ * `roles` (P0's flat list) is the union of the generic project roles claim and the claim scoped
+ * to `projectId` (our API's project id, which is also `OIDC_AUDIENCE`). Nothing authorizes on it.
  *
- * `rolesByOrg` reads the same two claims but keeps the org each role was granted in. The P1
- * interceptor picks the list for the resolved org, so a Finance grant in another org does not
- * make the caller Finance here.
+ * `rolesByOrg`, the list P1 authorizes on, reads ONLY the claim scoped to `projectId` (review R3).
+ * The generic claim names no project, so a role in it may have been granted in another project
+ * of the same ZITADEL instance; real ZITADEL tokens for our project carry the scoped claim (seen
+ * in the seed's R7 check). Claims scoped to any other project are ignored too. Each role keeps
+ * the org it was granted in, and the interceptor picks the list for the resolved org, so a Finance
+ * grant in another org does not make the caller Finance here.
  */
 export function mapClaims(payload: JWTPayload, projectId: string): MappedClaims {
   const { sub } = payload;
@@ -112,13 +117,13 @@ export function mapClaims(payload: JWTPayload, projectId: string): MappedClaims 
   const org = payload[ORG_ID_CLAIM];
   const zitadelOrgId = typeof org === 'string' && org.length > 0 ? org : null;
 
-  const roleClaims = [payload[PROJECT_ROLES_CLAIM], payload[projectRolesClaim(projectId)]];
-  const roles = new Set(roleClaims.flatMap(roleKeys));
+  const scopedClaim = payload[projectRolesClaim(projectId)];
+  const roles = new Set([payload[PROJECT_ROLES_CLAIM], scopedClaim].flatMap(roleKeys));
 
   return {
     userId: sub,
     zitadelOrgId,
     roles: [...roles].sort(),
-    rolesByOrg: groupRolesByOrg(roleClaims),
+    rolesByOrg: groupRolesByOrg([scopedClaim]),
   };
 }
