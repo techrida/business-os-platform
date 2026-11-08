@@ -5,8 +5,10 @@
 #   - Caddy published on 127.0.0.1:80 and :443 only (Windows reaches it through WSL localhost forwarding)
 #   - Postgres and Valkey published on 127.0.0.1 only, for apps and tests that run on the host
 #   - Caddy upstreams for app.localhost and api.localhost point at dev servers on the host
-#   - Mailpit (fake SMTP server with a web UI) behind https://mail.localhost
+#   - Mailpit (fake SMTP server with a web UI) behind https://mail.localhost; its SMTP port on 127.0.0.1:1025
 #   - BOS_DEV_LOGIN_RATE_LIMIT=200 on the workspace service (the `app` profile), so e2e runs do not trip the login limit
+#   - ClamAV (profile `files`) published on 127.0.0.1:3310
+#   - zitadel-api can reach host.docker.internal, so Actions v2 webhooks can call a host-run API on :3001
 
 services:
   caddy:
@@ -33,9 +35,25 @@ services:
       - '127.0.0.1:6379:6379'
     networks: [backend, edge]
 
+  clamav:
+    # For a host-run API and tests (CLAMD_HOST=127.0.0.1). Published ports need a non-internal network, so the
+    # base file already puts clamav on edge as well.
+    ports:
+      - '127.0.0.1:3310:3310'
+
+  zitadel-api:
+    # Actions v2 webhooks go from ZITADEL to the API. A host-run API on :3001 is reachable at host.docker.internal.
+    # [unverified] ZITADEL may block private or host addresses in its outbound calls; U6's probe checks.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
   mailpit:
     profiles: [core]
     image: axllent/mailpit:v1.33@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    # SMTP on 127.0.0.1:1025 for a host-run API and worker (SMTP_URL=smtp://127.0.0.1:1025). The web UI stays
+    # behind Caddy at https://mail.localhost.
+    ports:
+      - '127.0.0.1:1025:1025'
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: '1'
       MP_SMTP_AUTH_ALLOW_INSECURE: '1'
