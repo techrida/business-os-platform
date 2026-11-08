@@ -88,9 +88,9 @@ export interface PricedColumns {
   /** Null for NPR; the rate row's date for INR and USD. */
   fxDate: string | null;
   calcVersion: number;
-  /** Sum of round(quantity x unitCost, 2); null unless every line has a unit cost. */
+  /** round(sum of quantity x unitCost, 2); null unless every line has a unit cost. */
   internalCostTotal: string | null;
-  /** (taxable - internalCostTotal) / taxable x 100, 4 decimals; null when the cost is unknown or taxable is 0. */
+  /** (taxable - unrounded cost) / taxable x 100, 4 decimals; null when the cost is unknown or taxable is 0. */
   marginPct: string | null;
 }
 
