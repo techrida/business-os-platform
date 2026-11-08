@@ -31,6 +31,7 @@
   --button-lift: 0 1px 1px rgba(60, 40, 20, .16), 0 6px 12px -5px rgba(60, 40, 20, .5);
   --button-lift-up: 0 1px 1px rgba(60, 40, 20, .12), 0 10px 18px -7px rgba(60, 40, 20, .5);
   --hatch: rgba(90, 90, 100, .13);
+  --ldev: #6d4de0; --lmeas: #0b7a86; --on-layer: #ffffff;
   --font: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --spring: cubic-bezier(.3, 1.5, .5, 1);
   --cw: 212px;
@@ -54,6 +55,7 @@
     --paper: #4a4a53; --ink-face: #f2f2f4; --ink-text: #18181b; --cut: rgba(0, 0, 0, .5);
     --button-lift: 0 4px 9px -4px rgba(0, 0, 0, .8); --button-lift-up: 0 9px 16px -7px rgba(0, 0, 0, .85);
     --hatch: rgba(255, 255, 255, .08);
+    --ldev: #a995ff; --lmeas: #52d3c7; --on-layer: #101018;
     color-scheme: dark;
   }
 }
@@ -75,6 +77,7 @@
   --paper: #4a4a53; --ink-face: #f2f2f4; --ink-text: #18181b; --cut: rgba(0, 0, 0, .5);
   --button-lift: 0 4px 9px -4px rgba(0, 0, 0, .8); --button-lift-up: 0 9px 16px -7px rgba(0, 0, 0, .85);
   --hatch: rgba(255, 255, 255, .08);
+  --ldev: #a995ff; --lmeas: #52d3c7; --on-layer: #101018;
   color-scheme: dark;
 }
 
@@ -112,6 +115,7 @@ button, input { font: inherit; color: inherit; }
 .frame.k-external::after { content: ""; position: absolute; inset: 0; border-radius: inherit; border: 1.5px dashed var(--muted); pointer-events: none; }
 .frame.k-later { background: repeating-linear-gradient(135deg, var(--hatch) 0 6px, transparent 6px 12px); }
 .frame.proposed { outline: 1.5px dashed var(--accent); outline-offset: 3px; }
+.frame.l-dev, .frame.l-measure { background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--lc) 13%, transparent) 0 1.5px, transparent 1.5px 9px), var(--frame); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--lc) 50%, transparent); }
 .frame.sel { box-shadow: inset 0 0 0 1.5px var(--fg), 0 0 0 5px var(--accent-soft); }
 .frame.retired { opacity: .55; }
 .frame.faint { opacity: .38; }
@@ -145,6 +149,10 @@ button, input { font: inherit; color: inherit; }
 .node.k-external::after { content: ""; position: absolute; inset: 0; border-radius: inherit; border: 1.5px dashed var(--muted); pointer-events: none; }
 .node.k-later { background: repeating-linear-gradient(135deg, var(--hatch) 0 6px, transparent 6px 12px), var(--glass); }
 .node.k-later .ttl { color: var(--muted); }
+/* Dev and measurement layers: diagonal stripes in the layer colour, plus a word chip (never colour alone). */
+.l-dev { --lc: var(--ldev); }
+.l-measure { --lc: var(--lmeas); }
+.node.l-dev, .node.l-measure { background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--lc) 15%, transparent) 0 1.5px, transparent 1.5px 9px), var(--glass); }
 
 /* Kind sticker, stuck half on the corner. */
 .stk { position: absolute; left: -9px; top: -11px; width: 30px; height: 30px; border-radius: 50%; background: var(--c); display: grid; place-items: center;
@@ -163,6 +171,7 @@ button, input { font: inherit; color: inherit; }
 .chip.proposed { background: var(--bg); color: var(--muted); box-shadow: 0 0 0 1.5px var(--muted); }
 .chip.inner { background: var(--paper); color: var(--fg); }
 .chip.same { background: var(--paper); color: var(--muted); }
+.chip.layer { background: var(--lc, var(--ldev)); color: var(--on-layer); }
 
 /* Links */
 .eg { color: var(--edge); transition: opacity .2s ease; }
@@ -205,6 +214,8 @@ button, input { font: inherit; color: inherit; }
 }
 .btn:active:not(:disabled) { translate: 0; rotate: 0deg; scale: .95; }
 .btn:disabled { cursor: default; opacity: .45; box-shadow: 0 0 0 var(--die-w) var(--die), 0 0 0 calc(var(--die-w) + .5px) var(--cut); }
+.btn[aria-disabled="true"] { cursor: default; opacity: .45; }
+@media (hover: hover) { .btn[aria-disabled="true"]:hover { translate: none; rotate: none; } }
 .btn.tg { min-height: 26px; --die-w: 2px; }
 .btn.tg.icon { width: 26px; }
 
@@ -229,15 +240,16 @@ button, input { font: inherit; color: inherit; }
 #q::placeholder { color: var(--muted); }
 #q:focus { outline: none; box-shadow: 0 0 0 1.5px var(--accent); }
 #q:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
-.pop { position: absolute; top: calc(100% + 14px); right: 0; z-index: 7; box-sizing: border-box; padding: 8px; border-radius: 20px; background: var(--glass);
+/* Popovers live at body level (outside the bars, whose backdrop-filter traps z-index) and are placed from their trigger by JS. */
+.pop { position: fixed; left: 0; top: 0; z-index: 20; box-sizing: border-box; padding: 8px; border-radius: 20px; background: var(--glass); overflow: auto; overscroll-behavior: contain;
   -webkit-backdrop-filter: blur(20px) saturate(1.7); backdrop-filter: blur(20px) saturate(1.7); box-shadow: var(--glass-edge); }
-#qres { list-style: none; margin: 0; width: 300px; max-width: calc(100vw - 28px); max-height: 320px; overflow: auto; }
+#qres { list-style: none; margin: 0; width: 300px; max-width: calc(100vw - 28px); }
 .opt { display: flex; flex-direction: column; gap: 1px; width: 100%; box-sizing: border-box; padding: 7px 10px; border: 0; border-radius: 12px; background: none; text-align: left; cursor: pointer; }
 .opt .n { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .opt .m { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 .opt:hover, .opt[aria-selected="true"] { background: var(--field); box-shadow: 0 0 0 1.5px var(--accent); }
 .qnone { padding: 10px; font-size: 12.5px; color: var(--muted); }
-#key { width: 292px; max-width: calc(100vw - 28px); padding: 14px; right: 0; }
+#key { width: 292px; max-width: calc(100vw - 28px); padding: 14px; }
 #key h3 { margin: 0 0 8px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 #key h3:not(:first-child) { margin-top: 14px; }
 .krow { display: flex; align-items: center; gap: 10px; padding: 4px; font-size: 13px; }
@@ -307,6 +319,9 @@ button, input { font: inherit; color: inherit; }
 .none { font-size: 13px; color: var(--muted); }
 .sh-foot { display: flex; gap: 10px; flex-wrap: wrap; padding: 3px; }
 
+#tip { position: fixed; left: 0; top: 0; z-index: 30; max-width: 240px; padding: 6px 11px; border-radius: 10px; background: var(--ink-face); color: var(--ink-text); font-size: 12px; font-weight: 500; line-height: 1.3;
+  box-shadow: var(--button-lift); pointer-events: none; animation: tipin .14s ease-out; }
+@keyframes tipin { from { opacity: 0; translate: 0 -3px; } }
 #busy { position: fixed; z-index: 4; left: 50%; translate: -50% 0; top: var(--busy-top, 190px); padding: 8px 16px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: var(--muted);
   background: var(--glass); box-shadow: var(--glass-edge); }
 #fatal { position: fixed; z-index: 9; left: 50%; top: 50%; translate: -50% -50%; width: min(440px, calc(100vw - 28px)); box-sizing: border-box; padding: 20px 22px; border-radius: 24px; background: var(--glass); box-shadow: var(--glass-edge); }
@@ -332,14 +347,13 @@ button, input { font: inherit; color: inherit; }
   #sheet { left: 10px; right: 10px; top: auto; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: auto; max-height: 58%; }
   #player { right: 14px; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
   #zoom { padding: 8px 10px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
-  .srch { position: static; }
-  .pop { left: 0; right: 0; width: auto; }
   #key { width: auto; max-width: none; }
   #qres { width: auto; max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .btn, .btn svg, .node, .frame, .stk, .eg, .elabel, .pbtn, #edges, #labels { transition: none !important; }
   .btn:hover, .btn:active { translate: none !important; rotate: none !important; scale: none !important; }
+  #tip { animation: none; }
   .node.pulse, .frame.pulse { animation: none; box-shadow: var(--glass-edge), 0 0 0 2px var(--accent), 0 0 0 10px var(--accent-soft); }
 }
 @media (prefers-reduced-transparency: reduce) { :root { --glass-float: var(--glass); --glass-float-blur: blur(20px) saturate(1.7); } }
@@ -369,14 +383,13 @@ button, input { font: inherit; color: inherit; }
       <button class="btn sm" id="expandAll">Expand all</button>
       <button class="btn sm" id="collapseAll">Collapse all</button>
     </div>
+    <button class="btn sm" id="layerBtn" type="button" aria-pressed="false">Dev &amp; measurement</button>
     <div class="srch">
       <label class="sr" for="q">Find an element</label>
       <input id="q" type="search" placeholder="Find an element" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="qres" aria-autocomplete="list">
-      <div class="pop" id="qpop" hidden><ul id="qres" role="listbox" aria-label="Matching elements"></ul></div>
     </div>
     <div class="srch">
       <button class="btn sm" id="keyBtn" aria-expanded="false" aria-controls="key">Key</button>
-      <aside class="pop" id="key" hidden aria-label="Key to kinds and statuses"></aside>
     </div>
     <button class="btn sm" id="themeBtn" aria-label="Switch theme"></button>
   </div>
@@ -410,6 +423,9 @@ button, input { font: inherit; color: inherit; }
 </div>
 
 <aside id="sheet" hidden aria-label="Details"></aside>
+<div class="pop" id="qpop" hidden><ul id="qres" role="listbox" aria-label="Matching elements"></ul></div>
+<aside class="pop" id="key" hidden aria-label="Key to kinds, statuses and layers"></aside>
+<div id="tip" role="tooltip" aria-hidden="true" hidden></div>
 <div id="busy" hidden role="status">Laying out the map…</div>
 <div id="empty" hidden>Nothing exists in this phase yet.</div>
 <div id="fatal" hidden role="alert"></div>
@@ -433,6 +449,10 @@ function createLogic(M) {
       kidsAll.get(e.parent).push(e);
     }
   });
+  // Layers: an element, relation or flow may carry layer: "dev" | "measure". Without a layer it is the product.
+  // While layersOn is false, layered items do not exist in any view (relations touching them go with them).
+  let layersOn = false;
+  const layerHidden = (o) => !!o.layer && !layersOn;
   const idx = (v, d) => (v != null && v in pidx ? pidx[v] : d);
   // exists: since <= i and (no until, or i < until)
   const alive = (o, i) => idx(o.since, 0) <= i && !(o.until != null && o.until in pidx && i >= pidx[o.until]);
@@ -453,7 +473,7 @@ function createLogic(M) {
     if (m.has(id)) return m.get(id);
     m.set(id, false);
     const o = els.get(id);
-    let r = !!o && present(o, i);
+    let r = !!o && !layerHidden(o) && present(o, i);
     if (r && o.parent) r = els.has(o.parent) && shown(o.parent, i);
     m.set(id, r);
     return r;
@@ -482,7 +502,13 @@ function createLogic(M) {
     for (let p = els.has(id) ? els.get(id).parent : null; p && els.has(p) && out.length < 50; p = els.get(p).parent) out.push(p);
     return out;
   }
-  const relPresent = (r, i) => present(r, i) && shown(r.src, i) && shown(r.dst, i);
+  const relPresent = (r, i) => !layerHidden(r) && present(r, i) && shown(r.src, i) && shown(r.dst, i);
+  // exists in at least one phase (with the current layer setting)
+  function everShown(id) { for (let i = 0; i < phases.length; i++) if (shown(id, i)) return true; return false; }
+  function relEver(r) { for (let i = 0; i < phases.length; i++) if (relPresent(r, i)) return true; return false; }
+  // own layer, or the layer of the nearest ancestor that has one ("" for the product)
+  function layerOf(id) { for (let c = id, n = 0; c && els.has(c) && n < 50; c = els.get(c).parent, n++) if (els.get(c).layer) return String(els.get(c).layer); return ""; }
+  function setLayers(on) { on = !!on; if (on !== layersOn) { layersOn = on; memo.length = 0; } }
   const relsAt = (i) => (M.relations || []).filter((r) => relPresent(r, i));
   // lifted + dropped (same box) + merged arrows
   function lifted(i, exp) {
@@ -505,7 +531,7 @@ function createLogic(M) {
     }
     return out;
   }
-  const flowsAt = (i) => (M.flows || []).filter((f) => idx(f.since, 0) <= i);
+  const flowsAt = (i) => (M.flows || []).filter((f) => !layerHidden(f) && idx(f.since, 0) <= i);
   // usable steps: both ends shown at this phase (not lifted yet)
   const flowSteps = (f, i) => (f.steps || []).filter((s) => shown(s.src, i) && shown(s.dst, i));
   const depthOf = (id) => ancestors(id).length;
@@ -526,9 +552,365 @@ function createLogic(M) {
     return s;
   }
   const sectionIds = () => [...kidsAll.keys()];
-  return { phases, pidx, els, kidsAll, idx, status, shown, shownKids, shownDesc, isSection, visible, lift, ancestors, relsAt, lifted, flowsAt, flowSteps, presetSet, defaultExpanded, sectionIds, retiredNow };
+  return { rels: () => M.relations || [], layersOn: () => layersOn, setLayers, everShown, relEver, layerOf, hasLayers: () => (M.elements || []).some((e) => e.layer) || (M.relations || []).some((r) => r.layer) || (M.flows || []).some((f) => f.layer), phases, pidx, els, kidsAll, idx, status, shown, shownKids, shownDesc, isSection, visible, lift, ancestors, relsAt, lifted, flowsAt, flowSteps, presetSet, defaultExpanded, sectionIds, retiredNow };
 }
 /* ===== END MODEL LOGIC ===== */
+
+/* ===== LAYOUT CORE (pure, no DOM; the node check harness loads this block) ===== */
+// Master layout (ELK, once) + stable views (the master's order, compacted, own router). See SCHEMA.md "Stable layout".
+function createLayout(LG, elk) {
+  const GX = 170, GY = 64, PAD_ROOT = 40, PAD_T = 56, PAD_S = 24;   // gaps kept between boxes; board and frame padding
+  const parentOf = (id) => LG.els.get(id).parent;
+
+  function elkGraph(ids, vis, kidsOf, sizes, edges, withLabels) {
+    const nodeMap = new Map();
+    const lo = {
+      "elk.algorithm": "layered", "elk.direction": "RIGHT", "elk.hierarchyHandling": "INCLUDE_CHILDREN", "elk.edgeRouting": "ORTHOGONAL",
+      "elk.separateConnectedComponents": "false",
+      "elk.spacing.nodeNode": "48", "elk.layered.spacing.nodeNodeBetweenLayers": "110",
+      "elk.spacing.edgeNode": "32", "elk.layered.spacing.edgeNodeBetweenLayers": "32",
+      "elk.spacing.edgeEdge": "18", "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
+      "elk.padding": "[top=40,left=40,bottom=40,right=40]",
+      "elk.json.edgeCoords": "ROOT", "elk.json.shapeCoords": "ROOT",
+    };
+    const root = { id: "__root", layoutOptions: lo, children: [], edges: [] };
+    const mk = (id) => {
+      const sz = sizes.get(id), kids = kidsOf.get(id);
+      let n;
+      if (kids && kids.length) {
+        n = { id, children: kids.map(mk), edges: [], layoutOptions: {
+          "elk.padding": "[top=56,left=24,bottom=24,right=24]",
+          "elk.nodeSize.constraints": "MINIMUM_SIZE", "elk.nodeSize.minimum": `(${Math.max(sz.minW, 120)},96)`,
+        } };
+      } else n = { id, width: sz.w, height: sz.h };
+      nodeMap.set(id, n);
+      return n;
+    };
+    const tops = ids.filter((id) => { const p = parentOf(id); return !(p && vis.has(p)); });
+    for (const id of tops) root.children.push(mk(id));
+    const chain = (id) => { const c = [id]; for (let p = parentOf(id); p && vis.has(p); p = parentOf(p)) c.unshift(p); return c; };
+    for (const e of edges) {
+      const ca = chain(e.src), cb = chain(e.dst);
+      let k = 0; while (k < ca.length && k < cb.length && ca[k] === cb[k]) k++;
+      const host = k > 0 ? nodeMap.get(ca[k - 1]) : root;
+      const edge = { id: e.id, sources: [e.src], targets: [e.dst] };
+      if (withLabels) edge.labels = [{ text: e.label, width: Math.min(220, e.label.length * 6.6 + 20), height: 22 }];
+      (host.edges || (host.edges = [])).push(edge);
+    }
+    return root;
+  }
+
+  function near(p, b) {
+    if (!b || !p) return false;
+    const t = 3;
+    if (p[0] < b.x - t || p[0] > b.x + b.w + t || p[1] < b.y - t || p[1] > b.y + b.h + t) return false;
+    return Math.abs(p[0] - b.x) <= t || Math.abs(p[0] - b.x - b.w) <= t || Math.abs(p[1] - b.y) <= t || Math.abs(p[1] - b.y - b.h) <= t;
+  }
+  function readElk(res, edges) {
+    const A = new Map(), B = new Map(), eA = new Map(), eB = new Map();
+    (function walk(n, ox, oy) {
+      for (const c of n.children || []) {
+        A.set(c.id, { x: c.x, y: c.y, w: c.width, h: c.height });
+        const bb = { x: ox + c.x, y: oy + c.y, w: c.width, h: c.height };
+        B.set(c.id, bb);
+        walk(c, bb.x, bb.y);
+      }
+      for (const e of n.edges || []) {
+        const s = (e.sections || [])[0]; if (!s) continue;
+        const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
+        eA.set(e.id, pts.map((p) => [p.x, p.y]));
+        eB.set(e.id, pts.map((p) => [p.x + ox, p.y + oy]));
+      }
+    })(res, 0, 0);
+    const score = (boxes, ep) => {
+      let f = 0;
+      for (const [id, b] of boxes) {
+        const par = parentOf(id), p = par && boxes.get(par);
+        if (p && (b.x < p.x - 1 || b.y < p.y - 1 || b.x + b.w > p.x + p.w + 1 || b.y + b.h > p.y + p.h + 1)) f++;
+      }
+      for (const e of edges) {
+        const pts = ep.get(e.id);
+        if (!pts) { f++; continue; }
+        if (!near(pts[0], boxes.get(e.src))) f++;
+        if (!near(pts[pts.length - 1], boxes.get(e.dst))) f++;
+      }
+      return f;
+    };
+    const fa = score(A, eA), fb = score(B, eB);
+    const useA = fa <= fb;
+    if (Math.min(fa, fb) > 0) console.warn(`[map] ELK coordinate self-check: ${Math.min(fa, fb)} issue(s) in ${useA ? "ROOT" : "summed"} mode (ROOT ${fa}, summed ${fb}). Some arrows may not touch their cards.`);
+    else if (!useA) console.info("[map] ELK did not honour ROOT coordinates, summed parent offsets instead.");
+    return { boxes: useA ? A : B, pts: useA ? eA : eB };
+  }
+  async function runElk(ids, vis, kidsOf, sizes, edges) {
+    let res;
+    try { res = await elk.layout(elkGraph(ids, vis, kidsOf, sizes, edges, true)); }
+    catch (e) {
+      console.warn("[map] ELK failed with edge labels, retrying without them.", e);
+      res = await elk.layout(elkGraph(ids, vis, kidsOf, sizes, edges, false));
+    }
+    return { res, rd: readElk(res, edges) };
+  }
+  const structure = (ids) => {
+    const vis = new Set(ids), kidsOf = new Map();
+    for (const id of ids) { const p = parentOf(id); if (p && vis.has(p)) { if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(id); } }
+    return { vis, kidsOf, frames: new Set(ids.filter((id) => kidsOf.has(id))) };
+  };
+  const relBoxes = (boxes) => {          // absolute boxes -> boxes relative to the parent frame
+    const rel = new Map();
+    for (const [id, b] of boxes) { const p = boxes.get(parentOf(id)); rel.set(id, { x: b.x - (p ? p.x : 0), y: b.y - (p ? p.y : 0), w: b.w, h: b.h }); }
+    return rel;
+  };
+
+  /* ---- master: every element that exists in any phase, every section open, no hints ---- */
+  async function buildMaster(sizesFor) {
+    const ids = [...LG.els.keys()].filter((id) => LG.everShown(id));
+    const { vis, kidsOf, frames } = structure(ids);
+    const groups = new Map(), edges = [];
+    for (const r of LG.rels()) {
+      if (!LG.relEver(r) || !vis.has(r.src) || !vis.has(r.dst) || r.src === r.dst) continue;
+      const k = r.src + "\u0001" + r.dst;
+      let g = groups.get(k);
+      if (!g) { g = { id: "m:" + r.src + ">" + r.dst, src: r.src, dst: r.dst, n: 0, label: r.label || "1 link" }; groups.set(k, g); edges.push(g); }
+      g.n++;
+    }
+    for (const g of edges) if (g.n > 1) g.label = g.n + " links";
+    const sizes = sizesFor(ids, frames);
+    const { rd } = await runElk(ids, vis, kidsOf, sizes, edges);
+    const abs = new Map();
+    for (const id of ids) { const b = rd.boxes.get(id); if (!b) throw new Error("ELK returned no master box for " + id); abs.set(id, { x: b.x, y: b.y, w: b.w, h: b.h }); }
+    return { ids, abs, rel: relBoxes(abs) };
+  }
+
+  /* ---- order check: visible siblings keep the master's left/right and above/below order ---- */
+  function orderViolations(boxes, master) {
+    const rel = relBoxes(boxes), sib = new Map();
+    for (const id of boxes.keys()) { const p = parentOf(id) && boxes.has(parentOf(id)) ? parentOf(id) : ""; if (!sib.has(p)) sib.set(p, []); sib.get(p).push(id); }
+    const bad = [];
+    for (const list of sib.values()) {
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+        const a = list[i], b = list[j], ma = master.rel.get(a), mb = master.rel.get(b), va = rel.get(a), vb = rel.get(b);
+        if (!ma || !mb) continue;
+        const e = .5;
+        if (ma.x + ma.w <= mb.x + e && !(va.x + va.w / 2 < vb.x + vb.w / 2)) bad.push([a, b, "x"]);
+        else if (mb.x + mb.w <= ma.x + e && !(vb.x + vb.w / 2 < va.x + va.w / 2)) bad.push([b, a, "x"]);
+        if (ma.y + ma.h <= mb.y + e && !(va.y + va.h / 2 < vb.y + vb.h / 2)) bad.push([a, b, "y"]);
+        else if (mb.y + mb.h <= ma.y + e && !(vb.y + vb.h / 2 < va.y + va.h / 2)) bad.push([b, a, "y"]);
+      }
+    }
+    return bad;
+  }
+
+
+  /* ---- view layout: master order kept, hidden boxes removed, space closed ---- */
+  const EPS = .5;
+  const leftOf = (a, b) => a.x + a.w <= b.x + EPS;      // a sits entirely left of b
+  const above = (a, b) => a.y + a.h <= b.y + EPS;       // a sits entirely above b
+  // Places sibling boxes. Every pair keeps the master's order: boxes that were side by side in the master are separated
+  // by a column gap, boxes that were stacked by a row gap, and diagonal pairs also keep their above/below order (by centres).
+  // Positions are the average of the earliest and the latest feasible ones, so lone boxes stay roughly centred instead of piling up top left.
+  function compact(list, dims, mrel) {
+    const n = list.length;
+    if (!n) return { pos: new Map(), w: 0, h: 0 };
+    const m = list.map(mrel), d = list.map((id) => dims.get(id));
+    const xin = list.map(() => []), yin = list.map(() => []);     // incoming constraints: [from, c] meaning p[to] >= p[from] + c
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+      const ab = leftOf(m[a], m[b]), ba = leftOf(m[b], m[a]);
+      const up = above(m[a], m[b]), dn = above(m[b], m[a]);
+      if (ab) xin[b].push([a, d[a].w + GX]); else if (ba) xin[a].push([b, d[b].w + GX]);
+      if (!ab && !ba) {            // overlap on x in the master: they were stacked
+        if (up) yin[b].push([a, d[a].h + GY]);
+        else if (dn) yin[a].push([b, d[b].h + GY]);
+        else if ((m[a].y + m[a].h / 2) <= (m[b].y + m[b].h / 2)) yin[b].push([a, d[a].h + GY]); else yin[a].push([b, d[b].h + GY]);
+      } else if (up) yin[b].push([a, (d[a].h - d[b].h) / 2 + 1]);
+      else if (dn) yin[a].push([b, (d[b].h - d[a].h) / 2 + 1]);
+    }
+    const solve = (inc, size, key) => {
+      const ord = list.map((_, i) => i).sort((p, q) => key(m[p]) - key(m[q]) || p - q);
+      const E = new Array(n).fill(0);
+      for (const b of ord) for (const [a, c] of inc[b]) E[b] = Math.max(E[b], E[a] + c);   // a precedes b in master order, so E[a] is final
+      let W = 0; for (let i = 0; i < n; i++) W = Math.max(W, E[i] + size(i));
+      const out = list.map(() => []);
+      inc.forEach((arr, b) => arr.forEach(([a, c]) => out[a].push([b, c])));
+      const Lt = new Array(n).fill(0);
+      for (let r = n - 1; r >= 0; r--) { const a = ord[r]; let v = W - size(a); for (const [b, c] of out[a]) v = Math.min(v, Lt[b] - c); Lt[a] = v; }
+      return { p: E.map((e, i) => Math.round(e + Lt[i]) / 2), W };
+    };
+    const X = solve(xin, (i) => d[i].w, (b) => b.x + b.w / 2), Y = solve(yin, (i) => d[i].h, (b) => b.y + b.h / 2);
+    const pos = new Map();
+    list.forEach((id, i) => pos.set(id, { x: X.p[i], y: Y.p[i] }));
+    return { pos, w: X.W, h: Y.W };
+  }
+
+  function layoutView(ids, edges, sizes, master) {
+    const { vis, kidsOf, frames } = structure(ids), order = new Map(ids.map((id, i) => [id, i]));
+    const mrel = (id) => master.rel.get(id) || { x: 1e7 + (order.get(id) || 0) * 10, y: 0, w: 1, h: 1 };
+    const dims = new Map(), rel = new Map();
+    const solveFrame = (id) => {
+      const kids = kidsOf.get(id);
+      if (!kids) { const s = sizes.get(id); dims.set(id, { w: s.w, h: s.h }); return; }
+      kids.forEach(solveFrame);
+      const c = compact(kids, dims, mrel);
+      c.pos.forEach((p, k) => rel.set(k, { x: PAD_S + p.x, y: PAD_T + p.y }));
+      dims.set(id, { w: Math.max(sizes.get(id).minW, 120, c.w + 2 * PAD_S), h: Math.max(96, c.h + PAD_T + PAD_S) });
+    };
+    const tops = ids.filter((id) => { const p = parentOf(id); return !(p && vis.has(p)); });
+    tops.forEach(solveFrame);
+    const c0 = compact(tops, dims, mrel);
+    c0.pos.forEach((p, k) => rel.set(k, { x: PAD_ROOT + p.x, y: PAD_ROOT + p.y }));
+    const boxes = new Map();
+    const put = (id, ox, oy) => {
+      const r = rel.get(id), dm = dims.get(id), b = { x: ox + r.x, y: oy + r.y, w: dm.w, h: dm.h, frame: frames.has(id) };
+      boxes.set(id, b);
+      (kidsOf.get(id) || []).forEach((k) => put(k, b.x, b.y));
+    };
+    tops.forEach((id) => put(id, 0, 0));
+    const w = c0.w + 2 * PAD_ROOT, h = c0.h + 2 * PAD_ROOT;
+    const pts = routeEdges(boxes, edges), lab = placeLabels(edges, pts, boxes);
+    return { boxes, frames, pts, mid: lab.mid, labelClashes: lab.clashes, w, h, bad: master ? orderViolations(boxes, master) : [] };
+  }
+
+  /* ---- own orthogonal router: grid of box margins and corridor tracks, A* with bend and overlap costs ---- */
+  function routeEdges(boxes, edges) {
+    const M = 14, BEND = 26, USED = 45, HW = 1.6, out = new Map();
+    if (!edges.length) return out;
+    const contains = (a, b) => a.x <= b.x && a.y <= b.y && a.x + a.w >= b.x + b.w && a.y + a.h >= b.y + b.h;
+    // 1 ports: one side per end, spread along the side by the position of the other end
+    const ends = [], byKey = new Map(), pair = new Map();
+    for (const e of edges) {
+      const a = boxes.get(e.src), b = boxes.get(e.dst);
+      let sa, sb;
+      if (contains(a, b) || contains(b, a)) { sa = "L"; sb = "L"; }
+      else if (b.x >= a.x + a.w - 1) { sa = "R"; sb = "L"; }
+      else if (b.x + b.w <= a.x + 1) { sa = "L"; sb = "R"; }
+      else if (b.y >= a.y) { sa = "B"; sb = "T"; }
+      else { sa = "T"; sb = "B"; }
+      const mk = (id, side, other) => {
+        const rec = { e, id, side, key: side === "L" || side === "R" ? other.y + other.h / 2 : other.x + other.w / 2 };
+        ends.push(rec);
+        const k = id + "|" + side; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(rec);
+        return rec;
+      };
+      pair.set(e, { A: mk(e.src, sa, b), B: mk(e.dst, sb, a) });
+    }
+    for (const list of byKey.values()) {
+      list.sort((p, q) => p.key - q.key);
+      const b = boxes.get(list[0].id), side = list[0].side, horiz = side === "L" || side === "R";
+      const lo = horiz ? b.y + (b.frame ? 52 : 14) : b.x + 14, hi = horiz ? b.y + b.h - 14 : b.x + b.w - 14;
+      list.forEach((r, k) => {
+        const t = hi > lo ? lo + (hi - lo) * (k + 1) / (list.length + 1) : (lo + hi) / 2, q = Math.round(t * 2) / 2;
+        r.x = side === "L" ? b.x : side === "R" ? b.x + b.w : q;
+        r.y = side === "T" ? b.y : side === "B" ? b.y + b.h : q;
+        r.dir = side === "R" ? 0 : side === "L" ? 1 : side === "B" ? 2 : 3;     // outward: E W S N
+      });
+    }
+    // 2 grid lines
+    const r2 = (v) => Math.round(v * 2) / 2;
+    const tracks = (vals) => {
+      const u = [...new Set(vals.map(r2))].sort((p, q) => p - q), res = u.slice();
+      for (let i = 0; i + 1 < u.length; i++) {
+        const g = u[i + 1] - u[i];
+        if (g >= 100) res.push(u[i] + g / 4, u[i] + g / 2, u[i] + g * 3 / 4); else if (g >= 44) res.push(u[i] + g / 2);
+      }
+      return [...new Set(res.map(r2))].sort((p, q) => p - q);
+    };
+    const xv = [], yv = [];
+    const HDR = 44;                                                   // a frame's header strip
+    for (const b of boxes.values()) {
+      xv.push(b.x, b.x + b.w); yv.push(b.y, b.y + b.h);
+      if (!b.frame) { xv.push(b.x - M, b.x + b.w + M); yv.push(b.y - M, b.y + b.h + M); } else yv.push(b.y + HDR, b.y + HDR + 6);
+    }
+    for (const r of ends) { xv.push(r.x); yv.push(r.y); }
+    const xs = tracks(xv), ys = tracks(yv), nx = xs.length, ny = ys.length;
+    const ix = new Map(xs.map((v, i) => [v, i])), iy = new Map(ys.map((v, i) => [v, i]));
+    const gx = (v) => ix.get(r2(v)), gy = (v) => iy.get(r2(v));
+    const Hb = new Uint8Array(ny * (nx - 1)), Vb = new Uint8Array(nx * (ny - 1)), Hu = new Uint8Array(ny * (nx - 1)), Vu = new Uint8Array(nx * (ny - 1));
+    for (const b of boxes.values()) {
+      const x0 = gx(b.x), x1 = gx(b.x + b.w), y0 = gy(b.y), y1 = gy(b.frame ? b.y + HDR : b.y + b.h);
+      for (let j = y0; j <= y1; j++) for (let i = x0; i < x1; i++) Hb[j * (nx - 1) + i] = 1;
+      for (let i = x0; i <= x1; i++) for (let j = y0; j < y1; j++) Vb[i * (ny - 1) + j] = 1;
+    }
+    // 3 A* per edge, shortest first
+    const NS = nx * ny * 4, g = new Float32Array(NS), from = new Int32Array(NS), stamp = new Int32Array(NS);
+    let run = 0;
+    const DX = [1, -1, 0, 0], DY = [0, 0, 1, -1];
+    const route = (A, B) => {
+      run++;
+      const sx = gx(A.x), sy = gy(A.y), tx = gx(B.x), ty = gy(B.y);
+      const heap = [];       // [f, state]
+      const push = (f, s) => { heap.push([f, s]); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+      const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let s = i; if (l < heap.length && heap[l][0] < heap[s][0]) s = l; if (r < heap.length && heap[r][0] < heap[s][0]) s = r; if (s === i) break; [heap[s], heap[i]] = [heap[i], heap[s]]; i = s; } } return top; };
+      const s0 = (sy * nx + sx) * 4 + A.dir;
+      g[s0] = 0; stamp[s0] = run; from[s0] = -1; push(HW * (Math.abs(xs[tx] - xs[sx]) + Math.abs(ys[ty] - ys[sy])), s0);
+      let goal = -1, steps = 0;
+      while (heap.length && steps++ < 400000) {
+        const s = pop()[1], d = s & 3, n = s >> 2, i = n % nx, j = (n / nx) | 0;
+        if (i === tx && j === ty) { goal = s; break; }
+        const gs = g[s];
+        for (let nd = 0; nd < 4; nd++) {
+          if (nd === (d ^ 1)) continue;                      // no U-turns
+          const ni = i + DX[nd], nj = j + DY[nd];
+          if (ni < 0 || nj < 0 || ni >= nx || nj >= ny) continue;
+          const seg = nd < 2 ? nj * (nx - 1) + Math.min(i, ni) : ni * (ny - 1) + Math.min(j, nj);
+          if ((nd < 2 ? Hb : Vb)[seg]) continue;
+          const len = nd < 2 ? Math.abs(xs[ni] - xs[i]) : Math.abs(ys[nj] - ys[j]);
+          const c = gs + len + (nd === d ? 0 : BEND) + USED * (nd < 2 ? Hu : Vu)[seg];
+          const ns = (nj * nx + ni) * 4 + nd;
+          if (stamp[ns] === run && g[ns] <= c) continue;
+          stamp[ns] = run; g[ns] = c; from[ns] = s;
+          push(c + HW * (Math.abs(xs[tx] - xs[ni]) + Math.abs(ys[ty] - ys[nj])), ns);
+        }
+      }
+      if (goal < 0) return null;
+      const path = [];
+      for (let s = goal; s >= 0; s = from[s]) { const n = s >> 2; path.push([xs[n % nx], ys[(n / nx) | 0]]); }
+      path.reverse();
+      for (let k = 1; k < path.length; k++) {     // mark the grid segments used
+        const a = path[k - 1], b = path[k];
+        if (a[1] === b[1]) { const j = gy(a[1]), lo = Math.min(gx(a[0]), gx(b[0])), hi = Math.max(gx(a[0]), gx(b[0])); for (let i = lo; i < hi; i++) Hu[j * (nx - 1) + i] = Math.min(3, Hu[j * (nx - 1) + i] + 1); }
+        else { const i = gx(a[0]), lo = Math.min(gy(a[1]), gy(b[1])), hi = Math.max(gy(a[1]), gy(b[1])); for (let j = lo; j < hi; j++) Vu[i * (ny - 1) + j] = Math.min(3, Vu[i * (ny - 1) + j] + 1); }
+      }
+      const pts = [];                              // drop collinear points
+      for (const p of path) { const l = pts.length; if (l >= 2 && ((pts[l - 1][0] === pts[l - 2][0] && pts[l - 1][0] === p[0]) || (pts[l - 1][1] === pts[l - 2][1] && pts[l - 1][1] === p[1]))) pts[l - 1] = p; else pts.push(p); }
+      return pts;
+    };
+    const jobs = [...pair].map(([e, p]) => ({ e, A: p.A, B: p.B })).sort((p, q) => (Math.abs(p.A.x - p.B.x) + Math.abs(p.A.y - p.B.y)) - (Math.abs(q.A.x - q.B.x) + Math.abs(q.A.y - q.B.y)));
+    for (const { e, A, B } of jobs) out.set(e.id, route(A, B) || [[A.x, A.y], [B.x, B.y]]);
+    return out;
+  }
+
+
+  /* ---- edge labels: sit on a stretch of the route where the pill clears every card and every other pill ---- */
+  const labelW = (e) => Math.min(300, String(e.label || "").length * 6.5 + 22);
+  function placeLabels(edges, pts, boxes) {
+    const leaf = [...boxes.values()].map((b) => (b.frame ? { x: b.x, y: b.y, w: b.w, h: 44 } : b)), placed = [], out = new Map(), bad = [];
+    const clash = (r) => leaf.some((b) => r.x0 < b.x + b.w && r.x1 > b.x && r.y0 < b.y + b.h && r.y1 > b.y) || placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+    for (const e of edges) {
+      const p = pts.get(e.id); if (!p) continue;
+      const w = labelW(e), segs = [];
+      for (let k = 1; k < p.length; k++) {
+        const a = p[k - 1], b = p[k], horiz = a[1] === b[1], len = Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]);
+        if (len >= 24) segs.push({ a, b, horiz, len });
+      }
+      if (!segs.length) segs.push({ a: p[0], b: p[p.length - 1], horiz: false, len: 0 });
+      segs.sort((s1, s2) => ((s2.horiz && s2.len >= w + 10) - (s1.horiz && s1.len >= w + 10)) || s2.len - s1.len);
+      let pick = null;
+      for (const s of segs) {
+        for (const t of [.5, .32, .68]) {
+          const x = s.a[0] + (s.b[0] - s.a[0]) * t, y = s.a[1] + (s.b[1] - s.a[1]) * t, r = { x0: x - w / 2, x1: x + w / 2, y0: y - 12, y1: y + 12, x, y };
+          if (!clash(r)) { pick = r; break; }
+        }
+        if (pick) break;
+      }
+      if (!pick) { const s = segs[0], x = (s.a[0] + s.b[0]) / 2, y = (s.a[1] + s.b[1]) / 2; pick = { x0: x - w / 2, x1: x + w / 2, y0: y - 12, y1: y + 12, x, y }; bad.push(e.id); }
+      placed.push(pick); out.set(e.id, [pick.x, pick.y]);
+    }
+    return { mid: out, clashes: bad.length };
+  }
+
+  return { elkGraph, readElk, runElk, structure, relBoxes, buildMaster, orderViolations, compact, layoutView, routeEdges, placeLabels, GX, GY };
+}
+/* ===== END LAYOUT CORE ===== */
 
 const KEY = "bos-map-v1";
 const $ = (s) => document.querySelector(s);
@@ -611,15 +993,19 @@ const state = {
   phase: sameSrc && saved.phase in LG.pidx ? LG.pidx[saved.phase] : (LG.phases.some((p) => p.target) ? defPhase : 0),
   expanded: sameSrc && Array.isArray(saved.expanded) ? new Set(saved.expanded.filter((id) => LG.els.has(id))) : LG.defaultExpanded(),
   only: false,
+  layers: !!saved.layers,   // show dev and measurement items (off by default, remembered)
   sel: null,       // { type: "el", id } | { type: "edge", id }
   flowId: null,
 };
 function persist() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ src: usedFixture ? "fixture" : "model", phase: LG.phases[state.phase].id, expanded: [...state.expanded], theme: document.documentElement.getAttribute("data-theme") || undefined }));
+    localStorage.setItem(KEY, JSON.stringify({ src: usedFixture ? "fixture" : "model", phase: LG.phases[state.phase].id, expanded: [...state.expanded], layers: state.layers, theme: document.documentElement.getAttribute("data-theme") || undefined }));
   } catch (e) {}
 }
 
+LG.setLayers(state.layers);
+const LAYER_INFO = { dev: { label: "Dev", full: "Dev tooling" }, measure: { label: "Measure", full: "Measurement" } };
+const layerInfo = (v) => LAYER_INFO[v] || { label: String(v), full: String(v) };
 const vp = $("#vp"), world = $("#world"), framesL = $("#frames"), nodesL = $("#nodes"), labelsL = $("#labels"), edgesSvg = $("#edges"), egG = $("#eg");
 const tmpl = $("#tmpl"), token = $("#token"), sheet = $("#sheet"), cap = $("#cap"), measureEl = $("#measure");
 const cardEls = new Map(), frameEls = new Map();
@@ -650,11 +1036,12 @@ function chipsHTML(o, st, id) {
   else if (st === "retired") h += '<span class="chip retired">Retired</span>';
   else if (!LG.visible(id, state.phase, state.expanded) || (LG.isSection(id, state.phase) && !state.expanded.has(id))) { if (innerChanges(id)) h += '<span class="chip inner">Changes inside</span>'; }
   if (o.proposed) h += '<span class="chip proposed">Proposed</span>';
+  if (o.layer) h += `<span class="chip layer">${esc(layerInfo(o.layer).label)}</span>`;
   return h ? `<span class="chips" aria-hidden="true">${h}</span>` : "";
 }
 function descCount(id) { return LG.shownDesc(id, state.phase).length; }
 function a11yLabel(o, st) {
-  return `${o.name}, ${kindOf(o).label}${o.tech ? ", " + o.tech : ""}. ${STATUS_WORD[st]} in ${LG.phases[state.phase].id}${o.proposed ? ", proposed" : ""}. Open details`;
+  return `${o.name}, ${kindOf(o).label}${o.tech ? ", " + o.tech : ""}. ${STATUS_WORD[st]} in ${LG.phases[state.phase].id}${o.proposed ? ", proposed" : ""}${o.layer ? ", " + layerInfo(o.layer).full : ""}. Open details`;
 }
 function cardHTML(id) {
   const o = LG.els.get(id), st = LG.status(o, state.phase), sec = LG.isSection(id, state.phase);
@@ -663,9 +1050,10 @@ function cardHTML(id) {
   if (sec) h += `<span class="tgrow"><button class="btn sm tg" type="button" data-act="toggle" data-id="${esc(id)}" data-fk="tg:${esc(id)}" aria-expanded="false" aria-label="Expand ${esc(o.name)}, ${descCount(id)} inside">${ICON.plus}+${descCount(id)} inside</button></span>`;
   return h;
 }
+const layerClass = (id) => { const l = LG.layerOf(id); return l === "dev" || l === "measure" ? " l-" + l : l ? " l-dev" : ""; };
 function cardClass(id) {
   const o = LG.els.get(id), st = LG.status(o, state.phase);
-  return `node k-${o.kind || "component"} st-${st}${st === "retired" ? " retired" : ""}${o.proposed ? " proposed" : ""}`;
+  return `node k-${o.kind || "component"} st-${st}${st === "retired" ? " retired" : ""}${o.proposed ? " proposed" : ""}${layerClass(id)}`;
 }
 function headerHTML(id) {
   const o = LG.els.get(id), st = LG.status(o, state.phase);
@@ -675,105 +1063,45 @@ function headerHTML(id) {
 }
 function frameClass(id) {
   const o = LG.els.get(id), st = LG.status(o, state.phase);
-  return `frame k-${o.kind || "container"} st-${st}${st === "retired" ? " retired" : ""}${o.proposed ? " proposed" : ""}`;
+  return `frame k-${o.kind || "container"} st-${st}${st === "retired" ? " retired" : ""}${o.proposed ? " proposed" : ""}${layerClass(id)}`;
 }
 
-/* ---------- Layout with ELK ---------- */
+/* ---------- Layout: one master (ELK, cached), every view keeps its order ---------- */
 const elk = new ELK();
-const isFrameId = (id, vis, kidsOf) => !!(kidsOf.get(id) && kidsOf.get(id).length);
+const LAYOUT = createLayout(LG, elk);
 
-function measureAll(ids, frames) {
-  measureEl.innerHTML = ids.map((id) => frames.has(id)
-    ? `<div class="frame" style="position:absolute;left:0;top:0;width:900px">${headerHTML(id)}</div>`
-    : `<div class="${cardClass(id)}">${cardHTML(id)}</div>`).join("");
-  const sizes = new Map();
-  ids.forEach((id, i) => {
-    const el = measureEl.children[i];
-    if (frames.has(id)) { const fi = el.querySelector(".fh-in"); sizes.set(id, { minW: Math.ceil(fi.scrollWidth) + 28 }); }
-    else sizes.set(id, { w: el.offsetWidth, h: el.offsetHeight });
-  });
-  measureEl.innerHTML = "";
-  return sizes;
+// Measures real card sizes. The phase is passed in so the master can be measured at a fixed phase.
+function measureAll(ids, frames, phaseIdx, allOpen) {
+  const keep = state.phase, keepExp = state.expanded;
+  state.phase = phaseIdx == null ? keep : phaseIdx;
+  if (allOpen) state.expanded = LG.presetSet("everything");
+  try {
+    measureEl.innerHTML = ids.map((id) => frames.has(id)
+      ? `<div class="frame" style="position:absolute;left:0;top:0;width:900px">${headerHTML(id)}</div>`
+      : `<div class="${cardClass(id)}">${cardHTML(id)}</div>`).join("");
+    const sizes = new Map();
+    ids.forEach((id, i) => {
+      const el = measureEl.children[i];
+      if (frames.has(id)) { const fi = el.querySelector(".fh-in"); sizes.set(id, { minW: Math.ceil(fi.scrollWidth) + 28 }); }
+      else sizes.set(id, { w: el.offsetWidth, h: el.offsetHeight });
+    });
+    measureEl.innerHTML = "";
+    return sizes;
+  } finally { state.phase = keep; state.expanded = keepExp; }
 }
 
-function elkGraph(ids, vis, kidsOf, sizes, edges, withLabels) {
-  const nodeMap = new Map();
-  const root = { id: "__root", layoutOptions: {
-    "elk.algorithm": "layered", "elk.direction": "RIGHT", "elk.hierarchyHandling": "INCLUDE_CHILDREN", "elk.edgeRouting": "ORTHOGONAL",
-    "elk.separateConnectedComponents": "false",
-    "elk.spacing.nodeNode": "48", "elk.layered.spacing.nodeNodeBetweenLayers": "110",
-    "elk.spacing.edgeNode": "32", "elk.layered.spacing.edgeNodeBetweenLayers": "32",
-    "elk.spacing.edgeEdge": "18", "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
-    "elk.padding": "[top=40,left=40,bottom=40,right=40]",
-    "elk.json.edgeCoords": "ROOT", "elk.json.shapeCoords": "ROOT",
-  }, children: [], edges: [] };
-  const mk = (id) => {
-    const sz = sizes.get(id), kids = kidsOf.get(id);
-    let n;
-    if (kids && kids.length) {
-      n = { id, children: kids.map(mk), edges: [], layoutOptions: {
-        "elk.padding": "[top=56,left=24,bottom=24,right=24]",
-        "elk.nodeSize.constraints": "MINIMUM_SIZE", "elk.nodeSize.minimum": `(${Math.max(sz.minW, 120)},96)`,
-      } };
-    } else n = { id, width: sz.w, height: sz.h };
-    nodeMap.set(id, n);
-    return n;
-  };
-  for (const id of ids) { const p = LG.els.get(id).parent; if (!(p && vis.has(p))) root.children.push(mk(id)); }
-  const chain = (id) => { const c = [id]; for (let p = LG.els.get(id).parent; p && vis.has(p); p = LG.els.get(p).parent) c.unshift(p); return c; };
-  for (const e of edges) {
-    const ca = chain(e.src), cb = chain(e.dst);
-    let k = 0; while (k < ca.length && k < cb.length && ca[k] === cb[k]) k++;
-    const host = k > 0 ? nodeMap.get(ca[k - 1]) : root;
-    const edge = { id: e.id, sources: [e.src], targets: [e.dst] };
-    if (withLabels) edge.labels = [{ text: e.label, width: Math.min(220, e.label.length * 6.6 + 20), height: 22 }];
-    (host.edges || (host.edges = [])).push(edge);
+// The master depends on the data, the card sizes (fonts) and the layer switch only, never on the phase or on what is expanded.
+let masterEpoch = 0;
+const masters = new Map();
+function getMaster() {
+  const key = (LG.layersOn() ? "on" : "off") + ":" + masterEpoch;
+  if (!masters.has(key)) {
+    const last = LG.phases.length - 1;
+    masters.set(key, LAYOUT.buildMaster((ids, frames) => measureAll(ids, frames, last, true)).catch((e) => { masters.delete(key); throw e; }));
   }
-  return root;
+  return masters.get(key);
 }
-
-function near(p, b) {
-  if (!b || !p) return false;
-  const t = 3;
-  if (p[0] < b.x - t || p[0] > b.x + b.w + t || p[1] < b.y - t || p[1] > b.y + b.h + t) return false;
-  return Math.abs(p[0] - b.x) <= t || Math.abs(p[0] - b.x - b.w) <= t || Math.abs(p[1] - b.y) <= t || Math.abs(p[1] - b.y - b.h) <= t;
-}
-function readElk(res, edges) {
-  const A = new Map(), B = new Map(), eA = new Map(), eB = new Map();
-  (function walk(n, ox, oy) {
-    for (const c of n.children || []) {
-      A.set(c.id, { x: c.x, y: c.y, w: c.width, h: c.height });
-      const bb = { x: ox + c.x, y: oy + c.y, w: c.width, h: c.height };
-      B.set(c.id, bb);
-      walk(c, bb.x, bb.y);
-    }
-    for (const e of n.edges || []) {
-      const s = (e.sections || [])[0]; if (!s) continue;
-      const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
-      eA.set(e.id, pts.map((p) => [p.x, p.y]));
-      eB.set(e.id, pts.map((p) => [p.x + ox, p.y + oy]));
-    }
-  })(res, 0, 0);
-  const score = (boxes, ep) => {
-    let f = 0;
-    for (const [id, b] of boxes) {
-      const par = LG.els.get(id).parent, p = par && boxes.get(par);
-      if (p && (b.x < p.x - 1 || b.y < p.y - 1 || b.x + b.w > p.x + p.w + 1 || b.y + b.h > p.y + p.h + 1)) f++;
-    }
-    for (const e of edges) {
-      const pts = ep.get(e.id);
-      if (!pts) { f++; continue; }
-      if (!near(pts[0], boxes.get(e.src))) f++;
-      if (!near(pts[pts.length - 1], boxes.get(e.dst))) f++;
-    }
-    return f;
-  };
-  const fa = score(A, eA), fb = score(B, eB);
-  const useA = fa <= fb;
-  if (Math.min(fa, fb) > 0) console.warn(`[map] ELK coordinate self-check: ${Math.min(fa, fb)} issue(s) in ${useA ? "ROOT" : "summed"} mode (ROOT ${fa}, summed ${fb}). Some arrows may not touch their cards.`);
-  else if (!useA) console.info("[map] ELK did not honour ROOT coordinates, summed parent offsets instead.");
-  return { boxes: useA ? A : B, pts: useA ? eA : eB };
-}
+function invalidateMasters() { masterEpoch++; masters.clear(); }
 
 function clipTo(b, from) {   // point on b's border towards 'from'
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2, dx = from[0] - cx, dy = from[1] - cy;
@@ -781,7 +1109,7 @@ function clipTo(b, from) {   // point on b's border towards 'from'
   const k = Math.min(dx ? (b.w / 2) / Math.abs(dx) : Infinity, dy ? (b.h / 2) / Math.abs(dy) : Infinity);
   return [cx + dx * k, cy + dy * k];
 }
-function geomOf(pts) {
+function geomOf(pts, labelAt) {
   const p = [];
   for (const q of pts) if (!p.length || Math.hypot(q[0] - p[p.length - 1][0], q[1] - p[p.length - 1][1]) > .5) p.push(q);
   if (p.length < 2) return null;
@@ -801,44 +1129,31 @@ function geomOf(pts) {
     const len = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
     if (len > best) { best = len; mid = [(p[i][0] + p[i - 1][0]) / 2, (p[i][1] + p[i - 1][1]) / 2]; }
   }
-  return { d, ah, mid };
+  return { d, ah, mid: labelAt || mid };
 }
 
-async function computeLayout() {
-  const i = state.phase, exp = state.expanded;
+async function computeLayout(i, exp) {
+  if (i == null) i = state.phase;
+  if (!exp) exp = state.expanded;
   const ids = [...LG.els.keys()].filter((id) => LG.visible(id, i, exp));
-  const vis = new Set(ids), kidsOf = new Map();
-  for (const id of ids) { const p = LG.els.get(id).parent; if (p && vis.has(p)) { if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(id); } }
-  const frames = new Set(ids.filter((id) => isFrameId(id, vis, kidsOf)));
+  if (!ids.length) return { ids, frames: new Set(), boxes: new Map(), edges: [], w: 0, h: 0, byPair: new Map(), bad: 0 };
+  const master = await getMaster();
   const edges = LG.lifted(i, exp);
-  if (!ids.length) return { ids, frames, boxes: new Map(), edges: [], w: 0, h: 0, byPair: new Map() };
-  const sizes = measureAll(ids, frames);
-  let res;
-  try { res = await elk.layout(elkGraph(ids, vis, kidsOf, sizes, edges, true)); }
-  catch (e) {
-    console.warn("[map] ELK failed with edge labels, retrying without them.", e);
-    res = await elk.layout(elkGraph(ids, vis, kidsOf, sizes, edges, false));
-  }
-  const rd = readElk(res, edges);
+  const { frames } = LAYOUT.structure(ids);
+  const r = LAYOUT.layoutView(ids, edges, measureAll(ids, frames, i), master);
+  // self-check against the master: 0 means every pair of visible siblings keeps its left/right and above/below order
+  if (r.bad.length) console.warn("[map] order violations", r.bad.length, r.bad.slice(0, 6).map((b) => b.join(":")).join(" "));
   const boxes = new Map();
-  for (const id of ids) {
-    const b = rd.boxes.get(id);
-    if (!b) throw new Error("ELK returned no box for " + id);
-    boxes.set(id, { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: b.w, h: b.h, frame: frames.has(id) });
-  }
+  for (const id of ids) { const b = r.boxes.get(id); boxes.set(id, { x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100, w: b.w, h: b.h, frame: b.frame }); }
   const out = [], byPair = new Map();
   for (const e of edges) {
-    let pts = rd.pts.get(e.id);
-    if (!pts) {
-      const a = boxes.get(e.src), b = boxes.get(e.dst);
-      pts = [clipTo(a, [b.x + b.w / 2, b.y + b.h / 2]), clipTo(b, [a.x + a.w / 2, a.y + a.h / 2])];
-    }
-    const g = geomOf(pts);
+    const pts = r.pts.get(e.id);
+    const g = pts && geomOf(pts, r.mid.get(e.id));
     if (!g) continue;
     const item = Object.assign({}, e, g);
     out.push(item); byPair.set(e.src + "|" + e.dst, item);
   }
-  return { ids, frames, boxes, edges: out, byPair, w: res.width || 0, h: res.height || 0 };
+  return { ids, frames, boxes, edges: out, byPair, w: r.w, h: r.h, bad: r.bad.length };
 }
 
 /* ---------- Commit a layout: DOM, view anchoring, FLIP ---------- */
@@ -868,7 +1183,7 @@ function commit(res, opts) {
   const ob = L ? L.boxes : new Map(), nb = res.boxes;
   const oldView = { x: view.x, y: view.y, z: view.z };
   finishAnims();
-  cancelAnimationFrame(camRaf);
+  cancelAnimationFrame(camRaf); followStop();
   const animate = !reduced && !!L && opts.animate !== false;
   let anchor = opts.anchor;
   if (!anchor && L && !opts.fit) anchor = autoAnchor(ob, nb);
@@ -1051,14 +1366,6 @@ function centerOnBox(b, z, ms) {
   const cx = (f.l + f.r) / 2, cy = (f.t + f.b) / 2;
   animateView({ z, x: cx - (b.x + b.w / 2) * z, y: cy - (b.y + b.h / 2) * z }, ms == null ? 600 : ms);
 }
-function ensureVisible(boxes, ms) {
-  const b = boundsOf(boxes); if (!b) return;
-  const f = freeArea();
-  const x0 = view.x + b.x * view.z, y0 = view.y + b.y * view.z, x1 = x0 + b.w * view.z, y1 = y0 + b.h * view.z;
-  if (x0 >= f.l && y0 >= f.t && x1 <= f.r && y1 <= f.b) return;
-  centerOnBox(b, Math.max(view.z, .55), ms);
-}
-
 /* ---------- Pointer: pan, pinch ---------- */
 const pointers = new Map();
 let drag = null, suppressUntil = 0;
@@ -1097,8 +1404,9 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   vp.classList.remove("panning");
   if (drag && drag.moved) suppressUntil = performance.now() + 60;
-  if (drag && drag.mode === "pinch") { if (pointers.size === 0) drag = null; return; }
+  if (drag && drag.mode === "pinch") { if (pointers.size === 0) { drag = null; resumeFollow(); } return; }
   drag = null;
+  if (!pointers.size) resumeFollow();
 }
 // Focusing an off-screen button makes the browser scroll #vp. Turn that scroll into a pan so the board and `view` never disagree.
 vp.addEventListener("scroll", () => {
@@ -1108,6 +1416,8 @@ vp.addEventListener("scroll", () => {
 });
 vp.addEventListener("pointerup", endPointer);
 vp.addEventListener("pointercancel", endPointer);
+addEventListener("pointerup", endPointer);        // a release outside the board must not leave the pointer "down"
+addEventListener("pointercancel", endPointer);
 vp.addEventListener("wheel", (e) => {
   e.preventDefault(); cancelAnimationFrame(camRaf); touched = true;
   const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50);
@@ -1287,7 +1597,7 @@ function renderSheet() {
     const chg = o.changes ? Object.keys(o.changes).filter((p) => p in LG.pidx).sort((a, b) => LG.pidx[a] - LG.pidx[b]) : [];
     h += `<div class="sh-head">${stickerHTML(o)}<span class="sh-kind">${esc(k.label)}${sec ? " · section, " + LG.shownKids(id, i).length + " inside" : ""}</span><button class="btn icon sm" id="shClose" type="button" aria-label="Close details">${ICON.close}</button></div>`;
     h += `<div><h2>${esc(o.name)}</h2>${o.tech ? `<p class="sh-tech">${esc(o.tech)}</p>` : ""}</div>`;
-    h += `<div class="sh-chips">${st !== "same" ? `<span class="chip ${st}">${STATUS_WORD[st]}</span>` : ""}${o.proposed ? '<span class="chip proposed">Proposed</span>' : ""}</div>`;
+    h += `<div class="sh-chips">${st !== "same" ? `<span class="chip ${st}">${STATUS_WORD[st]}</span>` : ""}${o.proposed ? '<span class="chip proposed">Proposed</span>' : ""}${o.layer ? `<span class="chip layer">${esc(layerInfo(o.layer).full)}</span>` : ""}</div>`;
     h += `<div class="crumbs">${crumbs.length ? crumbs.join(" / ") + " / " : "Top level / "}<b>${esc(o.name)}</b></div>`;
     if (o.desc) h += `<p class="sh-p">${esc(o.desc)}</p>`;
     h += `<div><span class="fl">In ${esc(P)}</span><p class="sh-p">${stat}</p>${st === "changed" ? `<div class="sh-note" style="margin-top:8px">${esc(o.changes[P])}</div>` : ""}</div>`;
@@ -1330,7 +1640,8 @@ function renderPhasesNow() {
   $("#pcap").innerHTML = (p.goal ? `<span><b>Goal</b>${esc(p.goal)}</span>` : "") + (p.exit ? `<span><b>Exit test</b>${esc(p.exit)}</span>` : "");
   $("#onlyBtn").setAttribute("aria-pressed", state.only);
 }
-const LEVELS = [["context", "Context"], ["containers", "Containers"], ["components", "Components"], ["everything", "Everything"]];
+// [key, label, tooltip]. The keys stay stable: saved state holds the expanded set, never a level name.
+const LEVELS = [["context", "Concise", "System view"], ["containers", "Containers", "Apps, services and stores"], ["components", "Components", "Parts inside each service"], ["everything", "Complete", "Everything in the system"]];
 function activeLevel() {
   const cur = new Set([...state.expanded].filter((id) => LG.kidsAll.has(id)));
   for (const [k] of LEVELS) {
@@ -1342,9 +1653,24 @@ function activeLevel() {
 function renderLevels() { keepFocus(renderLevelsNow); }
 function renderLevelsNow() {
   const a = activeLevel();
-  $("#levels").innerHTML = LEVELS.map(([k, n]) => `<button class="btn sm" type="button" data-level="${k}" aria-pressed="${a === k}">${n}</button>`).join("");
+  $("#levels").innerHTML = LEVELS.map(([k, n, t]) => `<button class="btn sm" type="button" data-level="${k}" data-tip="${esc(t)}" aria-describedby="lvd-${k}" aria-pressed="${a === k}">${n}</button><span class="sr" id="lvd-${k}">${esc(t)}</span>`).join("");
   $("#levels").querySelectorAll("[data-level]").forEach((b) => { b.onclick = async () => { await setExpanded(LG.presetSet(b.dataset.level)); touched = false; fitView(true); }; });
 }
+const layerBtn = $("#layerBtn");
+function renderLayerBtn() {
+  const any = LG.hasLayers();
+  layerBtn.setAttribute("aria-pressed", String(state.layers));
+  layerBtn.setAttribute("aria-disabled", String(!any));   // not "disabled", so the tooltip can still explain why
+  layerBtn.dataset.tip = any ? "Show tooling for developers and for measuring the system" : "This map has no dev or measurement items yet";
+}
+layerBtn.onclick = async () => {
+  if (!LG.hasLayers()) return;
+  stopPlay(); closePops();
+  state.layers = !state.layers; LG.setLayers(state.layers);
+  persist(); renderLayerBtn(); renderPhases(); renderLevels(); renderPlayer();
+  await relayout({});
+  if (state.sel) renderSheet();
+};
 $("#expandAll").onclick = () => setExpanded(LG.presetSet("everything"));
 $("#collapseAll").onclick = () => setExpanded(new Set());
 $("#onlyBtn").onclick = () => { state.only = !state.only; $("#onlyBtn").setAttribute("aria-pressed", state.only); applyFocus(); };
@@ -1357,6 +1683,9 @@ function renderKey() {
     `<div class="krow"><span class="chip changed">Changed</span><span class="d">Exists before and changes here, see the note</span></div>` +
     `<div class="krow"><span class="chip retired">Retired</span><span class="d">Faded and struck through, gone after this phase</span></div>` +
     `<div class="krow"><span class="chip proposed">Proposed</span><span class="d">Our proposal, not in the source documents (dashed outline)</span></div>` +
+    `<h3>Layers</h3>` +
+    `<div class="krow l-dev"><span class="chip layer">Dev</span><span class="d">Tooling for building and running the system, not the product. Striped violet. Hidden until "Dev &amp; measurement" is on.</span></div>` +
+    `<div class="krow l-measure"><span class="chip layer">Measure</span><span class="d">Tests, metrics and checks that watch the product. Striped teal. Hidden until "Dev &amp; measurement" is on.</span></div>` +
     `<h3>Arrows</h3>` +
     `<div class="krow"><span class="kline"></span><span class="d">A relation. "N links" merges several hidden inside a collapsed box.</span></div>` +
     `<div class="krow"><span class="kline d"></span><span class="d">A relation that is retired in this phase</span></div>`;
@@ -1365,12 +1694,25 @@ function closePops() {
   $("#key").hidden = true; $("#keyBtn").setAttribute("aria-expanded", "false");
   $("#qpop").hidden = true; $("#q").setAttribute("aria-expanded", "false");
 }
+// Fixed popover under its trigger: right edges aligned, kept inside the viewport, scrolls when taller than the room left.
+function placePop(pop, anchor, maxH) {
+  if (pop.hidden) return;
+  const r = anchor.getBoundingClientRect(), m = 10, vw = innerWidth, vh = innerHeight, narrow = vw <= 720;
+  pop.style.width = narrow ? (vw - 2 * m) + "px" : "";
+  pop.style.maxHeight = "";
+  const w = pop.offsetWidth, top = Math.min(r.bottom + 10, vh - 120);
+  pop.style.left = Math.round(narrow ? m : Math.max(m, Math.min(r.right - w, vw - w - m))) + "px";
+  pop.style.top = Math.round(top) + "px";
+  pop.style.maxHeight = Math.max(140, Math.min(maxH || 9999, vh - top - m)) + "px";
+}
+function placePops() { placePop($("#key"), $("#keyBtn")); placePop($("#qpop"), $("#q"), 340); }
 $("#keyBtn").onclick = (e) => {
-  e.stopPropagation();
+  e.stopPropagation(); tipHide();
   const open = $("#key").hidden; closePops();
   $("#key").hidden = !open; $("#keyBtn").setAttribute("aria-expanded", String(open));
+  if (open) placePop($("#key"), $("#keyBtn"));
 };
-document.addEventListener("click", (e) => { if (!e.target.closest(".srch")) closePops(); });
+document.addEventListener("click", (e) => { if (!e.target.closest(".srch, .pop")) closePops(); });
 
 /* ---------- Search ---------- */
 let qItems = [], qActive = -1;
@@ -1379,6 +1721,7 @@ function qRender() {
   if (!q) { $("#qpop").hidden = true; $("#q").setAttribute("aria-expanded", "false"); qItems = []; return; }
   const scored = [];
   for (const o of LG.els.values()) {
+    if (firstPhaseShown(o.id) < 0) continue;   // not in any phase (or in a hidden layer)
     const hay = [o.name, o.tech, o.id].filter(Boolean).join(" ").toLowerCase();
     const n = (o.name || "").toLowerCase();
     let s = -1;
@@ -1393,6 +1736,7 @@ function qRender() {
     return `<li role="presentation"><button class="opt" type="button" role="option" id="qo${n}" data-q="${esc(o.id)}" aria-selected="${n === qActive}"><span class="n">${esc(o.name)}</span><span class="m">${esc(kindOf(o).label)}${path ? " · " + esc(path) : ""}${vis ? "" : " · not in " + esc(LG.phases[state.phase].id) + ", opens " + esc(LG.phases[Math.max(0, firstPhaseShown(o.id))].id)}</span></button></li>`;
   }).join("") : `<li class="qnone">No element matches "${esc($("#q").value.trim())}".</li>`;
   $("#qpop").hidden = false; $("#q").setAttribute("aria-expanded", "true");
+  placePop($("#qpop"), $("#q"), 340);
   ul.querySelectorAll("[data-q]").forEach((b) => { b.onclick = () => qPick(b.dataset.q); });
   $("#q").setAttribute("aria-activedescendant", qActive >= 0 ? "qo" + qActive : "");
 }
@@ -1411,6 +1755,62 @@ $("#q").addEventListener("keydown", (e) => {
   else if (e.key === "Enter") { e.preventDefault(); if (qActive >= 0 && qItems[qActive]) qPick(qItems[qActive].id); }
   else if (e.key === "Escape") { e.stopPropagation(); $("#q").value = ""; qRender(); $("#q").blur(); }
 });
+
+/* ---------- Camera that follows the flow token ---------- */
+// One rAF loop. Each frame it reads where the token is (world coordinates, kept in play.tok by moveToken; between hops the
+// destination box centre) and moves the camera centre toward it with a critically damped spring, so it accelerates and eases
+// with no snapping. Zoom is a second spring in log space towards follow.zt. A pointer that is down wins; on release the
+// loop resumes and eases back. Anything else that moves the view (wheel, zoom buttons) is adopted as the new zoom.
+const follow = { raf: 0, prev: 0, last: null, vx: 0, vy: 0, vz: 0, zt: 1, zSeen: 1 };
+function followTarget() {
+  const P = play; if (!P || P.done) return null;
+  if (P.tok && P.tok.moving) return [P.tok.x, P.tok.y];
+  const st = P.steps[P.i], b = st && L.boxes.get(st.b);
+  return b ? [b.x + b.w / 2, b.y + b.h / 2] : null;
+}
+function followStop() { cancelAnimationFrame(follow.raf); follow.raf = 0; follow.last = null; }
+function followKick() {
+  if (reduced || follow.raf || !play || play.done) return;
+  follow.last = null; follow.vx = follow.vy = follow.vz = 0; follow.prev = performance.now();
+  follow.raf = requestAnimationFrame(followTick);
+}
+function resumeFollow() { if (play && !play.done && !pointers.size) followKick(); }
+function followTick(now) {
+  follow.raf = 0;
+  const T = followTarget(); if (!T) return;
+  const dt = Math.min(.05, Math.max(.001, (now - follow.prev) / 1000)); follow.prev = now;
+  if (pointers.size) { follow.last = null; follow.raf = requestAnimationFrame(followTick); return; }   // the drag wins while the pointer is down
+  if (!follow.last || view.x !== follow.last.x || view.y !== follow.last.y || view.z !== follow.last.z) {
+    if (Math.abs(view.z - follow.zSeen) > 1e-6) follow.zt = view.z;     // the user zoomed: keep their zoom
+    follow.vx = follow.vy = follow.vz = 0;
+  }
+  const f = freeArea(), cx = (f.l + f.r) / 2, cy = (f.t + f.b) / 2;
+  let Cx = (cx - view.x) / view.z, Cy = (cy - view.y) / view.z;
+  const w = 6.5, wz = 5.5, lz = Math.log(view.z), lt = Math.log(clampZ(follow.zt));
+  follow.vx += (w * w * (T[0] - Cx) - 2 * w * follow.vx) * dt;
+  follow.vy += (w * w * (T[1] - Cy) - 2 * w * follow.vy) * dt;
+  follow.vz += (wz * wz * (lt - lz) - 2 * wz * follow.vz) * dt;
+  Cx += follow.vx * dt; Cy += follow.vy * dt;
+  const z = clampZ(Math.exp(lz + follow.vz * dt));
+  view.z = z; view.x = cx - Cx * z; view.y = cy - Cy * z; applyView();
+  follow.last = { x: view.x, y: view.y, z }; follow.zSeen = z;
+  const still = Math.hypot(follow.vx, follow.vy) * z < 4 && Math.hypot(T[0] - Cx, T[1] - Cy) * z < 1.5 && Math.abs(lt - Math.log(z)) < .004 && Math.abs(follow.vz) < .01 && !(play.tok && play.tok.moving);
+  if (!still) follow.raf = requestAnimationFrame(followTick); else follow.last = null;
+}
+// Called on every step. Reduced motion: jump so the hop is in view at the current zoom, no pursuit.
+function followStep(s) {
+  if (!L) return;
+  if (!reduced) { followKick(); return; }
+  const A = L.boxes.get(s.a), B = L.boxes.get(s.b), f = freeArea(), u = boundsOf([A, B]);
+  const fits = u && u.w * view.z <= f.r - f.l - 40 && u.h * view.z <= f.b - f.t - 40, c = fits ? u : B;
+  view.x = (f.l + f.r) / 2 - (c.x + c.w / 2) * view.z; view.y = (f.t + f.b) / 2 - (c.y + c.h / 2) * view.z; applyView();
+}
+// Clicking a flow's name frames its first hop at a comfortable zoom (0.8 to 1); play, next and prev keep the zoom.
+function comfortZoom(s) {
+  const u = boundsOf([L.boxes.get(s.a), L.boxes.get(s.b)]), f = freeArea();
+  const fit = Math.min((f.r - f.l - 120) / u.w, (f.b - f.t - 120) / u.h);
+  return clampZ(Math.max(.8, Math.min(1, fit)));
+}
 
 /* ---------- Flow player ---------- */
 const playIcon = $("#playIcon");
@@ -1435,12 +1835,12 @@ function renderPlayerNow() {
   const fl = flowsNow();
   if (!fl.some((x) => x.f.id === state.flowId)) state.flowId = fl[0] ? fl[0].f.id : null;
   $("#flows").innerHTML = fl.length ? fl.map((x) => `<button class="btn sm" type="button" data-flow="${esc(x.f.id)}" aria-pressed="${x.f.id === state.flowId}" title="${esc(x.f.desc || "")}">${esc(x.f.name)}</button>`).join("") : '<span class="none">No flows yet</span>';
-  $("#flows").querySelectorAll("[data-flow]").forEach((b) => { b.onclick = () => { state.flowId = b.dataset.flow; renderPlayer(); startPlay(); }; });
+  $("#flows").querySelectorAll("[data-flow]").forEach((b) => { b.onclick = () => { state.flowId = b.dataset.flow; renderPlayer(); startPlay(true); }; });
   for (const id of ["#prevBtn", "#playBtn", "#nextBtn"]) $(id).disabled = !fl.length;
   setPlayIcon(false);
   idleCaption();
 }
-function startPlay() {
+function startPlay(frame) {
   stopPlay(true);
   const x = flowsNow().find((y) => y.f.id === state.flowId); if (!x) return;
   closePops();
@@ -1450,11 +1850,13 @@ function startPlay() {
   state.sel = null; sheet.hidden = true;
   play = { flow: x.f, steps, i: -1, running: true, timer: 0, raf: 0, bright: new Set(), edges: new Set(), current: null };
   vp.classList.add("playing"); setPlayIcon(true);
+  follow.zt = frame ? comfortZoom(steps[0]) : view.z; follow.zSeen = view.z;
+  if (frame && reduced) view.z = follow.zt;
   goStep(0);
 }
 function stopPlay(silent) {
   if (!play) return;
-  clearTimeout(play.timer); cancelAnimationFrame(play.raf);
+  clearTimeout(play.timer); cancelAnimationFrame(play.raf); followStop();
   play = null; showToken(false); tmpl.setAttribute("d", ""); vp.classList.remove("playing");
   document.querySelectorAll(".pulse").forEach((n) => n.classList.remove("pulse"));
   if (!silent) { setPlayIcon(false); idleCaption(); applyFocus(); }
@@ -1468,6 +1870,7 @@ function goStep(i) {
   const P = play; if (!P) return;
   clearTimeout(P.timer); cancelAnimationFrame(P.raf);
   i = Math.max(0, Math.min(P.steps.length - 1, i));
+  P.done = false;
   P.bright = new Set(); P.edges = new Set();
   for (let k = 0; k <= i; k++) {
     const s = P.steps[k]; P.bright.add(s.a); P.bright.add(s.b);
@@ -1476,10 +1879,10 @@ function goStep(i) {
   const fwd = i > P.i; P.i = i;
   const s = P.steps[i]; P.current = s.b;
   document.querySelectorAll(".pulse").forEach((n) => n.classList.remove("pulse"));
-  tmpl.setAttribute("d", ""); showToken(false);
+  tmpl.setAttribute("d", ""); showToken(false); P.tok = null;
   const nm = (id) => LG.els.get(id).name;
   cap.innerHTML = `<b>${esc(s.note || "Step")}</b><span class="num">Step ${i + 1} of ${P.steps.length}</span> · ${esc(nm(s.src))} → ${esc(nm(s.dst))}`;
-  ensureVisible([L.boxes.get(s.a), L.boxes.get(s.b)], 600);
+  followStep(s);
   applyFocus();
   if (s.a === s.b) {
     const el = (frameEls.get(s.a) || cardEls.get(s.a));
@@ -1499,23 +1902,57 @@ function goStep(i) {
 }
 function finishPlay() {
   const P = play; if (!P) return;
-  P.running = false; setPlayIcon(false); showToken(false);
+  P.running = false; P.done = true; followStop(); setPlayIcon(false); showToken(false);
   cap.innerHTML = `<b>End of "${esc(P.flow.name)}"</b>${P.steps.length} steps. Press play to run it again.`;
 }
 function moveToken(path, ms) {
-  const len = path.getTotalLength(), t0 = performance.now(), c = token.firstElementChild;
+  const len = path.getTotalLength(), t0 = performance.now(), c = token.firstElementChild, P = play;
   showToken(true);
+  const p0 = path.getPointAtLength(0);
+  P.tok = { x: p0.x, y: p0.y, moving: true };
   const tick = (now) => {
     const k = Math.min(1, (now - t0) / ms), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
     const p = path.getPointAtLength(len * e);
     c.setAttribute("cx", p.x); c.setAttribute("cy", p.y);
-    if (k < 1 && play) play.raf = requestAnimationFrame(tick); else showToken(false);
+    if (P.tok) { P.tok.x = p.x; P.tok.y = p.y; }
+    if (k < 1 && play === P) P.raf = requestAnimationFrame(tick); else { showToken(false); if (P.tok) P.tok.moving = false; }
   };
-  play.raf = requestAnimationFrame(tick);
+  P.raf = requestAnimationFrame(tick);
 }
 $("#playBtn").onclick = () => { if (!play) startPlay(); else if (play.running) pausePlay(); else resumePlay(); };
 $("#nextBtn").onclick = () => { if (!play) { startPlay(); pausePlay(); return; } pausePlay(); goStep(play.i + 1); };
 $("#prevBtn").onclick = () => { if (!play) { startPlay(); pausePlay(); return; } pausePlay(); goStep(play.i - 1); };
+
+/* ---------- Tooltips: any [data-tip]. About 600 ms after hover, 350 ms after keyboard focus; never on touch. ---------- */
+const tipEl = $("#tip");
+let tipT = 0, tipFor = null;
+function tipShow(el) {
+  if (!el.isConnected) return;
+  tipEl.textContent = el.dataset.tip; tipEl.hidden = false;
+  const r = el.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight, m = 8;
+  let top = r.bottom + 8; if (top + h > innerHeight - m) top = Math.max(m, r.top - h - 8);
+  tipEl.style.left = Math.round(Math.max(m, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - m))) + "px";
+  tipEl.style.top = Math.round(top) + "px";
+}
+function tipHide() { clearTimeout(tipT); tipFor = null; tipEl.hidden = true; }
+const tipTarget = (n) => n && n.closest ? n.closest("[data-tip]") : null;
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType === "touch") return;
+  const el = tipTarget(e.target);
+  if (el === tipFor) return;
+  tipHide();
+  if (el) { tipFor = el; tipT = setTimeout(() => tipShow(el), 600); }
+});
+document.addEventListener("pointerout", (e) => { const el = tipTarget(e.target); if (el && el === tipFor && !(e.relatedTarget && el.contains(e.relatedTarget)) && document.activeElement !== el) tipHide(); });
+document.addEventListener("focusin", (e) => {
+  const el = tipTarget(e.target);
+  tipHide();
+  if (el && e.target.matches(":focus-visible")) { tipFor = el; tipT = setTimeout(() => tipShow(el), 350); }
+});
+document.addEventListener("focusout", tipHide);
+document.addEventListener("pointerdown", tipHide, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !tipEl.hidden) tipHide(); }, true);
+addEventListener("wheel", tipHide, { passive: true });
 
 /* ---------- Zoom bar, keys, resize ---------- */
 $("#zoomIn").onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, view.z * 1.25);
@@ -1536,15 +1973,29 @@ addEventListener("keydown", (e) => {
   else if (e.key === "/") { e.preventDefault(); $("#q").focus(); }
 });
 let touched = false, rzT = 0;
-addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { positionChrome(); if (!touched && !play) fitView(false); }, 80); });
+addEventListener("resize", () => { placePops(); tipHide(); clearTimeout(rzT); rzT = setTimeout(() => { positionChrome(); placePops(); if (!touched && !play) fitView(false); }, 80); });
+
+/* ---------- Check hook for QA: in the console, `await bosMap.sweep()` lays out every phase at every level (nothing is drawn)
+   and returns how many sibling pairs broke the master's left/right or above/below order. The acceptance bar is 0 everywhere. ---------- */
+async function sweep() {
+  const rows = [];
+  for (const [k] of LEVELS) for (let i = 0; i < LG.phases.length; i++) {
+    const r = await computeLayout(i, LG.presetSet(k));
+    rows.push({ level: k, phase: LG.phases[i].id, visible: r.ids.length, violations: r.bad });
+  }
+  rows.total = rows.reduce((n, r) => n + r.violations, 0);
+  console.table(rows); console.log("[map] order violations in total:", rows.total);
+  return rows;
+}
+window.bosMap = { sweep, state, view, LG };
 
 /* ---------- Start ---------- */
-renderPhases(); renderLevels(); renderKey(); renderPlayer();
+renderPhases(); renderLevels(); renderKey(); renderPlayer(); renderLayerBtn();
 positionChrome();
 relayout({ fit: true, animate: false }).then((ok) => { if (ok) fitView(false); });
 if (document.fonts && document.fonts.addEventListener) {
   let fontT = 0;
-  document.fonts.addEventListener("loadingdone", () => { clearTimeout(fontT); fontT = setTimeout(() => { if (L && !play) relayout({ animate: false }); }, 120); });
+  document.fonts.addEventListener("loadingdone", () => { clearTimeout(fontT); fontT = setTimeout(() => { invalidateMasters(); if (L && !play) relayout({ animate: false }); }, 120); });
 }
 }
 
