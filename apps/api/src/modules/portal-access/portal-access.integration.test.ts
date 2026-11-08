@@ -63,6 +63,10 @@ class FakeZitadel {
     this.orgs.set(name, id);
     return Promise.resolve(id);
   }
+  ensureOrgLoginPolicy() {
+    this.calls.push('ensureOrgLoginPolicy');
+    return Promise.resolve('created' as const);
+  }
   ensureProjectGrant() {
     this.calls.push('ensureProjectGrant');
     return Promise.resolve();
@@ -275,6 +279,7 @@ describe('POST /v1/customers/:id/portal-access', () => {
       'portal_access.requested',
       'portal_access.org_linked',
       'portal_access.zitadel_org_created',
+      'portal_access.login_policy_pinned',
       'portal_access.project_granted',
       'portal_access.zitadel_user_created',
       'portal_access.role_granted',
