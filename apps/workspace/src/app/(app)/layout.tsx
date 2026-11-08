@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { Header } from '@/components/shell/header';
+import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
+import { Sidebar } from '@/components/shell/sidebar';
 import { getSession } from '@/lib/session';
-
-import styles from './shell.module.css';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
@@ -16,24 +17,15 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // users have a valid session but no business here.
   if (session.orgKind !== 'staff') redirect('/staff-only');
 
+  const roles = session.roles.length > 0 ? session.roles.join(', ') : 'No roles';
+
   return (
-    <div className={styles.frame}>
-      <header className={styles.header}>
-        <p className={styles.brand}>Business OS</p>
-        <div className={styles.who}>
-          <span className={styles.badge}>{session.orgKind}</span>
-          <span className={styles.roles}>
-            {session.roles.length > 0 ? session.roles.join(', ') : 'No roles'}
-          </span>
-          {/* POST, not a link: signing out changes state, so a crawler or prefetch must not trigger it. */}
-          <form method="post" action="/auth/logout">
-            <button type="submit" className={styles.button}>
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-      {children}
-    </div>
+    <ShellFrame>
+      <Sidebar user={{ name: roles, detail: session.orgKind }} />
+      <ShellMain>
+        <Header orgKind={session.orgKind} roles={session.roles} />
+        {children}
+      </ShellMain>
+    </ShellFrame>
   );
 }
