@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 
-import { ApprovalsModule } from './modules/approvals/approvals.module';
+import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { MeModule } from './modules/me/me.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
@@ -45,7 +45,7 @@ import { UsersModule } from './platform/users/users.module';
     DocumentsModule,
     NotifyHttpModule,
     UsersModule,
-    ApprovalsModule,
+    ApprovalsHttpModule,
     TestMemoModule,
   ],
 })
