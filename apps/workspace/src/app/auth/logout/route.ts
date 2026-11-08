@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 
 import { getEnv } from '@/lib/env';
 import { endSessionUrl } from '@/lib/oidc';
-import { clearSessionCookie, destroySession, SESSION_COOKIE } from '@/lib/session';
+import { clearSessionCookie, destroySession, peekSession, SESSION_COOKIE } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,7 +58,21 @@ export async function POST(req: Request): Promise<Response> {
   // when Valkey is down, and it would also slide the TTL or refresh tokens mid-logout. Whatever
   // the local state, the ZITADEL session must end, or the next visit signs straight back in.
   const id = (await cookies()).get(SESSION_COOKIE)?.value;
+  let idTokenHint: string | undefined;
   if (id) {
+    // Read the ID token before the record goes: ZITADEL needs it as id_token_hint to end its
+    // own session. No record (expired, Valkey down) means no hint, and logout carries on.
+    try {
+      idTokenHint = (await peekSession(id))?.idToken;
+    } catch (err) {
+      // Only the error name, for the same reason as below.
+      console.warn(
+        JSON.stringify({
+          event: 'auth.logout_read_failed',
+          error: err instanceof Error ? err.name : 'unknown',
+        }),
+      );
+    }
     try {
       await destroySession(id);
     } catch (err) {
@@ -76,8 +90,8 @@ export async function POST(req: Request): Promise<Response> {
   await clearSessionCookie();
 
   try {
-    // Ends the ZITADEL session too. No id_token_hint: it would put the ID token in the URL.
-    const url = await endSessionUrl();
+    // Ends the ZITADEL session too; it needs the hint to end the user's session there.
+    const url = await endSessionUrl(idTokenHint !== undefined ? { idTokenHint } : {});
     return redirectTo(url.toString());
   } catch {
     // The session cookie is already cleared, so a discovery failure must not strand the user.

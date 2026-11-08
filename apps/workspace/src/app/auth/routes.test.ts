@@ -14,6 +14,7 @@ const m = vi.hoisted(() => ({
   setSessionCookie: vi.fn(),
   clearSessionCookie: vi.fn(),
   getSession: vi.fn(),
+  peekSession: vi.fn(),
   destroySession: vi.fn(),
   safeReturnTo: vi.fn(),
   getOidcRedis: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock('@/lib/session', () => ({
   setSessionCookie: m.setSessionCookie,
   clearSessionCookie: m.clearSessionCookie,
   getSession: m.getSession,
+  peekSession: m.peekSession,
   destroySession: m.destroySession,
   safeReturnTo: m.safeReturnTo,
 }));
@@ -419,32 +421,38 @@ describe('/auth/logout', () => {
     expect(m.clearSessionCookie).not.toHaveBeenCalled();
   });
 
-  // CR-05a: the end-session URL is a browser redirect, so an ID token in it would land in
-  // history, proxy logs and Referer headers.
-  it('destroys the session, clears the cookie and redirects to end_session without an id token hint', async () => {
+  // Without id_token_hint ZITADEL's end_session does not end the user's ZITADEL session, so the
+  // next visit signs straight back in. The token is read before the record is destroyed.
+  it('destroys the session, clears the cookie and redirects to end_session with the id token hint', async () => {
     requestCookies.set(SESSION_COOKIE, SESSION_ID);
-    m.getSession.mockResolvedValue({ id: SESSION_ID, idToken: ID_TOKEN });
+    m.peekSession.mockResolvedValue({ idToken: ID_TOKEN });
     m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
 
     const res = await post({ origin: ORIGIN });
 
+    expect(m.peekSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(m.peekSession.mock.invocationCallOrder[0]).toBeLessThan(
+      m.destroySession.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(m.getSession).not.toHaveBeenCalled();
     expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(m.endSessionUrl).toHaveBeenCalledTimes(1);
-    expect(m.endSessionUrl.mock.calls[0]).toEqual([]);
+    expect(m.endSessionUrl.mock.calls[0]).toEqual([{ idTokenHint: ID_TOKEN }]);
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(END_SESSION);
   });
 
   // CR-06: getSession is null when the record idled out or Valkey is down. The ZITADEL session
   // must still end, or the next visit signs the user straight back in.
-  it('with a cookie but no live session: destroys by cookie id, clears it and ends the IdP session', async () => {
+  it('with a cookie but no live session: destroys by cookie id, clears it and ends the IdP session without a hint', async () => {
     requestCookies.set(SESSION_COOKIE, SESSION_ID);
-    m.getSession.mockResolvedValue(null);
+    m.peekSession.mockResolvedValue(null);
     m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
 
     const res = await post({ origin: ORIGIN });
 
+    expect(m.endSessionUrl.mock.calls[0]).toEqual([{}]);
     expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(303);
@@ -452,11 +460,12 @@ describe('/auth/logout', () => {
   });
 
   it('without any cookie: clears the cookie and still ends the IdP session', async () => {
-    m.getSession.mockResolvedValue(null);
     m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
 
     const res = await post({ origin: ORIGIN });
 
+    expect(m.peekSession).not.toHaveBeenCalled();
+    expect(m.endSessionUrl.mock.calls[0]).toEqual([{}]);
     expect(m.destroySession).not.toHaveBeenCalled();
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(303);
@@ -472,15 +481,17 @@ describe('/auth/logout', () => {
       vi.spyOn(console, 'debug').mockImplementation(() => undefined),
     ];
     requestCookies.set(SESSION_COOKIE, SESSION_ID);
-    m.getSession.mockResolvedValue(null);
     // ioredis puts the command arguments in the error: the key and the stored record.
     const replyError = new Error(`ERR del bos:session:${SESSION_ID} {"idToken":"${ID_TOKEN}"}`);
     replyError.name = 'ReplyError';
+    m.peekSession.mockRejectedValue(replyError);
     m.destroySession.mockRejectedValue(replyError);
     m.endSessionUrl.mockResolvedValue(new URL(END_SESSION));
 
     const res = await post({ origin: ORIGIN });
 
+    // A failed read must not skip the destroy, and no hint is sent without a record.
+    expect(m.endSessionUrl.mock.calls[0]).toEqual([{}]);
     expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
     expect(m.clearSessionCookie).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(303);
@@ -495,7 +506,7 @@ describe('/auth/logout', () => {
 
   it('goes home when ZITADEL discovery fails, after the local session is already gone', async () => {
     requestCookies.set(SESSION_COOKIE, SESSION_ID);
-    m.getSession.mockResolvedValue({ id: SESSION_ID, idToken: ID_TOKEN });
+    m.peekSession.mockResolvedValue({ idToken: ID_TOKEN });
     m.endSessionUrl.mockRejectedValue(new Error('discovery down'));
     const res = await post({ origin: ORIGIN });
     expect(m.destroySession).toHaveBeenCalledWith(SESSION_ID);
