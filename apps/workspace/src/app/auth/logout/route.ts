@@ -64,10 +64,8 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    // Ends the ZITADEL session too; id_token_hint lets it skip its own confirmation screen.
-    const url = await endSessionUrl(
-      session.idToken === undefined ? {} : { idTokenHint: session.idToken },
-    );
+    // Ends the ZITADEL session too. No id_token_hint: it would put the ID token in the URL.
+    const url = await endSessionUrl();
     return redirectTo(url.toString());
   } catch {
     // The local session is already gone, so a discovery failure must not strand the user.
