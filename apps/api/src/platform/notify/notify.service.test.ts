@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UserDirectory } from '../authz/user-directory';
 import type { CoreConfig } from '../config/config';
 import type { Db } from '../db/db.module';
+import type { DbTransaction } from '../db/tx';
 import { OUTBOX_DRAIN_JOB, OUTBOX_QUEUE } from './notify.constants';
 import { NotifyService } from './notify.service';
+import type { EmailTemplate } from './templates';
 
 function serviceWith(queue: { add: ReturnType<typeof vi.fn> }): NotifyService {
   return new NotifyService(
@@ -66,5 +68,73 @@ describe('NotifyService.nudge', () => {
 
     await expect(serviceWith(queue).nudge()).resolves.toBeUndefined();
     expect(queue.add).toHaveBeenCalledOnce();
+  });
+});
+
+describe('NotifyService.notifyUser email links', () => {
+  /** A transaction that answers the scope query and records what the outbox insert receives. */
+  function fakeTx() {
+    const outboxRows: Record<string, unknown>[] = [];
+    let insertCount = 0;
+    const tx = {
+      execute: vi
+        .fn()
+        .mockResolvedValue({ rows: [{ tenant_id: 'tenant-1', organization_id: 'org-1' }] }),
+      insert: vi.fn(() => {
+        insertCount += 1;
+        const isOutbox = insertCount === 2; // the bell row is written first
+        return {
+          values: (row: Record<string, unknown>) => {
+            if (isOutbox) outboxRows.push(row);
+            return { onConflictDoNothing: () => Promise.resolve() };
+          },
+        };
+      }),
+    };
+    return { tx: tx as unknown as DbTransaction, outboxRows };
+  }
+
+  const notifier = (config: Partial<CoreConfig>): NotifyService =>
+    new NotifyService(
+      {} as Db,
+      config as CoreConfig,
+      { emailOf: vi.fn().mockResolvedValue('someone@example.com') } as unknown as UserDirectory,
+      { add: vi.fn() } as unknown as Queue,
+    );
+
+  const input = (template: EmailTemplate, linkPath: string) => ({
+    userId: 'user-1',
+    title: 't',
+    body: 'b',
+    link: '/inbox/1',
+    email: { template, vars: { linkPath } },
+    dedupeKey: 'evt:1',
+  });
+
+  it('builds a customer email link from PORTAL_PUBLIC_URL, not from the workspace address', async () => {
+    const { tx, outboxRows } = fakeTx();
+    const service = notifier({
+      WORKSPACE_PUBLIC_URL: 'https://app.example.com',
+      PORTAL_PUBLIC_URL: 'https://portal.example.com',
+    });
+
+    await service.notifyUser(tx, input('quotation.sent', '/quotations/q-1'));
+
+    const row = outboxRows[0];
+    expect(row?.bodyText).toContain('https://portal.example.com/quotations/q-1');
+    expect(row?.bodyText).not.toContain('app.example.com');
+  });
+
+  it('keeps staff email links on WORKSPACE_PUBLIC_URL', async () => {
+    const { tx, outboxRows } = fakeTx();
+    const service = notifier({
+      WORKSPACE_PUBLIC_URL: 'https://app.example.com',
+      PORTAL_PUBLIC_URL: 'https://portal.example.com',
+    });
+
+    await service.notifyUser(tx, input('quotation.accepted', '/quotations/q-1'));
+
+    expect(outboxRows[0]?.bodyText).toContain('https://app.example.com/quotations/q-1');
+    expect(outboxRows[0]?.bodyText).not.toContain('portal.example.com');
   });
 });
