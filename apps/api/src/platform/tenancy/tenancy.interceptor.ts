@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   type CallHandler,
   type ExecutionContext,
@@ -9,6 +10,9 @@ import type { Observable } from 'rxjs';
 
 import { OrgResolver } from './org-resolver';
 import { bindIdentity } from './request-context';
+
+// Fixed text: it names no org, tenant or role, so the caller learns nothing about where it landed.
+const NO_ROLE = 'No project role has been granted';
 
 /**
  * The identity AuthGuard stores on `req.auth` after verifying the token (see API-INTERFACE.md).
@@ -31,6 +35,10 @@ interface AuthIdentity {
  * Exceptions thrown here (an unknown org gives 403) still go through the exception filter.
  *
  * Public routes have no `req.auth`, so they are skipped and `ctx()` throws there by design.
+ *
+ * Staff principals must hold at least one project role (CR-02). Belonging to the staff org is not
+ * enough on its own: if ZITADEL self-registration is on, anyone could join that org. Customer and
+ * vendor principals are scoped to their own org and keep working without a role.
  */
 @Injectable()
 export class TenancyInterceptor implements NestInterceptor {
@@ -44,6 +52,9 @@ export class TenancyInterceptor implements NestInterceptor {
     const auth = req.auth;
     if (auth) {
       const org = await this.orgs.resolve(auth.zitadelOrgId);
+      if (org.orgKind === 'staff' && auth.roles.length === 0) {
+        throw new ForbiddenException(NO_ROLE);
+      }
       bindIdentity({
         tenantId: org.tenantId,
         organizationId: org.organizationId,
