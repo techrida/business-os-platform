@@ -1,0 +1,107 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  border: var(--border-width-thin) solid transparent;
+  border-radius: var(--radius-lg);
+  font-family: inherit;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+/* Heights from the Figma exports (Buttons, Dashboard, Add User): 36 / 40 / 48. Medium and Large
+   share one text style, 14px at tablet and up, and the same side padding. */
+.small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.medium {
+  min-height: 40px;
+  padding: 0 16px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.large {
+  min-height: 48px;
+  padding: 0 16px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.primary {
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
+}
+
+.primary:hover {
+  background: var(--button-primary-bg-hover);
+}
+
+.primary:active {
+  background: var(--button-primary-bg-active);
+}
+
+.secondary {
+  border-color: var(--button-primary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-primary-border);
+}
+
+.secondary:hover {
+  background: var(--button-secondary-bg-hover);
+}
+
+.secondary:active {
+  background: var(--button-secondary-bg-active);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--button-ghost-text);
+}
+
+.ghost:hover {
+  background: var(--button-ghost-bg-hover);
+  color: var(--button-ghost-text-hover);
+}
+
+.ghost:active {
+  background: var(--button-ghost-bg-active);
+  color: var(--button-ghost-text-hover);
+}
+
+.button:disabled,
+.button[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+.primary:disabled,
+.primary[aria-disabled='true'] {
+  background: var(--button-disabled-bg);
+}
+
+.secondary:disabled,
+.secondary[aria-disabled='true'] {
+  border-color: var(--button-disabled-bg);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-disabled-text);
+}
+
+.ghost:disabled,
+.ghost[aria-disabled='true'] {
+  background: transparent;
+  color: var(--button-secondary-disabled-text);
+}

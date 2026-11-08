@@ -229,6 +229,18 @@ describe('beginLogin', () => {
     expect(JSON.stringify(pending)).not.toContain(a.binding);
   });
 
+  it('sends max_age for step-up (K7) and omits it by default', async () => {
+    const { url } = await beginLogin({ returnTo: '/', prompt: 'login', maxAge: 0 });
+    expect(url.searchParams.get('max_age')).toBe('0');
+    const { url: plain } = await beginLogin({ returnTo: '/' });
+    expect(plain.searchParams.has('max_age')).toBe(false);
+  });
+
+  it.each([-1, 1.5, Number.NaN, 86_401])('drops a max_age of %s', async (maxAge) => {
+    const { url } = await beginLogin({ returnTo: '/', maxAge });
+    expect(url.searchParams.has('max_age')).toBe(false);
+  });
+
   it('sanitises returnTo again and drops unknown prompts and missing hints', async () => {
     const { url } = await beginLogin({
       returnTo: '//evil.example',

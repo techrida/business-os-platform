@@ -5,6 +5,9 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 
+import { BounceController } from './bounce.controller';
+import { BounceService, BounceStore } from './bounce.service';
+import { SqlBounceStore } from './bounce.store';
 import { NotifyController } from './notify.controller';
 import { OUTBOX_QUEUE } from './notify.constants';
 import { NotifyService } from './notify.service';
@@ -19,6 +22,7 @@ export class NotifyModule {}
 
 @Module({
   imports: [NotifyModule],
-  controllers: [NotifyController],
+  controllers: [NotifyController, BounceController],
+  providers: [BounceService, { provide: BounceStore, useClass: SqlBounceStore }],
 })
 export class NotifyHttpModule {}

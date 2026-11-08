@@ -1,0 +1,147 @@
+/* Layout and small pieces that belong to the KYB screens only. Everything else comes from
+   components/ui. Colours are Figma tokens from styles/tokens.css. */
+
+.count {
+  white-space: nowrap;
+}
+
+.note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* ---- Status filter: real links, one per status, the current one marked ---- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: var(--border-width-thin) solid var(--tabs-border);
+}
+
+.filter {
+  padding: 10px 16px;
+  margin-bottom: -1px;
+  border-bottom: var(--border-width-medium) solid transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  text-decoration: none;
+}
+
+.filter:hover {
+  color: var(--tabs-text-hover);
+}
+
+.filter[aria-current='page'] {
+  border-bottom-color: var(--tabs-active-border);
+  color: var(--tabs-text-active);
+}
+
+.filter:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ---- Queue rows ---- */
+
+.progress {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Detail: checklist across the main column, the 373px decision card beside it ---- */
+
+.columns {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.main {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr) 373px;
+  }
+
+  /* The header is sticky too, so the card stops below it. */
+  .side {
+    position: sticky;
+    top: calc(var(--bos-header-height) + 16px);
+  }
+}
+
+.itemName {
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.ref {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
+.comment {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Decision card ---- */
+
+.decision {
+  display: grid;
+  gap: 16px;
+}
+
+.buttons {
+  display: grid;
+  gap: 8px;
+}
+
+.buttons > * {
+  width: 100%;
+}
+
+/* Reject: the Figma danger button, built from its tokens. Two classes beat the Button's one. */
+.buttons .danger {
+  border-color: var(--button-danger-bg);
+  background: var(--button-danger-bg);
+  color: var(--button-danger-text);
+}
+
+.buttons .danger:hover {
+  border-color: var(--button-danger-bg-hover);
+  background: var(--button-danger-bg-hover);
+}
+
+.buttons .danger:active {
+  border-color: var(--button-danger-bg-active);
+  background: var(--button-danger-bg-active);
+}
+
+.buttons .danger:disabled {
+  border-color: var(--button-disabled-bg);
+  background: var(--button-disabled-bg);
+}
+
+.status {
+  min-height: var(--line-height-caption);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}

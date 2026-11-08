@@ -1,18 +1,21 @@
 // Flat ESLint config (ESLint 9): typescript-eslint typed rules everywhere, plus the
-// eslint-config-next 16 rules scoped to apps/workspace only.
+// eslint-config-next 16 rules scoped to apps/workspace and apps/portal.
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import nextVitals from 'eslint-config-next/core-web-vitals';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-const WORKSPACE_FILES = ['apps/workspace/**/*.{js,jsx,mjs,ts,tsx}'];
+const WORKSPACE_FILES = [
+  'apps/workspace/**/*.{js,jsx,mjs,ts,tsx}',
+  'apps/portal/**/*.{js,jsx,mjs,ts,tsx}',
+];
 
 const DRIVER_MESSAGE =
   'Only packages/db may import the raw Postgres driver. Use @bos/db (createDb, the typed tables) and the injected DB with withTx instead.';
 
 /**
- * eslint-config-next ships global configs. Restrict each config object to the workspace app.
+ * eslint-config-next ships global configs. Restrict each config object to the workspace and portal apps.
  * An object that holds only `ignores` is a global ignore, and giving it `files` would turn it
  * into a per-config ignore, so those objects pass through unchanged.
  */
@@ -121,7 +124,7 @@ export default defineConfig([
   {
     files: WORKSPACE_FILES,
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
-    settings: { next: { rootDir: 'apps/workspace/' } },
+    settings: { next: { rootDir: ['apps/workspace/', 'apps/portal/'] } },
   },
 
   // k6 scripts run inside k6's own JS runtime, which provides these globals.

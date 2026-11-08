@@ -20,6 +20,16 @@ function parsePrompt(raw: string | null): Prompt | undefined {
   return ALLOWED_PROMPTS.find((p) => p === raw);
 }
 
+// OIDC max_age in seconds, at most one day (beginLogin checks the same bound again). Digits only,
+// so '0x10', '1e3', '1.5' and ' 0' never reach Number().
+const MAX_AGE_LIMIT = 86_400;
+
+function parseMaxAge(raw: string | null): number | undefined {
+  if (raw === null || !/^\d{1,5}$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return value <= MAX_AGE_LIMIT ? value : undefined;
+}
+
 function parseLoginHint(raw: string | null): string | undefined {
   return raw !== null && LOGIN_HINT.test(raw) ? raw : undefined;
 }
@@ -45,10 +55,12 @@ export async function GET(req: Request): Promise<Response> {
   const params = new URL(req.url).searchParams;
   const loginHint = parseLoginHint(params.get('login_hint'));
   const prompt = parsePrompt(params.get('prompt'));
+  const maxAge = parseMaxAge(params.get('max_age'));
   // Spread instead of `key: undefined`: the tsconfig has exactOptionalPropertyTypes on.
   const { url, binding } = await beginLogin({
     ...(loginHint !== undefined && { loginHint }),
     ...(prompt !== undefined && { prompt }),
+    ...(maxAge !== undefined && { maxAge }),
     // Open-redirect guard: only a same-origin relative path survives, everything else is '/'.
     returnTo: safeReturnTo(params.get('returnTo')),
   });

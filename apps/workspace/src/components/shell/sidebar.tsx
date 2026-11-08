@@ -1,3 +1,4 @@
+import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Icon } from '@/components/ui/icon';
 import { canSeeAdmin } from '@/lib/kernel-format';
 import { isBuilt, phaseDescription, phaseTag, visibleGroups, type NavItem } from '@/lib/nav';
@@ -55,10 +56,10 @@ export function Sidebar({
   roles,
 }: {
   user: SidebarUser;
-  /** Role keys from the session: they decide whether the Administration items show. */
+  /** Role keys from the session: they decide whether the Administration and permission-gated CRM items show. */
   roles: readonly string[];
 }) {
-  const groups = visibleGroups(canSeeAdmin(roles));
+  const groups = visibleGroups(canSeeAdmin(roles), permissionChecker(roles));
   return (
     <div id="app-sidebar" className={styles.sidebar}>
       <div className={styles.top}>
