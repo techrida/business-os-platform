@@ -1,6 +1,6 @@
 // Unit tests of the pure KYB rules (no database): the default checklist, attaching a document, what a
 // submit needs, what an approval needs, and what reopening an expired case clears.
-import { type ChecklistItem, ChecklistItemSchema } from '@bos/contracts';
+import { type ChecklistItem, ChecklistItemSchema, type DocumentVersionDto } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -19,7 +19,7 @@ const DOC_B = '22222222-2222-4222-8222-222222222222';
 const provide = (items: readonly ChecklistItem[], key: ChecklistItem['key'], documentId: string) =>
   attachDocument(items, key, documentId, null);
 
-const version = (documentId: string, status: string, v = 1) => ({
+const version = (documentId: string, status: DocumentVersionDto['status'], v = 1) => ({
   documentId,
   version: v,
   status,
@@ -63,7 +63,11 @@ describe('attachDocument', () => {
   });
 
   it('replaces the document of an item that already had one', () => {
-    const second = provide(provide(DEFAULT_CHECKLIST, 'address_proof', DOC_A), 'address_proof', DOC_B);
+    const second = provide(
+      provide(DEFAULT_CHECKLIST, 'address_proof', DOC_A),
+      'address_proof',
+      DOC_B,
+    );
     expect(second.find((i) => i.key === 'address_proof')!.documentId).toBe(DOC_B);
   });
 });
@@ -77,7 +81,8 @@ describe('missingRequired', () => {
 
   it('is empty once every required item is provided', () => {
     let items: readonly ChecklistItem[] = DEFAULT_CHECKLIST;
-    for (const i of DEFAULT_CHECKLIST.filter((x) => x.required)) items = provide(items, i.key, DOC_A);
+    for (const i of DEFAULT_CHECKLIST.filter((x) => x.required))
+      items = provide(items, i.key, DOC_A);
     expect(missingRequired(items)).toEqual([]);
   });
 
@@ -96,8 +101,20 @@ describe('missingRequired', () => {
 describe('documentProblems', () => {
   const items: ChecklistItem[] = [
     { key: 'other', required: true, status: 'provided', documentId: DOC_A, expiresOn: null },
-    { key: 'address_proof', required: true, status: 'provided', documentId: DOC_B, expiresOn: null },
-    { key: 'pan_vat_certificate', required: false, status: 'missing', documentId: null, expiresOn: null },
+    {
+      key: 'address_proof',
+      required: true,
+      status: 'provided',
+      documentId: DOC_B,
+      expiresOn: null,
+    },
+    {
+      key: 'pan_vat_certificate',
+      required: false,
+      status: 'missing',
+      documentId: null,
+      expiresOn: null,
+    },
   ];
 
   it('passes when the newest usable version of each required document is clean', () => {
@@ -109,9 +126,9 @@ describe('documentProblems', () => {
     expect(documentProblems(items, [version(DOC_A, 'infected'), version(DOC_B, 'clean')])).toEqual([
       'other',
     ]);
-    expect(documentProblems(items, [version(DOC_A, 'clean'), version(DOC_B, 'quarantined')])).toEqual(
-      ['address_proof'],
-    );
+    expect(
+      documentProblems(items, [version(DOC_A, 'clean'), version(DOC_B, 'quarantined')]),
+    ).toEqual(['address_proof']);
   });
 
   it('judges a document by its newest version that was not rejected', () => {
