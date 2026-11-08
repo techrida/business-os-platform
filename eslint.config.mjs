@@ -28,7 +28,6 @@ export default defineConfig([
     '**/test-results/**',
     '**/.dev/**',
     '**/next-env.d.ts',
-    'architecture/**',
   ]),
 
   {
