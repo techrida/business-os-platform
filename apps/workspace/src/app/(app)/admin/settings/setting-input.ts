@@ -20,6 +20,25 @@ export function parseSettingInput(key: SettingKey, raw: readonly string[]): Sett
         return { ok: false, message: 'The text is not valid JSON.' };
       }
       break;
+    case 'entity.pan_vat_no': {
+      // The form sends an empty string for "none"; the stored value for none is null.
+      const text = (raw[0] ?? '').trim();
+      value = text === '' ? null : text;
+      break;
+    }
+    case 'entity.address': {
+      const text = (raw[0] ?? '').trim();
+      if (text === '') {
+        value = null;
+        break;
+      }
+      try {
+        value = JSON.parse(text) as unknown;
+      } catch {
+        return { ok: false, message: 'The text is not valid JSON.' };
+      }
+      break;
+    }
     case 'fx.max_rate_age_days':
     case 'quotation.validity_days': {
       // Digits only: Number() would also take '1e1', '0x10', '7.5' and ' ', which are not day counts.
@@ -43,6 +62,8 @@ export function parseSettingInput(key: SettingKey, raw: readonly string[]): Sett
 
 /** The current value as text for display and for a prefilled field. */
 export function settingValueText(value: unknown): string {
+  // An unset value (the entity settings) shows as an empty field, not as the word "null".
+  if (value === null) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return String(value);
   if (Array.isArray(value) && value.every((v) => typeof v === 'string')) return value.join(', ');

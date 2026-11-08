@@ -14,6 +14,8 @@ describe('P2 settings', () => {
       'fx.max_rate_age_days',
       'quotation.validity_days',
       'sales.evidence_policy',
+      'entity.pan_vat_no',
+      'entity.address',
     ]) {
       expect(SETTING_KEYS).toContain(key);
     }
@@ -24,6 +26,8 @@ describe('P2 settings', () => {
       'fx.max_rate_age_days': 7,
       'quotation.validity_days': 15,
       'sales.evidence_policy': 'signed_quote',
+      'entity.pan_vat_no': null,
+      'entity.address': null,
     });
     for (const key of Object.keys(P2_SETTING_DEFAULTS) as (keyof typeof P2_SETTING_DEFAULTS)[]) {
       expect(SETTINGS[key].safeParse(P2_SETTING_DEFAULTS[key]).success, key).toBe(true);
@@ -45,6 +49,24 @@ describe('P2 settings', () => {
     ['quotation.validity_days', null, false],
   ] as const)('%s accepts %j: %s', (key, value, ok) => {
     expect(SETTINGS[key].safeParse(value).success).toBe(ok);
+  });
+
+  describe('the selling entity', () => {
+    const address = { line1: 'Kupondole', city: 'Lalitpur', country: 'NP' };
+
+    it.each([
+      ['entity.pan_vat_no', '301234567', true],
+      ['entity.pan_vat_no', null, true],
+      ['entity.pan_vat_no', '', false],
+      ['entity.pan_vat_no', 'no spaces allowed', false],
+      ['entity.address', address, true],
+      ['entity.address', null, true],
+      ['entity.address', { ...address, country: 'Nepal' }, false],
+      ['entity.address', { ...address, extra: 'x' }, false],
+      ['entity.address', { city: 'Lalitpur', country: 'NP' }, false],
+    ] as const)('%s accepts %j: %s', (key, value, ok) => {
+      expect(SETTINGS[key].safeParse(value).success).toBe(ok);
+    });
   });
 
   it.each(['contract', 'purchase_order', 'both', 'signed_quote'])(
