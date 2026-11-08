@@ -42,6 +42,10 @@ export const ZITADEL_ENDPOINTS = {
   // VERIFIED path and body (seed createProjectGrant). UNVERIFIED: that a duplicate answers HTTP 409
   // (Connect maps already_exists to 409) and that the provisioner may grant the project.
   createProjectGrant: '/zitadel.project.v2.ProjectService/CreateProjectGrant',
+  // VERIFIED path and bodies (seed ensureOrgLoginPolicyNoRegister, management v1 at v4.20.1): GET =
+  // GetLoginPolicy, POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy, on the org named by the
+  // `x-zitadel-orgid` header. UNVERIFIED with this client's PAT (needs policy.write on the customer org).
+  orgLoginPolicy: '/management/v1/policies/login',
 } as const;
 
 /** The ZITADEL project that holds the role keys (tools/seed-zitadel/src/personas.ts PROJECT_NAME). */
@@ -89,6 +93,27 @@ export interface ZitadelUserPage {
   /** ZITADEL's own count of matching users (`details.totalResult`), or null when it sent none. */
   totalResult?: number | null;
 }
+
+/** The org login-policy settings a caller pins (management v1 field names). */
+export interface OrgLoginPolicyPatch {
+  allowRegister: boolean;
+  forceMfa: boolean;
+  forceMfaLocalOnly?: boolean;
+  /** A protobuf duration such as `0s`. */
+  mfaInitSkipLifetime?: string;
+}
+
+/**
+ * A customer's portal org (K8): no self-registration, so nobody can sign themselves up into a customer org,
+ * and MFA forced and never skippable for its users (D23 = C), the same MFA values the seed's FORCE_MFA_POLICY
+ * sets on the instance. Pinned per org so a later change of the instance policy cannot open the org.
+ */
+export const PORTAL_LOGIN_POLICY: Readonly<OrgLoginPolicyPatch> = {
+  allowRegister: false,
+  forceMfa: true,
+  forceMfaLocalOnly: false,
+  mfaInitSkipLifetime: '0s',
+};
 
 export interface CreateHumanInput {
   email: string;
@@ -150,6 +175,42 @@ const AuthorizationList = z.object({
     )
     .default([]),
 });
+// Protobuf JSON omits false booleans and empty lists. Every other field is carried over (CARRY_OVER).
+const LoginPolicyResponse = z.object({
+  policy: z.looseObject({
+    isDefault: z.boolean().default(false),
+    allowRegister: z.boolean().default(false),
+    forceMfa: z.boolean().default(false),
+    forceMfaLocalOnly: z.boolean().default(false),
+    secondFactors: z.array(Str).default([]),
+    multiFactors: z.array(Str).default([]),
+    idps: z.array(z.unknown()).default([]),
+  }),
+  isDefault: z.boolean().default(false),
+});
+/**
+ * AddCustomLoginPolicy and UpdateCustomLoginPolicy replace the whole policy (proto3 scalars), so every
+ * setting read must be sent back or it silently resets: allowUsernamePassword would become false and lock
+ * everyone out. The same list as the seed's CARRY_OVER (tools/seed-zitadel/src/zitadel-client.ts).
+ */
+const CARRY_OVER = [
+  'allowUsernamePassword',
+  'allowExternalIdp',
+  'forceMfa',
+  'passwordlessType',
+  'hidePasswordReset',
+  'ignoreUnknownUsernames',
+  'defaultRedirectUri',
+  'passwordCheckLifetime',
+  'externalLoginCheckLifetime',
+  'mfaInitSkipLifetime',
+  'secondFactorCheckLifetime',
+  'multiFactorCheckLifetime',
+  'allowDomainDiscovery',
+  'disableLoginWithEmail',
+  'disableLoginWithPhone',
+  'forceMfaLocalOnly',
+] as const;
 const ErrorShape = z.object({ code: Str.optional(), message: Str.optional() });
 
 function parse<S extends z.ZodType>(schema: S, data: unknown, what: string): z.infer<S> {
@@ -380,6 +441,58 @@ export class ZitadelAdminClient {
     return found ? toUser(found) : null;
   }
 
+  /**
+   * Pins `patch` in the org's own login policy. An org that inherits the instance policy gets a custom one
+   * (even when the inherited values already match, so a later instance change cannot open the org); a custom
+   * policy that differs is updated; a matching custom policy is left alone. Every call names the org in
+   * `x-zitadel-orgid`: without it management v1 acts on the provisioner's own org, the staff org.
+   */
+  async ensureOrgLoginPolicy(
+    zitadelOrgId: string,
+    patch: Readonly<OrgLoginPolicyPatch>,
+  ): Promise<'created' | 'updated' | 'unchanged'> {
+    const asOrg = { 'x-zitadel-orgid': zitadelOrgId };
+    const current = parse(
+      LoginPolicyResponse,
+      await this.request('GET', ZITADEL_ENDPOINTS.orgLoginPolicy, undefined, asOrg),
+      'GetLoginPolicy',
+    );
+    const { policy } = current;
+    const inherited = policy.isDefault || current.isDefault;
+    const matches = Object.entries(patch).every(([key, value]) => policy[key] === value);
+    if (!inherited && matches) return 'unchanged';
+
+    const body: Record<string, unknown> = {};
+    for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+    Object.assign(body, patch);
+
+    if (inherited) {
+      // The create request also takes the factor lists. IDP links come back without the owner type the
+      // create request needs, so refuse rather than drop them silently (fail closed: no user is made).
+      if (policy.idps.length > 0) {
+        throw new Error(
+          `The login policy inherited by ZITADEL org ${zitadelOrgId} has identity provider links; ` +
+            'copy them by hand into a custom org policy',
+        );
+      }
+      try {
+        await this.request(
+          'POST',
+          ZITADEL_ENDPOINTS.orgLoginPolicy,
+          { ...body, secondFactors: policy.secondFactors, multiFactors: policy.multiFactors },
+          asOrg,
+        );
+        return 'created';
+      } catch (error) {
+        // A concurrent grant created the custom policy a moment ago: update that one instead.
+        if (!(error instanceof ZitadelHttpError && error.status === 409)) throw error;
+      }
+    }
+    // Update has no factor or IDP lists: those have their own endpoints and stay as they are.
+    await this.request('PUT', ZITADEL_ENDPOINTS.orgLoginPolicy, body, asOrg);
+    return 'updated';
+  }
+
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
   async sendInviteCode(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
@@ -421,18 +534,28 @@ export class ZitadelAdminClient {
     return project.projectId;
   }
 
-  private async post(path: string, body: unknown): Promise<unknown> {
+  private post(path: string, body: unknown): Promise<unknown> {
+    return this.request('POST', path, body);
+  }
+
+  private async request(
+    method: 'GET' | 'POST' | 'PUT',
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ): Promise<unknown> {
     const token = this.config.ZITADEL_PROVISIONER_TOKEN;
     if (!token) throw new ZitadelNotConfiguredError();
     const base = this.config.ZITADEL_API_URL.replace(/\/+$/, '');
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: {
+        ...headers,
         'content-type': 'application/json',
         'connect-protocol-version': '1',
         authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       // A hung ZITADEL must not hold a worker slot or an admin request forever.
       signal: AbortSignal.timeout(10_000),
     });

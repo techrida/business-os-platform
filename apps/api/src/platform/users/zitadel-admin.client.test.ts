@@ -3,7 +3,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CoreConfig } from '../config/config';
-import { ZITADEL_ENDPOINTS, ZitadelAdminClient, ZitadelHttpError } from './zitadel-admin.client';
+import {
+  PORTAL_LOGIN_POLICY,
+  ZITADEL_ENDPOINTS,
+  ZitadelAdminClient,
+  ZitadelHttpError,
+} from './zitadel-admin.client';
 
 interface Call {
   path: string;
@@ -11,6 +16,8 @@ interface Call {
 }
 
 let calls: Call[];
+/** The HTTP method and `x-zitadel-orgid` header of each request, in the same order as `calls`. */
+let sent: Array<{ method: string; orgId: string | undefined }>;
 let answers: Array<{ status: number; body: unknown }>;
 
 function client(): ZitadelAdminClient {
@@ -22,20 +29,25 @@ function client(): ZitadelAdminClient {
 
 beforeEach(() => {
   calls = [];
+  sent = [];
   answers = [];
-  vi.stubGlobal('fetch', (url: string, init: { body: string }) => {
-    calls.push({
-      path: url.replace('http://zitadel.test', ''),
-      body: JSON.parse(init.body) as Record<string, unknown>,
-    });
-    const next = answers.shift() ?? { status: 200, body: {} };
-    return Promise.resolve(
-      new Response(JSON.stringify(next.body), {
-        status: next.status,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-  });
+  vi.stubGlobal(
+    'fetch',
+    (url: string, init: { method: string; body?: string; headers: Record<string, string> }) => {
+      calls.push({
+        path: url.replace('http://zitadel.test', ''),
+        body: init.body === undefined ? {} : (JSON.parse(init.body) as Record<string, unknown>),
+      });
+      sent.push({ method: init.method, orgId: init.headers['x-zitadel-orgid'] });
+      const next = answers.shift() ?? { status: 200, body: {} };
+      return Promise.resolve(
+        new Response(JSON.stringify(next.body), {
+          status: next.status,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  );
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -151,5 +163,140 @@ describe('findHumanByUsername', () => {
       },
     });
     await expect(client().findHumanByUsername('o-1', 'ana@acme.test')).resolves.toBeNull();
+  });
+});
+
+describe('ensureOrgLoginPolicy', () => {
+  // What GetLoginPolicy answers for an org that inherits the instance policy (protobuf JSON omits false).
+  const inherited = {
+    policy: {
+      isDefault: true,
+      allowUsernamePassword: true,
+      allowRegister: true,
+      passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+      passwordCheckLifetime: '864000s',
+      secondFactors: ['SECOND_FACTOR_TYPE_OTP'],
+      multiFactors: ['MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION'],
+    },
+  };
+  /** The org's own policy is a full replacement, so every setting read must be sent back. */
+  const carried = {
+    allowUsernamePassword: true,
+    passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+    passwordCheckLifetime: '864000s',
+  };
+
+  it('pins self-registration off and MFA on in a new custom policy when the org inherits the instance one', async () => {
+    answers.push({ status: 200, body: inherited }, { status: 200, body: {} });
+    await expect(client().ensureOrgLoginPolicy('o-1', PORTAL_LOGIN_POLICY)).resolves.toBe(
+      'created',
+    );
+    expect(calls).toEqual([
+      { path: ZITADEL_ENDPOINTS.orgLoginPolicy, body: {} },
+      {
+        path: ZITADEL_ENDPOINTS.orgLoginPolicy,
+        body: {
+          ...carried,
+          allowRegister: false,
+          forceMfa: true,
+          forceMfaLocalOnly: false,
+          mfaInitSkipLifetime: '0s',
+          secondFactors: ['SECOND_FACTOR_TYPE_OTP'],
+          multiFactors: ['MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION'],
+        },
+      },
+    ]);
+    // Every call names the customer org: without the header management v1 would change the staff org.
+    expect(sent).toEqual([
+      { method: 'GET', orgId: 'o-1' },
+      { method: 'POST', orgId: 'o-1' },
+    ]);
+  });
+
+  it('updates an existing custom policy that still allows self-registration or skips MFA', async () => {
+    answers.push(
+      {
+        status: 200,
+        body: { policy: { ...inherited.policy, isDefault: false, allowRegister: false } },
+      },
+      { status: 200, body: {} },
+    );
+    await expect(client().ensureOrgLoginPolicy('o-1', PORTAL_LOGIN_POLICY)).resolves.toBe(
+      'updated',
+    );
+    expect(calls[1]).toEqual({
+      path: ZITADEL_ENDPOINTS.orgLoginPolicy,
+      body: {
+        ...carried,
+        allowRegister: false,
+        forceMfa: true,
+        forceMfaLocalOnly: false,
+        mfaInitSkipLifetime: '0s',
+      },
+    });
+    expect(sent).toEqual([
+      { method: 'GET', orgId: 'o-1' },
+      { method: 'PUT', orgId: 'o-1' },
+    ]);
+  });
+
+  it('writes nothing when the custom policy already matches', async () => {
+    answers.push({
+      status: 200,
+      body: {
+        policy: {
+          ...carried,
+          isDefault: false,
+          forceMfa: true,
+          mfaInitSkipLifetime: '0s',
+        },
+      },
+    });
+    await expect(client().ensureOrgLoginPolicy('o-1', PORTAL_LOGIN_POLICY)).resolves.toBe(
+      'unchanged',
+    );
+    expect(sent).toEqual([{ method: 'GET', orgId: 'o-1' }]);
+  });
+
+  it('still pins an inherited policy that happens to match, so a later instance change cannot open the org', async () => {
+    answers.push(
+      {
+        status: 200,
+        body: { policy: { isDefault: true, forceMfa: true, mfaInitSkipLifetime: '0s' } },
+      },
+      { status: 200, body: {} },
+    );
+    await expect(client().ensureOrgLoginPolicy('o-1', PORTAL_LOGIN_POLICY)).resolves.toBe(
+      'created',
+    );
+    expect(sent.map((s) => s.method)).toEqual(['GET', 'POST']);
+  });
+
+  it('falls back to an update when a concurrent grant created the custom policy first', async () => {
+    answers.push(
+      { status: 200, body: inherited },
+      { status: 409, body: { code: 'already_exists', message: 'Policy already exists' } },
+      { status: 200, body: {} },
+    );
+    await expect(client().ensureOrgLoginPolicy('o-1', PORTAL_LOGIN_POLICY)).resolves.toBe(
+      'updated',
+    );
+    expect(sent).toEqual([
+      { method: 'GET', orgId: 'o-1' },
+      { method: 'POST', orgId: 'o-1' },
+      { method: 'PUT', orgId: 'o-1' },
+    ]);
+    expect(calls[2]?.body).not.toHaveProperty('secondFactors');
+  });
+
+  it('refuses, writing nothing, when the inherited policy links identity providers it cannot copy', async () => {
+    answers.push({
+      status: 200,
+      body: { policy: { ...inherited.policy, idps: [{ idpId: 'idp-1' }] } },
+    });
+    await expect(client().ensureOrgLoginPolicy('o-1', PORTAL_LOGIN_POLICY)).rejects.toThrow(
+      /identity provider/,
+    );
+    expect(sent).toHaveLength(1);
   });
 });
