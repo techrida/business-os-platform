@@ -92,6 +92,11 @@ jobs:
       - name: API end-to-end tests
         run: pnpm --filter @bos/api test:e2e
 
+      # NOT run in CI: the Playwright browser tests (apps/workspace/e2e). They log in through the real
+      # ZITADEL, Caddy and Postgres stack (compose `core` + `app` profiles, seeded), which this job does not
+      # start; that needs the full stack and a local CA. Until a CI stack exists they run on the dev machine
+      # only (CR-09), so a green `e2e` job here does not mean the browser login flows were exercised.
+
   # Builds the production Next.js app, then proves the dev-only persona pages are not in it.
   web:
     name: web (build, no dev routes)
@@ -116,16 +121,10 @@ jobs:
       - name: Build the workspace app (production)
         run: pnpm --filter '@bos/workspace...' build
 
-      # TODO: remove the `if [ -f ... ]` guard once apps/workspace/scripts/check-no-dev-routes.mjs
-      # lands (it comes from the persona-switcher unit). After that, a missing checker must
-      # fail this step instead of being skipped.
+      # No existence guard on purpose: a missing checker is an error (node exits 1), never a silent skip.
+      # The checker itself exits 2 when there is no build output to inspect.
       - name: Check no dev routes in the production build
-        run: |
-          if [ -f apps/workspace/scripts/check-no-dev-routes.mjs ]; then
-            node apps/workspace/scripts/check-no-dev-routes.mjs
-          else
-            echo "check-no-dev-routes.mjs does not exist yet, skipping (see TODO above)"
-          fi
+        run: node apps/workspace/scripts/check-no-dev-routes.mjs
 
   # Proves both production images still build. Nothing is pushed anywhere.
   docker:
@@ -148,11 +147,26 @@ jobs:
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
 
+      # load: true keeps the image in the runner's Docker so the next step can look inside it.
       - name: Build workspace image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/workspace/Dockerfile
           push: false
+          load: true
+          tags: bos/workspace:ci
           cache-from: type=gha,scope=workspace
           cache-to: type=gha,scope=workspace,mode=max
+
+      # The `web` job checks the build on the runner; this checks what actually ships. The image has no source
+      # and the runtime stage has no checker, so the checker is mounted read-only from the checkout and run with
+      # the image's own Node against the image's .next folder. It exits 1 on a dev route, and 2 when the folder
+      # is not a finished build, which fails the step too.
+      - name: Check no dev routes in the workspace image
+        run: |
+          docker run --rm \
+            -v "$PWD/apps/workspace/scripts/check-no-dev-routes.mjs:/check/check-no-dev-routes.mjs:ro" \
+            --entrypoint node \
+            bos/workspace:ci \
+            /check/check-no-dev-routes.mjs /app/apps/workspace/.next
