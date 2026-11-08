@@ -1,6 +1,8 @@
+import { cookies } from 'next/headers';
+
 import { getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin } from '@/lib/oidc';
+import { completeLogin, LOGIN_COOKIE } from '@/lib/oidc';
 import { createSession, setSessionCookie } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -21,6 +23,19 @@ function redirectTo(path: string): Response {
 export async function GET(req: Request): Promise<Response> {
   const incoming = new URL(req.url);
 
+  // CR-01: read the login binding cookie, then expire it whatever happens next, so each one
+  // backs a single attempt. Same attributes as /auth/login set it with: browsers ignore a
+  // `__Host-` Set-Cookie without Secure and Path=/, which would leave the old cookie in place.
+  const jar = await cookies();
+  const binding = jar.get(LOGIN_COOKIE)?.value;
+  jar.set(LOGIN_COOKIE, '', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 0,
+  });
+
   // ZITADEL reports the user cancelling or a failed login as ?error=...&error_description=...
   // The description is untrusted text, so it is neither logged nor forwarded.
   if (incoming.searchParams.has('error')) {
@@ -34,7 +49,8 @@ export async function GET(req: Request): Promise<Response> {
     const callbackUrl = new URL(getEnv().OIDC_REDIRECT_URI);
     callbackUrl.search = incoming.search;
 
-    const { tokens, sub, returnTo } = await completeLogin(callbackUrl);
+    // Throws before any token request when the binding cookie is missing or foreign.
+    const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
     // The API is the authority on org and roles, not the token claims.
     const me = await getMe({ accessToken: tokens.accessToken });
     const id = await createSession({

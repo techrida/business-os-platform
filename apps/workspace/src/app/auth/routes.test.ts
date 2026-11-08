@@ -23,6 +23,7 @@ let requestCookies = new Map<string, string>();
 vi.mock('@/lib/oidc', () => ({
   // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
   LOGIN_COOKIE: '__Host-bos_login',
+  LOGIN_COOKIE_MAX_AGE: 600,
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
@@ -211,7 +212,10 @@ describe('GET /auth/callback', () => {
 
     expect(m.completeLogin).toHaveBeenCalledWith(expect.any(URL), BINDING);
     expect(m.setSessionCookie).toHaveBeenCalledWith('sid');
-    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('https://app.localhost/orders');
   });
@@ -219,10 +223,11 @@ describe('GET /auth/callback', () => {
   it('without the login cookie: 303 to callback_failed, no session cookie, login cookie cleared', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     // Same contract as the real completeLogin: no binding, no token exchange, it throws.
-    m.completeLogin.mockImplementation(async (_url: URL, binding: string | undefined) => {
-      if (binding !== BINDING) throw new Error('oidc: login is not bound to this browser');
-      return { tokens, sub: 'attacker', returnTo: '/' };
-    });
+    m.completeLogin.mockImplementation((_url: URL, binding: string | undefined) =>
+      binding === BINDING
+        ? Promise.resolve({ tokens, sub: 'attacker', returnTo: '/' })
+        : Promise.reject(new Error('oidc: login is not bound to this browser')),
+    );
     m.getMe.mockResolvedValue({ organizationId: 'o', orgKind: 'staff', roles: [] });
     m.createSession.mockResolvedValue('sid');
 
@@ -235,7 +240,10 @@ describe('GET /auth/callback', () => {
     expect(m.completeLogin).toHaveBeenCalledWith(expect.any(URL), undefined);
     expect(m.createSession).not.toHaveBeenCalled();
     expect(cookiesWritten()).not.toContain('__Host-bos_session');
-    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
   });
 
   it('redirects an IdP error to idp_error without touching the token exchange', async () => {
@@ -244,7 +252,10 @@ describe('GET /auth/callback', () => {
     expect(res.headers.get('location')).toBe('https://app.localhost/auth/error?code=idp_error');
     expect(m.completeLogin).not.toHaveBeenCalled();
     expect(m.setSessionCookie).not.toHaveBeenCalled();
-    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
   });
 
   it('redirects to callback_failed and logs only a correlation id, never a token', async () => {
@@ -270,7 +281,10 @@ describe('GET /auth/callback', () => {
     );
     expect(m.createSession).not.toHaveBeenCalled();
     expect(m.setSessionCookie).not.toHaveBeenCalled();
-    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 0,
+    });
 
     const logged = spies.flatMap((s) => s.mock.calls).map((args) => JSON.stringify(args));
     expect(logged).toHaveLength(1);

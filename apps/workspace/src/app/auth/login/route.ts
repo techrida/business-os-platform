@@ -1,4 +1,6 @@
-import { beginLogin } from '@/lib/oidc';
+import { cookies } from 'next/headers';
+
+import { beginLogin, LOGIN_COOKIE, LOGIN_COOKIE_MAX_AGE } from '@/lib/oidc';
 import { safeReturnTo } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -26,11 +28,20 @@ export async function GET(req: Request): Promise<Response> {
   const loginHint = parseLoginHint(params.get('login_hint'));
   const prompt = parsePrompt(params.get('prompt'));
   // Spread instead of `key: undefined`: the tsconfig has exactOptionalPropertyTypes on.
-  const url = await beginLogin({
+  const { url, binding } = await beginLogin({
     ...(loginHint !== undefined && { loginHint }),
     ...(prompt !== undefined && { prompt }),
     // Open-redirect guard: only a same-origin relative path survives, everything else is '/'.
     returnTo: safeReturnTo(params.get('returnTo')),
+  });
+  // CR-01: the callback only completes in the browser holding this cookie. SameSite=Lax still
+  // sends it on the top-level GET redirect back from ZITADEL.
+  (await cookies()).set(LOGIN_COOKIE, binding, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: LOGIN_COOKIE_MAX_AGE,
   });
   // 303 so the browser always follows with GET, and nothing caches the one-time state URL.
   return new Response(null, {
