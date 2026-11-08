@@ -10,6 +10,7 @@
 #
 # Profiles:
 #   core   postgres, backup-scheduler, valkey, valkey-oidc, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
+#   files  clamav   (virus scanner for uploaded documents, P1; opt-in because it needs about 1.2-1.4 GB real RAM)
 #   app    migrate, api, worker, workspace   (images bos/api:dev and bos/workspace:dev, built by U3/U5)
 #   tools  seed-zitadel, k6, restore-drill   (one-shot, started with `docker compose run --rm`)
 #   obs    prometheus
@@ -35,11 +36,18 @@
 #   core total (prod)         3008 MiB  = 3.154 GB decimal (no mailpit)
 #   (With mailpit at its old 64 MiB the dev total would be 3072 MiB = 3.221 GB decimal, over the 3.2 GB budget.)
 #
+#   clamav          files     1792 MiB  loads ~1.2 GiB of signatures; do not go lower (OOM on load). Peak during a
+#                                       reload is ~2.4 GiB with the default, so clamd.conf sets
+#                                       ConcurrentDatabaseReload no and freshclam.conf sets TestDatabases no
+#   files total               1792 MiB  (core + files = 4840 MiB = 4.73 GiB, dev)
+#
 #   migrate         app        256 MiB  one-shot
 #   api             app        512 MiB
-#   worker          app        384 MiB
+#   worker          app        512 MiB  was 384 MiB; P1 adds the scan, mail and approval-timer processors
 #   workspace       app        512 MiB
-#   app total                 1664 MiB  (core + app = 4608 MiB = 4.5 GiB)
+#   app total                 1792 MiB  (core + app = 4840 MiB = 4.73 GiB, dev)
+#
+#   core + files + app        6632 MiB  = 6.48 GiB (about 6.5 GiB of limits, dev; real use is about 2 GB)
 #
 #   seed-zitadel    tools      256 MiB  transient
 #   k6              tools      512 MiB  transient
@@ -73,6 +81,10 @@ volumes:
   pgsocket: {}
   pgdata-drill: {}
   valkey-data: {}
+  # Uploaded documents (api writes, worker reads and moves them). Back it up with restic (ADR 0022), not pgBackRest.
+  files: {}
+  # ClamAV signatures (~300 MB). Kept in a volume so a restart does not download them again.
+  clamav-db: {}
   zitadel-bootstrap: {}
   caddy-data: {}
   caddy-config: {}
@@ -368,6 +380,48 @@ services:
         limits:
           memory: 128M
 
+  # ---------------------------------------------------------------- files
+  clamav:
+    profiles: [files]
+    # Pinned to the 1.5 line; the lead pulled it and it is ClamAV 1.5.4 (GPL-2.0, a separate service, not linked
+    # into our code). `_base` ships no signatures: freshclam inside the container downloads them into clamav-db.
+    image: clamav/clamav:1.5_base
+    environment:
+      CLAMAV_NO_FRESHCLAMD: 'false' # keep the signature updater running (freshclam.conf: Checks 2 = twice a day)
+      CLAMAV_NO_MILTERD: 'true' # mail-filter daemon, not needed
+    volumes:
+      - clamav-db:/var/lib/clamav
+      # Mounted read-only over the image defaults. Long syntax + create_host_path false, as for the pgBackRest
+      # config: a missing file is an error, not a directory created on the host.
+      - type: bind
+        source: ../clamav/clamd.conf
+        target: /etc/clamav/clamd.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../clamav/freshclam.conf
+        target: /etc/clamav/freshclam.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      # clamdcheck.sh ships in the image and sends PING to clamd (the lead verified it and nc exist). clamd only
+      # starts answering after the signatures are loaded, so the first start (download ~300 MB, then load) is
+      # slow: start_period 300s keeps retries from counting against it.
+      test: ['CMD', 'clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    # No published port here. Both networks on purpose: freshclam must reach database.clamav.net, and `backend`
+    # is internal (no route out). api and worker reach it as clamav:3310 over either network.
+    networks: [backend, edge]
+    deploy:
+      resources:
+        limits:
+          memory: 1792M
+
   # ---------------------------------------------------------------- app
   migrate:
     profiles: [app]
@@ -396,13 +450,25 @@ services:
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
-    # OIDC_ISSUER, OIDC_AUDIENCE and OIDC_CLIENT_ID come from the seed output. The root .env is deliberately not
-    # passed in: it holds host-side values (127.0.0.1 URLs).
+      # P1 seams. Container-side values are written out here, not read from .env, because the root .env holds
+      # the host-run values (CLAMD_HOST=127.0.0.1, SMTP_URL=smtp://127.0.0.1:1025, FILES_ROOT=./.dev/files).
+      FILES_ROOT: /var/lib/bos/files
+      CLAMD_HOST: clamav
+      CLAMD_PORT: '3310'
+      SMTP_URL: smtp://mailpit:1025 # mailpit exists in the dev overlay only; prod overrides this
+      MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
+      # Signs the 60 s single-use document links. The same value must be in .env for a host-run API.
+      DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
+      ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost} # through Caddy, trusted via NODE_EXTRA_CA_CERTS
+      WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
+    # OIDC_ISSUER, OIDC_AUDIENCE, OIDC_CLIENT_ID, ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY come
+    # from the seed output. The root .env is deliberately not passed in: it holds host-side values (127.0.0.1 URLs).
     env_file:
       - path: ../../.dev/zitadel.env
         required: false
     volumes:
       - *ca-mount
+      - files:/var/lib/bos/files
     healthcheck:
       test:
         [
@@ -436,11 +502,21 @@ services:
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
+      # Same P1 seams as api (see there): the worker scans files and sends mail.
+      FILES_ROOT: /var/lib/bos/files
+      CLAMD_HOST: clamav
+      CLAMD_PORT: '3310'
+      SMTP_URL: smtp://mailpit:1025
+      MAIL_FROM: ${MAIL_FROM:-Business OS <no-reply@bos.localhost>}
+      DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
+      ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost}
+      WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
     env_file:
       - path: ../../.dev/zitadel.env
         required: false
     volumes:
       - *ca-mount
+      - files:/var/lib/bos/files
     healthcheck:
       test:
         [
@@ -462,7 +538,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 384M
+          memory: 512M
 
   workspace:
     profiles: [app]
@@ -524,6 +600,11 @@ services:
       DATABASE_MIGRATE_URL: postgresql://bos_owner:${BOS_DB_OWNER_PASSWORD}@postgres:5432/bos
       BOS_DEV_PERSONAS_FILE: /repo/.dev/personas.json
       NODE_EXTRA_CA_CERTS: /repo/.dev/caddy-root.crt
+      # P1: the human first-instance admin the seed retires once the Founder has MFA and ORG_OWNER.
+      ZITADEL_ADMIN_USERNAME: ${ZITADEL_ADMIN_USERNAME:?set ZITADEL_ADMIN_USERNAME in .env}
+      # P1: where ZITADEL's Actions v2 user-event webhook goes. Default: a host-run API on :3001
+      # (compose.dev gives zitadel-api host.docker.internal). With the app profile use http://api:3001/... .
+      ZITADEL_WEBHOOK_URL: ${ZITADEL_WEBHOOK_URL:-http://host.docker.internal:3001/v1/hooks/zitadel}
     volumes:
       - ../..:/repo:ro
       - ../../.dev:/repo/.dev:rw
