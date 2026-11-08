@@ -211,6 +211,10 @@ export const verificationCases = appSchema.table(
     checklist: jsonb('checklist')
       .notNull()
       .default(sql`'[]'::jsonb`),
+    /** Who submitted the case and when; set by the submit, and so never the reviewer's (separation of duties). */
+    submittedByUserId: uuid('submitted_by_user_id'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    /** Who decided; set only by the decision. */
     reviewerUserId: uuid('reviewer_user_id'),
     decidedAt: timestamp('decided_at', { withTimezone: true }),
     /** The decision note (the DTO's decisionNote); required to reject. */
@@ -227,6 +231,11 @@ export const verificationCases = appSchema.table(
       foreignColumns: [customers.tenantId, customers.id],
     }),
     foreignKey({
+      name: 'verification_cases_submitter_user_fk',
+      columns: [t.tenantId, t.submittedByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
       name: 'verification_cases_reviewer_user_fk',
       columns: [t.tenantId, t.reviewerUserId],
       foreignColumns: [users.tenantId, users.id],
@@ -236,6 +245,10 @@ export const verificationCases = appSchema.table(
       sql`${t.status} in ('draft', 'submitted', 'approved', 'rejected', 'expired')`,
     ),
     check('verification_cases_checklist_check', sql`jsonb_typeof(${t.checklist}) = 'array'`),
+    check(
+      'verification_cases_submission_check',
+      sql`${t.status} NOT IN ('submitted', 'approved', 'rejected') OR (${t.submittedByUserId} IS NOT NULL AND ${t.submittedAt} IS NOT NULL)`,
+    ),
     check(
       'verification_cases_decision_check',
       sql`${t.status} NOT IN ('approved', 'rejected') OR (${t.reviewerUserId} IS NOT NULL AND ${t.decidedAt} IS NOT NULL)`,
