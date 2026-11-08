@@ -1,6 +1,7 @@
 // HTTP routes of the leads. Thin on purpose: parsing here, every rule in LeadsService. Each route names its
 // permission with @Can (route level); the service then checks the record itself (entity, own scope), so a
-// salesperson cannot read a colleague's lead by guessing its id. POST /v1/leads/:id/convert is a later unit.
+// salesperson cannot read a colleague's lead by guessing its id. POST /v1/leads/:id/convert is in
+// convert/lead-convert.controller.ts.
 import { CreateLeadBodySchema, LeadStageChangeBodySchema, type LeadDto } from '@bos/contracts';
 import {
   Body,
