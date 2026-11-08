@@ -30,7 +30,10 @@ class FakeZitadel implements ZitadelApi {
   appTokenType = 'OIDC_TOKEN_TYPE_JWT';
   private seq = 0;
   private readonly orgs = new Map<string, string>(); // name -> id
-  private readonly projects = new Map<string, { id: string; owner: string; assertion: boolean }>();
+  private readonly projects = new Map<
+    string,
+    { id: string; owner: string; assertion: boolean; authRequired: boolean }
+  >();
   private readonly roles = new Set<string>();
   private readonly grants = new Map<string, string[]>(); // org id -> roles
   private app: AppInfo | undefined;
@@ -38,6 +41,10 @@ class FakeZitadel implements ZitadelApi {
   private readonly auths = new Map<string, { id: string; roles: string[] }>(); // user id -> auth
   private readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
   private smtp = false;
+  /** Every call, changing or not, so a test can see what the seed asked for. */
+  readonly authRequiredCalls: string[] = [];
+  readonly noRegisterCalls: string[] = [];
+  private readonly noRegisterOrgs = new Set<string>();
   readonly staffOrgId = 'staff-org';
 
   private id(prefix: string): string {
@@ -63,14 +70,37 @@ class FakeZitadel implements ZitadelApi {
   findProject(owner: string, name: string): Promise<ProjectInfo | undefined> {
     const p = this.projects.get(name);
     return Promise.resolve(
-      p && p.owner === owner ? { id: p.id, projectRoleAssertion: p.assertion } : undefined,
+      p && p.owner === owner
+        ? {
+            id: p.id,
+            projectRoleAssertion: p.assertion,
+            authorizationRequired: p.authRequired,
+          }
+        : undefined,
     );
   }
   createProject(owner: string, name: string): Promise<string> {
     this.mutate();
     const id = this.id('project');
-    this.projects.set(name, { id, owner, assertion: true });
+    this.projects.set(name, { id, owner, assertion: true, authRequired: true });
     return Promise.resolve(id);
+  }
+  /** Test hook: put the project back in the state ZITADEL creates it in by default. */
+  resetAuthorizationRequired(): void {
+    for (const p of this.projects.values()) p.authRequired = false;
+  }
+  enableAuthorizationRequired(projectId: string): Promise<void> {
+    this.authRequiredCalls.push(projectId);
+    this.mutate();
+    for (const p of this.projects.values()) if (p.id === projectId) p.authRequired = true;
+    return Promise.resolve();
+  }
+  ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
+    this.noRegisterCalls.push(orgId);
+    if (this.noRegisterOrgs.has(orgId)) return Promise.resolve(false);
+    this.mutate();
+    this.noRegisterOrgs.add(orgId);
+    return Promise.resolve(true);
   }
   enableRoleAssertion(): Promise<void> {
     this.mutate();
@@ -275,6 +305,43 @@ describe('@bos/seed-zitadel', () => {
     expect(files.writes).toBe(writesAfterFirst);
     expect(files.data.get('k6.env')).toBe(k6EnvAfterFirst);
     expect(files.data.get('personas.json')).toBe(personasAfterFirst);
+  });
+
+  it('enables "check for authorization on authentication" on an existing project that lacks it (CR-02)', async () => {
+    const { api, deps, logs } = setup();
+    await runSeed(deps);
+    api.resetAuthorizationRequired();
+    api.authRequiredCalls.length = 0;
+    logs.length = 0;
+
+    const result = await runSeed(deps);
+
+    expect(api.authRequiredCalls).toHaveLength(1);
+    expect(api.authRequiredCalls[0]).toMatch(/^project-/);
+    expect(result.changes).toEqual(['enabled "check for authorization on authentication"']);
+    expect(logs).toContain('  + enabled "check for authorization on authentication"');
+  });
+
+  it('disables self-registration on the staff org (CR-02)', async () => {
+    const { api, deps } = setup();
+    const result = await runSeed(deps);
+
+    expect(api.noRegisterCalls).toEqual([api.staffOrgId]);
+    expect(result.changes).toContain('disabled self-registration on the staff org');
+  });
+
+  it('is idempotent for authorization and self-registration (CR-02)', async () => {
+    const { api, deps } = setup();
+    await runSeed(deps);
+    const mutationsAfterFirst = api.mutations;
+    const authCallsAfterFirst = api.authRequiredCalls.length;
+
+    const second = await runSeed(deps);
+
+    expect(second.changes).toEqual([]);
+    expect(api.mutations).toBe(mutationsAfterFirst);
+    expect(api.authRequiredCalls).toHaveLength(authCallsAfterFirst); // a new project is created with it on
+    expect(api.noRegisterCalls).toEqual([api.staffOrgId, api.staffOrgId]); // asked again, changed nothing
   });
 
   it('keeps persona passwords across runs and never logs secrets', async () => {
