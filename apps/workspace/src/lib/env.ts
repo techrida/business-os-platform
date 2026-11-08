@@ -14,6 +14,12 @@ export interface WorkspaceEnv {
   WORKSPACE_PUBLIC_URL: string;
   API_INTERNAL_URL: string;
   VALKEY_URL: string;
+  /** Login state (state, nonce, PKCE verifier) lives on its own Valkey so it cannot fill the session one. */
+  OIDC_STATE_VALKEY_URL: string;
+  /** AES-256-GCM key for session records at rest: base64 of exactly 32 bytes. */
+  SESSION_ENC_KEY: string;
+  /** Written into every stored session value, so a rotated key can be told apart. */
+  SESSION_ENC_KEY_ID: string;
 }
 
 const nonEmpty = z.string().trim().min(1, 'is required');
@@ -49,6 +55,21 @@ const redisUrl = nonEmpty.refine((v) => {
   }
 }, 'must be a redis:// or rediss:// URL');
 
+/**
+ * Canonical base64 of exactly 32 bytes, as `openssl rand -base64 32` prints it. Node's base64
+ * decoder skips characters it does not know, so the value must also re-encode to itself.
+ */
+const encryptionKey = nonEmpty.refine((v) => {
+  const bytes = Buffer.from(v, 'base64');
+  return bytes.length === 32 && bytes.toString('base64') === v;
+}, 'must be base64 that decodes to exactly 32 bytes (openssl rand -base64 32)');
+
+/** The key id is one dot-separated part of the stored value, so it may not contain a dot. */
+const keyId = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_-]{1,32}$/, 'must be 1 to 32 characters of A-Z, a-z, 0-9, _ or -');
+
 const EnvSchema = z.object({
   OIDC_ISSUER: httpsUrl,
   OIDC_CLIENT_ID: nonEmpty,
@@ -59,6 +80,9 @@ const EnvSchema = z.object({
   /** Container-to-container URL of the API, so plain http is allowed. */
   API_INTERNAL_URL: httpUrl,
   VALKEY_URL: redisUrl,
+  OIDC_STATE_VALKEY_URL: redisUrl.optional(),
+  SESSION_ENC_KEY: encryptionKey,
+  SESSION_ENC_KEY_ID: keyId.default('k1'),
 });
 
 let cached: WorkspaceEnv | undefined;
@@ -80,7 +104,8 @@ export function getEnv(): WorkspaceEnv {
       .join('; ');
     throw new Error(`Invalid workspace environment: ${problems}`);
   }
-  cached = parsed.data;
+  const { OIDC_STATE_VALKEY_URL, ...rest } = parsed.data;
+  cached = { ...rest, OIDC_STATE_VALKEY_URL: OIDC_STATE_VALKEY_URL ?? rest.VALKEY_URL };
   return cached;
 }
 
