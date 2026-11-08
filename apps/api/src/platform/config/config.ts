@@ -1,3 +1,4 @@
+import { MAX_UPLOAD_BYTES } from '@bos/contracts';
 import { z } from 'zod';
 
 /** The two processes that ship in the one image. They share a core config. */
@@ -66,7 +67,21 @@ const coreShape = (service: ServiceName) => ({
     .string()
     .refine(urlWithProtocol(['https:', 'http:']), 'must be an http(s) URL')
     .optional(),
+  // PDF renderer (Gotenberg), used by the worker's quotation render job. Optional here and required in
+  // production for the worker only (see coreSchema): the API never calls it. Dev default: GOTENBERG_DEV_URL.
+  GOTENBERG_URL: z
+    .string()
+    .refine(urlWithProtocol(['https:', 'http:']), 'must be an http(s) URL')
+    .optional(),
+  // One deadline for a render request including the body, and the most PDF bytes accepted. The size cap may
+  // not exceed what the documents module takes (MAX_UPLOAD_BYTES), or a PDF Gotenberg returns would be refused
+  // at upload time.
+  GOTENBERG_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300_000).default(30_000),
+  GOTENBERG_MAX_BYTES: z.coerce.number().int().min(1).max(MAX_UPLOAD_BYTES).default(20_971_520),
 });
+
+/** The compose service name; applied outside production only. */
+export const GOTENBERG_DEV_URL = 'http://gotenberg:3000';
 
 /** What a missing optional kernel value becomes outside production (the local compose stack). */
 const KERNEL_DEV_DEFAULTS = {
@@ -85,6 +100,8 @@ const CORE_REQUIRED_IN_PRODUCTION = [
   'WORKSPACE_PUBLIC_URL',
   'PORTAL_PUBLIC_URL',
 ] as const;
+/** The worker alone needs the PDF renderer, so only its production config must state GOTENBERG_URL. */
+const WORKER_REQUIRED_IN_PRODUCTION = [...CORE_REQUIRED_IN_PRODUCTION, 'GOTENBERG_URL'] as const;
 const API_REQUIRED_IN_PRODUCTION = [
   ...CORE_REQUIRED_IN_PRODUCTION,
   'DOCS_LINK_SECRET',
@@ -111,10 +128,15 @@ function withKernelDefaults<
     ZITADEL_API_URL?: string | undefined;
     WORKSPACE_PUBLIC_URL?: string | undefined;
     PORTAL_PUBLIC_URL?: string | undefined;
+    NODE_ENV?: string;
+    GOTENBERG_URL?: string | undefined;
   },
 >(cfg: T) {
   return {
     ...cfg,
+    // Never the dev URL in production: a missing value stays undefined there (and is refused for the worker).
+    GOTENBERG_URL:
+      cfg.GOTENBERG_URL ?? (cfg.NODE_ENV === 'production' ? undefined : GOTENBERG_DEV_URL),
     SMTP_URL: cfg.SMTP_URL ?? KERNEL_DEV_DEFAULTS.SMTP_URL,
     MAIL_FROM: cfg.MAIL_FROM ?? KERNEL_DEV_DEFAULTS.MAIL_FROM,
     ZITADEL_API_URL: cfg.ZITADEL_API_URL ?? KERNEL_DEV_DEFAULTS.ZITADEL_API_URL,
@@ -190,7 +212,11 @@ function allowedAzp(list: string | undefined, clientId: string | undefined): str
 const coreSchema = (service: ServiceName) =>
   z
     .object(coreShape(service))
-    .superRefine(kernelProblems(CORE_REQUIRED_IN_PRODUCTION))
+    .superRefine(
+      kernelProblems(
+        service === 'worker' ? WORKER_REQUIRED_IN_PRODUCTION : CORE_REQUIRED_IN_PRODUCTION,
+      ),
+    )
     .transform(withKernelDefaults);
 
 const apiSchema = z
@@ -235,6 +261,13 @@ export abstract class CoreConfig {
   abstract readonly PORTAL_PUBLIC_URL: string;
   /** Undefined outside production when unset; a consumer that needs it must fail with a clear error. */
   abstract readonly ZITADEL_PROVISIONER_TOKEN?: string | undefined;
+  /**
+   * The PDF renderer's base URL. Defaulted outside production and required in the worker's production
+   * config; undefined only in a production API, which never uses it.
+   */
+  abstract readonly GOTENBERG_URL?: string | undefined;
+  abstract readonly GOTENBERG_TIMEOUT_MS: number;
+  abstract readonly GOTENBERG_MAX_BYTES: number;
 }
 
 /** The API's config: the core plus its port and the OIDC settings. */
