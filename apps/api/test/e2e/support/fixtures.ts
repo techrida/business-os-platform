@@ -1,7 +1,7 @@
 // Seed data and small helpers for the approvals exit e2e. Seeds exactly what production seeds (the kernel
 // rows from tools/seed-zitadel) plus the users ZITADEL would mirror, so the scenario runs on real data and
 // not on test-only shortcuts (NFR "authorization is deny-by-default": an unseeded role table denies everyone).
-import { userRoles, users } from '@bos/db';
+import { userEntities, userRoles, users } from '@bos/db';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
@@ -44,7 +44,7 @@ const PERSONAS: Record<PersonaKey, { tokenRoles: string[]; mirroredRoles: string
 
 /**
  * Seeds role_permissions, the test_memo workflow and the INR peg (the production seed), then one active user
- * per persona in the staff org, with an email so the outbox has a recipient. Run it BEFORE the app boots, so
+ * per persona under the staff IdP org with a default membership in the entity, with an email so the outbox has a recipient. Run it BEFORE the app boots, so
  * the first request already sees the bumped authz version.
  */
 export async function seedApprovalsWorld(e2e: E2eContext): Promise<ApprovalsWorld> {
@@ -68,7 +68,8 @@ export async function seedApprovalsWorld(e2e: E2eContext): Promise<ApprovalsWorl
       const [row] = await tx
         .insert(users)
         .values({
-          ...scope,
+          tenantId: scope.tenantId,
+          idpOrgId: e2e.staff.idpOrgId,
           zitadelUserId: sub,
           email,
           displayName: `E2E ${key}`,
@@ -76,8 +77,13 @@ export async function seedApprovalsWorld(e2e: E2eContext): Promise<ApprovalsWorl
         })
         .returning({ id: users.id });
       if (row === undefined) throw new Error(`user insert for ${key} returned no row`);
+      // A staff user acts in an entity only through a membership (ADR 0027 section 3). Without one
+      // the request is refused with entity_not_permitted. role_keys NULL keeps every token role.
+      await tx.insert(userEntities).values({ ...scope, userId: row.id, isDefault: true });
       for (const roleKey of roles.mirroredRoles) {
-        await tx.insert(userRoles).values({ ...scope, userId: row.id, roleKey, source: 'zitadel' });
+        await tx
+          .insert(userRoles)
+          .values({ tenantId: scope.tenantId, userId: row.id, roleKey, source: 'zitadel' });
       }
       personas[key] = { sub, userId: row.id, email, ...roles };
     }
