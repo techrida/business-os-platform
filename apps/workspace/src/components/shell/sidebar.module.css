@@ -247,10 +247,12 @@
 
 /* The rail: icons only. Names stay available to assistive technology. */
 @container sidebar (max-width: 160px) {
+  /* Mark and toggle sit side by side so the top block stays 65px and its rule lines up with the
+     header's. */
   .top {
-    flex-direction: column;
     justify-content: center;
-    padding: 16px 0 8px;
+    gap: 4px;
+    padding: 0;
   }
 
   .top [data-brand-name],
