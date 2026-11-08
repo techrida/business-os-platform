@@ -4,7 +4,13 @@
 // Reads take a TxScope (the worker has no request); writes take the caller's transaction, which withTx has
 // already stamped with tenant, organization and actor. A setting nobody has written yet falls back to a
 // default kept here, because most SETTINGS schemas have no default of their own (they only validate).
-import { SETTINGS, type SettingKey, type SettingValue, SlaSpecSchema } from '@bos/contracts';
+import {
+  P2_SETTING_DEFAULTS,
+  SETTINGS,
+  type SettingKey,
+  type SettingValue,
+  SlaSpecSchema,
+} from '@bos/contracts';
 import { numberSeries } from '@bos/db';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
@@ -20,6 +26,8 @@ export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } =
   'numbering.memo_prefix': 'MEMO',
   // The schema fills in its own defaults (24 h, 72 h, founder), so the two never drift apart.
   'approvals.sla_defaults': SlaSpecSchema.parse({}),
+  // fx.max_rate_age_days, quotation.validity_days and sales.evidence_policy: one source in contracts.
+  ...P2_SETTING_DEFAULTS,
 };
 
 export interface SettingVersion {

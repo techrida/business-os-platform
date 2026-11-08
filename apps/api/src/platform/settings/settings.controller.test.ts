@@ -125,4 +125,10 @@ describe('SETTING_DEFAULTS', () => {
       escalateTo: { role: 'founder' },
     });
   });
+
+  it('uses the P2 values: 7 days of FX age, 15 days of validity, a signed quote as evidence', () => {
+    expect(SETTING_DEFAULTS['fx.max_rate_age_days']).toBe(7);
+    expect(SETTING_DEFAULTS['quotation.validity_days']).toBe(15);
+    expect(SETTING_DEFAULTS['sales.evidence_policy']).toBe('signed_quote');
+  });
 });
