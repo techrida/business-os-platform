@@ -29,7 +29,9 @@ export async function GET(req: Request): Promise<Response> {
   const limit = await checkLoginRateLimit(req);
   if (!limit.allowed) {
     // Without this a 429 leaves no server trace. Only the delay: no client IP, no session id.
-    console.warn(JSON.stringify({ event: 'auth.login_rate_limited', retryAfter: limit.retryAfter }));
+    console.warn(
+      JSON.stringify({ event: 'auth.login_rate_limited', retryAfter: limit.retryAfter }),
+    );
     return new Response('Too many sign-in attempts. Try again shortly.', {
       status: 429,
       headers: {
