@@ -101,6 +101,7 @@ export function QuoteBuilder({
   contacts,
   taxCodes,
   paymentTerms,
+  idempotencyKey,
   savedNotice = false,
 }: {
   target: BuilderTarget;
@@ -113,11 +114,15 @@ export function QuoteBuilder({
   contacts: readonly ContactOption[] | null;
   taxCodes: readonly TaxCode[] | null;
   paymentTerms: readonly PaymentTerm[] | null;
+  /** Made once per page render on the server; the actions hand back the key the next try uses. */
+  idempotencyKey: string;
   savedNotice?: boolean;
 }) {
   const router = useRouter();
   const [values, setValues] = useState<BuilderValues>(initial);
   const [rowVersion, setRowVersion] = useState(target.mode === 'edit' ? target.expectedVersion : 0);
+  // Kept when the outcome is unknown (the action threw), rotated by the action after a definite 4xx.
+  const [key, setKey] = useState(idempotencyKey);
   const savedRef = useRef(JSON.stringify(initial));
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<null | 'save' | 'submit'>(null);
@@ -282,7 +287,7 @@ export function QuoteBuilder({
     try {
       const res = await saveDraftAction(
         target.mode === 'create'
-          ? { mode: 'create', opportunityId: target.opportunityId, values }
+          ? { mode: 'create', opportunityId: target.opportunityId, idempotencyKey: key, values }
           : {
               mode: 'update',
               quotationId: target.quotationId,
@@ -297,6 +302,7 @@ export function QuoteBuilder({
         setDirty(false);
         setNotice({ tone: 'success', text: 'Draft saved.' });
       } else {
+        if (res.key) setKey(res.key);
         fail(res.kind, res.message, res.fieldErrors);
       }
     } catch {
