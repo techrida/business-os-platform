@@ -7,14 +7,21 @@ import { CollapseToggle, DrawerCloseButton } from './shell-state';
 import styles from './sidebar.module.css';
 
 export interface SidebarUser {
-  /** First line of the user card, for example the roles. */
+  /** First line of the user card (in bold), for example the roles. */
   name: string;
   /** Second line, for example the organisation kind. */
   detail: string;
 }
 
-function initialOf(text: string): string {
-  return text.trim().charAt(0).toUpperCase() || '?';
+/** Up to two initials from the first role: "super_admin, auditor" gives "SA". */
+function initialsOf(text: string): string {
+  const first = text.split(',')[0] ?? '';
+  const letters = first
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase());
+  return letters.join('') || '?';
 }
 
 /** An item whose phase has not shipped: not a link, dimmed, with its phase tag. */
@@ -93,12 +100,13 @@ export function Sidebar({ user }: { user: SidebarUser }) {
       <div className={styles.footer}>
         <div className={styles.userCard}>
           <span className={styles.avatar} aria-hidden="true">
-            {initialOf(user.name)}
+            {initialsOf(user.name)}
           </span>
           <span className={styles.userText}>
             <span className={styles.userName}>{user.name}</span>
             <span className={styles.userDetail}>{user.detail}</span>
           </span>
+          <Icon name="chevron-right" size={16} className={styles.userChevron} />
         </div>
       </div>
     </div>
