@@ -84,6 +84,9 @@ function inScope(p: Principal, scope: Scope, r: ResourceRef): boolean {
  * 5. Scope (see `inScope`).
  * 6. Separation of duties. For `SOD_PERMISSIONS`, a user listed in `r.sodUserIds` is refused even
  *    when in scope. Scope runs first so an out-of-scope caller learns nothing about who prepared it.
+ *    A record check with no `sodUserIds` at all is refused too (review R14): a caller that forgot to
+ *    load who prepared the record must not skip the check. An empty list means "nobody prepared
+ *    it" and passes.
  */
 export function can(p: Principal, action: Permission, r?: ResourceRef): Decision {
   if (p.status !== 'active') return DENY_INACTIVE;
@@ -100,7 +103,7 @@ export function can(p: Principal, action: Permission, r?: ResourceRef): Decision
   if (!sameId(r.tenantId, p.tenantId)) return DENY_OUT_OF_SCOPE;
   if (!inScope(p, scope, r)) return DENY_OUT_OF_SCOPE;
 
-  if (SOD.has(action) && r.sodUserIds !== undefined && r.sodUserIds.includes(p.userId)) {
+  if (SOD.has(action) && (r.sodUserIds === undefined || r.sodUserIds.includes(p.userId))) {
     return DENY_SOD;
   }
   return allow;
