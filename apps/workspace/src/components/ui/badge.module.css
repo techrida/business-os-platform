@@ -22,19 +22,22 @@
   color: var(--badge-info-text);
 }
 
+/* Success, warning and error text uses the -700 primitives, not Figma's -600 badge tokens: on
+   the Figma tints -600 measures 3.1 to 4.4:1, under the WCAG AA 4.5:1 minimum. The backgrounds
+   are Figma's. Info (4.75:1) already passes. */
 .success {
   background: var(--badge-success-bg);
-  color: var(--badge-success-text);
+  color: var(--success-700);
 }
 
 .warning {
   background: var(--badge-warning-bg);
-  color: var(--badge-warning-text);
+  color: var(--warning-700);
 }
 
 .error {
   background: var(--badge-error-bg);
-  color: var(--badge-error-text);
+  color: var(--error-700);
 }
 
 /* Figma "disabled": Input/disabled-text on Input/disabled-bg. */
