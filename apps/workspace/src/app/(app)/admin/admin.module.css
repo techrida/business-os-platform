@@ -1,24 +1,65 @@
-/* Admin area: dense and calm, built on the shell's tokens (same neutrals, same blue accent).
-   Contrast on white: text #1f2933 (15:1), muted #3e4c59 (9:1), accent #1d4ed8 (6.7:1), danger #b42318 (6.5:1),
-   control borders #7b8794 (3.9:1, above the 3:1 non-text minimum). */
+/* Admin area styles, on the shared tokens (src/styles/tokens.css) only.
+   Screens move to the shared components (Page, Panel, Table, Field, Button, Badge) one by one; the
+   legacy classes below stay until the last screen using them has moved. The admin-local additions
+   for the shared components are at the top: .local, .rowHead, .group, .danger, .dangerOutline. */
+
+/* ---- admin-local additions for shared components ----------------------------------------------- */
+
+/* Row header override for the shared Table. Pass `className={styles.local}` to <Table> (it lands on
+   the scroll wrapper), then use <Th scope="row" className={styles.rowHead}> in tbody. The Table's own
+   `.table th` (0,1,1) styles every th as a column header; these selectors (0,2,1) win over it and
+   stay below its hover rule (0,2,2), so the row still highlights. */
+.local th.rowHead {
+  padding-block: 16px;
+  border-bottom: 0;
+  background: var(--table-row-bg);
+  color: var(--table-text);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A full-width group label row inside tbody (<th scope="colgroup" colSpan=n className={styles.group}>).
+   Reset to a quiet sub-header; 0,2,3 so it beats the row hover rule. */
+.local tbody tr th.group {
+  padding-block: 8px;
+  border-bottom: 0;
+  background: var(--table-header-bg);
+  color: var(--table-header-text);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-caption);
+  text-transform: capitalize;
+  white-space: normal;
+}
+
+/* Danger tone for the shared Button (Button has no danger variant; the icon set has no trash icon, so
+   destructive row actions are text buttons). Add to a ghost or secondary Button:
+     <Button variant="ghost" size="small" className={styles.danger}>Remove</Button>
+     <Button variant="secondary" size="small" className={`${styles.danger} ${styles.dangerOutline}`}>
+   Text is --error-700 (6.5:1 on white and on the tint); --status-error on its subtle tint is about
+   4.4:1 and fails AA. The doubled class beats Button's variant colours (0,2,0) and hover rules. */
+.danger.danger:not(:disabled):not([aria-disabled='true']) {
+  color: var(--error-700);
+}
+
+.dangerOutline.dangerOutline:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--error-700);
+}
+
+.danger.danger:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--status-error-subtle);
+  color: var(--error-700);
+}
+
+.danger.danger:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--error-100);
+  color: var(--error-800);
+}
 
 .shell {
-  --ink: #1f2933;
-  --muted: #3e4c59;
-  --line: #d9e0e8;
-  --control: #7b8794;
-  --accent: #1d4ed8;
-  --accent-strong: #1e40af;
-  --accent-soft: #e5edff;
-  --danger: #b42318;
-  --danger-soft: #fff5f4;
-  --ok: #05603a;
-  --ok-soft: #ecfdf3;
-  --warn: #8a4b08;
-  --warn-soft: #fff8eb;
-  --surface: #ffffff;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-
   max-width: 76rem;
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
@@ -32,25 +73,25 @@
   gap: 0.25rem;
   margin: 0 -0.5rem;
   padding: 0.75rem 0 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .subnav a {
   padding: 0.5rem 0.75rem;
   border-bottom: 2px solid transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-weight: 500;
   text-decoration: none;
 }
 
 .subnav a:hover {
-  color: var(--ink);
-  background: #eef2f7;
+  color: var(--text-primary);
+  background: var(--interactive-hover);
 }
 
 .subnav a[aria-current='page'] {
-  border-bottom-color: var(--accent);
-  color: var(--ink);
+  border-bottom-color: var(--action-primary);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -58,8 +99,8 @@
 .link:focus-visible,
 .linkList a:focus-visible,
 .skip:focus-visible {
-  outline: 3px solid #93b4ff;
-  outline-offset: 2px;
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
 }
 
 .main {
@@ -82,7 +123,7 @@
 .lede {
   max-width: 65ch;
   margin: 0;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 .section {
@@ -104,7 +145,7 @@
 .hint {
   max-width: 65ch;
   margin: 0;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
@@ -114,17 +155,17 @@
 }
 
 .link {
-  color: var(--accent);
+  color: var(--action-primary);
 }
 
 .mono {
-  font-family: var(--mono);
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
   overflow-wrap: anywhere;
 }
 
 .muted {
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 /* Overview: a plain list of destinations, not a grid of cards. */
@@ -134,7 +175,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border-default);
 }
 
 .linkList li {
@@ -142,18 +183,18 @@
   grid-template-columns: minmax(9rem, 14rem) 1fr;
   gap: 0.25rem 1.5rem;
   padding: 0.875rem 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .linkList a {
-  color: var(--accent);
+  color: var(--action-primary);
   font-weight: 600;
 }
 
 .linkList p {
   max-width: 65ch;
   margin: 0;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 /* ---- notices ---------------------------------------------------------------------------------- */
@@ -161,9 +202,9 @@
 .notice {
   margin: 0.75rem 0;
   padding: 0.625rem 0.875rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-default);
   font-size: 0.9375rem;
 }
 
@@ -177,29 +218,29 @@
 }
 
 .noticeError {
-  border-color: var(--danger);
-  background: var(--danger-soft);
-  color: #7a271a;
+  border-color: var(--status-error);
+  background: var(--status-error-subtle);
+  color: var(--text-primary);
 }
 
 .noticeOk {
-  border-color: var(--ok);
-  background: var(--ok-soft);
-  color: #054f31;
+  border-color: var(--status-success);
+  background: var(--status-success-subtle);
+  color: var(--text-primary);
 }
 
 .noticeInfo {
-  border-color: #a9b8d6;
-  background: #f3f6fc;
-  color: var(--ink);
+  border-color: var(--status-info);
+  background: var(--status-info-subtle);
+  color: var(--text-primary);
 }
 
 .empty {
   margin: 0.75rem 0;
   padding: 1rem;
-  border: 1px dashed var(--control);
-  border-radius: 6px;
-  color: var(--muted);
+  border: 1px dashed var(--input-border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
 }
 
 /* ---- tables ----------------------------------------------------------------------------------- */
@@ -207,14 +248,14 @@
 /* The wrapper scrolls sideways on a narrow screen; it is focusable so a keyboard user can scroll it. */
 .tableWrap {
   overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
 }
 
 .tableWrap:focus-visible {
-  outline: 3px solid #93b4ff;
-  outline-offset: 2px;
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
 }
 
 .table {
@@ -234,16 +275,16 @@
 .table th,
 .table td {
   padding: 0.5rem 0.75rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border-default);
   text-align: left;
   vertical-align: top;
 }
 
 .table thead th {
   border-top: 0;
-  border-bottom: 1px solid var(--line);
-  background: #f8fafc;
-  color: var(--muted);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
   font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
@@ -274,18 +315,18 @@
   left: 0;
   z-index: 1;
   min-width: 13rem;
-  background: var(--surface);
+  background: var(--surface-default);
   text-align: left;
 }
 
 .matrix thead th:first-child {
-  background: #f8fafc;
+  background: var(--surface-subtle);
 }
 
 .matrix .groupRow th {
   position: static;
-  background: #f8fafc;
-  color: var(--muted);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
   font-size: 0.8125rem;
   font-weight: 600;
   text-transform: capitalize;
@@ -293,12 +334,12 @@
 
 .roleCount {
   display: block;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-weight: 400;
 }
 
 .scopeNone {
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 /* ---- chips ------------------------------------------------------------------------------------ */
@@ -315,27 +356,27 @@
 .chip {
   display: inline-block;
   padding: 0.0625rem 0.5rem;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: #1e3a8a;
+  border-radius: var(--radius-full);
+  background: var(--badge-info-bg);
+  color: var(--badge-info-text);
   font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .chipNeutral {
-  background: #eef2f7;
-  color: var(--muted);
+  background: var(--interactive-hover);
+  color: var(--text-secondary);
 }
 
 .chipOk {
-  background: var(--ok-soft);
-  color: var(--ok);
+  background: var(--status-success-subtle);
+  color: var(--success-800);
 }
 
 .chipWarn {
-  background: var(--warn-soft);
-  color: var(--warn);
+  background: var(--status-warning-subtle);
+  color: var(--warning-800);
 }
 
 /* Scope chips in the matrix: each scope has its own text, so colour is never the only signal. */
@@ -343,9 +384,9 @@
   display: inline-block;
   min-width: 5.5rem;
   padding: 0.125rem 0.5rem;
-  border-radius: 4px;
-  background: #eef2f7;
-  color: var(--ink);
+  border-radius: var(--radius-xs);
+  background: var(--interactive-hover);
+  color: var(--text-primary);
   font-size: 0.8125rem;
   font-weight: 600;
 }
@@ -357,9 +398,9 @@
   gap: 0.875rem;
   max-width: 40rem;
   padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
 }
 
 .formWide {
@@ -390,16 +431,16 @@
   width: 100%;
   min-height: 2.25rem;
   padding: 0.375rem 0.625rem;
-  border: 1px solid var(--control);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--ink);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-default);
+  color: var(--text-primary);
   font: inherit;
 }
 
 .textarea {
   min-height: 7rem;
-  font-family: var(--mono);
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
   line-height: 1.5;
   resize: vertical;
@@ -409,16 +450,16 @@
 .select:focus-visible,
 .textarea:focus-visible,
 .checkbox:focus-visible {
-  outline: 3px solid #93b4ff;
-  outline-offset: 1px;
-  border-color: var(--accent);
+  outline: 2px solid transparent;
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-focus-shadow);
 }
 
 .input:disabled,
 .select:disabled,
 .textarea:disabled {
-  background: #f1f4f8;
-  color: var(--muted);
+  background: var(--input-disabled-bg);
+  color: var(--text-secondary);
 }
 
 .fieldset {
@@ -448,7 +489,7 @@
   width: 1.125rem;
   height: 1.125rem;
   margin: 0;
-  accent-color: var(--accent);
+  accent-color: var(--action-primary);
 }
 
 .actions {
@@ -461,44 +502,44 @@
 .btn {
   min-height: 2.25rem;
   padding: 0.375rem 0.875rem;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: var(--accent);
-  color: #ffffff;
+  border: 1px solid var(--action-primary);
+  border-radius: var(--radius-md);
+  background: var(--action-primary);
+  color: var(--button-primary-text);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--accent-strong);
+  background: var(--action-primary-hover);
 }
 
 .btn:disabled {
-  border-color: #b8c2cc;
-  background: #e4e9ee;
-  color: #52606d;
+  border-color: var(--button-disabled-bg);
+  background: var(--button-disabled-bg);
+  color: var(--text-secondary);
   cursor: not-allowed;
 }
 
 .btnQuiet {
-  border-color: var(--control);
-  background: var(--surface);
-  color: var(--ink);
+  border-color: var(--input-border);
+  background: var(--surface-default);
+  color: var(--text-primary);
 }
 
 .btnQuiet:hover:not(:disabled) {
-  background: #eef2f7;
+  background: var(--interactive-hover);
 }
 
 .btnDanger {
-  border-color: var(--danger);
-  background: var(--surface);
-  color: var(--danger);
+  border-color: var(--error-700);
+  background: var(--surface-default);
+  color: var(--error-700);
 }
 
 .btnDanger:hover:not(:disabled) {
-  background: var(--danger-soft);
+  background: var(--status-error-subtle);
 }
 
 .btnSmall {
@@ -508,8 +549,8 @@
 }
 
 .btn:focus-visible {
-  outline: 3px solid #93b4ff;
-  outline-offset: 2px;
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
 }
 
 .status {
@@ -519,35 +560,35 @@
 }
 
 .statusError {
-  color: #7a271a;
+  color: var(--error-800);
 }
 
 .statusOk {
-  color: #054f31;
+  color: var(--success-800);
 }
 
 /* ---- disclosure ------------------------------------------------------------------------------- */
 
 .details {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
 }
 
 .details > summary {
   padding: 0.625rem 0.875rem;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   font-weight: 600;
   cursor: pointer;
 }
 
 .details > summary:focus-visible {
-  outline: 3px solid #93b4ff;
-  outline-offset: -3px;
+  outline: 2px solid transparent;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
 }
 
 .details[open] > summary {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-default);
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
@@ -559,14 +600,14 @@
 .inlineDetails > summary {
   display: inline-block;
   padding: 0.125rem 0;
-  color: var(--accent);
+  color: var(--action-primary);
   font-weight: 600;
   cursor: pointer;
 }
 
 .inlineDetails > summary:focus-visible {
-  outline: 3px solid #93b4ff;
-  outline-offset: 2px;
+  outline: 2px solid transparent;
+  box-shadow: var(--bos-focus-shadow);
 }
 
 /* ---- workflows -------------------------------------------------------------------------------- */
@@ -574,9 +615,9 @@
 .workflow {
   margin-top: 1rem;
   padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
 }
 
 .workflowHead {
@@ -605,9 +646,9 @@
   display: grid;
   gap: 0.5rem;
   padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #f8fafc;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
 }
 
 .stepGrid {
@@ -626,10 +667,10 @@
   margin: 0;
   padding: 0.75rem;
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #f8fafc;
-  font-family: var(--mono);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
 }
 
