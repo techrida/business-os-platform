@@ -27,7 +27,11 @@ interface ErrorLike {
   body?: unknown;
 }
 
-function errorFields(body: unknown): { code?: string; message: string; reason?: string } {
+function errorFields(body: unknown): {
+  code?: string | undefined;
+  message: string;
+  reason?: string | undefined;
+} {
   const e = (body as { error?: Record<string, unknown> } | null | undefined)?.error;
   const text = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
   return { code: text(e?.code), message: text(e?.message) ?? '', reason: text(e?.reason) };
