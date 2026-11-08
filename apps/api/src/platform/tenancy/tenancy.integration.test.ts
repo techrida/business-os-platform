@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import type { Server } from 'node:http';
 
 import { ErrorBodySchema, MeResponseSchema } from '@bos/contracts';
+import { organizations } from '@bos/db';
 import {
   Controller,
   Get,
@@ -23,7 +24,7 @@ import { MeController } from '../../modules/me/me.controller';
 import { TelemetryController } from '../../modules/telemetry/telemetry.controller';
 import { AnyAuthenticated } from '../authz/decorators';
 import { RoleCache } from '../authz/role-cache';
-import { UserDirectory } from '../authz/user-directory';
+import { type ResolvedUser, UserDirectory } from '../authz/user-directory';
 import { DB } from '../db/db.module';
 import { MetricsService } from '../obs/metrics.service';
 import { TenancyModule } from './tenancy.module';
@@ -35,20 +36,30 @@ const TENANT = '11111111-1111-4111-8111-111111111111';
 const STAFF_ORG = '22222222-2222-4222-8222-222222222222';
 const APP_USER_ID = '33333333-3333-4333-8333-333333333333';
 
-/** Fake `select().from().where().limit()` that knows one org, found through the real WHERE clause. */
+const STAFF_IDP_ORG = '99999999-9999-4999-8999-999999999999';
+
+/**
+ * Fake of the resolver's two queries, each found through the real WHERE clause: the IdP org by
+ * `select().from(idpOrgs).where().limit()` (one staff org is known), then the tenant's entities by
+ * `select().from(organizations).where()` (STAFF_ORG is the one, default, entity).
+ */
 const fakeDb = {
   select: () => ({
-    from: () => ({
-      where: (condition: Parameters<PgDialect['sqlToQuery']>[0]) => ({
-        limit: () => {
-          const { params } = new PgDialect().sqlToQuery(condition);
-          return Promise.resolve(
-            params[0] === 'zit-staff'
-              ? [{ tenantId: TENANT, organizationId: STAFF_ORG, orgKind: 'staff' }]
-              : [],
-          );
-        },
-      }),
+    from: (table: unknown) => ({
+      where: (condition: Parameters<PgDialect['sqlToQuery']>[0]) => {
+        const { params } = new PgDialect().sqlToQuery(condition);
+        if (table === organizations) {
+          return Promise.resolve(params[0] === TENANT ? [{ id: STAFF_ORG, isDefault: true }] : []);
+        }
+        return {
+          limit: () =>
+            Promise.resolve(
+              params[0] === 'zit-staff'
+                ? [{ idpOrgId: STAFF_IDP_ORG, tenantId: TENANT, kind: 'staff', partyId: null }]
+                : [],
+            ),
+        };
+      },
     }),
   }),
 };
@@ -64,15 +75,22 @@ class FakeDbModule {}
     {
       provide: UserDirectory,
       useValue: {
-        // Echoes the scope it is asked for: the user row lives in the token's org, as the real
-        // directory's JIT insert would place it.
-        resolve: (i: { tenantId: string; organizationId: string }) =>
+        // Echoes the scope it is asked for: the user row lives in the token's tenant with one
+        // default membership in the default entity, as the real JIT insert would place it.
+        resolve: (i: { tenantId: string; idpOrgId: string }): Promise<ResolvedUser> =>
           Promise.resolve({
             userId: APP_USER_ID,
             status: 'active',
-            departmentId: null,
             tenantId: i.tenantId,
-            organizationId: i.organizationId,
+            idpOrgId: i.idpOrgId,
+            memberships: [
+              {
+                organizationId: STAFF_ORG,
+                isDefault: true,
+                roleKeys: null,
+                departmentId: null,
+              },
+            ],
           }),
       },
     },
@@ -161,6 +179,7 @@ describe('tenancy wiring (in-process)', () => {
       tenantId: TENANT,
       organizationId: STAFF_ORG,
       orgKind: 'staff',
+      partyId: null,
       roles: ['founder'],
       correlationId: 'trace-abcdef12',
     });
