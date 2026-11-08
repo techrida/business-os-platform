@@ -334,8 +334,14 @@ const rawCase = async (id: string) => {
   const { rows } = await ownerPool.query<{
     status: string;
     version: number;
+    submitted_by_user_id: string | null;
+    submitted_at: Date | null;
     reviewer_user_id: string | null;
-  }>('SELECT status, version, reviewer_user_id FROM app.verification_cases WHERE id = $1', [id]);
+  }>(
+    `SELECT status, version, submitted_by_user_id, submitted_at, reviewer_user_id
+       FROM app.verification_cases WHERE id = $1`,
+    [id],
+  );
   return rows[0]!;
 };
 
@@ -468,6 +474,11 @@ describe('POST /v1/verification-cases/:id/submit', () => {
     const submitted = await submittedCase();
     expect(submitted.status).toBe('submitted');
     expect(submitted.reviewedBy).toBeNull();
+    // The submit records its own columns and leaves the reviewer's alone.
+    const raw = await rawCase(submitted.id);
+    expect(raw.submitted_by_user_id).toBe(U.founder);
+    expect(raw.submitted_at).toEqual(clock);
+    expect(raw.reviewer_user_id).toBeNull();
     expect((await submitCase(submitted.id)).status).toBe(409);
   });
 });
@@ -490,6 +501,10 @@ describe('POST /v1/verification-cases/:id/decision', () => {
     });
     expect(dto.decidedAt).not.toBeNull();
     expect(dto.version).toBe(submitted.version + 1);
+    // The decision names the reviewer and keeps the submitter.
+    const raw = await rawCase(dto.id);
+    expect(raw.reviewer_user_id).toBe(U.pmo);
+    expect(raw.submitted_by_user_id).toBe(U.founder);
     for (const key of REQUIRED_KEYS) {
       expect(dto.checklist.find((i) => i.key === key)!.status).toBe('accepted');
     }
@@ -572,7 +587,9 @@ describe('POST /v1/verification-cases/:id/decision', () => {
     });
     expect(res.status).toBe(403);
     expect(ErrorBodySchema.parse(res.body).error.reason).toBe('separation_of_duties');
-    expect((await rawCase(submitted.id)).status).toBe('submitted');
+    const raw = await rawCase(submitted.id);
+    expect(raw.status).toBe('submitted');
+    expect(raw.reviewer_user_id).toBeNull();
   });
 
   it('is 403 for a user without verification.review', async () => {
@@ -725,8 +742,8 @@ describe('reading', () => {
     const foreignParty = await newCustomer(scope2);
     const { rows } = await withTx(db, scope2, systemActor('test'), (tx) =>
       tx.execute<{ id: string }>(
-        sql`INSERT INTO app.verification_cases (tenant_id, party_id, status, reviewer_user_id)
-            VALUES (${scope2.tenantId}, ${foreignParty}, 'submitted', NULL) RETURNING id`,
+        sql`INSERT INTO app.verification_cases (tenant_id, party_id, status)
+            VALUES (${scope2.tenantId}, ${foreignParty}, 'draft') RETURNING id`,
       ),
     );
     const foreignId = rows[0]!.id;
@@ -739,6 +756,6 @@ describe('reading', () => {
     ).toBe(404);
     const list = await api().get('/v1/verification-cases');
     expect((list.body as VerificationCaseDto[]).map((c) => c.id)).not.toContain(foreignId);
-    expect((await rawCase(foreignId)).status).toBe('submitted');
+    expect((await rawCase(foreignId)).status).toBe('draft');
   });
 });

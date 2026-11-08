@@ -8,10 +8,7 @@
 //   domain event through AuditService.
 // Cases are tenant-level (ADR 0027): one per customer party, visible from every legal entity of the tenant, so
 // the lookups filter on the tenant alone. Another tenant's case is not found, never forbidden.
-//
-// The table has no submitted_by column (0015_crm is not this unit's). While a case is `submitted`,
-// `reviewer_user_id` therefore holds the SUBMITTER, and the decision overwrites it with the reviewer. The DTO
-// reports `reviewedBy` only for a decided case. A later migration with a real column removes this.
+// The submit writes submitted_by_user_id and submitted_at; only a decision writes reviewer_user_id and decided_at.
 import {
   ChecklistItemSchema,
   type AttachVerificationDocumentBody,
@@ -82,14 +79,13 @@ const checklistOf = (row: CaseRow): ChecklistItem[] =>
   ChecklistItemSchema.array().parse(row.checklist);
 
 export function toVerificationCaseDto(row: CaseRow): VerificationCaseDto {
-  const decided = row.status === 'approved' || row.status === 'rejected';
   return {
     id: row.id,
     partyId: row.partyId,
     status: row.status,
     checklist: checklistOf(row),
-    reviewedBy: decided ? row.reviewerUserId : null,
-    decidedAt: decided && row.decidedAt !== null ? row.decidedAt.toISOString() : null,
+    reviewedBy: row.reviewerUserId,
+    decidedAt: row.decidedAt === null ? null : row.decidedAt.toISOString(),
     decisionNote: row.reason,
     version: row.version,
   };
@@ -346,8 +342,9 @@ export class VerificationService implements OnModuleInit {
       }
       const updated = await updateVersioned(tx, verificationCases, id, l.row.version, {
         status: 'submitted',
-        // The submitter, kept here until the decision names the reviewer (see the header comment).
-        reviewerUserId: principal.userId,
+        submittedByUserId: principal.userId,
+        submittedAt: now,
+        reviewerUserId: null,
         decidedAt: null,
         reason: null,
         updatedAt: now,
@@ -387,8 +384,7 @@ export class VerificationService implements OnModuleInit {
       if (l.row.status !== 'submitted') {
         throw conflict(`A case in status ${l.row.status} cannot be decided`);
       }
-      // reviewer_user_id still holds the submitter while the case is submitted.
-      if (l.row.reviewerUserId === principal.userId) throw separationOfDuties();
+      if (l.row.submittedByUserId === principal.userId) throw separationOfDuties();
 
       const items = checklistOf(l.row);
       const approve = body.decision === 'approve';
