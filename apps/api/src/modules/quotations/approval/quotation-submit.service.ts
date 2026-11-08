@@ -430,6 +430,17 @@ export class QuotationSubmitService {
       submittedByUserId: callerUserId,
       sodUserIds,
     });
+    if (request.status === 'blocked') {
+      // The engine re-plans inside the transaction: an approver lost since the preview. Same answer as a blocked
+      // preview, and the rollback removes the version update and the request row (and the engine's own notice).
+      throw new NoEligibleApprover({
+        quotationNumber: quotation.number,
+        revisionNo: version.revisionNo,
+        versionId: version.id,
+        rowVersion: version.version,
+        reason: 'No eligible approver',
+      });
+    }
 
     const linked = await updateVersioned(tx, quotationVersions, version.id, submitted.version, {
       approvalRequestId: request.requestId,

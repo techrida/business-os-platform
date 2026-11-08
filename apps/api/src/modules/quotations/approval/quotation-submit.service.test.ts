@@ -331,6 +331,19 @@ describe('QuotationSubmitService.submit', () => {
     });
   });
 
+  it('is a 422 too when the engine finds the route blocked inside the submit transaction', async () => {
+    const { service, approvals, notify, store, audit } = setup();
+    fakeUpdateVersioned(versionRow());
+    approvals.submit.mockResolvedValue({ requestId: REQUEST, status: 'blocked' });
+
+    const error: unknown = await service.submit(QID, VID, BODY, 'key-1').catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ status: 422, response: { code: 'NO_ELIGIBLE_APPROVER' } });
+    expect(store.appendHistory).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+    expect(notify.notifyRole).toHaveBeenCalled();
+  });
+
   it('submits with the unrounded facts, the snapshot, [owner, caller] and the quotation number', async () => {
     const { service, approvals, store, audit } = setup();
     fakeUpdateVersioned(versionRow());
