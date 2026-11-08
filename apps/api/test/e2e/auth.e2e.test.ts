@@ -39,7 +39,7 @@ const staffClaims = () =>
     clientId: CLIENT_ID,
     userId: 'user-e2e-1',
     orgId: e2e.staff.zitadelOrgId,
-    roles: ['staff_admin'],
+    roles: ['founder'],
   });
 
 describe('authentication: GET /v1/me must answer 401', () => {
@@ -112,7 +112,7 @@ describe('authentication: GET /v1/me must answer 401', () => {
 
 describe('GET /v1/me with a valid token', () => {
   it('answers 200 for a staff user, with the seeded tenant and org, and echoes x-request-id', async () => {
-    const token = await t.token(e2e.staff, { userId: 'user-staff-1', roles: ['staff_admin'] });
+    const token = await t.token(e2e.staff, { userId: 'user-staff-1', roles: ['founder'] });
     const res = await t
       .http()
       .get('/v1/me')
@@ -126,7 +126,7 @@ describe('GET /v1/me with a valid token', () => {
       tenantId: e2e.tenantId,
       organizationId: e2e.staff.organizationId,
       orgKind: 'staff',
-      roles: ['staff_admin'],
+      roles: ['founder'],
       correlationId: 'e2e-correlation-0001',
     });
     expect(res.headers['x-request-id']).toBe('e2e-correlation-0001');
@@ -144,6 +144,27 @@ describe('GET /v1/me with a valid token', () => {
     expect(me.orgKind).toBe('customer');
     expect(me.organizationId).toBe(e2e.customer.organizationId);
     expect(me.tenantId).toBe(e2e.tenantId);
+    expect(me.roles).toEqual(['customer_user']);
+  });
+
+  it('shows only roles granted in the caller own org, never one granted in another org', async () => {
+    // A staff user who is `founder` only in the customer org, and `sales` in their own org.
+    const token = await t.issuer.mint(
+      zitadelClaims({
+        projectId: PROJECT_ID,
+        clientId: 'client-e2e',
+        userId: 'user-staff-cross-org',
+        orgId: e2e.staff.zitadelOrgId,
+        roles: ['sales'],
+        rolesInOtherOrgs: { [e2e.customer.zitadelOrgId]: ['founder'] },
+      }),
+    );
+    const res = await t.http().get('/v1/me').set('authorization', `Bearer ${token}`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const me = MeResponseSchema.parse(res.body);
+    expect(me.organizationId).toBe(e2e.staff.organizationId);
+    expect(me.roles).toEqual(['sales']);
   });
 
   it('answers 403 forbidden for a valid token whose org is not registered', async () => {
