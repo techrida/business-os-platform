@@ -398,6 +398,21 @@ describe('TenancyInterceptor', () => {
     expect(bound.roles).toEqual(['finance']);
   });
 
+  it('accepts the P2 staff roles in a staff org and drops them in a customer org', async () => {
+    const p2Roles: RoleKey[] = ['pmo', 'operations_head', 'procurement', 'receiver'];
+    // Without an entry in ROLE_ORG_KIND these were filtered out, which left a staff token with no role.
+    const staff = await run(interceptor, auth({ [ZIT_ORG]: p2Roles }), Routes, Routes.prototype.me);
+    expect(staff.bound.roles).toEqual(p2Roles);
+
+    const portal = await run(
+      buildFor(CUSTOMER),
+      auth({ [ZIT_ORG]: p2Roles }),
+      Routes,
+      Routes.prototype.me,
+    );
+    expect(portal.bound.roles).toEqual([]);
+  });
+
   it('a method @Can beats a class @AnyAuthenticated', async () => {
     const sales = { [ZIT_ORG]: ['sales'] as RoleKey[] };
     const body = await denial(
