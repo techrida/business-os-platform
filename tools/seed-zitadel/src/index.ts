@@ -103,6 +103,15 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
       await api.enableRoleAssertion(projectId);
       changed('enabled "assert roles on authentication"');
     }
+    if (!project.authorizationRequired) {
+      await api.enableAuthorizationRequired(projectId);
+      changed('enabled "check for authorization on authentication"');
+    }
+  }
+
+  // Nobody may register themselves on the staff org: staff are invited.
+  if (await api.ensureOrgLoginPolicyNoRegister(staffOrgId)) {
+    changed('disabled self-registration on the staff org');
   }
 
   const haveRoles = new Set(await api.listProjectRoles(projectId));
