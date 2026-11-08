@@ -5,3 +5,4 @@ export * from './allocate.js';
 export * from './tax.js';
 export * from './discount.js';
 export * from './fx.js';
+export * from './pricing.js';
