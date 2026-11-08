@@ -43,6 +43,11 @@ export const documents = appSchema.table(
     /** The newest clean version; null until the first version has passed the scan. */
     currentVersionId: uuid('current_version_id'),
     createdBy: uuid('created_by'),
+    /**
+     * Soft remove (migration 0010): set when someone who may edit the owner takes the attachment away. The rows
+     * and files of a clean version stay for the audit trail; a removed document is invisible everywhere else.
+     */
+    removedAt: timestamp('removed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

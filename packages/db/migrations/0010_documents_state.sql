@@ -54,3 +54,4 @@ FOR EACH ROW EXECUTE FUNCTION "app"."document_versions_guard_update"();
 --> statement-breakpoint
 
 -- removal state (FIX-E1) below
+ALTER TABLE "app"."documents" ADD COLUMN "removed_at" timestamp with time zone;
