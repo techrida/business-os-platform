@@ -57,6 +57,7 @@ import { SignedLinks } from '../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { MoneyService } from '../../platform/settings/money.service';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../approvals/admin.service';
 import { ApprovalsService } from '../approvals/requests.service';
@@ -276,7 +277,7 @@ beforeAll(async () => {
     audit,
   );
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  const money = new MoneyService(db);
+  const money = new MoneyService(db, new SettingsService(db));
   service = new TestMemoService(
     db,
     new NumberingService(),
@@ -896,7 +897,7 @@ describe('submitter and uploaders join separation of duties (R9)', () => {
 
 describe('submit re-freezes the NPR value (R11)', () => {
   it('converts at the submit day rate and routes on that value', async () => {
-    const money = new MoneyService(db);
+    const money = new MoneyService(db, new SettingsService(db));
     // Days after every other test's clock, so these rates change no other memo.
     await withTx(db, scope, systemActor('test'), (tx) =>
       money.setRate(tx, 'USD', '133', '2026-11-20', 'manual'),

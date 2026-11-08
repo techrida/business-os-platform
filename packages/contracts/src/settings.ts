@@ -5,6 +5,15 @@ import { z } from 'zod';
 
 import { SlaSpecSchema } from './approvals.js';
 import { CurrencySchema, DecimalString } from './money.js';
+import { EVIDENCE_KINDS } from './quotations.js';
+
+/**
+ * Evidence an accepted quotation needs before Won: one evidence kind, or `both`, which means a contract AND a
+ * purchase order. Built from EVIDENCE_KINDS so a kind cannot be renamed in one place only.
+ */
+export const EVIDENCE_POLICIES = [...EVIDENCE_KINDS, 'both'] as const;
+export const EvidencePolicySchema = z.enum(EVIDENCE_POLICIES);
+export type EvidencePolicy = z.infer<typeof EvidencePolicySchema>;
 
 export const SETTINGS = {
   /** Used when a workflow spec leaves its `sla` out. */
@@ -24,7 +33,24 @@ export const SETTINGS = {
   'numbering.memo_prefix': z
     .string()
     .regex(/^[A-Z][A-Z0-9]{1,9}$/, 'use 2 to 10 capitals or digits'),
+  /** Oldest FX rate a document may use, in days. Past it the API answers 409 `fx_rate_stale`. */
+  'fx.max_rate_age_days': z.number().int().min(1).max(365),
+  /** Days a sent quotation stays valid when the author gives no expiry. */
+  'quotation.validity_days': z.number().int().min(1).max(365),
+  /** What a quotation needs on file before the opportunity may become Won. */
+  'sales.evidence_policy': EvidencePolicySchema,
 } as const;
+
+/** Defaults of the P2 keys. The API's SETTING_DEFAULTS reuses these, so the two cannot drift apart. */
+export const P2_SETTING_DEFAULTS = {
+  'fx.max_rate_age_days': 7,
+  'quotation.validity_days': 15,
+  'sales.evidence_policy': 'signed_quote',
+} as const satisfies {
+  [K in 'fx.max_rate_age_days' | 'quotation.validity_days' | 'sales.evidence_policy']: z.infer<
+    (typeof SETTINGS)[K]
+  >;
+};
 
 export type SettingKey = keyof typeof SETTINGS;
 export type SettingValue<K extends SettingKey> = z.infer<(typeof SETTINGS)[K]>;

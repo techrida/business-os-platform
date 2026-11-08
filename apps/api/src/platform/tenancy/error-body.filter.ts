@@ -1,4 +1,9 @@
-import { ErrorReasonSchema, type ErrorBody, type ErrorReason } from '@bos/contracts';
+import {
+  ErrorBodySchema,
+  ErrorReasonSchema,
+  type ErrorBody,
+  type ErrorReason,
+} from '@bos/contracts';
 import {
   Catch,
   HttpException,
@@ -21,6 +26,7 @@ export type ErrorCode =
   | 'forbidden'
   | 'not_found'
   | 'conflict'
+  | 'fx_rate_stale'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -55,6 +61,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   forbidden: 'Forbidden',
   not_found: 'Not found',
   conflict: 'Conflict',
+  fx_rate_stale: 'The exchange rate is too old',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -98,6 +105,27 @@ function isStepUp(exception: HttpException): boolean {
   return typeof response === 'object' && 'code' in response && response.code === STEP_UP_REQUIRED;
 }
 
+/**
+ * A 409 may name its cause with a code a client can switch on. Only these pass: any other string a thrown
+ * object carries still reads as plain `conflict`, so the body stays within what clients know.
+ */
+const CONFLICT_CODES: readonly ErrorCode[] = ['fx_rate_stale'];
+
+function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
+  if (exception.getStatus() !== 409) return undefined;
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('code' in response)) return undefined;
+  return CONFLICT_CODES.find((code) => code === response.code);
+}
+
+/** The `details` of a coded 409: string and number values only, so the body satisfies ErrorBodySchema. */
+function detailsOf(exception: HttpException): Record<string, string | number> | undefined {
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('details' in response)) return undefined;
+  const parsed = ErrorBodySchema.shape.error.shape.details.safeParse(response.details);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /** body-parser and other Express middleware throw plain errors that carry an HTTP status. */
 function statusOfPlainError(exception: unknown): number | undefined {
   if (typeof exception !== 'object' || exception === null) return undefined;
@@ -129,17 +157,21 @@ export class ErrorBodyFilter implements ExceptionFilter {
     let exposedMessage: string | undefined;
     let reason: ErrorReason | undefined;
     let stepUp = false;
+    let conflictCode: ErrorCode | undefined;
+    let details: Record<string, string | number> | undefined;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
       // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
       if (status === 403 || status === 400) reason = reasonOf(exception);
       stepUp = isStepUp(exception);
+      conflictCode = conflictCodeOf(exception);
+      if (conflictCode !== undefined) details = detailsOf(exception);
     } else {
       status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
     }
 
-    const code: ErrorCode = stepUp ? 'step_up_required' : codeForStatus(status);
+    const code: ErrorCode = stepUp ? 'step_up_required' : (conflictCode ?? codeForStatus(status));
     // 5xx other than 503 may carry internal detail in the message, so those are never shown.
     const message =
       status >= 500 && status !== 503
@@ -160,7 +192,13 @@ export class ErrorBodyFilter implements ExceptionFilter {
       return;
     }
     const body: ErrorBody = {
-      error: { code, message, correlationId, ...(reason === undefined ? {} : { reason }) },
+      error: {
+        code,
+        message,
+        correlationId,
+        ...(reason === undefined ? {} : { reason }),
+        ...(details === undefined ? {} : { details }),
+      },
     };
     res.setHeader(REQUEST_ID_HEADER, correlationId);
     res.status(status).json(body);

@@ -26,6 +26,8 @@ export const ErrorBodySchema = z.object({
     correlationId: z.string().min(1),
     /** Present only on some 403 and 400 responses. */
     reason: ErrorReasonSchema.optional(),
+    /** Facts a client can show next to a domain code such as `fx_rate_stale`: currency, rate date, limit. */
+    details: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
   }),
 });
 export type ErrorBody = z.infer<typeof ErrorBodySchema>;

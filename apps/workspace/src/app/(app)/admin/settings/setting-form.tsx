@@ -1,15 +1,27 @@
 'use client';
 
-import { CURRENCIES, type SettingKey } from '@bos/contracts';
+import {
+  CURRENCIES,
+  EVIDENCE_POLICIES,
+  type EvidencePolicy,
+  type SettingKey,
+} from '@bos/contracts';
 import { useActionState, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
 
 import { IDLE, type ActionState } from '../action-state';
 import { FormStatus } from '../ui';
 import { saveSettingAction } from './actions';
 import styles from './settings.module.css';
+
+const EVIDENCE_LABEL: Record<EvidencePolicy, string> = {
+  signed_quote: 'Signed quotation',
+  contract: 'Contract',
+  purchase_order: 'Purchase order',
+  both: 'Contract and purchase order',
+};
 
 // One row per setting key: the current value and an Edit button; Edit opens the form. The control
 // depends on the value's shape: a list of currencies is checkboxes, the SLA object is JSON text,
@@ -93,6 +105,20 @@ export function SettingForm({
             defaultValue={kept ?? current}
             {...field}
           />
+        )}
+      </Field>
+    );
+  } else if (settingKey === 'sales.evidence_policy') {
+    control = (
+      <Field label={label}>
+        {(field) => (
+          <Select name="value" defaultValue={kept ?? current} {...field}>
+            {EVIDENCE_POLICIES.map((policy) => (
+              <option key={policy} value={policy}>
+                {EVIDENCE_LABEL[policy]}
+              </option>
+            ))}
+          </Select>
         )}
       </Field>
     );
