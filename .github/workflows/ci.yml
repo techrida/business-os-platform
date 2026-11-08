@@ -1,0 +1,158 @@
+# Continuous integration for the Business OS monorepo (ADR 0016).
+#
+# Every job must pass for a pull request to merge. Nothing here is allowed to fail:
+# no step is marked as tolerating failure, on purpose.
+#
+# Actions are pinned to a major version (`@v7`) so they get fixes without surprise breaking
+# changes. Dependabot can move them to full commit SHAs later.
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'p*/**'
+  pull_request:
+
+# The least privilege that lets the jobs read the code. No job here writes to the repo,
+# the registry or pull requests.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the older run, so the queue never
+# fills with results nobody will read.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # pnpm's own prompts would hang a job with no terminal.
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  # Fast gate: types, lint, unit tests, formatting. No containers started by this repo's
+  # own compose files. Note `pnpm test` runs every workspace package's `test` script.
+  checks:
+    name: checks (typecheck, lint, unit, format)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Order matters: pnpm must exist before setup-node asks it for the store path (cache: pnpm).
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (lockfile must match every package.json)
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint (zero warnings allowed)
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Format check
+        run: pnpm format:check
+
+  # Real Postgres through Testcontainers (it starts throw-away Docker containers from inside
+  # the tests). ubuntu-24.04 runners already have Docker, so nothing extra to install.
+  e2e:
+    name: e2e (db tenancy, api auth)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Database tests (migrations, tenancy check)
+        run: pnpm --filter @bos/db test
+
+      - name: API end-to-end tests
+        run: pnpm --filter @bos/api test:e2e
+
+  # Builds the production Next.js app, then proves the dev-only persona pages are not in it.
+  web:
+    name: web (build, no dev routes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `@bos/workspace...` = the app plus the workspace packages it depends on.
+      - name: Build the workspace app (production)
+        run: pnpm --filter '@bos/workspace...' build
+
+      # TODO: remove the `if [ -f ... ]` guard once apps/workspace/scripts/check-no-dev-routes.mjs
+      # lands (it comes from the persona-switcher unit). After that, a missing checker must
+      # fail this step instead of being skipped.
+      - name: Check no dev routes in the production build
+        run: |
+          if [ -f apps/workspace/scripts/check-no-dev-routes.mjs ]; then
+            node apps/workspace/scripts/check-no-dev-routes.mjs
+          else
+            echo "check-no-dev-routes.mjs does not exist yet, skipping (see TODO above)"
+          fi
+
+  # Proves both production images still build. Nothing is pushed anywhere.
+  docker:
+    name: docker (build both images)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # The build context is the repo root (the Dockerfiles need pnpm-lock.yaml and packages/*).
+      # Each image has its own cache scope so one image's layers don't evict the other's.
+      - name: Build api image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build workspace image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/workspace/Dockerfile
+          push: false
+          cache-from: type=gha,scope=workspace
+          cache-to: type=gha,scope=workspace,mode=max
