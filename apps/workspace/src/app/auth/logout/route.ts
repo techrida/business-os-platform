@@ -1,6 +1,8 @@
+import { cookies } from 'next/headers';
+
 import { getEnv } from '@/lib/env';
 import { endSessionUrl } from '@/lib/oidc';
-import { clearSessionCookie, destroySession, getSession } from '@/lib/session';
+import { clearSessionCookie, destroySession, SESSION_COOKIE } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,23 +54,33 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Forbidden', { status: 403 });
   }
 
-  const session = await getSession();
-  if (session) {
-    await destroySession(session.id);
+  // CR-06: the cookie id, not getSession(). getSession() is null for an idle-expired record or
+  // when Valkey is down, and it would also slide the TTL or refresh tokens mid-logout. Whatever
+  // the local state, the ZITADEL session must end, or the next visit signs straight back in.
+  const id = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (id) {
+    try {
+      await destroySession(id);
+    } catch (err) {
+      // Only the error name: ioredis errors carry the command arguments (the session key and
+      // the stored record with its tokens). The record dies with its TTL anyway.
+      console.warn(
+        JSON.stringify({
+          event: 'auth.logout_destroy_failed',
+          error: err instanceof Error ? err.name : 'unknown',
+        }),
+      );
+    }
   }
-  // Cleared even without a live session, so a stale cookie does not linger.
+  // Cleared whatever happened above, so a stale cookie does not linger.
   await clearSessionCookie();
-
-  if (!session) {
-    return redirectTo(home);
-  }
 
   try {
     // Ends the ZITADEL session too. No id_token_hint: it would put the ID token in the URL.
     const url = await endSessionUrl();
     return redirectTo(url.toString());
   } catch {
-    // The local session is already gone, so a discovery failure must not strand the user.
+    // The session cookie is already cleared, so a discovery failure must not strand the user.
     return redirectTo(home);
   }
 }
