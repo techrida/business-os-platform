@@ -15,6 +15,24 @@ export const DEFAULT_STEP_UP_MAX_AGE_SECONDS = 300;
 /** DI token for the window in seconds. Provide a positive integer to change the default. */
 export const STEP_UP_MAX_AGE_SECONDS = Symbol('STEP_UP_MAX_AGE_SECONDS');
 
+/** The longest window the env may set: one day. Longer would make step-up meaningless. */
+const MAX_STEP_UP_MAX_AGE_SECONDS = 86_400;
+
+/**
+ * Reads the STEP_UP_MAX_AGE_SECONDS env value: unset or empty means the 300 s default, a whole
+ * number from 1 to 86400 is used as is, and anything else throws so the API refuses to start.
+ */
+export function stepUpMaxAgeFromEnv(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return DEFAULT_STEP_UP_MAX_AGE_SECONDS;
+  const value = /^[1-9]\d{0,4}$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!(value <= MAX_STEP_UP_MAX_AGE_SECONDS)) {
+    throw new Error(
+      `STEP_UP_MAX_AGE_SECONDS must be a whole number of seconds from 1 to ${MAX_STEP_UP_MAX_AGE_SECONDS}`,
+    );
+  }
+  return value;
+}
+
 /** An `auth_time` this far ahead of our clock still counts (clock drift with ZITADEL). */
 const CLOCK_SKEW_SECONDS = 60;
 
