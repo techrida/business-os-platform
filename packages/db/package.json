@@ -23,7 +23,8 @@
     "test": "vitest run",
     "generate": "drizzle-kit generate",
     "migrate": "node dist/migrate.js",
-    "check-tenancy": "node dist/check-tenancy.js"
+    "check-tenancy": "node dist/check-tenancy.js",
+    "check-audit": "node dist/check-audit.js"
   },
   "dependencies": {
     "drizzle-orm": "catalog:",
