@@ -102,6 +102,7 @@ function acceptanceOf(outcome: 'accepted' | 'rejected'): AcceptanceDto {
     comment: outcome === 'rejected' ? 'Too expensive' : null,
     evidenceKinds: outcome === 'accepted' ? ['signed_quote'] : [],
     evidenceDocumentIds: [],
+    acceptedByName: outcome === 'accepted' ? 'Ram Thapa' : null,
   };
 }
 
