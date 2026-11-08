@@ -267,9 +267,11 @@ export async function refreshTokens(refreshToken: string): Promise<OidcTokens> {
  * RP-initiated logout URL. `client_id` is always sent: ZITADEL ignores
  * `post_logout_redirect_uri` unless it can tie it to a client.
  *
- * No `id_token_hint` (CR-05a): this URL is a browser redirect, so it lands in history, proxy
- * logs and Referer headers, and an ID token must not. The cost is that ZITADEL may show its own
- * logout confirmation.
+ * Pass the user's ID token as `idTokenHint`: without it ZITADEL's end_session does not end the
+ * user's ZITADEL session, and the next visit signs straight back in. The cost (CR-05a) is that
+ * the token is in a browser redirect URL, so in history, proxy logs and Referer headers. That is
+ * accepted, since the API refuses ID tokens as credentials. With no hint (the session record is
+ * gone) the URL is still built, but the ZITADEL session may survive.
  */
 export async function endSessionUrl(options: { idTokenHint?: string } = {}): Promise<URL> {
   const env = getEnv();
