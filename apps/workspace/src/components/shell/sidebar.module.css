@@ -126,21 +126,18 @@
   background: var(--interactive-pressed);
 }
 
-/* Current page: pale blue fill, blue icon and a blue bar on the sidebar's left edge. */
+/* Current page: pale blue fill and a blue bar on the sidebar's left edge. As in Figma, the label
+   and icon keep the colour of the other rows; the fill and the bar carry the state. */
 .active,
 .active:hover {
   background: var(--interactive-selected);
-  color: var(--text-primary);
-}
-
-.active .icon {
-  color: var(--icon-brand);
 }
 
 .active::before {
   content: '';
   position: absolute;
   inset-block: 6px;
+  /* The nav pads its rows by 12px, so -12px puts the bar flush on the sidebar's edge. */
   inset-inline-start: -12px;
   width: 3px;
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
