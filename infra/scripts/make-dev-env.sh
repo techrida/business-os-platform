@@ -13,5 +13,6 @@ sed -i \
   -e "s/dev-zitadel-db-pw/$(r 16)/g" \
   -e "s/bos-dev-masterkey-0123456789abcd/$(r 16)/g" \
   -e "s/bos-dev-login-cookie-secret-0123456789abcdef/$(r 32)/g" \
-  -e "s/Dev-Admin-Passw0rd-1#/Bos-$(r 8)-Aa1#/g" .env
-echo "make-dev-env: .env written with random secrets (mode 600). Back up ZITADEL_MASTERKEY with it."
+  -e "s/Dev-Admin-Passw0rd-1#/Bos-$(r 8)-Aa1#/g" \
+  -e "s/^PGBACKREST_REPO1_CIPHER_PASS=\$/PGBACKREST_REPO1_CIPHER_PASS=$(r 32)/" .env
+echo "make-dev-env: .env written with random secrets (mode 600). Back up ZITADEL_MASTERKEY and PGBACKREST_REPO1_CIPHER_PASS with it (no backup can be restored without the second)."
