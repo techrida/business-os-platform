@@ -1,7 +1,7 @@
 // Seed data and small helpers for the approvals exit e2e. Seeds exactly what production seeds (the kernel
 // rows from tools/seed-zitadel) plus the users ZITADEL would mirror, so the scenario runs on real data and
 // not on test-only shortcuts (NFR "authorization is deny-by-default": an unseeded role table denies everyone).
-import { userEntities, userRoles, users } from '@bos/db';
+import { createTenantWithEntity, userEntities, userRoles, users } from '@bos/db';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
@@ -9,7 +9,7 @@ import { seedKernelRows } from '../../../../../tools/seed-zitadel/src/db-seed';
 import { systemActor, withTx } from '../../../src/platform/db/tx';
 import type { E2eContext } from '../global-setup';
 
-export type PersonaKey = 'sales' | 'accountant' | 'finance' | 'founder';
+export type PersonaKey = 'sales' | 'accountant' | 'finance' | 'management' | 'founder';
 
 export interface Persona {
   /** The ZITADEL `sub` the token carries; `app.users.zitadel_user_id`. */
@@ -39,6 +39,7 @@ const PERSONAS: Record<PersonaKey, { tokenRoles: string[]; mirroredRoles: string
   sales: { tokenRoles: ['sales'], mirroredRoles: ['sales'] },
   accountant: { tokenRoles: ['accountant'], mirroredRoles: ['accountant', 'sales'] },
   finance: { tokenRoles: ['finance'], mirroredRoles: ['finance'] },
+  management: { tokenRoles: ['management'], mirroredRoles: ['management'] },
   founder: { tokenRoles: ['founder'], mirroredRoles: ['founder'] },
 };
 
@@ -47,7 +48,14 @@ const PERSONAS: Record<PersonaKey, { tokenRoles: string[]; mirroredRoles: string
  * per persona under the staff IdP org with a default membership in the entity, with an email so the outbox has a recipient. Run it BEFORE the app boots, so
  * the first request already sees the bumped authz version.
  */
-export async function seedApprovalsWorld(e2e: E2eContext): Promise<ApprovalsWorld> {
+export async function seedApprovalsWorld(
+  e2e: E2eContext,
+  /**
+   * Prefix of every `sub` and email. `users.zitadel_user_id` is unique across tenants, so a second world
+   * (see {@link createIsolatedStaffOrg}) needs its own prefix. The default is what the approvals e2e uses.
+   */
+  idPrefix = 'e2e-approvals',
+): Promise<ApprovalsWorld> {
   const pool = new Pool({ connectionString: e2e.databaseUrl, max: 2 });
   const scope = { tenantId: e2e.tenantId, organizationId: e2e.staff.organizationId };
 
@@ -63,8 +71,8 @@ export async function seedApprovalsWorld(e2e: E2eContext): Promise<ApprovalsWorl
   const db = drizzle({ client: pool });
   await withTx(db, scope, systemActor('e2e-approvals-seed'), async (tx) => {
     for (const [key, roles] of Object.entries(PERSONAS) as [PersonaKey, typeof PERSONAS.sales][]) {
-      const sub = `e2e-approvals-${key}`;
-      const email = `${key}@e2e-approvals.test`;
+      const sub = `${idPrefix}-${key}`;
+      const email = `${key}@${idPrefix}.test`;
       const [row] = await tx
         .insert(users)
         .values({
@@ -90,6 +98,44 @@ export async function seedApprovalsWorld(e2e: E2eContext): Promise<ApprovalsWorl
   });
 
   return { personas, pool, close: () => pool.end() };
+}
+
+/**
+ * A new tenant with its own default legal entity and staff IdP org (ADR 0027), for an e2e that seeds its own
+ * approvers. The role-based approver lookup counts every user holding a role in the tenant, so a file that
+ * adds a second accountant to the shared staff org would change who the approvals e2e sees as eligible.
+ * Spread the result over the context: `seedApprovalsWorld({ ...e2e, ...isolated }, prefix)`, and mint tokens
+ * for `isolated.staff`.
+ */
+export async function createIsolatedStaffOrg(
+  e2e: E2eContext,
+): Promise<Pick<E2eContext, 'tenantId' | 'staff'>> {
+  // The same @bos/db fixture global-setup uses, as bos_app: it opens its own transaction and sets the
+  // audit context in it.
+  const pool = new Pool({ connectionString: e2e.databaseUrl, max: 1 });
+  try {
+    const entity = await createTenantWithEntity(pool, { name: 'Techrida (e2e isolated entity)' });
+    // The fixture mints a random ZITADEL org id; a token for this org must carry the stored one.
+    const { rows } = await pool.query<{ zitadel_org_id: string }>(
+      'SELECT zitadel_org_id FROM app.idp_orgs WHERE id = $1',
+      [entity.idpOrgId],
+    );
+    const zitadelOrgId = rows[0]?.zitadel_org_id;
+    if (zitadelOrgId === undefined) {
+      throw new Error(`idp_orgs row ${entity.idpOrgId} was not seeded`);
+    }
+    return {
+      tenantId: entity.tenantId,
+      staff: {
+        organizationId: entity.organizationId,
+        idpOrgId: entity.idpOrgId,
+        zitadelOrgId,
+        partyId: null,
+      },
+    };
+  } finally {
+    await pool.end();
+  }
 }
 
 /** A minimal but well-formed one-page PDF (header, catalog, pages, page, xref with real offsets, trailer). */
