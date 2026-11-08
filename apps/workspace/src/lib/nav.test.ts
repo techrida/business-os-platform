@@ -68,8 +68,36 @@ describe('NAV_GROUPS', () => {
       ['Users', '/admin/users'],
       ['Roles & Permissions', '/admin/roles'],
       ['Approval Workflows', '/admin/workflows'],
+      ['Customers', '/customers'],
+      ['Leads', '/leads'],
+      ['Opportunities', '/opportunities'],
+      ['Quotations', '/quotations'],
+      ['Verification', '/verification'],
       ['Settings', '/admin/settings'],
     ]);
+  });
+
+  it('gates every P2 CRM page by its read permission', () => {
+    const permissionByLabel = Object.fromEntries(
+      items.filter((i) => i.phase === 'P2' && isBuilt(i)).map((i) => [i.label, i.permission]),
+    );
+    expect(permissionByLabel).toEqual({
+      Customers: 'customer.read',
+      Leads: 'crm.lead.read',
+      Opportunities: 'crm.opportunity.read',
+      Quotations: 'quotation.read',
+      Verification: 'verification.read',
+    });
+  });
+
+  it('keeps Customers and Verification in the CRM group, in the Figma order', () => {
+    const crm = NAV_GROUPS.find((g) => g.label === 'CRM');
+    const labels = crm?.items.map((i) => i.label) ?? [];
+    expect(labels.indexOf('Customers')).toBeLessThan(labels.indexOf('Leads'));
+    expect(labels.indexOf('Leads')).toBeLessThan(labels.indexOf('Opportunities'));
+    expect(labels.indexOf('Opportunities')).toBeLessThan(labels.indexOf('Quotations'));
+    expect(labels.indexOf('Quotations')).toBeLessThan(labels.indexOf('Verification'));
+    expect(labels).not.toContain('Organizations');
   });
 
   it('marks every /admin page as admin-only, and nothing else', () => {
@@ -127,6 +155,51 @@ describe('visibleGroups', () => {
   });
 });
 
+describe('visibleGroups with permissions', () => {
+  const labelsWith = (can?: (permission: string) => boolean) =>
+    (can === undefined ? visibleGroups(false) : visibleGroups(false, can)).flatMap((g) =>
+      g.items.map((i) => i.label),
+    );
+
+  it('hides every permission-gated item when no predicate is given (deny by default)', () => {
+    const labels = labelsWith();
+    for (const hidden of ['Customers', 'Leads', 'Opportunities', 'Quotations', 'Verification']) {
+      expect(labels).not.toContain(hidden);
+    }
+    expect(labels).toContain('Inbox');
+  });
+
+  it('hides them when the predicate refuses', () => {
+    const labels = labelsWith(() => false);
+    expect(labels).not.toContain('Customers');
+    expect(labels).not.toContain('Verification');
+  });
+
+  it('shows only the items whose permission the predicate grants', () => {
+    const labels = labelsWith((p) => p === 'customer.read');
+    expect(labels).toContain('Customers');
+    expect(labels).not.toContain('Leads');
+    expect(labels).not.toContain('Verification');
+  });
+
+  it('passes the item permission string to the predicate', () => {
+    const asked: string[] = [];
+    visibleGroups(false, (p) => {
+      asked.push(p);
+      return true;
+    });
+    expect(asked).toEqual(
+      expect.arrayContaining([
+        'customer.read',
+        'crm.lead.read',
+        'crm.opportunity.read',
+        'quotation.read',
+        'verification.read',
+      ]),
+    );
+  });
+});
+
 describe('ownsPath', () => {
   it('matches the page and the pages under it, not a lookalike', () => {
     expect(ownsPath('/inbox', '/inbox')).toBe(true);
@@ -147,6 +220,12 @@ describe('titleForPath', () => {
     expect(titleForPath('/inbox/0f3a')).toBe('Inbox');
     expect(titleForPath('/memos/new')).toBe('Memos');
     expect(titleForPath('/admin/users/invite')).toBe('Users');
+  });
+
+  it('names the P2 pages and the pages under them', () => {
+    expect(titleForPath('/customers')).toBe('Customers');
+    expect(titleForPath('/customers/0f3a/edit')).toBe('Customers');
+    expect(titleForPath('/verification/0f3a')).toBe('Verification');
   });
 
   it('falls back to the app name for any other path', () => {
