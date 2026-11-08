@@ -213,14 +213,23 @@ describe('DocumentsService.issueLinkForOwner', () => {
   const versionOwner = { ownerType: 'quotation', ownerId: OWNER_ID };
   const scope = { tenantId: TENANT, organizationId: ORG };
 
+  type Row = { version: { id: string; status: string } };
+  interface Chain {
+    from(): Chain;
+    innerJoin(): Chain;
+    where(): Chain;
+    orderBy(): Chain;
+    limit(): Promise<Row[]>;
+  }
+
   /** A db whose select chain resolves to `rows`; `select` counts the queries. */
-  function linkSetup(rows: { version: { id: string; status: string } }[]) {
-    const chain = {
-      from: vi.fn(() => chain),
-      innerJoin: vi.fn(() => chain),
-      where: vi.fn(() => chain),
-      orderBy: vi.fn(() => chain),
-      limit: vi.fn(() => Promise.resolve(rows)),
+  function linkSetup(rows: Row[]) {
+    const chain: Chain = {
+      from: () => chain,
+      innerJoin: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      limit: () => Promise.resolve(rows),
     };
     const db = { select: vi.fn(() => chain) };
     const authz = { assert: vi.fn() };
