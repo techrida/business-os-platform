@@ -111,6 +111,23 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('passes a known reason through on a 400: a malformed X-Entity-Id is invalid_entity', () => {
+    const out = filter(
+      new BadRequestException({
+        code: 'bad_request',
+        message: 'X-Entity-Id must be a uuid',
+        reason: 'invalid_entity',
+      }),
+    );
+
+    expect(out.status).toBe(400);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'bad_request',
+      message: 'X-Entity-Id must be a uuid',
+      reason: 'invalid_entity',
+    });
+  });
+
   it('drops an unknown reason, a reason on a plain 403, and a reason on any other status', () => {
     const unknown = filter(new ForbiddenException({ reason: 'because I said so' }));
     expect(ErrorBodySchema.parse(unknown.body).error).not.toHaveProperty('reason');
