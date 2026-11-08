@@ -36,7 +36,12 @@ const AUDIENCE = '300000000000000001';
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
 const JWKS_URI = `${ISSUER}/oauth/v2/keys`;
 const KID = 'trusted-key';
-const OPTIONS: AuthOptions = { issuer: ISSUER, audience: AUDIENCE, warmupDelaysMs: [1] };
+const OPTIONS: AuthOptions = {
+  issuer: ISSUER,
+  audience: AUDIENCE,
+  allowedAzp: ['web-client'],
+  warmupDelaysMs: [1],
+};
 const UNAUTHENTICATED = 'Missing or invalid bearer token';
 
 let trusted: { privateKey: CryptoKey; publicKey: CryptoKey };
@@ -83,6 +88,7 @@ const now = (): number => Math.floor(Date.now() / 1000);
 const claims = (extra: JWTPayload = {}): JWTPayload => ({
   iss: ISSUER,
   aud: AUDIENCE,
+  azp: 'web-client',
   sub: 'user-1',
   iat: now(),
   exp: now() + 300,
