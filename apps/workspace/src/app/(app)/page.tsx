@@ -1,6 +1,8 @@
 import type { MeResponse } from '@bos/contracts';
 import { redirect } from 'next/navigation';
 
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import { getMe } from '@/lib/api';
 import { getSession } from '@/lib/session';
 
@@ -23,30 +25,46 @@ export default async function ShellPage() {
   if (!me) {
     return (
       <main className={styles.main}>
-        <section className={`${styles.card} ${styles.alert}`} role="alert">
-          <h1>We could not reach the platform API</h1>
-          <p>You are signed in, but your profile did not load. Reload the page in a moment.</p>
-        </section>
+        <Card as="section" tone="error" role="alert">
+          <h1 className={styles.heading}>We could not reach the platform API</h1>
+          <p className={styles.lede}>
+            You are signed in, but your profile did not load. Reload the page in a moment.
+          </p>
+        </Card>
       </main>
     );
   }
 
+  const facts: ReadonlyArray<readonly [string, string]> = [
+    ['User', me.userId],
+    ['Tenant', me.tenantId],
+    ['Organisation', me.organizationId],
+    ['Correlation ID', me.correlationId],
+  ];
+
   return (
     <main className={styles.main}>
-      <section className={styles.card} aria-labelledby="ready-heading">
-        <h1 id="ready-heading">P0: platform ready</h1>
-        <p>You are signed in. These values come straight from the API for this request.</p>
+      <Card as="section" aria-labelledby="ready-heading">
+        <div className={styles.head}>
+          <div className={styles.headText}>
+            <h1 id="ready-heading" className={styles.heading}>
+              P0: platform ready
+            </h1>
+            <p className={styles.lede}>
+              You are signed in. These values come straight from the API for this request.
+            </p>
+          </div>
+          <Badge tone="success">API connected</Badge>
+        </div>
         <dl className={styles.facts}>
-          <dt>User</dt>
-          <dd>{me.userId}</dd>
-          <dt>Tenant</dt>
-          <dd>{me.tenantId}</dd>
-          <dt>Organisation</dt>
-          <dd>{me.organizationId}</dd>
-          <dt>Correlation ID</dt>
-          <dd>{me.correlationId}</dd>
+          {facts.map(([term, value]) => (
+            <div key={term} className={styles.fact}>
+              <dt className={styles.term}>{term}</dt>
+              <dd className={styles.value}>{value}</dd>
+            </div>
+          ))}
         </dl>
-      </section>
+      </Card>
     </main>
   );
 }
