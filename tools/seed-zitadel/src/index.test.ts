@@ -36,6 +36,7 @@ import type {
   MachineSpec,
   OidcAppSpec,
   OidcSettings,
+  OrgLoginPolicyPatch,
   PatInfo,
   ProjectInfo,
   SecondFactorType,
@@ -182,6 +183,17 @@ class FakeZitadel implements SeedApi {
     if (this.noRegisterOrgs.has(orgId)) return Promise.resolve(false);
     this.mutate();
     this.noRegisterOrgs.add(orgId);
+    return Promise.resolve(true);
+  }
+  /** Every call, changing or not, with the patch it asked for. */
+  readonly portalPolicyCalls: { orgId: string; patch: OrgLoginPolicyPatch }[] = [];
+  private readonly pinnedPolicies = new Map<string, OrgLoginPolicyPatch>();
+  ensureOrgLoginPolicy(orgId: string, patch: OrgLoginPolicyPatch): Promise<boolean> {
+    this.portalPolicyCalls.push({ orgId, patch });
+    const pinned = this.pinnedPolicies.get(orgId);
+    if (pinned && JSON.stringify(pinned) === JSON.stringify(patch)) return Promise.resolve(false);
+    this.mutate();
+    this.pinnedPolicies.set(orgId, { ...patch });
     return Promise.resolve(true);
   }
   enableRoleAssertion(): Promise<void> {

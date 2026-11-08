@@ -259,6 +259,13 @@ export interface ZitadelApi {
    */
   ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean>;
 
+  /**
+   * Pins the org's login policy to `patch`. An inherited policy always becomes a custom one (so a later
+   * change of the instance policy cannot reach the org), a custom one that differs is updated, and a
+   * matching custom one is left alone. Returns true when it wrote something, false when nothing changed.
+   */
+  ensureOrgLoginPolicy(orgId: string, patch: Readonly<OrgLoginPolicyPatch>): Promise<boolean>;
+
   /** Returns true when a provider was created (false: already present). */
   ensureSmtp(spec: SmtpSpec): Promise<boolean>;
 
@@ -293,6 +300,25 @@ export type SecondFactorType =
   | 'SECOND_FACTOR_TYPE_U2F'
   | 'SECOND_FACTOR_TYPE_OTP_EMAIL'
   | 'SECOND_FACTOR_TYPE_OTP_SMS';
+/** The org login-policy settings a caller pins (management v1 field names). */
+export interface OrgLoginPolicyPatch {
+  allowRegister: boolean;
+  forceMfa: boolean;
+  forceMfaLocalOnly?: boolean;
+  /** A protobuf duration such as `0s`. */
+  mfaInitSkipLifetime?: string;
+}
+/**
+ * The customer org's portal login policy: no self-registration, MFA forced and never skippable.
+ * Duplicated from PORTAL_LOGIN_POLICY in apps/api/src/platform/users/zitadel-admin.client.ts (the seed
+ * cannot import the API); keep the two in step.
+ */
+export const PORTAL_LOGIN_POLICY: Readonly<OrgLoginPolicyPatch> = {
+  allowRegister: false,
+  forceMfa: true,
+  forceMfaLocalOnly: false,
+  mfaInitSkipLifetime: '0s',
+};
 /** The login-policy values U6 wants: MFA required for everyone, never skippable. */
 export const FORCE_MFA_POLICY: LoginPolicy = {
   forceMfa: true,
@@ -938,6 +964,49 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
       // Update has no factor or IDP lists: those have their own endpoints and stay as they are.
       await this.transport.put(ENDPOINTS.orgLoginPolicy, body, asOrg);
     }
+    return true;
+  }
+
+  async ensureOrgLoginPolicy(
+    orgId: string,
+    patch: Readonly<OrgLoginPolicyPatch>,
+  ): Promise<boolean> {
+    const asOrg = { 'x-zitadel-orgid': orgId };
+    const current = parse(
+      LoginPolicyResponse,
+      await this.transport.get(ENDPOINTS.orgLoginPolicy, asOrg),
+      'GetLoginPolicy',
+    );
+    const { policy } = current;
+    const inherited = policy.isDefault || current.isDefault;
+    const matches = Object.entries(patch).every(([key, value]) => policy[key] === value);
+    if (!inherited && matches) return false;
+
+    const body: Record<string, unknown> = {};
+    for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+    Object.assign(body, patch);
+
+    if (inherited) {
+      // Same refusal as ensureOrgLoginPolicyNoRegister: IDP links cannot be copied faithfully.
+      if (policy.idps.length > 0) {
+        throw new Error(
+          'The inherited login policy has identity provider links; copy them by hand into a custom org policy.',
+        );
+      }
+      try {
+        await this.transport.post(
+          ENDPOINTS.orgLoginPolicy,
+          { ...body, secondFactors: policy.secondFactors, multiFactors: policy.multiFactors },
+          asOrg,
+        );
+        return true;
+      } catch (error) {
+        // The custom policy appeared in the meantime: update that one instead.
+        if (!(error instanceof ZitadelError && error.status === 409)) throw error;
+      }
+    }
+    // Update has no factor or IDP lists: those have their own endpoints and stay as they are.
+    await this.transport.put(ENDPOINTS.orgLoginPolicy, body, asOrg);
     return true;
   }
 
