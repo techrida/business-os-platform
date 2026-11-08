@@ -75,3 +75,32 @@ describe('settingValueText', () => {
     expect(settingValueText({ a: 1 })).toBe('{\n  "a": 1\n}');
   });
 });
+
+describe('parseSettingInput: the selling entity', () => {
+  it('turns an empty PAN/VAT field into null and checks the shape of a number', () => {
+    expect(parseSettingInput('entity.pan_vat_no', [' 301234567 '])).toEqual({
+      ok: true,
+      value: '301234567',
+    });
+    expect(parseSettingInput('entity.pan_vat_no', [''])).toEqual({ ok: true, value: null });
+    expect(parseSettingInput('entity.pan_vat_no', ['  '])).toEqual({ ok: true, value: null });
+    expect(parseSettingInput('entity.pan_vat_no', ['12 34']).ok).toBe(false);
+  });
+
+  it('parses the address from JSON, an empty field is null, a bad one is refused', () => {
+    const address = { line1: 'Kupondole', city: 'Lalitpur', country: 'NP' };
+    expect(parseSettingInput('entity.address', [JSON.stringify(address)])).toEqual({
+      ok: true,
+      value: address,
+    });
+    expect(parseSettingInput('entity.address', [''])).toEqual({ ok: true, value: null });
+    expect(parseSettingInput('entity.address', ['{']).ok).toBe(false);
+    expect(parseSettingInput('entity.address', ['{"city":"Lalitpur","country":"NP"}']).ok).toBe(
+      false,
+    );
+  });
+
+  it('shows an unset value as an empty field, not the word null', () => {
+    expect(settingValueText(null)).toBe('');
+  });
+});
