@@ -18,8 +18,9 @@ import { type Keyring, openSessionValue, sealSessionValue } from './session-cryp
  * Valkey at `ws:sess:<SHA-256 of the id, hex>` and never reach the browser. The key is hashed so
  * that anyone who can list keys (KEYS, SCAN, an AOF or RDB file) learns no usable cookie value,
  * and each value is an AES-256-GCM envelope bound to its key (see session-crypto.ts). The ID
- * token is not kept: nothing uses it after sign-in. All timestamps are epoch seconds,
- * the same unit as a JWT `exp`.
+ * token is kept in the record for one reader only: logout sends it as `id_token_hint`, without
+ * which ZITADEL does not end its own session. It never leaves this module through `getSession`,
+ * and is never logged. All timestamps are epoch seconds, the same unit as a JWT `exp`.
  */
 
 /** `__Host-` makes the browser insist on Secure, Path=/ and no Domain, so no subdomain can plant or read it. */
@@ -47,8 +48,12 @@ export interface Session {
   lastSeenAt: number;
 }
 
-/** What is stored in Valkey: the session minus its id (the id is the key). */
-type StoredSession = Omit<Session, 'id'>;
+/**
+ * What is stored in Valkey: the session minus its id (the id is the key), plus the ID token,
+ * which only `peekSession` hands out (to logout). `Session` leaves it out on purpose, so no
+ * Server Component holds it one prop away from the browser.
+ */
+type StoredSession = Omit<Session, 'id'> & { idToken?: string };
 
 const StoredSessionSchema = z.object({
   sub: z.string().min(1),
@@ -57,6 +62,7 @@ const StoredSessionSchema = z.object({
   roles: z.array(z.string()),
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
+  idToken: z.string().min(1).optional(),
   accessExp: z.number().int(),
   createdAt: z.number().int(),
   lastSeenAt: z.number().int(),
@@ -167,6 +173,7 @@ function toRecord(data: StoredSession): StoredSession {
     roles: [...data.roles],
     accessToken: data.accessToken,
     ...(data.refreshToken !== undefined ? { refreshToken: data.refreshToken } : {}),
+    ...(data.idToken !== undefined ? { idToken: data.idToken } : {}),
     accessExp: data.accessExp,
     createdAt: data.createdAt,
     lastSeenAt: data.lastSeenAt,
@@ -183,8 +190,12 @@ function parseRecord(raw: string): StoredSession | null {
   }
   const parsed = StoredSessionSchema.safeParse(json);
   if (!parsed.success) return null;
-  const { refreshToken, ...rest } = parsed.data;
-  return toRecord({ ...rest, ...(refreshToken !== undefined ? { refreshToken } : {}) });
+  const { refreshToken, idToken, ...rest } = parsed.data;
+  return toRecord({
+    ...rest,
+    ...(refreshToken !== undefined ? { refreshToken } : {}),
+    ...(idToken !== undefined ? { idToken } : {}),
+  });
 }
 
 /** Built from the env on each call, so it never outlives a reset env in tests. */
@@ -231,7 +242,7 @@ function isExpired(record: StoredSession, now: number): boolean {
 
 /** Stores a new session and returns its id. The caller sets the cookie with `setSessionCookie`. */
 export async function createSession(
-  data: Omit<Session, 'id' | 'createdAt' | 'lastSeenAt'>,
+  data: Omit<StoredSession, 'createdAt' | 'lastSeenAt'>,
 ): Promise<string> {
   const id = randomBytes(32).toString('base64url');
   const now = nowSeconds();
@@ -272,6 +283,23 @@ export async function clearSessionCookie(): Promise<void> {
 export async function destroySession(id: string): Promise<void> {
   if (!SESSION_ID_PATTERN.test(id)) return;
   await (await readyRedis()).del(sessionKey(id));
+}
+
+/**
+ * Reads a live record by its cookie id for logout, which needs the ID token as `id_token_hint`
+ * before it destroys the record. Unlike `getSession` it never slides the TTL, refreshes or
+ * deletes anything. Null for a malformed id, a missing, undecryptable or expired record.
+ *
+ * Throws on Valkey errors: the caller logs only the error name (ioredis errors carry the
+ * command arguments) and carries on without a hint.
+ */
+export async function peekSession(id: string): Promise<{ idToken?: string } | null> {
+  if (!SESSION_ID_PATTERN.test(id)) return null;
+  const raw = await (await readyRedis()).get(sessionKey(id));
+  if (raw === null) return null;
+  const record = unseal(id, raw);
+  if (!record || isExpired(record, nowSeconds())) return null;
+  return record.idToken !== undefined ? { idToken: record.idToken } : {};
 }
 
 /**
@@ -391,6 +419,7 @@ async function refreshUnderLock(
       accessExp: tokens.accessExp,
       // Keep the old values when the provider does not send new ones.
       ...(tokens.refreshToken !== undefined ? { refreshToken: tokens.refreshToken } : {}),
+      ...(tokens.idToken !== undefined ? { idToken: tokens.idToken } : {}),
       lastSeenAt: now,
     });
     // XX: only if the session still exists, so a concurrent logout is not undone. We hold the
@@ -408,8 +437,10 @@ async function refreshUnderLock(
   }
 }
 
+/** The public form: never carries the ID token (see StoredSession). */
 function toSession(id: string, record: StoredSession): Session {
-  return { id, ...toRecord(record) };
+  const { idToken: _idToken, ...rest } = toRecord(record);
+  return { id, ...rest };
 }
 
 // ---------------------------------------------------------------------------------------------

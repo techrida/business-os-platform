@@ -16,6 +16,7 @@ import {
   getRedis,
   getSession,
   IDLE_SECONDS,
+  peekSession,
   safeReturnTo,
   SESSION_COOKIE,
   setSessionCookie,
@@ -131,11 +132,19 @@ describe('createSession', () => {
     expect(await redis.ttl(keyFor(id))).toBe(IDLE_SECONDS);
   });
 
-  it('never stores the ID token, even when the caller passes one', async () => {
-    // Nothing reads it since logout stopped sending id_token_hint (A3).
-    const withIdToken = { ...BASE, idToken: 'id-secret-1' };
-    const id = await createSession(withIdToken);
-    expect(await stored(id)).not.toHaveProperty('idToken');
+  // Logout sends it as id_token_hint: without it ZITADEL keeps its own session alive.
+  it('stores the ID token only inside the encrypted envelope', async () => {
+    const idToken = 'id-secret-1.payload.sig';
+    const id = await createSession({ ...BASE, idToken });
+    expect(await stored(id)).toHaveProperty('idToken', idToken);
+    const raw = (await redis.get(keyFor(id))) ?? '';
+    for (const form of [
+      idToken,
+      Buffer.from(idToken).toString('base64'),
+      Buffer.from(idToken).toString('base64url'),
+    ]) {
+      expect(raw).not.toContain(form);
+    }
   });
 
   it('gives every session a different id', async () => {
@@ -278,15 +287,27 @@ describe('getSession token refresh', () => {
     expect(await redis.exists(`${keyFor(id)}:refresh`)).toBe(0); // lock released
   });
 
-  it('does not store an ID token that comes back from the refresh', async () => {
-    const id = await signedIn({ accessExp: T0_SECONDS + 10 });
+  it('stores a new ID token from the refresh but never returns it from getSession', async () => {
+    const id = await createSession({ ...BASE, idToken: 'id-secret-1', accessExp: T0_SECONDS + 10 });
+    jar.values.set(SESSION_COOKIE, id);
     vi.mocked(refreshTokens).mockResolvedValue({
       accessToken: 'access-2',
       idToken: 'id-secret-2',
       accessExp: T0_SECONDS + 300,
     });
     expect(await getSession()).not.toHaveProperty('idToken');
-    expect(await stored(id)).not.toHaveProperty('idToken');
+    expect(await stored(id)).toHaveProperty('idToken', 'id-secret-2');
+  });
+
+  it('keeps the old ID token when the refresh sends none', async () => {
+    const id = await createSession({ ...BASE, idToken: 'id-secret-1', accessExp: T0_SECONDS + 10 });
+    jar.values.set(SESSION_COOKIE, id);
+    vi.mocked(refreshTokens).mockResolvedValue({
+      accessToken: 'access-2',
+      accessExp: T0_SECONDS + 300,
+    });
+    expect(await getSession()).not.toHaveProperty('idToken');
+    expect(await stored(id)).toHaveProperty('idToken', 'id-secret-1');
   });
 
   it('does not refresh with 60 s or more left', async () => {
@@ -387,6 +408,46 @@ describe('getSession when Valkey errors', () => {
     vi.spyOn(redis, 'set').mockRejectedValue(replyError([]));
     await expect(getSession()).resolves.toBeNull();
     expect(refreshTokens).not.toHaveBeenCalled();
+  });
+});
+
+describe('peekSession', () => {
+  it('returns the ID token of a live record without sliding its TTL or lastSeenAt', async () => {
+    const id = await createSession({ ...BASE, idToken: 'id-secret-1' });
+    advance(100);
+    expect(await peekSession(id)).toEqual({ idToken: 'id-secret-1' });
+    expect(await redis.ttl(keyFor(id))).toBe(IDLE_SECONDS - 100);
+    expect(await stored(id)).toHaveProperty('lastSeenAt', T0_SECONDS);
+  });
+
+  it('returns a record with no idToken when none was stored', async () => {
+    const id = await createSession(BASE);
+    expect(await peekSession(id)).toEqual({});
+  });
+
+  it('never refreshes, even when the access token is about to expire', async () => {
+    const id = await createSession({ ...BASE, idToken: 'id-secret-1', accessExp: T0_SECONDS + 5 });
+    expect(await peekSession(id)).toEqual({ idToken: 'id-secret-1' });
+    expect(refreshTokens).not.toHaveBeenCalled();
+  });
+
+  it('is null for an idle-expired record and does not delete it', async () => {
+    const id = await createSession({ ...BASE, idToken: 'id-secret-1' });
+    // Rewrite the record as idle for too long, but keep the key alive.
+    const old = { ...BASE, idToken: 'id-secret-1', createdAt: T0_SECONDS, lastSeenAt: T0_SECONDS };
+    advance(IDLE_SECONDS + 1);
+    await redis.set(keyFor(id), sealSessionValue(JSON.stringify(old), keyFor(id), RING));
+    expect(await peekSession(id)).toBeNull();
+    expect(await redis.exists(keyFor(id))).toBe(1);
+  });
+
+  it('is null for a missing record, a malformed id and a value that does not decrypt', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await peekSession('A'.repeat(43))).toBeNull();
+    expect(await peekSession('not-an-id')).toBeNull();
+    const id = await createSession(BASE);
+    await redis.set(keyFor(id), 'garbage');
+    expect(await peekSession(id)).toBeNull();
   });
 });
 
