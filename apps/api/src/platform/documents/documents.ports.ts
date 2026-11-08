@@ -17,9 +17,6 @@ export interface ScanJobData {
   organizationId: string;
 }
 
-/** How many times BullMQ tries a scan before the version is marked `scan_failed`. */
-export const SCAN_ATTEMPTS = 3;
-
 /**
  * An owner record type (for example a test memo) tells documents who may touch its attachments.
  * Registered by the module that owns the record; U8 registers 'test_memo'.
