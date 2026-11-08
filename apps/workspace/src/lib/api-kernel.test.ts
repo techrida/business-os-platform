@@ -4,6 +4,7 @@ import { ApiError } from './api';
 import {
   actOnApproval,
   createDocument,
+  createMemo,
   failureOf,
   getApprovalRequest,
   getInbox,
@@ -16,6 +17,7 @@ import {
   openSignedFile,
   previewRoute,
   submitMemo,
+  updateMemo,
   uploadDocumentContent,
 } from './api-kernel';
 import { __resetEnvForTests } from './env';
@@ -527,5 +529,67 @@ describe('audit', () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.action).toBe('test_memos.update');
     expect(lastCall().url).toBe(`http://api:3001/v1/audit?entityId=${ID_A}&limit=50`);
+  });
+});
+
+describe('x-bos-id-token stays on decisions only (K7)', () => {
+  // A regression guard: none of these calls takes an ID token, so none may ever send one. The
+  // header is the API's step-up proof and has no business on reads, memos, files or audit.
+  const created = {
+    documentId: ID_A,
+    versionId: ID_B,
+    uploadPath: `/v1/documents/${ID_A}/versions/${ID_B}/content`,
+  };
+  const calls: [string, () => Promise<unknown>][] = [
+    ['getInbox', () => getInbox(session)],
+    ['getApprovalRequest', () => getApprovalRequest(session, ID_A)],
+    ['previewRoute', () => previewRoute(session, { documentType: 'test_memo', facts: {} })],
+    [
+      'createMemo',
+      () =>
+        createMemo(session, {
+          title: 't',
+          body: 'b',
+          amount: '1.00',
+          currency: 'NPR',
+        }),
+    ],
+    ['getMemo', () => getMemo(session, ID_A)],
+    ['updateMemo', () => updateMemo(session, ID_A, { title: 't' })],
+    ['submitMemo', () => submitMemo(session, ID_A)],
+    [
+      'createDocument',
+      () =>
+        createDocument(session, {
+          ownerType: 'test_memo',
+          ownerId: ID_A,
+          filename: 'quote.pdf',
+          declaredMime: 'application/pdf',
+          sizeBytes: 1,
+        }),
+    ],
+    [
+      'uploadDocumentContent',
+      () =>
+        uploadDocumentContent(session, created, {
+          body: new ReadableStream<Uint8Array>(),
+          contentLength: 1,
+          contentType: 'application/pdf',
+        }),
+    ],
+    ['issueDocumentLink', () => issueDocumentLink(session, ID_A, ID_B)],
+    ['openSignedFile', () => openSignedFile(session, { url: '/v1/files/tok', expiresAt: WHEN })],
+    ['listNotifications', () => listNotifications(session, { limit: 5 })],
+    ['getUnreadCount', () => getUnreadCount(session)],
+    ['markNotificationRead', () => markNotificationRead(session, ID_A)],
+    ['listAudit', () => listAudit(session, { entityId: ID_A })],
+  ];
+
+  it.each(calls)('%s never sends x-bos-id-token', async (_name, run) => {
+    // Any answer will do: the request headers are what is under test, not the parsing.
+    fetchMock.mockResolvedValue(reply({}, 500));
+    await run().catch(() => undefined);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall().headers.has('x-bos-id-token')).toBe(false);
   });
 });
