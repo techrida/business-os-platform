@@ -481,13 +481,32 @@ describe('P2 exit: lead to won over HTTP', () => {
 
   it('7. the worker renders the PDF (fake Gotenberg) and the scan marks it clean (fake clamd)', async () => {
     // The sweeper the worker wired, run now instead of waiting for its one-minute schedule. The scheduled run
-    // may claim the version first; either way the poll below waits for the result.
-    await worker.app.get(QuotationRenderSweeper).sweep();
+    // may claim the version first (this sweep then finds nothing); either way the poll below waits for the
+    // result. A failed render is retried only after FAILED_RETRY_MS (5 min), far past the poll, so a failure
+    // from either run stops the test at once, naming the kind or the state, instead of timing out.
+    const swept = await worker.app.get(QuotationRenderSweeper).sweep();
+    expect(swept.failures, JSON.stringify(swept)).toEqual([]);
     const clean = await pollUntil(
       'the rendered quotation PDF to scan clean',
       async () => {
+        const { rows } = await world.pool.query<{ render_state: string }>(
+          'SELECT render_state FROM app.quotation_versions WHERE id = $1',
+          [s.versionId],
+        );
+        const renderState = rows[0]?.render_state;
+        if (renderState === 'failed') {
+          throw new Error(
+            `the render failed (render_state failed); this sweep: ${JSON.stringify(swept)}`,
+          );
+        }
         const v = await getVersion(s.salesAuth);
-        return { done: v.renderedScanStatus === 'clean' ? v : undefined, last: v };
+        if (v.renderedScanStatus === 'infected' || v.renderedScanStatus === 'scan_failed') {
+          throw new Error(`the rendered PDF scan ended ${v.renderedScanStatus}`);
+        }
+        return {
+          done: v.renderedScanStatus === 'clean' ? v : undefined,
+          last: { renderState, version: v },
+        };
       },
       60_000,
       500,
