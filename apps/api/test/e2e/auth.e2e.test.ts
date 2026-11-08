@@ -215,7 +215,7 @@ describe('POST /v1/telemetry/vitals', () => {
   });
 
   it('answers 202 for a valid LCP sample', async () => {
-    const token = await t.token(e2e.staff);
+    const token = await t.token(e2e.staff, { roles: ['sales'] });
     const res = await t
       .http()
       .post('/v1/telemetry/vitals')
@@ -225,7 +225,7 @@ describe('POST /v1/telemetry/vitals', () => {
   });
 
   it('answers 413 payload_too_large for a 3 KB body (valid JSON, under the 16 kb parser limit)', async () => {
-    const token = await t.token(e2e.staff);
+    const token = await t.token(e2e.staff, { roles: ['sales'] });
     const body = { ...lcp, id: 'x'.repeat(3000) };
     expect(JSON.stringify(body).length).toBeGreaterThan(3000);
     const res = await t
@@ -237,7 +237,7 @@ describe('POST /v1/telemetry/vitals', () => {
   });
 
   it('answers 413 payload_too_large for a body over the 16 kb parser limit', async () => {
-    const token = await t.token(e2e.staff);
+    const token = await t.token(e2e.staff, { roles: ['sales'] });
     const res = await t
       .http()
       .post('/v1/telemetry/vitals')
@@ -247,7 +247,7 @@ describe('POST /v1/telemetry/vitals', () => {
   });
 
   it('answers 400 bad_request for a sample that fails validation', async () => {
-    const token = await t.token(e2e.staff);
+    const token = await t.token(e2e.staff, { roles: ['sales'] });
     const res = await t
       .http()
       .post('/v1/telemetry/vitals')
