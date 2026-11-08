@@ -108,13 +108,16 @@ CREATE INDEX "customer_contacts_tenant_phone_e164_idx" ON "app"."customer_contac
 
 -- The KYB (know your business) case of a customer: one per customer, tenant-level like the party it verifies.
 -- checklist is the JSON array of ChecklistItem (contracts/crm.ts). An approved or rejected case names its reviewer
--- and decision time; a rejection needs a reason (the DTO's decisionNote).
+-- and decision time; a rejection needs a reason (the DTO's decisionNote). A submitted, approved or rejected case
+-- also names who submitted it and when, so the reviewer can be checked against the submitter.
 CREATE TABLE "app"."verification_cases" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
 	"party_id" uuid NOT NULL,
 	"status" text DEFAULT 'draft' NOT NULL,
 	"checklist" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"submitted_by_user_id" uuid,
+	"submitted_at" timestamp with time zone,
 	"reviewer_user_id" uuid,
 	"decided_at" timestamp with time zone,
 	"reason" text,
@@ -125,9 +128,11 @@ CREATE TABLE "app"."verification_cases" (
 	CONSTRAINT "verification_cases_tenant_party_unique" UNIQUE("tenant_id", "party_id"),
 	CONSTRAINT "verification_cases_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "app"."tenants"("id"),
 	CONSTRAINT "verification_cases_customer_fk" FOREIGN KEY ("tenant_id", "party_id") REFERENCES "app"."customers"("tenant_id", "id"),
+	CONSTRAINT "verification_cases_submitter_user_fk" FOREIGN KEY ("tenant_id", "submitted_by_user_id") REFERENCES "app"."users"("tenant_id", "id"),
 	CONSTRAINT "verification_cases_reviewer_user_fk" FOREIGN KEY ("tenant_id", "reviewer_user_id") REFERENCES "app"."users"("tenant_id", "id"),
 	CONSTRAINT "verification_cases_status_check" CHECK ("status" in ('draft', 'submitted', 'approved', 'rejected', 'expired')),
 	CONSTRAINT "verification_cases_checklist_check" CHECK (jsonb_typeof("checklist") = 'array'),
+	CONSTRAINT "verification_cases_submission_check" CHECK ("status" NOT IN ('submitted', 'approved', 'rejected') OR ("submitted_by_user_id" IS NOT NULL AND "submitted_at" IS NOT NULL)),
 	CONSTRAINT "verification_cases_decision_check" CHECK ("status" NOT IN ('approved', 'rejected') OR ("reviewer_user_id" IS NOT NULL AND "decided_at" IS NOT NULL)),
 	CONSTRAINT "verification_cases_reason_check" CHECK ("status" <> 'rejected' OR "reason" IS NOT NULL),
 	CONSTRAINT "verification_cases_version_check" CHECK ("version" >= 1)
