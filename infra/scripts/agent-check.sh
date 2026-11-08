@@ -2,13 +2,14 @@
 # Focused check for a subagent: copy the Windows worktree (minus node_modules) into a scratch dir in WSL,
 # give it its own node_modules from the pnpm store, run ONE light command, then delete the scratch dir.
 # Usage (from Windows):
-#   wsl -d Ubuntu -e bash /mnt/f/Projects/Techrida/Business-OS/bos-p0/infra/scripts/agent-check.sh <unit> "<cmd>"
+#   wsl -d Ubuntu -e bash /mnt/f/Projects/Techrida/Business-OS/<worktree>/infra/scripts/agent-check.sh <unit> "<cmd>"
 # Example: ... agent-check.sh u4a "pnpm --filter @bos/api exec vitest run src/platform/auth"
 # Only for light checks (one test file / a folder of unit tests / eslint of named files). Builds, full suites,
 # docker and e2e are the lead's job.
 set -euo pipefail
 UNIT="${1:?unit name}"; CMD="${2:?command}"
-SRC=/mnt/f/Projects/Techrida/Business-OS/bos-p0
+# The worktree this script lives in (infra/scripts/ -> repo root), so any worktree checks its own tree.
+SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 CLONE="$HOME/src/business-os-platform"
 DIR="/var/tmp/agents-$UNIT"
 trap 'rm -rf "$DIR"' EXIT
