@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ENDPOINTS,
   FORCE_MFA_POLICY,
+  PORTAL_LOGIN_POLICY,
   ZitadelClient,
   ZitadelError,
   createFetchTransport,
@@ -243,6 +244,103 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
     await expect(client(transport).ensureOrgLoginPolicyNoRegister('o')).rejects.toThrow(
       /identity provider/i,
     );
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+});
+
+describe('ensureOrgLoginPolicy (pins the customer org policy)', () => {
+  const inherited = {
+    isDefault: true,
+    policy: {
+      isDefault: true,
+      allowUsernamePassword: true,
+      allowRegister: false,
+      allowExternalIdp: true,
+      forceMfa: true,
+      forceMfaLocalOnly: false,
+      mfaInitSkipLifetime: '0s',
+      passwordCheckLifetime: '864000s',
+      secondFactors: ['SECOND_FACTOR_TYPE_OTP'],
+      multiFactors: [],
+    },
+  };
+  const custom = (over: Record<string, unknown>) => ({
+    isDefault: false,
+    policy: { ...inherited.policy, isDefault: false, ...over },
+  });
+
+  it('turns an inherited policy into a custom one even when the values already match', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: inherited });
+    expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+      true,
+    );
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'POST']);
+    expect(calls.every((c) => c.headers?.['x-zitadel-orgid'] === 'cust-org')).toBe(true);
+    expect(calls[1]?.body).toEqual({
+      allowUsernamePassword: true,
+      allowExternalIdp: true,
+      passwordCheckLifetime: '864000s',
+      ...PORTAL_LOGIN_POLICY,
+      secondFactors: ['SECOND_FACTOR_TYPE_OTP'],
+      multiFactors: [],
+    });
+  });
+
+  it('updates a custom policy that differs, keeping every other setting', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.orgLoginPolicy]: custom({ allowRegister: true, forceMfa: false }),
+    });
+    expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+      true,
+    );
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+    expect(calls[1]?.body).toEqual({
+      allowUsernamePassword: true,
+      allowExternalIdp: true,
+      passwordCheckLifetime: '864000s',
+      ...PORTAL_LOGIN_POLICY,
+    });
+  });
+
+  it('sends nothing but the read when a custom policy already matches', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: custom({}) });
+    expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+      false,
+    );
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+
+  it('updates a custom policy whose omitted false boolean differs from a true patch', async () => {
+    // Protobuf JSON omits false: forceMfa is absent here, so it is false and must be updated.
+    const { forceMfa: _omit, ...rest } = inherited.policy;
+    const { transport, calls } = recording({
+      [ENDPOINTS.orgLoginPolicy]: { isDefault: false, policy: { ...rest, isDefault: false } },
+    });
+    expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+      true,
+    );
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+  });
+
+  it('falls back to an update when the custom policy appeared during the create', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.orgLoginPolicy]: (call: Call) =>
+        call.method === 'POST'
+          ? new ZitadelError(ENDPOINTS.orgLoginPolicy, 409, 'already_exists')
+          : inherited,
+    });
+    expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+      true,
+    );
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'POST', 'PUT']);
+  });
+
+  it('refuses to copy identity-provider links into a custom policy', async () => {
+    const withIdp = { ...inherited, policy: { ...inherited.policy, idps: [{ idpId: 'i1' }] } };
+    const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: withIdp });
+    await expect(
+      client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY),
+    ).rejects.toThrow(/identity provider/i);
     expect(calls.map((c) => c.method)).toEqual(['GET']);
   });
 });
