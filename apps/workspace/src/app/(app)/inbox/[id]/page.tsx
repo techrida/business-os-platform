@@ -4,6 +4,7 @@ import type { ApprovalRequestDto, InboxItemDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { QuotationApprovalSummary } from '@/components/p2/quotations/approval-summary';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
@@ -195,7 +196,9 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             title="What was submitted"
             description="A frozen copy from the moment of submission. Later edits do not change it."
           >
-            {facts.length === 0 ? (
+            {request.documentType === 'quotation_version' ? (
+              <QuotationApprovalSummary request={request} />
+            ) : facts.length === 0 ? (
               <p className={styles.note}>The snapshot is empty.</p>
             ) : (
               <FactList facts={facts} />
