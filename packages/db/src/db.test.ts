@@ -166,7 +166,7 @@ describe('check-tenancy', () => {
 
   it('fails on a table without organization_id', async () => {
     const { violations, message } = await violationsFor(
-      'CREATE TABLE app.bad_no_org (id uuid PRIMARY KEY, tenant_id uuid NOT NULL)',
+      'CREATE TABLE app.bad_no_org (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES app.tenants (id))',
     );
     expect(violations).toEqual([
       { table: 'app.bad_no_org', column: 'organization_id', problem: 'missing' },
@@ -176,7 +176,7 @@ describe('check-tenancy', () => {
 
   it('fails when a column is nullable', async () => {
     const { violations } = await violationsFor(
-      'CREATE TABLE app.bad_nullable (id uuid PRIMARY KEY, tenant_id uuid, organization_id uuid NOT NULL)',
+      'CREATE TABLE app.bad_nullable (id uuid PRIMARY KEY, tenant_id uuid REFERENCES app.tenants (id), organization_id uuid NOT NULL)',
     );
     expect(violations).toEqual([
       { table: 'app.bad_nullable', column: 'tenant_id', problem: 'nullable' },
@@ -185,7 +185,7 @@ describe('check-tenancy', () => {
 
   it('fails when a column is not a uuid', async () => {
     const { violations } = await violationsFor(
-      'CREATE TABLE app.bad_type (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, organization_id text NOT NULL)',
+      'CREATE TABLE app.bad_type (id uuid PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES app.tenants (id), organization_id text NOT NULL)',
     );
     expect(violations).toEqual([
       { table: 'app.bad_type', column: 'organization_id', problem: 'not uuid' },
