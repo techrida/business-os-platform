@@ -129,8 +129,15 @@ describe('QuotationExpirySweeper', () => {
   it('expires a version, then writes the audit event and the owner notice in the same transaction', async () => {
     const c = candidate(1);
     const { sweeper, calls, audit, txs } = setup({ candidates: [c] });
-    await expect(sweeper.sweep()).resolves.toEqual({ expired: 1, skipped: 0, failed: 0, expiring: 0 });
-    expect(calls.filter((x) => !x.startsWith('candidates'))).toEqual([
+    await expect(sweeper.sweep()).resolves.toEqual({
+      expired: 1,
+      skipped: 0,
+      failed: 0,
+      expiring: 0,
+    });
+    expect(
+      calls.filter((x) => !x.startsWith('candidates') && !x.startsWith('expiringCandidates')),
+    ).toEqual([
       `expire:${c.versionId}:2026-11-09`,
       `audit:${c.versionId}`,
       `notify:quotation.expired:${c.versionId}`,
@@ -178,7 +185,12 @@ describe('QuotationExpirySweeper', () => {
       candidates: [c],
       results: { [c.versionId]: expired({ ownerUserId: null }) },
     });
-    await expect(sweeper.sweep()).resolves.toEqual({ expired: 1, skipped: 0, failed: 0, expiring: 0 });
+    await expect(sweeper.sweep()).resolves.toEqual({
+      expired: 1,
+      skipped: 0,
+      failed: 0,
+      expiring: 0,
+    });
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(notify.notifyUser).not.toHaveBeenCalled();
   });
@@ -189,7 +201,12 @@ describe('QuotationExpirySweeper', () => {
       candidates: [c],
       results: { [c.versionId]: undefined },
     });
-    await expect(sweeper.sweep()).resolves.toEqual({ expired: 0, skipped: 1, failed: 0, expiring: 0 });
+    await expect(sweeper.sweep()).resolves.toEqual({
+      expired: 0,
+      skipped: 1,
+      failed: 0,
+      expiring: 0,
+    });
     expect(audit.record).not.toHaveBeenCalled();
     expect(notify.notifyUser).not.toHaveBeenCalled();
   });
@@ -201,7 +218,12 @@ describe('QuotationExpirySweeper', () => {
       candidates: [a, b],
       results: { [a.versionId]: new Error('boom') },
     });
-    await expect(sweeper.sweep()).resolves.toEqual({ expired: 1, skipped: 0, failed: 1, expiring: 0 });
+    await expect(sweeper.sweep()).resolves.toEqual({
+      expired: 1,
+      skipped: 0,
+      failed: 1,
+      expiring: 0,
+    });
     expect(calls).toContain(`audit:${b.versionId}`);
     expect(calls).not.toContain(`audit:${a.versionId}`);
   });
@@ -210,12 +232,22 @@ describe('QuotationExpirySweeper', () => {
     const a = candidate(1);
     const { sweeper, notify } = setup({ candidates: [a] });
     notify.notifyUser.mockRejectedValueOnce(new Error('notify down'));
-    await expect(sweeper.sweep()).resolves.toEqual({ expired: 0, skipped: 0, failed: 1, expiring: 0 });
+    await expect(sweeper.sweep()).resolves.toEqual({
+      expired: 0,
+      skipped: 0,
+      failed: 1,
+      expiring: 0,
+    });
   });
 
   it('does nothing when no version is due', async () => {
     const { sweeper, txs } = setup();
-    await expect(sweeper.sweep()).resolves.toEqual({ expired: 0, skipped: 0, failed: 0, expiring: 0 });
+    await expect(sweeper.sweep()).resolves.toEqual({
+      expired: 0,
+      skipped: 0,
+      failed: 0,
+      expiring: 0,
+    });
     expect(txs).toHaveLength(0);
   });
 });
