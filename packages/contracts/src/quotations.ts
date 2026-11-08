@@ -3,6 +3,7 @@
 // Only Draft and Returned versions are editable; every later change is a revision with a reason.
 import { z } from 'zod';
 
+import { RoutePlanSchema } from './approvals.js';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
 
@@ -274,6 +275,13 @@ export const UpdateQuotationDraftBodySchema = contentObject
   })
   .superRefine(contentChecks);
 export type UpdateQuotationDraftBody = z.infer<typeof UpdateQuotationDraftBodySchema>;
+
+/**
+ * Body of `PUT /v1/quotations/:id/versions/:vid`: the draft content plus `expectedVersion`. The
+ * same schema as `UpdateQuotationDraftBodySchema` under the name of the route it belongs to.
+ */
+export const UpdateQuotationVersionBodySchema = UpdateQuotationDraftBodySchema;
+export type UpdateQuotationVersionBody = UpdateQuotationDraftBody;
 
 /** Ask the server for totals without saving. The web app shows this and never does the maths itself. */
 export const QuotationPreviewBodySchema = z.strictObject({
@@ -552,3 +560,54 @@ export const QuotationApprovalSnapshotSchema = z.object({
   revisionNo: z.number().int().min(1),
 });
 export type QuotationApprovalSnapshot = z.infer<typeof QuotationApprovalSnapshotSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Quote builder: preview result and lookup lists
+// ---------------------------------------------------------------------------------------------
+
+/** `POST .../versions/:vid/preview`: server totals plus the approval route dry-run. */
+export const PreviewResultSchema = z.object({
+  totals: QuotationTotalsSchema,
+  taxSummary: z.array(QuotationTaxSummaryItemSchema),
+  /** Per-line figures the pricing function computed, when the API sends them. */
+  lines: z
+    .array(
+      QuotationLineDtoSchema.pick({
+        lineNo: true,
+        gross: true,
+        discountAlloc: true,
+        taxable: true,
+      }),
+    )
+    .optional(),
+  /** The NPR equivalent and its rate, for INR and USD documents. */
+  nprSnapshot: NprSnapshotSchema.nullable().optional(),
+  /** Who must approve and why (`previewRoute` on the facts of this version). */
+  route: RoutePlanSchema,
+});
+export type PreviewResult = z.infer<typeof PreviewResultSchema>;
+
+/** The tax code kinds of the `tax_codes` table. */
+export const TAX_CODE_KINDS = ['vat', 'exempt', 'zero', 'reverse_charge'] as const;
+export const TaxCodeKindSchema = z.enum(TAX_CODE_KINDS);
+
+/**
+ * One row of `GET /v1/tax-codes`. The builder needs `id` and `label`; the registry fields are
+ * optional so a list that carries them still parses.
+ */
+export const TaxCodeSchema = z.object({
+  id: z.guid(),
+  /** Short name such as "VAT 13%". */
+  label: z.string(),
+  /** Percent, for the label only; the server does the tax maths. */
+  rate: z.string().optional(),
+  code: z.string().optional(),
+  kind: TaxCodeKindSchema.optional(),
+  /** Basis points (1300 is 13%). */
+  rateBp: z.number().int().min(0).max(10000).optional(),
+});
+export type TaxCode = z.infer<typeof TaxCodeSchema>;
+
+/** One row of `GET /v1/payment-terms`. */
+export const PaymentTermSchema = z.object({ id: z.guid(), label: z.string() });
+export type PaymentTerm = z.infer<typeof PaymentTermSchema>;
