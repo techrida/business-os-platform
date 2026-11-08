@@ -27,6 +27,8 @@ import {
   approvalRequests,
   approvalSteps,
   delegations,
+  idpOrgs,
+  userEntities,
   users as appUsers,
   workflowDefinitions,
   workflowVersions,
@@ -781,11 +783,19 @@ export class ApprovalsService {
         })
         .from(approvalGroups)
         .leftJoin(approvalGroupMembers, eq(approvalGroupMembers.groupId, approvalGroups.id))
-        // Only active people approve, the same rule as userIdsWithRole; an inactive member drops out
+        // Only active members of the request's entity approve, the same rule as userIdsWithRole
+        // (ADR 0027 §3); an inactive member, or one without a membership in this entity, drops out
         // here, so their delegates (who act on their behalf) drop out with them.
         .leftJoin(
           appUsers,
-          and(eq(appUsers.id, approvalGroupMembers.userId), eq(appUsers.status, 'active')),
+          and(
+            eq(appUsers.tenantId, approvalGroupMembers.tenantId),
+            eq(appUsers.id, approvalGroupMembers.userId),
+            eq(appUsers.status, 'active'),
+            sql`EXISTS (SELECT 1 FROM ${userEntities} WHERE ${userEntities.tenantId} = ${appUsers.tenantId}
+              AND ${userEntities.userId} = ${appUsers.id}
+              AND ${userEntities.organizationId} = ${scope.organizationId})`,
+          ),
         )
         .where(
           and(
@@ -827,20 +837,9 @@ export class ApprovalsService {
     return { roleMembers, groups, delegations: delegationRows, activeUserIds };
   }
 
-  /** The ids among `ids` of active users of this tenant and org. */
-  async activeUserIds(q: Q, scope: TxScope, ids: readonly string[]): Promise<string[]> {
-    const rows = await q
-      .select({ id: appUsers.id })
-      .from(appUsers)
-      .where(
-        and(
-          eq(appUsers.tenantId, scope.tenantId),
-          eq(appUsers.organizationId, scope.organizationId),
-          eq(appUsers.status, 'active'),
-          inArray(appUsers.id, [...ids]),
-        ),
-      );
-    return rows.map((r) => r.id);
+  /** The ids among `ids` of active staff users of this tenant with a membership in the entity. */
+  activeUserIds(q: Q, scope: TxScope, ids: readonly string[]): Promise<string[]> {
+    return activeEntityStaff(q, scope, ids);
   }
 
   directory(
@@ -1067,6 +1066,42 @@ export class ApprovalsService {
     if (s === undefined) throw new Error(`no approval subject registered for "${documentType}"`);
     return s;
   }
+}
+
+/**
+ * The ids among `ids` of active staff users of the tenant who have a membership in the scope's entity
+ * (ADR 0027 §3): `app.users` is tenant-scoped, so the entity comes from `app.user_entities`, and the
+ * staff IdP org tells staff from portal users. Shared with the admin service's user checks.
+ */
+export async function activeEntityStaff(
+  q: Q,
+  scope: TxScope,
+  ids: readonly string[],
+): Promise<string[]> {
+  const rows = await q
+    .select({ id: appUsers.id })
+    .from(appUsers)
+    .innerJoin(
+      userEntities,
+      and(
+        eq(userEntities.tenantId, appUsers.tenantId),
+        eq(userEntities.userId, appUsers.id),
+        eq(userEntities.organizationId, scope.organizationId),
+      ),
+    )
+    .innerJoin(
+      idpOrgs,
+      and(eq(idpOrgs.tenantId, appUsers.tenantId), eq(idpOrgs.id, appUsers.idpOrgId)),
+    )
+    .where(
+      and(
+        eq(appUsers.tenantId, scope.tenantId),
+        eq(appUsers.status, 'active'),
+        eq(idpOrgs.kind, 'staff'),
+        inArray(appUsers.id, [...ids]),
+      ),
+    );
+  return rows.map((r) => r.id);
 }
 
 /** Scope and actor live in the transaction (withTx set them); the kernel never reads ctx() here. */

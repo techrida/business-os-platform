@@ -7,7 +7,6 @@ import {
   approvalGroupMembers,
   approvalGroups,
   delegations,
-  users as appUsers,
   workflowDefinitions,
   workflowVersions,
 } from '@bos/db';
@@ -23,7 +22,7 @@ import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { APPROVALS_CLOCK, ApprovalsAudit, ApprovalsCaller, type Clock } from './ports';
-import { pgCode } from './requests.service';
+import { activeEntityStaff, pgCode } from './requests.service';
 
 export interface WorkflowVersionDto {
   id: string;
@@ -252,8 +251,9 @@ export class ApprovalsAdminService {
   }
 
   /**
-   * Every id must be an active user of this tenant and org. Group members and delegations hold bare
-   * uuids (no FK to app.users), so without this a typo or another org's user id is stored silently.
+   * Every id must be an active staff user of this tenant with a membership in the acting entity
+   * (ADR 0027 §3). Group members and delegations hold bare uuids (no FK to app.users), so without this
+   * a typo or the id of a user who may not act for this entity is stored silently.
    */
   private async assertActiveUsers(
     tx: DbTransaction,
@@ -261,18 +261,8 @@ export class ApprovalsAdminService {
     ids: readonly string[],
   ): Promise<void> {
     const wanted = [...new Set(ids)];
-    const rows = await tx
-      .select({ id: appUsers.id })
-      .from(appUsers)
-      .where(
-        and(
-          eq(appUsers.tenantId, scope.tenantId),
-          eq(appUsers.organizationId, scope.organizationId),
-          eq(appUsers.status, 'active'),
-          inArray(appUsers.id, wanted),
-        ),
-      );
-    const missing = wanted.filter((id) => !rows.some((r) => r.id === id));
+    const found = new Set(await activeEntityStaff(tx, scope, wanted));
+    const missing = wanted.filter((id) => !found.has(id));
     if (missing.length > 0) {
       throw new BadRequestException(
         `Not an active user of this organization: ${missing.join(', ')}`,
