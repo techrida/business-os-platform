@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { AuditEventDtoSchema } from '@bos/contracts';
 import { organizations, runMigrations, tenants } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -209,11 +210,35 @@ describe('AuditService.list', () => {
   });
 });
 
+describe('AuditService.list canonical text', () => {
+  it("returns the jsonb columns exactly as Postgres's ::text prints them", async () => {
+    // Written as raw jsonb text so the number keeps its trailing zero; JSON.stringify would drop it.
+    const raw = '{"z": 1, "a": 1.50, "m": {"b": 1, "a": 2}}';
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`SELECT audit.record('canon.checked', 'canon', 'canon-1', NULL, ${raw}::jsonb, NULL)`,
+      ),
+    );
+    const expected = (await appPool.query<{ t: string }>('SELECT $1::jsonb::text AS t', [raw]))
+      .rows[0]?.t;
+    // Guard against a vacuous test: Postgres reorders the keys and keeps 1.50.
+    expect(expected).toBe('{"a": 1.50, "m": {"a": 2, "b": 1}, "z": 1}');
+
+    const [event] = await service.list(scope, { entityId: 'canon-1', limit: 10 });
+    expect(event?.canonical).toEqual({ before: null, after: expected, meta: null });
+    // The parsed field is what node-postgres re-serialised, so it cannot be used to recompute the hash.
+    expect(JSON.stringify(event?.after)).not.toBe(event?.canonical.after);
+    expect(AuditEventDtoSchema.parse(event)).toEqual(event);
+  });
+});
+
 describe('AuditService.verifyChain', () => {
   it('is ok for the current month and counts the rows', async () => {
     const month = new Date().toISOString().slice(0, 7);
     const result = await service.verifyChain(scope.tenantId, month);
     expect(result).toMatchObject({ tenantId: scope.tenantId, month, ok: true, firstBadSeq: null });
+    // No reason for an intact chain, whether or not verify_chain has the column yet.
+    expect(result.reason ?? null).toBeNull();
     expect(result.rows).toBeGreaterThan(0);
     expect(typeof result.rows).toBe('number');
   });
@@ -225,6 +250,7 @@ describe('AuditService.verifyChain', () => {
       ok: true,
       rows: 0,
       firstBadSeq: null,
+      reason: null,
     });
   });
 });
