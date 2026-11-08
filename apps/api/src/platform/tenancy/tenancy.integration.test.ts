@@ -64,8 +64,16 @@ class FakeDbModule {}
     {
       provide: UserDirectory,
       useValue: {
-        resolve: () =>
-          Promise.resolve({ userId: APP_USER_ID, status: 'active', departmentId: null }),
+        // Echoes the scope it is asked for: the user row lives in the token's org, as the real
+        // directory's JIT insert would place it.
+        resolve: (i: { tenantId: string; organizationId: string }) =>
+          Promise.resolve({
+            userId: APP_USER_ID,
+            status: 'active',
+            departmentId: null,
+            tenantId: i.tenantId,
+            organizationId: i.organizationId,
+          }),
       },
     },
     { provide: RoleCache, useValue: { grantsFor: () => Promise.resolve(new Map()) } },
