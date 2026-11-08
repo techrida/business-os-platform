@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { organizations, outbox, runMigrations, tenants } from '@bos/db';
+import { createTenantWithEntity, outbox, runMigrations } from '@bos/db';
 import { Logger } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
@@ -140,20 +140,8 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
   db = drizzle({ client: appPool });
 
-  const tenantId = randomUUID();
-  const organizationId = randomUUID();
+  const { tenantId, organizationId } = await createTenantWithEntity(appPool);
   scope = { tenantId, organizationId };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId });
-    await tx.insert(organizations).values({
-      id: organizationId,
-      tenantId,
-      organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${organizationId}`,
-    });
-  });
 }, 120_000);
 
 afterAll(async () => {
