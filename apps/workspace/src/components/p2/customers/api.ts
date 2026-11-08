@@ -1,10 +1,17 @@
 import 'server-only';
 
 import {
+  ContactDtoSchema,
   CustomerDtoSchema,
+  PartyAccountDtoSchema,
   VerificationCaseDtoSchema,
+  type ContactDto,
+  type CreateContactBody,
+  type CreateCustomerBody,
   type CustomerDto,
+  type PartyAccountDto,
   type ReviewVerificationBody,
+  type UpdateCustomerBody,
   type VerificationCaseDto,
   type VerificationStatus,
 } from '@bos/contracts';
@@ -100,6 +107,83 @@ export function listCustomers(
 
 export function getCustomer(session: Session, id: string): Promise<CustomerDto> {
   return call(session, `/v1/customers/${seg(id)}`, CustomerDtoSchema);
+}
+
+/**
+ * A customer with its per-legal-entity terms. The contracts' `CustomerDto` has no `accounts`, so
+ * the detail route is read as "the customer, plus an optional `accounts` array". `undefined` means
+ * the API did not send terms; `[]` means it did and none are set. The two read differently.
+ */
+const CustomerDetailSchema = CustomerDtoSchema.extend({
+  accounts: z.array(PartyAccountDtoSchema).optional(),
+});
+export type CustomerDetail = CustomerDto & { accounts?: PartyAccountDto[] | undefined };
+
+/** `GET /v1/customers/:id` with the optional `accounts` kept. */
+export function getCustomerDetail(session: Session, id: string): Promise<CustomerDetail> {
+  return call(session, `/v1/customers/${seg(id)}`, CustomerDetailSchema);
+}
+
+function jsonInit(
+  method: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): RequestInit {
+  return {
+    method,
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  };
+}
+
+/**
+ * `POST /v1/customers`. The key is required, as for approvals, so a double click or a retry after
+ * a timeout cannot create the customer twice.
+ */
+export function createCustomer(
+  session: Session,
+  body: CreateCustomerBody,
+  idempotencyKey: string,
+): Promise<CustomerDto> {
+  return call(
+    session,
+    '/v1/customers',
+    CustomerDtoSchema,
+    jsonInit('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
+}
+
+/** `PATCH /v1/customers/:id`. `expectedVersion` makes a stale edit a 409, not a silent overwrite. */
+export function updateCustomer(
+  session: Session,
+  id: string,
+  body: UpdateCustomerBody,
+): Promise<CustomerDto> {
+  return call(session, `/v1/customers/${seg(id)}`, CustomerDtoSchema, jsonInit('PATCH', body));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Contacts
+// ---------------------------------------------------------------------------------------------
+
+/** `GET /v1/customers/:id/contacts`. */
+export function listContacts(session: Session, customerId: string): Promise<Listing<ContactDto>> {
+  return call(session, `/v1/customers/${seg(customerId)}/contacts`, listingOf(ContactDtoSchema));
+}
+
+/** `POST /v1/customers/:id/contacts`. */
+export function createContact(
+  session: Session,
+  customerId: string,
+  body: CreateContactBody,
+  idempotencyKey: string,
+): Promise<ContactDto> {
+  return call(
+    session,
+    `/v1/customers/${seg(customerId)}/contacts`,
+    ContactDtoSchema,
+    jsonInit('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
