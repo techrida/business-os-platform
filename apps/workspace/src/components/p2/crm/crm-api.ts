@@ -1,0 +1,172 @@
+import 'server-only';
+
+import {
+  type ActivityKind,
+  ActivityDtoSchema,
+  type ConvertLeadBody,
+  type CreateActivityBody,
+  type CreateLeadBody,
+  type LeadStageChangeBody,
+  LeadDtoSchema,
+  type OpportunityStageChangeBody,
+  OpportunityDtoSchema,
+} from '@bos/contracts';
+import { z } from 'zod';
+
+import { ApiError, apiFetch } from '@/lib/api';
+import type { Session } from '@/lib/session';
+
+/**
+ * Typed calls from the workspace BFF to the CRM routes. Every response is parsed with the
+ * contracts' schemas, so an API that drifts fails loudly (502) instead of rendering `undefined`.
+ * The CRM endpoints are new; the guesses about their wire shape are named below, each in one place.
+ */
+
+/**
+ * ASSUMED: a list answers a bare array (like the approvals inbox) or `{ items }` (like the audit
+ * list). Both are accepted here, so only this constant changes once the API fixes one.
+ */
+const listOf = <T extends z.ZodType>(item: T) =>
+  z.union([z.array(item), z.object({ items: z.array(item) }).transform((o) => o.items)]);
+
+/** ASSUMED: a successful convert names the new opportunity (and the customer) it made or linked. */
+const ConvertResultSchema = z.object({
+  opportunityId: z.guid(),
+  customerId: z.guid().optional(),
+});
+export type ConvertResult = z.infer<typeof ConvertResultSchema>;
+
+const seg = (id: string): string => encodeURIComponent(id);
+
+async function readBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (text === '') return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+async function call<T>(
+  session: Session,
+  path: string,
+  schema: z.ZodType<T>,
+  init?: RequestInit,
+): Promise<T> {
+  const res = await apiFetch(session, path, init);
+  const body = await readBody(res);
+  const label = `${init?.method ?? 'GET'} ${path.split('?')[0] ?? path}`;
+  if (!res.ok) throw new ApiError(res.status, `${label} failed with ${res.status}`, body);
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
+  }
+  return parsed.data;
+}
+
+function json(method: string, body: unknown, headers: Record<string, string> = {}): RequestInit {
+  return {
+    method,
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  };
+}
+
+function query(params: Record<string, string | number | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+  return q.size > 0 ? `?${q.toString()}` : '';
+}
+
+// ---------------------------------------------------------------------------------------------
+// Leads
+// ---------------------------------------------------------------------------------------------
+
+export function listLeads(
+  session: Session,
+  opts: { stage?: string; q?: string; limit?: number } = {},
+) {
+  return call(session, `/v1/leads${query(opts)}`, listOf(LeadDtoSchema));
+}
+
+/** ASSUMED: `GET /v1/leads/:id` exists (the brief lists only the list route). */
+export function getLead(session: Session, id: string) {
+  return call(session, `/v1/leads/${seg(id)}`, LeadDtoSchema);
+}
+
+export function createLead(session: Session, body: CreateLeadBody) {
+  return call(session, '/v1/leads', LeadDtoSchema, json('POST', body));
+}
+
+/** ASSUMED: the stage route answers the updated lead. */
+export function changeLeadStage(session: Session, id: string, body: LeadStageChangeBody) {
+  return call(session, `/v1/leads/${seg(id)}/stage`, LeadDtoSchema, json('PATCH', body));
+}
+
+/**
+ * Convert a qualified lead. The idempotency key is made when the dialog opens, so a retry after a
+ * timeout is the same request and cannot create the customer twice. A duplicate warning arrives as
+ * an `ApiError` whose `body` `duplicatesFrom` reads.
+ */
+export function convertLead(
+  session: Session,
+  id: string,
+  body: ConvertLeadBody,
+  idempotencyKey: string,
+) {
+  return call(
+    session,
+    `/v1/leads/${seg(id)}/convert`,
+    ConvertResultSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Opportunities
+// ---------------------------------------------------------------------------------------------
+
+export function listOpportunities(
+  session: Session,
+  opts: { stage?: string; q?: string; limit?: number } = {},
+) {
+  return call(session, `/v1/opportunities${query(opts)}`, listOf(OpportunityDtoSchema));
+}
+
+export function getOpportunity(session: Session, id: string) {
+  return call(session, `/v1/opportunities/${seg(id)}`, OpportunityDtoSchema);
+}
+
+/** ASSUMED: the stage route answers the updated opportunity. */
+export function changeOpportunityStage(
+  session: Session,
+  id: string,
+  body: OpportunityStageChangeBody,
+) {
+  return call(
+    session,
+    `/v1/opportunities/${seg(id)}/stage`,
+    OpportunityDtoSchema,
+    json('PATCH', body),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Activities
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * ASSUMED query params: one subject id (`leadId` or `opportunityId`), `kind`, `limit`. The API
+ * may filter more; these are the ones the screens send.
+ */
+export function listActivities(
+  session: Session,
+  opts: { leadId?: string; opportunityId?: string; kind?: ActivityKind; limit?: number } = {},
+) {
+  return call(session, `/v1/activities${query(opts)}`, listOf(ActivityDtoSchema));
+}
+
+export function createActivity(session: Session, body: CreateActivityBody) {
+  return call(session, '/v1/activities', ActivityDtoSchema, json('POST', body));
+}
