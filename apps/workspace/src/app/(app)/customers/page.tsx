@@ -8,6 +8,7 @@ import {
   parsePage,
   type DuplicateReason,
 } from '@/components/p2/customers/duplicates';
+import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
@@ -56,7 +57,11 @@ function Row({ c, duplicate }: { c: CustomerDto; duplicate: DuplicateReason[] | 
     <tr>
       <Td>
         <CellTitle
-          title={<span className={styles.name}>{c.legalName}</span>}
+          title={
+            <Link href={`/customers/${encodeURIComponent(c.id)}`} className={styles.name}>
+              {c.legalName}
+            </Link>
+          }
           meta={
             <>
               <span className="sr-only">Customer number: </span>
@@ -126,6 +131,8 @@ export default async function CustomersPage({
     customers !== null &&
     (total !== null ? page * PAGE_SIZE < total : customers.length === PAGE_SIZE);
   const first = (page - 1) * PAGE_SIZE + 1;
+  const mayWrite = hasPermission(session.roles, 'customer.write');
+  const addButton = mayWrite ? <LinkButton href="/customers/new">Add customer</LinkButton> : null;
 
   return (
     <Page>
@@ -133,12 +140,15 @@ export default async function CustomersPage({
         title="Customers"
         description="Companies you sell to. Each customer is shared by every legal entity; payment terms are set per entity."
         actions={
-          total !== null || (customers !== null && customers.length > 0) ? (
-            <Badge tone="info" role="status" className={styles.count}>
-              {total ?? customers?.length ?? 0}{' '}
-              {(total ?? customers?.length) === 1 ? 'customer' : 'customers'}
-            </Badge>
-          ) : null
+          <>
+            {total !== null || (customers !== null && customers.length > 0) ? (
+              <Badge tone="info" role="status" className={styles.count}>
+                {total ?? customers?.length ?? 0}{' '}
+                {(total ?? customers?.length) === 1 ? 'customer' : 'customers'}
+              </Badge>
+            ) : null}
+            {addButton}
+          </>
         }
       />
 
@@ -194,7 +204,7 @@ export default async function CustomersPage({
             <Link href={href(q, 1)}>Back to the first page</Link>
           </EmptyState>
         ) : (
-          <EmptyState title="No customers yet." icon="building">
+          <EmptyState title="No customers yet." icon="building" action={addButton}>
             Customers appear here when a lead is converted or a customer is added.
           </EmptyState>
         )
