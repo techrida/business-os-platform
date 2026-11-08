@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { runSeed, SEED_TOOL, type OrgRow, type SeedDeps, type TenancyStore } from './index.js';
-import type { DevFiles } from './outputs.js';
+import { type DevFiles, parseEnv } from './outputs.js';
 import { PERSONAS, PROJECT_ROLES } from './personas.js';
 import type {
   AppInfo,
@@ -212,6 +212,8 @@ class FakeZitadel implements ZitadelApi {
       iss: 'https://auth.localhost',
       sub: 'machine-1',
       aud: [project?.id ?? 'x', 'client-1'],
+      // ZITADEL client credentials: the client is the machine user's username (Basic auth).
+      client_id: 'bos-loadtest',
       'urn:zitadel:iam:org:project:roles': { sales: { [this.staffOrgId]: 'staff.localhost' } },
       'urn:zitadel:iam:user:resourceowner:id': this.staffOrgId,
     };
@@ -282,6 +284,11 @@ describe('@bos/seed-zitadel', () => {
     expect(await api.listProjectRoles()).toHaveLength(PROJECT_ROLES.length);
     expect([...files.data.keys()].sort()).toEqual(['k6.env', 'personas.json', 'zitadel.env']);
     expect(files.data.get('zitadel.env')).toContain('OIDC_CLIENT_ID=client-1');
+    // The API's azp allow-list: the workspace app plus the k6 machine user, or perf:load gets 401.
+    expect(parseEnv(files.data.get('zitadel.env'))['OIDC_ALLOWED_AZP']).toBe(
+      'client-1,bos-loadtest',
+    );
+    expect(result.token.clientId).toBe('bos-loadtest');
     expect(files.data.get('k6.env')).toContain('K6_CLIENT_ID=bos-loadtest');
     expect(store.rows.size).toBe(3);
     const personas = JSON.parse(files.data.get('personas.json') ?? '[]') as unknown[];
@@ -396,5 +403,21 @@ describe('@bos/seed-zitadel', () => {
       'urn:zitadel:iam:user:resourceowner:id': 'x',
     };
     await expect(runSeed(deps)).rejects.toThrow(/R7 failed.*aud does not contain/);
+  });
+
+  it('fails R7 when the k6 token client is not on the emitted azp allow-list', async () => {
+    const { api, deps } = setup();
+    api.tokenClaims = {
+      sub: 'm',
+      aud: ['client-1'],
+      // A present azp wins over client_id, as in the API's jwt-verifier.
+      azp: 'someone-else',
+      client_id: 'bos-loadtest',
+      'urn:zitadel:iam:org:project:roles': {},
+      'urn:zitadel:iam:user:resourceowner:id': 'x',
+    };
+    await expect(runSeed(deps)).rejects.toThrow(
+      /R7 failed.*token client "someone-else" is not in OIDC_ALLOWED_AZP/,
+    );
   });
 });

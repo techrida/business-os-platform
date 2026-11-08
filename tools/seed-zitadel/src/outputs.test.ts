@@ -50,6 +50,12 @@ describe('token inspection (R7)', () => {
     expect(inspectToken(jwt({ aud: 'other' }), 'p1').audienceHasProject).toBe(false);
   });
 
+  it('reports the token client as azp, else client_id, like the API verifier', () => {
+    expect(inspectToken(jwt({ azp: 'a', client_id: 'c' }), 'p1').clientId).toBe('a');
+    expect(inspectToken(jwt({ client_id: 'c' }), 'p1').clientId).toBe('c');
+    expect(inspectToken(jwt({ sub: 'u' }), 'p1').clientId).toBeUndefined();
+  });
+
   it('asks for the project audience, roles and resource owner', () => {
     const scope = loadtestScope('p1');
     expect(scope).toContain('urn:zitadel:iam:org:project:id:p1:aud');

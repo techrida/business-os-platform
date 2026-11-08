@@ -275,6 +275,10 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   }
 
   // --- Env file for the API and the workspace. ---
+  // The API accepts a token only when its client (azp, else client_id) is listed here. k6 sends
+  // K6_CLIENT_ID, the machine user's username, as the client-credentials client id, so that is
+  // the client its tokens carry. R7 below checks it against a real token.
+  const allowedAzp = [app.clientId, LOADTEST_USER];
   if (
     await files.write(
       'zitadel.env',
@@ -282,6 +286,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
         OIDC_ISSUER: deps.issuer,
         OIDC_AUDIENCE: projectId,
         OIDC_CLIENT_ID: app.clientId,
+        OIDC_ALLOWED_AZP: allowedAzp.join(','),
         ZITADEL_STAFF_ORG_ID: orgIds.staff,
         ZITADEL_CUSTOMER_ORG_ID: orgIds.customer,
         ZITADEL_VENDOR_ORG_ID: orgIds.vendor,
@@ -302,6 +307,7 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   // --- R7: fetch a real token and show which claims ZITADEL puts in it. Never print the token. ---
   const token = await fetchTokenReport(api, loadSecret, projectId);
   log(`R7 token claim keys: ${token.claimKeys.join(', ')}`);
+  log(`R7 token client (azp, else client_id): ${token.clientId ?? '(none)'}`);
   log(
     `R7 aud contains project id: ${String(token.audienceHasProject)}; ` +
       `role claim: ${String(token.hasRoleClaim)}; resourceowner claim: ${String(token.hasResourceOwnerClaim)}`,
@@ -310,6 +316,12 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   if (!token.audienceHasProject) problems.push('aud does not contain the project id');
   if (!token.hasRoleClaim) problems.push('no urn:zitadel:iam:org:project:*:roles claim');
   if (!token.hasResourceOwnerClaim) problems.push('no urn:zitadel:iam:user:resourceowner:* claim');
+  // A client id is not a secret, so the observed value goes into the message.
+  if (token.clientId === undefined || !allowedAzp.includes(token.clientId)) {
+    problems.push(
+      `token client "${token.clientId ?? '(none)'}" is not in OIDC_ALLOWED_AZP (${allowedAzp.join(',')}); the API would answer 401`,
+    );
+  }
   if (problems.length > 0) {
     throw new Error(`R7 failed for the ${LOADTEST_USER} token: ${problems.join('; ')}`);
   }
