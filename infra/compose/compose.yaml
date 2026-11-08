@@ -462,6 +462,7 @@ services:
       DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost} # through Caddy, trusted via NODE_EXTRA_CA_CERTS
       WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
+      PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost} # customer email links point at the portal
     # OIDC_ISSUER, OIDC_AUDIENCE, OIDC_CLIENT_ID, ZITADEL_PROVISIONER_TOKEN and ZITADEL_ACTIONS_SIGNING_KEY come
     # from the seed output. The root .env is deliberately not passed in: it holds host-side values (127.0.0.1 URLs).
     env_file:
@@ -512,6 +513,7 @@ services:
       DOCS_LINK_SECRET: ${DOCS_LINK_SECRET:?set DOCS_LINK_SECRET in .env (32+ characters)}
       ZITADEL_API_URL: https://${AUTH_HOST:-auth.localhost}
       WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost} # email links point at /inbox/<id> only
+      PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost} # customer email links point at the portal
     env_file:
       - path: ../../.dev/zitadel.env
         required: false

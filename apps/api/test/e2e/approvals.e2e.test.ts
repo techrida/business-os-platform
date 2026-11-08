@@ -64,6 +64,7 @@ beforeAll(async () => {
     FILES_ROOT: filesRoot,
     DOCS_LINK_SECRET: 'e2e-approvals-docs-link-secret-0123456789abcdef',
     WORKSPACE_PUBLIC_URL: 'http://app.e2e.test',
+    PORTAL_PUBLIC_URL: 'http://portal.e2e.test',
   });
   t = await startApp();
   worker = await startWorker();
