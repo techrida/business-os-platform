@@ -16,6 +16,10 @@ import { AuthUnavailableError, JwtVerifier } from './jwt-verifier';
 
 const ISSUER = 'https://auth.test.local';
 const AUDIENCE = '300000000000000001';
+/** The workspace client, the default `azp` of a valid token. */
+const CLIENT_ID = '300000000000000002';
+/** A second allowed client (the k6 load-test user), to show the list is a list. */
+const K6_CLIENT_ID = '300000000000000003';
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
 // Deliberately not ZITADEL's usual /oauth/v2/keys: the verifier must take the URL from discovery.
 const JWKS_URI = `${ISSUER}/discovered/keys`;
@@ -69,6 +73,7 @@ const now = (): number => Math.floor(Date.now() / 1000);
 const claims = (extra: JWTPayload = {}): JWTPayload => ({
   iss: ISSUER,
   aud: AUDIENCE,
+  azp: CLIENT_ID,
   sub: 'user-1',
   iat: now(),
   exp: now() + 300,
@@ -84,8 +89,11 @@ const sign = (
 
 const b64url = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url');
 
-const newVerifier = (warmupDelaysMs: readonly number[] = [1]): JwtVerifier =>
-  new JwtVerifier({ issuer: ISSUER, audience: AUDIENCE, warmupDelaysMs });
+const newVerifier = (
+  warmupDelaysMs: readonly number[] = [1],
+  allowedAzp: readonly string[] = [CLIENT_ID, K6_CLIENT_ID],
+): JwtVerifier =>
+  new JwtVerifier({ issuer: ISSUER, audience: AUDIENCE, allowedAzp, warmupDelaysMs });
 
 const httpError = (status: number): Promise<Response> =>
   Promise.resolve(new Response('error', { status }));
@@ -106,9 +114,13 @@ describe('JwtVerifier.verify: token checks (each must reject as a token error, n
     ).resolves.toBeDefined();
   });
 
-  const rejects = async (token: string, errorClass: new (...args: never[]) => Error) => {
+  const rejects = async (
+    token: string,
+    errorClass: new (...args: never[]) => Error,
+    verifier: JwtVerifier = newVerifier(),
+  ) => {
     stubIdp();
-    const result = newVerifier().verify(token);
+    const result = verifier.verify(token);
     await expect(result).rejects.toBeInstanceOf(errorClass);
     await expect(result).rejects.not.toBeInstanceOf(AuthUnavailableError);
   };
@@ -167,6 +179,46 @@ describe('JwtVerifier.verify: token checks (each must reject as a token error, n
 
   it('rejects garbage', async () => {
     await rejects('not.a.jwt', errors.JOSEError);
+  });
+
+  // CR-04: `aud` only says our project may read the token. A client in another project can add
+  // our project to `aud`, so the authorized party must be one of our own clients.
+  it('rejects a valid token minted for a client that is not allow-listed (foreign azp)', async () => {
+    await rejects(
+      await sign(claims({ azp: '399999999999999999' })),
+      errors.JWTClaimValidationFailed,
+    );
+  });
+
+  it('rejects a token without azp', async () => {
+    const { azp: _azp, ...noAzp } = claims();
+    await rejects(await sign(noAzp), errors.JWTClaimValidationFailed);
+  });
+
+  it('rejects a non-string azp', async () => {
+    await rejects(await sign(claims({ azp: [CLIENT_ID] })), errors.JWTClaimValidationFailed);
+  });
+
+  it('accepts every allow-listed azp', async () => {
+    stubIdp();
+    const verifier = newVerifier();
+    await expect(verifier.verify(await sign(claims()))).resolves.toMatchObject({ azp: CLIENT_ID });
+    await expect(
+      verifier.verify(await sign(claims({ azp: K6_CLIENT_ID }))),
+    ).resolves.toMatchObject({ azp: K6_CLIENT_ID });
+  });
+
+  it('fails closed when the allow-list is empty', async () => {
+    await rejects(await sign(claims()), errors.JWTClaimValidationFailed, newVerifier([1], []));
+  });
+
+  // CR-05b: an ID token has the same issuer, keys and audience as an access token. Only ID
+  // tokens carry `nonce`, so its presence means someone is replaying an ID token as a bearer.
+  it('rejects an ID token used as a bearer token (has nonce)', async () => {
+    await rejects(
+      await sign(claims({ nonce: 'n-0S6_WzA2Mj' })),
+      errors.JWTClaimValidationFailed,
+    );
   });
 });
 

@@ -7,6 +7,7 @@ const base = {
   VALKEY_URL: 'redis://valkey:6379',
   OIDC_ISSUER: 'https://auth.example.com',
   OIDC_AUDIENCE: '123456789',
+  OIDC_CLIENT_ID: 'workspace-client',
 };
 
 const prod = { ...base, NODE_ENV: 'production' };
@@ -107,6 +108,35 @@ describe('loadAppConfig', () => {
     it('rejects a non-URL issuer everywhere', () => {
       expect(problems(() => loadAppConfig({ ...base, OIDC_ISSUER: 'not a url' }))).toEqual([
         'OIDC_ISSUER: must be an absolute URL',
+      ]);
+    });
+  });
+
+  describe('OIDC_ALLOWED_AZP (the clients whose tokens the API accepts)', () => {
+    it('defaults to OIDC_CLIENT_ID, the workspace client', () => {
+      expect(loadAppConfig(base).OIDC_ALLOWED_AZP).toEqual(['workspace-client']);
+    });
+
+    it('parses a comma-separated list, trimming blanks and empty entries', () => {
+      const config = loadAppConfig({ ...base, OIDC_ALLOWED_AZP: ' web-1 , k6-user,, ' });
+      expect(config.OIDC_ALLOWED_AZP).toEqual(['web-1', 'k6-user']);
+    });
+
+    it('replaces the OIDC_CLIENT_ID default when set', () => {
+      const config = loadAppConfig({ ...base, OIDC_ALLOWED_AZP: 'k6-user' });
+      expect(config.OIDC_ALLOWED_AZP).toEqual(['k6-user']);
+    });
+
+    it('is required when OIDC_CLIENT_ID is not set', () => {
+      const { OIDC_CLIENT_ID: _drop, ...withoutClient } = base;
+      expect(problems(() => loadAppConfig(withoutClient))).toEqual([
+        'OIDC_ALLOWED_AZP: must list at least one client id (or set OIDC_CLIENT_ID)',
+      ]);
+    });
+
+    it('rejects a list with no entries', () => {
+      expect(problems(() => loadAppConfig({ ...base, OIDC_ALLOWED_AZP: ' , ' }))).toEqual([
+        'OIDC_ALLOWED_AZP: must list at least one client id (or set OIDC_CLIENT_ID)',
       ]);
     });
   });
