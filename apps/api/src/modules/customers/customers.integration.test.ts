@@ -363,6 +363,11 @@ describe('create a customer and read it back', () => {
     expect(paged.items).toHaveLength(1);
     expect(paged.total).toBe(2);
 
+    // No q at all (the workspace's default page) lists the tenant's customers by name.
+    const all = await request(baseUrl).get('/v1/customers');
+    expect(all.status, JSON.stringify(all.body)).toBe(200);
+    expect((all.body as { total: number }).total).toBeGreaterThanOrEqual(3);
+
     // A LIKE metacharacter is matched literally.
     const percent = await request(baseUrl).get('/v1/customers').query({ q: '%' });
     expect((percent.body as { items: unknown[] }).items).toEqual([]);

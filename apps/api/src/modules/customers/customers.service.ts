@@ -174,23 +174,27 @@ export class CustomersService {
   async list(query: ListCustomersQuery): Promise<CustomerList> {
     const { scope, principal } = this.caller.current();
     const conditions: SQL[] = [this.visibleWhere(scope.tenantId, principal, 'customer.read')];
-    let prefixFirst: SQL = sql`0`;
+    // A bare constant in ORDER BY is a column position to Postgres, so the rank is added only when it exists.
+    const order: SQL[] = [];
     if (query.q !== undefined) {
       const terms = searchTerms(query.q);
       const code = `%${escapeLike(terms.code)}%`;
       const matches: SQL[] = [like(customers.panVatNo, code), like(customers.number, code)];
       if (terms.name !== null) {
         matches.push(like(customers.nameNorm, `%${escapeLike(terms.name)}%`));
-        prefixFirst = sql`CASE WHEN ${like(customers.nameNorm, `${escapeLike(terms.name)}%`)} THEN 0 ELSE 1 END`;
+        order.push(
+          sql`CASE WHEN ${like(customers.nameNorm, `${escapeLike(terms.name)}%`)} THEN 0 ELSE 1 END`,
+        );
       }
       conditions.push(or(...matches) as SQL);
     }
+    order.push(asc(customers.legalName), asc(customers.id));
     const where = and(...conditions);
     const rows = await this.db
       .select()
       .from(customers)
       .where(where)
-      .orderBy(prefixFirst, asc(customers.legalName), asc(customers.id))
+      .orderBy(...order)
       .limit(query.limit)
       .offset(query.offset);
     const [count] = await this.db
