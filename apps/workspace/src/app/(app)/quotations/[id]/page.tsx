@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 
 import { getQuotation } from '@/components/p2/quotations/api';
 import styles from '@/components/p2/quotations/detail.module.css';
+import { DetailActions } from '@/components/p2/quotations/detail-actions';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { StatusHistory } from '@/components/p2/quotations/status-history';
@@ -197,8 +198,17 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
         description={<span className={styles.wrap}>{customerName}</span>}
       />
 
-      {/* Part C fills this slot with the actions (submit, send, accept, revise). */}
-      <div className={styles.actions}></div>
+      <div className={styles.actions}>
+        {current !== null ? (
+          <DetailActions
+            quotationId={quotation.id}
+            number={quotation.number}
+            current={current}
+            contacts={contacts}
+            reloadHref={path}
+          />
+        ) : null}
+      </div>
 
       {current === null ? (
         <Alert

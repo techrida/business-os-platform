@@ -1,0 +1,97 @@
+/* Pieces of the quotation actions that no shared component covers. The dialog frame itself reuses the
+   `.dialog*` classes of detail.module.css. Colours are Figma tokens. */
+
+/* A trigger with the sentence that explains why it is off, kept together when the row wraps. */
+.group {
+  display: grid;
+  gap: 4px;
+  max-width: 44ch;
+  justify-items: start;
+}
+
+.reason {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.intro {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.status {
+  margin: 0;
+  min-height: var(--line-height-body-small);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+/* A native radio or checkbox group: fieldset and legend, with the same hint and error lines as Field. */
+.choices {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0;
+  font-weight: var(--font-weight-semibold);
+}
+
+.hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.error {
+  color: var(--status-error);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.choice input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--button-primary-bg);
+}
+
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+/* The forms are short: a narrower dialog than the revisions table. The element selector outranks
+   detail.module.css's `.dialog` whichever stylesheet loads first. */
+dialog.dialogNarrow {
+  width: min(560px, calc(100vw - 32px));
+}

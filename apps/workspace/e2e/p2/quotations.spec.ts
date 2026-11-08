@@ -1,0 +1,192 @@
+import { expect, test, type Page } from '@playwright/test';
+
+import { getJson } from '../helpers/api';
+import { signInAs, type Signed } from '../helpers/memo-flow';
+import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
+
+/**
+ * The quotation detail page, against the real stack: the summary and totals, the revisions dialog,
+ * the PDF download, and the three actions (send, record outcome, revise).
+ *
+ * The quotation endpoints and their seed data are not in the stack yet, and a quotation moves one
+ * step per run (a sent quotation cannot be sent again), so each test takes a fixture id from the
+ * environment and skips itself when it is unset. Every fixture is one quotation owned by the
+ * `sales` persona's organization:
+ *
+ *   BOS_E2E_QUOTATION_APPROVED   status Approved, rendered PDF scanned clean, valid for at least a
+ *                                week, with a contact that has an email address.
+ *   BOS_E2E_QUOTATION_CONTACT    that contact's email address (the send test looks for the mail).
+ *   BOS_E2E_QUOTATION_SCANNING   status Approved, but the rendered PDF is not clean yet.
+ *   BOS_E2E_QUOTATION_SENT       status Sent, still waiting for the customer's answer.
+ *   BOS_E2E_QUOTATION_REVISABLE  status Rejected (or Expired): Revise is offered.
+ *   BOS_E2E_QUOTATION_DOWNLOAD   any quotation with a clean PDF (may be the approved one if the
+ *                                download test runs first; it clicks the link exactly once, because
+ *                                every call to the route issues a single-use signed link).
+ *
+ * `playwright.config.ts` lists the specs of the `dev` project by name, so this one runs only after
+ * `'p2/quotations.spec.ts'` is added to that list.
+ */
+
+const fixture = (name: string): string | undefined => process.env[`BOS_E2E_QUOTATION_${name}`];
+
+async function open(page: Page, id: string): Promise<void> {
+  await page.goto(`/quotations/${id}`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+}
+
+async function withSales<T>(
+  browser: Parameters<typeof signInAs>[0],
+  baseURL: string | undefined,
+  run: (signed: Signed) => Promise<T>,
+): Promise<T> {
+  const signed = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
+  try {
+    return await run(signed);
+  } finally {
+    await signed.context.close();
+  }
+}
+
+test('the detail page shows the summary, the totals and every revision in a dialog', async ({
+  browser,
+  baseURL,
+}) => {
+  const id = fixture('SENT') ?? fixture('APPROVED');
+  test.skip(id === undefined, 'BOS_E2E_QUOTATION_SENT or _APPROVED is not set');
+  await withSales(browser, baseURL, async ({ page }) => {
+    await open(page, id ?? '');
+    await expect(page.getByText('Current revision')).toBeVisible();
+    await expect(page.getByText('Totals')).toBeVisible();
+    await expect(page.getByText('Status history')).toBeVisible();
+
+    await page.getByRole('button', { name: /^All revisions \(\d+\)$/ }).click();
+    const dialog = page.getByRole('dialog', { name: /^Revisions of / });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+  });
+});
+
+test('the customer PDF downloads from one click on the link', async ({ browser, baseURL }) => {
+  const id = fixture('DOWNLOAD');
+  test.skip(id === undefined, 'BOS_E2E_QUOTATION_DOWNLOAD is not set');
+  await withSales(browser, baseURL, async ({ page }) => {
+    await open(page, id ?? '');
+    const download = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Download PDF' }).first().click();
+    expect((await download).suggestedFilename()).toMatch(/\.pdf$/i);
+  });
+});
+
+test('Send is off, with its reason in words, while the PDF is not clean', async ({
+  browser,
+  baseURL,
+}) => {
+  const id = fixture('SCANNING');
+  test.skip(id === undefined, 'BOS_E2E_QUOTATION_SCANNING is not set');
+  await withSales(browser, baseURL, async ({ page }) => {
+    await open(page, id ?? '');
+    const send = page.getByRole('button', { name: 'Send to customer' });
+    await expect(send).toHaveAttribute('aria-disabled', 'true');
+    await expect(send).toHaveAccessibleDescription(/PDF is still being/);
+    // Reachable by keyboard, so the reason is announced; a click opens nothing.
+    await send.focus();
+    await send.click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+});
+
+test('Send gives the customer a portal link by email, never the file', async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  const id = fixture('APPROVED');
+  const contact = fixture('CONTACT');
+  test.skip(id === undefined || contact === undefined, 'APPROVED or CONTACT is not set');
+  await withSales(browser, baseURL, async ({ page }) => {
+    await open(page, id ?? '');
+    await page.getByRole('button', { name: 'Send to customer' }).click();
+    const dialog = page.getByRole('dialog', { name: /^Send / });
+    await expect(dialog).toContainText('never sent as a file');
+
+    // Nothing chosen: refused in place, with the field named.
+    await dialog.getByRole('button', { name: 'Send to customer' }).click();
+    await expect(dialog.getByText('Choose who should receive it.')).toBeVisible();
+
+    const select = dialog.getByLabel('Send to');
+    const value = await select.locator('option', { hasText: contact ?? '' }).getAttribute('value');
+    await select.selectOption({ value: value ?? '' });
+    await dialog.getByRole('button', { name: 'Send to customer' }).click();
+    await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
+
+    // Closing reloads the page, which now shows the new status.
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByText('Sent', { exact: true }).first()).toBeVisible();
+
+    const mail = await waitForMessage((m) => sentTo(m, contact ?? ''), `a mail to ${contact}`);
+    const full = await getJson<{ Attachments?: unknown[]; Text?: string }>(
+      `${mailOrigin()}/api/v1/message/${mail.ID}`,
+    );
+    expect(full.Attachments ?? []).toHaveLength(0);
+    expect(full.Text ?? '').toMatch(/https?:\/\//);
+  });
+});
+
+test('Record outcome needs evidence to accept and a comment to reject', async ({
+  browser,
+  baseURL,
+}) => {
+  const id = fixture('SENT');
+  test.skip(id === undefined, 'BOS_E2E_QUOTATION_SENT is not set');
+  await withSales(browser, baseURL, async ({ page }) => {
+    await open(page, id ?? '');
+    await page.getByRole('button', { name: 'Record outcome' }).click();
+    const dialog = page.getByRole('dialog', { name: /^Record the outcome of / });
+    const submit = dialog.getByRole('button', { name: 'Record outcome' });
+
+    await submit.click();
+    await expect(
+      dialog.getByText('Choose whether the customer accepted or rejected.'),
+    ).toBeVisible();
+
+    await dialog.getByLabel('Accepted').check();
+    await submit.click();
+    await expect(
+      dialog.getByText('Choose at least one kind of evidence the customer gave.'),
+    ).toBeVisible();
+
+    await dialog.getByLabel('Rejected').check();
+    await dialog.getByLabel('Signed quotation').uncheck();
+    await submit.click();
+    await expect(dialog.getByText('Say why the customer said no.', { exact: false })).toBeVisible();
+
+    await dialog.getByLabel('Comment').fill('Went with a competitor.');
+    await submit.click();
+    await expect(dialog.getByRole('status')).toContainText('Recorded as rejected', {
+      timeout: 30_000,
+    });
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByText('Rejected', { exact: true }).first()).toBeVisible();
+  });
+});
+
+test('Revise needs a reason, then opens the new draft for editing', async ({
+  browser,
+  baseURL,
+}) => {
+  const id = fixture('REVISABLE');
+  test.skip(id === undefined, 'BOS_E2E_QUOTATION_REVISABLE is not set');
+  await withSales(browser, baseURL, async ({ page }) => {
+    await open(page, id ?? '');
+    await page.getByRole('button', { name: 'Revise', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: /^Revise / });
+
+    await dialog.getByRole('button', { name: 'Start revision' }).click();
+    await expect(dialog.getByText('Say why you are revising it.', { exact: false })).toBeVisible();
+
+    await dialog.getByLabel('Why are you revising it?').fill('Customer asked for a smaller scope.');
+    await dialog.getByRole('button', { name: 'Start revision' }).click();
+    await page.waitForURL(new RegExp(`/quotations/${id}/edit$`), { timeout: 30_000 });
+  });
+});
