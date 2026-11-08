@@ -42,6 +42,10 @@ fi
 ensure SESSION_ENC_KEY "$(openssl rand -base64 32)"
 ensure SESSION_ENC_KEY_ID k1
 
+# Backup encryption passphrase. An .env written before the repo was encrypted has no such line at all, so the
+# first-run substitution above never fills it and compose refuses to start. Back it up with the .env.
+ensure PGBACKREST_REPO1_CIPHER_PASS "$(r 32)"
+
 # Valkey password (CR-13). Hex only: it sits inside redis:// URLs.
 ensure VALKEY_PASSWORD "$(r 32)"
 # Host-side Valkey URL: add the password to the old passwordless default or to the .env.example placeholder.
