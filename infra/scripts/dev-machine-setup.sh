@@ -12,6 +12,8 @@ if [[ "${1:-}" != "--no-docker" ]] && ! command -v /usr/bin/docker >/dev/null; t
   echo "docker installed; open a new shell for the docker group to apply"
 fi
 
+command -v unzip >/dev/null || { sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip; }
+
 if ! command -v fnm >/dev/null && [[ ! -x "$HOME/.local/share/fnm/fnm" ]]; then
   curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell
 fi
