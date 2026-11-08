@@ -24,6 +24,16 @@ export const AuditEventDtoSchema = z.object({
   before: z.unknown(),
   after: z.unknown(),
   meta: z.unknown(),
+  /**
+   * before/after/meta exactly as Postgres prints them (jsonb::text), or null when the column is null.
+   * This is the text the hash covers: `before`/`after`/`meta` above are parsed JSON, which has lost the key
+   * order and number formatting (1.50 becomes 1.5), so a verifier must hash these strings, not those values.
+   */
+  canonical: z.object({
+    before: z.string().nullable(),
+    after: z.string().nullable(),
+    meta: z.string().nullable(),
+  }),
   ip: z.string().nullable(),
   userAgent: z.string().nullable(),
   correlationId: z.string(),
@@ -42,5 +52,10 @@ export const ChainVerifyDtoSchema = z.object({
   rows: z.number().int().nonnegative(),
   /** The first sequence number whose hash did not match; null when ok. */
   firstBadSeq: z.number().int().nullable(),
+  /**
+   * Why the chain failed, from audit.verify_chain; null when ok. Optional so older API responses still parse.
+   * Known values: hash_mismatch, prev_hash_mismatch, seal_count_mismatch, seal_hash_mismatch.
+   */
+  reason: z.string().nullable().optional(),
 });
 export type ChainVerifyDto = z.infer<typeof ChainVerifyDtoSchema>;
