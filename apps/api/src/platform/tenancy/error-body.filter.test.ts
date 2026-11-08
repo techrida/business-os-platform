@@ -3,6 +3,7 @@ import 'reflect-metadata';
 import { ErrorBodySchema } from '@bos/contracts';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   InternalServerErrorException,
@@ -11,6 +12,7 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnauthorizedException,
+  UnsupportedMediaTypeException,
   type ArgumentsHost,
 } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -70,6 +72,8 @@ describe('ErrorBodyFilter', () => {
     [new UnauthorizedException('no token'), 401, 'unauthenticated'],
     [new ForbiddenException('nope'), 403, 'forbidden'],
     [new NotFoundException('missing'), 404, 'not_found'],
+    [new ConflictException('stale'), 409, 'conflict'],
+    [new UnsupportedMediaTypeException('type'), 415, 'unsupported_media_type'],
     [new PayloadTooLargeException('big'), 413, 'payload_too_large'],
     [new BadRequestException('bad'), 400, 'bad_request'],
     [new ServiceUnavailableException('jwks down'), 503, 'unavailable'],
@@ -89,6 +93,34 @@ describe('ErrorBodyFilter', () => {
     const out = filter(new ForbiddenException('Organization is not registered'));
 
     expect(ErrorBodySchema.parse(out.body).error.message).toBe('Organization is not registered');
+  });
+
+  it('passes a known reason through on a 403 and keeps the code and message', () => {
+    const out = filter(
+      new ForbiddenException({
+        code: 'forbidden',
+        reason: 'separation_of_duties',
+        message: 'You prepared this',
+      }),
+    );
+
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code: 'forbidden',
+      message: 'You prepared this',
+      reason: 'separation_of_duties',
+    });
+  });
+
+  it('drops an unknown reason, a reason on a plain 403, and a reason on any other status', () => {
+    const unknown = filter(new ForbiddenException({ reason: 'because I said so' }));
+    expect(ErrorBodySchema.parse(unknown.body).error).not.toHaveProperty('reason');
+    expect(ErrorBodySchema.parse(unknown.body).error.message).toBe('Forbidden');
+
+    const plain = filter(new ForbiddenException('nope'));
+    expect(ErrorBodySchema.parse(plain.body).error).not.toHaveProperty('reason');
+
+    const conflict = filter(new ConflictException({ reason: 'out_of_scope', message: 'stale' }));
+    expect(ErrorBodySchema.parse(conflict.body).error).not.toHaveProperty('reason');
   });
 
   it('joins a validation message array', () => {
@@ -168,11 +200,13 @@ describe('ErrorBodyFilter', () => {
   });
 
   it('codeForStatus covers the documented table', () => {
-    expect([401, 403, 404, 413, 400, 503, 500, 502].map(codeForStatus)).toEqual([
+    expect([401, 403, 404, 409, 413, 415, 400, 503, 500, 502].map(codeForStatus)).toEqual([
       'unauthenticated',
       'forbidden',
       'not_found',
+      'conflict',
       'payload_too_large',
+      'unsupported_media_type',
       'bad_request',
       'unavailable',
       'internal',
