@@ -28,6 +28,10 @@ export interface E2eContext {
   tenantId: string;
   staff: SeededOrg;
   customer: SeededOrg;
+  /** Mailpit SMTP (smtp://host:port): the SMTP_URL an e2e that sends email gives the API and worker. */
+  mailpitSmtpUrl: string;
+  /** Mailpit HTTP base (http://host:port); its REST API is under /api/v1. */
+  mailpitApiUrl: string;
 }
 
 // `inject('e2e')` in the tests is typed through this declaration.
@@ -45,6 +49,11 @@ export default async function setup(project: TestProject): Promise<() => Promise
   const valkey = await new GenericContainer('valkey/valkey:9.1-alpine')
     .withExposedPorts(6379)
     .withWaitStrategy(Wait.forLogMessage(/Ready to accept connections/))
+    .start();
+  // A real SMTP sink with a REST API, so an e2e can prove an email was really sent, not just queued.
+  const mailpit = await new GenericContainer('axllent/mailpit:v1.33')
+    .withExposedPorts(1025, 8025)
+    .withWaitStrategy(Wait.forHttp('/livez', 8025))
     .start();
 
   const urlFor = (user: string, password: string, database: string): string => {
@@ -80,6 +89,11 @@ export default async function setup(project: TestProject): Promise<() => Promise
   const databaseUrl = urlFor('bos_app', APP_PW, 'bos');
   const appPool = new Pool({ connectionString: databaseUrl, max: 1 });
   const db = drizzle({ client: appPool });
+  // The audit trigger (0001) refuses app writes with no actor. The pool has one connection, so a
+  // session-level (is_local = false) seed actor covers every insert below.
+  await appPool.query(
+    "SELECT set_config('bos.actor_kind', 'seed', false), set_config('bos.actor_id', 'seed:e2e', false), set_config('bos.correlation_id', 'e2e-global-setup', false)",
+  );
   const [tenant] = await db.insert(tenants).values({}).returning({ id: tenants.id });
   if (tenant === undefined) throw new Error('tenant insert returned no row');
 
@@ -110,9 +124,11 @@ export default async function setup(project: TestProject): Promise<() => Promise
     tenantId: tenant.id,
     staff,
     customer,
+    mailpitSmtpUrl: `smtp://${mailpit.getHost()}:${mailpit.getMappedPort(1025)}`,
+    mailpitApiUrl: `http://${mailpit.getHost()}:${mailpit.getMappedPort(8025)}`,
   });
 
   return async () => {
-    await Promise.allSettled([postgres.stop(), valkey.stop()]);
+    await Promise.allSettled([postgres.stop(), valkey.stop(), mailpit.stop()]);
   };
 }
