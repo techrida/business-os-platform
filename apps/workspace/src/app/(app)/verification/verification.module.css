@@ -171,3 +171,57 @@
 .file .itemName {
   min-width: 0;
 }
+
+/* ---- Detail: attach a document (item, file, expiry, then the button) ---- */
+
+.attach {
+  display: grid;
+  gap: 16px;
+}
+
+/* Three fields across when the column is wide, stacked when it is not. */
+.attachFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.attachActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.attachActions .note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The native file input, with its button drawn like the secondary Button. */
+.fileInput {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+}
+
+.fileInput::file-selector-button {
+  min-height: 34px;
+  margin-right: 12px;
+  padding: 0 12px;
+  border: var(--border-width-thin) solid var(--button-primary-border);
+  border-radius: var(--radius-lg);
+  background: var(--button-secondary-bg);
+  color: var(--button-primary-border);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.fileInput:disabled::file-selector-button {
+  border-color: var(--border-default);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
