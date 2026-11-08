@@ -309,3 +309,40 @@ describe('route: distinct approvers across a request (R12)', () => {
     expect(plan.steps[1]).toMatchObject({ eligibleUserIds: [], blocked: true });
   });
 });
+
+describe('resolveActor: which approver a delegate acts for (R12)', () => {
+  // act() passes the SoD people and, under distinctApprovers, the earlier deciders as preferNot, so a
+  // delegate for both u-1 (decided step 1) and u-2 acts for u-2 instead of being refused.
+  const deputyFor = (from: string) => ({
+    fromUserId: from,
+    toUserId: 'deputy-1',
+    startsAt: new Date('2026-11-01T00:00:00Z'),
+    endsAt: new Date('2026-11-30T00:00:00Z'),
+    documentType: null,
+    revokedAt: null,
+  });
+  const d = buildDirectory(
+    {
+      roleMembers: new Map([['finance', ['u-1', 'u-2']]]),
+      groups: new Map(),
+      delegations: [deputyFor('u-1'), deputyFor('u-2')],
+    },
+    { now: NOW, documentType: 'test_memo' },
+  );
+  const finance = { id: 'b', kind: 'role', role: 'finance', reason: 'B' } as const;
+
+  it('skips an approver in preferNot when another one delegated too', () => {
+    expect(d.resolveActor(finance, 'deputy-1')).toEqual({ eligible: true, onBehalfOf: 'u-1' });
+    expect(d.resolveActor(finance, 'deputy-1', new Set(['u-1']))).toEqual({
+      eligible: true,
+      onBehalfOf: 'u-2',
+    });
+  });
+
+  it('falls back to an approver in preferNot when nobody else delegated', () => {
+    expect(d.resolveActor(finance, 'deputy-1', new Set(['u-1', 'u-2']))).toEqual({
+      eligible: true,
+      onBehalfOf: 'u-1',
+    });
+  });
+});
