@@ -16,6 +16,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // The API is the authority on org kind (it came from /v1/me at login). Customer and vendor
   // users have a valid session but no business here.
   if (session.orgKind !== 'staff') redirect('/staff-only');
+  // Being in the staff org is not enough (CR-02): self-registration could put anyone there. The
+  // API refuses role-less staff too; this keeps them out of the shell.
+  if (session.roles.length === 0) redirect('/no-access');
 
   const roles = session.roles.length > 0 ? session.roles.join(', ') : 'No roles';
 
