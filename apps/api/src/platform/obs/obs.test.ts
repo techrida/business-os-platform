@@ -202,7 +202,7 @@ describe('HTTP latency middleware (real Nest app)', () => {
       imports: [
         ConfigModule.forRoot({
           service: 'api',
-          env: { ...env, OIDC_ISSUER: 'http://127.0.0.1:1', OIDC_AUDIENCE: 'aud' },
+          env: { ...env, OIDC_ISSUER: 'http://127.0.0.1:1', OIDC_AUDIENCE: 'aud', OIDC_CLIENT_ID: 'client' },
         }),
         ObsModule.forRoot({ service: 'api' }),
       ],
