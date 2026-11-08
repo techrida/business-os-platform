@@ -385,7 +385,7 @@ services:
     profiles: [files]
     # Pinned to the 1.5 line; the lead pulled it and it is ClamAV 1.5.4 (GPL-2.0, a separate service, not linked
     # into our code). `_base` ships no signatures: freshclam inside the container downloads them into clamav-db.
-    image: clamav/clamav:1.5_base
+    image: clamav/clamav:1.5_base@sha256:58168cd4f48a118c7d20b76da8ffce97e579b84ed7e6d1e977c6e22b1e989c5a
     environment:
       CLAMAV_NO_FRESHCLAMD: 'false' # keep the signature updater running (freshclam.conf: Checks 2 = twice a day)
       CLAMAV_NO_MILTERD: 'true' # mail-filter daemon, not needed
