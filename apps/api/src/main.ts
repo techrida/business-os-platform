@@ -11,7 +11,13 @@ import { MetricsServer } from './platform/obs/metrics.server';
 
 async function bootstrap(): Promise<void> {
   // bufferLogs holds early Nest logs until pino is ready, so every line is JSON.
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  // rawBody keeps the unparsed bytes on req.rawBody: the ZITADEL webhook signature is an HMAC over
+  // the exact body, and re-serialising parsed JSON would not reproduce it. It is a factory option,
+  // so configureApp() cannot set it.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
   app.useLogger(app.get(Logger));
   configureApp(app);
 
