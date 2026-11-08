@@ -1,7 +1,16 @@
 // Drizzle table for migration 0012_idempotency_keys (owner: N4). The SQL in migrations/0012_idempotency_keys.sql
 // is the source of truth (it also holds the audit trigger); this file only describes the table so queries are
 // typed. Keep the two in step.
-import { customType, integer, jsonb, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  customType,
+  foreignKey,
+  integer,
+  jsonb,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 import { appSchema, organizations, tenants } from './platform.js';
 
@@ -17,9 +26,7 @@ export const idempotencyKeys = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    organizationId: uuid('organization_id').notNull(),
     /** bos.actor_id: a user uuid, or `system:<job>`. */
     actorId: text('actor_id').notNull(),
     command: text('command').notNull(),
@@ -30,5 +37,13 @@ export const idempotencyKeys = appSchema.table(
     response: jsonb('response'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [unique('idempotency_keys_unique').on(t.tenantId, t.actorId, t.command, t.key)],
+  (t) => [
+    unique('idempotency_keys_unique').on(t.tenantId, t.actorId, t.command, t.key),
+    // ADR 0027 section 8 (migration 0014_composite_keys): the entity must belong to the row's tenant.
+    foreignKey({
+      name: 'idempotency_keys_tenant_org_fk',
+      columns: [t.tenantId, t.organizationId],
+      foreignColumns: [organizations.tenantId, organizations.id],
+    }),
+  ],
 );

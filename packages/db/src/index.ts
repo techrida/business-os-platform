@@ -3,8 +3,12 @@ export { createDb, type Db, type DbHandle } from './client.js';
 // `migrate(url)` is the name the P0 API interface note promises; runMigrations is the same function.
 export { MIGRATIONS_FOLDER, runMigrations, runMigrations as migrate } from './migrate.js';
 export {
+  COUNTERPARTY_COLUMNS,
   DEFAULT_ALLOWLIST,
+  ENTITY_FK_EXEMPTIONS,
   TENANCY_COLUMNS,
+  TENANT_SCOPED,
+  UNIQUE_EXEMPTIONS,
   assertTenancy,
   checkTenancy,
   describeViolations,
@@ -12,7 +16,25 @@ export {
   type TenancyOptions,
   type TenancyViolation,
 } from './check-tenancy.js';
-export { scoped, type Scope, type Scoped, type ScopedTable } from './scoped.js';
+export {
+  scoped,
+  type CounterpartyKind,
+  type CounterpartyTable,
+  type Scope,
+  type Scoped,
+  type ScopedTable,
+} from './scoped.js';
+// SQL helpers for tests: a tenant with its default entity, parties, staff and portal users (ADR 0027).
+export {
+  createDepartment,
+  createParty,
+  createPortalUser,
+  createStaffUser,
+  createTenantWithEntity,
+  type FixturePool,
+  type Party,
+  type TenantWithEntity,
+} from './testing/fixtures.js';
 export * from './schema/platform.js';
 // All tables as one object, e.g. drizzle({ client, schema }) or schema.organizations.
 export * as schema from './schema/platform.js';
