@@ -49,6 +49,7 @@ import {
 import { totpCode } from './totp.js';
 import {
   FORCE_MFA_POLICY,
+  PORTAL_LOGIN_POLICY,
   ZitadelClient,
   createFetchTransport,
   type MachineSpec,
@@ -380,8 +381,17 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   const withoutTotp = [...personaState].filter(([, s]) => !s.hasTotp).map(([key]) => key);
   if (withoutTotp.length > 0) {
     warn(`forceMfa NOT enabled: personas without TOTP: ${withoutTotp.join(', ')}`);
-  } else if (await api.updateLoginPolicy(FORCE_MFA_POLICY)) {
-    changed('login policy: forceMfa on, MFA setup not skippable');
+    warn('portal login policy NOT pinned on the customer org: personas without TOTP');
+  } else {
+    if (await api.updateLoginPolicy(FORCE_MFA_POLICY)) {
+      changed('login policy: forceMfa on, MFA setup not skippable');
+    }
+    // The customer org gets its own pinned portal policy (no registration, MFA forced), so an instance
+    // change cannot open it. Same gate as forceMfa: it forces MFA on the customer persona, who must
+    // already have TOTP.
+    if (await api.ensureOrgLoginPolicy(orgIds.customer, PORTAL_LOGIN_POLICY)) {
+      changed('pinned the portal login policy on the customer org');
+    }
   }
 
   // --- P1 step 4: 15 min access tokens. ---
