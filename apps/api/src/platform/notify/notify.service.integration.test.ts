@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { RoleKey } from '@bos/contracts';
-import { organizations, notifications, runMigrations, tenants, users } from '@bos/db';
+import { createStaffUser, createTenantWithEntity, notifications, runMigrations } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -46,9 +46,11 @@ let container: StartedPostgreSqlContainer;
 let appPool: Pool;
 let db: Db;
 let scope: TxScope;
+let idpOrgId: string;
 let service: NotifyService;
 const directory = new FakeDirectory();
-const ids = { a: randomUUID(), b: randomUUID(), c: randomUUID(), noEmail: randomUUID() };
+// Filled in beforeAll: the fixtures generate the user ids.
+const ids = { a: '', b: '', c: '', noEmail: '' };
 
 function urlFor(user: string, password: string, database: string): string {
   const url = new URL(container.getConnectionUri());
@@ -93,8 +95,11 @@ function asUser<T>(userId: string, fn: () => Promise<T>): Promise<T> {
     bindIdentity({
       ...scope,
       orgKind: 'staff',
+      partyId: null,
+      idpOrgId,
       userId: `zitadel-${userId}`,
       roles: [],
+      departmentId: null,
       tokenExp: 1_900_000_000,
     });
     const p: Principal = {
@@ -102,6 +107,8 @@ function asUser<T>(userId: string, fn: () => Promise<T>): Promise<T> {
       zitadelUserId: `zitadel-${userId}`,
       ...scope,
       orgKind: 'staff',
+      partyId: null,
+      idpOrgId,
       roles: [],
       departmentId: null,
       status: 'active',
@@ -137,31 +144,14 @@ beforeAll(async () => {
   appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 5 });
   db = drizzle({ client: appPool });
 
-  const tenantId = randomUUID();
-  const organizationId = randomUUID();
-  scope = { tenantId, organizationId };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId });
-    await tx.insert(organizations).values({
-      id: organizationId,
-      tenantId,
-      organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${organizationId}`,
-    });
-    for (const [name, id] of Object.entries(ids)) {
-      await tx.insert(users).values({
-        id,
-        tenantId,
-        organizationId,
-        zitadelUserId: `zitadel-${id}`,
-        email: name === 'noEmail' ? null : `${name}@example.com`,
-        status: 'active',
-      });
-      directory.emails.set(id, name === 'noEmail' ? null : `${name}@example.com`);
-    }
-  });
+  const tenant = await createTenantWithEntity(appPool);
+  scope = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
+  idpOrgId = tenant.idpOrgId;
+  for (const name of Object.keys(ids) as (keyof typeof ids)[]) {
+    const { userId } = await createStaffUser(appPool, { ...tenant });
+    ids[name] = userId;
+    directory.emails.set(userId, name === 'noEmail' ? null : `${name}@example.com`);
+  }
 
   // The queue is only touched by nudge(), which has its own unit test.
   service = new NotifyService(
@@ -309,11 +299,8 @@ describe('NotifyService reads and markRead', () => {
 
   /** A user nobody else wrote to, so a test sees only its own rows. */
   async function newUser(): Promise<string> {
-    const id = randomUUID();
-    await withTx(db, scope, systemActor('test'), (tx) =>
-      tx.insert(users).values({ id, ...scope, zitadelUserId: `zitadel-${id}`, status: 'active' }),
-    );
-    return id;
+    const { userId } = await createStaffUser(appPool, { ...scope, idpOrgId });
+    return userId;
   }
 
   it('lists only my notifications, newest first, and pages with before', async () => {
