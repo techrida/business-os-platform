@@ -42,6 +42,8 @@ import styles from '../verification.module.css';
 export const metadata: Metadata = { title: 'Verification case · Business OS' };
 export const dynamic = 'force-dynamic';
 
+const SCAN_TONE = { good: 'success', wait: 'warning', bad: 'error' } as const;
+
 /** One attached file: its name, scan result and, once the scan passed, a link that opens it. */
 function AttachedFile({
   documentId,
@@ -70,9 +72,7 @@ function AttachedFile({
     <div className={styles.file}>
       <span className={styles.itemName}>{file.filename}</span>
       <span className={styles.quiet}>{formatBytes(file.sizeBytes)}</span>
-      <Badge tone={{ good: 'success', wait: 'warning', bad: 'error' }[scan.tone]}>
-        {scan.text}
-      </Badge>
+      <Badge tone={SCAN_TONE[scan.tone]}>{scan.text}</Badge>
       {file.status === 'clean' ? (
         <LinkButton
           variant="secondary"
