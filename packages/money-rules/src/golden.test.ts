@@ -90,7 +90,7 @@ describe('P2 golden case (architect section 2.6): three lines, 8% discount, mixe
     expect(priced.discountApprovalRequired).toBe(false);
   });
 
-  it('threshold basis (C-6) is the grand total in NPR, here above NPR 10,00,000 and 2 lakh bands', () => {
+  it('threshold basis (C-6) is the grand total including VAT, in NPR', () => {
     expect(s(priced.amountNpr)).toBe('2690999.99');
   });
 });
