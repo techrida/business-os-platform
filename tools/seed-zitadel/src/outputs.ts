@@ -108,6 +108,8 @@ export interface TokenReport {
   audienceHasProject: boolean;
   hasRoleClaim: boolean;
   hasResourceOwnerClaim: boolean;
+  /** The token's client: `azp`, else `client_id`. The same rule as the API's jwt-verifier. */
+  clientId?: string;
 }
 
 export function inspectToken(token: string, projectId: string): TokenReport {
@@ -116,8 +118,10 @@ export function inspectToken(token: string, projectId: string): TokenReport {
   const audiences: unknown[] =
     typeof aud === 'string' ? [aud] : Array.isArray(aud) ? (aud as unknown[]) : [];
   const claimKeys = Object.keys(claims).sort();
+  const client = claims['azp'] ?? claims['client_id'];
   return {
     claimKeys,
+    ...(typeof client === 'string' ? { clientId: client } : {}),
     audienceHasProject: audiences.includes(projectId),
     hasRoleClaim: claimKeys.some(
       (k) => k.startsWith('urn:zitadel:iam:org:project:') && k.endsWith(':roles'),
