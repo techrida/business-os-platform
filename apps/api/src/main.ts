@@ -6,6 +6,7 @@ import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
+import { assertRoutePolicy } from './platform/authz/route-policy.check';
 import { AppConfig } from './platform/config/config';
 import { MetricsServer } from './platform/obs/metrics.server';
 
@@ -20,6 +21,11 @@ async function bootstrap(): Promise<void> {
   });
   app.useLogger(app.get(Logger));
   configureApp(app);
+
+  // Refuse to boot with a route that has no @Can, @AnyAuthenticated or @Public marker. init() is
+  // idempotent, so listen() below does not run the lifecycle hooks twice.
+  await app.init();
+  assertRoutePolicy(app);
 
   const config = app.get(AppConfig);
   await app.listen(config.API_PORT, '0.0.0.0');
