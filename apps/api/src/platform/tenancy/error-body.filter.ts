@@ -31,6 +31,7 @@ export type ErrorCode =
   | 'duplicate_pan_vat'
   | 'duplicate_found'
   | 'primary_contact_exists'
+  | 'NO_ELIGIBLE_APPROVER'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -69,6 +70,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
   duplicate_found: 'This looks like a record that already exists',
   primary_contact_exists: 'This customer already has a primary contact',
+  NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -128,6 +130,19 @@ function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
   const response = exception.getResponse();
   if (typeof response !== 'object' || !('code' in response)) return undefined;
   return CONFLICT_CODES.find((code) => code === response.code);
+}
+
+/**
+ * A 422 may name its cause the same way. `NO_ELIGIBLE_APPROVER` (P2 M4, upper case as the plan names it): a
+ * quotation submit found an approval step nobody may decide, so nothing was submitted and admins were told.
+ */
+const UNPROCESSABLE_CODES: readonly ErrorCode[] = ['NO_ELIGIBLE_APPROVER'];
+
+function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
+  if (exception.getStatus() !== 422) return undefined;
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('code' in response)) return undefined;
+  return UNPROCESSABLE_CODES.find((code) => code === response.code);
 }
 
 /** The `details` of a coded 409: string and number values only, so the body satisfies ErrorBodySchema. */
@@ -207,7 +222,7 @@ export class ErrorBodyFilter implements ExceptionFilter {
       // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
       if (status === 403 || status === 400) reason = reasonOf(exception);
       stepUp = isStepUp(exception);
-      conflictCode = conflictCodeOf(exception);
+      conflictCode = conflictCodeOf(exception) ?? unprocessableCodeOf(exception);
       if (conflictCode !== undefined) details = detailsOf(exception);
       if (conflictCode === 'duplicate_found') duplicates = duplicatesOf(exception);
     } else {
