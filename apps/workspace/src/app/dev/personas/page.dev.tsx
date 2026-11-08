@@ -4,6 +4,12 @@ import path from 'node:path';
 import { notFound } from 'next/navigation';
 import { z } from 'zod';
 
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { CenteredPage } from '@/components/ui/centered-page';
+import { LinkCard, LinkCardList } from '@/components/ui/link-card';
+import { Stack } from '@/components/ui/stack';
+
 /**
  * Dev-only persona switcher: one link per seeded ZITADEL user, each starting a real OIDC login
  * with that user's login name pre-filled. It signs nobody in by itself and has no bypass: the
@@ -66,31 +72,33 @@ export default async function DevPersonasPage() {
   const loaded = await loadPersonas();
 
   return (
-    <main
-      data-marker="BOS_DEV_PERSONA_SWITCHER"
-      style={{ maxWidth: 640, margin: '2rem auto', padding: '0 1rem' }}
-    >
-      <h1>Dev personas</h1>
-      <p>
-        Development only. Each link starts a real ZITADEL login for that user. The passwords are in{' '}
-        <code>.dev/personas.json</code>, which this page never reads out.
-      </p>
-      {loaded.ok ? (
-        <ul>
-          {loaded.personas.map((persona) => (
-            <li key={persona.key}>
-              {/* A plain anchor, not next/link: Link would prefetch this route handler, and a
-                  prefetch of /auth/login starts a login and stores one-time state. */}
-              <a href={loginHref(persona)}>{persona.label}</a>{' '}
-              <span>
-                ({persona.username}, {persona.orgKind}, {persona.role})
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p role="alert">{loaded.reason}</p>
-      )}
-    </main>
+    <CenteredPage width="wide">
+      <Stack as="main" gap="large" data-marker="BOS_DEV_PERSONA_SWITCHER">
+        <Stack gap="small">
+          <h1>Dev personas</h1>
+          <p>
+            Development only. Each link starts a real ZITADEL login for that user. The passwords
+            are in <code>.dev/personas.json</code>, which this page never reads out.
+          </p>
+        </Stack>
+        {loaded.ok ? (
+          <LinkCardList>
+            {loaded.personas.map((persona) => (
+              // The link text is only the label, so the link's accessible name is the label.
+              // The username, organisation kind and role sit beside it, outside the anchor.
+              <LinkCard key={persona.key} href={loginHref(persona)} title={persona.label}>
+                <span>{persona.username}</span>
+                <Badge tone="info">{persona.orgKind}</Badge>
+                <Badge>{persona.role}</Badge>
+              </LinkCard>
+            ))}
+          </LinkCardList>
+        ) : (
+          <Card tone="error" role="alert">
+            {loaded.reason}
+          </Card>
+        )}
+      </Stack>
+    </CenteredPage>
   );
 }
