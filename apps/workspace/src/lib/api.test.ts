@@ -27,6 +27,7 @@ const validMe = {
   tenantId: '00000000-0000-4000-8000-000000000001',
   organizationId: '00000000-0000-4000-8000-000000000002',
   orgKind: 'staff',
+  partyId: null,
   roles: ['founder'],
   correlationId: 'req-12345678',
 };
@@ -124,6 +125,27 @@ describe('getMe', () => {
     const err = await getMe({ accessToken: TOKEN }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 401, body });
+  });
+
+  it('keeps the party id of a portal caller', async () => {
+    const portal = {
+      ...validMe,
+      orgKind: 'customer',
+      partyId: '00000000-0000-4000-8000-000000000003',
+    };
+    fetchMock.mockResolvedValue(Response.json(portal));
+    await expect(getMe({ accessToken: TOKEN })).resolves.toMatchObject({
+      orgKind: 'customer',
+      partyId: portal.partyId,
+    });
+  });
+
+  it('throws ApiError when the body has no partyId', async () => {
+    const { partyId: _omitted, ...withoutParty } = validMe;
+    fetchMock.mockResolvedValue(Response.json(withoutParty));
+    const err = await getMe({ accessToken: TOKEN }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
   });
 
   it('throws ApiError when the body does not match MeResponseSchema', async () => {
