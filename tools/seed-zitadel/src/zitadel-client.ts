@@ -10,7 +10,8 @@
 //    `POST /zitadel.<pkg>.v2.<Service>/<Method>`, header `Connect-Protocol-Version: 1`,
 //    lowerCamelCase fields, enum values as their proto names.
 //    Example page: https://zitadel.com/docs/reference/api/project/zitadel.project.v2.ProjectService.CreateProject
-//  - v1 is used only where v2 has no GA equivalent: org members (management v1) and the email
+//  - v1 is used only where v2 has no GA equivalent: org members and the org login policy
+//    (management v1; v2 SettingsService has only GetLoginSettings, no setter) and the email
 //    provider / SMTP settings (admin v1). The v2 InternalPermissionService (administrators) is not on
 //    the GA list of that page, so ORG_USER_MANAGER goes through management v1 `AddOrgMember`.
 //  - Proto sources: https://github.com/zitadel/zitadel/tree/v4.20.1/proto/zitadel
@@ -48,6 +49,11 @@ export const ENDPOINTS = {
   listOrgMembers: '/management/v1/orgs/me/members/_search',
   addOrgMember: '/management/v1/orgs/me/members',
 
+  // management v1 login policy of the org in `x-zitadel-orgid`. Verified at tag v4.20.1
+  // (proto/zitadel/management.proto): GET = GetLoginPolicy (effective policy; `isDefault` true means
+  // inherited from the instance), POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy.
+  orgLoginPolicy: '/management/v1/policies/login',
+
   // admin v1 (REST): `AddSMTPConfig` is deprecated in favour of the email-provider endpoints.
   listEmailProviders: '/admin/v1/email/_search',
   addEmailProviderSmtp: '/admin/v1/email/smtp',
@@ -71,6 +77,10 @@ export class ZitadelError extends Error {
 
 export interface Transport {
   post(path: string, body: unknown, headers?: Record<string, string>): Promise<unknown>;
+  /** REST only (management v1 has no Connect endpoints, so reads there are plain GETs). */
+  get(path: string, headers?: Record<string, string>): Promise<unknown>;
+  /** REST only. */
+  put(path: string, body: unknown, headers?: Record<string, string>): Promise<unknown>;
 }
 
 const ErrorBodySchema = z.object({ code: z.string().optional(), message: z.string().optional() });
@@ -81,32 +91,40 @@ export function createFetchTransport(
   fetchImpl: typeof fetch = fetch,
 ): Transport {
   const base = baseUrl.replace(/\/+$/, '');
-  return {
-    async post(path, body, headers = {}) {
-      const res = await fetchImpl(`${base}${path}`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'connect-protocol-version': '1',
-          authorization: `Bearer ${pat}`,
-          ...headers,
-        },
-        body: JSON.stringify(body),
-      });
-      const text = await res.text();
-      if (!res.ok) {
-        let detail = text.slice(0, 200);
-        try {
-          const parsed = ErrorBodySchema.safeParse(JSON.parse(text));
-          if (parsed.success)
-            detail = `${parsed.data.code ?? ''} ${parsed.data.message ?? ''}`.trim();
-        } catch {
-          // Not JSON (for example a proxy error page): keep the truncated text.
-        }
-        throw new ZitadelError(path, res.status, detail);
+  const send = async (
+    method: 'GET' | 'POST' | 'PUT',
+    path: string,
+    body: unknown,
+    headers: Record<string, string>,
+  ): Promise<unknown> => {
+    const res = await fetchImpl(`${base}${path}`, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        'connect-protocol-version': '1',
+        authorization: `Bearer ${pat}`,
+        ...headers,
+      },
+      ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let detail = text.slice(0, 200);
+      try {
+        const parsed = ErrorBodySchema.safeParse(JSON.parse(text));
+        if (parsed.success)
+          detail = `${parsed.data.code ?? ''} ${parsed.data.message ?? ''}`.trim();
+      } catch {
+        // Not JSON (for example a proxy error page): keep the truncated text.
       }
-      return text.length > 0 ? (JSON.parse(text) as unknown) : {};
-    },
+      throw new ZitadelError(path, res.status, detail);
+    }
+    return text.length > 0 ? (JSON.parse(text) as unknown) : {};
+  };
+  return {
+    post: (path, body, headers = {}) => send('POST', path, body, headers),
+    get: (path, headers = {}) => send('GET', path, undefined, headers),
+    put: (path, body, headers = {}) => send('PUT', path, body, headers),
   };
 }
 
@@ -202,6 +220,13 @@ export interface ZitadelApi {
   listOrgMemberRoles(orgId: string, userId: string): Promise<string[] | undefined>;
   addOrgMember(orgId: string, userId: string, roles: string[]): Promise<void>;
 
+  /**
+   * Makes sure the org's login policy has `allowRegister` false (no self-registration). Creates a
+   * custom org policy when the org inherits the instance default. Returns true when it changed
+   * something, false when self-registration was already off (nothing is written then).
+   */
+  ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean>;
+
   /** Returns true when a provider was created (false: already present). */
   ensureSmtp(spec: SmtpSpec): Promise<boolean>;
 
@@ -281,6 +306,39 @@ const MemberList = z.object({
 const ProviderList = z.object({
   result: z.array(z.object({ id: Str.min(1), description: Str.default('') })).default([]),
 });
+// Protobuf JSON: false booleans and empty lists are omitted. Everything else in `policy` is carried
+// over verbatim when the policy is rewritten (see CARRY_OVER).
+const LoginPolicyResponse = z.object({
+  policy: z.looseObject({
+    isDefault: z.boolean().default(false),
+    allowRegister: z.boolean().default(false),
+    secondFactors: z.array(Str).default([]),
+    multiFactors: z.array(Str).default([]),
+    idps: z.array(z.unknown()).default([]),
+  }),
+  isDefault: z.boolean().default(false),
+});
+// AddCustomLoginPolicy and UpdateCustomLoginPolicy are full replacements (proto3 scalars), so every
+// setting must be sent back or it silently resets (allowUsernamePassword would become false and lock
+// everyone out). These are all the scalar/duration fields both requests share.
+const CARRY_OVER = [
+  'allowUsernamePassword',
+  'allowExternalIdp',
+  'forceMfa',
+  'passwordlessType',
+  'hidePasswordReset',
+  'ignoreUnknownUsernames',
+  'defaultRedirectUri',
+  'passwordCheckLifetime',
+  'externalLoginCheckLifetime',
+  'mfaInitSkipLifetime',
+  'secondFactorCheckLifetime',
+  'multiFactorCheckLifetime',
+  'allowDomainDiscovery',
+  'disableLoginWithEmail',
+  'disableLoginWithPhone',
+  'forceMfaLocalOnly',
+] as const;
 const TokenResponse = z.object({ access_token: Str.min(1) });
 
 function parse<S extends z.ZodType>(schema: S, data: unknown, what: string): z.infer<S> {
@@ -623,6 +681,40 @@ export class ZitadelClient implements ZitadelApi {
       { userId, roles },
       { 'x-zitadel-orgid': orgId },
     );
+  }
+
+  async ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
+    const asOrg = { 'x-zitadel-orgid': orgId };
+    const current = parse(
+      LoginPolicyResponse,
+      await this.transport.get(ENDPOINTS.orgLoginPolicy, asOrg),
+      'GetLoginPolicy',
+    );
+    const { policy } = current;
+    if (!policy.allowRegister) return false;
+
+    const body: Record<string, unknown> = { allowRegister: false };
+    for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+
+    if (policy.isDefault || current.isDefault) {
+      // Inherited from the instance: create the org's own policy, starting from the same settings.
+      // The create request also takes the factor lists. IDP links come back without the owner type
+      // the create request needs, so refuse rather than drop them silently (none exist in dev).
+      if (policy.idps.length > 0) {
+        throw new Error(
+          'The inherited login policy has identity provider links; copy them by hand into a custom org policy.',
+        );
+      }
+      await this.transport.post(
+        ENDPOINTS.orgLoginPolicy,
+        { ...body, secondFactors: policy.secondFactors, multiFactors: policy.multiFactors },
+        asOrg,
+      );
+    } else {
+      // Update has no factor or IDP lists: those have their own endpoints and stay as they are.
+      await this.transport.put(ENDPOINTS.orgLoginPolicy, body, asOrg);
+    }
+    return true;
   }
 
   async ensureSmtp(spec: SmtpSpec): Promise<boolean> {
