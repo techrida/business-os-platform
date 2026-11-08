@@ -9,6 +9,15 @@ export type CorrelatedRequest = Request & { correlationId?: string };
 
 export const REQUEST_ID_HEADER = 'x-request-id';
 
+/** Longest `ip` / `userAgent` kept in the request store (they end up in audit rows and logs). */
+export const MAX_CLIENT_FIELD_LENGTH = 512;
+
+/** Null for anything that is not a non-empty string; otherwise the value cut to 512 characters. */
+function clientField(value: unknown): string | null {
+  if (typeof value !== 'string' || value === '') return null;
+  return value.slice(0, MAX_CLIENT_FIELD_LENGTH);
+}
+
 /**
  * Gives every request a correlation id and opens the AsyncLocalStorage store for it.
  *
@@ -25,6 +34,9 @@ export class CorrelationMiddleware implements NestMiddleware {
     req.correlationId = correlationId;
     res.setHeader(REQUEST_ID_HEADER, correlationId);
     // next() must be called inside run(): everything downstream (guards, handlers) inherits the store.
-    runWithRequestStore(correlationId, () => next());
+    runWithRequestStore(correlationId, () => next(), {
+      ip: clientField(req.ip),
+      userAgent: clientField(req.headers['user-agent']),
+    });
   }
 }
