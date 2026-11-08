@@ -6,8 +6,11 @@ import type { DbTransaction } from '../db/db.module';
 import { UserMirror } from './user-mirror';
 import type { UsersSyncData } from './users.constants';
 import {
+  CUST_IDP,
+  CUST_ZORG,
   FakeUsersStore,
   FakeZitadel,
+  STAFF_IDP,
   STAFF_ORG,
   STAFF_ZORG,
   TENANT,
@@ -41,9 +44,13 @@ describe('UserMirror.syncUser', () => {
     expect(await mirror.syncUser('z1')).toBe(true);
     const row = store.users[0];
     expect(row).toMatchObject({ zitadelUserId: 'z1', email: 'z1@techrida.test', status: 'active' });
-    expect(await store.rolesOf(db, row!.id)).toEqual(['accountant', 'finance']);
+    expect(await store.rolesOf(db, TENANT, row!.id)).toEqual(['accountant', 'finance']);
     expect(store.authzBumps).toBe(1);
     expect(db.txCount).toBe(1);
+    // A staff user created by sync gets the bootstrap membership (ADR 0027 section 3).
+    expect(await store.membershipsOf(db, TENANT, row!.id)).toEqual([
+      { organizationId: STAFF_ORG, isDefault: true, roleKeys: null, departmentId: null },
+    ]);
 
     // A second sync with nothing new changes nothing and does not bump authz again.
     expect(await mirror.syncUser('z1')).toBe(false);
@@ -65,7 +72,7 @@ describe('UserMirror.syncUser', () => {
     expect(store.users[0]?.status).toBe('active');
   });
 
-  it('skips a user whose org has no app.organizations row', async () => {
+  it('skips a user whose org has no app.idp_orgs row', async () => {
     zitadel.users.set('z9', zUser('z9', { orgId: 'z-unknown' }));
     expect(await mirror.syncUser('z9')).toBe(false);
     expect(store.users).toHaveLength(0);
@@ -244,6 +251,7 @@ describe('UserMirror.reconcile deactivation safeguards (R8, R18)', () => {
         zitadel.hiddenFromList.add(id);
         void store.insertUser(tx, scope, {
           zitadelUserId: id,
+          idpOrgId: STAFF_IDP,
           email: null,
           displayName: null,
           status: 'active',
@@ -292,16 +300,21 @@ describe('Strict ZITADEL state mapping (R18)', () => {
 });
 
 describe('UserMirror as the UserDirectory backend', () => {
-  it('resolve() JIT-inserts an active row once and enqueues users.sync', async () => {
-    const i = { zitadelUserId: 'jit', tenantId: TENANT, organizationId: STAFF_ORG };
+  it('resolve() JIT-creates a staff user with one default membership, once, and enqueues users.sync', async () => {
+    const i = { zitadelUserId: 'jit', tenantId: TENANT, idpOrgId: STAFF_IDP };
     const first = await mirror.resolve(i);
-    expect(first).toMatchObject({
+    expect(first).toEqual({
+      userId: store.users[0]?.id,
       status: 'active',
-      departmentId: null,
       tenantId: TENANT,
-      organizationId: STAFF_ORG,
+      idpOrgId: STAFF_IDP,
+      memberships: [
+        { organizationId: STAFF_ORG, isDefault: true, roleKeys: null, departmentId: null },
+      ],
     });
+    expect(store.users[0]).not.toHaveProperty('organizationId');
     expect(queue.added).toEqual([{ name: 'users.sync', data: { zitadelUserId: 'jit' } }]);
+    // The user row and its membership went through one withTx.
     expect(db.txCount).toBe(1);
 
     expect(await mirror.resolve(i)).toEqual(first);
@@ -318,10 +331,11 @@ describe('UserMirror as the UserDirectory backend', () => {
     expect(zitadel.setGrantsCalls).toEqual([
       { userId: 'z1', orgId: STAFF_ZORG, roles: ['finance'] },
     ]);
-    expect(await store.rolesOf(db, id)).toEqual(['finance']);
+    expect(await store.rolesOf(db, TENANT, id)).toEqual(['finance']);
     expect(await mirror.userIdsWithRole(scope, 'finance')).toEqual([id]);
 
-    store.scope = { tenantId: TENANT, organizationId: '00000000-0000-4000-8000-0000000000bb' };
+    // Users are tenant-scoped, so only another tenant is "outside the scope".
+    store.scope = { tenantId: '00000000-0000-4000-8000-0000000000bb', organizationId: STAFF_ORG };
     await expect(mirror.setRoles(tx, id, [])).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -337,8 +351,51 @@ describe('UserMirror as the UserDirectory backend', () => {
       status: 'invited',
       displayName: 'New Person',
     });
-    expect(await store.rolesOf(db, userId)).toEqual(['accountant']);
+    expect(await store.rolesOf(db, TENANT, userId)).toEqual(['accountant']);
     expect(zitadel.setGrantsCalls[0]).toMatchObject({ userId: 'z-new', roles: ['accountant'] });
+    // An invited staff user gets the default membership too.
+    expect(await store.membershipsOf(db, TENANT, userId)).toEqual([
+      { organizationId: STAFF_ORG, isDefault: true, roleKeys: null, departmentId: null },
+    ]);
+  });
+});
+
+describe('Bootstrap rule (ADR 0027 section 3)', () => {
+  it('gives a portal user no membership, on JIT and on sync', async () => {
+    const jit = await mirror.resolve({
+      zitadelUserId: 'p1',
+      tenantId: TENANT,
+      idpOrgId: CUST_IDP,
+    });
+    expect(jit).toMatchObject({ idpOrgId: CUST_IDP, memberships: [] });
+
+    zitadel.users.set('p2', zUser('p2', { orgId: CUST_ZORG }));
+    expect(await mirror.syncUser('p2')).toBe(true);
+    const p2 = store.users.find((u) => u.zitadelUserId === 'p2');
+    expect(p2?.idpOrgId).toBe(CUST_IDP);
+    expect(store.memberships).toHaveLength(0);
+  });
+
+  it('keeps admin paths on staff users: setRoles 404s on a portal user and list omits them', async () => {
+    zitadel.users.set('p3', zUser('p3', { orgId: CUST_ZORG }));
+    await mirror.syncUser('p3');
+    const portal = store.users.find((u) => u.zitadelUserId === 'p3')!;
+    await expect(mirror.setRoles(tx, portal.id, ['finance'])).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(zitadel.setGrantsCalls).toEqual([]);
+    expect(await mirror.list(scope, { limit: 10 })).toEqual([]);
+  });
+
+  it('does not add a default membership to a staff user who already has one', async () => {
+    const first = await mirror.resolve({
+      zitadelUserId: 's1',
+      tenantId: TENANT,
+      idpOrgId: STAFF_IDP,
+    });
+    zitadel.users.set('s1', zUser('s1'));
+    await mirror.syncUser('s1');
+    expect(store.memberships.filter((m) => m.userId === first.userId)).toHaveLength(1);
   });
 });
 
@@ -353,14 +410,16 @@ describe('UserMirror.resolve on an accepted invite', () => {
     const resolved = await mirror.resolve({
       zitadelUserId: 'z-new',
       tenantId: TENANT,
-      organizationId: STAFF_ORG,
+      idpOrgId: STAFF_IDP,
     });
     expect(resolved).toEqual({
       userId,
       status: 'active',
-      departmentId: null,
       tenantId: TENANT,
-      organizationId: STAFF_ORG,
+      idpOrgId: STAFF_IDP,
+      memberships: [
+        { organizationId: STAFF_ORG, isDefault: true, roleKeys: null, departmentId: null },
+      ],
     });
     expect(store.users.find((u) => u.id === userId)?.status).toBe('active');
     expect(queue.added).toEqual([{ name: 'users.sync', data: { zitadelUserId: 'z-new' } }]);
