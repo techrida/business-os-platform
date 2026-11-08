@@ -5,7 +5,7 @@
 import type { Permission } from '@bos/contracts';
 import { authzVersions, type Scoped, scoped } from '@bos/db';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { and, eq, or, type SQL, sql } from 'drizzle-orm';
+import { eq, type SQL, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import { DB, type Db } from '../db/db.module';
@@ -21,18 +21,29 @@ type AnyCounterpartyTable = Parameters<Scoped['forCounterparty']>[0];
 /** Matches no row. Every "cannot reach" case returns this, so the default is an empty list. */
 const NOTHING: SQL = sql`false`;
 
-/** The counterparty column of `table` for the principal's org kind; staff have none (see can.ts). */
+/** The party column of `table` for the principal's org kind; staff have none (see can.ts). */
 function counterpartyColumn(
   p: Principal,
   table: ScopableTable,
 ): { kind: CounterpartyKind; column: AnyPgColumn } | undefined {
-  if (p.orgKind === 'customer' && table.customerOrganizationId !== undefined) {
-    return { kind: 'customer', column: table.customerOrganizationId };
+  if (p.orgKind === 'customer' && table.customerPartyId !== undefined) {
+    return { kind: 'customer', column: table.customerPartyId };
   }
-  if (p.orgKind === 'vendor' && table.vendorOrganizationId !== undefined) {
-    return { kind: 'vendor', column: table.vendorOrganizationId };
+  if (p.orgKind === 'vendor' && table.vendorPartyId !== undefined) {
+    return { kind: 'vendor', column: table.vendorPartyId };
   }
   return undefined;
+}
+
+/**
+ * The portal rule (ADR 0017, revised by ADR 0027 §5): rows of the acting entity whose party column
+ * equals `p.partyId`. Staff, a table without the column and a principal with no party match nothing.
+ */
+function portalRows(p: Principal, table: ScopableTable, s: Scoped): SQL {
+  const counterparty = counterpartyColumn(p, table);
+  if (counterparty === undefined || p.partyId === null || p.partyId === '') return NOTHING;
+  // Safe cast: counterpartyColumn() returned only because the table has this kind's column.
+  return s.forCounterparty(table as unknown as AnyCounterpartyTable, counterparty.kind, p.partyId);
 }
 
 /**
@@ -57,22 +68,13 @@ export function scopeWhereFor(p: Principal, table: ScopableTable, action: Permis
       // No department means no department scope; NULL = NULL would not match anyway, but be explicit.
       if (p.departmentId === null || table.departmentId === undefined) return NOTHING;
       return s.where(table, eq(table.departmentId, p.departmentId));
-    case 'customer_org': {
-      // The portal rule (ADR 0017): the counterparty column, never organization_id.
-      const counterparty = counterpartyColumn(p, table);
-      if (counterparty === undefined) return NOTHING;
-      // Safe cast: counterpartyColumn() returned only because the table has this kind's column.
-      return s.forCounterparty(table as unknown as AnyCounterpartyTable, counterparty.kind);
-    }
-    case 'all': {
-      const counterparty = counterpartyColumn(p, table);
-      // Staff, or a table with no counterparty column: rows my org owns.
-      if (counterparty === undefined) return s.where(table);
-      return and(
-        eq(table.tenantId, p.tenantId),
-        or(eq(table.organizationId, p.organizationId), eq(counterparty.column, p.organizationId)),
-      ) as SQL;
-    }
+    case 'customer_org':
+      return portalRows(p, table, s);
+    case 'all':
+      // Staff: every row of the acting entity. A portal caller: the `customer_org` rows, because
+      // its `organizationId` is the acting entity and would otherwise reach every staff document.
+      if (p.orgKind === 'staff') return s.where(table);
+      return portalRows(p, table, s);
     default:
       // An unknown scope string from the database grants nothing, as in can().
       return NOTHING;
@@ -108,9 +110,11 @@ export class AuthzService {
   }
 
   /**
-   * Bumps the org's `authz_versions` row, so every api instance reloads its role rows within 5 s
-   * (R11), and this instance at once. Call it after the `role_permissions` change has committed:
-   * a reload between this bump and that commit would cache the old rows under the new version.
+   * Bumps the tenant's `authz_versions` row, so every api instance reloads the tenant's role rows
+   * within 5 s (R11), and this instance at once, for every entity of the tenant (ADR 0027 §7). Call
+   * it after the `role_permissions` change has committed: a reload between this bump and that commit
+   * would cache the old rows under the new version. `organizationId` is the acting entity: the
+   * write is audited under it (a tenant-scoped row has no entity of its own).
    */
   async invalidate(tenantId: string, organizationId: string): Promise<void> {
     await withTx(
@@ -120,9 +124,9 @@ export class AuthzService {
       async (tx) => {
         await tx
           .insert(authzVersions)
-          .values({ tenantId, organizationId, version: 1 })
+          .values({ tenantId, version: 1 })
           .onConflictDoUpdate({
-            target: [authzVersions.tenantId, authzVersions.organizationId],
+            target: [authzVersions.tenantId],
             set: { version: sql`${authzVersions.version} + 1`, updatedAt: sql`now()` },
           });
       },

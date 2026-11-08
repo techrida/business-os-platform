@@ -1,7 +1,10 @@
-// The in-memory role → permission → scope table for each org, and the merge that turns a user's
+// The in-memory role → permission → scope table for each tenant, and the merge that turns a user's
 // roles into `Principal.grants`. Serves the NFR "< 5 ms per decision" (P1 plan §1, k-authz): a
-// request reads its grants from memory, and the database is touched at most once per org every 5 s
-// to check that the rows are still current (risk R11, staleness across api instances).
+// request reads its grants from memory, and the database is touched at most once per tenant every
+// 5 s to check that the rows are still current (risk R11, staleness across api instances).
+// What a role may do is company policy, so `role_permissions` and `authz_versions` are tenant-scoped
+// and every entity of a tenant shares one entry (ADR 0027 §7). Membership narrows the roles per
+// entity before they reach `grantsFor` (the tenancy interceptor).
 import {
   DEFAULT_ROLE_PERMISSIONS,
   type Permission,
@@ -10,7 +13,7 @@ import {
 } from '@bos/contracts';
 import { authzVersions, rolePermissions } from '@bos/db';
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { DB, type Db } from '../db/db.module';
 
@@ -27,11 +30,10 @@ export const AUTHZ_CLOCK = Symbol('AUTHZ_CLOCK');
  *
  * `all` sits above `customer_org` because it reaches everything `customer_org` does, for every org
  * kind (see `can.ts`): for staff `customer_org` matches nothing, and for a customer or vendor `all`
- * is "rows my org owns OR rows that name my org as counterparty", which includes the `customer_org`
- * rows. The three lower scopes are not nested like that (a `department` grant does not reach a row I
- * own in another department, and a customer's `customer_org` does not reach rows it owns), so their
- * order is a policy choice: `Principal.grants` holds one scope per permission, and we keep the one
- * that usually reaches further.
+ * is the same rows as `customer_org` (rows of the acting entity that name its party, ADR 0027 §5).
+ * The three lower scopes are not nested like that (a `department` grant does not reach a row I own
+ * in another department), so their order is a policy choice: `Principal.grants` holds one scope per
+ * permission, and we keep the one that usually reaches further.
  */
 const SCOPE_RANK: Readonly<Record<Scope, number>> = {
   own: 0,
@@ -42,9 +44,9 @@ const SCOPE_RANK: Readonly<Record<Scope, number>> = {
 
 type RoleGrants = ReadonlyMap<Permission, Scope>;
 
-/** One org's rows, and the version they were read at. */
-interface OrgEntry {
-  /** `authz_versions.version` read just before the rows; 0 when the org has no version row yet. */
+/** One tenant's rows, and the version they were read at. */
+interface TenantEntry {
+  /** `authz_versions.version` read just before the rows; 0 when the tenant has no version row yet. */
   version: number;
   /** Clock time the version was last confirmed against the database. */
   checkedAt: number;
@@ -55,8 +57,8 @@ const EMPTY: RoleGrants = new Map();
 
 /**
  * The fallback table, built once. The seed copies `DEFAULT_ROLE_PERMISSIONS` into
- * `app.role_permissions` for every org, so in a seeded system the rows are the truth and this is
- * only used for a fresh tenant whose org has no rows yet (before the seed runs). The seed must bump
+ * `app.role_permissions` for every tenant, so in a seeded system the rows are the truth and this is
+ * only used for a fresh tenant with no rows yet (before the seed runs). The seed must bump
  * `authz_versions` when it inserts the rows, or a cache that already loaded the defaults keeps them.
  */
 const DEFAULT_BY_ROLE: ReadonlyMap<string, RoleGrants> = new Map(
@@ -66,13 +68,12 @@ const DEFAULT_BY_ROLE: ReadonlyMap<string, RoleGrants> = new Map(
   ]),
 );
 
-const keyOf = (tenantId: string, organizationId: string): string => `${tenantId}:${organizationId}`;
-
 @Injectable()
 export class RoleCache {
-  private readonly entries = new Map<string, OrgEntry>();
-  /** One load at a time per org, so a burst of requests after a bump causes one reload, not many. */
-  private readonly inFlight = new Map<string, Promise<OrgEntry>>();
+  /** Keyed by tenant id. */
+  private readonly entries = new Map<string, TenantEntry>();
+  /** One load at a time per tenant, so a burst of requests after a bump causes one reload, not many. */
+  private readonly inFlight = new Map<string, Promise<TenantEntry>>();
   /**
    * Bumped by `forget()`. A load that started before a `forget()` must not write its (possibly old)
    * rows back, or this instance would keep them for another 5 s despite its own invalidate.
@@ -88,28 +89,35 @@ export class RoleCache {
   }
 
   /**
-   * The union of what `roles` grant in this org, with the widest scope per permission. A role the
-   * org has no rows for grants nothing (once an org has rows, the table is the whole truth).
+   * The union of what `roles` grant in this tenant, with the widest scope per permission. A role the
+   * tenant has no rows for grants nothing (once a tenant has rows, the table is the whole truth).
+   *
+   * `_organizationId` (the acting entity) does not change the answer: the rows are tenant policy and
+   * `roles` are already the effective roles in that entity. It stays in the signature so callers
+   * keep passing the full request scope.
    */
   async grantsFor(
     tenantId: string,
-    organizationId: string,
+    _organizationId: string,
     roles: readonly RoleKey[],
   ): Promise<ReadonlyMap<Permission, Scope>> {
-    const entry = await this.entryFor(tenantId, organizationId);
+    const entry = await this.entryFor(tenantId);
     return merge(entry.byRole, roles);
   }
 
-  /** Drops this instance's entry, so the next `grantsFor` reloads. `AuthzService.invalidate` calls it. */
-  forget(tenantId: string, organizationId: string): void {
-    const key = keyOf(tenantId, organizationId);
+  /**
+   * Drops this instance's entry for the tenant, so the next `grantsFor` reloads, for every entity.
+   * `AuthzService.invalidate` calls it. `_organizationId` is ignored, as in `grantsFor`.
+   */
+  forget(tenantId: string, _organizationId: string): void {
+    const key = tenantId;
     this.entries.delete(key);
     this.inFlight.delete(key);
     this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
   }
 
-  private async entryFor(tenantId: string, organizationId: string): Promise<OrgEntry> {
-    const key = keyOf(tenantId, organizationId);
+  private async entryFor(tenantId: string): Promise<TenantEntry> {
+    const key = tenantId;
     const cached = this.entries.get(key);
     if (cached !== undefined && this.clock() - cached.checkedAt < VERSION_CHECK_TTL_MS) {
       return cached;
@@ -119,7 +127,7 @@ export class RoleCache {
     if (pending !== undefined) return pending;
 
     const generation = this.generations.get(key) ?? 0;
-    const load = this.refresh(tenantId, organizationId, cached, generation).finally(() => {
+    const load = this.refresh(tenantId, cached, generation).finally(() => {
       // Only our own promise: after a forget() a newer load may own the slot.
       if (this.inFlight.get(key) === load) this.inFlight.delete(key);
     });
@@ -128,54 +136,48 @@ export class RoleCache {
   }
 
   /**
-   * Confirms or reloads one org. Writes the result into `entries` before resolving, unless a
+   * Confirms or reloads one tenant. Writes the result into `entries` before resolving, unless a
    * `forget()` happened meanwhile (then the caller still gets it, but it is not cached).
    */
   private async refresh(
     tenantId: string,
-    organizationId: string,
-    cached: OrgEntry | undefined,
+    cached: TenantEntry | undefined,
     generation: number,
-  ): Promise<OrgEntry> {
-    const key = keyOf(tenantId, organizationId);
+  ): Promise<TenantEntry> {
+    const key = tenantId;
     // The version is read BEFORE the rows. If a change commits in between, we store new rows under
     // the old version and simply reload again at the next check. The other order could store old
     // rows under the new version, and they would stay stale until the next bump.
-    const version = await this.readVersion(tenantId, organizationId);
+    const version = await this.readVersion(tenantId);
     const checkedAt = this.clock();
 
     if (cached !== undefined && cached.version === version) {
-      const confirmed: OrgEntry = { ...cached, checkedAt };
+      const confirmed: TenantEntry = { ...cached, checkedAt };
       this.store(key, confirmed, generation);
       return confirmed;
     }
 
-    const byRole = await this.readRows(tenantId, organizationId);
-    const loaded: OrgEntry = { version, checkedAt, byRole };
+    const byRole = await this.readRows(tenantId);
+    const loaded: TenantEntry = { version, checkedAt, byRole };
     this.store(key, loaded, generation);
     return loaded;
   }
 
-  private store(key: string, entry: OrgEntry, generation: number): void {
+  private store(key: string, entry: TenantEntry, generation: number): void {
     if ((this.generations.get(key) ?? 0) === generation) this.entries.set(key, entry);
   }
 
-  /** One read on the `(tenant_id, organization_id)` unique index. */
-  private async readVersion(tenantId: string, organizationId: string): Promise<number> {
+  /** One read on the `(tenant_id)` unique index. */
+  private async readVersion(tenantId: string): Promise<number> {
     const rows = await this.db
       .select({ version: authzVersions.version })
       .from(authzVersions)
-      .where(
-        and(eq(authzVersions.tenantId, tenantId), eq(authzVersions.organizationId, organizationId)),
-      )
+      .where(eq(authzVersions.tenantId, tenantId))
       .limit(1);
     return rows[0]?.version ?? 0;
   }
 
-  private async readRows(
-    tenantId: string,
-    organizationId: string,
-  ): Promise<ReadonlyMap<string, RoleGrants>> {
+  private async readRows(tenantId: string): Promise<ReadonlyMap<string, RoleGrants>> {
     const rows = await this.db
       .select({
         roleKey: rolePermissions.roleKey,
@@ -183,14 +185,9 @@ export class RoleCache {
         scope: rolePermissions.scope,
       })
       .from(rolePermissions)
-      .where(
-        and(
-          eq(rolePermissions.tenantId, tenantId),
-          eq(rolePermissions.organizationId, organizationId),
-        ),
-      );
+      .where(eq(rolePermissions.tenantId, tenantId));
 
-    // No rows at all: a fresh org before the seed ran (see DEFAULT_BY_ROLE).
+    // No rows at all: a fresh tenant before the seed ran (see DEFAULT_BY_ROLE).
     if (rows.length === 0) return DEFAULT_BY_ROLE;
 
     const byRole = new Map<string, Map<Permission, Scope>>();

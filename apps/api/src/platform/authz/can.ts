@@ -29,19 +29,30 @@ const SOD: ReadonlySet<Permission> = new Set(SOD_PERMISSIONS);
 const sameId = (a: string | null | undefined, b: string | null | undefined): boolean =>
   typeof a === 'string' && a.length > 0 && a === b;
 
-/** The record's counterparty column that names the principal's org kind, if it has one. */
+/**
+ * The record's counterparty column for the principal's org kind, if it has one. It holds a party id
+ * (`customer_party_id` / `vendor_party_id`, ADR 0027 §5) and is compared with `p.partyId` only.
+ */
 function counterpartyOf(p: Principal, r: ResourceRef): string | null | undefined {
-  if (p.orgKind === 'customer') return r.customerOrganizationId;
-  if (p.orgKind === 'vendor') return r.vendorOrganizationId;
-  // Staff orgs are never a counterparty: staff reach records through ownership, not this column.
+  if (p.orgKind === 'customer') return r.customerPartyId;
+  if (p.orgKind === 'vendor') return r.vendorPartyId;
+  // Staff are never a counterparty: staff reach records through the entity, not this column.
   return undefined;
 }
+
+/**
+ * The portal rule (ADR 0017, revised by ADR 0027 §5): a row of the acting entity whose counterparty
+ * column names the caller's party. Never `organizationId` alone: for a portal caller that is the
+ * acting entity, which owns every business document, so it would reach the whole entity.
+ */
+const namesMyParty = (p: Principal, r: ResourceRef): boolean =>
+  sameId(r.organizationId, p.organizationId) && sameId(counterpartyOf(p, r), p.partyId);
 
 /** Does `scope` reach `r` for `p`? The tenant was already checked by the caller. */
 function inScope(p: Principal, scope: Scope, r: ResourceRef): boolean {
   switch (scope) {
-    // `own` and `department` also need the principal's own org, so a record check agrees with the
-    // list query: `scopeWhere()` builds these on `scoped()`, which filters tenant and org.
+    // `own` and `department` also need the acting entity, so a record check agrees with the list
+    // query: `scopeWhere()` builds these on `scoped()`, which filters tenant and entity.
     case 'own':
       return sameId(r.organizationId, p.organizationId) && sameId(r.ownerUserId, p.userId);
     case 'department':
@@ -52,19 +63,16 @@ function inScope(p: Principal, scope: Scope, r: ResourceRef): boolean {
         sameId(r.departmentId, p.departmentId)
       );
     case 'customer_org':
-      // The portal rule (ADR 0017): match the counterparty column, never `organizationId`. A
-      // customer matches only the customer column and a vendor only the vendor column.
-      return sameId(counterpartyOf(p, r), p.organizationId);
+      // A customer matches only the customer column and a vendor only the vendor column; staff
+      // match nothing. A party id that happens to equal an entity id grants nothing.
+      return namesMyParty(p, r);
     case 'all':
-      // `all` means "everything my org holds", not "everything in the tenant".
-      // - Staff: rows owned by the staff org (`organizationId`). Business documents that name a
-      //   customer or vendor are still owned by the staff org (ADR 0017), so they are covered. A row
-      //   owned by a customer org (its own users, say) is out of scope for staff.
-      // - Customer or vendor: rows owned by its own org, plus rows that name it in its own
-      //   counterparty column. It never reaches a staff-owned row through `organizationId`, and
-      //   never through the other kind's counterparty column.
-      if (sameId(r.organizationId, p.organizationId)) return true;
-      return p.orgKind !== 'staff' && sameId(counterpartyOf(p, r), p.organizationId);
+      // `all` means "everything the acting entity holds that I may see", not "the whole tenant".
+      // - Staff: every row of the acting entity, including the ones that name a customer or vendor.
+      // - Customer or vendor: the same rows as `customer_org`. Its `organizationId` is the acting
+      //   entity, so "rows my org owns" would be every staff document; a party owns no entity rows.
+      if (p.orgKind === 'staff') return sameId(r.organizationId, p.organizationId);
+      return namesMyParty(p, r);
     default:
       // A scope string this code does not know (a bad `role_permissions` row) grants nothing.
       return false;
