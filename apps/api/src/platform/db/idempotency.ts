@@ -10,7 +10,7 @@ import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 
 // Pure and dependency-free, so it is reused from approvals instead of copied. It moves next to this file when
 // approvals moves onto withIdempotency (a later unit).
-import { canonicalSha256 } from '../../modules/approvals/canonical-json';
+import { canonicalSha256 } from '../hashing/canonical-json';
 import type { DbTransaction } from './tx';
 
 /** What a command hands back: the HTTP status and the JSON-serialisable body that a replay will return. */
