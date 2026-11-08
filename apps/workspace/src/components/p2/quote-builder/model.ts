@@ -16,6 +16,13 @@ export interface LineValues {
   quantity: string;
   unitPrice: string;
   taxCodeId: string;
+  /**
+   * Hidden: the builder never shows or edits these, but the API replaces lines wholesale on save,
+   * so they travel with the line or a saved cost (and the margin from it) is erased. A new line
+   * has both null.
+   */
+  unitCost?: string | null;
+  catalogItemId?: string | null;
 }
 
 export interface MilestoneValues {
@@ -71,6 +78,8 @@ export const newLine = (key: string): LineValues => ({
   quantity: '1',
   unitPrice: '',
   taxCodeId: '',
+  unitCost: null,
+  catalogItemId: null,
 });
 
 export const newMilestone = (key: string): MilestoneValues => ({
@@ -202,6 +211,9 @@ export function toContent(v: BuilderValues, mode: 'create' | 'update' = 'create'
       quantity: plainNumber(l.quantity),
       unitPrice: plainNumber(l.unitPrice),
       taxCodeId: l.taxCodeId,
+      // The contract takes these as optional, not null: a line without them sends neither key.
+      ...(l.unitCost ? { unitCost: l.unitCost } : {}),
+      ...(l.catalogItemId ? { catalogItemId: l.catalogItemId } : {}),
     })),
   };
   // Leave absent keys out entirely (not as `undefined`), so the body says only what it means.
@@ -229,6 +241,8 @@ export interface VersionLike {
     quantity: string;
     unitPrice: string;
     taxCodeId: string;
+    unitCost?: string | null | undefined;
+    catalogItemId?: string | null | undefined;
   }[];
   paymentSchedule: readonly {
     label: string;
@@ -257,6 +271,8 @@ export function valuesFromVersion(d: VersionLike): BuilderValues {
       quantity: l.quantity,
       unitPrice: l.unitPrice,
       taxCodeId: l.taxCodeId,
+      unitCost: l.unitCost ?? null,
+      catalogItemId: l.catalogItemId ?? null,
     })),
     schedule: d.paymentSchedule.map((m, i) => ({
       key: `m${i + 1}`,
