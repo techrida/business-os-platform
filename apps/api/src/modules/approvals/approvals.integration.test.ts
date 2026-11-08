@@ -290,6 +290,8 @@ const submit = (over: Partial<SubmitInput> = {}) =>
     }),
   );
 
+const submitMemo = submit;
+
 const act = (as: string, requestId: string, body: object, key = randomUUID()) => {
   me = as;
   return service.act(requestId, body as never, key);
@@ -1159,6 +1161,19 @@ describe('cancel (K1, kernel gap M5)', () => {
     withTx(db, scope, systemActor('test'), (tx) =>
       service.cancel(tx, requestId, reason, { ...asRequester, id: U.requester }),
     );
+  // Its own document type: other tests publish new test_memo versions with more steps.
+  const submit = (over: Partial<SubmitInput> = {}) =>
+    submitMemo({ documentType: 'k1_cancel', ...over });
+  beforeAll(async () => {
+    me = U.founder;
+    await admin.createWorkflow({
+      key: 'k1_cancel',
+      name: 'K1 cancel',
+      spec: { documentType: 'k1_cancel', steps: seedSpec.steps },
+    });
+    await admin.publish('k1_cancel', 1);
+    service.registerSubject({ documentType: 'k1_cancel', onDecided });
+  });
 
   it('cancels a pending request: status, version, skipped steps, a cancel row and an audit event', async () => {
     const { requestId } = await submit();
@@ -1166,7 +1181,8 @@ describe('cancel (K1, kernel gap M5)', () => {
     expect(dto).toMatchObject({ status: 'cancelled', version: 2 });
     expect(dto.decidedAt).not.toBeNull();
     expect(dto.steps.map((s) => s.status)).toEqual(['skipped', 'skipped']);
-    expect(dto.actions.at(-1)).toMatchObject({
+    // find, not the last row: the fake clock gives submit and cancel the same createdAt, and ids are random.
+    expect(dto.actions.find((a) => a.action === 'cancel')).toMatchObject({
       action: 'cancel',
       actorUserId: U.requester,
       comment: REASON,
