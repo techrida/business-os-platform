@@ -151,6 +151,51 @@ describe('ErrorBodyFilter', () => {
     },
   );
 
+  describe('duplicate_found', () => {
+    const CUSTOMER = '4f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
+    const CONTACT = '9b2c1d3e-5f60-4a7b-8c9d-0e1f2a3b4c5d';
+    const candidates = [
+      { kind: 'customer', id: CUSTOMER, label: 'Acme Pvt. Ltd.', matchedOn: 'name' },
+      { kind: 'contact', id: CONTACT, label: 'Sita', matchedOn: 'email', customerId: CUSTOMER },
+    ];
+
+    it('puts the candidates at error.duplicates, where the workspace reads them, and still parses', () => {
+      const out = filter(
+        new ConflictException({
+          code: 'duplicate_found',
+          message: 'Possible duplicates',
+          duplicates: candidates,
+        }),
+      );
+      expect(out.status).toBe(409);
+      expect(ErrorBodySchema.parse(out.body).error.code).toBe('duplicate_found');
+      expect((out.body as { error: { duplicates?: unknown } }).error.duplicates).toEqual(
+        candidates,
+      );
+    });
+
+    it('drops a malformed candidate list instead of leaking a shape clients do not know', () => {
+      const out = filter(
+        new ConflictException({
+          code: 'duplicate_found',
+          message: 'm',
+          duplicates: [{ kind: 'customer', id: 'not-a-guid', label: 'x', matchedOn: 'name', x: 1 }],
+        }),
+      );
+      expect(ErrorBodySchema.parse(out.body).error.code).toBe('duplicate_found');
+      expect((out.body as { error: { duplicates?: unknown } }).error.duplicates).toBeUndefined();
+    });
+
+    it('is never claimed by a non-409', () => {
+      const out = filter(
+        new BadRequestException({ code: 'duplicate_found', message: 'm', duplicates: candidates }),
+      );
+      const { error } = out.body as { error: { code: string; duplicates?: unknown } };
+      expect(error.code).toBe('bad_request');
+      expect(error.duplicates).toBeUndefined();
+    });
+  });
+
   it('does not let a 409 claim any other code, or a non-409 claim fx_rate_stale', () => {
     expect(
       ErrorBodySchema.parse(filter(new ConflictException({ code: 'whatever', message: 'm' })).body)
