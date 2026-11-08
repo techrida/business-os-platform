@@ -21,15 +21,19 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { MeController } from '../../modules/me/me.controller';
 import { TelemetryController } from '../../modules/telemetry/telemetry.controller';
+import { AnyAuthenticated } from '../authz/decorators';
+import { RoleCache } from '../authz/role-cache';
+import { UserDirectory } from '../authz/user-directory';
 import { DB } from '../db/db.module';
 import { MetricsService } from '../obs/metrics.service';
 import { TenancyModule } from './tenancy.module';
 
 // In-process wiring of the real middleware, interceptor, filter and controllers. Only the things
-// outside this unit are faked: the database and the token check.
+// outside this unit are faked: the database, the token check, the user directory and the role table.
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const STAFF_ORG = '22222222-2222-4222-8222-222222222222';
+const APP_USER_ID = '33333333-3333-4333-8333-333333333333';
 
 /** Fake `select().from().where().limit()` that knows one org, found through the real WHERE clause. */
 const fakeDb = {
@@ -53,6 +57,23 @@ const fakeDb = {
 @Module({ providers: [{ provide: DB, useValue: fakeDb }], exports: [DB] })
 class FakeDbModule {}
 
+/** Stands in for the global UsersModule and AuthzModule, which provide these two in the app. */
+@Global()
+@Module({
+  providers: [
+    {
+      provide: UserDirectory,
+      useValue: {
+        resolve: () =>
+          Promise.resolve({ userId: APP_USER_ID, status: 'active', departmentId: null }),
+      },
+    },
+    { provide: RoleCache, useValue: { grantsFor: () => Promise.resolve(new Map()) } },
+  ],
+  exports: [UserDirectory, RoleCache],
+})
+class FakeAuthzPortsModule {}
+
 /**
  * Plays AuthGuard's role: "Bearer <zitadelOrgId>" gives `req.auth`, anything else is 401. Test
  * scaffolding only (the real guard verifies a JWT); nothing like it exists in src.
@@ -64,10 +85,13 @@ class FakeAuthGuard implements CanActivate {
       .getRequest<{ headers: Record<string, string>; auth?: unknown }>();
     const match = /^Bearer (.+)$/.exec(req.headers['authorization'] ?? '');
     if (!match) throw new UnauthorizedException('Missing bearer token');
+    const zitadelOrgId = match[1] ?? '';
     req.auth = {
       userId: 'user-1',
-      zitadelOrgId: match[1],
-      roles: ['admin'],
+      zitadelOrgId,
+      // The union lists a role from another org; only the caller's own org counts (finding 4).
+      roles: ['finance', 'founder'],
+      rolesByOrg: { [zitadelOrgId]: ['founder'], 'zit-elsewhere': ['finance'] },
       tokenExp: 1_900_000_000,
     };
     return true;
@@ -75,10 +99,20 @@ class FakeAuthGuard implements CanActivate {
 }
 
 @Controller('v1/boom')
+@AnyAuthenticated()
 class BoomController {
   @Get()
   boom(): never {
     throw new Error('connection to postgres://bos_app:hunter2@db failed');
+  }
+}
+
+/** A protected route nobody marked: the interceptor must refuse it. */
+@Controller('v1/unmarked')
+class UnmarkedController {
+  @Get()
+  get(): { ok: true } {
+    return { ok: true };
   }
 }
 
@@ -90,8 +124,8 @@ describe('tenancy wiring (in-process)', () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [FakeDbModule, TenancyModule],
-      controllers: [MeController, TelemetryController, BoomController],
+      imports: [FakeDbModule, FakeAuthzPortsModule, TenancyModule],
+      controllers: [MeController, TelemetryController, BoomController, UnmarkedController],
       providers: [
         { provide: APP_GUARD, useClass: FakeAuthGuard },
         { provide: MetricsService, useValue: { observeWebVitalLcp } },
@@ -119,9 +153,20 @@ describe('tenancy wiring (in-process)', () => {
       tenantId: TENANT,
       organizationId: STAFF_ORG,
       orgKind: 'staff',
-      roles: ['admin'],
+      roles: ['founder'],
       correlationId: 'trace-abcdef12',
     });
+  });
+
+  it('a protected route with no marker is 403 no_permission through the real filter', async () => {
+    const res = await http()
+      .get('/v1/unmarked')
+      .set('authorization', 'Bearer zit-staff')
+      .expect(403);
+
+    const { error } = ErrorBodySchema.parse(res.body);
+    expect(error).toMatchObject({ code: 'forbidden', reason: 'no_permission' });
+    expect(error.correlationId).toBe(res.headers['x-request-id']);
   });
 
   it('replaces an invalid x-request-id and reports the same id in the header and the body', async () => {
