@@ -417,6 +417,18 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
     },
 
     async expiringNotice(tx, c, from, until) {
+      // Shared lock on the version, in a select of its own on that one table. Not `.for('share', { of: ... })` on
+      // the joined read below: drizzle renders that as FOR SHARE OF "app"."quotation_versions" and Postgres refuses
+      // a schema-qualified name there (it wants the bare table name or alias). An accept waits for this transaction,
+      // or has committed first and the WHERE no longer matches.
+      const [locked] = await tx
+        .select({ id: quotationVersions.id })
+        .from(quotationVersions)
+        .where(and(ownVersion(c), inWindow(from, until)))
+        .limit(1)
+        .for('share');
+      if (locked === undefined) return undefined;
+
       const [row] = await tx
         .select({
           quotationId: quotations.id,
@@ -451,10 +463,7 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
           ),
         )
         .where(and(ownVersion(c), inWindow(from, until)))
-        .limit(1)
-        // Shared, on the version only (the outer-joined customer cannot be locked): an accept waits for this
-        // transaction, or has committed first and the WHERE above no longer matches.
-        .for('share', { of: quotationVersions });
+        .limit(1);
       if (row === undefined) return undefined;
       return {
         quotationId: row.quotationId,
