@@ -17,6 +17,11 @@ export const PROJECT_ROLES = [
   'accountant',
   'customer_user',
   'vendor_user',
+  // P2 (ADR 0027 section 3). A test keeps this list equal to ROLE_KEYS in contracts.
+  'pmo',
+  'operations_head',
+  'procurement',
+  'receiver',
 ] as const;
 export type RoleKey = (typeof PROJECT_ROLES)[number];
 

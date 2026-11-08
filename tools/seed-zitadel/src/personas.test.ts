@@ -1,3 +1,4 @@
+import { ROLE_KEYS } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -53,6 +54,14 @@ describe('personas', () => {
     });
     expect(personaUsername('accountant')).toBe('accountant@dev.bos.test');
     expect(PROJECT_ROLES).toContain('accountant');
+  });
+
+  it('creates a ZITADEL project role for every role key the API knows (ADR 0027 section 3)', () => {
+    // A token can only carry a role ZITADEL has, so a role missing here can never be granted to anyone.
+    expect([...PROJECT_ROLES].sort()).toEqual([...ROLE_KEYS].sort());
+    for (const role of ['pmo', 'operations_head', 'procurement', 'receiver']) {
+      expect(PROJECT_ROLES).toContain(role);
+    }
   });
 
   it('round-trips TOTP secrets and treats entries without one as unknown', () => {
