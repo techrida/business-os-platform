@@ -49,7 +49,7 @@ function reqWith(authTime?: number | null): AuthenticatedRequest {
       tokenExp: nowS() + 600,
       ...(authTime === undefined ? {} : { authTime }),
     },
-  } as AuthenticatedRequest;
+  } as unknown as AuthenticatedRequest;
 }
 
 function approvalsController(current: unknown = requestAt('management'), maxAge?: number) {
