@@ -557,7 +557,8 @@ async function boot() {
   const wantFixture = /[?&]fixture(=|&|$)/.test(location.search);
   let fixture = wantFixture;
   try {
-    if (!wantFixture) {
+    if (!wantFixture && window.BOS_MODEL) { /* inlined by build.mjs */ }
+    else if (!wantFixture) {
       try { await loadScript("model.js"); }
       catch (e) { console.warn("model.js not found next to map.html, using model.fixture.js instead."); fixture = true; }
     }

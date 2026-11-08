@@ -10,6 +10,8 @@ Status: **architecture stage**. There is no application code yet. This repo star
 - `architecture/map.html`: the interactive viewer. Open it in a browser next to `model.js`. It is read-only, so make changes in `model.js`.
 - `architecture/SCHEMA.md`: the data format plus the rules for phases and for expand/collapse.
 - `architecture/validate.mjs`: run `node architecture/validate.mjs` after every edit. It catches broken ids, wrong phases and flow steps with no arrow.
+- `architecture/build.mjs`: `node architecture/build.mjs` writes `dist/system-map.html`, a single file with the model built in. Publish that file as the artifact, because a sandboxed page cannot load `model.js` beside it.
+- Published copy: https://an assistant.ai/artifact/2UfSqZ1KUQcfSx21pB3VuZ (private).
 - `docs/adr/0001-system-map-format.md`: why the map works this way (the C4 model plus collapsible sections).
 
 ### How to read it
