@@ -3,12 +3,14 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AcceptQuotationBody,
   CUSTOMER_VISIBLE_STATUSES,
   type CustomerQuotationView,
   CustomerQuotationViewSchema,
   MeResponseSchema,
   type PortalQuotationListItem,
   PortalQuotationListItemSchema,
+  type RejectQuotationBody,
   type SignedLinkDto,
   SignedLinkDtoSchema,
 } from '@bos/contracts';
@@ -16,6 +18,10 @@ import { z } from 'zod';
 
 import { getEnv } from './env';
 import type { Session } from './session';
+
+// The request bodies live in @bos/contracts. Re-exported so the portal's actions and tests keep
+// importing them from here.
+export { AcceptQuotationBodySchema, RejectQuotationBodySchema } from '@bos/contracts';
 
 /**
  * Server-to-server calls from the portal BFF to the API. Copied from apps/workspace (dedupe later).
@@ -130,23 +136,6 @@ async function call<T>(
   }
   return parsed.data;
 }
-
-/**
- * `POST /v1/portal/quotations/:id/accept`. Local until the lead moves it into @bos/contracts. The
- * typed name and the ticked box are the customer's signature; the API records them as evidence of
- * kind `signed_quote`. Strict, so nothing else can ride along.
- */
-export const AcceptQuotationBodySchema = z.strictObject({
-  acceptedByName: z.string().trim().min(1).max(200),
-  confirm: z.literal(true),
-});
-export type AcceptQuotationBody = z.infer<typeof AcceptQuotationBodySchema>;
-
-/** `POST /v1/portal/quotations/:id/reject`. Local until the lead moves it into @bos/contracts. */
-export const RejectQuotationBodySchema = z.strictObject({
-  comment: z.string().trim().min(1).max(2000),
-});
-export type RejectQuotationBody = z.infer<typeof RejectQuotationBodySchema>;
 
 /** `GET /v1/portal/quotations`: the customer's own quotations, customer-visible states only. */
 export function listPortalQuotations(

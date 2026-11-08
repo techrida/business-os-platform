@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
+  AcceptQuotationBodySchema,
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   CUSTOMER_VISIBLE_STATUSES,
   CustomerQuotationViewSchema,
   PortalQuotationListItemSchema,
   QUOTATION_STATUSES,
   QuotationVersionDtoSchema,
+  RejectQuotationBodySchema,
   isCustomerVisibleStatus,
 } from './index.js';
 
@@ -220,6 +222,45 @@ describe('PortalQuotationListItemSchema', () => {
       false,
     );
     expect(PortalQuotationListItemSchema.safeParse({ ...item, marginPct: '1' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('AcceptQuotationBodySchema', () => {
+  it('trims the typed name and needs the ticked box', () => {
+    expect(
+      AcceptQuotationBodySchema.safeParse({ acceptedByName: ' Jules ', confirm: true }).data,
+    ).toEqual({ acceptedByName: 'Jules', confirm: true });
+    expect(
+      AcceptQuotationBodySchema.safeParse({ acceptedByName: 'Jules', confirm: false }).success,
+    ).toBe(false);
+    expect(AcceptQuotationBodySchema.safeParse({ acceptedByName: 'Jules' }).success).toBe(false);
+  });
+
+  it('refuses a blank or oversized name and any extra key', () => {
+    expect(
+      AcceptQuotationBodySchema.safeParse({ acceptedByName: '   ', confirm: true }).success,
+    ).toBe(false);
+    expect(
+      AcceptQuotationBodySchema.safeParse({ acceptedByName: 'x'.repeat(201), confirm: true })
+        .success,
+    ).toBe(false);
+    expect(
+      AcceptQuotationBodySchema.safeParse({ acceptedByName: 'J', confirm: true, evidenceKind: 'x' })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('RejectQuotationBodySchema', () => {
+  it('trims the comment and refuses a blank, oversized or extra-key body', () => {
+    expect(RejectQuotationBodySchema.safeParse({ comment: ' too dear ' }).data).toEqual({
+      comment: 'too dear',
+    });
+    expect(RejectQuotationBodySchema.safeParse({ comment: '  ' }).success).toBe(false);
+    expect(RejectQuotationBodySchema.safeParse({ comment: 'x'.repeat(2001) }).success).toBe(false);
+    expect(RejectQuotationBodySchema.safeParse({ comment: 'no', status: 'accepted' }).success).toBe(
       false,
     );
   });

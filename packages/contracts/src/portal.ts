@@ -118,3 +118,20 @@ export const PortalQuotationListItemSchema = z.strictObject({
   total: DecimalString,
 });
 export type PortalQuotationListItem = z.infer<typeof PortalQuotationListItemSchema>;
+
+/**
+ * `POST /v1/portal/quotations/:id/accept`. The typed name and the ticked box are the customer's
+ * signature; the API records them as evidence of kind `signed_quote`. Strict, so nothing else can
+ * ride along.
+ */
+export const AcceptQuotationBodySchema = z.strictObject({
+  acceptedByName: z.string().trim().min(1).max(200),
+  confirm: z.literal(true),
+});
+export type AcceptQuotationBody = z.infer<typeof AcceptQuotationBodySchema>;
+
+/** `POST /v1/portal/quotations/:id/reject`. The customer's reason is required. */
+export const RejectQuotationBodySchema = z.strictObject({
+  comment: z.string().trim().min(1).max(2000),
+});
+export type RejectQuotationBody = z.infer<typeof RejectQuotationBodySchema>;

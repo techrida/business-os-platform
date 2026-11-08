@@ -230,6 +230,38 @@ describe('ErrorBodyFilter', () => {
     ).toBe('conflict');
   });
 
+  it.each(['quotation_not_sent', 'quotation_expired'])(
+    'keeps %s on a 409 (quotation outcome, Q3b/PA-3), and only on a 409',
+    (code) => {
+      const out = filter(new ConflictException({ code, message: 'Already answered' }));
+
+      expect(out.status).toBe(409);
+      const parsed = ErrorBodySchema.parse(out.body);
+      expect(parsed.error.code).toBe(code);
+      expect(parsed.error.message).toBe('Already answered');
+      expect(
+        ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+          .error.code,
+      ).toBe('bad_request');
+    },
+  );
+
+  it.each(['evidence_policy_unmet', 'decided_on_in_future'])(
+    'keeps %s on a 422 (quotation outcome, Q3b/PA-3), and only on a 422',
+    (code) => {
+      const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
+
+      expect(out.status).toBe(422);
+      const parsed = ErrorBodySchema.parse(out.body);
+      expect(parsed.error.code).toBe(code);
+      expect(parsed.error.message).toBe('Not accepted');
+      expect(
+        ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error
+          .code,
+      ).toBe('conflict');
+    },
+  );
+
   it('exposes the message of a client error', () => {
     const out = filter(new ForbiddenException('Organization is not registered'));
 
