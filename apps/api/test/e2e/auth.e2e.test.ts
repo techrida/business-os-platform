@@ -152,7 +152,7 @@ describe('GET /v1/me with a valid token', () => {
     const token = await t.issuer.mint(
       zitadelClaims({
         projectId: PROJECT_ID,
-        clientId: 'client-e2e',
+        clientId: CLIENT_ID,
         userId: 'user-staff-cross-org',
         orgId: e2e.staff.zitadelOrgId,
         roles: ['sales'],

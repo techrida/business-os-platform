@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { IS_PUBLIC_KEY } from '../../src/platform/auth/public.decorator';
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../src/platform/authz/decorators';
-import { PROJECT_ID, startApp, type TestApp } from './support/app';
+import { CLIENT_ID, PROJECT_ID, startApp, type TestApp } from './support/app';
 import { zitadelClaims } from './support/test-issuer';
 
 // Without a configured key the webhook answers 401 to everything, which would make its 401 tests
@@ -278,7 +278,7 @@ describe('route sweep: every non-public route fails closed', () => {
     const token = await t.issuer.mint(
       zitadelClaims({
         projectId: PROJECT_ID,
-        clientId: 'client-e2e',
+        clientId: CLIENT_ID,
         userId: 'user-sweep-staff-cross-org',
         orgId: e2e.staff.zitadelOrgId,
         roles: [],
