@@ -50,6 +50,17 @@ export function Sidebar({ user }: { user: SidebarUser }) {
         <DrawerCloseButton />
       </div>
 
+      <div className={styles.searchWrap}>
+        <Icon name="search" size={16} className={styles.searchIcon} />
+        <input
+          type="search"
+          className={styles.search}
+          aria-label="Search menu"
+          placeholder="Search menu"
+          disabled
+        />
+      </div>
+
       <nav aria-label="Main" className={styles.nav}>
         {NAV_GROUPS.map((group, index) => {
           const labelId = `nav-group-${index}`;
