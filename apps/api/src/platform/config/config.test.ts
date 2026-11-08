@@ -17,6 +17,7 @@ const kernelProd = {
   ZITADEL_API_URL: 'https://auth.example.com',
   ZITADEL_PROVISIONER_TOKEN: 'provisioner-token-value',
   WORKSPACE_PUBLIC_URL: 'https://app.example.com',
+  PORTAL_PUBLIC_URL: 'https://portal.example.com',
   DOCS_LINK_SECRET: 'd'.repeat(32),
   ZITADEL_ACTIONS_SIGNING_KEY: 'signing-key-value',
 };
@@ -177,6 +178,34 @@ describe('P1 kernel settings', () => {
     expect(config.DOCS_LINK_SECRET).toBeUndefined();
     expect(config.ZITADEL_PROVISIONER_TOKEN).toBeUndefined();
     expect(config.ZITADEL_ACTIONS_SIGNING_KEY).toBeUndefined();
+    expect(config.POSTAL_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  it('gives PORTAL_PUBLIC_URL a dev default and keeps an explicit value', () => {
+    expect(loadAppConfig(base).PORTAL_PUBLIC_URL).toBe('https://portal.localhost');
+    expect(
+      loadCoreConfig({ DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL }, 'worker')
+        .PORTAL_PUBLIC_URL,
+    ).toBe('https://portal.localhost');
+    expect(
+      loadAppConfig({ ...base, PORTAL_PUBLIC_URL: 'https://portal.example.com' }).PORTAL_PUBLIC_URL,
+    ).toBe('https://portal.example.com');
+  });
+
+  it('rejects a PORTAL_PUBLIC_URL that is not an http(s) URL', () => {
+    const list = problems(() => loadAppConfig({ ...base, PORTAL_PUBLIC_URL: 'ftp://portal' }));
+    expect(list).toEqual(['PORTAL_PUBLIC_URL: must be an http(s) URL']);
+  });
+
+  it('keeps POSTAL_WEBHOOK_SECRET optional in production, and refuses a short one without echoing it', () => {
+    expect(loadAppConfig(prod).POSTAL_WEBHOOK_SECRET).toBeUndefined();
+    const secret = 'p'.repeat(32);
+    expect(loadAppConfig({ ...prod, POSTAL_WEBHOOK_SECRET: secret }).POSTAL_WEBHOOK_SECRET).toBe(
+      secret,
+    );
+    const list = problems(() => loadAppConfig({ ...base, POSTAL_WEBHOOK_SECRET: 'short-postal' }));
+    expect(list.map((p) => p.split(':')[0])).toEqual(['POSTAL_WEBHOOK_SECRET']);
+    expect(list.join('\n')).not.toContain('short-postal');
   });
 
   it('reads explicit values and coerces CLAMD_PORT', () => {
@@ -204,6 +233,7 @@ describe('P1 kernel settings', () => {
       'ZITADEL_API_URL: is required in production',
       'ZITADEL_PROVISIONER_TOKEN: is required in production',
       'WORKSPACE_PUBLIC_URL: is required in production',
+      'PORTAL_PUBLIC_URL: is required in production',
       'DOCS_LINK_SECRET: is required in production',
     ]);
   });
@@ -251,6 +281,7 @@ describe('loadCoreConfig (worker)', () => {
       'ZITADEL_API_URL',
       'ZITADEL_PROVISIONER_TOKEN',
       'WORKSPACE_PUBLIC_URL',
+      'PORTAL_PUBLIC_URL',
     ]);
   });
 
