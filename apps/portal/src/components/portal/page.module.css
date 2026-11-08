@@ -31,3 +31,22 @@
   border-radius: var(--radius-lg);
   background: var(--surface-default);
 }
+
+.back {
+  margin-bottom: 16px;
+  font-size: var(--font-size-body-small);
+}
+
+.back a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+.back a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.confirmation {
+  margin-bottom: 24px;
+}

@@ -1,0 +1,359 @@
+/* Customer quotation list and view. Class names never use an internal word (cost, margin, rate,
+   npr, markup): they appear in the markup, and a test scans it. */
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.revision {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+/* ---- Tables ----------------------------------------------------------------------------- */
+
+.tableFrame {
+  overflow-x: auto;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.table th,
+.table td {
+  padding: 12px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table thead th {
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.table th.num,
+.table td.num {
+  text-align: right;
+}
+
+.table tbody th {
+  font-weight: var(--font-weight-medium);
+}
+
+.rowLink {
+  color: var(--text-link);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rowLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.rowLink:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.description {
+  min-width: 16ch;
+  overflow-wrap: anywhere;
+}
+
+/* ---- View layout ------------------------------------------------------------------------ */
+
+.layout {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (min-width: 1024px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+
+  .respond {
+    position: sticky;
+    top: 24px;
+  }
+}
+
+.document {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.docHead {
+  display: grid;
+  gap: 20px;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.docTitle {
+  font-size: 24px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 40px;
+}
+
+.facts dt,
+.terms dt {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.facts dd {
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.factTotal {
+  font-size: 18px;
+  line-height: 28px;
+}
+
+.download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.checksum {
+  display: grid;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.hash {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+}
+
+.section {
+  display: grid;
+  gap: 16px;
+}
+
+.sectionTitle {
+  font-size: 18px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 28px;
+}
+
+.parties {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px 32px;
+}
+
+.party {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.partyHeading {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.partyName {
+  font-weight: var(--font-weight-medium);
+}
+
+.address {
+  font-style: normal;
+}
+
+.totals {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 360px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.totals dt {
+  color: var(--text-secondary);
+}
+
+.totals dd {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.grandTotal {
+  padding-top: 8px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+  font-weight: var(--font-weight-semibold);
+}
+
+.grandTotal dt {
+  color: var(--text-primary);
+}
+
+.terms {
+  display: grid;
+  gap: 16px;
+}
+
+.longText {
+  max-width: 75ch;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.schedule {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.schedule li {
+  display: flex;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+
+.schedulePercent {
+  min-width: 4ch;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-medium);
+  text-align: right;
+}
+
+/* ---- Respond panel ---------------------------------------------------------------------- */
+
+.panel {
+  display: grid;
+  gap: 16px;
+}
+
+.panelTitle {
+  font-size: 18px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 28px;
+}
+
+.choice {
+  display: flex;
+  gap: 8px;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--action-primary);
+}
+
+.checkError {
+  color: var(--error-700);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.danger {
+  border-color: var(--error-700);
+  background: var(--error-700);
+  color: var(--neutral-0);
+}
+
+.danger:hover:not(:disabled) {
+  border-color: var(--error-800);
+  background: var(--error-800);
+}
+
+.liveStatus {
+  min-height: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
