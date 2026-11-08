@@ -38,8 +38,8 @@ export interface CustomerList {
   total: number;
 }
 
-/** GET /v1/customers/:id: the customer plus its terms with the legal entities the caller can act for. */
-export type CustomerDetailDto = CustomerDto & { accounts: PartyAccountDto[] };
+/** GET /v1/customers/:id: the customer plus its terms with the legal entities the caller can act for (staff only). */
+export type CustomerDetailDto = CustomerDto & { accounts?: PartyAccountDto[] };
 
 /** Printable ASCII, 1 to 200 characters (a UUID from the client is the expected value). Same rule as approvals. */
 const IdempotencyKeySchema = z.string().regex(/^[\x21-\x7e]{1,200}$/);
