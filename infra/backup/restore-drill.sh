@@ -15,7 +15,8 @@
 #   - a volume pgdata-drill at /var/lib/postgresql/data (the restore target; never the live pgdata).
 #     The script empties it before and after, so a leftover from an earlier run cannot fake a pass.
 #   - pgbackrest.conf mounted at /etc/pgbackrest/pgbackrest.conf
-# The live database is only touched to write the canary row and to take the backup.
+# The live database is only touched to write the canary row and to take the backup (an incr, never a full, so a
+# drill does not shorten the history of restore points).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
@@ -93,11 +94,17 @@ log "writing canary row $CANARY_ID"
 compose exec -T -u postgres postgres psql -v ON_ERROR_STOP=1 -q -d bos \
   -c "INSERT INTO ops.restore_canary (id, written_at) VALUES ('$CANARY_ID', now())" >&2
 
-# ---- 2. full backup ---------------------------------------------------------------------------------------------
-# backup.sh runs stanza-create first, so this also works on a stack that was never backed up.
+# ---- 2. incremental backup (never a full) ----------------------------------------------------------------------
+# The restore below stops at the end of the newest backup (--type=immediate), so the canary row only comes back if a
+# backup was taken AFTER it was written: an old backup cannot be reused. But it must not be a full: retention keeps
+# 2 fulls (pgbackrest.conf), so every drill that took a full pushed a real restore point closer to expiry, and two
+# drills in a row deleted the older one (CR-08). An incr never triggers expiry (incrementals expire with their full),
+# and the restore then also proves that the full + incr chain restores. If the repository is empty pgBackRest
+# promotes the incr to the first full by itself; that expires nothing. backup.sh runs stanza-create first, so this
+# also works on a stack that was never backed up.
 STEP="backup"
-log "taking a full backup"
-bash infra/backup/backup.sh full >&2
+log "taking an incremental backup"
+bash infra/backup/backup.sh incr >&2
 
 # ---- 3. make sure the newest WAL is in the repository --------------------------------------------------------------
 # `pgbackrest check` switches to a new WAL file and waits until it has been archived.
