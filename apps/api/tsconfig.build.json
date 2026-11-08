@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // This package is CommonJS (no "type"), so a tsc build must emit CommonJS. nodenext lets
+    // CommonJS code require() the ESM-only @bos/contracts and jose on Node 24. U3's nest-cli.json
+    // may use the SWC builder instead, which ignores `module` here.
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": false,
+    "outDir": "./dist",
+    "customConditions": [],
+    "sourceMap": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "test", "src/**/*.test.ts"]
+}
