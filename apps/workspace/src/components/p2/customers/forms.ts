@@ -221,7 +221,7 @@ export function parseUpdateCustomer(
   if (addressFields.some((f) => values[f] !== before[f])) data.address = body.address;
 
   if (Object.keys(data).length === 0) return { ok: false, nothingChanged: true };
-  return { ok: true, data: { ...data, expectedVersion: original.version } as UpdateCustomerBody };
+  return { ok: true, data: { ...data, expectedVersion: original.version } };
 }
 
 // ---------------------------------------------------------------------------------------------

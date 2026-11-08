@@ -1,0 +1,82 @@
+/* The customer and contact forms. Layout only; every control comes from components/ui and every
+   colour from styles/tokens.css. */
+
+.form {
+  display: grid;
+  gap: 24px;
+}
+
+/* Fields flow into as many columns as fit, so a narrow screen gets one. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.code {
+  max-width: 6rem;
+  text-transform: uppercase;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.status {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* ---- Possible duplicates ---- */
+
+.matches {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.match {
+  overflow-wrap: anywhere;
+}
+
+.matchMeta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+}
+
+/* ---- Add contact ---- */
+
+.contactForm {
+  display: grid;
+  gap: 16px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--button-primary-bg);
+}

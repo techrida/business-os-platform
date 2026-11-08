@@ -141,7 +141,7 @@ describe('create and update customer', () => {
     expect(init.method).toBe('POST');
     expect(headers.get('idempotency-key')).toBe('key-123456');
     expect(headers.get('content-type')).toBe('application/json');
-    expect(JSON.parse(String(init.body))).toEqual(body);
+    expect(JSON.parse(init.body as string)).toEqual(body);
   });
 
   it('PATCHes with the version the person saw', async () => {
@@ -151,7 +151,7 @@ describe('create and update customer', () => {
     const { url, init } = lastCall();
     expect(url).toBe(`http://api:3001/v1/customers/${ID_A}`);
     expect(init.method).toBe('PATCH');
-    expect(JSON.parse(String(init.body))).toEqual({ industry: 'Hydro', expectedVersion: 2 });
+    expect(JSON.parse(init.body as string)).toEqual({ industry: 'Hydro', expectedVersion: 2 });
   });
 
   it('surfaces a 409 as an ApiError with that status', async () => {
