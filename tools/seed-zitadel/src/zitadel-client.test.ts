@@ -84,13 +84,13 @@ describe('ZitadelClient request shapes', () => {
       projects: [{ projectId: 'p1', organizationId: 'org1', name: 'business-os', ...extra }],
     });
     const off = recording({ [ENDPOINTS.listProjects]: project({}) });
-    expect((await client(off.transport).findProject('org1', 'business-os'))?.authorizationRequired).toBe(
-      false,
-    );
+    expect(
+      (await client(off.transport).findProject('org1', 'business-os'))?.authorizationRequired,
+    ).toBe(false);
     const on = recording({ [ENDPOINTS.listProjects]: project({ authorizationRequired: true }) });
-    expect((await client(on.transport).findProject('org1', 'business-os'))?.authorizationRequired).toBe(
-      true,
-    );
+    expect(
+      (await client(on.transport).findProject('org1', 'business-os'))?.authorizationRequired,
+    ).toBe(true);
   });
 
   it('turns authorizationRequired on for an existing project without touching other flags', async () => {
@@ -203,7 +203,10 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
   });
 
   it('sends nothing but the read when self-registration is already off', async () => {
-    const off = { isDefault: false, policy: { ...inherited.policy, isDefault: false, allowRegister: false } };
+    const off = {
+      isDefault: false,
+      policy: { ...inherited.policy, isDefault: false, allowRegister: false },
+    };
     const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: off });
     expect(await client(transport).ensureOrgLoginPolicyNoRegister('staff-org')).toBe(false);
     expect(calls.map((c) => c.method)).toEqual(['GET']);
@@ -212,7 +215,9 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
   it('refuses to copy identity-provider links into a custom policy instead of dropping them', async () => {
     const withIdp = { ...inherited, policy: { ...inherited.policy, idps: [{ idpId: 'i1' }] } };
     const { transport, calls } = recording({ [ENDPOINTS.orgLoginPolicy]: withIdp });
-    await expect(client(transport).ensureOrgLoginPolicyNoRegister('o')).rejects.toThrow(/identity provider/i);
+    await expect(client(transport).ensureOrgLoginPolicyNoRegister('o')).rejects.toThrow(
+      /identity provider/i,
+    );
     expect(calls.map((c) => c.method)).toEqual(['GET']);
   });
 });
