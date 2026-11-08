@@ -51,6 +51,10 @@ describe('NAV_GROUPS', () => {
     expect(items.some((i) => i.label === 'Quotations')).toBe(true);
   });
 
+  it('sets no counts in P0 (there is nothing to count yet)', () => {
+    for (const item of items) expect(item.count, item.label).toBeUndefined();
+  });
+
   it('uses only known phases', () => {
     const phases = new Set(['P0', 'P1', 'P2', 'P3', 'P4', 'later']);
     for (const item of items) expect(phases.has(item.phase), item.label).toBe(true);
