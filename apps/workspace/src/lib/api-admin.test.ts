@@ -96,7 +96,7 @@ describe('users', () => {
             email: null,
             displayName: null,
             status: 'invited',
-            departmentId: null,
+            idpOrgId: UUID_B,
             roles: [],
           },
         ],
@@ -105,6 +105,7 @@ describe('users', () => {
     );
     const page = await listUsers(session, { limit: 10, after: UUID_B });
     expect(page.items[0]?.email).toBeNull();
+    expect(page.items[0]?.idpOrgId).toBe(UUID_B);
     expect(page.nextAfter).toBe(UUID_A);
     const call = lastCall();
     expect(call.url.pathname).toBe('/v1/admin/users');
