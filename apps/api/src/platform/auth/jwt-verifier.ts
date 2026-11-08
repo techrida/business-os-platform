@@ -11,12 +11,20 @@ import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload, type JWTVerifyG
 // token; here we only promise its shape, so this file loads without the health module.
 import type { JwksStatus } from '../health/jwks-status';
 
-/** What the verifier trusts. AuthModule builds it from AppConfig (OIDC_ISSUER, OIDC_AUDIENCE). */
+/**
+ * What the verifier trusts. AuthModule builds it from AppConfig (OIDC_ISSUER, OIDC_AUDIENCE,
+ * OIDC_ALLOWED_AZP).
+ */
 export interface AuthOptions {
   /** Must equal the discovery document's `issuer` and every token's `iss`, character for character. */
   readonly issuer: string;
   /** Our ZITADEL project id: the required `aud`, and the project whose roles we read. */
   readonly audience: string;
+  /**
+   * Client ids allowed as the token's `azp` (authorized party). `aud` only says our project may
+   * read the token, and any client can ask for our project in `aud`. Empty rejects every token.
+   */
+  readonly allowedAzp: readonly string[];
   /** Delays between warm-up attempts in ms; the last one repeats. Tests shorten it. */
   readonly warmupDelaysMs?: readonly number[];
 }
@@ -115,6 +123,26 @@ export class JwtVerifier implements JwksStatus, OnApplicationBootstrap, OnModule
       clockTolerance: 30,
       requiredClaims: ['sub', 'exp', 'iat'],
     });
+    // Checked after the signature, so these errors only ever describe a genuine token. Thrown as
+    // jose claim errors, so the guard answers 401 like any other bad token.
+    if (typeof payload.azp !== 'string' || !this.options.allowedAzp.includes(payload.azp)) {
+      throw new errors.JWTClaimValidationFailed(
+        'unexpected "azp" claim value',
+        payload,
+        'azp',
+        'check_failed',
+      );
+    }
+    // ID tokens share the issuer, keys and audience of access tokens, and only they carry
+    // `nonce`. An ID token is proof of a login, not a bearer credential for this API.
+    if ('nonce' in payload) {
+      throw new errors.JWTClaimValidationFailed(
+        'an ID token is not an access token',
+        payload,
+        'nonce',
+        'check_failed',
+      );
+    }
     return payload;
   }
 

@@ -75,18 +75,42 @@ const apiShape = {
   // JWKS (same code path, different trusted key); production config refuses such an issuer.
   OIDC_ISSUER: z.string().min(1),
   OIDC_AUDIENCE: z.string().min(1),
-  // The API only checks the audience. The client id is part of the shared env contract, so it
-  // is accepted but not required.
+  // The workspace client's id. Part of the shared env contract, and the default for
+  // OIDC_ALLOWED_AZP below.
   OIDC_CLIENT_ID: z.string().min(1).optional(),
+  // Comma-separated client ids whose tokens the API accepts (the token's `azp`). `aud` alone is
+  // not enough: any client can ask ZITADEL to add our project to `aud`. Unset or blank means
+  // [OIDC_CLIENT_ID]; with neither, the config is refused.
+  OIDC_ALLOWED_AZP: z.string().optional(),
 };
+
+const AZP_REQUIRED = 'must list at least one client id (or set OIDC_CLIENT_ID)';
+
+function allowedAzp(list: string | undefined, clientId: string | undefined): string[] {
+  const source = list === undefined || list.trim() === '' ? (clientId ?? '') : list;
+  return source
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id !== '');
+}
 
 const coreSchema = (service: ServiceName) => z.object(coreShape(service));
 
-const apiSchema = z.object({ ...coreShape('api'), ...apiShape }).superRefine((cfg, ctx) => {
-  const problem = issuerProblem(cfg.OIDC_ISSUER, cfg.NODE_ENV);
-  if (problem !== undefined)
-    ctx.addIssue({ code: 'custom', path: ['OIDC_ISSUER'], message: problem });
-});
+const apiSchema = z
+  .object({ ...coreShape('api'), ...apiShape })
+  .superRefine((cfg, ctx) => {
+    const problem = issuerProblem(cfg.OIDC_ISSUER, cfg.NODE_ENV);
+    if (problem !== undefined)
+      ctx.addIssue({ code: 'custom', path: ['OIDC_ISSUER'], message: problem });
+  })
+  .transform((cfg, ctx) => {
+    const azp = allowedAzp(cfg.OIDC_ALLOWED_AZP, cfg.OIDC_CLIENT_ID);
+    if (azp.length === 0) {
+      ctx.addIssue({ code: 'custom', path: ['OIDC_ALLOWED_AZP'], message: AZP_REQUIRED });
+      return z.NEVER;
+    }
+    return { ...cfg, OIDC_ALLOWED_AZP: Object.freeze(azp) };
+  });
 
 /**
  * Config both processes need: logging, metrics port, Postgres and Valkey.
@@ -110,6 +134,8 @@ export abstract class AppConfig extends CoreConfig {
   abstract readonly OIDC_ISSUER: string;
   abstract readonly OIDC_AUDIENCE: string;
   abstract readonly OIDC_CLIENT_ID?: string | undefined;
+  /** Never empty: the `azp` values the verifier accepts. */
+  abstract readonly OIDC_ALLOWED_AZP: readonly string[];
 }
 
 export class ConfigError extends Error {

@@ -203,9 +203,9 @@ describe('JwtVerifier.verify: token checks (each must reject as a token error, n
     stubIdp();
     const verifier = newVerifier();
     await expect(verifier.verify(await sign(claims()))).resolves.toMatchObject({ azp: CLIENT_ID });
-    await expect(
-      verifier.verify(await sign(claims({ azp: K6_CLIENT_ID }))),
-    ).resolves.toMatchObject({ azp: K6_CLIENT_ID });
+    await expect(verifier.verify(await sign(claims({ azp: K6_CLIENT_ID })))).resolves.toMatchObject(
+      { azp: K6_CLIENT_ID },
+    );
   });
 
   it('fails closed when the allow-list is empty', async () => {
@@ -215,10 +215,7 @@ describe('JwtVerifier.verify: token checks (each must reject as a token error, n
   // CR-05b: an ID token has the same issuer, keys and audience as an access token. Only ID
   // tokens carry `nonce`, so its presence means someone is replaying an ID token as a bearer.
   it('rejects an ID token used as a bearer token (has nonce)', async () => {
-    await rejects(
-      await sign(claims({ nonce: 'n-0S6_WzA2Mj' })),
-      errors.JWTClaimValidationFailed,
-    );
+    await rejects(await sign(claims({ nonce: 'n-0S6_WzA2Mj' })), errors.JWTClaimValidationFailed);
   });
 });
 
