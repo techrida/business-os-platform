@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test';
 
-import { loadPersonas, persona } from './helpers/personas';
+import { PERSONA_KEYS, loadPersonas, persona } from './helpers/personas';
 import { expectZitadelCredentialForm, signInOnZitadel } from './helpers/zitadel-login';
 
 /**
- * Each seeded persona signs in through the real ZITADEL Login V2 form and the Workspace's real
- * OIDC code flow. Nothing is stubbed: no token, header or cookie is faked anywhere.
+ * Each seeded persona signs in through the real ZITADEL Login V2 form (password, then a
+ * TOTP code from the seed's secret) and the Workspace's real OIDC code flow. Nothing is stubbed: no token, header or cookie is faked anywhere.
  */
 
 const SESSION_COOKIE = '__Host-bos_session';
@@ -34,6 +34,23 @@ test.afterEach(() => {
 
 // Read at collection time, so a missing `.dev/personas.json` fails loudly with "run pnpm seed".
 const personas = loadPersonas();
+
+test.describe('seeded personas', () => {
+  // P1 added the accountant (blueprint base route Accountant -> Finance). A stale file from an
+  // older `pnpm seed` fails here, with a clear message, instead of deep inside a ZITADEL login.
+  test('the seed wrote exactly seven personas, accountant included', () => {
+    expect(personas.map((p) => p.key).sort()).toEqual([...PERSONA_KEYS].sort());
+    const accountant = persona('accountant');
+    expect(accountant.role).toBe('accountant');
+    expect(accountant.orgKind).toBe('staff');
+    expect(accountant.username).toBe('accountant@dev.bos.test');
+  });
+
+  test('every persona has a TOTP secret, because the login policy forces MFA', () => {
+    const without = personas.filter((p) => !p.totpSecret).map((p) => p.key);
+    expect(without, 'no totpSecret for these personas; run pnpm seed').toEqual([]);
+  });
+});
 
 test.describe('persona sign-in and sign-out', () => {
   for (const who of personas) {
