@@ -1,8 +1,7 @@
-/* Building blocks for the kernel screens (inbox, memos). It reads the palette that
-   shell.module.css puts on .frame, so there is one set of colours. Calm and dense: one accent,
-   one type scale, hairline borders, no nested cards, state shown by words and shape as well as
-   colour. Contrast: --muted on white 6.4:1, --ok/#e7f6ec 7.1:1, --warn/#fff4d6 6.6:1,
-   --bad/#fff5f4 6.2:1, white on --accent 6.7:1. */
+/* Building blocks the memo screens still use. Everything is drawn with the Figma tokens from
+   styles/tokens.css (no literal colours). New screens use components/ui/* instead; each class
+   here goes when the last screen that uses it moves over. Text on a tinted background stays in
+   --text-primary so it passes 4.5:1; the tone lives in the border and the badge shape. */
 
 .page {
   max-width: 68rem;
@@ -27,14 +26,14 @@
   margin: 0;
   font-size: 1.375rem;
   line-height: 1.3;
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
   overflow-wrap: anywhere;
   text-wrap: balance;
 }
 
 .sub {
   margin: 0.25rem 0 0;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.9375rem;
   max-width: 65ch;
 }
@@ -42,9 +41,9 @@
 .back {
   display: inline-block;
   margin-bottom: 0.5rem;
-  color: var(--accent);
+  color: var(--action-primary);
   font-size: 0.9375rem;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-decoration: none;
 }
 
@@ -76,20 +75,20 @@
 
 .panel {
   padding: 1.125rem 1.25rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
 }
 
 .panelTitle {
   margin: 0 0 0.75rem;
   font-size: 1rem;
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
 }
 
 .panelNote {
   margin: -0.375rem 0 0.75rem;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
@@ -97,9 +96,9 @@
 
 .notice {
   padding: 0.75rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
   font-size: 0.9375rem;
   overflow-wrap: anywhere;
 }
@@ -113,31 +112,31 @@
 }
 
 .noticeOk {
-  border-color: #8bd0a8;
-  background: var(--ok-wash);
-  color: var(--ok);
+  border-color: var(--status-success);
+  background: var(--status-success-subtle);
+  color: var(--text-primary);
 }
 
 .noticeBad {
-  border-color: #e8a29b;
-  background: var(--bad-wash);
-  color: var(--bad);
+  border-color: var(--status-error);
+  background: var(--status-error-subtle);
+  color: var(--text-primary);
 }
 
 .noticeWarn {
-  border-color: #e6c36c;
-  background: var(--warn-wash);
-  color: var(--warn);
+  border-color: var(--status-warning);
+  background: var(--status-warning-subtle);
+  color: var(--text-primary);
 }
 
 .notice a {
   color: inherit;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-underline-offset: 0.2em;
 }
 
 .notice:focus {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--action-primary);
   outline-offset: 2px;
 }
 
@@ -148,12 +147,12 @@
   align-items: center;
   gap: 0.375rem;
   padding: 0.0625rem 0.5rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-default);
   border-radius: 999px;
-  background: var(--canvas);
-  color: var(--ink);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -167,34 +166,40 @@
 }
 
 .good {
-  border-color: #8bd0a8;
-  background: var(--ok-wash);
-  color: var(--ok);
+  border-color: var(--status-success);
+  background: var(--status-success-subtle);
+  color: var(--text-primary);
 }
 
 .wait {
-  border-color: #e6c36c;
-  background: var(--warn-wash);
-  color: var(--warn);
+  border-color: var(--status-warning);
+  background: var(--status-warning-subtle);
+  color: var(--text-primary);
+}
+
+.good::before {
+  background: var(--status-success);
 }
 
 .wait::before {
+  background: var(--status-warning);
   border-radius: 0;
   clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
 }
 
 .bad {
-  border-color: #e8a29b;
-  background: var(--bad-wash);
-  color: var(--bad);
+  border-color: var(--status-error);
+  background: var(--status-error-subtle);
+  color: var(--text-primary);
 }
 
 .bad::before {
+  background: var(--status-error);
   border-radius: 0;
 }
 
 .quiet {
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 /* ---- Buttons ---- */
@@ -206,37 +211,37 @@
   gap: 0.5rem;
   min-height: 2.5rem;
   padding: 0.4375rem 1rem;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: var(--accent);
-  color: #ffffff;
+  border: 1px solid var(--action-primary);
+  border-radius: var(--radius-lg);
+  background: var(--action-primary);
+  color: var(--button-primary-text);
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-decoration: none;
   cursor: pointer;
 }
 
 .btn:hover {
-  background: var(--accent-strong);
+  background: var(--action-primary-hover);
 }
 
 .btnSecondary {
-  background: var(--surface);
-  color: var(--accent);
+  background: var(--surface-default);
+  color: var(--action-primary);
 }
 
 .btnSecondary:hover {
-  background: var(--accent-wash);
+  background: var(--interactive-selected);
 }
 
 .btnDanger {
-  border-color: var(--bad);
-  background: var(--surface);
-  color: var(--bad);
+  border-color: var(--status-error);
+  background: var(--surface-default);
+  color: var(--status-error);
 }
 
 .btnDanger:hover {
-  background: var(--bad-wash);
+  background: var(--status-error-subtle);
 }
 
 .btn:focus-visible,
@@ -244,21 +249,21 @@
 .rowLink:focus-visible,
 .link:focus-visible,
 .back:focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--action-primary);
   outline-offset: 2px;
 }
 
 .btn:disabled,
 .btn[aria-disabled='true'] {
-  border-color: var(--line);
-  background: var(--canvas);
-  color: var(--muted);
+  border-color: var(--border-default);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
   cursor: not-allowed;
 }
 
 .link {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--action-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .actions {
@@ -276,12 +281,12 @@
 }
 
 .label {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-size: 0.9375rem;
 }
 
 .hint {
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
@@ -289,10 +294,10 @@
   width: 100%;
   min-height: 2.5rem;
   padding: 0.4375rem 0.625rem;
-  border: 1px solid #7b8794;
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--ink);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  color: var(--text-primary);
   font: inherit;
 }
 
@@ -302,13 +307,13 @@ textarea.input {
 }
 
 .input[aria-invalid='true'] {
-  border-color: var(--bad);
+  border-color: var(--status-error);
 }
 
 .fieldError {
-  color: var(--bad);
+  color: var(--status-error);
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .row2 {
@@ -329,9 +334,9 @@ textarea.input {
   margin: 0;
   padding: 0;
   list-style: none;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: var(--surface-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
   overflow: hidden;
 }
 
@@ -340,7 +345,7 @@ textarea.input {
   display: grid;
   gap: 0.375rem 1.5rem;
   padding: 0.875rem 1.125rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .item:last-child {
@@ -348,7 +353,7 @@ textarea.input {
 }
 
 .item:hover {
-  background: #f8fafc;
+  background: var(--surface-subtle);
 }
 
 @media (min-width: 52rem) {
@@ -363,8 +368,8 @@ textarea.input {
 }
 
 .rowLink {
-  color: var(--ink);
-  font-weight: 650;
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -380,22 +385,22 @@ textarea.input {
 }
 
 .rowLink:focus-visible::after {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--action-primary);
   outline-offset: -3px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .docNumber {
   display: block;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.8125rem;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
 }
 
 .reason {
   margin: 0;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.9375rem;
   overflow-wrap: anywhere;
 }
@@ -406,11 +411,11 @@ textarea.input {
 }
 
 .amount {
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
 }
 
 .meta {
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
 }
 
@@ -424,7 +429,7 @@ textarea.input {
 }
 
 .facts dt {
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.9375rem;
 }
 
@@ -451,8 +456,8 @@ textarea.input {
 .pre {
   margin: 0.25rem 0 0;
   padding: 0.625rem 0.75rem;
-  border-radius: 6px;
-  background: var(--canvas);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
   font: inherit;
   font-size: 0.9375rem;
   white-space: pre-wrap;
@@ -485,11 +490,11 @@ textarea.input {
   place-items: center;
   width: 1.75rem;
   height: 1.75rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border-default);
   border-radius: 50%;
-  background: var(--canvas);
+  background: var(--surface-subtle);
   font-size: 0.8125rem;
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
 }
 
@@ -501,13 +506,13 @@ textarea.input {
 }
 
 .stepWho {
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
   overflow-wrap: anywhere;
 }
 
 .stepReason {
   margin: 0.125rem 0 0;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.9375rem;
   overflow-wrap: anywhere;
 }
@@ -522,7 +527,7 @@ textarea.input {
 
 .event {
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .event:last-child {
@@ -538,11 +543,11 @@ textarea.input {
 }
 
 .eventName {
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
 }
 
 .eventTime {
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
@@ -550,8 +555,8 @@ textarea.input {
 .comment {
   margin: 0.25rem 0 0;
   padding: 0.375rem 0.625rem;
-  border-radius: 6px;
-  background: var(--canvas);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
   font-size: 0.9375rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -563,8 +568,8 @@ textarea.input {
   margin: 0 0 1rem;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
 }
 
 .file {
@@ -574,7 +579,7 @@ textarea.input {
   justify-content: space-between;
   gap: 0.5rem 1rem;
   padding: 0.625rem 0.875rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .file:last-child {
@@ -583,7 +588,7 @@ textarea.input {
 
 .fileName {
   display: block;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   overflow-wrap: anywhere;
 }
 
@@ -597,23 +602,28 @@ textarea.input {
 .empty {
   margin: 0;
   padding: 1.5rem 1.25rem;
-  background: var(--surface);
-  border: 1px dashed #9aa5b1;
-  border-radius: 10px;
-  color: var(--muted);
+  background: var(--surface-default);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-xl);
+  color: var(--text-secondary);
 }
 
 .empty strong {
   display: block;
   margin-bottom: 0.25rem;
-  color: var(--ink);
+  color: var(--text-primary);
   font-size: 1rem;
 }
 
 .skeleton {
   height: 3.5rem;
-  border-bottom: 1px solid var(--line);
-  background: linear-gradient(90deg, #eef2f6 25%, #f8fafc 50%, #eef2f6 75%);
+  border-bottom: 1px solid var(--border-default);
+  background: linear-gradient(
+    90deg,
+    var(--skeleton-bg) 25%,
+    var(--skeleton-shimmer) 50%,
+    var(--skeleton-bg) 75%
+  );
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
 }
