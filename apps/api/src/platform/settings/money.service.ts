@@ -3,7 +3,13 @@
 // year gives the same number, and an auditor can find the rate row a person entered.
 //
 // Rates are typed in by a person (no feed). The INR peg of 1.6 is just a row with source 'NRB peg'.
-import { type Currency, type Money, type NprSnapshot, NprSnapshotSchema } from '@bos/contracts';
+import {
+  type Currency,
+  type Money,
+  type NprSnapshot,
+  NprSnapshotSchema,
+  PEGGED_CURRENCIES,
+} from '@bos/contracts';
 import { fxRates } from '@bos/db';
 import { Dec, kathmanduDate } from '@bos/locale';
 import { ConflictException, Inject, Injectable } from '@nestjs/common';
@@ -85,8 +91,12 @@ export class MoneyService {
           message: `No NPR rate for ${money.currency} on or before ${day}`,
         });
       }
-      const maxAgeDays = await this.settings.get(scope, 'fx.max_rate_age_days');
-      if (row.rateDate < shiftDay(day, -maxAgeDays)) {
+      // A currency pegged by NRB (INR at 1.6) has one standing rate row, so its age says nothing.
+      const pegged = (PEGGED_CURRENCIES as readonly Currency[]).includes(money.currency);
+      const maxAgeDays = pegged
+        ? undefined
+        : await this.settings.get(scope, 'fx.max_rate_age_days');
+      if (maxAgeDays !== undefined && row.rateDate < shiftDay(day, -maxAgeDays)) {
         throw new ConflictException({
           code: 'fx_rate_stale',
           message: `The latest ${money.currency} rate is from ${row.rateDate}, more than ${maxAgeDays} days before ${day}. Enter a current rate.`,
