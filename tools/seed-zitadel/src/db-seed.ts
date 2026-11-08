@@ -89,36 +89,36 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
       keptPermissions.push(permission);
       // WHERE ... IS DISTINCT FROM makes an unchanged row a no-op, so rowCount is 0 on a re-run.
       const result = await client.query(
-        `INSERT INTO app.role_permissions (tenant_id, organization_id, role_key, permission, scope)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (tenant_id, organization_id, role_key, permission) DO UPDATE
+        `INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, role_key, permission) DO UPDATE
            SET scope = EXCLUDED.scope
            WHERE role_permissions.scope IS DISTINCT FROM EXCLUDED.scope
          RETURNING id`,
-        [scope.tenantId, scope.organizationId, roleKey, permission, permissionScope],
+        [scope.tenantId, roleKey, permission, permissionScope],
       );
       changed += result.rowCount ?? 0;
     }
   }
   // Review R25: a grant dropped from the defaults must also leave the table, or it keeps granting
-  // forever. P1 has no roles editor, so every row in this org came from an earlier seed run. The
+  // forever. P1 has no roles editor, so every row in this tenant came from an earlier seed run. The
   // keep-list goes in as two parallel arrays; once the stale rows are gone a re-run deletes nothing.
   const stale = await client.query(
     `DELETE FROM app.role_permissions
-     WHERE tenant_id = $1 AND organization_id = $2
-       AND (role_key, permission) NOT IN (SELECT * FROM unnest($3::text[], $4::text[]))
+     WHERE tenant_id = $1
+       AND (role_key, permission) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))
      RETURNING id`,
-    [scope.tenantId, scope.organizationId, keptRoles, keptPermissions],
+    [scope.tenantId, keptRoles, keptPermissions],
   );
   changed += stale.rowCount ?? 0;
   if (changed > 0) {
     // The API caches grants per authz version; without a bump, running instances keep stale roles.
     const bump = await client.query(
-      `INSERT INTO app.authz_versions (tenant_id, organization_id, version)
-       VALUES ($1, $2, 1)
-       ON CONFLICT (tenant_id, organization_id) DO UPDATE
+      `INSERT INTO app.authz_versions (tenant_id, version)
+       VALUES ($1, 1)
+       ON CONFLICT (tenant_id) DO UPDATE
          SET version = authz_versions.version + 1`,
-      [scope.tenantId, scope.organizationId],
+      [scope.tenantId],
     );
     changed += bump.rowCount ?? 0;
   }
@@ -152,7 +152,7 @@ async function seedTestMemoWorkflow(
     `INSERT INTO app.workflow_versions
        (tenant_id, organization_id, definition_id, version, status, spec, published_at, published_by)
      VALUES ($1, $2, $3, 1, 'published', $4::jsonb, now(), NULL)
-     ON CONFLICT (definition_id, version) DO NOTHING
+     ON CONFLICT (tenant_id, definition_id, version) DO NOTHING
      RETURNING id`,
     [scope.tenantId, scope.organizationId, definitionId, JSON.stringify(spec)],
   );
@@ -171,10 +171,10 @@ async function seedTestMemoWorkflow(
 
 async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<number> {
   const result = await client.query(
-    `INSERT INTO app.fx_rates (tenant_id, organization_id, currency, rate_npr, source, rate_date)
-     VALUES ($1, $2, 'INR', $3, 'NRB peg', $4)
-     ON CONFLICT DO NOTHING`,
-    [scope.tenantId, scope.organizationId, INR_PEG_RATE, INR_PEG_DATE],
+    `INSERT INTO app.fx_rates (tenant_id, currency, rate_npr, source, rate_date)
+     VALUES ($1, 'INR', $2, 'NRB peg', $3)
+     ON CONFLICT (tenant_id, currency, rate_date) DO NOTHING`,
+    [scope.tenantId, INR_PEG_RATE, INR_PEG_DATE],
   );
   return result.rowCount ?? 0;
 }
