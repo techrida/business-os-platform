@@ -154,15 +154,34 @@
   color: var(--icon-disabled);
 }
 
+/* Count pill, as in Figma: a small solid blue circle that stretches for two or more digits. */
+.count {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-semibold);
+  line-height: 18px;
+}
+
+/* Phase tag on a row that is not built yet: small, outlined, no fill, so the roadmap stays
+   readable without competing with the live items. */
 .tag {
   flex: none;
   padding: 0 6px;
+  border: var(--border-width-thin) solid var(--border-default);
   border-radius: var(--radius-full);
-  background: var(--surface-muted);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
+  color: var(--text-tertiary);
+  font-size: 11px;
   font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
+  line-height: 14px;
 }
 
 .footer {
@@ -242,6 +261,13 @@
   .groupLabel,
   .tag {
     display: none;
+  }
+
+  /* A count rides on the icon's top corner instead of the row's end. */
+  .count {
+    position: absolute;
+    inset-block-start: 2px;
+    inset-inline-start: calc(50% + 4px);
   }
 
   .group + .group {

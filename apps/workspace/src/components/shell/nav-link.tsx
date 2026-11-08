@@ -13,7 +13,17 @@ import { useShell } from './shell-state';
  * A built sidebar item. It is a client component only to know the current path (for the
  * highlight and `aria-current`) and to close the drawer after a tap.
  */
-export function NavLink({ href, label, icon }: { href: string; label: string; icon: NavIconName }) {
+export function NavLink({
+  href,
+  label,
+  icon,
+  count,
+}: {
+  href: string;
+  label: string;
+  icon: NavIconName;
+  count?: number | undefined;
+}) {
   const pathname = usePathname();
   const { closeDrawer } = useShell();
   const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -28,6 +38,7 @@ export function NavLink({ href, label, icon }: { href: string; label: string; ic
     >
       <Icon name={icon} className={styles.icon} />
       <span className={styles.label}>{label}</span>
+      {count !== undefined && count > 0 ? <span className={styles.count}>{count}</span> : null}
     </Link>
   );
 }

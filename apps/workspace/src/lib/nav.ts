@@ -39,6 +39,11 @@ export interface NavItem {
   icon: NavIconName;
   /** The phase that builds this item. */
   phase: Phase;
+  /**
+   * Optional number shown in a pill at the row's end (the Figma "Organizations 4"). Only built
+   * items show it, and only when it is above zero. P0 has nothing to count, so no item sets it.
+   */
+  count?: number;
 }
 
 export interface NavGroup {

@@ -73,7 +73,12 @@ export function Sidebar({ user }: { user: SidebarUser }) {
                 {group.items.map((item) => (
                   <li key={item.label}>
                     {isBuilt(item) ? (
-                      <NavLink href={item.href} label={item.label} icon={item.icon} />
+                      <NavLink
+                        href={item.href}
+                        label={item.label}
+                        icon={item.icon}
+                        count={item.count}
+                      />
                     ) : (
                       <PlannedItem item={item} />
                     )}
