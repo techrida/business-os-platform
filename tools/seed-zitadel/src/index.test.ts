@@ -14,9 +14,10 @@ import {
   SEED_TOOL,
   TOTP_METHOD,
   WEBHOOK_TARGET_NAME,
-  type OrgRow,
+  type IdpOrgSeed,
   type SeedApi,
   type SeedDeps,
+  type TenancySeed,
   type TenancyStore,
 } from './index.js';
 import { type DevFiles, parseEnv } from './outputs.js';
@@ -409,19 +410,22 @@ class FakeFiles implements DevFiles {
 
 /** Mimics the SQL: first call inserts, later identical calls change nothing. */
 class FakeStore implements TenancyStore {
-  rows = new Map<string, OrgRow>();
+  entity: TenancySeed['entity'] | undefined;
+  /** idp_orgs by ZITADEL org id, each with its party (null for staff). */
+  rows = new Map<string, IdpOrgSeed>();
   /** Staff org id passed to each seedKernel call; the first call seeds 5 rows, later ones 0. */
   readonly kernelCalls: string[] = [];
   seedKernel(staffZitadelOrgId: string): Promise<number> {
     this.kernelCalls.push(staffZitadelOrgId);
     return Promise.resolve(this.kernelCalls.length === 1 ? 5 : 0);
   }
-  upsertOrganizations(rows: OrgRow[]): Promise<number> {
-    let changed = 0;
-    for (const row of rows) {
-      const old = this.rows.get(row.zitadelOrgId);
-      if (!old || old.kind !== row.kind || old.name !== row.name) changed += 1;
-      this.rows.set(row.zitadelOrgId, row);
+  upsertTenancy(seed: TenancySeed): Promise<number> {
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    let changed = same(this.entity, seed.entity) ? 0 : 1;
+    this.entity = seed.entity;
+    for (const org of seed.idpOrgs) {
+      if (!same(this.rows.get(org.zitadelOrgId), org)) changed += 1;
+      this.rows.set(org.zitadelOrgId, org);
     }
     return Promise.resolve(changed);
   }
@@ -480,6 +484,13 @@ describe('@bos/seed-zitadel', () => {
     expect(files.data.get('k6.env')).toContain(`K6_APPROVER_CLIENT_ID=${LOADTEST_APPROVER_USER}\n`);
     expect(files.data.get('k6.env')).toMatch(/^K6_APPROVER_CLIENT_SECRET=secret-\d+$/m);
     expect(store.rows.size).toBe(3);
+    // ADR 0027 section 11: one TR entity; the customer and vendor IdP orgs carry their parties.
+    expect(store.entity).toEqual({ code: 'TR', name: 'Techrida', legalName: 'Techrida Pvt. Ltd.' });
+    expect([...store.rows.values()].map((o) => [o.kind, o.party?.code ?? null])).toEqual([
+      ['staff', null],
+      ['customer', 'CUST-DEV'],
+      ['vendor', 'VEND-DEV'],
+    ]);
     expect(PERSONAS).toHaveLength(7);
     const personas = personasOf(files);
     expect(personas).toHaveLength(7);
