@@ -1,12 +1,15 @@
 // Integration tests for migration 0002_identity_authz (users, departments, user_roles, role_permissions,
-// authz_versions, ops.zitadel_events, ops.sync_cursors) and its Drizzle schema.
+// authz_versions, ops.zitadel_events, ops.sync_cursors) as reshaped by 0013/0014 (ADR 0027: users and the role
+// tables are tenant-scoped, a user belongs to an IdP org, the department lives on the membership), and its
+// Drizzle schema.
 // Needs Docker: a real postgres:16-alpine from Testcontainers. Run with:
 //   pnpm --filter @bos/db exec vitest run src/identity.test.ts
 //
 // The container starts with only a superuser, so beforeAll creates the same roles and default privileges that
 // infra/postgres/init-dbs.sh creates, migrates as bos_owner and queries as bos_app (same path as production).
-// Writes to app tables go through tx(), which sets the bos.* settings the audit trigger (0001) demands once it
-// exists, so these tests behave the same before and after 0001 lands.
+// Writes to app tables go through tx(), which sets the bos.* settings the audit trigger demands. A write to a
+// tenant-scoped table (users, user_roles, role_permissions) is audited under bos.organization_id, so tx() takes
+// the acting entity.
 import { randomUUID } from 'node:crypto';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -23,10 +26,13 @@ import {
   departments,
   rolePermissions,
   syncCursors,
+  userEntities,
   userRoles,
   users,
   zitadelEvents,
 } from './schema/identity.js';
+import { idpOrgs, organizations, parties } from './schema/platform.js';
+import { createTenantWithEntity, type TenantWithEntity } from './testing/fixtures.js';
 
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
@@ -43,8 +49,11 @@ function urlFor(user: string, password: string, database: string): string {
   return url.toString();
 }
 
-/** Runs `fn` in one transaction as bos_app with the bos.* actor settings set (the audit trigger needs them). */
-async function tx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+/**
+ * Runs `fn` in one transaction as bos_app with the bos.* actor settings set (the audit trigger needs them).
+ * `organizationId` is the acting entity, which a write to a tenant-scoped table is audited under.
+ */
+async function tx<T>(fn: (client: PoolClient) => Promise<T>, organizationId?: string): Promise<T> {
   const client = await app.pool.connect();
   try {
     await client.query('BEGIN');
@@ -54,6 +63,9 @@ async function tx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
               set_config('bos.correlation_id', $1, true)`,
       [randomUUID()],
     );
+    if (organizationId !== undefined) {
+      await client.query(`SELECT set_config('bos.organization_id', $1, true)`, [organizationId]);
+    }
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
@@ -65,34 +77,25 @@ async function tx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   }
 }
 
-/** A tenant with one staff organization, ready to hold users and roles. */
-async function makeOrg(): Promise<{ tenantId: string; organizationId: string }> {
-  return tx(async (c) => {
-    const t = await c.query<{ id: string }>('INSERT INTO app.tenants DEFAULT VALUES RETURNING id');
-    const tenantId = t.rows[0]?.id ?? '';
-    const o = await c.query<{ id: string }>(
-      `INSERT INTO app.organizations (tenant_id, kind, name, zitadel_org_id)
-       VALUES ($1, 'staff', 'Staff', $2) RETURNING id`,
-      [tenantId, `zitadel-${randomUUID()}`],
-    );
-    return { tenantId, organizationId: o.rows[0]?.id ?? '' };
-  });
+/** A tenant with its default legal entity and staff IdP org, ready to hold users and roles. */
+function makeOrg(): Promise<TenantWithEntity> {
+  return createTenantWithEntity(app.pool);
 }
 
-/** Inserts a user (status given) and returns its id. */
+/** Inserts a user (status given) under the staff IdP org and returns its id. */
 async function makeUser(
-  org: { tenantId: string; organizationId: string },
+  org: TenantWithEntity,
   status = 'active',
   zitadelUserId = `zu-${randomUUID()}`,
 ): Promise<string> {
   return tx(async (c) => {
     const { rows } = await c.query<{ id: string }>(
-      `INSERT INTO app.users (tenant_id, organization_id, zitadel_user_id, status)
+      `INSERT INTO app.users (tenant_id, idp_org_id, zitadel_user_id, status)
        VALUES ($1, $2, $3, $4) RETURNING id`,
-      [org.tenantId, org.organizationId, zitadelUserId, status],
+      [org.tenantId, org.idpOrgId, zitadelUserId, status],
     );
     return rows[0]?.id ?? '';
-  });
+  }, org.organizationId);
 }
 
 beforeAll(async () => {
@@ -155,8 +158,12 @@ describe('0002 tables', () => {
 // forgotten in the other would otherwise only show up as a runtime error in some later unit.
 describe('the Drizzle schema mirrors the SQL', () => {
   const tables: PgTable[] = [
+    organizations,
+    parties,
+    idpOrgs,
     departments,
     users,
+    userEntities,
     userRoles,
     rolePermissions,
     authzVersions,
@@ -186,19 +193,21 @@ describe('the Drizzle schema mirrors the SQL', () => {
     const zitadelUserId = `zu-${randomUUID()}`;
     await tx(async (c) => {
       await c.query(
-        `INSERT INTO app.users (tenant_id, organization_id, zitadel_user_id, status)
+        `INSERT INTO app.users (tenant_id, idp_org_id, zitadel_user_id, status)
          VALUES ($1, $2, $3, 'invited')`,
-        [org.tenantId, org.organizationId, zitadelUserId],
+        [org.tenantId, org.idpOrgId, zitadelUserId],
       );
-    });
+    }, org.organizationId);
     const [row] = await app.db.select().from(users).where(eq(users.zitadelUserId, zitadelUserId));
     expect(row).toMatchObject({
       tenantId: org.tenantId,
-      organizationId: org.organizationId,
+      idpOrgId: org.idpOrgId,
       status: 'invited',
       email: null,
-      departmentId: null,
     });
+    // A user is tenant-scoped (ADR 0027): the entity and the department moved to user_entities.
+    expect(Object.keys(row ?? {})).not.toContain('organizationId');
+    expect(Object.keys(row ?? {})).not.toContain('departmentId');
   });
 });
 
@@ -215,48 +224,65 @@ describe('app.users', () => {
     await expect(makeUser(org, 'banned')).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('rejects an organization that does not exist', async () => {
+  it('rejects an IdP org that does not exist', async () => {
     const org = await makeOrg();
-    await expect(makeUser({ ...org, organizationId: randomUUID() })).rejects.toMatchObject({
+    await expect(makeUser({ ...org, idpOrgId: randomUUID() })).rejects.toMatchObject({
       code: '23503',
     });
   });
 
-  it('lets a department point at its head and a user at their department', async () => {
+  it('rejects an IdP org of another tenant (the key is (tenant_id, idp_org_id))', async () => {
+    const org = await makeOrg();
+    const other = await makeOrg();
+    await expect(makeUser({ ...org, idpOrgId: other.idpOrgId })).rejects.toMatchObject({
+      code: '23503',
+    });
+  });
+
+  it('lets a department point at its head and a membership at its department', async () => {
     const org = await makeOrg();
     const headId = await makeUser(org);
+    // The user's department is on the membership now (users.department_id went with ADR 0027).
     const deptId = await tx(async (c) => {
       const { rows } = await c.query<{ id: string }>(
         `INSERT INTO app.departments (tenant_id, organization_id, name, head_user_id)
          VALUES ($1, $2, 'Sales', $3) RETURNING id`,
         [org.tenantId, org.organizationId, headId],
       );
-      await c.query('UPDATE app.users SET department_id = $1 WHERE id = $2', [rows[0]?.id, headId]);
+      await c.query(
+        `INSERT INTO app.user_entities (tenant_id, organization_id, user_id, is_default, department_id)
+         VALUES ($1, $2, $3, true, $4)`,
+        [org.tenantId, org.organizationId, headId, rows[0]?.id],
+      );
       return rows[0]?.id;
-    });
+    }, org.organizationId);
     expect(deptId).toBeDefined();
     await expect(
-      tx((c) =>
-        c.query('UPDATE app.departments SET head_user_id = $1 WHERE id = $2', [
-          randomUUID(),
-          deptId,
-        ]),
+      tx(
+        (c) =>
+          c.query('UPDATE app.departments SET head_user_id = $1 WHERE id = $2', [
+            randomUUID(),
+            deptId,
+          ]),
+        org.organizationId,
       ),
     ).rejects.toMatchObject({ code: '23503' });
   });
 });
 
 describe('app.user_roles', () => {
-  it('defaults source to zitadel, and its primary key is (user_id, role_key)', async () => {
+  it('defaults source to zitadel, and its primary key is (tenant_id, user_id, role_key)', async () => {
     const org = await makeOrg();
     const userId = await makeUser(org);
     const insert = (roleKey: string) =>
-      tx((c) =>
-        c.query<{ source: string }>(
-          `INSERT INTO app.user_roles (tenant_id, organization_id, user_id, role_key)
-           VALUES ($1, $2, $3, $4) RETURNING source`,
-          [org.tenantId, org.organizationId, userId, roleKey],
-        ),
+      tx(
+        (c) =>
+          c.query<{ source: string }>(
+            `INSERT INTO app.user_roles (tenant_id, user_id, role_key)
+             VALUES ($1, $2, $3) RETURNING source`,
+            [org.tenantId, userId, roleKey],
+          ),
+        org.organizationId,
       );
     expect((await insert('finance')).rows[0]?.source).toBe('zitadel');
     await expect(insert('finance')).rejects.toMatchObject({ code: '23505' });
@@ -267,29 +293,46 @@ describe('app.user_roles', () => {
   it('rejects a role for a user that does not exist', async () => {
     const org = await makeOrg();
     await expect(
-      tx((c) =>
-        c.query(
-          `INSERT INTO app.user_roles (tenant_id, organization_id, user_id, role_key)
-           VALUES ($1, $2, $3, 'finance')`,
-          [org.tenantId, org.organizationId, randomUUID()],
-        ),
+      tx(
+        (c) =>
+          c.query(
+            `INSERT INTO app.user_roles (tenant_id, user_id, role_key)
+             VALUES ($1, $2, 'finance')`,
+            [org.tenantId, randomUUID()],
+          ),
+        org.organizationId,
+      ),
+    ).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('rejects a role for a user of another tenant (the key is (tenant_id, user_id))', async () => {
+    const org = await makeOrg();
+    const other = await makeOrg();
+    const foreignUser = await makeUser(other);
+    await expect(
+      tx(
+        (c) =>
+          c.query(
+            `INSERT INTO app.user_roles (tenant_id, user_id, role_key)
+             VALUES ($1, $2, 'finance')`,
+            [org.tenantId, foreignUser],
+          ),
+        org.organizationId,
       ),
     ).rejects.toMatchObject({ code: '23503' });
   });
 });
 
 describe('app.role_permissions', () => {
-  const insert = (
-    org: { tenantId: string; organizationId: string },
-    scope: string,
-    perm = 'x.read',
-  ) =>
-    tx((c) =>
-      c.query(
-        `INSERT INTO app.role_permissions (tenant_id, organization_id, role_key, permission, scope)
-         VALUES ($1, $2, 'finance', $3, $4)`,
-        [org.tenantId, org.organizationId, perm, scope],
-      ),
+  const insert = (org: TenantWithEntity, scope: string, perm = 'x.read') =>
+    tx(
+      (c) =>
+        c.query(
+          `INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
+           VALUES ($1, 'finance', $2, $3)`,
+          [org.tenantId, perm, scope],
+        ),
+      org.organizationId,
     );
 
   it.each(['own', 'department', 'customer_org', 'all'])('accepts scope %s', async (scope) => {
@@ -300,23 +343,27 @@ describe('app.role_permissions', () => {
     await expect(insert(await makeOrg(), 'galaxy')).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('allows one row per (tenant, org, role, permission)', async () => {
+  it('allows one row per (tenant, role, permission)', async () => {
     const org = await makeOrg();
     await insert(org, 'own');
     await expect(insert(org, 'all')).rejects.toMatchObject({ code: '23505' });
     await expect(insert(org, 'all', 'x.write')).resolves.toBeDefined();
+    // Another tenant has its own policy for the same role and permission.
+    await expect(insert(await makeOrg(), 'own')).resolves.toBeDefined();
   });
 });
 
 describe('app.authz_versions', () => {
-  it('starts at version 0 and allows one row per organization', async () => {
+  it('starts at version 0 and allows one row per tenant', async () => {
     const org = await makeOrg();
     const insert = () =>
-      tx((c) =>
-        c.query<{ version: string }>(
-          `INSERT INTO app.authz_versions (tenant_id, organization_id) VALUES ($1, $2) RETURNING version`,
-          [org.tenantId, org.organizationId],
-        ),
+      tx(
+        (c) =>
+          c.query<{ version: string }>(
+            `INSERT INTO app.authz_versions (tenant_id) VALUES ($1) RETURNING version`,
+            [org.tenantId],
+          ),
+        org.organizationId,
       );
     // bigint comes back from pg as a string.
     expect((await insert()).rows[0]?.version).toBe('0');
