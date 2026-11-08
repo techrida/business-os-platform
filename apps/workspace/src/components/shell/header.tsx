@@ -1,3 +1,4 @@
+import { NotificationsBell } from '@/app/(app)/notifications-bell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
@@ -7,12 +8,12 @@ import { MenuButton } from './shell-state';
 
 /**
  * The top bar (the page's `banner`). Left: the menu button on phones and the signed-in roles,
- * which is what the Figma bar shows ("Super Admin"). Right: search (disabled in P0), the
- * organisation kind and Sign out.
+ * which is what the Figma bar shows ("Super Admin"). Right: search (disabled until search
+ * exists), the notifications bell, the organisation kind and Sign out.
  *
- * Left out on purpose: the bell (until P1 has notifications) and the Figma cloud, undo and redo
- * icons, which would look like working controls on a page with nothing to save or undo. Page
- * titles belong to each page's own h1, as in Figma.
+ * Left out on purpose: the Figma cloud, undo and redo icons, which would look like working
+ * controls on a page with nothing to save or undo. Page titles belong to each page's own h1, as
+ * in Figma.
  *
  * It must stay a direct child of the layout, outside <main>: a <header> nested in <main> or a
  * section loses the banner role.
@@ -38,6 +39,7 @@ export function Header({ orgKind, roles }: { orgKind: string; roles: readonly st
             disabled
           />
         </div>
+        <NotificationsBell />
         <div className={styles.who}>
           <Badge tone="info" className={styles.kind}>
             {orgKind}

@@ -1,0 +1,189 @@
+/* The bell in the header and its dropdown (Figma Dropdown open state 31:128, rows like the
+   "Today's focus" list on 115:7554). The panel is 360px wide, right-aligned under the bell. */
+
+.wrap {
+  position: relative;
+}
+
+.button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.button:hover,
+.button[aria-expanded='true'] {
+  background: var(--interactive-hover);
+}
+
+.button:active {
+  background: var(--interactive-pressed);
+}
+
+/* Unread dot: the count is in the button's name and in the panel; the dot is the glance. */
+.dot {
+  position: absolute;
+  inset-block-start: 7px;
+  inset-inline-end: 8px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface-default);
+  border-radius: var(--radius-full);
+  background: var(--action-primary);
+  box-sizing: content-box;
+}
+
+.panel {
+  position: absolute;
+  inset-block-start: calc(100% + 8px);
+  inset-inline-end: 0;
+  z-index: 30;
+  display: grid;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(520px, calc(100dvh - var(--bos-header-height) - 24px));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: var(--border-width-thin) solid var(--dropdown-border);
+  border-radius: var(--radius-xl);
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--overlay-scrim) 14%, transparent);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.title {
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
+.action {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--action-primary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  background: var(--action-primary-subtle);
+}
+
+.action:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.list li:last-child .item {
+  border-bottom: 0;
+}
+
+a.item:hover {
+  background: var(--dropdown-hover-bg);
+}
+
+.mark {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+}
+
+.unread .mark {
+  background: var(--action-primary);
+}
+
+.text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.itemTitle {
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.unread .itemTitle {
+  font-weight: var(--font-weight-semibold);
+}
+
+.itemBody {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.itemTime {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  padding: 32px 16px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  text-align: center;
+}
+
+.skeleton {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+@media (max-width: 767.98px) {
+  /* Phones: the bell is not at the screen edge, so the panel spans the screen under the header. */
+  .panel {
+    position: fixed;
+    inset-block-start: calc(var(--bos-header-height) + 8px);
+    inset-inline: 16px;
+    width: auto;
+  }
+}
