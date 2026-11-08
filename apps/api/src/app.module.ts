@@ -1,20 +1,31 @@
 import { Module } from '@nestjs/common';
 
+import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { MeModule } from './modules/me/me.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
+import { TestMemoModule } from './modules/test-memo/test-memo.module';
+import { AuditHttpModule } from './platform/audit/audit.module';
 import { AuthModule } from './platform/auth/auth.module';
+import { AuthzModule } from './platform/authz/authz.module';
 import { ConfigModule } from './platform/config/config.module';
 import { DbModule } from './platform/db/db.module';
+import { DocumentsModule } from './platform/documents/documents.module';
 import { HealthModule } from './platform/health/health.module';
+import { NotifyHttpModule } from './platform/notify/notify.module';
 import { ObsModule } from './platform/obs/obs.module';
 import { QueueModule } from './platform/queue/queue.module';
+import { SettingsHttpModule } from './platform/settings/settings.module';
 import { TenancyModule } from './platform/tenancy/tenancy.module';
+import { UsersModule } from './platform/users/users.module';
 
 /**
  * The HTTP API. Import order matters in one place: TenancyModule comes before ObsModule because
  * Nest registers middleware in module order, and the correlation middleware must set
  * `req.correlationId` before pino-http's request-id generator reads it.
  * Config, Obs and Db are global, so the modules below inject their services without importing them.
+ *
+ * Only HTTP modules are listed here. Their BullMQ processors live in the matching *WorkerModule,
+ * imported by WorkerModule alone, so the API process never consumes jobs.
  */
 @Module({
   imports: [
@@ -27,6 +38,15 @@ import { TenancyModule } from './platform/tenancy/tenancy.module';
     HealthModule,
     MeModule,
     TelemetryModule,
+    // P1 kernel (stubs until each unit fills its module in).
+    AuthzModule,
+    AuditHttpModule,
+    SettingsHttpModule,
+    DocumentsModule,
+    NotifyHttpModule,
+    UsersModule,
+    ApprovalsModule,
+    TestMemoModule,
   ],
 })
 export class AppModule {}
