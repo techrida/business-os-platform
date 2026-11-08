@@ -104,10 +104,11 @@ describe('mapClaims rolesByOrg', () => {
   const inA = { [ORG_A]: 'staff.auth.localhost' };
   const inB = { [ORG_B]: 'other.auth.localhost' };
   const inBoth = { ...inA, ...inB };
+  const SCOPED = projectRolesClaim(PROJECT);
 
   it('leaves out of org A a role granted only in org B', () => {
     const mapped = mapClaims(
-      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { sales: inA, finance: inB } },
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [SCOPED]: { sales: inA, finance: inB } },
       PROJECT,
     );
     expect(mapped.rolesByOrg[ORG_A]).toEqual(['sales']);
@@ -118,7 +119,7 @@ describe('mapClaims rolesByOrg', () => {
 
   it('has no entry for an org where nothing was granted', () => {
     const mapped = mapClaims(
-      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { founder: inB } },
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [SCOPED]: { founder: inB } },
       PROJECT,
     );
     expect(mapped.rolesByOrg[ORG_A]).toBeUndefined();
@@ -127,7 +128,7 @@ describe('mapClaims rolesByOrg', () => {
 
   it('lists a role granted in two orgs under both', () => {
     const mapped = mapClaims(
-      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { management: inBoth } },
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [SCOPED]: { management: inBoth } },
       PROJECT,
     );
     expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['management'], [ORG_B]: ['management'] });
@@ -135,23 +136,45 @@ describe('mapClaims rolesByOrg', () => {
 
   it('drops role keys that are not in ROLE_KEYS', () => {
     const mapped = mapClaims(
-      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { admin: inA, sales: inA } },
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [SCOPED]: { admin: inA, sales: inA } },
       PROJECT,
     );
     expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['sales'] });
   });
 
-  it('merges both claim forms per org, sorted and de-duplicated', () => {
+  it('groups the scoped claim per org, sorted', () => {
     const mapped = mapClaims(
       {
         sub: 'u',
         [ORG_ID_CLAIM]: ORG_A,
-        [PROJECT_ROLES_CLAIM]: { sales: inA, finance: inA },
-        [projectRolesClaim(PROJECT)]: { finance: inA, accountant: inB },
+        [SCOPED]: { sales: inA, finance: inA, accountant: inB },
       },
       PROJECT,
     );
     expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['finance', 'sales'], [ORG_B]: ['accountant'] });
+  });
+
+  // R3: the generic claim does not name a project, so a role in it may belong to another project
+  // in the same ZITADEL instance. Only the claim scoped to our project id may grant roles here.
+  it('grants nothing from the generic project roles claim', () => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { founder: inA } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({});
+  });
+
+  it('ignores the generic claim even next to the scoped one', () => {
+    const mapped = mapClaims(
+      {
+        sub: 'u',
+        [ORG_ID_CLAIM]: ORG_A,
+        [PROJECT_ROLES_CLAIM]: { founder: inA, finance: inA },
+        [SCOPED]: { sales: inA },
+      },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['sales'] });
   });
 
   it("ignores roles scoped to another project's id", () => {
@@ -168,7 +191,7 @@ describe('mapClaims rolesByOrg', () => {
     ['null', null],
   ])('ignores a role whose org value is %s', (_label, value) => {
     const mapped = mapClaims(
-      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { founder: value } },
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [SCOPED]: { founder: value } },
       PROJECT,
     );
     expect(mapped.rolesByOrg).toEqual({});
