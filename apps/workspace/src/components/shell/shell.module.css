@@ -20,6 +20,8 @@
   flex-direction: column;
   min-width: 0;
   min-height: 100vh;
+  /* Figma's main area is white; the header and sidebar are the pale surfaces. */
+  background: var(--surface-default);
 }
 
 /* Square icon-only buttons used by the shell controls. */

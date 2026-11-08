@@ -43,11 +43,17 @@ export default async function ShellPage() {
 
   return (
     <main className={styles.main}>
+      {/* Figma greets by name. P0 has no display name (only ids and roles), so there is no
+          ", Name" yet. The status card below is the only content: no placeholder metrics. */}
+      <div className={styles.pageHead}>
+        <h1 className={styles.pageTitle}>Good morning</h1>
+        <p className={styles.pageLede}>Here is what needs your attention today.</p>
+      </div>
       <Card as="section" aria-labelledby="ready-heading">
         <div className={styles.headText}>
-          <h1 id="ready-heading" className={styles.heading}>
+          <h2 id="ready-heading" className={styles.cardTitle}>
             P0: platform ready
-          </h1>
+          </h2>
           <p className={styles.lede}>
             You are signed in. These values come straight from the API for this request.
           </p>
