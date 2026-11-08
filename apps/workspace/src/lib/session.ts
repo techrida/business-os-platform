@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { OrgKindSchema } from '@bos/contracts';
 import { Redis } from 'ioredis';
@@ -14,7 +14,8 @@ import { refreshTokens } from './oidc';
  * Server-side sessions for the workspace BFF.
  *
  * The browser only ever holds an opaque 256-bit id in a `__Host-` cookie. Tokens live in
- * Valkey at `ws:sess:<id>` and never reach the browser. All timestamps are epoch seconds,
+ * Valkey at `ws:sess:<SHA-256 of the id, hex>` and never reach the browser. The key is hashed so
+ * that anyone who can list keys (KEYS, SCAN, an AOF or RDB file) learns no usable cookie value. All timestamps are epoch seconds,
  * the same unit as a JWT `exp`.
  */
 
@@ -63,8 +64,13 @@ const StoredSessionSchema = z.object({
 /** 32 random bytes in base64url is exactly 43 characters with no padding. */
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
-const sessionKey = (id: string) => `ws:sess:${id}`;
-const refreshLockKey = (id: string) => `ws:sess:${id}:refresh`;
+/**
+ * Valkey key names. Callers pass the raw id (after the SESSION_ID_PATTERN check); only these
+ * functions hash it, so the raw id never appears in a key (CR-13).
+ */
+const hashId = (id: string) => createHash('sha256').update(id).digest('hex');
+const sessionKey = (id: string) => `ws:sess:${hashId(id)}`;
+const refreshLockKey = (id: string) => `${sessionKey(id)}:refresh`;
 
 /** Reads `Date.now()` so tests control time with `vi.setSystemTime`. */
 function nowSeconds(): number {
