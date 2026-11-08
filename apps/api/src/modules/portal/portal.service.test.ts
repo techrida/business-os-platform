@@ -125,6 +125,22 @@ function fakeStore(seeds: Seed[]) {
       const s = mine(p).find((x) => x.versionId === versionId);
       return Promise.resolve(s === undefined ? undefined : sourceOf(s));
     }),
+    // The row's own tenant and entity, not the caller's: the service must scope the link by these.
+    loadDocumentHead: vi.fn((p: Principal, versionId: string) => {
+      const s = mine(p).find((x) => x.versionId === versionId);
+      return Promise.resolve(
+        s === undefined
+          ? undefined
+          : {
+              tenantId: TENANT,
+              organizationId: ENTITY,
+              status: s.status,
+              rejectionSource: s.rejectionSource ?? null,
+              renderState: s.rendered === true ? ('rendered' as const) : ('none' as const),
+              renderedDocumentId: s.rendered === true ? DOC : null,
+            },
+      );
+    }),
   };
   return store;
 }
@@ -138,6 +154,9 @@ function setup(
   const documents = {
     listForOwner: vi.fn(() =>
       Promise.resolve([{ documentId: DOC, version: 1, status: opts.docStatus ?? 'clean' }]),
+    ),
+    issueLinkForOwner: vi.fn(() =>
+      Promise.resolve({ url: '/v1/files/tok.en', expiresAt: 'later' }),
     ),
   };
   const settings = {
@@ -193,9 +212,14 @@ describe('PortalService: who may call', () => {
       const { service, store, documents } = setup([SENT], { caller: principalOf(over) });
       await expect(service.list()).rejects.toBeInstanceOf(ForbiddenException);
       await expect(service.get(SENT.versionId)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.quotationPdfLink(SENT.versionId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
       expect(store.listVersions).not.toHaveBeenCalled();
       expect(store.loadView).not.toHaveBeenCalled();
+      expect(store.loadDocumentHead).not.toHaveBeenCalled();
       expect(documents.listForOwner).not.toHaveBeenCalled();
+      expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
     });
   }
 });
@@ -410,5 +434,72 @@ describe('PortalService.get', () => {
       code: 'issuer_incomplete',
       message: 'This quotation cannot be shown right now',
     });
+  });
+});
+
+describe('PortalService.quotationPdfLink', () => {
+  const RENDERED: Seed = { ...SENT, rendered: true };
+
+  it('issues the link for the version and its rendered document, in the quotation own tenant and entity', async () => {
+    // The caller acts in another entity than the row: the scope must come from the row, never the caller.
+    const caller = principalOf({ organizationId: '0a000000-0000-4000-8000-0000000000ff' });
+    const { service, store, documents } = setup([RENDERED], { caller });
+    const link = await service.quotationPdfLink(SENT.versionId);
+    expect(link).toEqual({ url: '/v1/files/tok.en', expiresAt: 'later' });
+    expect(store.loadDocumentHead).toHaveBeenCalledWith(caller, SENT.versionId);
+    expect(documents.issueLinkForOwner).toHaveBeenCalledTimes(1);
+    expect(documents.issueLinkForOwner).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: ENTITY },
+      { ownerType: 'quotation_version', ownerId: SENT.versionId },
+      DOC,
+    );
+  });
+
+  it('answers 404, without a link, for a version that is not customer-visible', async () => {
+    for (const status of ['draft', 'submitted', 'approved'] as const) {
+      const { service, documents } = setup([{ ...RENDERED, status }]);
+      await expect(service.quotationPdfLink(SENT.versionId), status).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(documents.issueLinkForOwner, status).not.toHaveBeenCalled();
+    }
+    const internal = setup([{ ...RENDERED, status: 'rejected', rejectionSource: 'internal' }]);
+    await expect(internal.service.quotationPdfLink(SENT.versionId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(internal.documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for another party or an unknown id, before any document lookup', async () => {
+    const { service, documents } = setup([{ ...RENDERED, partyId: OTHER_PARTY }]);
+    await expect(service.quotationPdfLink(SENT.versionId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(service.quotationPdfLink(vid(99))).rejects.toBeInstanceOf(NotFoundException);
+    expect(documents.listForOwner).not.toHaveBeenCalled();
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when nothing is rendered, or the rendered document is not clean', async () => {
+    const notRendered = setup([SENT]);
+    await expect(notRendered.service.quotationPdfLink(SENT.versionId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(notRendered.documents.issueLinkForOwner).not.toHaveBeenCalled();
+    for (const status of ['quarantined', 'scanning', 'infected', 'failed', 'rejected']) {
+      const { service, documents } = setup([RENDERED], { docStatus: status });
+      await expect(service.quotationPdfLink(SENT.versionId), status).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(documents.issueLinkForOwner, status).not.toHaveBeenCalled();
+    }
+  });
+
+  it('passes the documents 404 through unchanged', async () => {
+    const { service, documents } = setup([RENDERED]);
+    documents.issueLinkForOwner.mockRejectedValueOnce(new NotFoundException('File not found'));
+    await expect(service.quotationPdfLink(SENT.versionId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });

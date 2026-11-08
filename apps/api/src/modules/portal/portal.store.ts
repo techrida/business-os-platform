@@ -37,11 +37,24 @@ export type PortalViewSource = Omit<CustomerViewInput, 'issuer' | 'renderedScanC
   issuerLegalName: string;
 };
 
+/**
+ * What the PDF link needs of one version: whether the customer may see it, which rendered document it holds, and the
+ * tenant and entity the QUOTATION lives in. The link is scoped by these two ids, read from the row, never taken from
+ * the caller.
+ */
+export type PortalDocumentHead = Pick<VersionRow, 'status' | 'rejectionSource' | 'renderState'> & {
+  tenantId: string;
+  organizationId: string;
+  renderedDocumentId: string | null;
+};
+
 export interface PortalQuotationStore {
   /** Every version, in a customer-visible status, of every quotation `p` may read. */
   listVersions(p: Principal): Promise<PortalVersionHead[]>;
   /** One version of a quotation `p` may read, whatever its status; undefined when out of reach or unknown. */
   loadView(p: Principal, versionId: string): Promise<PortalViewSource | undefined>;
+  /** The document head of one version of a quotation `p` may read, whatever its status; undefined when out of reach. */
+  loadDocumentHead(p: Principal, versionId: string): Promise<PortalDocumentHead | undefined>;
 }
 
 export const PORTAL_QUOTATION_STORE = Symbol('PORTAL_QUOTATION_STORE');
@@ -119,6 +132,23 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
           inArray(quotationVersions.status, [...CUSTOMER_VISIBLE_STATUSES]),
         ),
       );
+  }
+
+  async loadDocumentHead(p: Principal, versionId: string): Promise<PortalDocumentHead | undefined> {
+    const [head] = await this.db
+      .select({
+        tenantId: quotationVersions.tenantId,
+        organizationId: quotationVersions.organizationId,
+        status: quotationVersions.status,
+        rejectionSource: quotationVersions.rejectionSource,
+        renderState: quotationVersions.renderState,
+        renderedDocumentId: quotationVersions.renderedDocumentId,
+      })
+      .from(quotationVersions)
+      .innerJoin(quotations, versionOfQuotation)
+      .where(and(scopeWhereFor(p, quotations, ACTION), eq(quotationVersions.id, versionId)))
+      .limit(1);
+    return head;
   }
 
   async loadView(p: Principal, versionId: string): Promise<PortalViewSource | undefined> {
