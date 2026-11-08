@@ -60,6 +60,12 @@ const coreShape = (service: ServiceName) => ({
     .string()
     .refine(urlWithProtocol(['https:', 'http:']), 'must be an http(s) URL')
     .optional(),
+  // Base of the links in customer emails (quotation sent, expiring, expired, portal invite): the
+  // portal's own hostname, never the workspace's. Built from config only, never from input.
+  PORTAL_PUBLIC_URL: z
+    .string()
+    .refine(urlWithProtocol(['https:', 'http:']), 'must be an http(s) URL')
+    .optional(),
 });
 
 /** What a missing optional kernel value becomes outside production (the local compose stack). */
@@ -68,6 +74,7 @@ const KERNEL_DEV_DEFAULTS = {
   MAIL_FROM: 'Business OS <noreply@bos.localhost>',
   ZITADEL_API_URL: 'https://auth.localhost',
   WORKSPACE_PUBLIC_URL: 'https://app.localhost',
+  PORTAL_PUBLIC_URL: 'https://portal.localhost',
 } as const;
 
 const CORE_REQUIRED_IN_PRODUCTION = [
@@ -76,6 +83,7 @@ const CORE_REQUIRED_IN_PRODUCTION = [
   'ZITADEL_API_URL',
   'ZITADEL_PROVISIONER_TOKEN',
   'WORKSPACE_PUBLIC_URL',
+  'PORTAL_PUBLIC_URL',
 ] as const;
 const API_REQUIRED_IN_PRODUCTION = [
   ...CORE_REQUIRED_IN_PRODUCTION,
@@ -102,6 +110,7 @@ function withKernelDefaults<
     MAIL_FROM?: string | undefined;
     ZITADEL_API_URL?: string | undefined;
     WORKSPACE_PUBLIC_URL?: string | undefined;
+    PORTAL_PUBLIC_URL?: string | undefined;
   },
 >(cfg: T) {
   return {
@@ -110,6 +119,7 @@ function withKernelDefaults<
     MAIL_FROM: cfg.MAIL_FROM ?? KERNEL_DEV_DEFAULTS.MAIL_FROM,
     ZITADEL_API_URL: cfg.ZITADEL_API_URL ?? KERNEL_DEV_DEFAULTS.ZITADEL_API_URL,
     WORKSPACE_PUBLIC_URL: cfg.WORKSPACE_PUBLIC_URL ?? KERNEL_DEV_DEFAULTS.WORKSPACE_PUBLIC_URL,
+    PORTAL_PUBLIC_URL: cfg.PORTAL_PUBLIC_URL ?? KERNEL_DEV_DEFAULTS.PORTAL_PUBLIC_URL,
   };
 }
 
@@ -162,6 +172,9 @@ const apiShape = {
   // At least 32 characters when present; required in production (kernelProblems).
   DOCS_LINK_SECRET: z.string().min(32).optional(),
   ZITADEL_ACTIONS_SIGNING_KEY: z.string().min(1).optional(),
+  // Shared secret for the Postal bounce webhook (HMAC-SHA256 of the raw body). Optional on purpose,
+  // like the ZITADEL key: with no secret the hook answers 401 to everyone (deny by default).
+  POSTAL_WEBHOOK_SECRET: z.string().min(32).optional(),
 };
 
 const AZP_REQUIRED = 'must list at least one client id (or set OIDC_CLIENT_ID)';
@@ -218,6 +231,8 @@ export abstract class CoreConfig {
   abstract readonly MAIL_FROM: string;
   abstract readonly ZITADEL_API_URL: string;
   abstract readonly WORKSPACE_PUBLIC_URL: string;
+  /** Base of customer-facing email links (the portal host). */
+  abstract readonly PORTAL_PUBLIC_URL: string;
   /** Undefined outside production when unset; a consumer that needs it must fail with a clear error. */
   abstract readonly ZITADEL_PROVISIONER_TOKEN?: string | undefined;
 }
@@ -233,6 +248,8 @@ export abstract class AppConfig extends CoreConfig {
   /** API-only secrets: undefined outside production when unset (see CoreConfig's token). */
   abstract readonly DOCS_LINK_SECRET?: string | undefined;
   abstract readonly ZITADEL_ACTIONS_SIGNING_KEY?: string | undefined;
+  /** Postal bounce webhook secret; undefined means the webhook refuses every call. */
+  abstract readonly POSTAL_WEBHOOK_SECRET?: string | undefined;
 }
 
 export class ConfigError extends Error {
