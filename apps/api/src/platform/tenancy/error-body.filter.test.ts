@@ -12,6 +12,7 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnauthorizedException,
+  UnprocessableEntityException,
   UnsupportedMediaTypeException,
   type ArgumentsHost,
 } from '@nestjs/common';
@@ -206,6 +207,27 @@ describe('ErrorBodyFilter', () => {
         filter(new BadRequestException({ code: 'fx_rate_stale', message: 'm' })).body,
       ).error.code,
     ).toBe('bad_request');
+  });
+
+  it('keeps NO_ELIGIBLE_APPROVER on a 422 (quotation submit, M4), and only on a 422', () => {
+    const out = filter(
+      new UnprocessableEntityException({ code: 'NO_ELIGIBLE_APPROVER', message: 'No approver' }),
+    );
+
+    expect(out.status).toBe(422);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe('NO_ELIGIBLE_APPROVER');
+    expect(parsed.error.message).toBe('No approver');
+    expect(
+      ErrorBodySchema.parse(
+        filter(new UnprocessableEntityException({ code: 'whatever', message: 'm' })).body,
+      ).error.code,
+    ).toBe('bad_request');
+    expect(
+      ErrorBodySchema.parse(
+        filter(new ConflictException({ code: 'NO_ELIGIBLE_APPROVER', message: 'm' })).body,
+      ).error.code,
+    ).toBe('conflict');
   });
 
   it('exposes the message of a client error', () => {

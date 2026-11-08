@@ -10,6 +10,9 @@ import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { AuditModule } from '../../platform/audit/audit.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { QuotationSubmitCaller } from './approval/quotation-submit.caller';
+import { QuotationSubmitController } from './approval/quotation-submit.controller';
+import { QuotationSubmitService, QuotationSubmitStore } from './approval/quotation-submit.service';
 import { DraftingCaller } from './drafting/drafting.caller';
 import { DraftingController } from './drafting/drafting.controller';
 import { DraftingService } from './drafting/drafting.service';
@@ -31,6 +34,7 @@ import { ReferenceService } from './reference/reference.service';
     ReferenceController,
     QuotationPreviewController,
     ReviseController,
+    QuotationSubmitController,
   ],
   providers: [
     PricingService,
@@ -41,6 +45,9 @@ import { ReferenceService } from './reference/reference.service';
     QuotationPreviewService,
     QuotationPreviewCaller,
     ReviseService,
+    QuotationSubmitService,
+    QuotationSubmitStore,
+    QuotationSubmitCaller,
   ],
   exports: [PricingService],
 })
