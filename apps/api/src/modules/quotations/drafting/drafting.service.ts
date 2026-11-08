@@ -124,6 +124,21 @@ function definedOnly<T extends object>(o: T): Partial<T> {
 }
 
 /**
+ * A PUT body over the saved content. An absent (undefined) key keeps the saved value; `null` clears it, so a
+ * person can remove a discount or blank a text once saved. The result is parsed with the content contract, which
+ * has no null: a cleared key is left out, the same as one that was never set.
+ */
+export function mergeDraftPatch(
+  saved: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const cleared = new Set(Object.keys(patch).filter((k) => patch[k] === null));
+  return Object.fromEntries(
+    Object.entries({ ...saved, ...definedOnly(patch) }).filter(([k]) => !cleared.has(k)),
+  );
+}
+
+/**
  * The saved content of a version in the body's shape, read off its DTO (whose discount is already trimmed to
  * the contract's decimals), so a partial update can be merged over it and parsed with the contract.
  */
@@ -506,18 +521,18 @@ export class DraftingService {
     }
     const [parts] = await this.withParts(tx, scope.tenantId, [version]);
     const saved = toQuotationVersionDto({ ...parts!, quotation });
-    const parsed = QuotationVersionContentSchema.safeParse({
-      ...contentOf(saved),
-      ...definedOnly(patch),
-    });
+    const parsed = QuotationVersionContentSchema.safeParse(
+      mergeDraftPatch(contentOf(saved), patch),
+    );
     if (!parsed.success) {
       throw badRequest(parsed.error.issues.map((i) => i.message).join('; '));
     }
     const content = parsed.data;
-    if (patch.contactId !== undefined && quotation.customerPartyId !== null) {
+    // A null clears the field, so only a sent id is checked.
+    if (typeof patch.contactId === 'string' && quotation.customerPartyId !== null) {
       await this.assertContactOf(tx, scope.tenantId, patch.contactId, quotation.customerPartyId);
     }
-    if (patch.paymentTermId !== undefined) {
+    if (typeof patch.paymentTermId === 'string') {
       await this.assertPaymentTerm(tx, scope.tenantId, patch.paymentTermId);
     }
 
@@ -572,7 +587,8 @@ export class DraftingService {
         version: updated.version,
         currency: updated.currency,
         total: updated.total,
-        fields: Object.keys(definedOnly(patch)),
+        // Cleared (null) fields count as changed too.
+        fields: Object.keys(patch).filter((k) => patch[k as keyof typeof patch] !== undefined),
       },
     });
     return { version: updated.version };
