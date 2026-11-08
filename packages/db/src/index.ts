@@ -16,3 +16,11 @@ export { scoped, type Scope, type Scoped, type ScopedTable } from './scoped.js';
 export * from './schema/platform.js';
 // All tables as one object, e.g. drizzle({ client, schema }) or schema.organizations.
 export * as schema from './schema/platform.js';
+// Per-unit table files (P1). Placeholders until each unit fills its own file in.
+export * from './schema/audit.js';
+export * from './schema/identity.js';
+export * from './schema/config.js';
+export * from './schema/documents.js';
+export * from './schema/notify.js';
+export * from './schema/approvals.js';
+export * from './schema/memo.js';
