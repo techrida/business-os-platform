@@ -53,6 +53,14 @@ export interface NavItem {
   count?: number;
   /** `admin`: shown only to people who can see the admin screens. */
   audience?: 'admin';
+  /**
+   * The permission that lets a person see this item (a read permission such as `customer.read`).
+   * The server decides, as with `audience`, and passes the answer in as the predicate of
+   * `visibleGroups`: this file stays free of runtime contract imports because the header title (a
+   * client component) imports it. With no predicate, a gated item stays hidden (deny by default).
+   * The pages and the API still enforce the permission themselves.
+   */
+  permission?: string;
 }
 
 export interface NavGroup {
@@ -61,7 +69,7 @@ export interface NavGroup {
 }
 
 /** Phases whose items may be built and linked. */
-export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1'];
+export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2'];
 
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -105,11 +113,44 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'CRM',
     items: [
-      { label: 'Organizations', icon: 'building', phase: 'P2' },
+      // The Figma sidebar says "Organizations"; the brief and ADR 0027 call the record a customer.
+      {
+        label: 'Customers',
+        href: '/customers',
+        icon: 'building',
+        phase: 'P2',
+        permission: 'customer.read',
+      },
       { label: 'Contacts', icon: 'users', phase: 'P2' },
-      { label: 'Leads', icon: 'target', phase: 'P2' },
-      { label: 'Opportunities', icon: 'trending-up', phase: 'P2' },
-      { label: 'Quotations', icon: 'file-text', phase: 'P2' },
+      {
+        label: 'Leads',
+        href: '/leads',
+        icon: 'target',
+        phase: 'P2',
+        permission: 'crm.lead.read',
+      },
+      {
+        label: 'Opportunities',
+        href: '/opportunities',
+        icon: 'trending-up',
+        phase: 'P2',
+        permission: 'crm.opportunity.read',
+      },
+      {
+        label: 'Quotations',
+        href: '/quotations',
+        icon: 'file-text',
+        phase: 'P2',
+        permission: 'quotation.read',
+      },
+      // Not in Figma: the KYB review queue sits next to the customers it verifies.
+      {
+        label: 'Verification',
+        href: '/verification',
+        icon: 'shield-check',
+        phase: 'P2',
+        permission: 'verification.read',
+      },
       { label: 'Activities & Tasks', icon: 'list-checks', phase: 'P2' },
     ],
   },
@@ -156,12 +197,20 @@ export function isBuilt(item: NavItem): item is NavItem & { href: string } {
 
 /**
  * The groups a person sees: unbuilt items stay (they show the roadmap), admin-only items go
- * unless `showAdmin`, and a group left with no items goes too.
+ * unless `showAdmin`, items with a `permission` go unless `can` grants it (no `can` means none
+ * is granted), and a group left with no items goes too.
  */
-export function visibleGroups(showAdmin: boolean): readonly NavGroup[] {
+export function visibleGroups(
+  showAdmin: boolean,
+  can?: (permission: string) => boolean,
+): readonly NavGroup[] {
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => item.audience !== 'admin' || showAdmin),
+    items: group.items.filter(
+      (item) =>
+        (item.audience !== 'admin' || showAdmin) &&
+        (item.permission === undefined || can?.(item.permission) === true),
+    ),
   })).filter((group) => group.items.length > 0);
 }
 
