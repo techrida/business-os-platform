@@ -336,7 +336,7 @@ describe('POST /v1/customers/:id/portal-access', () => {
       expect(res.status).toBe(409);
       // Needs kyb_not_verified in ErrorBodyFilter's CONFLICT_CODES (and the contracts' code list); until
       // then the filter answers plain `conflict` and this line fails, which is the gap it guards.
-      expect((res.body as { code: string }).code).toBe('kyb_not_verified');
+      expect((res.body as { error: { code: string } }).error.code).toBe('kyb_not_verified');
       expect(
         await rows('SELECT 1 FROM app.idp_orgs WHERE party_id = $1', [customerId]),
       ).toHaveLength(0);
