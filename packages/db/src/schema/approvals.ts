@@ -75,6 +75,8 @@ export const APPROVAL_ACTIONS = [
   'remind',
   'block',
   'reroute',
+  // 0017: a module withdrew the request (ApprovalsService.cancel).
+  'cancel',
 ] as const;
 
 export const workflowDefinitions = appSchema.table(
