@@ -43,6 +43,7 @@ export class ApprovalsSlaService {
     const candidates = await this.db
       .select({
         stepId: approvalSteps.id,
+        requestId: approvalSteps.requestId,
         tenantId: approvalSteps.tenantId,
         organizationId: approvalSteps.organizationId,
       })
@@ -57,97 +58,119 @@ export class ApprovalsSlaService {
     let escalated = 0;
     for (const c of candidates) {
       const scope = { tenantId: c.tenantId, organizationId: c.organizationId };
-      const done = await withTx(this.db, scope, systemActor(SLA_JOB), async (tx) => {
-        // Re-read under a lock: another worker may have handled the step since the scan.
-        const [step] = await tx
-          .select()
-          .from(approvalSteps)
-          .where(and(eq(approvalSteps.id, c.stepId), eq(approvalSteps.status, 'active'), due(now)))
-          .for('update');
-        if (step === undefined) return { remind: false, escalate: false };
-        const [request] = await tx
-          .select()
-          .from(approvalRequests)
-          .where(eq(approvalRequests.id, step.requestId));
-        if (request === undefined || request.status !== 'pending')
-          return { remind: false, escalate: false };
-        const spec = await this.approvals.frozenSpec(tx, request.workflowVersionId);
-
-        const remind = step.remindAt !== null && step.remindAt <= now && step.remindedAt === null;
-        const escalate =
-          step.escalateAt !== null && step.escalateAt <= now && step.escalatedAt === null;
-        await tx
-          .update(approvalSteps)
-          .set({
-            ...(remind ? { remindedAt: now } : {}),
-            ...(escalate ? { escalatedAt: now } : {}),
-          })
-          .where(eq(approvalSteps.id, step.id));
-
-        if (remind) {
-          await this.approvals.writeAction(tx, scope, {
-            requestId: request.id,
-            stepId: step.id,
-            actorUserId: null,
-            action: 'remind',
-            requestVersion: request.version,
-            now,
-          });
-          await this.audit.record(tx, {
-            action: 'approvals.remind',
-            entityType: 'approval_request',
-            entityId: request.id,
-            meta: { seq: step.seq },
-          });
-          const data = await this.approvals.loadDirectory(tx, scope, spec);
-          const eligible = this.approvals
-            .directory(data, now, request.documentType, request.sodUserIds)
-            .eligible(stepSpecOf(step, data));
-          await this.approvals.notifyApprovers(
-            tx,
-            request.id,
-            request.documentNumber,
-            request.title,
-            eligible,
-            step.seq,
-            'reminder',
-          );
-        }
-        if (escalate) {
-          await this.approvals.writeAction(tx, scope, {
-            requestId: request.id,
-            stepId: step.id,
-            actorUserId: null,
-            action: 'escalate',
-            comment: `Escalated to ${spec.sla.escalateTo.role}`,
-            requestVersion: request.version,
-            now,
-          });
-          await this.audit.record(tx, {
-            action: 'approvals.escalate',
-            entityType: 'approval_request',
-            entityId: request.id,
-            meta: { seq: step.seq, role: spec.sla.escalateTo.role },
-          });
-          await this.notify.notifyRole(tx, spec.sla.escalateTo.role, {
-            title: `Overdue approval: ${request.documentNumber}`,
-            body: `Step ${step.seq} (${step.reason}) has waited ${spec.sla.escalateAfterHours} hours.`,
-            link: `/inbox/${request.id}`,
-            email: {
-              template: 'approval.escalated',
-              vars: { documentNumber: request.documentNumber },
-            },
-            dedupeKey: `approval:${request.id}:${step.seq}:escalated`,
-          });
-        }
-        return { remind, escalate };
-      });
+      let done: { remind: boolean; escalate: boolean };
+      try {
+        done = await this.handle(c, scope, now);
+      } catch (error) {
+        // One bad step (a broken spec, a failing notify) must not stall the rest of the batch; its
+        // transaction rolled back, so it is due again and retried on the next tick.
+        this.logger.error(
+          `SLA tick: step ${c.stepId} of request ${c.requestId} failed: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        continue;
+      }
       if (done.remind) reminded += 1;
       if (done.escalate) escalated += 1;
     }
     if (reminded + escalated > 0)
       this.logger.log(`SLA tick: ${reminded} reminded, ${escalated} escalated`);
     return { reminded, escalated };
+  }
+
+  /** One candidate step, in its own transaction under the system actor. */
+  private handle(
+    c: { stepId: string; requestId: string },
+    scope: { tenantId: string; organizationId: string },
+    now: Date,
+  ): Promise<{ remind: boolean; escalate: boolean }> {
+    return withTx(this.db, scope, systemActor(SLA_JOB), async (tx) => {
+      // Lock the request, then the step: the same order as act(), so the tick and a decider never
+      // deadlock. NO KEY UPDATE matches act() too. Re-read both: another worker or a decision may
+      // have handled the step since the scan.
+      const [request] = await tx
+        .select()
+        .from(approvalRequests)
+        .where(and(eq(approvalRequests.id, c.requestId), eq(approvalRequests.status, 'pending')))
+        .for('no key update');
+      if (request === undefined) return { remind: false, escalate: false };
+      const [step] = await tx
+        .select()
+        .from(approvalSteps)
+        .where(and(eq(approvalSteps.id, c.stepId), eq(approvalSteps.status, 'active'), due(now)))
+        .for('update');
+      if (step === undefined) return { remind: false, escalate: false };
+      const spec = await this.approvals.frozenSpec(tx, request.workflowVersionId);
+
+      const remind = step.remindAt !== null && step.remindAt <= now && step.remindedAt === null;
+      const escalate =
+        step.escalateAt !== null && step.escalateAt <= now && step.escalatedAt === null;
+      await tx
+        .update(approvalSteps)
+        .set({
+          ...(remind ? { remindedAt: now } : {}),
+          ...(escalate ? { escalatedAt: now } : {}),
+        })
+        .where(eq(approvalSteps.id, step.id));
+
+      if (remind) {
+        await this.approvals.writeAction(tx, scope, {
+          requestId: request.id,
+          stepId: step.id,
+          actorUserId: null,
+          action: 'remind',
+          requestVersion: request.version,
+          now,
+        });
+        await this.audit.record(tx, {
+          action: 'approvals.remind',
+          entityType: 'approval_request',
+          entityId: request.id,
+          meta: { seq: step.seq },
+        });
+        const data = await this.approvals.loadDirectory(tx, scope, spec);
+        const eligible = this.approvals
+          .directory(data, now, request.documentType, request.sodUserIds)
+          .eligible(stepSpecOf(step, data));
+        await this.approvals.notifyApprovers(
+          tx,
+          request.id,
+          request.documentNumber,
+          request.title,
+          eligible,
+          step.seq,
+          'reminder',
+        );
+      }
+      if (escalate) {
+        await this.approvals.writeAction(tx, scope, {
+          requestId: request.id,
+          stepId: step.id,
+          actorUserId: null,
+          action: 'escalate',
+          comment: `Escalated to ${spec.sla.escalateTo.role}`,
+          requestVersion: request.version,
+          now,
+        });
+        await this.audit.record(tx, {
+          action: 'approvals.escalate',
+          entityType: 'approval_request',
+          entityId: request.id,
+          meta: { seq: step.seq, role: spec.sla.escalateTo.role },
+        });
+        await this.notify.notifyRole(tx, spec.sla.escalateTo.role, {
+          title: `Overdue approval: ${request.documentNumber}`,
+          body: `Step ${step.seq} (${step.reason}) has waited ${spec.sla.escalateAfterHours} hours.`,
+          link: `/inbox/${request.id}`,
+          email: {
+            template: 'approval.escalated',
+            vars: { documentNumber: request.documentNumber },
+          },
+          dedupeKey: `approval:${request.id}:${step.seq}:escalated`,
+        });
+      }
+      return { remind, escalate };
+    });
   }
 }
 
