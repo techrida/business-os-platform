@@ -38,6 +38,10 @@ else
   echo "make-dev-env: .env written with random secrets (mode 600). Back up ZITADEL_MASTERKEY and PGBACKREST_REPO1_CIPHER_PASS with it (no backup can be restored without the second)."
 fi
 
+# Session encryption key (32 random bytes, base64) and its id. Not read by the apps yet.
+ensure SESSION_ENC_KEY "$(openssl rand -base64 32)"
+ensure SESSION_ENC_KEY_ID k1
+
 # Valkey password (CR-13). Hex only: it sits inside redis:// URLs.
 ensure VALKEY_PASSWORD "$(r 32)"
 # Host-side Valkey URL: add the password to the old passwordless default or to the .env.example placeholder.

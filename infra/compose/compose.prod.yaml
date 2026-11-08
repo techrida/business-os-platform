@@ -42,6 +42,10 @@ services:
     <<: *restart
   workspace:
     <<: *restart
+    environment:
+      # Required in prod so a start without the session key fails instead of running with an empty one.
+      SESSION_ENC_KEY: ${SESSION_ENC_KEY:?set SESSION_ENC_KEY in .env (32 random bytes, base64, from openssl rand -base64 32)}
+      SESSION_ENC_KEY_ID: ${SESSION_ENC_KEY_ID:?set SESSION_ENC_KEY_ID in .env (e.g. k1)}
   caddy:
     <<: *restart
     ports:
