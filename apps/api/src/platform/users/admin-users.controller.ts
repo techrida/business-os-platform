@@ -81,6 +81,9 @@ export class AdminUsersController {
   @Can('admin.users.invite')
   async invite(@Body() body: unknown): Promise<{ userId: string }> {
     const b = parse(InviteBody, body, 'invite');
+    // An invite grants roles, so it is a role assignment too: `admin.users.invite` alone must not be
+    // a way to hand out `founder`. There is no default low role in the invite flow, so any role needs it.
+    if (b.roles.length > 0) this.authz.assert('admin.roles.write');
     const { scope, actor } = requestTx();
     const result = await zitadelCall(() =>
       withTx(this.db, scope, actor, (tx) => this.users.invite(tx, b)),
