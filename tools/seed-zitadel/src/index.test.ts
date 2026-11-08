@@ -471,9 +471,9 @@ describe('@bos/seed-zitadel', () => {
     expect(await api.listProjectRoles()).toContain('accountant');
     expect([...files.data.keys()].sort()).toEqual(['k6.env', 'personas.json', 'zitadel.env']);
     expect(files.data.get('zitadel.env')).toContain('OIDC_CLIENT_ID=client-1');
-    // The API's azp allow-list: the workspace app plus the k6 machine user, or perf:load gets 401.
+    // The API's azp allow-list: the workspace app plus both k6 machine users, or the perf gates get 401.
     expect(parseEnv(files.data.get('zitadel.env'))['OIDC_ALLOWED_AZP']).toBe(
-      'client-1,bos-loadtest',
+      'client-1,bos-loadtest,bos-loadtest-approver',
     );
     expect(result.token.clientId).toBe('bos-loadtest');
     expect(files.data.get('k6.env')).toContain('K6_CLIENT_ID=bos-loadtest\n');
