@@ -1,16 +1,23 @@
 'use client';
 
 import { CURRENCIES, type SettingKey } from '@bos/contracts';
-import { useActionState, type ReactNode } from 'react';
+import { useActionState, useState, type ReactNode } from 'react';
 
-import styles from '../admin.module.css';
-import { IDLE } from '../action-state';
+import { Button } from '@/components/ui/button';
+import { Field, Input, Textarea } from '@/components/ui/field';
+
+import { IDLE, type ActionState } from '../action-state';
 import { FormStatus } from '../ui';
 import { saveSettingAction } from './actions';
+import styles from './settings.module.css';
 
-// One form per setting key. The control depends on the value's shape: a list of currencies is
-// checkboxes, the SLA object is JSON text, and the rest are short text fields. The Server Action
-// validates against the shared SETTINGS schema, and the API validates again.
+// One row per setting key: the current value and an Edit button; Edit opens the form. The control
+// depends on the value's shape: a list of currencies is checkboxes, the SLA object is JSON text,
+// and the rest are short text fields. The Server Action validates against the shared SETTINGS
+// schema, and the API validates again.
+//
+// It renders the row's cells (value, button, form, status) as siblings: the page's list item is
+// the grid they sit in.
 export function SettingForm({
   settingKey,
   label,
@@ -21,9 +28,19 @@ export function SettingForm({
   /** The saved value as text: a string, comma-separated list, or pretty JSON. */
   current: string;
 }) {
-  const [state, formAction, pending] = useActionState(saveSettingAction, IDLE);
+  const [editing, setEditing] = useState(false);
+  // A saved value closes the editor; the new value shows in the row after the page refreshes.
+  const [state, formAction, pending] = useActionState(
+    async (previous: ActionState, formData: FormData): Promise<ActionState> => {
+      const next = await saveSettingAction(previous, formData);
+      if (next.status === 'ok') setEditing(false);
+      return next;
+    },
+    IDLE,
+  );
   const kept = state.status === 'error' ? (state.fields?.value ?? null) : null;
   const id = `setting-${settingKey.replace(/[^a-z0-9]+/gi, '-')}`;
+  const formId = `${id}-form`;
 
   let control: ReactNode;
   if (settingKey === 'currency.enabled') {
@@ -66,44 +83,80 @@ export function SettingForm({
     );
   } else if (settingKey === 'approvals.sla_defaults') {
     control = (
-      <div className={styles.field}>
-        <label htmlFor={id}>{label} (JSON)</label>
-        <textarea
-          id={id}
-          className={styles.textarea}
-          name="value"
-          rows={7}
-          spellCheck={false}
-          defaultValue={kept ?? current}
-        />
-      </div>
+      <Field label={`${label} (JSON)`}>
+        {(field) => (
+          <Textarea
+            name="value"
+            rows={7}
+            spellCheck={false}
+            className={styles.jsonField}
+            defaultValue={kept ?? current}
+            {...field}
+          />
+        )}
+      </Field>
     );
   } else {
     control = (
-      <div className={styles.field}>
-        <label htmlFor={id}>{label}</label>
-        <input
-          id={id}
-          className={styles.input}
-          name="value"
-          autoComplete="off"
-          required
-          defaultValue={kept ?? current}
-        />
-      </div>
+      <Field label={label}>
+        {(field) => (
+          <Input
+            name="value"
+            autoComplete="off"
+            required
+            defaultValue={kept ?? current}
+            {...field}
+          />
+        )}
+      </Field>
     );
   }
 
   return (
-    <form action={formAction} className={styles.stack}>
-      <input type="hidden" name="key" value={settingKey} />
-      {control}
-      <div className={styles.actions}>
-        <button type="submit" className={`${styles.btn} ${styles.btnSmall}`} disabled={pending}>
-          Save
-        </button>
-        <FormStatus state={state} pending={pending} />
+    <>
+      <div className={styles.value}>
+        {current.includes('\n') ? (
+          <pre
+            className={styles.json}
+            role="region"
+            aria-label={`${label}, current value`}
+            tabIndex={0}
+          >
+            {current}
+          </pre>
+        ) : (
+          current
+        )}
       </div>
-    </form>
+      <div className={styles.rowAction}>
+        <Button
+          variant="secondary"
+          size="small"
+          aria-expanded={editing}
+          aria-controls={editing ? formId : undefined}
+          onClick={() => setEditing((open) => !open)}
+        >
+          {editing ? 'Cancel' : 'Edit'}
+          <span className="sr-only"> {label}</span>
+        </Button>
+      </div>
+      {editing ? (
+        <form id={formId} action={formAction} className={`${styles.rowForm} ${styles.editForm}`}>
+          <input type="hidden" name="key" value={settingKey} />
+          {control}
+          <div className={styles.actions}>
+            <Button type="submit" size="small" disabled={pending}>
+              Save
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      <div className={styles.rowStatus}>
+        {/* A rejected save's message goes away with the editor it belongs to. */}
+        {!editing && state.status === 'error' ? null : (
+          <FormStatus state={state} pending={pending} />
+        )}
+      </div>
+    </>
   );
 }
