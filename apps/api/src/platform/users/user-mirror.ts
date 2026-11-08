@@ -26,6 +26,20 @@ const zitadelActor = () => systemActor('zitadel');
 
 const cursorName = (zitadelOrgId: string) => `users.reconcile:${zitadelOrgId}`;
 
+/**
+ * Hard stops for one reconcile pass. 200 pages of 100 is 20,000 users in one org, far above any real
+ * org here; a walk that long means ZITADEL is not paging (offset ignored, endless list), not growth.
+ * Twenty deactivations per pass is far above normal churn between two 10-minute passes; more than
+ * that looks like a bug or an attack on the mirror, so it stops and waits for a human to look.
+ */
+const MAX_PAGES = 200;
+const MAX_DEACTIVATIONS_PER_PASS = 20;
+
+export interface ReconcileLimits {
+  maxPages?: number;
+  maxDeactivations?: number;
+}
+
 function sameRoles(a: readonly string[], b: readonly string[]): boolean {
   const left = [...new Set(a)].sort();
   const right = [...new Set(b)].sort();
@@ -81,22 +95,48 @@ export class UserMirror {
   }
 
   /**
-   * Walks every known org page by page and upserts each user. A user missing from a COMPLETE pass
-   * of its org is deactivated. A partial pass (a page failed, or the run resumed from a saved
-   * cursor) is not proof of absence, so it deactivates nobody; the next full pass will.
+   * Walks every known org page by page and upserts each user. A user missing from a COMPLETE and
+   * TRUSTWORTHY pass of its org is a deactivation candidate (see deactivateMissing). A partial pass
+   * (a page failed, or the run resumed from a saved cursor) is not proof of absence, so it
+   * deactivates nobody; the next full pass will.
+   *
+   * The listing is only trusted when it shows signs of paging correctly. ZITADEL's offset and page
+   * size are unverified, so a pass aborts (no deactivations, error logged, cursor reset) when it
+   * hits the page cap, when a page repeats the previous page, or when ZITADEL's own totalResult
+   * disagrees with the number of distinct users collected. Without that, a server that ignored the
+   * offset would make every user beyond the first page look "missing".
    */
-  async reconcile(): Promise<{ scanned: number; changed: number }> {
+  async reconcile(limits: ReconcileLimits = {}): Promise<{ scanned: number; changed: number }> {
+    const maxPages = limits.maxPages ?? MAX_PAGES;
+    const maxDeactivations = limits.maxDeactivations ?? MAX_DEACTIVATIONS_PER_PASS;
     let scanned = 0;
     let changed = 0;
     for (const org of await this.store.listOrgs()) {
       const name = cursorName(org.zitadelOrgId);
       const start = await this.store.getCursor(name);
       const fullPass = start === null || start === '0';
+      // Taken before the first page: anyone created in ZITADEL after this is not "missing", just new.
+      const passStart = new Date();
       const seen = new Set<string>();
       let cursor: string | null = fullPass ? null : start;
+      let pages = 0;
+      let previousIds = new Set<string>();
+      let total: number | null = null;
+      let abort: string | null = null;
       try {
         for (;;) {
+          if (pages >= maxPages) {
+            abort = `hit the page cap of ${maxPages} pages`;
+            break;
+          }
+          pages += 1;
           const page = await this.zitadel.listUsers(org.zitadelOrgId, cursor);
+          if (page.users.length > 0 && page.users.every((u) => previousIds.has(u.id))) {
+            abort = 'a page repeated the previous page (ZITADEL may be ignoring the offset)';
+            break;
+          }
+          previousIds = new Set(page.users.map((u) => u.id));
+          total = page.totalResult ?? null;
           for (const user of page.users) {
             scanned += 1;
             seen.add(user.id);
@@ -118,8 +158,19 @@ export class UserMirror {
         );
         continue;
       }
+      // Reset in every non-error outcome, so an aborted pass restarts the org instead of resuming
+      // from a cursor a misbehaving ZITADEL handed out.
       await this.store.setCursor(name, '0');
-      if (fullPass) changed += await this.deactivateMissing(org, seen);
+      if (abort === null && fullPass && total !== null && seen.size !== total) {
+        abort = `collected ${seen.size} users but ZITADEL reports ${total}`;
+      }
+      if (abort !== null) {
+        this.logger.error(
+          `users.reconcile aborted for org ${org.zitadelOrgId}: ${abort}; no users deactivated`,
+        );
+        continue;
+      }
+      if (fullPass) changed += await this.deactivateMissing(org, seen, passStart, maxDeactivations);
     }
     return { scanned, changed };
   }
@@ -234,8 +285,16 @@ export class UserMirror {
   }
 
   /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
-  private apply(org: OrgRow, user: ZitadelUser, roles: readonly RoleKey[]): Promise<boolean> {
+  private async apply(org: OrgRow, user: ZitadelUser, roles: readonly RoleKey[]): Promise<boolean> {
     const scope = scopeOf(org);
+    const status = user.status;
+    if (status === null) {
+      // A state we cannot read must never lock anyone out or let anyone in: write nothing at all.
+      this.logger.warn(
+        `users.apply skipped ${user.id}: unknown state from ZITADEL; left unchanged`,
+      );
+      return false;
+    }
     return withTx(this.db, scope, zitadelActor(), async (tx) => {
       let changed = false;
       const existing = await this.store.findByZitadelId(tx, user.id, true);
@@ -245,7 +304,7 @@ export class UserMirror {
           zitadelUserId: user.id,
           email: user.email,
           displayName: user.displayName,
-          status: user.status,
+          status,
         });
         changed = true;
       } else {
@@ -253,12 +312,12 @@ export class UserMirror {
         if (
           existing.email !== user.email ||
           existing.displayName !== user.displayName ||
-          existing.status !== user.status
+          existing.status !== status
         ) {
           await this.store.updateUser(tx, userId, {
             email: user.email,
             displayName: user.displayName,
-            status: user.status,
+            status,
           });
           changed = true;
         }
@@ -272,7 +331,21 @@ export class UserMirror {
     });
   }
 
-  private async deactivateMissing(org: OrgRow, seen: ReadonlySet<string>): Promise<number> {
+  /**
+   * The org's local users the pass did not see are only CANDIDATES. Each is asked about directly,
+   * and only a definite "inactive" answer deactivates it: not found (maybe just invisible to the
+   * provisioner token), an unknown state, an active user the listing missed, and a user created
+   * after the pass started all stay as they are. At most `max` are deactivated per pass.
+   *
+   * Known gap: a user deleted in ZITADEL answers "not found", so reconcile never deactivates it
+   * any more; an admin must deactivate it by hand until deletion events are mirrored.
+   */
+  private async deactivateMissing(
+    org: OrgRow,
+    seen: ReadonlySet<string>,
+    passStart: Date,
+    max: number,
+  ): Promise<number> {
     const locals = await this.store.notInactiveInOrg(this.db, scopeOf(org));
     const missing = locals.filter((u) => !seen.has(u.zitadelUserId));
     if (seen.size === 0 && missing.length > 0) {
@@ -283,8 +356,46 @@ export class UserMirror {
       );
       return 0;
     }
-    for (const user of missing) await this.deactivate(user);
-    return missing.length;
+    let deactivated = 0;
+    for (const [index, local] of missing.entries()) {
+      if (deactivated >= max) {
+        this.logger.warn(
+          `users.reconcile: deactivation cap of ${max} reached for org ${org.zitadelOrgId}; ${missing.length - index} candidates left for a later pass`,
+        );
+        break;
+      }
+      const remote = await this.confirm(local.zitadelUserId);
+      if (!remote) continue;
+      if (remote.createdAt && remote.createdAt >= passStart) continue; // newer than the pass
+      if (remote.status === null) {
+        this.logger.warn(
+          `users.reconcile: ${local.zitadelUserId} has an unknown state in ZITADEL; left unchanged`,
+        );
+        continue;
+      }
+      if (remote.status !== 'inactive') continue;
+      await this.deactivate(local);
+      deactivated += 1;
+    }
+    return deactivated;
+  }
+
+  /** One candidate's own record, or null when it cannot be confirmed (not found or the call failed). */
+  private async confirm(zitadelUserId: string): Promise<ZitadelUser | null> {
+    try {
+      const user = await this.zitadel.getUser(zitadelUserId);
+      if (!user) {
+        this.logger.warn(
+          `users.reconcile: ZITADEL does not return ${zitadelUserId}; left unchanged`,
+        );
+      }
+      return user;
+    } catch (error) {
+      this.logger.warn(
+        `users.reconcile: could not confirm ${zitadelUserId}: ${(error as Error).message}; left unchanged`,
+      );
+      return null;
+    }
   }
 
   private deactivate(user: UserRow): Promise<void> {
