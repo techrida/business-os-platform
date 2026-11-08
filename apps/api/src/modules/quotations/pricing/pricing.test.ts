@@ -151,6 +151,7 @@ describe('priceQuotation: the P2 golden case (architect section 2.6)', () => {
   it('carries the unrounded discount percentage and the NPR amount in the facts', () => {
     expect(pv.facts).toMatchObject({
       amountNpr: '2690999.99',
+      nprDiscountAmount: '208000.00',
       discountApprovalRequired: false,
       marginPct: null,
       currency: 'NPR',
@@ -180,6 +181,39 @@ describe('priceQuotation: foreign currency', () => {
     });
     expect(pv.facts).toMatchObject({ amountNpr: '1808.10', currency: 'INR' });
     expectDbArithmetic(pv);
+  });
+});
+
+describe('priceQuotation: the NPR discount amount fact', () => {
+  const inr = (value: string) =>
+    priceQuotation(
+      input([line(1, '1', '1000.00')], { currency: 'INR', discount: { mode: 'amount', value } }),
+      PERIODS,
+      { rate: '1.6', source: 'NRB peg', date: '2020-01-01' },
+    );
+
+  it.each([
+    ['100.05', '160.08'],
+    ['0.03', '0.05'],
+    ['0.00', '0.00'],
+  ])(
+    'converts an INR discount of %s at the snapshot rate, rounded half up, to %s NPR',
+    (value, npr) => {
+      const pv = inr(value);
+      expect(pv.columns.discountAmount).toBe(value);
+      expect(pv.facts.nprDiscountAmount).toBe(npr);
+      expectDbArithmetic(pv);
+    },
+  );
+
+  it('equals the discount amount for NPR', () => {
+    const pv = priceQuotation(
+      input([line(1, '1', '999.99')], { discount: { mode: 'pct', value: '7.5' } }),
+      PERIODS,
+      NPR_FX,
+    );
+    expect(pv.facts.nprDiscountAmount).toBe(pv.columns.discountAmount);
+    expect(pv.facts.nprDiscountAmount).toBe('75.00');
   });
 });
 
@@ -305,6 +339,43 @@ describe('priceQuotation: internal cost and margin', () => {
     expect(pv.columns.internalCostTotal).toBeNull();
     expect(pv.columns.marginPct).toBeNull();
     expect(pv.facts.marginPct).toBeNull();
+  });
+
+  it('reports a margin in range as not out of range', () => {
+    const pv = priceQuotation(input(lines), PERIODS, NPR_FX);
+    expect(pv.facts.marginOutOfRange).toBe(false);
+  });
+
+  it('is null and flagged out of range when the cost is 20 times taxable (-1900%)', () => {
+    const pv = priceQuotation(
+      input([line(1, '1', '100.00', { unitCost: '2000.00' })]),
+      PERIODS,
+      NPR_FX,
+    );
+    expect(pv.columns.internalCostTotal).toBe('2000.00');
+    expect(pv.columns.marginPct).toBeNull();
+    expect(pv.facts).toMatchObject({ marginPct: null, marginOutOfRange: true });
+  });
+
+  it.each([
+    ['109999.99', '-999.9999', false],
+    ['110000.00', null, true],
+  ])(
+    'with cost %s on taxable 10000.00 the margin is %s (edge -999.9999 still fits)',
+    (cost, margin, out) => {
+      const pv = priceQuotation(
+        input([line(1, '1', '10000.00', { unitCost: cost })]),
+        PERIODS,
+        NPR_FX,
+      );
+      expect(pv.columns.marginPct).toBe(margin);
+      expect(pv.facts).toMatchObject({ marginPct: margin, marginOutOfRange: out });
+    },
+  );
+
+  it('is not flagged out of range when the margin is unknown', () => {
+    const pv = priceQuotation(input([line(1, '1', '100.00')]), PERIODS, NPR_FX);
+    expect(pv.facts).toMatchObject({ marginPct: null, marginOutOfRange: false });
   });
 
   it('is null, not a division by zero, when the taxable amount is zero', () => {
