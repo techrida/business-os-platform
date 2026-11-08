@@ -31,7 +31,11 @@ export type ErrorCode =
   | 'duplicate_pan_vat'
   | 'duplicate_found'
   | 'primary_contact_exists'
+  | 'quotation_not_sent'
+  | 'quotation_expired'
   | 'NO_ELIGIBLE_APPROVER'
+  | 'evidence_policy_unmet'
+  | 'decided_on_in_future'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -70,7 +74,11 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
   duplicate_found: 'This looks like a record that already exists',
   primary_contact_exists: 'This customer already has a primary contact',
+  quotation_not_sent: 'This quotation is not open for an answer',
+  quotation_expired: 'This quotation has expired',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
+  evidence_policy_unmet: 'The evidence given does not meet the policy',
+  decided_on_in_future: 'The decision date is in the future',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -123,6 +131,10 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'duplicate_pan_vat',
   'duplicate_found',
   'primary_contact_exists',
+  // Q3b/PA-3: the quotation version was already answered, revised or expired (`quotation_not_sent`), or its
+  // validity ended before the decision day (`quotation_expired`). The portal shows "already answered".
+  'quotation_not_sent',
+  'quotation_expired',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -135,8 +147,14 @@ function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
 /**
  * A 422 may name its cause the same way. `NO_ELIGIBLE_APPROVER` (P2 M4, upper case as the plan names it): a
  * quotation submit found an approval step nobody may decide, so nothing was submitted and admins were told.
+ * `evidence_policy_unmet` and `decided_on_in_future` (Q3b/PA-3): an acceptance without the evidence the entity's
+ * policy asks for, or an answer dated after today in Kathmandu.
  */
-const UNPROCESSABLE_CODES: readonly ErrorCode[] = ['NO_ELIGIBLE_APPROVER'];
+const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
+  'NO_ELIGIBLE_APPROVER',
+  'evidence_policy_unmet',
+  'decided_on_in_future',
+];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
   if (exception.getStatus() !== 422) return undefined;
