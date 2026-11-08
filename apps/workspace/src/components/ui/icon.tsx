@@ -188,7 +188,7 @@ export function Icon({
 }: {
   name: IconName;
   size?: number;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <svg

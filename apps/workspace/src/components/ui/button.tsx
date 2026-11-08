@@ -6,8 +6,8 @@ type Variant = 'primary' | 'secondary' | 'ghost';
 type Size = 'small' | 'medium' | 'large';
 
 interface Look {
-  variant?: Variant;
-  size?: Size;
+  variant?: Variant | undefined;
+  size?: Size | undefined;
 }
 
 function classes({ variant = 'primary', size = 'medium' }: Look, extra?: string): string {
