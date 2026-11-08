@@ -1,4 +1,4 @@
-import type { ErrorBody } from '@bos/contracts';
+import { ErrorReasonSchema, type ErrorBody, type ErrorReason } from '@bos/contracts';
 import {
   Catch,
   HttpException,
@@ -18,7 +18,9 @@ export type ErrorCode =
   | 'unauthenticated'
   | 'forbidden'
   | 'not_found'
+  | 'conflict'
   | 'payload_too_large'
+  | 'unsupported_media_type'
   | 'bad_request'
   | 'unavailable'
   | 'internal';
@@ -31,12 +33,16 @@ export function codeForStatus(status: number): ErrorCode {
       return 'forbidden';
     case 404:
       return 'not_found';
+    case 409:
+      return 'conflict';
     case 413:
       return 'payload_too_large';
+    case 415:
+      return 'unsupported_media_type';
     case 503:
       return 'unavailable';
     default:
-      // Any other 4xx is the caller's fault (400, 405, 409, 415, 422, 429 ...); anything else is ours.
+      // Any other 4xx is the caller's fault (400, 405, 422, 429 ...); anything else is ours.
       return status >= 400 && status < 500 ? 'bad_request' : 'internal';
   }
 }
@@ -45,7 +51,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   unauthenticated: 'Authentication required',
   forbidden: 'Forbidden',
   not_found: 'Not found',
+  conflict: 'Conflict',
   payload_too_large: 'Payload too large',
+  unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
   unavailable: 'Service unavailable',
   internal: 'Internal server error',
@@ -65,6 +73,18 @@ function messageOf(exception: HttpException): string | undefined {
   return undefined;
 }
 
+/**
+ * The optional `reason` a 403 can carry, e.g. `new ForbiddenException({ code: 'forbidden',
+ * reason: 'out_of_scope' })`. Only the known reasons pass, so the body always satisfies
+ * ErrorBodySchema and a stray string from a thrown object never reaches the client.
+ */
+function reasonOf(exception: HttpException): ErrorReason | undefined {
+  const response = exception.getResponse();
+  if (typeof response !== 'object' || !('reason' in response)) return undefined;
+  const parsed = ErrorReasonSchema.safeParse(response.reason);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /** body-parser and other Express middleware throw plain errors that carry an HTTP status. */
 function statusOfPlainError(exception: unknown): number | undefined {
   if (typeof exception !== 'object' || exception === null) return undefined;
@@ -74,7 +94,7 @@ function statusOfPlainError(exception: unknown): number | undefined {
 }
 
 /**
- * Turns every exception into `{ error: { code, message, correlationId } }` (ErrorBodySchema).
+ * Turns every exception into `{ error: { code, message, correlationId, reason? } }` (ErrorBodySchema).
  *
  * Leak rules: a server-side failure (any 5xx except 503) always returns a fixed message; the real
  * error and its stack go only to the log, next to the correlation id so support can find them.
@@ -94,9 +114,11 @@ export class ErrorBodyFilter implements ExceptionFilter {
 
     let status: number;
     let exposedMessage: string | undefined;
+    let reason: ErrorReason | undefined;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
+      if (status === 403) reason = reasonOf(exception);
     } else {
       status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
     }
@@ -121,7 +143,9 @@ export class ErrorBodyFilter implements ExceptionFilter {
     if (res.headersSent) {
       return;
     }
-    const body: ErrorBody = { error: { code, message, correlationId } };
+    const body: ErrorBody = {
+      error: { code, message, correlationId, ...(reason === undefined ? {} : { reason }) },
+    };
     res.setHeader(REQUEST_ID_HEADER, correlationId);
     res.status(status).json(body);
   }
