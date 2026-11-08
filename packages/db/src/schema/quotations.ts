@@ -686,6 +686,7 @@ export const quotationVersionEditors = appSchema.table(
 /**
  * The customer's answer to a sent version, one per version. Append-only. Accepting needs at least one evidence
  * kind; rejecting needs a comment. `actorId` is an app.users row (staff, or a portal user later).
+ * Migration 0018 added `acceptedByName` and `evidenceDocumentIds`.
  */
 export const quotationAcceptances = appSchema.table(
   'quotation_acceptances',
@@ -705,6 +706,13 @@ export const quotationAcceptances = appSchema.table(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /** The name the customer signed with (migration 0018); at most 200 characters. */
+    acceptedByName: text('accepted_by_name'),
+    /** Kernel document ids of the uploaded evidence files (migration 0018). No FK: an array cannot have one. */
+    evidenceDocumentIds: uuid('evidence_document_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -745,6 +753,14 @@ export const quotationAcceptances = appSchema.table(
     check(
       'quotation_acceptances_rejected_comment_check',
       sql`${t.outcome} <> 'rejected' OR ${t.comment} IS NOT NULL`,
+    ),
+    check(
+      'quotation_acceptances_accepted_by_name_check',
+      sql`${t.acceptedByName} IS NULL OR char_length(${t.acceptedByName}) <= 200`,
+    ),
+    check(
+      'quotation_acceptances_evidence_document_ids_check',
+      sql`array_position(${t.evidenceDocumentIds}, NULL) IS NULL`,
     ),
   ],
 );

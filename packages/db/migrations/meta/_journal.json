@@ -127,6 +127,13 @@
       "when": 1783000000017,
       "tag": "0017_approvals_cancel",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783000000018,
+      "tag": "0018_quotation_acceptance_evidence",
+      "breakpoints": true
     }
   ]
 }
