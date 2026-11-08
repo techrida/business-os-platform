@@ -246,6 +246,20 @@ describe('ErrorBodyFilter', () => {
     },
   );
 
+  it('keeps quotation_pdf_not_ready on a 409 (the quotation PDF download), and only on a 409', () => {
+    const code = 'quotation_pdf_not_ready';
+    const out = filter(new ConflictException({ code, message: 'The PDF is not ready' }));
+
+    expect(out.status).toBe(409);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('The PDF is not ready');
+    expect(
+      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+        .error.code,
+    ).toBe('bad_request');
+  });
+
   it.each(['evidence_policy_unmet', 'decided_on_in_future'])(
     'keeps %s on a 422 (quotation outcome, Q3b/PA-3), and only on a 422',
     (code) => {
