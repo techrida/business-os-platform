@@ -1,0 +1,108 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve({ roles: ['sales'] }) }));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  redirect: (to: string) => {
+    throw new Error(`redirect ${to}`);
+  },
+}));
+vi.mock('./permissions', () => ({ hasPermission: () => true }));
+
+const api = vi.hoisted(() => ({
+  createContact: vi.fn(),
+  createCustomer: vi.fn(),
+  getCustomer: vi.fn(),
+  listCustomers: vi.fn(),
+  updateCustomer: vi.fn(),
+}));
+vi.mock('./api', () => api);
+
+const { addContactAction, createCustomerAction, updateCustomerAction } = await import('./actions');
+
+const ID = '11111111-1111-4111-8111-111111111111';
+const IDEM = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+
+const apiError = (status: number, code: string) =>
+  new ApiError(status, 'x', {
+    error: { code, message: 'internal wording', correlationId: 'corr-12345678' },
+  });
+
+function form(fields: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+}
+
+const createForm = () =>
+  form({
+    legalName: 'Himalayan Construction Pvt. Ltd.',
+    relationship: 'prospect',
+    country: 'NP',
+    line1: 'Balaju',
+    city: 'Kathmandu',
+    ackDuplicates: 'yes',
+    idempotencyKey: IDEM,
+  });
+
+beforeEach(() => vi.resetAllMocks());
+
+describe('createCustomerAction', () => {
+  it('says another customer has the PAN/VAT number, and rotates the key', async () => {
+    api.createCustomer.mockRejectedValue(apiError(409, 'duplicate_pan_vat'));
+    const res = await createCustomerAction({ key: IDEM, errors: {} }, createForm());
+    expect(res.error).toBe('Another customer already has this PAN/VAT number.');
+    expect(res.key).not.toBe(IDEM);
+  });
+});
+
+describe('addContactAction', () => {
+  it('says the customer already has a primary contact', async () => {
+    api.createContact.mockRejectedValue(apiError(409, 'primary_contact_exists'));
+    const res = await addContactAction(
+      { key: IDEM, errors: {}, savedCount: 0 },
+      form({ customerId: ID, fullName: 'Sita Rai', isPrimary: 'on', idempotencyKey: IDEM }),
+    );
+    expect(res.error).toBe('This customer already has a primary contact.');
+  });
+});
+
+describe('updateCustomerAction', () => {
+  const original = {
+    id: ID,
+    legalName: 'Old name',
+    relationship: 'prospect',
+    address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+    version: 2,
+  };
+  const editForm = () =>
+    form({
+      customerId: ID,
+      expectedVersion: '2',
+      legalName: 'New name',
+      relationship: 'prospect',
+      line1: 'Balaju',
+      city: 'Kathmandu',
+      country: 'NP',
+    });
+
+  it('shows the real duplicate PAN/VAT sentence, not "someone else changed this"', async () => {
+    api.getCustomer.mockResolvedValue(original);
+    api.updateCustomer.mockRejectedValue(apiError(409, 'duplicate_pan_vat'));
+    const res = await updateCustomerAction({ key: IDEM, errors: {} }, editForm());
+    expect(res.error).toBe('Another customer already has this PAN/VAT number.');
+    expect(res.reload).toBeUndefined();
+  });
+
+  it('keeps the reload wording for a plain version conflict', async () => {
+    api.getCustomer.mockResolvedValue(original);
+    api.updateCustomer.mockRejectedValue(apiError(409, 'conflict'));
+    const res = await updateCustomerAction({ key: IDEM, errors: {} }, editForm());
+    expect(res.error).toMatch(/Someone else changed this customer/);
+    expect(res.reload).toBe(true);
+  });
+});

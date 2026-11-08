@@ -155,7 +155,9 @@ export async function updateCustomerAction(
       key,
       errors: {},
       error:
-        failure.status === 409
+        // Only a plain version conflict reads as "someone else changed it"; a 409 that names its
+        // cause (a duplicate PAN/VAT number) keeps its own sentence.
+        failure.status === 409 && failure.reload
           ? 'Someone else changed this customer after you opened it. Reload to see their changes, then make your edit again.'
           : failure.message,
       ...(failure.reload ? { reload: true } : {}),

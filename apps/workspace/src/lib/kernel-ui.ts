@@ -35,6 +35,13 @@ const FORBIDDEN_REASONS: Record<string, string> = {
   inactive_user: 'Your account is not active. Ask an administrator to restore it.',
 };
 
+/** What a 409 means when the API names its cause, so the user is not told to reload for no reason. */
+const CONFLICT_CODES: Record<string, string> = {
+  duplicate_pan_vat: 'Another customer already has this PAN/VAT number.',
+  primary_contact_exists: 'This customer already has a primary contact.',
+  kyb_not_verified: "This customer's verification must be approved first.",
+};
+
 /** Turns an API status, code and 403 reason into the sentence the user sees. */
 export function describeFailure(input: FailureInput, context: FailureContext = 'generic'): Failure {
   const { status, reason } = input;
@@ -51,7 +58,13 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
   } else if (status === 404) {
     message = 'We could not find that item. It may have been removed.';
   } else if (status === 409) {
-    if (context === 'approval') {
+    const named =
+      input.code !== undefined && Object.hasOwn(CONFLICT_CODES, input.code)
+        ? CONFLICT_CODES[input.code]
+        : undefined;
+    if (named !== undefined) {
+      message = named;
+    } else if (context === 'approval') {
       message = 'This request changed since you opened it.';
       reload = true;
     } else if (context === 'submit') {

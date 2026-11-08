@@ -26,6 +26,31 @@ describe('describeFailure', () => {
     );
   });
 
+  it.each([
+    ['duplicate_pan_vat', 'Another customer already has this PAN/VAT number.'],
+    ['primary_contact_exists', 'This customer already has a primary contact.'],
+    ['kyb_not_verified', "This customer's verification must be approved first."],
+  ])('words the 409 code %s, and does not ask for a reload', (code, message) => {
+    const f = describeFailure({ status: 409, code });
+    expect(f.message).toBe(message);
+    expect(f.reload).toBe(false);
+    expect(f.definite).toBe(true);
+  });
+
+  it('words a coded 409 the same in every context', () => {
+    expect(describeFailure({ status: 409, code: 'duplicate_pan_vat' }, 'submit').message).toBe(
+      'Another customer already has this PAN/VAT number.',
+    );
+  });
+
+  it('keeps the reload wording for a plain or unknown-coded 409', () => {
+    for (const code of [undefined, 'conflict', 'something_new']) {
+      const f = describeFailure({ status: 409, code });
+      expect(f.message).toBe('This item changed since you opened it. Reload and try again.');
+      expect(f.reload).toBe(true);
+    }
+  });
+
   it('marks 4xx as definite and 5xx, 429 and network errors as not', () => {
     expect(describeFailure({ status: 400 }).definite).toBe(true);
     expect(describeFailure({ status: 500 }).definite).toBe(false);

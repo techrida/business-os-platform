@@ -126,6 +126,27 @@ describe('acceptAction', () => {
     expect(down.error).toBeTruthy();
   });
 
+  it('on 422 evidence_policy_unmet asks the customer to contact us, and rotates the key', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(
+        { error: { code: 'evidence_policy_unmet', message: 'policy 7 needs evidence kind x' } },
+        422,
+      ),
+    );
+    const res = await acceptAction({ key: IDEM }, form({ acceptedByName: 'J', confirm: 'on' }));
+    expect(res.error).toBe(
+      'We need a signed contract or purchase order to accept this. Please contact us.',
+    );
+    expect(res.key).not.toBe(IDEM);
+    expect(res.reload).toBeUndefined();
+  });
+
+  it('keeps the generic wording for any other 422', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 'bad_request', message: 'x' } }, 422));
+    const res = await acceptAction({ key: IDEM }, form({ acceptedByName: 'J', confirm: 'on' }));
+    expect(res.error).toBe('We could not record your response. Check the form and try again.');
+  });
+
   it('never shows API detail text, and answers a 404 or 403 as "Quotation not found"', async () => {
     fetchMock.mockResolvedValueOnce(
       json({ error: { code: 'forbidden', message: 'party 00aa does not own quotation' } }, 403),
