@@ -61,16 +61,21 @@ command -v docker >/dev/null || { log "docker is not installed"; exit 1; }
 # ---- 0. the runbook must list what a restore cannot recreate ------------------------------------------------------
 # A restore of the database alone cannot log anyone in without ZITADEL_MASTERKEY (it decrypts ZITADEL's data),
 # and .env holds the rest of the secrets. If the written procedure forgets them, the drill fails.
+# The runbook lives outside the repo (Kuu's KB), so its path comes from RESTORE_RUNBOOK. Unset: the check is skipped.
 STEP="runbook-check"
-RUNBOOK=docs/runbooks/restore-drill.md
-[[ -f "$RUNBOOK" ]] || { log "$RUNBOOK is missing"; exit 1; }
-BACKUP_ITEMS="$(awk '/^## /{inside = ($0 ~ /^## What to back up/)} inside' "$RUNBOOK")"
-for item in ZITADEL_MASTERKEY '.env'; do
-  grep -Fq -- "$item" <<<"$BACKUP_ITEMS" || {
-    log "$RUNBOOK has no '$item' in its \"What to back up\" section"
-    exit 1
-  }
-done
+RUNBOOK="${RESTORE_RUNBOOK:-}"
+if [[ -z "$RUNBOOK" ]]; then
+  log "RESTORE_RUNBOOK not set: skipping the runbook check"
+else
+  [[ -f "$RUNBOOK" ]] || { log "$RUNBOOK is missing"; exit 1; }
+  BACKUP_ITEMS="$(awk '/^## /{inside = ($0 ~ /^## What to back up/)} inside' "$RUNBOOK")"
+  for item in ZITADEL_MASTERKEY '.env'; do
+    grep -Fq -- "$item" <<<"$BACKUP_ITEMS" || {
+      log "$RUNBOOK has no '$item' in its \"What to back up\" section"
+      exit 1
+    }
+  done
+fi
 
 STEP="postgres-running"
 compose ps --status running --services | grep -qx postgres || {
