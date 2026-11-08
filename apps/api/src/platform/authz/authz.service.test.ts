@@ -4,6 +4,10 @@
 //   pnpm --filter @bos/api exec vitest run src/platform/authz/authz.service.test.ts
 // The fixture table lives in `public` and is read as the container superuser: this test is about the
 // SQL, not about migrations or grants (role-cache.test.ts covers those).
+//
+// ADR 0027: every principal's `organizationId` is the acting legal entity, for staff and portal
+// callers alike; a portal caller is told apart by `partyId`. The counterparty columns also hold the
+// entity id in some rows, so a comparison with `organizationId` instead of `partyId` would show.
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -27,19 +31,21 @@ import { RoleCache } from './role-cache';
 
 const TENANT = randomUUID();
 const OTHER_TENANT = randomUUID();
-const STAFF_ORG = randomUUID();
-const CUSTOMER_ORG = randomUUID();
-const VENDOR_ORG = randomUUID();
-const OTHER_ORG = randomUUID();
+/** The acting legal entity, for every org kind. */
+const ENTITY = randomUUID();
+const OTHER_ENTITY = randomUUID();
+const CUSTOMER_PARTY = randomUUID();
+const VENDOR_PARTY = randomUUID();
+const OTHER_PARTY = randomUUID();
 const ME = randomUUID();
 const SOMEONE_ELSE = randomUUID();
 const MY_DEPT = randomUUID();
 const OTHER_DEPT = randomUUID();
 
-const ORG_OF: Record<OrgKind, string> = {
-  staff: STAFF_ORG,
-  customer: CUSTOMER_ORG,
-  vendor: VENDOR_ORG,
+const PARTY_OF: Record<OrgKind, string | null> = {
+  staff: null,
+  customer: CUSTOMER_PARTY,
+  vendor: VENDOR_PARTY,
 };
 
 // Two Drizzle views of one physical table: one with every scope column, and one with only the
@@ -50,8 +56,8 @@ const fullTable = pgTable('authz_fixture', {
   organizationId: uuid('organization_id').notNull(),
   ownerUserId: uuid('owner_user_id'),
   departmentId: uuid('department_id'),
-  customerOrganizationId: uuid('customer_organization_id'),
-  vendorOrganizationId: uuid('vendor_organization_id'),
+  customerPartyId: uuid('customer_party_id'),
+  vendorPartyId: uuid('vendor_party_id'),
 });
 const bareTable = pgTable('authz_fixture', {
   id: text('id').primaryKey(),
@@ -61,23 +67,24 @@ const bareTable = pgTable('authz_fixture', {
 
 type FixtureRow = typeof fullTable.$inferSelect;
 
-/** Every combination of the columns `can()` looks at (2 × 4 × 3 × 3 × 3 × 3 = 648 rows). */
+/** Every combination of the columns `can()` looks at (2 × 2 × 3 × 3 × 4 × 4 = 576 rows). */
 function fixtureRows(): FixtureRow[] {
   const rows: FixtureRow[] = [];
   for (const tenantId of [TENANT, OTHER_TENANT])
-    for (const organizationId of [STAFF_ORG, CUSTOMER_ORG, VENDOR_ORG, OTHER_ORG])
+    for (const organizationId of [ENTITY, OTHER_ENTITY])
       for (const ownerUserId of [ME, SOMEONE_ELSE, null])
         for (const departmentId of [MY_DEPT, OTHER_DEPT, null])
-          for (const customerOrganizationId of [CUSTOMER_ORG, OTHER_ORG, null])
-            for (const vendorOrganizationId of [VENDOR_ORG, OTHER_ORG, null])
+          // ENTITY in a counterparty column: a party id equal to an entity id must grant nothing.
+          for (const customerPartyId of [CUSTOMER_PARTY, ENTITY, OTHER_PARTY, null])
+            for (const vendorPartyId of [VENDOR_PARTY, ENTITY, OTHER_PARTY, null])
               rows.push({
                 id: `r${rows.length.toString().padStart(4, '0')}`,
                 tenantId,
                 organizationId,
                 ownerUserId,
                 departmentId,
-                customerOrganizationId,
-                vendorOrganizationId,
+                customerPartyId,
+                vendorPartyId,
               });
   return rows;
 }
@@ -97,7 +104,9 @@ function principalOf(over: Partial<Principal> & { orgKind: OrgKind }): Principal
     userId: ME,
     zitadelUserId: 'zitadel-sub-1',
     tenantId: TENANT,
-    organizationId: ORG_OF[over.orgKind],
+    organizationId: ENTITY,
+    partyId: PARTY_OF[over.orgKind],
+    idpOrgId: randomUUID(),
     roles: [],
     departmentId: MY_DEPT,
     status: 'active',
@@ -120,8 +129,8 @@ beforeAll(async () => {
     organization_id uuid NOT NULL,
     owner_user_id uuid,
     department_id uuid,
-    customer_organization_id uuid,
-    vendor_organization_id uuid
+    customer_party_id uuid,
+    vendor_party_id uuid
   )`);
   await db.insert(fullTable).values(ROWS);
 }, 120_000);
@@ -157,28 +166,51 @@ describe('AuthzService.scopeWhere', () => {
     { name: 'tenancy-only table', table: bareTable, ref: bareRef },
   ] as const;
 
-  it('returns exactly the rows can() allows, for every scope, org kind, department and status', async () => {
+  it('returns exactly the rows can() allows, for every scope, org kind, party, department and status', async () => {
     let nonEmptyCases = 0;
     for (const { name, table, ref } of TABLES)
       for (const orgKind of ['staff', 'customer', 'vendor'] as const)
-        for (const scope of SCOPE_CASES)
-          for (const departmentId of [MY_DEPT, null])
-            for (const status of ['active', 'inactive'] as const) {
-              const grants = new Map<Permission, Scope>();
-              // 'unknown' stands for a bad role_permissions row: neither side may treat it as a grant.
-              if (scope !== 'none') grants.set(ACTION, scope as Scope);
-              const p = principalOf({ orgKind, departmentId, status, grants });
+        // A portal principal with no party (a misbuilt principal) must reach no counterparty row.
+        for (const partyId of orgKind === 'staff' ? [null] : [PARTY_OF[orgKind], null])
+          for (const scope of SCOPE_CASES)
+            for (const departmentId of [MY_DEPT, null])
+              for (const status of ['active', 'inactive'] as const) {
+                const grants = new Map<Permission, Scope>();
+                // 'unknown' stands for a bad role_permissions row: neither side may treat it as a grant.
+                if (scope !== 'none') grants.set(ACTION, scope as Scope);
+                const p = principalOf({ orgKind, partyId, departmentId, status, grants });
 
-              const expected = ROWS.filter((r) => can(p, ACTION, ref(r)).allowed).map((r) => r.id);
-              const actual = await idsMatching(table, p);
-              expect(actual, `${name} ${orgKind} ${scope} dept=${departmentId} ${status}`).toEqual(
-                expected,
-              );
-              if (expected.length > 0) nonEmptyCases++;
-            }
+                const expected = ROWS.filter((r) => can(p, ACTION, ref(r)).allowed).map(
+                  (r) => r.id,
+                );
+                const actual = await idsMatching(table, p);
+                expect(
+                  actual,
+                  `${name} ${orgKind} party=${partyId} ${scope} dept=${departmentId} ${status}`,
+                ).toEqual(expected);
+                if (expected.length > 0) nonEmptyCases++;
+              }
     // Guard against a vacuous pass (both sides empty everywhere).
     expect(nonEmptyCases).toBeGreaterThan(20);
   });
+
+  it.each(['customer_org', 'all'] as const)(
+    'shows a customer with %s only the rows of the acting entity that name its party',
+    async (scope) => {
+      const p = principalOf({ orgKind: 'customer', grants: new Map([[ACTION, scope]]) });
+
+      const ids = await idsMatching(fullTable, p);
+      const want = ROWS.filter(
+        (r) =>
+          r.tenantId === TENANT &&
+          r.organizationId === ENTITY &&
+          r.customerPartyId === CUSTOMER_PARTY,
+      ).map((r) => r.id);
+      // 3 owners × 3 departments × 4 vendor values. Rows with the entity id as the party are out.
+      expect(want).toHaveLength(36);
+      expect(ids).toEqual(want);
+    },
+  );
 
   it('reads the principal from the request when called on the service', async () => {
     const p = principalOf({ orgKind: 'customer', grants: new Map([[ACTION, 'all']]) });
@@ -205,8 +237,11 @@ function inRequest<T>(p: Principal, fn: () => T): T {
       tenantId: p.tenantId,
       organizationId: p.organizationId,
       orgKind: p.orgKind,
+      partyId: p.partyId,
+      idpOrgId: p.idpOrgId,
       userId: p.zitadelUserId,
       roles: p.roles,
+      departmentId: p.departmentId,
       tokenExp: Math.floor(Date.now() / 1000) + 300,
     });
     bindPrincipal(p);
@@ -239,7 +274,7 @@ function errorBodyOf(exception: unknown): { status?: number; body?: unknown } {
 
 describe('AuthzService.assert', () => {
   const service = (): AuthzService => new AuthzService({} as Db, new RoleCache({} as Db));
-  const record: ResourceRef = { tenantId: TENANT, organizationId: STAFF_ORG, ownerUserId: ME };
+  const record: ResourceRef = { tenantId: TENANT, organizationId: ENTITY, ownerUserId: ME };
 
   /** The exception `assert` throws for `p`, or undefined when it allows. */
   function thrown(p: Principal, action: Permission, r?: ResourceRef): unknown {
