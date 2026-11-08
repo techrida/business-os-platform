@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 
+import { getEnv } from './env';
 import { getOidcRedis } from './oidc';
 
 /**
@@ -13,8 +14,11 @@ import { getOidcRedis } from './oidc';
  * IP per window, and `volatile-ttl` evicts only keys that have a TTL, which `HIT_SCRIPT` always
  * sets.
  *
- * Constants, not env vars: `lib/env.ts` owns the env schema. `LOGIN_RATE_LIMIT` and
- * `LOGIN_RATE_WINDOW_S` are the intended names if they ever become configurable.
+ * Production is fixed at `LOGIN_RATE_LIMIT` and `LOGIN_RATE_WINDOW_S`. The one exception is the dev
+ * override `BOS_DEV_LOGIN_RATE_LIMIT` (owned and validated by `lib/env.ts`): all local traffic shares
+ * one Caddy client IP, so a persona e2e run would trip 20 per minute. `getEnv()` accepts it only
+ * when `WORKSPACE_PUBLIC_URL` is `localhost` or `*.localhost`, and only 21 to 10000, so it can
+ * raise the limit but never lower it, and a production host fails env validation if it is set.
  */
 export const LOGIN_RATE_LIMIT = 20;
 export const LOGIN_RATE_WINDOW_S = 60;
@@ -81,7 +85,7 @@ export async function checkLoginRateLimit(req: Request): Promise<RateLimitResult
     );
     return { allowed: true };
   }
-  if (count <= LOGIN_RATE_LIMIT) return { allowed: true };
+  if (count <= (getEnv().BOS_DEV_LOGIN_RATE_LIMIT ?? LOGIN_RATE_LIMIT)) return { allowed: true };
   const retryAfter = Number.isInteger(ttl) && ttl >= 1 ? ttl : LOGIN_RATE_WINDOW_S;
   return { allowed: false, retryAfter };
 }
