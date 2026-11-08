@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 function calledUrl(): URL {
-  return new URL(String(fetchMock.mock.calls[0]?.[0]));
+  return new URL(fetchMock.mock.calls[0]?.[0] as URL | string);
 }
 
 describe('listQuotations', () => {
