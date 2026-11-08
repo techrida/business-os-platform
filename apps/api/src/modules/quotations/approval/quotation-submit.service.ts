@@ -58,7 +58,6 @@ import { approvalFactsOf } from '../preview/preview-result';
 import { quotationRef } from '../preview/quotation-preview.service';
 import { PricingService } from '../pricing/pricing.service';
 import type { PricedVersion, PricingInput } from '../pricing/pricing.types';
-import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
 import {
   buildApprovalSnapshot,
   contentSha256,
@@ -66,16 +65,10 @@ import {
   snapshotSha256,
 } from './quotation-approval-snapshot';
 import { QuotationSubmitCaller } from './quotation-submit.caller';
+import { QUOTATION_VERSION_DOCUMENT_TYPE } from './quotation-version.subject';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const QUOTATION_SUBMIT_CLOCK = Symbol('QUOTATION_SUBMIT_CLOCK');
-
-/**
- * The approval document type of a quotation version; the preview route routes on the same one. The subject
- * (approval/quotation-version.subject.ts, p2/q2s) registers it; switch to its QUOTATION_VERSION_DOCUMENT_TYPE once
- * merged.
- */
-export const QUOTATION_APPROVAL_DOCUMENT_TYPE = QUOTATION_OWNER_TYPE;
 
 const SUBMIT_ACTION: Permission = 'quotation.submit';
 const AUDIT_ENTITY = 'quotations';
@@ -370,7 +363,7 @@ export class QuotationSubmitService {
     // First, before any write: a route with a blocked step is refused instead of opening a stuck request.
     const plan = await this.approvals.preview(
       scope,
-      QUOTATION_APPROVAL_DOCUMENT_TYPE,
+      QUOTATION_VERSION_DOCUMENT_TYPE,
       facts,
       sodUserIds,
     );
@@ -420,7 +413,7 @@ export class QuotationSubmitService {
 
     // The engine hashes this same snapshot object into approval_requests.snapshot_sha256.
     const request = await this.approvals.submit(tx, {
-      documentType: QUOTATION_APPROVAL_DOCUMENT_TYPE,
+      documentType: QUOTATION_VERSION_DOCUMENT_TYPE,
       documentId: version.id,
       documentNumber: quotation.number,
       title: `Quotation ${quotation.number} revision ${version.revisionNo}`,
@@ -493,7 +486,7 @@ export class QuotationSubmitService {
           template: 'approval.blocked',
           vars: {
             documentNumber: n.quotationNumber,
-            documentType: QUOTATION_APPROVAL_DOCUMENT_TYPE,
+            documentType: QUOTATION_VERSION_DOCUMENT_TYPE,
             reason: n.reason,
             linkPath: BLOCKED_NOTICE_LINK,
           },

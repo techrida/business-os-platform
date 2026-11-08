@@ -29,8 +29,7 @@ const conflict = (message: string) => new ConflictException({ code: 'conflict', 
 
 /**
  * The workspace page of the quotation that owns `versionId` (`/quotations/<quotationId>`), or undefined when the
- * acting entity has no such version. Async because it reads the version. ApprovalSubject.link is synchronous and
- * gets no transaction, so this is not registered as `link` yet; see the hand-back for the kernel change.
+ * acting entity has no such version (the requester then gets the inbox link). The subject's `link` hook.
  */
 export async function quotationLinkOf(
   tx: DbTransaction,
@@ -53,6 +52,10 @@ export class QuotationVersionSubject implements ApprovalSubject {
   private readonly log = new Logger(QuotationVersionSubject.name);
 
   constructor(private readonly clock: () => Date = () => new Date()) {}
+
+  /** The decided notice opens the quotation, not the request in the inbox. */
+  readonly link = (tx: DbTransaction, versionId: string): Promise<string | undefined> =>
+    quotationLinkOf(tx, versionId);
 
   async onDecided(tx: DbTransaction, versionId: string, outcome: Outcome): Promise<void> {
     const ctx = await readTxContext(tx);
