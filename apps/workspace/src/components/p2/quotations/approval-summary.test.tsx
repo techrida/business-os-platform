@@ -13,6 +13,7 @@ const snapshot = (over: Record<string, unknown> = {}) => ({
   customerName: 'Big Kahuna Burger Ltd.',
   quotationNumber: 'QT-2082-0042',
   revisionNo: 2,
+  discountApprovalRequired: true,
   ...over,
 });
 
@@ -57,8 +58,20 @@ describe('QuotationApprovalSummary', () => {
   });
 
   it('does not highlight a discount of exactly 12%, or one below it', () => {
-    expect(render(snapshot({ effectiveDiscountPct: '12.0000' }))).not.toContain('Above the 12%');
-    expect(render(snapshot({ effectiveDiscountPct: '4.5000' }))).not.toContain('Above the 12%');
+    const flag = { discountApprovalRequired: false };
+    expect(render(snapshot({ effectiveDiscountPct: '12.0000', ...flag }))).not.toContain(
+      'Above the 12%',
+    );
+    expect(render(snapshot({ effectiveDiscountPct: '4.5000', ...flag }))).not.toContain(
+      'Above the 12%',
+    );
+  });
+
+  it('follows the server flag over the rounded text: 12.0000 with the flag set is highlighted', () => {
+    const html = render(
+      snapshot({ effectiveDiscountPct: '12.0000', discountApprovalRequired: true }),
+    );
+    expect(html).toContain('Above the 12% limit');
   });
 
   it('says "Not recorded" for an unknown margin, never 0%', () => {
