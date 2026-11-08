@@ -5,6 +5,10 @@ export const CURRENCIES = ['NPR', 'INR', 'USD'] as const;
 export const CurrencySchema = z.enum(CURRENCIES);
 export type Currency = z.infer<typeof CurrencySchema>;
 
+/** Currencies whose NPR rate Nepal Rastra Bank fixes by peg (INR at 1.6), so an old rate row is still current. */
+export const PEGGED_CURRENCIES = ['INR'] as const satisfies readonly Currency[];
+export type PeggedCurrency = (typeof PEGGED_CURRENCIES)[number];
+
 /** An amount with at most 2 decimals (numeric(18,2) in the database). Compare with decimal.js, not Number. */
 export const DecimalString = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?$/);
 export type DecimalString = z.infer<typeof DecimalString>;
