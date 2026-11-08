@@ -1,4 +1,4 @@
-// Integration tests of DraftingService.create on a real Postgres (Testcontainers, needs Docker in WSL).
+// Integration tests of DraftingService create, list, detail and getVersion on a real Postgres (Testcontainers, needs Docker in WSL).
 // Real: migrations as bos_owner, queries as bos_app (so every DB CHECK and trigger of 0016 runs), NumberingService,
 // PricingService (NPR only: the MoneyService behind it is a stub that fails if FX is ever asked for) and the real
 // AuditService. Faked: the request context, and authz.assert, which still runs the real pure can() on a fake
@@ -7,9 +7,14 @@
 // Run: pnpm --filter @bos/api exec vitest run src/modules/quotations/drafting/drafting.integration.test.ts
 import 'reflect-metadata';
 
+import { randomUUID } from 'node:crypto';
+
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  QuotationDetailSchema,
   QuotationDtoSchema,
+  QuotationListItemSchema,
+  QuotationVersionDtoSchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -47,6 +52,7 @@ import { DraftingService, pricingInputOf } from './drafting.service';
 import {
   GOLDEN_TOTALS,
   goldenCreateBody,
+  seedOtherStaffUser,
   seedQuotationFixture,
   type QuotationFixture,
   type QuotationFixtureDb,
@@ -68,12 +74,19 @@ let service: DraftingService;
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { grants: Map<Permission, Scope> } = { grants: grantsOf('sales') };
+/** Who calls: by default the fixture's owner in entity A with the sales grants; a test may switch any part. */
+const current: { grants: Map<Permission, Scope>; userId: string | null; scope: TxScope | null } = {
+  grants: grantsOf('sales'),
+  userId: null,
+  scope: null,
+};
+const userNow = (): string => current.userId ?? f.ownerUserId;
+const scopeNow = (): TxScope => current.scope ?? scopeA;
 
 const principalNow = (): Principal => ({
-  userId: f.ownerUserId,
-  zitadelUserId: `z-${f.ownerUserId}`,
-  ...scopeA,
+  userId: userNow(),
+  zitadelUserId: `z-${userNow()}`,
+  ...scopeNow(),
   orgKind: 'staff',
   partyId: null,
   idpOrgId: 'unused',
@@ -84,8 +97,8 @@ const principalNow = (): Principal => ({
 });
 const caller = {
   current: () => ({
-    scope: scopeA,
-    actor: { kind: 'user' as const, id: f.ownerUserId, correlationId: 'test-corr' },
+    scope: scopeNow(),
+    actor: { kind: 'user' as const, id: userNow(), correlationId: 'test-corr' },
     principal: principalNow(),
   }),
 };
@@ -153,6 +166,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   current.grants = grantsOf('sales');
+  current.userId = null;
+  current.scope = null;
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -295,5 +310,184 @@ describe('DraftingService.create', () => {
     const before = await quotationCount(f.opportunityId);
     expect(await statusOf(service.create(goldenCreateBody(f), 'create-denied'))).toBe(403);
     expect(await quotationCount(f.opportunityId)).toBe(before);
+  });
+});
+
+// ------------------------------------------------------------------------------------------- reads
+
+/** A contact of the fixture's customer, so the detail has a recipient to offer. */
+async function seedCustomerContact(name: string): Promise<string> {
+  return withTx(db, scopeA, systemActor('test'), async (tx) => {
+    const { rows } = await tx.execute<{ id: string }>(
+      sql`INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm)
+          VALUES (${f.tenantId}, ${f.customerPartyId}, ${name}, ${`${randomUUID()}@example.test`})
+          RETURNING id`,
+    );
+    return rows[0]!.id;
+  });
+}
+
+/** Runs `fn` as another caller, then switches back to the default one. */
+async function asCaller<T>(
+  who: { userId?: string; scope?: TxScope; grants?: Map<Permission, Scope> },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const saved = { ...current };
+  current.userId = who.userId ?? current.userId;
+  current.scope = who.scope ?? current.scope;
+  current.grants = who.grants ?? current.grants;
+  try {
+    return await fn();
+  } finally {
+    Object.assign(current, saved);
+  }
+}
+
+/** 32 bytes for a bytea hash column, as hex for decode(). */
+const HASH_HEX = 'ab'.repeat(32);
+
+/**
+ * Revises `quotationId` by raw SQL in S2's order (old to superseded, insert the new draft, link the old to it),
+ * then points the parent at the new version. The old version needs the snapshot columns that
+ * quotation_versions_snapshot_check requires outside draft, returned and cancelled. Returns the new version id.
+ */
+async function reviseBySql(quotationId: string, oldVersionId: string): Promise<string> {
+  return withTx(db, scopeA, systemActor('test'), async (tx) => {
+    await tx.execute(
+      sql`UPDATE app.quotation_versions
+             SET status = 'superseded', fx_rate = 1, amount_npr = total, npr_taxable_amount = taxable_amount,
+                 content_sha256 = decode(${HASH_HEX}, 'hex'), snapshot_sha256 = decode(${HASH_HEX}, 'hex')
+           WHERE tenant_id = ${f.tenantId} AND id = ${oldVersionId}`,
+    );
+    const { rows } = await tx.execute<{ id: string }>(
+      sql`INSERT INTO app.quotation_versions
+            (tenant_id, organization_id, quotation_id, revision_no, status, currency, issue_date, valid_until,
+             supersedes_version_id, revision_reason)
+          SELECT tenant_id, organization_id, quotation_id, revision_no + 1, 'draft', currency, issue_date,
+                 valid_until, id, 'Customer asked for a new scope'
+            FROM app.quotation_versions
+           WHERE tenant_id = ${f.tenantId} AND id = ${oldVersionId}
+          RETURNING id`,
+    );
+    const newVersionId = rows[0]!.id;
+    await tx.execute(
+      sql`UPDATE app.quotation_versions SET superseded_by_version_id = ${newVersionId}
+           WHERE tenant_id = ${f.tenantId} AND id = ${oldVersionId}`,
+    );
+    await tx.execute(
+      sql`UPDATE app.quotations SET current_version_id = ${newVersionId}
+           WHERE tenant_id = ${f.tenantId} AND id = ${quotationId}`,
+    );
+    return newVersionId;
+  });
+}
+
+describe('DraftingService reads', () => {
+  it('lists, details and returns one version in the contract shapes', async () => {
+    const contactId = await seedCustomerContact('Asha Shrestha');
+    const created = await service.create(goldenCreateBody(f), 'read-shapes');
+
+    const list = QuotationListItemSchema.array().parse(await service.list());
+    const item = list.find((q) => q.id === created.id);
+    expect(item).toMatchObject({
+      number: created.number,
+      status: 'draft',
+      customerName: 'Acme Pvt. Ltd.',
+      currency: 'NPR',
+      total: GOLDEN_TOTALS.total,
+      validUntil: '2026-12-09',
+      ownerUserId: f.ownerUserId,
+    });
+    expect(typeof item!.ownerName).toBe('string');
+    expect((await service.list('draft')).map((q) => q.id)).toContain(created.id);
+    expect((await service.list('submitted')).map((q) => q.id)).not.toContain(created.id);
+
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.quotation).toMatchObject({ id: created.id, status: 'draft' });
+    expect(detail.customerName).toBe('Acme Pvt. Ltd.');
+    expect(detail.contacts).toContainEqual(
+      expect.objectContaining({ id: contactId, name: 'Asha Shrestha' }),
+    );
+    expect(detail.versions).toHaveLength(1);
+    const [v1] = detail.versions;
+    expect(v1).toMatchObject({
+      id: created.currentVersionId,
+      revisionNo: 1,
+      status: 'draft',
+      renderedScanStatus: null,
+    });
+    expect(v1!.totals.total).toBe(GOLDEN_TOTALS.total);
+    expect(v1!.lines.map((l) => l.lineNo)).toEqual([1, 2, 3]);
+    expect(v1!.taxSummary.length).toBeGreaterThan(0);
+    expect(detail.statusHistory).toEqual([
+      expect.objectContaining({ versionId: v1!.id, fromStatus: null, toStatus: 'draft' }),
+    ]);
+
+    const version = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(version).toEqual(v1);
+  });
+
+  it('includes a superseded version in the detail, oldest first', async () => {
+    const created = await service.create(goldenCreateBody(f), 'read-superseded');
+    const v2Id = await reviseBySql(created.id, created.currentVersionId);
+
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.quotation).toMatchObject({ currentVersionId: v2Id, status: 'draft' });
+    expect(detail.versions.map((v) => [v.revisionNo, v.status])).toEqual([
+      [1, 'superseded'],
+      [2, 'draft'],
+    ]);
+    expect(detail.versions[0]).toMatchObject({
+      supersededByVersionId: v2Id,
+      snapshotSha256: HASH_HEX,
+    });
+    expect(detail.versions[1]).toMatchObject({ supersedesVersionId: created.currentVersionId });
+    expect((await service.getVersion(created.id, created.currentVersionId)).status).toBe(
+      'superseded',
+    );
+  });
+
+  it("answers 404 for another entity's quotation and leaves it out of the list", async () => {
+    const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+    const other = await asCaller({ scope: scopeB }, () =>
+      service.create(
+        goldenCreateBody(f, { opportunityId: f.otherEntityOpportunityId }),
+        'read-other-entity',
+      ),
+    );
+    expect(await statusOf(service.detail(other.id))).toBe(404);
+    expect(await statusOf(service.getVersion(other.id, other.currentVersionId))).toBe(404);
+    expect((await service.list()).map((q) => q.id)).not.toContain(other.id);
+    // Even a read-all role of entity A cannot reach it.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect(await statusOf(service.detail(other.id))).toBe(404);
+    });
+  });
+
+  it('answers 404 for a version of another quotation', async () => {
+    const a = await service.create(goldenCreateBody(f), 'read-mix-a');
+    const b = await service.create(goldenCreateBody(f), 'read-mix-b');
+    expect(await statusOf(service.getVersion(a.id, b.currentVersionId))).toBe(404);
+  });
+
+  it("hides another owner's quotation under own scope, and shows it under all", async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const theirs = await asCaller({ userId: otherUserId }, () =>
+      service.create(goldenCreateBody(f), 'read-other-owner'),
+    );
+    expect(theirs.ownerUserId).toBe(otherUserId);
+
+    // sales holds quotation.read as `own`.
+    expect((await service.list()).map((q) => q.id)).not.toContain(theirs.id);
+    expect(await statusOf(service.detail(theirs.id))).toBe(404);
+    expect(await statusOf(service.getVersion(theirs.id, theirs.currentVersionId))).toBe(404);
+
+    // Positive control: management reads `all` in the entity, so the hide above is the scope, not a bad row.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect((await service.list()).map((q) => q.id)).toContain(theirs.id);
+      expect((await service.detail(theirs.id)).quotation.ownerUserId).toBe(otherUserId);
+    });
   });
 });
