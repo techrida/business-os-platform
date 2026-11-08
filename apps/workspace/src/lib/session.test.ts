@@ -92,6 +92,7 @@ afterEach(() => {
   __setRedisForTests(undefined);
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 describe('createSession', () => {
@@ -297,6 +298,47 @@ describe('getSession token refresh', () => {
     expect(await getSession()).toMatchObject({ accessToken: 'access-9' });
     expect(refreshTokens).not.toHaveBeenCalled();
     expect(await stored(id)).toMatchObject({ accessToken: 'access-9' });
+  });
+});
+
+// CR-03: Valkey runs noeviction, so a full instance rejects every write. Pages must then see a
+// signed-out user, not a 500.
+describe('getSession when Valkey errors', () => {
+  /** Shaped like an ioredis ReplyError, which carries the command and its arguments. */
+  function replyError(args: unknown[]): Error {
+    return Object.assign(new Error('OOM command not allowed when used memory > maxmemory'), {
+      name: 'ReplyError',
+      command: { name: 'eval', args },
+    });
+  }
+
+  it('returns null when the read rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await signedIn();
+    vi.spyOn(redis, 'get').mockRejectedValue(new Error('connect ECONNREFUSED'));
+    await expect(getSession()).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null when the sliding write rejects, and never logs the record', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn();
+    const raw = await redis.get(`ws:sess:${id}`);
+    vi.spyOn(redis, 'eval').mockRejectedValue(replyError([`ws:sess:${id}`, raw]));
+    await expect(getSession()).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const logged = JSON.stringify(warn.mock.calls);
+    for (const secret of [BASE.accessToken, BASE.refreshToken, BASE.idToken, id]) {
+      expect(logged).not.toContain(secret);
+    }
+  });
+
+  it('returns null when the refresh path rejects', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await signedIn({ accessExp: T0_SECONDS + 10 });
+    vi.spyOn(redis, 'set').mockRejectedValue(replyError([]));
+    await expect(getSession()).resolves.toBeNull();
+    expect(refreshTokens).not.toHaveBeenCalled();
   });
 });
 

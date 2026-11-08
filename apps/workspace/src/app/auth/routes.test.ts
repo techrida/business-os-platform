@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+
+import type { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The libs are mocked: these tests cover what the route handlers decide (what they pass on,
@@ -13,6 +16,7 @@ const m = vi.hoisted(() => ({
   getSession: vi.fn(),
   destroySession: vi.fn(),
   safeReturnTo: vi.fn(),
+  getRedis: vi.fn(),
   cookies: vi.fn(),
   cookieSet: vi.fn(),
 }));
@@ -37,6 +41,8 @@ vi.mock('@/lib/session', () => ({
   getSession: m.getSession,
   destroySession: m.destroySession,
   safeReturnTo: m.safeReturnTo,
+  // The login rate limiter (CR-03) runs for real against an in-memory Valkey.
+  getRedis: m.getRedis,
 }));
 vi.mock('@/lib/env', () => ({
   getEnv: () => ({
@@ -58,8 +64,14 @@ const LOGIN_COOKIE = '__Host-bos_login';
 const BINDING = 'b'.repeat(43);
 const LOGIN_COOKIE_ATTRS = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' };
 
-beforeEach(() => {
+// Loaded through require, as in session.test.ts: ioredis-mock has no reachable types.
+const RedisMock = createRequire(import.meta.url)('ioredis-mock') as new () => Redis;
+const redis = new RedisMock();
+
+beforeEach(async () => {
   vi.resetAllMocks();
+  await redis.flushall(); // every login test shares one client IP bucket
+  m.getRedis.mockReturnValue(redis);
   // Same contract as the real one: a same-origin relative path survives, anything else is '/'.
   m.safeReturnTo.mockImplementation((raw: string | null | undefined) =>
     raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/',
@@ -154,6 +166,34 @@ describe('GET /auth/login', () => {
     const hint = 'a'.repeat(200);
     await call('?login_hint=' + hint);
     expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ loginHint: hint });
+  });
+
+  // CR-03: each login stores OIDC state in Valkey, which runs noeviction. Unlimited logins fill
+  // it and then every session write fails.
+  describe('rate limit', () => {
+    const from = (ip: string) =>
+      loginGET(
+        new Request(`${ORIGIN}/auth/login`, { headers: { 'x-forwarded-for': `${ip}, 10.0.0.2` } }),
+      );
+
+    it('answers the 21st login from one IP in a minute with 429 and Retry-After, before any OIDC state or cookie', async () => {
+      for (let i = 0; i < 20; i++) expect((await from('203.0.113.7')).status).toBe(303);
+      m.beginLogin.mockClear();
+      m.cookieSet.mockClear();
+
+      const res = await from('203.0.113.7');
+
+      expect(res.status).toBe(429);
+      expect(res.headers.get('retry-after')).toBe('60');
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(m.beginLogin).not.toHaveBeenCalled();
+      expect(cookiesWritten()).toEqual([]);
+    });
+
+    it('still lets another IP sign in', async () => {
+      for (let i = 0; i < 21; i++) await from('203.0.113.7');
+      expect((await from('198.51.100.1')).status).toBe(303);
+    });
   });
 });
 
