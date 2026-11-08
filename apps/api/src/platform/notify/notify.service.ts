@@ -43,6 +43,19 @@ export interface NotifyInput {
   dedupeKey: string;
 }
 
+/**
+ * An email to an address that is not a user, such as a customer contact (customer contacts are not users,
+ * so notifyUser cannot resolve them). No bell row: there is no workspace user to show it to.
+ */
+export interface NotifyEmailInput {
+  toEmail: string;
+  template: EmailTemplate;
+  /** Follow EMAIL_TEMPLATE_VARS; `linkPath` must be under one of the template's own areas. */
+  data: Record<string, string>;
+  /** Names the event (for example `quotation.sent:<versionId>`): a retried action queues no second email. */
+  dedupeKey: string;
+}
+
 @Injectable()
 export class NotifyService {
   private readonly log = new Logger(NotifyService.name);
@@ -107,6 +120,33 @@ export class NotifyService {
         bodyHtml: rendered.html,
         // Per recipient: one event that notifies three users makes three rows.
         dedupeKey: `${n.dedupeKey}:${n.userId}`,
+      })
+      .onConflictDoNothing({ target: [outbox.tenantId, outbox.dedupeKey] });
+  }
+
+  /**
+   * Writes one outbox row to `n.toEmail` inside the caller's `tx`, rendered now (a bad variable or link fails
+   * the caller's transaction, as in notifyUser). The scope comes from the transaction, never from a request.
+   */
+  async notifyEmail(tx: DbTransaction, n: NotifyEmailInput): Promise<void> {
+    const scope = await scopeOf(tx);
+    const rendered = renderEmail(n.template, n.data, {
+      workspaceUrl: this.config.WORKSPACE_PUBLIC_URL,
+      portalUrl: this.config.PORTAL_PUBLIC_URL,
+    });
+    await tx
+      .insert(outbox)
+      .values({
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        kind: 'email',
+        template: n.template,
+        toUserId: null,
+        toEmail: n.toEmail,
+        subject: rendered.subject,
+        bodyText: rendered.text,
+        bodyHtml: rendered.html,
+        dedupeKey: n.dedupeKey,
       })
       .onConflictDoNothing({ target: [outbox.tenantId, outbox.dedupeKey] });
   }

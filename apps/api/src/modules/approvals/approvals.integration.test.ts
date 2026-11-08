@@ -250,7 +250,7 @@ beforeAll(async () => {
   service.registerSubject({
     documentType: 'test_memo',
     onDecided,
-    link: (documentId) => `/memos/${documentId}`,
+    link: (_tx, documentId) => `/memos/${documentId}`,
   });
 
   resetRoles();
@@ -1291,7 +1291,8 @@ describe('subject hooks (K1): link and onCancelled', () => {
       documentType: 'k1_quote',
       onDecided,
       onCancelled,
-      link: (documentId) => `/quotations/${documentId}`,
+      // Async, as a subject that reads its document (the quotation version) gives it.
+      link: (_tx, documentId) => Promise.resolve(`/quotations/${documentId}`),
     });
     service.registerSubject({ documentType: 'k1_nolink', onDecided });
     await admin.createWorkflow({
