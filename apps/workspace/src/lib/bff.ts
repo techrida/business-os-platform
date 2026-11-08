@@ -80,13 +80,14 @@ export function isStepUpRequired(err: unknown): boolean {
 }
 
 /**
- * The normal login route with `prompt=login`, so ZITADEL asks for the credentials again even with
- * a live ZITADEL session and issues a token with a fresh `auth_time`. Going through /auth/login keeps
+ * The normal login route with `prompt=login` and `max_age=0`, so ZITADEL asks for the credentials
+ * again even with a live ZITADEL session. `max_age` also obliges the IdP (OIDC Core 3.1.2.1) to
+ * report `auth_time`, which the API needs fresh. Going through /auth/login keeps
  * every login protection: the `__Host-` binding cookie, server-side state and `safeReturnTo`. The
  * callback then creates a new session holding the new tokens.
  */
 export function stepUpLoginUrl(returnTo: string): string {
-  return `/auth/login?prompt=login&returnTo=${encodeURIComponent(returnTo)}`;
+  return `/auth/login?prompt=login&max_age=0&returnTo=${encodeURIComponent(returnTo)}`;
 }
 
 /** For server actions and pages: `redirect` throws, so nothing after this runs. */
