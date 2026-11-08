@@ -184,10 +184,14 @@ services:
       - noeviction
       - --appendonly
       - 'yes'
+      # Password required (CR-13). Hex only, so it is safe inside the redis:// URLs the apps use.
+      - --requirepass
+      - ${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env (infra/scripts/make-dev-env.sh adds it)}
     volumes:
       - valkey-data:/data
     healthcheck:
-      test: ['CMD', 'valkey-cli', 'ping']
+      # Authenticated: without -a the server answers NOAUTH, so a plain ping would never turn healthy.
+      test: ['CMD', 'valkey-cli', '-a', '${VALKEY_PASSWORD}', '--no-auth-warning', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -356,7 +360,7 @@ services:
       METRICS_PORT: '9464'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
-      VALKEY_URL: redis://valkey:6379
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     # OIDC_ISSUER, OIDC_AUDIENCE and OIDC_CLIENT_ID come from the seed output. The root .env is deliberately not
     # passed in: it holds host-side values (127.0.0.1 URLs).
@@ -396,7 +400,7 @@ services:
       METRICS_PORT: '9465'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
-      VALKEY_URL: redis://valkey:6379
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     env_file:
       - path: ../../.dev/zitadel.env
@@ -436,7 +440,7 @@ services:
       WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost}
       OIDC_REDIRECT_URI: https://${APP_HOST:-app.localhost}/auth/callback
       API_INTERNAL_URL: http://api:3001
-      VALKEY_URL: redis://valkey:6379
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     env_file:
       - path: ../../.dev/zitadel.env
