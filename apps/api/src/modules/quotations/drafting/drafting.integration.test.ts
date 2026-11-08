@@ -563,6 +563,32 @@ describe('DraftingService.updateDraft', () => {
     expect(after.lines).toEqual(before.lines);
   });
 
+  it('removes the discount when the body sends discount: null, and re-prices without it', async () => {
+    const created = await service.create(
+      goldenCreateBody(f, { scope: 'Phase 1 and 2' }),
+      'put-clear-discount',
+    );
+    const before = await service.getVersion(created.id, created.currentVersionId);
+    expect(before.discount).toEqual(GOLDEN_DISCOUNT);
+
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      discount: null,
+      scope: null,
+    });
+
+    const after = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(after.discount).toBeNull();
+    expect(after.scope).toBeNull();
+    expect(after.totals.discountAmount).toBe('0.00');
+    expect(after.totals.subtotal).toBe(GOLDEN_TOTALS.subtotal);
+    expect(after.totals.taxableAmount).toBe(GOLDEN_TOTALS.subtotal);
+    expect(after.totals.total).not.toBe(GOLDEN_TOTALS.total);
+    expect(after.lines.map((l) => l.discountAlloc)).toEqual(after.lines.map(() => '0.00'));
+  });
+
   it('answers 400 when the merged content has validUntil before the saved issueDate', async () => {
     const created = await service.create(goldenCreateBody(f), 'put-validity');
     const v = await rowVersionOf(created.id, created.currentVersionId);
