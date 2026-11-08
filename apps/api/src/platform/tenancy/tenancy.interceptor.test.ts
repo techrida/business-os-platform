@@ -26,12 +26,12 @@ const STAFF: ResolvedOrg = {
 };
 const CUSTOMER: ResolvedOrg = {
   tenantId: STAFF.tenantId,
-  organizationId: '44444444-4444-4444-8444-444444444444',
+  organizationId: '66666666-6666-4666-8666-666666666666',
   orgKind: 'customer',
 };
 const VENDOR: ResolvedOrg = {
   tenantId: STAFF.tenantId,
-  organizationId: '55555555-5555-4555-8555-555555555555',
+  organizationId: '77777777-7777-4777-8777-777777777777',
   orgKind: 'vendor',
 };
 const ZIT_ORG = 'zit-staff';
@@ -108,17 +108,37 @@ function auth(rolesByOrg: Record<string, readonly RoleKey[]> | undefined): AuthI
   };
 }
 
+/** A second org in the same tenant, and an org of another tenant, for the R26 row-scope checks. */
+const OTHER_ORG_SAME_TENANT: ResolvedOrg = {
+  ...STAFF,
+  organizationId: '44444444-4444-4444-8444-444444444444',
+};
+const OTHER_TENANT: ResolvedOrg = {
+  ...STAFF,
+  tenantId: '55555555-5555-4555-8555-555555555555',
+};
+
 let now = 1_000_000;
 let resolveCalls: number;
 let status: Principal['status'];
 let grantRequests: (readonly RoleKey[])[];
+/** The org the token resolves to. */
+let tokenOrg: ResolvedOrg;
+/** Where the user row the directory returns lives. */
+let rowScope: { tenantId: string; organizationId: string };
 
-function build(org: ResolvedOrg = STAFF): TenancyInterceptor {
-  const orgs = { resolve: () => Promise.resolve(org) } as unknown as OrgResolver;
+function build(): TenancyInterceptor {
+  const orgs = { resolve: () => Promise.resolve(tokenOrg) } as unknown as OrgResolver;
   const directory = {
     resolve: () => {
       resolveCalls += 1;
-      return Promise.resolve({ userId: APP_USER_ID, status, departmentId: null });
+      return Promise.resolve({
+        userId: APP_USER_ID,
+        status,
+        departmentId: null,
+        tenantId: rowScope.tenantId,
+        organizationId: rowScope.organizationId,
+      });
     },
   } as unknown as UserDirectory;
   const roleCache = {
@@ -130,6 +150,13 @@ function build(org: ResolvedOrg = STAFF): TenancyInterceptor {
     },
   } as unknown as RoleCache;
   return new TenancyInterceptor(orgs, new Reflector(), directory, roleCache, () => now);
+}
+
+/** An interceptor whose token and user row both resolve to `org` (CR-02 cases outside staff). */
+function buildFor(org: ResolvedOrg): TenancyInterceptor {
+  tokenOrg = org;
+  rowScope = { tenantId: org.tenantId, organizationId: org.organizationId };
+  return build();
 }
 
 /** Runs one request through the interceptor; returns the handler result and the bound principal. */
@@ -158,6 +185,32 @@ async function denial(promise: Promise<unknown>): Promise<Record<string, unknown
   return (err as ForbiddenException).getResponse() as Record<string, unknown>;
 }
 
+/**
+ * Runs one request that must be refused, inside the request store, and reports whether a principal
+ * was bound before the refusal: `run()` rejects before it can look.
+ */
+function refusedRun(
+  interceptor: TenancyInterceptor,
+  identity: AuthIdentity,
+  handler: Handler,
+): Promise<{ err: unknown; principalBound: boolean }> {
+  return runWithRequestStore('corr-1', async () => {
+    const err: unknown = await interceptor
+      .intercept(httpContext({ auth: identity }, Routes, handler), next)
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    let principalBound = true;
+    try {
+      principal();
+    } catch {
+      principalBound = false;
+    }
+    return { err, principalBound };
+  });
+}
+
 describe('TenancyInterceptor', () => {
   let interceptor: TenancyInterceptor;
 
@@ -166,6 +219,8 @@ describe('TenancyInterceptor', () => {
     resolveCalls = 0;
     status = 'active';
     grantRequests = [];
+    tokenOrg = STAFF;
+    rowScope = { tenantId: STAFF.tenantId, organizationId: STAFF.organizationId };
     interceptor = build();
   });
 
@@ -219,7 +274,12 @@ describe('TenancyInterceptor', () => {
 
   it('lets an active customer or vendor user with no roles through @AnyAuthenticated', async () => {
     for (const org of [CUSTOMER, VENDOR]) {
-      const { result, bound, roles } = await run(build(org), auth({}), Routes, Routes.prototype.me);
+      const { result, bound, roles } = await run(
+        buildFor(org),
+        auth({}),
+        Routes,
+        Routes.prototype.me,
+      );
       expect(result).toBe('handled');
       expect(bound).toMatchObject({ orgKind: org.orgKind, roles: [] });
       expect(roles).toEqual([]);
@@ -259,7 +319,12 @@ describe('TenancyInterceptor', () => {
     expect(JSON.stringify(p0Shaped)).toContain('No project role has been granted');
 
     // In a customer org the same identity resolves to no roles and is let through @AnyAuthenticated.
-    const { roles, bound } = await run(build(CUSTOMER), auth(undefined), Routes, Routes.prototype.me);
+    const { roles, bound } = await run(
+      buildFor(CUSTOMER),
+      auth(undefined),
+      Routes,
+      Routes.prototype.me,
+    );
     expect(roles).toEqual([]);
     expect(bound.roles).toEqual([]);
   });
@@ -321,6 +386,50 @@ describe('TenancyInterceptor', () => {
     now += 1;
     await run(interceptor, auth(finance), Routes, Routes.prototype.me);
     expect(resolveCalls).toBe(2);
+  });
+
+  // R26: the directory looks a user up by ZITADEL id alone, so the row it returns must belong to the
+  // tenant and org the token resolved to, or the request would act as that row in another scope.
+  it.each([
+    ['another org of the same tenant', OTHER_ORG_SAME_TENANT],
+    ['another tenant', OTHER_TENANT],
+  ])('refuses a user row from %s with no_permission and binds no principal', async (_, rowOrg) => {
+    rowScope = { tenantId: rowOrg.tenantId, organizationId: rowOrg.organizationId };
+    for (const handler of [Routes.prototype.readUsers, Routes.prototype.me]) {
+      const { err, principalBound } = await refusedRun(interceptor, auth(finance), handler);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toEqual({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: 'no_permission',
+      });
+      expect(principalBound).toBe(false);
+    }
+  });
+
+  it('refuses a cached user row once the token resolves to another org of the tenant', async () => {
+    const { result } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
+    expect(result).toBe('handled');
+
+    // The cache key is tenant + ZITADEL user, so this hit reuses the STAFF row without a lookup.
+    tokenOrg = OTHER_ORG_SAME_TENANT;
+    const { err, principalBound } = await refusedRun(
+      interceptor,
+      auth(finance),
+      Routes.prototype.me,
+    );
+    expect(resolveCalls).toBe(1);
+    expect((err as ForbiddenException).getResponse()).toMatchObject({ reason: 'no_permission' });
+    expect(principalBound).toBe(false);
+  });
+
+  it('lets a user row of the token org through', async () => {
+    const { result, bound } = await run(interceptor, auth(finance), Routes, Routes.prototype.me);
+    expect(result).toBe('handled');
+    expect(bound).toMatchObject({
+      tenantId: STAFF.tenantId,
+      organizationId: STAFF.organizationId,
+    });
   });
 
   it('builds a principal from warm caches in under 1 ms', async () => {
