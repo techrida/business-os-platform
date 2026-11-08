@@ -7,6 +7,7 @@ import {
   DEFAULT_WEBHOOK_URL,
   FOUNDER_ORG_ROLE,
   LOADTEST_APPROVER_USER,
+  PROVISIONER_IAM_ROLES,
   PROVISIONER_ROLES,
   PROVISIONER_USER,
   retireBootstrapAdmin,
@@ -108,6 +109,7 @@ class FakeZitadel implements SeedApi {
   private readonly users = new Map<string, UserInfo & { orgId: string; username: string }>();
   private readonly auths = new Map<string, { id: string; roles: string[] }>(); // user id -> auth
   readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
+  readonly iamMembers = new Map<string, string[]>(); // user -> instance roles
   private smtp = false;
   /** Every call, changing or not, so a test can see what the seed asked for. */
   readonly authRequiredCalls: string[] = [];
@@ -278,6 +280,14 @@ class FakeZitadel implements SeedApi {
   addOrgMember(orgId: string, userId: string, roles: string[]): Promise<void> {
     this.mutate();
     this.members.set(`${orgId}:${userId}`, roles);
+    return Promise.resolve();
+  }
+  listIamMemberRoles(userId: string): Promise<string[] | undefined> {
+    return Promise.resolve(this.iamMembers.get(userId));
+  }
+  addIamMember(userId: string, roles: string[]): Promise<void> {
+    this.mutate();
+    this.iamMembers.set(userId, roles);
     return Promise.resolve();
   }
   ensureSmtp(_spec: SmtpSpec): Promise<boolean> {
@@ -703,6 +713,9 @@ describe('@bos/seed-zitadel', () => {
       await runSeed(deps);
       const provisionerId = api.userIdOf(PROVISIONER_USER);
       expect(api.members.get(`${api.staffOrgId}:${provisionerId}`)).toEqual([...PROVISIONER_ROLES]);
+      // K8 portal access: customer orgs, their users, project grants and org login policies.
+      expect(PROVISIONER_IAM_ROLES).toEqual(['IAM_ORG_MANAGER']);
+      expect(api.iamMembers.get(provisionerId)).toEqual(['IAM_ORG_MANAGER']);
       expect(api.patsIssued).toBe(1);
       // Expiry is now + 1 year, from the pinned clock.
       expect(api.calls).toContain(`addPat:${provisionerId}:2027-11-08T10:00:00.000Z`);
@@ -736,6 +749,37 @@ describe('@bos/seed-zitadel', () => {
       expect(api.members.get(`${api.staffOrgId}:${provisionerId}`)).toEqual(['ORG_USER_MANAGER']);
       expect(result.warnings).toEqual([
         expect.stringMatching(/without ORG_USER_PERMISSION_EDITOR.*Organization > Members/),
+      ]);
+    });
+  });
+
+  describe('provisioner instance role (K8 portal access)', () => {
+    it('adds the instance role to an existing provisioner once (a P1 stack re-seeded)', async () => {
+      const { api, deps } = setup();
+      const provisionerId = api.preexisting(api.staffOrgId, PROVISIONER_USER);
+      api.members.set(`${api.staffOrgId}:${provisionerId}`, [...PROVISIONER_ROLES]);
+      const first = await runSeed(deps);
+      expect(api.iamMembers.get(provisionerId)).toEqual(['IAM_ORG_MANAGER']);
+      expect(first.changes).toContain(`made ${PROVISIONER_USER} IAM_ORG_MANAGER on the instance`);
+      const second = await runSeed(deps);
+      expect(second.changes).toEqual([]);
+    });
+
+    it('never grants IAM_OWNER', async () => {
+      const { api, deps } = setup();
+      await runSeed(deps);
+      for (const roles of api.iamMembers.values()) expect(roles).not.toContain('IAM_OWNER');
+    });
+
+    it('warns instead of re-adding an instance member that lacks IAM_ORG_MANAGER', async () => {
+      const { api, deps } = setup();
+      const provisionerId = api.preexisting(api.staffOrgId, PROVISIONER_USER);
+      api.members.set(`${api.staffOrgId}:${provisionerId}`, [...PROVISIONER_ROLES]);
+      api.iamMembers.set(provisionerId, ['IAM_USER_MANAGER']);
+      const result = await runSeed(deps);
+      expect(api.iamMembers.get(provisionerId)).toEqual(['IAM_USER_MANAGER']);
+      expect(result.warnings).toEqual([
+        expect.stringMatching(/instance member without IAM_ORG_MANAGER.*Instance > Members/),
       ]);
     });
   });

@@ -54,6 +54,12 @@ export const ENDPOINTS = {
   // inherited from the instance), POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy.
   orgLoginPolicy: '/management/v1/policies/login',
 
+  // admin v1 (REST) instance members (K8). UNVERIFIED: ListIAMMembers / AddIAMMember as named in
+  // proto/zitadel/admin.proto (`POST /admin/v1/members/_search`, `POST /admin/v1/members` { userId, roles });
+  // not yet called against a live instance.
+  listIamMembers: '/admin/v1/members/_search',
+  addIamMember: '/admin/v1/members',
+
   // admin v1 (REST): `AddSMTPConfig` is deprecated in favour of the email-provider endpoints.
   listEmailProviders: '/admin/v1/email/_search',
   addEmailProviderSmtp: '/admin/v1/email/smtp',
@@ -365,6 +371,17 @@ export interface ZitadelP1Api {
 
   /** User v2 `POST /v2/users/{userId}/deactivate`. True when deactivated, false when it already was. */
   deactivateUser(userId: string): Promise<boolean>;
+}
+
+/**
+ * K8 (portal access) addition: instance-level (IAM) membership. A separate interface for the same reason as
+ * ZitadelP1Api. The seed's own identity (`bos-bootstrap-sa`) is IAM_OWNER, so it may add IAM members.
+ */
+export interface ZitadelInstanceApi {
+  /** Admin v1 `POST /admin/v1/members/_search`. The user's instance roles, or undefined when not a member. */
+  listIamMemberRoles(userId: string): Promise<string[] | undefined>;
+  /** Admin v1 `POST /admin/v1/members` `{ userId, roles }`. Fails when the user is already a member. */
+  addIamMember(userId: string, roles: string[]): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -874,6 +891,20 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api {
       { userId, roles },
       { 'x-zitadel-orgid': orgId },
     );
+  }
+
+  async listIamMemberRoles(userId: string): Promise<string[] | undefined> {
+    // Instance members are a handful, so the first page is all of them; matched here, like org members.
+    const res = parse(
+      MemberList,
+      await this.transport.post(ENDPOINTS.listIamMembers, {}),
+      'ListIAMMembers',
+    );
+    return res.result.find((m) => m.userId === userId)?.roles;
+  }
+
+  async addIamMember(userId: string, roles: string[]): Promise<void> {
+    await this.transport.post(ENDPOINTS.addIamMember, { userId, roles });
   }
 
   async ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
