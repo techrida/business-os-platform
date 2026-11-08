@@ -295,7 +295,12 @@ describe('UserMirror as the UserDirectory backend', () => {
   it('resolve() JIT-inserts an active row once and enqueues users.sync', async () => {
     const i = { zitadelUserId: 'jit', tenantId: TENANT, organizationId: STAFF_ORG };
     const first = await mirror.resolve(i);
-    expect(first).toMatchObject({ status: 'active', departmentId: null });
+    expect(first).toMatchObject({
+      status: 'active',
+      departmentId: null,
+      tenantId: TENANT,
+      organizationId: STAFF_ORG,
+    });
     expect(queue.added).toEqual([{ name: 'users.sync', data: { zitadelUserId: 'jit' } }]);
     expect(db.txCount).toBe(1);
 
@@ -350,7 +355,13 @@ describe('UserMirror.resolve on an accepted invite', () => {
       tenantId: TENANT,
       organizationId: STAFF_ORG,
     });
-    expect(resolved).toEqual({ userId, status: 'active', departmentId: null });
+    expect(resolved).toEqual({
+      userId,
+      status: 'active',
+      departmentId: null,
+      tenantId: TENANT,
+      organizationId: STAFF_ORG,
+    });
     expect(store.users.find((u) => u.id === userId)?.status).toBe('active');
     expect(queue.added).toEqual([{ name: 'users.sync', data: { zitadelUserId: 'z-new' } }]);
   });
