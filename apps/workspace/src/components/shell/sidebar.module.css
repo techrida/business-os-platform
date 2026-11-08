@@ -192,49 +192,57 @@
 .userCard {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
-  padding: 8px;
+  padding: 10px;
   border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
 }
 
+/* Figma shows a rounded square with initials, not a circle. */
 .avatar {
   display: grid;
   flex: none;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-full);
-  background: var(--action-primary-subtle);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-brand);
   color: var(--action-primary);
+  font-size: var(--font-size-caption);
   font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-caption);
 }
 
 .userText {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .userName,
 .userDetail {
   overflow: hidden;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .userName {
   color: var(--text-primary);
-  font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-body-small);
 }
 
 .userDetail {
   color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
   text-transform: capitalize;
+}
+
+/* Decorative: the card is not a control in P0 (Sign out lives in the header). */
+.userChevron {
+  flex: none;
+  color: var(--icon-secondary);
 }
 
 /* The rail: icons only. Names stay available to assistive technology. */
@@ -280,6 +288,10 @@
     justify-content: center;
     min-height: 44px;
     padding: 0;
+  }
+
+  .userChevron {
+    display: none;
   }
 
   .userCard {

@@ -4,7 +4,14 @@ import type { NavIconName } from '@/lib/nav';
 
 /** Sidebar icons plus the few the shell itself needs. */
 export type IconName =
-  NavIconName | 'star' | 'search' | 'menu' | 'x' | 'chevrons-left' | 'chevrons-right';
+  | NavIconName
+  | 'star'
+  | 'search'
+  | 'menu'
+  | 'x'
+  | 'chevrons-left'
+  | 'chevrons-right'
+  | 'chevron-right';
 
 // Lucide-style drawings (24x24 grid, 2px round strokes), inlined so there is no icon package
 // and no request. Each entry is the inside of the <svg>.
@@ -166,6 +173,7 @@ const DRAWINGS: Record<IconName, ReactNode> = {
       <path d="m18 17-5-5 5-5" />
     </>
   ),
+  'chevron-right': <path d="m9 18 6-6-6-6" />,
   'chevrons-right': (
     <>
       <path d="m6 17 5-5-5-5" />
