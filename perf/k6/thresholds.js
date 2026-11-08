@@ -34,6 +34,9 @@ export const NFR = {
   authOverheadP99Ms: numberFromEnv('K6_READ_P99_MS', 800),
   writeP95Ms: numberFromEnv('K6_WRITE_P95_MS', 500),
   failedRate: numberFromEnv('K6_FAILED_RATE', 0.01),
+  // P1 (approvals.js): the real approve action and the route preview.
+  approveP95Ms: numberFromEnv('K6_APPROVE_P95_MS', 300),
+  previewP95Ms: numberFromEnv('K6_PREVIEW_P95_MS', 200),
 };
 
 /**
@@ -49,6 +52,28 @@ export function buildThresholds() {
     ],
     'http_req_duration{kind:write}': [`p(95)<${NFR.writeP95Ms}`],
     // Overall error rate across every request, and checks (status codes, JSON shape).
+    http_req_failed: [`rate<${NFR.failedRate}`],
+    checks: ['rate>0.99'],
+  };
+}
+
+/**
+ * P1 gates for `pnpm perf:approvals`, selected by the `name` tag that approvals.js puts on every
+ * measured request. A threshold can only fail the run if some request carries its tag, and a typo
+ * in a tag would leave an empty metric whose p(95) is 0 and passes forever. So each name also has
+ * a `count>0` threshold: no samples means a failed gate, not a green one.
+ *
+ * abortOnFail stays off (k6's default) so the run finishes and the summary prints. k6 still exits
+ * with code 99 when any threshold is crossed.
+ */
+export function buildApprovalsThresholds() {
+  return {
+    'http_req_duration{name:approve}': [`p(95)<${NFR.approveP95Ms}`],
+    'http_req_duration{name:preview}': [`p(95)<${NFR.previewP95Ms}`],
+    'http_req_duration{name:write}': [`p(95)<${NFR.writeP95Ms}`],
+    'http_reqs{name:approve}': ['count>0'],
+    'http_reqs{name:preview}': ['count>0'],
+    'http_reqs{name:write}': ['count>0'],
     http_req_failed: [`rate<${NFR.failedRate}`],
     checks: ['rate>0.99'],
   };
