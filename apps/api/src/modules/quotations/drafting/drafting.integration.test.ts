@@ -1,4 +1,4 @@
-// Integration tests of DraftingService create, list, detail and getVersion on a real Postgres (Testcontainers, needs Docker in WSL).
+// Integration tests of DraftingService create, list, detail, getVersion and updateDraft on a real Postgres (Testcontainers, needs Docker in WSL).
 // Real: migrations as bos_owner, queries as bos_app (so every DB CHECK and trigger of 0016 runs), NumberingService,
 // PricingService (NPR only: the MoneyService behind it is a stub that fails if FX is ever asked for) and the real
 // AuditService. Faked: the request context, and authz.assert, which still runs the real pure can() on a fake
@@ -50,8 +50,10 @@ import { NumberingService } from '../../../platform/settings/numbering.service';
 import { PricingService } from '../pricing/pricing.service';
 import { DraftingService, pricingInputOf } from './drafting.service';
 import {
+  GOLDEN_DISCOUNT,
   GOLDEN_TOTALS,
   goldenCreateBody,
+  goldenLines,
   seedOtherStaffUser,
   seedQuotationFixture,
   type QuotationFixture,
@@ -489,5 +491,152 @@ describe('DraftingService reads', () => {
       expect((await service.list()).map((q) => q.id)).toContain(theirs.id);
       expect((await service.detail(theirs.id)).quotation.ownerUserId).toBe(otherUserId);
     });
+  });
+});
+
+// --------------------------------------------------------------------------------------- update draft
+
+/** A small one-line NPR draft, so a PUT of the golden lines visibly changes every figure. */
+const smallBody = () =>
+  goldenCreateBody(f, {
+    lines: [
+      {
+        description: 'Discovery',
+        uom: 'lot',
+        quantity: '1',
+        unitPrice: '1000.00',
+        taxCodeId: f.taxCodeVat13Id,
+      },
+    ],
+    discount: undefined,
+  });
+
+/** The row version of `versionId` as the API returns it. */
+const rowVersionOf = async (quotationId: string, versionId: string): Promise<number> =>
+  (await service.getVersion(quotationId, versionId)).version;
+
+describe('DraftingService.updateDraft', () => {
+  it('re-prices the golden lines to 2,690,999.99 and bumps the row version', async () => {
+    const created = await service.create(smallBody(), 'put-golden');
+    const before = await rowVersionOf(created.id, created.currentVersionId);
+
+    const { version } = await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before,
+      lines: goldenLines(f),
+      discount: GOLDEN_DISCOUNT,
+    });
+    expect(version).toBe(before + 1);
+
+    const after = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(after.version).toBe(version);
+    expect(after.totals).toMatchObject(GOLDEN_TOTALS);
+    expect(after.discount).toEqual(GOLDEN_DISCOUNT);
+    expect(after.lines.map((l) => [l.lineNo, l.description])).toEqual([
+      [1, 'Implementation'],
+      [2, 'Licences'],
+      [3, 'Training'],
+    ]);
+    const expected = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      pricing.priceVersion(tx, scopeA, pricingInputOf(goldenCreateBody(f))),
+    );
+    expect(after.taxSummary).toHaveLength(expected.taxSummary.length);
+
+    const { rows: audit } = await ownerPool.query<{ action: string }>(
+      `SELECT action FROM audit.audit_events WHERE tenant_id = $1 AND entity_id = $2 ORDER BY id`,
+      [f.tenantId, created.id],
+    );
+    expect(audit.map((r) => r.action)).toContain('quotation.draft_updated');
+  });
+
+  it('keeps the saved lines and totals when the body changes only the text', async () => {
+    const created = await service.create(goldenCreateBody(f), 'put-partial');
+    const before = await service.getVersion(created.id, created.currentVersionId);
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      scope: 'Phase 1 only',
+    });
+    const after = await service.getVersion(created.id, created.currentVersionId);
+    expect(after.scope).toBe('Phase 1 only');
+    expect(after.totals).toMatchObject(GOLDEN_TOTALS);
+    expect(after.lines).toEqual(before.lines);
+  });
+
+  it('answers 400 when the merged content has validUntil before the saved issueDate', async () => {
+    const created = await service.create(goldenCreateBody(f), 'put-validity');
+    const v = await rowVersionOf(created.id, created.currentVersionId);
+    expect(
+      await statusOf(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: v,
+          validUntil: '2026-01-01',
+        }),
+      ),
+    ).toBe(400);
+  });
+
+  it('answers 409 for a stale expectedVersion and changes nothing', async () => {
+    const created = await service.create(smallBody(), 'put-stale');
+    const v = await rowVersionOf(created.id, created.currentVersionId);
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: v,
+      scope: 'First edit',
+    });
+    expect(
+      await statusOf(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: v,
+          lines: goldenLines(f),
+        }),
+      ),
+    ).toBe(409);
+    const after = await service.getVersion(created.id, created.currentVersionId);
+    expect(after).toMatchObject({ version: v + 1, scope: 'First edit' });
+    expect(after.lines).toHaveLength(1);
+  });
+
+  it('answers 409 for a version moved to Submitted, even with its current row version', async () => {
+    const created = await service.create(smallBody(), 'put-submitted');
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.quotation_versions
+               SET status = 'submitted', fx_rate = 1, amount_npr = total, npr_taxable_amount = taxable_amount,
+                   content_sha256 = decode(${HASH_HEX}, 'hex'), snapshot_sha256 = decode(${HASH_HEX}, 'hex')
+             WHERE tenant_id = ${f.tenantId} AND id = ${created.currentVersionId}`,
+      ),
+    );
+    // Read back, so the 409 below is the status and not a stale row version.
+    const submitted = await service.getVersion(created.id, created.currentVersionId);
+    expect(submitted.status).toBe('submitted');
+    expect(
+      await statusOf(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: submitted.version,
+          lines: goldenLines(f),
+        }),
+      ),
+    ).toBe(409);
+    const after = await service.getVersion(created.id, created.currentVersionId);
+    expect(after).toMatchObject({ status: 'submitted', version: submitted.version });
+    expect(after.lines).toHaveLength(1);
+  });
+
+  it("answers 404 for another owner's quotation under own scope", async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const theirs = await asCaller({ userId: otherUserId }, () =>
+      service.create(smallBody(), 'put-other-owner'),
+    );
+    const v = await asCaller({ userId: otherUserId }, () =>
+      rowVersionOf(theirs.id, theirs.currentVersionId),
+    );
+    expect(
+      await statusOf(
+        service.updateDraft(theirs.id, theirs.currentVersionId, {
+          expectedVersion: v,
+          scope: 'Not mine',
+        }),
+      ),
+    ).toBe(404);
   });
 });
