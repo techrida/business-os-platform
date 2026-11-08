@@ -1,9 +1,13 @@
-import { UnauthorizedException } from '@nestjs/common';
-import { describe, expect, it } from 'vitest';
+import { Logger, UnauthorizedException } from '@nestjs/common';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { startTestIssuer, type TestIssuer } from '../../../test/e2e/support/test-issuer';
+import { JwtVerifier } from './jwt-verifier';
 
 import type { AuthIdentity } from './claims';
 import {
   assertRecentAuth,
+  assertRecentIdToken,
   DEFAULT_STEP_UP_MAX_AGE_SECONDS,
   isAuthRecent,
   STEP_UP_REQUIRED,
@@ -77,6 +81,79 @@ describe('assertRecentAuth', () => {
     const ex = thrown as StepUpRequiredException;
     expect(ex.getStatus()).toBe(401);
     expect(ex.getResponse()).toMatchObject({ code: STEP_UP_REQUIRED, maxAge: MAX });
+  });
+});
+
+// The real producer (the e2e test issuer, serving discovery and a JWKS on 127.0.0.1) through the
+// real consumer (JwtVerifier): every case differs from the valid token in exactly one way.
+describe('assertRecentIdToken', () => {
+  const PROJECT = '300000000000000001';
+  const CLIENT = '300000000000000002';
+  const SUB = 'user-1';
+  let issuer: TestIssuer;
+  let verifier: JwtVerifier;
+  const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+  beforeAll(async () => {
+    Logger.overrideLogger(false);
+    issuer = await startTestIssuer();
+    verifier = new JwtVerifier({ issuer: issuer.url, audience: PROJECT, allowedAzp: [CLIENT] });
+  });
+  afterAll(async () => {
+    verifier.onModuleDestroy();
+    await issuer.close();
+  });
+
+  const idToken = (over: Partial<Parameters<TestIssuer['mintIdToken']>[0]> = {}) =>
+    issuer.mintIdToken({ sub: SUB, authTime: nowSec() - 10, audience: [CLIENT], ...over });
+
+  async function refusal(promise: Promise<unknown>): Promise<void> {
+    const err: unknown = await promise.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(StepUpRequiredException);
+    const ex = err as StepUpRequiredException;
+    expect(ex.getStatus()).toBe(401);
+    expect(ex.getResponse()).toMatchObject({ code: STEP_UP_REQUIRED, maxAge: MAX });
+  }
+
+  it('passes a fresh, valid ID token for the caller', async () => {
+    await expect(
+      assertRecentIdToken(verifier, await idToken(), SUB, nowSec(), MAX),
+    ).resolves.toBeUndefined();
+  });
+
+  it('passes an ID token whose exp is an hour past when auth_time is fresh', async () => {
+    const token = await idToken({ exp: nowSec() - 3600 });
+    await expect(assertRecentIdToken(verifier, token, SUB, nowSec(), MAX)).resolves.toBeUndefined();
+  });
+
+  it.each<[string, () => Promise<string | undefined>]>([
+    ['the header is missing', () => Promise.resolve(undefined)],
+    ['the header is empty', () => Promise.resolve('')],
+    ['the header is not a JWT', () => Promise.resolve('not-a-jwt')],
+    ['two headers were joined', async () => `${await idToken()}, ${await idToken()}`],
+    ['auth_time is stale', () => idToken({ authTime: nowSec() - MAX - 5 })],
+    ['the token is forged (a key not in the JWKS)', () => idToken({ signWith: 'forged' })],
+    ['the token belongs to another user', () => idToken({ sub: 'user-2' })],
+    ['aud names no allowed client', () => idToken({ audience: ['other-client'] })],
+    ['iss is another issuer', () => idToken({ issuer: 'https://evil.test' })],
+    [
+      'an access token is passed as the ID token',
+      () =>
+        issuer.mint(
+          { sub: SUB, azp: CLIENT },
+          { audience: [PROJECT, CLIENT], authTime: nowSec() - 10 },
+        ),
+    ],
+    ['exp is more than 24 h past', () => idToken({ exp: nowSec() - 86_400 - 120 })],
+  ])('throws 401 step_up_required when %s', async (_label, header) => {
+    await refusal(assertRecentIdToken(verifier, await header(), SUB, nowSec(), MAX));
+  });
+
+  it('throws 401 step_up_required when the caller has no user id', async () => {
+    await refusal(assertRecentIdToken(verifier, await idToken(), undefined, nowSec(), MAX));
   });
 });
 
