@@ -240,4 +240,14 @@ describe('route: groups, users, delegation and separation of duties', () => {
     expect(d.resolveActor(step, 'deputy-1')).toEqual({ eligible: true, onBehalfOf: 'acc-1' });
     expect(d.resolveActor(step, 'fin-1')).toEqual({ eligible: false, onBehalfOf: null });
   });
+
+  it('a user step whose user is not active has no approver (R24)', () => {
+    const d = buildDirectory(
+      { ...people, activeUserIds: new Set(['acc-1']) },
+      { now: NOW, documentType: 'test_memo' },
+    );
+    const step = (user: string) => ({ id: 'u', kind: 'user' as const, user, reason: 'Named' });
+    expect(d.eligible(step('gone-1'))).toEqual([]);
+    expect(d.eligible(step('acc-1'))).toEqual(['acc-1']);
+  });
 });
