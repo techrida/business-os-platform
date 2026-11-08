@@ -1,7 +1,14 @@
 import { createTransport } from 'nodemailer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { EMAIL_PROVIDER, EmailSendError, SmtpEmailProvider, redactError } from './email.provider';
+import {
+  DEFAULT_SMTP_TIMEOUTS_MS,
+  EMAIL_PROVIDER,
+  EmailSendError,
+  SmtpEmailProvider,
+  redactError,
+} from './email.provider';
+import { STALE_CLAIM_MIN } from './outbox.drainer';
 
 const config = {
   SMTP_URL: 'smtp://mailer:s3cret-pw@smtp.example.com:587',
@@ -70,6 +77,55 @@ describe('SmtpEmailProvider', () => {
 
   it('exports the injection token', () => {
     expect(typeof EMAIL_PROVIDER).toBe('symbol');
+  });
+});
+
+describe('SMTP timeouts', () => {
+  /** nodemailer keeps the options it built the SMTP transport with on `transporter.options`. */
+  const optionsOf = (provider: SmtpEmailProvider) =>
+    (provider as unknown as { transport: { transporter: { options: Record<string, unknown> } } })
+      .transport.transporter.options;
+
+  it('gives the built transport a connection, greeting and socket timeout by default', () => {
+    const options = optionsOf(new SmtpEmailProvider(config));
+    expect(options).toMatchObject({
+      connectionTimeout: DEFAULT_SMTP_TIMEOUTS_MS.connection,
+      greetingTimeout: DEFAULT_SMTP_TIMEOUTS_MS.greeting,
+      socketTimeout: DEFAULT_SMTP_TIMEOUTS_MS.socket,
+      // The URL still supplies the host and port.
+      host: 'smtp.example.com',
+      port: 587,
+    });
+    expect(DEFAULT_SMTP_TIMEOUTS_MS).toEqual({
+      connection: 10_000,
+      greeting: 10_000,
+      socket: 30_000,
+    });
+  });
+
+  it('reads the timeouts from config when it has them', () => {
+    const options = optionsOf(
+      new SmtpEmailProvider({
+        ...config,
+        SMTP_CONNECTION_TIMEOUT_MS: 1_000,
+        SMTP_GREETING_TIMEOUT_MS: 2_000,
+        SMTP_SOCKET_TIMEOUT_MS: 3_000,
+      }),
+    );
+    expect(options).toMatchObject({
+      connectionTimeout: 1_000,
+      greetingTimeout: 2_000,
+      socketTimeout: 3_000,
+    });
+  });
+
+  it('keeps the default timeouts shorter than the outbox claim lease', () => {
+    // A hung send must give up before the drainer treats its claim as stale and hands the row to another worker.
+    const worstCaseMs =
+      DEFAULT_SMTP_TIMEOUTS_MS.connection +
+      DEFAULT_SMTP_TIMEOUTS_MS.greeting +
+      DEFAULT_SMTP_TIMEOUTS_MS.socket;
+    expect(worstCaseMs).toBeLessThan(STALE_CLAIM_MIN * 60_000);
   });
 });
 
