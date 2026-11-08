@@ -81,7 +81,7 @@ const memo = {
   status: 'draft',
   ownerUserId: ID_B,
   departmentId: null,
-  customerOrganizationId: null,
+  customerPartyId: null,
   editorUserIds: [],
   version: 1,
   createdAt: WHEN,
