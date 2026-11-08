@@ -9,7 +9,10 @@ import {
   QUOTATION_STATUSES,
   QUOTATION_TRANSITIONS,
   QuantityString,
+  QuotationApprovalSnapshotSchema,
+  QuotationDetailSchema,
   QuotationLineInputSchema,
+  QuotationListItemSchema,
   QuotationTaxSummaryItemSchema,
   QuotationVersionContentSchema,
   QuotationVersionDtoSchema,
@@ -391,6 +394,7 @@ describe('QuotationVersionDtoSchema', () => {
     snapshotSha256: null,
     renderedDocumentId: null,
     renderedSha256: null,
+    renderedScanStatus: null,
     supersedesVersionId: null,
     supersededByVersionId: id(),
     revisionReason: 'Customer changed scope',
@@ -437,5 +441,235 @@ describe('QuotationVersionDtoSchema', () => {
     expect(
       QuotationVersionDtoSchema.safeParse({ ...version(), rejectionSource: 'internal' }).success,
     ).toBe(false);
+  });
+});
+
+describe('QuotationVersionDtoSchema.renderedScanStatus', () => {
+  const iso = '2026-11-08T10:00:00+05:45';
+  const base = () => ({
+    id: id(),
+    quotationId: id(),
+    number: 'QT-2082-0042',
+    revisionNo: 1,
+    status: 'approved',
+    rejectionSource: null,
+    customerId: id(),
+    contactId: null,
+    templateId: null,
+    currency: 'NPR',
+    issueDate: '2026-11-08',
+    validUntil: '2026-11-23',
+    scope: null,
+    assumptions: null,
+    exclusions: null,
+    deliveryTimeline: null,
+    paymentTermId: null,
+    paymentSchedule: [],
+    discount: null,
+    lines: [],
+    taxSummary: [],
+    totals: {
+      subtotal: '100.00',
+      discountAmount: '0.00',
+      taxableAmount: '100.00',
+      taxAmount: '13.00',
+      total: '113.00',
+      effectiveDiscountPct: '0.0000',
+    },
+    internalCostTotal: null,
+    marginPct: null,
+    nprSnapshot: null,
+    approvalRequestId: null,
+    snapshotSha256: null,
+    renderedDocumentId: id(),
+    renderedSha256: null,
+    renderedScanStatus: 'clean',
+    supersedesVersionId: null,
+    supersededByVersionId: null,
+    revisionReason: null,
+    cancelReason: null,
+    submittedAt: iso,
+    approvedAt: iso,
+    sentAt: null,
+    acceptedAt: null,
+    rejectedAt: null,
+    expiredAt: null,
+    cancelledAt: null,
+    version: 1,
+    createdAt: iso,
+    updatedAt: iso,
+  });
+
+  it('takes a document scan status or null, and refuses anything else', () => {
+    expect(QuotationVersionDtoSchema.safeParse(base()).success).toBe(true);
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...base(), renderedScanStatus: null }).success,
+    ).toBe(true);
+    for (const status of ['quarantined', 'infected', 'scan_failed']) {
+      expect(
+        QuotationVersionDtoSchema.safeParse({ ...base(), renderedScanStatus: status }).success,
+        status,
+      ).toBe(true);
+    }
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...base(), renderedScanStatus: 'ok' }).success,
+    ).toBe(false);
+  });
+
+  it('is required: a producer that omits it fails, so the default is deny', () => {
+    const { renderedScanStatus: _omitted, ...without } = base();
+    expect(QuotationVersionDtoSchema.safeParse(without).success).toBe(false);
+  });
+});
+
+describe('QuotationListItemSchema', () => {
+  const iso = '2026-11-08T10:00:00+05:45';
+  const item = () => ({
+    id: id(),
+    number: 'QT-2082-0042',
+    customerId: id(),
+    opportunityId: id(),
+    currentVersionId: id(),
+    ownerUserId: id(),
+    status: 'sent',
+    version: 3,
+    createdAt: iso,
+    updatedAt: iso,
+    customerName: 'Big Kahuna Burger Ltd.',
+    currency: 'NPR',
+    total: '2690999.99',
+    validUntil: '2026-11-23',
+    ownerName: 'Amanda Rai',
+  });
+
+  it('is the parent DTO plus customer, currency, total, valid-until and owner', () => {
+    expect(QuotationListItemSchema.safeParse(item()).success).toBe(true);
+    expect(QuotationListItemSchema.safeParse([item()]).success).toBe(false);
+  });
+
+  it('allows an unowned quotation, but keeps money a string', () => {
+    expect(
+      QuotationListItemSchema.safeParse({ ...item(), ownerUserId: null, ownerName: null }).success,
+    ).toBe(true);
+    expect(QuotationListItemSchema.safeParse({ ...item(), total: 2690999.99 }).success).toBe(false);
+    expect(QuotationListItemSchema.safeParse({ ...item(), total: '-5.00' }).success).toBe(false);
+  });
+
+  it('refuses a missing customer name, an unknown status and a bad currency', () => {
+    const { customerName: _omitted, ...without } = item();
+    expect(QuotationListItemSchema.safeParse(without).success).toBe(false);
+    expect(QuotationListItemSchema.safeParse({ ...item(), status: 'lost' }).success).toBe(false);
+    expect(QuotationListItemSchema.safeParse({ ...item(), currency: 'EUR' }).success).toBe(false);
+  });
+});
+
+describe('QuotationDetailSchema', () => {
+  const iso = '2026-11-08T10:00:00+05:45';
+  const parent = () => ({
+    id: id(),
+    number: 'QT-2082-0042',
+    customerId: id(),
+    opportunityId: id(),
+    currentVersionId: id(),
+    ownerUserId: null,
+    status: 'draft',
+    version: 1,
+    createdAt: iso,
+    updatedAt: iso,
+  });
+  const detail = () => ({
+    quotation: parent(),
+    versions: [],
+    statusHistory: [
+      {
+        versionId: id(),
+        fromStatus: null,
+        toStatus: 'draft',
+        actorId: id(),
+        reason: null,
+        at: iso,
+      },
+    ],
+    customerName: 'Big Kahuna Burger Ltd.',
+    contacts: [{ id: id(), name: 'Jules Winnfield', email: 'jules@example.com' }],
+  });
+
+  it('parses the parent, versions, history, customer name and contacts', () => {
+    expect(QuotationDetailSchema.safeParse(detail()).success).toBe(true);
+  });
+
+  it('lets a contact have no email (the send dialog shows it as unusable)', () => {
+    expect(
+      QuotationDetailSchema.safeParse({
+        ...detail(),
+        contacts: [{ id: id(), name: 'Vincent', email: null }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('refuses a missing history, a bad history status and a contact without an id', () => {
+    const { statusHistory: _omitted, ...without } = detail();
+    expect(QuotationDetailSchema.safeParse(without).success).toBe(false);
+    const d = detail();
+    expect(
+      QuotationDetailSchema.safeParse({
+        ...d,
+        statusHistory: [{ ...d.statusHistory[0], toStatus: 'lost' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      QuotationDetailSchema.safeParse({ ...d, contacts: [{ name: 'x', email: null }] }).success,
+    ).toBe(false);
+  });
+});
+
+describe('QuotationApprovalSnapshotSchema', () => {
+  const snapshot = () => ({
+    nprTotal: '2690999.99',
+    effectiveDiscountPct: '13.0000',
+    marginPct: '22.5000',
+    nprDiscountAmount: '400000.00',
+    currency: 'USD',
+    fxRate: '133.500000',
+    customerName: 'Big Kahuna Burger Ltd.',
+    quotationNumber: 'QT-2082-0042',
+    revisionNo: 2,
+  });
+
+  it('parses the camelCase snapshot with money and percentages as strings', () => {
+    expect(QuotationApprovalSnapshotSchema.safeParse(snapshot()).success).toBe(true);
+  });
+
+  it('allows an unknown margin (no cost recorded) and an NPR document at rate 1', () => {
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({
+        ...snapshot(),
+        marginPct: null,
+        currency: 'NPR',
+        fxRate: '1',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('refuses numbers for money and percentages, snake_case keys and a zero revision', () => {
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({ ...snapshot(), nprTotal: 2690999.99 }).success,
+    ).toBe(false);
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({ ...snapshot(), effectiveDiscountPct: 13 })
+        .success,
+    ).toBe(false);
+    const { nprTotal, ...rest } = snapshot();
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({ ...rest, npr_total: nprTotal }).success,
+    ).toBe(false);
+    expect(
+      QuotationApprovalSnapshotSchema.safeParse({ ...snapshot(), revisionNo: 0 }).success,
+    ).toBe(false);
+  });
+
+  it('is what the inbox renderer reads: a stored JSON snapshot round-trips', () => {
+    const stored = JSON.parse(JSON.stringify(snapshot())) as unknown;
+    expect(QuotationApprovalSnapshotSchema.parse(stored)).toEqual(snapshot());
   });
 });
