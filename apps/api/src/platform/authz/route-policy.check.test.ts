@@ -112,6 +112,7 @@ describe('route policy sweep on the real AppModule', () => {
       VALKEY_URL: 'redis://127.0.0.1:1',
       OIDC_ISSUER: 'http://127.0.0.1:1',
       OIDC_AUDIENCE: 'route-policy-check',
+      OIDC_CLIENT_ID: 'route-policy-client',
     });
     const { AppModule } = await import('../../app.module');
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
