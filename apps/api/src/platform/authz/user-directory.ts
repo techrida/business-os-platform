@@ -10,12 +10,21 @@ export abstract class UserDirectory {
   /**
    * Maps a token identity to our user row. Creates the row (status `active`) and enqueues
    * `users.sync` when it is missing, so a first login works before the webhook arrives.
+   *
+   * The lookup is by ZITADEL id alone, so it returns the row's own `tenantId` and `organizationId`:
+   * the tenancy interceptor refuses the request when they differ from the token's org (review R26).
    */
   abstract resolve(i: {
     zitadelUserId: string;
     tenantId: string;
     organizationId: string;
-  }): Promise<{ userId: string; status: Principal['status']; departmentId: string | null }>;
+  }): Promise<{
+    userId: string;
+    status: Principal['status'];
+    departmentId: string | null;
+    tenantId: string;
+    organizationId: string;
+  }>;
 
   /** Active users holding `role` in this scope: the approver lookup for routing and notifications. */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
