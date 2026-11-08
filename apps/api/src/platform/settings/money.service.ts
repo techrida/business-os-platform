@@ -56,7 +56,6 @@ export class MoneyService {
         .where(
           and(
             eq(fxRates.tenantId, scope.tenantId),
-            eq(fxRates.organizationId, scope.organizationId),
             eq(fxRates.currency, money.currency),
             lte(fxRates.rateDate, day),
           ),
@@ -80,7 +79,8 @@ export class MoneyService {
   }
 
   /**
-   * Records the rate of `currency` for `rateDate` inside the caller's transaction and returns its id.
+   * Records the rate of `currency` for `rateDate` for the whole tenant (a rate is a market fact, ADR 0027
+   * section 7) inside the caller's transaction and returns its id.
    * ON CONFLICT DO NOTHING instead of catching the unique violation: in Postgres a violation aborts the
    * whole transaction, so the caller could not even roll back cleanly to report a 409. A rate is never
    * overwritten; to correct one, enter it for a later date.
@@ -92,11 +92,12 @@ export class MoneyService {
     rateDate: string,
     source: string,
   ): Promise<{ id: string }> {
-    const { tenantId, organizationId, userId } = await readTxContext(tx, 'MoneyService.setRate');
+    const { tenantId, userId } = await readTxContext(tx, 'MoneyService.setRate');
     const [row] = await tx
       .insert(fxRates)
-      .values({ tenantId, organizationId, currency, rateNpr, rateDate, source, enteredBy: userId })
-      .onConflictDoNothing()
+      .values({ tenantId, currency, rateNpr, rateDate, source, enteredBy: userId })
+      // Name the target: a bare DO NOTHING would also swallow any other unique violation as "already exists".
+      .onConflictDoNothing({ target: [fxRates.tenantId, fxRates.currency, fxRates.rateDate] })
       .returning({ id: fxRates.id });
     if (!row) {
       throw new ConflictException({
@@ -122,7 +123,6 @@ export class MoneyService {
       .where(
         and(
           eq(fxRates.tenantId, scope.tenantId),
-          eq(fxRates.organizationId, scope.organizationId),
           opts.currency ? eq(fxRates.currency, opts.currency) : undefined,
         ),
       )
