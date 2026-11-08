@@ -1,0 +1,68 @@
+import 'server-only';
+
+import { redirect } from 'next/navigation';
+
+import { failureOf } from './api-kernel';
+import { getEnv } from './env';
+import type { FailureContext } from './kernel-ui';
+import { getSession, type Session } from './session';
+
+/**
+ * Shared plumbing for the workspace BFF: page guards and Route Handler helpers. Server-only.
+ * Serves the NFR "no token ever reaches the browser": pages and handlers get the session here, call
+ * the API with it, and hand the browser only the parsed result.
+ */
+
+/**
+ * For pages and server actions. A layout cannot see the URL, so each page names its own path and
+ * an unauthenticated user comes back to it after signing in. `redirect` throws, so the caller
+ * never gets a null session.
+ */
+export async function requireStaffSession(returnTo: string): Promise<Session> {
+  const session = await getSession();
+  if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+  if (session.orgKind !== 'staff') redirect('/staff-only');
+  return session;
+}
+
+const NO_STORE = { 'cache-control': 'no-store' } as const;
+
+export function jsonResponse(body: unknown, status = 200): Response {
+  return Response.json(body, { status, headers: NO_STORE });
+}
+
+/**
+ * For Route Handlers: the session, or a 401/403 JSON response the handler returns as is. A handler
+ * never redirects, because `fetch` from the browser would follow the redirect into the login HTML.
+ */
+export async function routeSession(): Promise<Session | Response> {
+  const session = await getSession();
+  if (!session) return jsonResponse({ error: { message: 'Sign in to continue.' } }, 401);
+  if (session.orgKind !== 'staff') {
+    return jsonResponse({ error: { message: 'This area is for staff only.' } }, 403);
+  }
+  return session;
+}
+
+/**
+ * Route Handlers do not get the origin check Next runs for Server Actions, so a state-changing
+ * handler calls this. The `__Host-` cookie is `SameSite=Lax`, which already stops cross-site
+ * POSTs; this is the second wall.
+ */
+export function isSameOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  return origin !== null && origin === new URL(getEnv().WORKSPACE_PUBLIC_URL).origin;
+}
+
+export function forbiddenOrigin(): Response {
+  return jsonResponse({ error: { message: 'This request did not come from the workspace.' } }, 403);
+}
+
+/** Maps a thrown API failure to a JSON response the browser code can show as is. */
+export function errorResponse(err: unknown, context: FailureContext = 'generic'): Response {
+  const failure = failureOf(err, context);
+  // Pass client errors through; anything else (API down, 5xx) is a gateway problem from the
+  // browser's point of view.
+  const status = failure.status >= 400 && failure.status < 500 ? failure.status : 502;
+  return jsonResponse({ error: { message: failure.message, reload: failure.reload } }, status);
+}

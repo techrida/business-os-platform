@@ -1,0 +1,328 @@
+import 'server-only';
+
+import {
+  type ApprovalActionBody,
+  type ApprovalRequestDto,
+  ApprovalRequestDtoSchema,
+  ApprovalRequestStatusSchema,
+  type AuditEventDto,
+  AuditEventDtoSchema,
+  type CreateDocumentBody,
+  type CreateMemoBody,
+  DocumentVersionDtoSchema,
+  ErrorBodySchema,
+  type InboxItemDto,
+  InboxItemDtoSchema,
+  MemoDtoSchema,
+  type NotificationDto,
+  NotificationDtoSchema,
+  type RoutePlan,
+  RoutePlanSchema,
+  type SignedLinkDto,
+  SignedLinkDtoSchema,
+  type UnreadCountDto,
+  UnreadCountDtoSchema,
+} from '@bos/contracts';
+import { z } from 'zod';
+
+import { ApiError, apiFetch } from './api';
+import { describeFailure, type Failure, type FailureContext } from './kernel-ui';
+import type { Session } from './session';
+
+/**
+ * Typed calls from the workspace BFF to the kernel's API routes (approvals, test memos, documents,
+ * notifications, audit). Server-only: every call carries the user's access token.
+ *
+ * Every response is parsed with the contracts' Zod schemas, so an API that drifts from the contract
+ * fails loudly here (502) instead of rendering `undefined` on a screen. Serves the NFR "the UI
+ * never shows data the contract does not promise".
+ */
+
+// ---------------------------------------------------------------------------------------------
+// Shapes that live in the API module rather than in @bos/contracts (see test-memo.types.ts)
+// ---------------------------------------------------------------------------------------------
+
+export const MemoDetailSchema = MemoDtoSchema.extend({
+  attachments: z.array(DocumentVersionDtoSchema),
+  approval: z.object({ requestId: z.string(), status: ApprovalRequestStatusSchema }).nullable(),
+});
+export type MemoDetail = z.infer<typeof MemoDetailSchema>;
+export type Memo = z.infer<typeof MemoDtoSchema>;
+export type DocumentVersion = z.infer<typeof DocumentVersionDtoSchema>;
+
+const SubmitMemoResultSchema = z.object({
+  requestId: z.string(),
+  status: z.enum(['pending', 'blocked']),
+});
+export type SubmitMemoResult = z.infer<typeof SubmitMemoResultSchema>;
+
+const CreatedDocumentSchema = z.object({
+  documentId: z.guid(),
+  versionId: z.guid(),
+  uploadPath: z.string(),
+});
+export type CreatedDocument = z.infer<typeof CreatedDocumentSchema>;
+
+const AuditListSchema = z.object({ items: z.array(AuditEventDtoSchema) });
+
+// ---------------------------------------------------------------------------------------------
+// Plumbing
+// ---------------------------------------------------------------------------------------------
+
+async function readBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (text === '') return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+/** One path segment from a caller-supplied id: encoded, so `../` can never climb out of the route. */
+const seg = (id: string): string => encodeURIComponent(id);
+
+async function call<T>(
+  session: Session,
+  path: string,
+  schema: z.ZodType<T>,
+  init?: RequestInit,
+): Promise<T> {
+  const res = await apiFetch(session, path, init);
+  const body = await readBody(res);
+  const label = `${init?.method ?? 'GET'} ${path.split('?')[0] ?? path}`;
+  if (!res.ok) throw new ApiError(res.status, `${label} failed with ${res.status}`, body);
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    // 502: the upstream answered, but not with the shape the contract promises.
+    throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
+  }
+  return parsed.data;
+}
+
+function json(method: string, body: unknown, headers: Record<string, string> = {}): RequestInit {
+  return {
+    method,
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  };
+}
+
+/**
+ * Turns any thrown value into something a screen can show. A thrown non-`ApiError` (the fetch
+ * itself failed: API down, DNS, timeout) becomes status 0, which `describeFailure` words as
+ * "the platform did not respond" and marks as not definite.
+ */
+export function failureOf(
+  err: unknown,
+  context: FailureContext = 'generic',
+): Failure & {
+  status: number;
+} {
+  if (!(err instanceof ApiError)) return { ...describeFailure({ status: 0 }, context), status: 0 };
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  const error = parsed.success ? parsed.data.error : undefined;
+  const failure = describeFailure(
+    {
+      status: err.status,
+      code: error?.code,
+      reason: error?.reason,
+      // The API's 400 text names fields, never values (see its controllers), so it is safe to show.
+      detail: err.status === 400 ? error?.message : undefined,
+    },
+    context,
+  );
+  return { ...failure, status: err.status };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Approvals
+// ---------------------------------------------------------------------------------------------
+
+/** `GET /v1/approvals/inbox`: a bare array. Needs `approvals.requests.act`, so Sales gets 403. */
+export function getInbox(session: Session): Promise<InboxItemDto[]> {
+  return call(session, '/v1/approvals/inbox', z.array(InboxItemDtoSchema));
+}
+
+export function getApprovalRequest(session: Session, id: string): Promise<ApprovalRequestDto> {
+  return call(session, `/v1/approvals/requests/${seg(id)}`, ApprovalRequestDtoSchema);
+}
+
+/**
+ * `POST /v1/approvals/requests/:id/actions`. The API refuses a call without `Idempotency-Key`
+ * (400), so the key is a required argument here: a missing key is a compile error, not a runtime one.
+ */
+export function actOnApproval(
+  session: Session,
+  id: string,
+  body: ApprovalActionBody,
+  idempotencyKey: string,
+): Promise<ApprovalRequestDto> {
+  return call(
+    session,
+    `/v1/approvals/requests/${seg(id)}/actions`,
+    ApprovalRequestDtoSchema,
+    json('POST', body, { 'idempotency-key': idempotencyKey }),
+  );
+}
+
+/** `POST /v1/approvals/preview`: the route a document would take, with each step's reason. */
+export function previewRoute(
+  session: Session,
+  input: { documentType: string; facts: Record<string, unknown>; sodUserIds?: string[] },
+): Promise<RoutePlan> {
+  return call(session, '/v1/approvals/preview', RoutePlanSchema, json('POST', input));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Test memos
+// ---------------------------------------------------------------------------------------------
+
+export function createMemo(session: Session, body: CreateMemoBody): Promise<Memo> {
+  return call(session, '/v1/test-memos', MemoDtoSchema, json('POST', body));
+}
+
+export function getMemo(session: Session, id: string): Promise<MemoDetail> {
+  return call(session, `/v1/test-memos/${seg(id)}`, MemoDetailSchema);
+}
+
+export function updateMemo(
+  session: Session,
+  id: string,
+  body: Partial<CreateMemoBody>,
+): Promise<Memo> {
+  return call(session, `/v1/test-memos/${seg(id)}`, MemoDtoSchema, json('PATCH', body));
+}
+
+export function submitMemo(session: Session, id: string): Promise<SubmitMemoResult> {
+  return call(
+    session,
+    `/v1/test-memos/${seg(id)}/submit`,
+    SubmitMemoResultSchema,
+    json('POST', {}),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------------------------
+
+/** Step 1 of an upload: reserve the document and its first version. */
+export function createDocument(
+  session: Session,
+  body: CreateDocumentBody,
+): Promise<CreatedDocument> {
+  return call(session, '/v1/documents', CreatedDocumentSchema, json('POST', body));
+}
+
+/** The content route the API hands back must be the one for this document and version. */
+function contentPath(created: Pick<CreatedDocument, 'documentId' | 'versionId' | 'uploadPath'>) {
+  const expected = `/v1/documents/${created.documentId}/versions/${created.versionId}/content`;
+  // Trust the API's own path when it matches; otherwise refuse rather than send a file elsewhere.
+  if (created.uploadPath !== expected) {
+    throw new ApiError(502, 'POST /v1/documents returned an unexpected uploadPath');
+  }
+  return created.uploadPath;
+}
+
+/**
+ * Step 2 of an upload: stream the bytes. The API reads the raw request body and requires
+ * `Content-Length` (411 without it), so the browser's length is forwarded and the body is never
+ * buffered here. `duplex: 'half'` is what Node's fetch demands for a streamed request body.
+ */
+export async function uploadDocumentContent(
+  session: Session,
+  created: Pick<CreatedDocument, 'documentId' | 'versionId' | 'uploadPath'>,
+  upload: { body: ReadableStream<Uint8Array>; contentLength: number; contentType: string },
+): Promise<z.infer<typeof DocumentVersionDtoSchema>> {
+  const init: RequestInit & { duplex: 'half' } = {
+    method: 'PUT',
+    headers: {
+      // The file's own type: the API's JSON and form parsers only act on their own types and
+      // would consume the stream otherwise.
+      'content-type': upload.contentType,
+      'content-length': String(upload.contentLength),
+    },
+    body: upload.body,
+    duplex: 'half',
+  };
+  return await call(session, contentPath(created), DocumentVersionDtoSchema, init);
+}
+
+/** `POST /v1/documents/:id/versions/:versionId/link`: a 60-second, single-use signed link. */
+export function issueDocumentLink(
+  session: Session,
+  documentId: string,
+  versionId: string,
+): Promise<SignedLinkDto> {
+  return call(
+    session,
+    `/v1/documents/${seg(documentId)}/versions/${seg(versionId)}/link`,
+    SignedLinkDtoSchema,
+    json('POST', {}),
+  );
+}
+
+const SIGNED_PATH = /^\/v1\/files\/[A-Za-z0-9._~-]+$/;
+
+/**
+ * Fetches the bytes behind a signed link. The link is a relative `/v1/files/<token>` path on the
+ * API origin and the workspace has no public API URL (its CSP is `connect-src 'self'`), so the BFF
+ * fetches it over the internal URL and streams it on. The caller streams `res.body` to the browser.
+ */
+export async function openSignedFile(session: Session, link: SignedLinkDto): Promise<Response> {
+  if (!SIGNED_PATH.test(link.url)) {
+    throw new ApiError(502, 'The API returned a download link in an unexpected form');
+  }
+  const res = await apiFetch(session, link.url, { method: 'GET' });
+  if (!res.ok) {
+    throw new ApiError(res.status, `GET /v1/files failed with ${res.status}`, await readBody(res));
+  }
+  return res;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------------------------
+
+export function listNotifications(
+  session: Session,
+  opts: { limit?: number; before?: string } = {},
+): Promise<NotificationDto[]> {
+  const query = new URLSearchParams();
+  if (opts.limit !== undefined) query.set('limit', String(opts.limit));
+  if (opts.before !== undefined) query.set('before', opts.before);
+  const qs = query.size > 0 ? `?${query.toString()}` : '';
+  return call(session, `/v1/notifications${qs}`, z.array(NotificationDtoSchema));
+}
+
+export function getUnreadCount(session: Session): Promise<UnreadCountDto> {
+  return call(session, '/v1/notifications/unread-count', UnreadCountDtoSchema);
+}
+
+/** `POST /v1/notifications/:id/read` answers 204 with no body, so nothing is parsed. */
+export async function markNotificationRead(session: Session, id: string): Promise<void> {
+  const res = await apiFetch(session, `/v1/notifications/${seg(id)}/read`, { method: 'POST' });
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      `POST notification read failed with ${res.status}`,
+      await readBody(res),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------------------------
+
+/** `GET /v1/audit?entityId=`: the API wraps the list as `{ items }`. Needs `audit.read`. */
+export async function listAudit(
+  session: Session,
+  opts: { entityId: string; limit?: number },
+): Promise<AuditEventDto[]> {
+  const query = new URLSearchParams({ entityId: opts.entityId });
+  if (opts.limit !== undefined) query.set('limit', String(opts.limit));
+  const { items } = await call(session, `/v1/audit?${query.toString()}`, AuditListSchema);
+  return items;
+}
