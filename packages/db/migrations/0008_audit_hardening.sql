@@ -423,3 +423,45 @@ REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA "audit" FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION "audit"."verify_chain"(uuid, date) TO "bos_app";
 
 -- R16 privileges (FIX-C1b) below
+--> statement-breakpoint
+
+-- R16: init-dbs.sh's default privileges gave bos_app USAGE on the drizzle schema and DML on its migration
+-- journal, so a compromised API could mark future migrations as applied and skip them. Guarded because the
+-- schema only exists once the migrator has run, which it has by the time this file runs, but a restore or a
+-- hand-built database may differ.
+DO $$
+BEGIN
+	IF EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'drizzle') THEN
+		REVOKE ALL ON SCHEMA "drizzle" FROM "bos_app";
+		REVOKE ALL ON ALL TABLES IN SCHEMA "drizzle" FROM "bos_app";
+		REVOKE ALL ON ALL SEQUENCES IN SCHEMA "drizzle" FROM "bos_app";
+	END IF;
+END
+$$;
+--> statement-breakpoint
+
+-- New functions are executable by PUBLIC by default. From here on a function bos_owner creates is callable by
+-- nobody else until a migration grants it (the audit functions below are the first to be granted by name).
+ALTER DEFAULT PRIVILEGES FOR ROLE "bos_owner" REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+--> statement-breakpoint
+
+-- Same for tables in audit. A per-schema "IN SCHEMA audit REVOKE ALL ON TABLES" would do nothing: per-schema
+-- default privileges are added to the global ones, and only a per-schema GRANT can be undone per schema. So
+-- the global DML grant of init-dbs.sh goes, and the two schemas that hold the API's own tables get it back
+-- per schema. A table bos_owner creates in audit (or in a new schema) is then closed to bos_app until it is
+-- granted, which is what 0001 did by hand for audit_events and chain_seals. Existing tables are untouched.
+ALTER DEFAULT PRIVILEGES FOR ROLE "bos_owner" REVOKE ALL ON TABLES FROM "bos_app";
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE "bos_owner" IN SCHEMA "app" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "bos_app";
+--> statement-breakpoint
+ALTER DEFAULT PRIVILEGES FOR ROLE "bos_owner" IN SCHEMA "ops" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "bos_app";
+--> statement-breakpoint
+
+-- The functions bos_app must call, by exact signature. The five are the whole API surface of audit.
+GRANT EXECUTE ON FUNCTION
+	"audit"."record"(text, text, text, jsonb, jsonb, jsonb),
+	"audit"."read_events"(uuid, uuid, text, text, timestamptz, timestamptz, bigint, integer),
+	"audit"."verify_chain"(uuid, date),
+	"audit"."seal"(uuid, date),
+	"audit"."tenants_with_rows"(date)
+TO "bos_app";

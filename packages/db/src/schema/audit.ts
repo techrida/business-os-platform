@@ -17,6 +17,7 @@ import {
   jsonb,
   pgSchema,
   primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
@@ -63,6 +64,8 @@ export const auditEvents = auditSchema.table(
     correlationId: text('correlation_id').notNull(),
     prevHash: bytea('prev_hash').notNull(),
     hash: bytea('hash').notNull(),
+    /** Which expression `hash` was written with: 1 = audit.event_hash (0001), 2 = audit.event_hash_v2 (0008). */
+    hashVersion: smallint('hash_version').notNull().default(1),
   },
   (t) => [
     unique('audit_events_chain_unique').on(t.tenantId, t.chainMonth, t.seq),
@@ -70,6 +73,7 @@ export const auditEvents = auditSchema.table(
       'audit_events_actor_kind_check',
       sql`${t.actorKind} in ('user', 'system', 'zitadel', 'seed')`,
     ),
+    check('audit_events_hash_version_check', sql`${t.hashVersion} in (1, 2)`),
     index('audit_events_entity_idx').on(
       t.tenantId,
       t.organizationId,
