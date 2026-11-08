@@ -1,7 +1,8 @@
 /* global __ENV */
 // Load gate: `pnpm perf:load`. Needs the `core` + `app` profiles and a finished `pnpm seed`.
 //
-//  - 50 virtual users loop for 3 minutes: GET /v1/me (tagged read) and POST /v1/telemetry/vitals
+//  - 50 virtual users loop for 3 minutes: GET /v1/me (tagged auth_overhead: it measures token and
+//    tenancy overhead, NOT database reads; see thresholds.js) and POST /v1/telemetry/vitals
 //    (tagged write; a stand-in for the real approve/reject write until P1, see perf-gates.md).
 //  - From minute 1, for one minute, 10 requests per second hit the write path on top of that
 //    (a constant ARRIVAL rate: k6 starts a request every 100 ms no matter how slow answers are,
@@ -91,14 +92,19 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}` };
 }
 
-export function readMe(token) {
+/**
+ * Auth-overhead probe (CR-14): /v1/me is answered from the request context, so this request exercises JWT
+ * validation, the cached org lookup and the HTTP stack, not Postgres.
+ * TODO(P1): add a DB-touching read scenario once an authenticated list/detail GET exists.
+ */
+export function readMeAuthOverhead(token) {
   const res = http.get(`${API_BASE}/v1/me`, {
     headers: authHeaders(token),
-    tags: { kind: 'read', name: 'GET /v1/me' },
+    tags: { kind: 'auth_overhead', name: 'GET /v1/me' },
   });
   check(res, {
-    'GET /v1/me is 200': (r) => r.status === 200,
-    'GET /v1/me has a userId': (r) => typeof r.json('userId') === 'string',
+    'auth overhead: GET /v1/me is 200': (r) => r.status === 200,
+    'auth overhead: GET /v1/me has a userId': (r) => typeof r.json('userId') === 'string',
   });
 }
 
@@ -116,9 +122,9 @@ export function postVitals(token) {
   check(res, { 'POST vitals is 2xx': (r) => r.status >= 200 && r.status < 300 });
 }
 
-/** One user iteration: a read, a write, then a pause like a person would take. */
+/** One user iteration: an auth-overhead request, a write, then a pause like a person would take. */
 export function iteration(data) {
-  readMe(data.token);
+  readMeAuthOverhead(data.token);
   postVitals(data.token);
   sleep(THINK_SECONDS);
 }
