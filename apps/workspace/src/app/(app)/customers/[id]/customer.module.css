@@ -1,0 +1,85 @@
+/* Layout and small pieces that belong to the customer detail page only. Everything else comes from
+   components/ui. Colours are Figma tokens from styles/tokens.css. */
+
+.note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* Names, emails and titles can be long or have no spaces: wrap rather than push the page wider. */
+.long {
+  overflow-wrap: anywhere;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.ref {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+}
+
+.address {
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Main column, with the verification and activity cards beside it on wide screens ---- */
+
+.columns {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.main,
+.sideStack {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr) 373px;
+  }
+}
+
+/* ---- Add contact ---- */
+
+.addContact {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.subhead {
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
+/* ---- Verification cases ---- */
+
+.cases {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.case {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}

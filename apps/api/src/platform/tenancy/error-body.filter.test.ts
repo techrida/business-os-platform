@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
+import { StepUpRequiredException } from '../auth/step-up';
 import { ErrorBodyFilter, codeForStatus } from './error-body.filter';
 import { runWithRequestStore } from './request-context';
 
@@ -87,6 +88,28 @@ describe('ErrorBodyFilter', () => {
     const parsed = ErrorBodySchema.parse(out.body);
     expect(parsed.error.code).toBe(code);
     expect(parsed.error.correlationId).toBe('req-12345678');
+  });
+
+  it('keeps step_up_required on a step-up 401 so the BFF can re-authenticate (K7)', () => {
+    const out = filter(new StepUpRequiredException(300));
+
+    expect(out.status).toBe(401);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe('step_up_required');
+    expect(parsed.error.message).toBe('Sign in again to approve this step');
+  });
+
+  it.each([
+    ['a plain 401', new UnauthorizedException('no token')],
+    ['a 401 with some other code', new UnauthorizedException({ code: 'whatever', message: 'm' })],
+  ])('keeps %s as unauthenticated', (_label, exception) => {
+    expect(ErrorBodySchema.parse(filter(exception).body).error.code).toBe('unauthenticated');
+  });
+
+  it('does not let a non-401 claim step_up_required', () => {
+    const out = filter(new ForbiddenException({ code: 'step_up_required', message: 'm' }));
+
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe('forbidden');
   });
 
   it('exposes the message of a client error', () => {

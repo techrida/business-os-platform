@@ -1,0 +1,212 @@
+'use server';
+
+import { randomUUID } from 'node:crypto';
+
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+
+import { failureOf } from '@/lib/api-kernel';
+import { requireStaffSession } from '@/lib/bff';
+
+import { createContact, createCustomer, getCustomer, listCustomers, updateCustomer } from './api';
+import { duplicateQueries, matchDuplicates, type DuplicateMatch } from './duplicate-check';
+import type { ContactFormState, CustomerFormState } from './form-state';
+import {
+  CUSTOMER_FIELDS,
+  parseContact,
+  parseCreateCustomer,
+  parseUpdateCustomer,
+  tidyCustomerValues,
+  type ContactValues,
+  type CustomerValues,
+} from './forms';
+import { isGuid } from './format';
+import { hasPermission } from './permissions';
+
+/**
+ * Server actions for the customer create and edit forms and the add-contact form. Each one asks
+ * `requireStaffSession` first, checks `customer.write` (deny by default: the API still decides
+ * every call), validates with the contracts' schemas, and words any refusal for a person. The
+ * browser never sees the API URL or a token.
+ */
+
+const NO_WRITE =
+  'Your roles do not include changing customers. Ask an administrator if you need to.';
+const INCOMPLETE = 'This form is incomplete. Reload the page and try again.';
+
+/** The page's key is a UUID; anything else in the hidden field was tampered with or lost. */
+const KEY = /^[A-Za-z0-9-]{8,64}$/;
+
+function text(form: FormData, name: string): string {
+  const v = form.get(name);
+  return typeof v === 'string' ? v : '';
+}
+
+function keyOf(form: FormData): string {
+  const submitted = text(form, 'idempotencyKey');
+  return KEY.test(submitted) ? submitted : randomUUID();
+}
+
+function customerValues(form: FormData): CustomerValues {
+  const raw: Partial<CustomerValues> = {};
+  for (const field of CUSTOMER_FIELDS) raw[field] = text(form, field);
+  return tidyCustomerValues(raw);
+}
+
+/**
+ * Looks for the same company already on file. Advisory: a search that fails (the API is down, or
+ * the route is not there yet) finds nothing, so it can never stop a customer being created.
+ */
+async function findDuplicates(
+  session: Awaited<ReturnType<typeof requireStaffSession>>,
+  input: { legalName: string; panVatNo?: string | undefined },
+  excludeId?: string,
+): Promise<DuplicateMatch[]> {
+  const queries = duplicateQueries(input.legalName, input.panVatNo);
+  const settled = await Promise.allSettled(
+    queries.map((q) => listCustomers(session, { q, limit: 20 })),
+  );
+  const candidates = settled.flatMap((r) => (r.status === 'fulfilled' ? r.value.items : []));
+  return matchDuplicates(input, candidates, excludeId !== undefined ? { excludeId } : {});
+}
+
+export async function createCustomerAction(
+  _prev: CustomerFormState,
+  form: FormData,
+): Promise<CustomerFormState> {
+  const session = await requireStaffSession('/customers/new');
+  const key = keyOf(form);
+  if (!hasPermission(session.roles, 'customer.write')) {
+    return { key, errors: {}, error: NO_WRITE };
+  }
+
+  const parsed = parseCreateCustomer(customerValues(form));
+  if (!parsed.ok) return { key, errors: parsed.errors };
+
+  if (text(form, 'ackDuplicates') !== 'yes') {
+    const duplicates = await findDuplicates(session, parsed.data);
+    if (duplicates.length > 0) {
+      return {
+        key,
+        errors: {},
+        duplicates,
+        checked: { legalName: parsed.data.legalName, panVatNo: parsed.data.panVatNo ?? '' },
+      };
+    }
+  }
+
+  let id: string;
+  try {
+    id = (await createCustomer(session, parsed.data, key)).id;
+  } catch (err) {
+    const failure = failureOf(err);
+    return {
+      // A 4xx is a final answer, so the next try is a new create. After a timeout or 5xx the first
+      // call may have landed: keep the key so it cannot create the customer twice.
+      key: failure.definite ? randomUUID() : key,
+      errors: {},
+      error: failure.message,
+    };
+  }
+
+  revalidatePath('/customers');
+  // `redirect` throws, so it stays outside the try block.
+  redirect(`/customers/${encodeURIComponent(id)}?created=1`);
+}
+
+export async function updateCustomerAction(
+  _prev: CustomerFormState,
+  form: FormData,
+): Promise<CustomerFormState> {
+  const id = text(form, 'customerId');
+  const key = randomUUID();
+  if (!isGuid(id)) return { key, errors: {}, error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/customers/${id}/edit`);
+  if (!hasPermission(session.roles, 'customer.write')) {
+    return { key, errors: {}, error: NO_WRITE };
+  }
+
+  // The version the person was looking at. A different current version is the API's 409.
+  const seen = Number(text(form, 'expectedVersion'));
+  if (!Number.isInteger(seen) || seen < 1) {
+    return { key, errors: {}, error: INCOMPLETE, reload: true };
+  }
+
+  let original;
+  try {
+    original = await getCustomer(session, id);
+  } catch (err) {
+    const failure = failureOf(err);
+    return { key, errors: {}, error: failure.message };
+  }
+
+  const parsed = parseUpdateCustomer(customerValues(form), { ...original, version: seen });
+  if (!parsed.ok) {
+    return 'nothingChanged' in parsed
+      ? { key, errors: {}, error: 'Nothing has changed, so there is nothing to save.' }
+      : { key, errors: parsed.errors };
+  }
+
+  try {
+    await updateCustomer(session, id, parsed.data);
+  } catch (err) {
+    const failure = failureOf(err);
+    return {
+      key,
+      errors: {},
+      error:
+        failure.status === 409
+          ? 'Someone else changed this customer after you opened it. Reload to see their changes, then make your edit again.'
+          : failure.message,
+      ...(failure.reload ? { reload: true } : {}),
+    };
+  }
+
+  revalidatePath('/customers');
+  revalidatePath(`/customers/${id}`);
+  redirect(`/customers/${encodeURIComponent(id)}?saved=1`);
+}
+
+export async function addContactAction(
+  prev: ContactFormState,
+  form: FormData,
+): Promise<ContactFormState> {
+  const customerId = text(form, 'customerId');
+  const key = keyOf(form);
+  const same = { savedCount: prev.savedCount };
+  if (!isGuid(customerId)) return { key, errors: {}, error: INCOMPLETE, ...same };
+  const session = await requireStaffSession(`/customers/${customerId}`);
+  if (!hasPermission(session.roles, 'customer.write')) {
+    return { key, errors: {}, error: NO_WRITE, ...same };
+  }
+
+  const values: ContactValues = {
+    fullName: text(form, 'fullName'),
+    title: text(form, 'title'),
+    email: text(form, 'email'),
+    phone: text(form, 'phone'),
+    isPrimary: text(form, 'isPrimary') === 'on',
+  };
+  const parsed = parseContact(values);
+  if (!parsed.ok) return { key, errors: parsed.errors, ...same };
+
+  try {
+    await createContact(session, customerId, parsed.data, key);
+  } catch (err) {
+    const failure = failureOf(err);
+    return {
+      key: failure.definite ? randomUUID() : key,
+      errors: {},
+      error: failure.message,
+      ...same,
+    };
+  }
+
+  revalidatePath(`/customers/${customerId}`);
+  return {
+    key: randomUUID(),
+    errors: {},
+    saved: `${parsed.data.fullName} was added.`,
+    savedCount: prev.savedCount + 1,
+  };
+}

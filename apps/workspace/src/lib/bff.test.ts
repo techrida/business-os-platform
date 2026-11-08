@@ -14,7 +14,15 @@ vi.mock('next/navigation', () => ({
 const getSession = vi.fn<() => Promise<Session | null>>();
 vi.mock('./session', () => ({ getSession: () => getSession() }));
 
-const { errorResponse, isSameOrigin, requireStaffSession, routeSession } = await import('./bff');
+const {
+  errorResponse,
+  isSameOrigin,
+  isStepUpRequired,
+  redirectToStepUp,
+  requireStaffSession,
+  routeSession,
+  stepUpLoginUrl,
+} = await import('./bff');
 
 const staff: Session = {
   id: 'A'.repeat(43),
@@ -111,5 +119,32 @@ describe('errorResponse', () => {
   it('turns a 5xx or a network failure into 502', () => {
     expect(errorResponse(new ApiError(500, 'x')).status).toBe(502);
     expect(errorResponse(new TypeError('fetch failed')).status).toBe(502);
+  });
+});
+
+// K7: the API answers a Founder decision on a stale sign-in with 401 step_up_required.
+describe('step-up', () => {
+  const body = (code: string) => ({ error: { code, message: 'm', correlationId: 'c' } });
+
+  it('recognises only a 401 whose body code is step_up_required', () => {
+    expect(isStepUpRequired(new ApiError(401, 'x', body('step_up_required')))).toBe(true);
+    expect(isStepUpRequired(new ApiError(401, 'x', body('unauthenticated')))).toBe(false);
+    expect(isStepUpRequired(new ApiError(401, 'x'))).toBe(false);
+    expect(isStepUpRequired(new ApiError(403, 'x', body('step_up_required')))).toBe(false);
+    expect(isStepUpRequired(new Error('step_up_required'))).toBe(false);
+  });
+
+  it('sends the user through a forced sign-in that returns to the approval', () => {
+    const url = new URL(stepUpLoginUrl('/inbox/abc?x=1'), 'https://app.test');
+    expect(url.pathname).toBe('/auth/login');
+    expect(url.searchParams.get('prompt')).toBe('login');
+    expect(url.searchParams.get('max_age')).toBe('0');
+    expect(url.searchParams.get('returnTo')).toBe('/inbox/abc?x=1');
+  });
+
+  it('redirects with prompt=login, max_age=0 and the encoded return path', () => {
+    expect(() => redirectToStepUp('/inbox/abc')).toThrow(
+      'REDIRECT:/auth/login?prompt=login&max_age=0&returnTo=%2Finbox%2Fabc',
+    );
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { STEP_UP_REQUIRED } from '../auth/step-up';
 import { newCorrelationId } from '../obs/correlation';
 import { REQUEST_ID_HEADER, type CorrelatedRequest } from './correlation.middleware';
 import { currentCorrelationId } from './request-context';
@@ -16,6 +17,7 @@ import { currentCorrelationId } from './request-context';
 /** Machine-readable codes clients can switch on. The message is for humans and may change. */
 export type ErrorCode =
   | 'unauthenticated'
+  | 'step_up_required'
   | 'forbidden'
   | 'not_found'
   | 'conflict'
@@ -49,6 +51,7 @@ export function codeForStatus(status: number): ErrorCode {
 
 const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   unauthenticated: 'Authentication required',
+  step_up_required: 'Sign in again to continue',
   forbidden: 'Forbidden',
   not_found: 'Not found',
   conflict: 'Conflict',
@@ -85,6 +88,16 @@ function reasonOf(exception: HttpException): ErrorReason | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+/**
+ * True for a 401 thrown with `code: 'step_up_required'` (StepUpRequiredException, K7). Only a 401
+ * may carry it, so no other error can tell the client to re-authenticate.
+ */
+function isStepUp(exception: HttpException): boolean {
+  if (exception.getStatus() !== 401) return false;
+  const response = exception.getResponse();
+  return typeof response === 'object' && 'code' in response && response.code === STEP_UP_REQUIRED;
+}
+
 /** body-parser and other Express middleware throw plain errors that carry an HTTP status. */
 function statusOfPlainError(exception: unknown): number | undefined {
   if (typeof exception !== 'object' || exception === null) return undefined;
@@ -115,16 +128,18 @@ export class ErrorBodyFilter implements ExceptionFilter {
     let status: number;
     let exposedMessage: string | undefined;
     let reason: ErrorReason | undefined;
+    let stepUp = false;
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
       // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
       if (status === 403 || status === 400) reason = reasonOf(exception);
+      stepUp = isStepUp(exception);
     } else {
       status = statusOfPlainError(exception) ?? HttpStatus.INTERNAL_SERVER_ERROR;
     }
 
-    const code = codeForStatus(status);
+    const code: ErrorCode = stepUp ? 'step_up_required' : codeForStatus(status);
     // 5xx other than 503 may carry internal detail in the message, so those are never shown.
     const message =
       status >= 500 && status !== 503

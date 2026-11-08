@@ -1,0 +1,206 @@
+'use client';
+
+import { useRef, useState } from 'react';
+
+import { Badge } from '@/components/ui/badge';
+
+import styles from './crm.module.css';
+import { MoveForm } from './move-form';
+import type { BoardCard, BoardColumnData, MoveAction } from './types';
+
+/**
+ * A stage board for leads or opportunities. Every card has a "Move" control (a native select in a
+ * disclosure) that works with a keyboard and no pointer; dragging a card onto a column is a
+ * shortcut that opens the same control with the stage chosen, and the person confirms with Move.
+ * Columns for stages only the system sets (Won, Converted, Quotation Sent) never take a drop.
+ *
+ * Money arrives formatted and nothing is totalled here: totals come from the server.
+ */
+export function Board({
+  columns,
+  action,
+  noun,
+}: {
+  columns: BoardColumnData[];
+  action: MoveAction;
+  /** "lead" or "opportunity", for the hint and empty columns. */
+  noun: string;
+}) {
+  const cards = columns.flatMap((c) => c.cards);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overStage, setOverStage] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [preset, setPreset] = useState<{ id: string; stage: string } | null>(null);
+  const [announce, setAnnounce] = useState('');
+  const refs = useRef(new Map<string, HTMLLIElement>());
+
+  const dragged = cards.find((c) => c.id === dragId);
+  const canDrop = (stage: string) => dragged?.moves.some((m) => m.stage === stage) ?? false;
+
+  function drop(column: BoardColumnData) {
+    if (dragged === undefined || !canDrop(column.stage)) return;
+    setPreset({ id: dragged.id, stage: column.stage });
+    setOpenId(dragged.id);
+    setAnnounce(
+      `Choose Move to put ${dragged.title} in ${column.label}. Lost and On Hold need a reason.`,
+    );
+    const el = refs.current.get(dragged.id);
+    requestAnimationFrame(() => el?.querySelector('select')?.focus());
+  }
+
+  return (
+    <div>
+      <p className={styles.boardHint}>
+        Drag a card to a column, or open Move on a card to pick the stage. Either way you confirm
+        with Move.
+      </p>
+      <p className="sr-only" role="status">
+        {announce}
+      </p>
+      <div
+        className={styles.board}
+        role="region"
+        aria-label={`${noun} board (scrolls sideways on narrow screens)`}
+        tabIndex={0}
+      >
+        {columns.map((column) => {
+          const headingId = `col-${column.stage}`;
+          const state =
+            dragId === null
+              ? ''
+              : canDrop(column.stage)
+                ? overStage === column.stage
+                  ? styles.dropOver
+                  : styles.dropAllowed
+                : styles.dropBlocked;
+          return (
+            <section
+              key={column.stage}
+              aria-labelledby={headingId}
+              className={[styles.column, state].filter(Boolean).join(' ')}
+              onDragOver={(e) => {
+                if (canDrop(column.stage)) {
+                  e.preventDefault();
+                  setOverStage(column.stage);
+                }
+              }}
+              onDragLeave={() => setOverStage((s) => (s === column.stage ? null : s))}
+              onDrop={(e) => {
+                e.preventDefault();
+                drop(column);
+                setDragId(null);
+                setOverStage(null);
+              }}
+            >
+              <header className={styles.columnHead}>
+                <h3 id={headingId} className={styles.columnTitle}>
+                  {column.label}
+                </h3>
+                <Badge tone="neutral">
+                  {column.cards.length}
+                  <span className="sr-only"> {column.cards.length === 1 ? noun : `${noun}s`}</span>
+                </Badge>
+              </header>
+              {column.note ? <p className={styles.columnNote}>{column.note}</p> : null}
+              {column.cards.length === 0 ? (
+                <p className={styles.columnEmpty}>No {noun}s here.</p>
+              ) : (
+                <ul className={styles.cards}>
+                  {column.cards.map((card) => (
+                    <BoardCardItem
+                      key={card.id}
+                      card={card}
+                      action={action}
+                      open={openId === card.id}
+                      onToggle={(open) =>
+                        setOpenId(open ? card.id : (id) => (id === card.id ? null : id))
+                      }
+                      presetStage={preset?.id === card.id ? preset.stage : undefined}
+                      dragging={dragId === card.id}
+                      onDragStart={() => {
+                        setDragId(card.id);
+                        setPreset(null);
+                      }}
+                      onDragEnd={() => {
+                        setDragId(null);
+                        setOverStage(null);
+                      }}
+                      register={(el) => {
+                        if (el) refs.current.set(card.id, el);
+                        else refs.current.delete(card.id);
+                      }}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BoardCardItem({
+  card,
+  action,
+  open,
+  onToggle,
+  presetStage,
+  dragging,
+  onDragStart,
+  onDragEnd,
+  register,
+}: {
+  card: BoardCard;
+  action: MoveAction;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  presetStage: string | undefined;
+  dragging: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  register: (el: HTMLLIElement | null) => void;
+}) {
+  const movable = card.moves.length > 0;
+  return (
+    <li
+      ref={register}
+      className={[styles.card, dragging ? styles.cardDragging : ''].filter(Boolean).join(' ')}
+      draggable={movable}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', card.id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+    >
+      <a href={card.href} className={styles.cardTitle}>
+        {card.title}
+      </a>
+      <span className={styles.cardMeta}>{card.number}</span>
+      {card.subtitle ? <span className={styles.cardSub}>{card.subtitle}</span> : null}
+      {card.value !== null ? <span className={styles.cardValue}>{card.value}</span> : null}
+      {movable ? (
+        <details
+          className={styles.cardMove}
+          open={open}
+          onToggle={(e) => onToggle(e.currentTarget.open)}
+        >
+          <summary>
+            Move<span className="sr-only"> {card.title}</span>
+          </summary>
+          <MoveForm
+            action={action}
+            recordId={card.id}
+            version={card.version}
+            moves={card.moves}
+            presetStage={presetStage}
+            emptyText=""
+            compact
+          />
+        </details>
+      ) : null}
+    </li>
+  );
+}

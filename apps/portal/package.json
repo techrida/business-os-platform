@@ -1,0 +1,35 @@
+{
+  "name": "@bos/portal",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Business OS customer portal (Next.js backend-for-frontend).",
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@bos/contracts": "workspace:*",
+    "@bos/locale": "workspace:*",
+    "@fontsource-variable/outfit": "catalog:",
+    "ioredis": "catalog:",
+    "next": "catalog:",
+    "openid-client": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "server-only": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "ioredis-mock": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

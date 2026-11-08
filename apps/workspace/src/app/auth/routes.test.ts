@@ -167,6 +167,16 @@ describe('GET /auth/login', () => {
     },
   );
 
+  it('passes max_age=0 through as a number for step-up (K7)', async () => {
+    await call('?prompt=login&max_age=0');
+    expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ prompt: 'login', maxAge: 0 });
+  });
+
+  it.each(['-1', '1.5', 'abc', '0x10', '', '9999999'])('drops max_age=%s', async (raw) => {
+    await call(`?max_age=${encodeURIComponent(raw)}`);
+    expect(m.beginLogin.mock.calls[0]?.[0]).not.toHaveProperty('maxAge');
+  });
+
   it('passes a normal login_hint through', async () => {
     await call('?login_hint=' + encodeURIComponent('kuu@example.com'));
     expect(m.beginLogin.mock.calls[0]?.[0]).toMatchObject({ loginHint: 'kuu@example.com' });

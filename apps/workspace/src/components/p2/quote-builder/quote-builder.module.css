@@ -1,0 +1,322 @@
+/* Quote builder. Tokens only; layout follows the memo detail page (main column + 373px side). */
+
+.layout {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.main {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.side {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 373px;
+  }
+
+  /* The totals and approval panels stay in view while the long form scrolls. */
+  .side {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding-bottom: 2px;
+  }
+}
+
+.sectionBody {
+  display: grid;
+  gap: 20px;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 20px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.actionBar {
+  display: grid;
+  gap: 8px;
+}
+
+.status {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.numInput {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.plainList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- Lines ---- */
+
+.lineCell {
+  min-width: 0;
+  vertical-align: top;
+}
+
+.lineText {
+  min-height: 40px;
+  padding-block: 8px;
+  resize: vertical;
+}
+
+.lineAmount {
+  min-width: 7rem;
+  padding-top: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.lineNo {
+  padding-top: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.rowError {
+  display: block;
+  margin-top: 4px;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+/* ---- Payment schedule ---- */
+
+.milestones {
+  display: grid;
+  gap: 16px;
+}
+
+.milestone {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)) auto;
+  align-items: end;
+  gap: 12px 16px;
+}
+
+.scheduleTotal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Totals ---- */
+
+.totals,
+.approval {
+  min-width: 0;
+}
+
+.totalList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.totalRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.totalRow dt {
+  color: var(--text-secondary);
+}
+
+.totalRow dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.grand {
+  padding-top: 12px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.grand dt {
+  color: var(--text-primary);
+}
+
+.subhead {
+  margin: 0 0 8px;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+}
+
+.taxSummary {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.taxRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.taxLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.npr {
+  margin: 16px 0 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.updating {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.stale {
+  opacity: 0.6;
+}
+
+.skeletons {
+  display: grid;
+  gap: 12px;
+}
+
+.skeleton {
+  display: block;
+  height: 16px;
+  border-radius: var(--radius-md);
+  background: var(--skeleton-bg);
+}
+
+/* ---- Approval steps (same look as the memo route card) ---- */
+
+.steps {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 0 12px;
+  padding-bottom: 16px;
+}
+
+.step:last-child {
+  padding-bottom: 0;
+}
+
+.step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  top: 32px;
+  bottom: 4px;
+  left: 13px;
+  width: 1px;
+  background: var(--divider-color);
+}
+
+.stepNo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+}
+
+.stepBody {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stepHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 28px;
+}
+
+.stepWho {
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.stepReason {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stale {
+    transition: none;
+  }
+}

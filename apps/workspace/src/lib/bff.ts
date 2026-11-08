@@ -1,7 +1,9 @@
 import 'server-only';
 
+import { ErrorBodySchema } from '@bos/contracts';
 import { redirect } from 'next/navigation';
 
+import { ApiError } from './api';
 import { failureOf } from './api-kernel';
 import { getEnv } from './env';
 import type { FailureContext } from './kernel-ui';
@@ -65,4 +67,30 @@ export function errorResponse(err: unknown, context: FailureContext = 'generic')
   // browser's point of view.
   const status = failure.status >= 400 && failure.status < 500 ? failure.status : 502;
   return jsonResponse({ error: { message: failure.message, reload: failure.reload } }, status);
+}
+
+/** The API's code for "this decision needs a recent sign-in" (K7, Founder approvals). */
+export const STEP_UP_REQUIRED = 'step_up_required';
+
+/** True only for the API's 401 whose error body carries `code: 'step_up_required'`. */
+export function isStepUpRequired(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 401) return false;
+  const parsed = ErrorBodySchema.safeParse(err.body);
+  return parsed.success && parsed.data.error.code === STEP_UP_REQUIRED;
+}
+
+/**
+ * The normal login route with `prompt=login` and `max_age=0`, so ZITADEL asks for the credentials
+ * again even with a live ZITADEL session. `max_age` also obliges the IdP (OIDC Core 3.1.2.1) to
+ * report `auth_time`, which the API needs fresh. Going through /auth/login keeps
+ * every login protection: the `__Host-` binding cookie, server-side state and `safeReturnTo`. The
+ * callback then creates a new session holding the new tokens.
+ */
+export function stepUpLoginUrl(returnTo: string): string {
+  return `/auth/login?prompt=login&max_age=0&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+/** For server actions and pages: `redirect` throws, so nothing after this runs. */
+export function redirectToStepUp(returnTo: string): never {
+  redirect(stepUpLoginUrl(returnTo));
 }

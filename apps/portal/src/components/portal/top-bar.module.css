@@ -1,0 +1,36 @@
+/* Same bar as the workspace header: 65px, bottom border, pale surface, page-margin padding. */
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: var(--bos-header-height);
+  padding: 8px var(--margin-page);
+  border-bottom: var(--border-width-thin) solid var(--border-default);
+  background: var(--surface-subtle);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.label {
+  padding-left: 12px;
+  border-left: var(--border-width-thin) solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  white-space: nowrap;
+}
+
+/* Phones: the brand name already says where you are; drop the label before anything wraps. */
+@media (max-width: 420px) {
+  .label {
+    display: none;
+  }
+}
