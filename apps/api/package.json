@@ -17,6 +17,7 @@
     "@bos/contracts": "workspace:*",
     "@bos/db": "workspace:*",
     "@bos/locale": "workspace:*",
+    "@bos/money-rules": "workspace:*",
     "@nestjs/bullmq": "catalog:",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",

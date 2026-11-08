@@ -16,6 +16,7 @@ export default defineConfig({
       '@bos/contracts': source('../../packages/contracts/src/index.ts'),
       '@bos/db': source('../../packages/db/src/index.ts'),
       '@bos/locale': source('../../packages/locale/src/index.ts'),
+      '@bos/money-rules': source('../../packages/money-rules/src/index.ts'),
     },
   },
   test: {
