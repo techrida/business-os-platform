@@ -9,6 +9,7 @@ import {
   Post,
 } from '@nestjs/common';
 
+import { AnyAuthenticated } from '../../platform/authz/decorators';
 import { MetricsService } from '../../platform/obs/metrics.service';
 
 /** Largest accepted request body. A vitals sample is about 100 bytes; this leaves room and stops abuse. */
@@ -29,6 +30,8 @@ export function labelForRoute(route: string): string {
   return VITALS_ROUTE_ALLOWLIST.has(route) ? route : OTHER_ROUTE;
 }
 
+// Any signed-in user's browser reports its own Web Vitals.
+@AnyAuthenticated()
 @Controller('v1/telemetry')
 export class TelemetryController {
   constructor(private readonly metrics: MetricsService) {}
