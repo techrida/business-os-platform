@@ -11,14 +11,14 @@
 # Profiles:
 #   core   postgres, backup-scheduler, valkey, valkey-oidc, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
 #   files  clamav   (virus scanner for uploaded documents, P1; opt-in because it needs about 1.2-1.4 GB real RAM)
-#   app    migrate, api, worker, workspace, gotenberg   (images bos/api:dev and bos/workspace:dev, built by U3/U5;
-#          gotenberg is the PDF renderer, an official image)
+#   app    migrate, api, worker, workspace, portal, gotenberg   (images bos/api:dev, bos/workspace:dev and
+#          bos/portal:dev, built by U3/U5/PT1; gotenberg is the PDF renderer, an official image)
 #   tools  seed-zitadel, k6, restore-drill   (one-shot, started with `docker compose run --rm`)
 #   obs    prometheus
 #
 # Running the `app` profile behind Caddy: the dev default for the Caddy upstreams points at host-run dev
 # servers. Override per call (a shell variable beats .env):
-#   WORKSPACE_UPSTREAM=workspace:3000 API_UPSTREAM=api:3001 docker compose --env-file .env -f ... --profile core --profile app up -d --wait
+#   WORKSPACE_UPSTREAM=workspace:3000 API_UPSTREAM=api:3001 PORTAL_UPSTREAM=portal:3000 docker compose --env-file .env -f ... --profile core --profile app up -d --wait
 #
 # Memory limits (deploy.resources.limits.memory). The `core` sum must stay <= 3.2 GB.
 # Units are MiB (1 MiB = 1.048576 MB); the sum is also under 3.2 GB decimal.
@@ -46,10 +46,11 @@
 #   api             app        512 MiB
 #   worker          app        512 MiB  was 384 MiB; P1 adds the scan, mail and approval-timer processors
 #   workspace       app        512 MiB
+#   portal          app        512 MiB  customer portal (Next.js, same shape as workspace)
 #   gotenberg       app        512 MiB  PDF rendering (headless Chromium); raise to 768 MiB if a render is OOM-killed
-#   app total                 2304 MiB  (core + app = 5352 MiB = 5.23 GiB, dev)
+#   app total                 2816 MiB  (core + app = 5864 MiB = 5.73 GiB, dev)
 #
-#   core + files + app        7144 MiB  = 6.98 GiB (about 7.0 GiB of limits, dev; real use is about 2.3 GB)
+#   core + files + app        7656 MiB  = 7.48 GiB (about 7.5 GiB of limits, dev; real use is about 2.5 GB)
 #
 #   seed-zitadel    tools      256 MiB  transient
 #   k6              tools      512 MiB  transient
@@ -350,10 +351,12 @@ services:
       APP_HOST: ${APP_HOST:-app.localhost}
       API_HOST: ${API_HOST:-api.localhost}
       MAIL_HOST: ${MAIL_HOST:-mail.localhost}
+      PORTAL_HOST: ${PORTAL_HOST:-portal.localhost}
       CADDY_TLS: ${CADDY_TLS:-internal}
       # Defaults suit the `app` profile; compose.dev.yaml points them at host-run dev servers instead.
       WORKSPACE_UPSTREAM: ${WORKSPACE_UPSTREAM:-workspace:3000}
       API_UPSTREAM: ${API_UPSTREAM:-api:3001}
+      PORTAL_UPSTREAM: ${PORTAL_UPSTREAM:-portal:3000}
       MAIL_UPSTREAM: mailpit:8025
     volumes:
       - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
@@ -377,6 +380,7 @@ services:
           - ${APP_HOST:-app.localhost}
           - ${API_HOST:-api.localhost}
           - ${MAIL_HOST:-mail.localhost}
+          - ${PORTAL_HOST:-portal.localhost}
     deploy:
       resources:
         limits:
@@ -565,6 +569,62 @@ services:
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     env_file:
       - path: ../../.dev/zitadel.env
+        required: false
+    volumes:
+      - *ca-mount
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      valkey:
+        condition: service_healthy
+      valkey-oidc:
+        condition: service_healthy
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Customer portal (apps/portal, Next.js backend-for-frontend), same shape as workspace. Sessions use the same Valkey
+  # servers but its own encryption key and key id (the two apps never share one).
+  portal:
+    profiles: [app]
+    image: bos/portal:dev
+    environment:
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost}
+      OIDC_REDIRECT_URI: https://${PORTAL_HOST:-portal.localhost}/auth/callback
+      # Optional: where staff who reach the portal by mistake are sent.
+      WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost}
+      API_INTERNAL_URL: http://api:3001
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      # Login state (CR-03) lives on its own Valkey with a small memory cap.
+      OIDC_STATE_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey-oidc:6379
+      # Session encryption key (32 random bytes, base64) and its id. Required in prod (compose.prod.yaml); dev
+      # falls back to empty/p1; the app reads its env lazily, so an empty key fails the first sign-in, not the start.
+      # infra/scripts/make-dev-env.sh adds a random one.
+      SESSION_ENC_KEY: ${PORTAL_SESSION_ENC_KEY:-}
+      SESSION_ENC_KEY_ID: ${PORTAL_SESSION_ENC_KEY_ID:-p1}
+      NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
+    # zitadel.env is the shared seed output (issuer, audience, workspace client). zitadel-portal.env, listed second so
+    # it wins, carries the portal's own OIDC_CLIENT_ID. Until the seed writes it, the portal would see the
+    # workspace's client id, so the seed must create the portal client before anyone signs in here.
+    env_file:
+      - path: ../../.dev/zitadel.env
+        required: false
+      - path: ../../.dev/zitadel-portal.env
         required: false
     volumes:
       - *ca-mount
