@@ -20,6 +20,13 @@ export interface ScanResult {
   signature?: string;
   /** Why the verdict is `error` (a clamd message or a socket error). Never contains file content. */
   detail?: string;
+  /**
+   * Only with verdict `error`: true when the failure is the infrastructure's (connection refused or reset,
+   * timeout, an empty reply because clamd died, a source that could not be read), so a retry later can
+   * succeed. Absent means clamd itself answered with an ERROR line (including "size limit exceeded"): a
+   * definite answer about this file, which more retries will not change.
+   */
+  transient?: boolean;
   ms: number;
 }
 
@@ -65,16 +72,19 @@ export class ClamdClient {
         await write(socket, Buffer.alloc(4)); // zero-length chunk: end of stream
       });
       if (OK.test(reply)) return { verdict: 'clean', ms: ms() };
+      // With AlertExceedsMax yes (infra/clamav/clamd.conf) an archive over the scan limits (size, depth, file
+      // count) comes back as "stream: Heuristics.Limits.Exceeded[.<limit>] FOUND". It takes this branch, so the
+      // file is blocked as `infected`; without that setting clamd would have answered OK for it.
       const found = FOUND.exec(reply);
       if (found?.[1] !== undefined) return { verdict: 'infected', signature: found[1], ms: ms() };
-      // Anything else (an ERROR line, "INSTREAM size limit exceeded", an empty reply) is not a verdict on the file.
-      return {
-        verdict: 'error',
-        detail: reply.slice(0, 200) || 'empty reply from clamd',
-        ms: ms(),
-      };
+      // Anything else is not a verdict on the file. An empty reply means clamd hung up without answering (it
+      // died or restarted mid-scan): the scanner's problem, so transient. An ERROR line is clamd's answer.
+      if (reply === '') {
+        return { verdict: 'error', detail: 'empty reply from clamd', transient: true, ms: ms() };
+      }
+      return { verdict: 'error', detail: reply.slice(0, 200), ms: ms() };
     } catch (error) {
-      return { verdict: 'error', detail: describe(error), ms: ms() };
+      return { verdict: 'error', detail: describe(error), transient: true, ms: ms() };
     }
   }
 
