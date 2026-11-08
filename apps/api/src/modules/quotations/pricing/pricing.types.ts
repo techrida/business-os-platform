@@ -97,6 +97,11 @@ export interface PricedColumns {
 /** The figures the approval facts provider and the UI need. */
 export interface QuoteFacts {
   amountNpr: string;
+  /**
+   * The discount in NPR: round(discountAmount x fxRate, 2), half up, at the same rate as amountNpr. Equal to
+   * discountAmount for NPR. A fact, not a column (quotation_versions has none); the approval snapshot reads it.
+   */
+  nprDiscountAmount: string;
   /** discount / subtotal x 100, unrounded (full precision). */
   effectiveDiscountPct: string;
   /** Strictly above 12%, decided exactly (not from the rounded text). */

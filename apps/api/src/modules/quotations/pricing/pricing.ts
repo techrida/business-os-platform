@@ -10,6 +10,7 @@ import {
   priceDocument,
   resolveTaxCode,
   roundMoney,
+  toNpr,
   type DiscountInput,
   type PricedDoc,
   type TaxCode,
@@ -78,6 +79,8 @@ export function buildFacts(
 ): QuoteFacts {
   return {
     amountNpr: money(priced.amountNpr),
+    // Same rate and rounding (roundMoney) as the C-2 snapshot; for NPR the rate is 1, so this is the discount.
+    nprDiscountAmount: money(toNpr(priced.discountTotal, currency, priced.npr.fxRate)),
     effectiveDiscountPct: unroundedDiscountPct(priced),
     discountApprovalRequired: priced.discountApprovalRequired,
     marginPct,
