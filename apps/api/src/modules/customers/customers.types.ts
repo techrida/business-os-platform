@@ -61,5 +61,7 @@ export function requireIdempotencyKey(header: string | undefined): string {
  */
 export function sentFields<T extends object>(raw: unknown, parsed: T): Partial<T> {
   const sent = typeof raw === 'object' && raw !== null ? raw : {};
-  return Object.fromEntries(Object.entries(parsed).filter(([key]) => Object.hasOwn(sent, key))) as Partial<T>;
+  return Object.fromEntries(
+    Object.entries(parsed).filter(([key]) => Object.hasOwn(sent, key)),
+  ) as Partial<T>;
 }

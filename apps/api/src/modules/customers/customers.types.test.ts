@@ -19,17 +19,21 @@ describe('ListCustomersQuerySchema', () => {
   });
 
   it('reads limit and offset from strings, as an HTTP query delivers them', () => {
-    expect(listQueryOf(ListCustomersQuerySchema.parse({ q: 'acme', limit: '20', offset: '40' }))).toEqual(
-      { q: 'acme', limit: 20, offset: 40 },
-    );
+    expect(
+      listQueryOf(ListCustomersQuerySchema.parse({ q: 'acme', limit: '20', offset: '40' })),
+    ).toEqual({ q: 'acme', limit: 20, offset: 40 });
   });
 
-  it.each([{ limit: '0' }, { limit: '101' }, { limit: '-1' }, { offset: 'x' }, { q: ['a', 'b'] }, { x: '1' }])(
-    'refuses %o',
-    (query) => {
-      expect(ListCustomersQuerySchema.safeParse(query).success).toBe(false);
-    },
-  );
+  it.each([
+    { limit: '0' },
+    { limit: '101' },
+    { limit: '-1' },
+    { offset: 'x' },
+    { q: ['a', 'b'] },
+    { x: '1' },
+  ])('refuses %o', (query) => {
+    expect(ListCustomersQuerySchema.safeParse(query).success).toBe(false);
+  });
 });
 
 describe('requireIdempotencyKey', () => {

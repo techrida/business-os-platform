@@ -59,10 +59,7 @@ describe('POST /v1/customers', () => {
   it('hands the service the parsed body (relationship defaulted) and the key', async () => {
     const { service, controller } = setup();
     await controller.create('k1', body);
-    expect(service.create).toHaveBeenCalledWith(
-      { ...body, relationship: 'prospect' },
-      'k1',
-    );
+    expect(service.create).toHaveBeenCalledWith({ ...body, relationship: 'prospect' }, 'k1');
   });
 });
 

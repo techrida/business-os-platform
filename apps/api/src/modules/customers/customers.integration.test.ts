@@ -1,0 +1,721 @@
+// Integration tests of the customers API on a real Postgres (Testcontainers, needs Docker in WSL).
+// Real: every migration as bos_owner, queries as bos_app, the controller behind the production body parser and
+// error filter, CustomersService, NumberingService, withTx and the audit triggers. Faked: the request context
+// (CustomersCaller) and authz.assert, which still runs the real pure can() on a fake principal, so the
+// ResourceRef the service builds is what decides 403 or 404.
+// Run: pnpm --filter @bos/api exec vitest run src/modules/customers
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import {
+  ContactDtoSchema,
+  CustomerDtoSchema,
+  DEFAULT_ROLE_PERMISSIONS,
+  ErrorBodySchema,
+  PartyAccountDtoSchema,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
+import {
+  checkTenancy,
+  createStaffUser,
+  createTenantWithEntity,
+  customerContacts,
+  customers,
+  organizations,
+  partyAccounts,
+  runMigrations,
+  userEntities,
+} from '@bos/db';
+import { fiscalYearOf } from '@bos/locale';
+import { ConflictException, ForbiddenException, type INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import request from 'supertest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { configureApp } from '../../app.setup';
+import { can } from '../../platform/authz/can';
+import type { AuthzService } from '../../platform/authz/authz.service';
+import type { Principal } from '../../platform/authz/principal';
+import type { Db } from '../../platform/db/db.module';
+import { systemActor, withTx } from '../../platform/db/tx';
+import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
+import { NumberingService } from '../../platform/settings/numbering.service';
+import { CustomersController } from './customers.controller';
+import { CustomersService } from './customers.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: Db;
+let app: INestApplication;
+let baseUrl: string;
+let service: CustomersService;
+const now = new Date('2026-11-08T04:00:00Z');
+
+type Tenant = { tenantId: string; organizationId: string; idpOrgId: string; userId: string };
+/** Tenant A has a default entity (`a.organizationId`) and a second one (`entityA2`); tenant B has only a default. */
+let a: Tenant;
+let b: Tenant;
+let entityA2: string;
+
+/** The caller: a staff user of one tenant, acting for one of its entities, or a portal user of a customer. */
+const current: {
+  tenant: Tenant;
+  organizationId: string;
+  userId: string;
+  grants: Map<Permission, Scope>;
+  orgKind: Principal['orgKind'];
+  partyId: string | null;
+} = {
+  tenant: undefined as never,
+  organizationId: '',
+  userId: '',
+  grants: new Map(),
+  orgKind: 'staff',
+  partyId: null,
+};
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+const asStaff = (
+  tenant: Tenant,
+  organizationId = tenant.organizationId,
+  userId = tenant.userId,
+) => {
+  current.tenant = tenant;
+  current.organizationId = organizationId;
+  current.userId = userId;
+  current.grants = grantsOf('sales');
+  current.orgKind = 'staff';
+  current.partyId = null;
+};
+/** customer_user has no default grants, so the portal caller gets `customer.read` at `customer_org` here. */
+const asPortal = (tenant: Tenant, partyId: string) => {
+  asStaff(tenant);
+  current.grants = new Map<Permission, Scope>([['customer.read', 'customer_org']]);
+  current.orgKind = 'customer';
+  current.partyId = partyId;
+};
+
+const principalNow = (): Principal => ({
+  userId: current.userId,
+  zitadelUserId: `z-${current.userId}`,
+  tenantId: current.tenant.tenantId,
+  organizationId: current.organizationId,
+  orgKind: current.orgKind,
+  partyId: current.partyId,
+  idpOrgId: current.tenant.idpOrgId,
+  roles: [],
+  departmentId: null,
+  status: 'active',
+  grants: current.grants,
+});
+const caller = {
+  current: () => ({
+    scope: { tenantId: current.tenant.tenantId, organizationId: current.organizationId },
+    actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const authz = {
+  assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+    const d = can(principalNow(), action, ref);
+    if (!d.allowed) {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+    }
+  },
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 6 });
+  db = drizzle({ client: appPool });
+
+  const tenant = async (code: string): Promise<Tenant> => {
+    const t = await createTenantWithEntity(appPool, { code });
+    const { userId } = await createStaffUser(appPool, { ...t });
+    return { ...t, userId };
+  };
+  a = await tenant('TA');
+  b = await tenant('TB');
+
+  // A second legal entity in tenant A, so "numbered from the default entity, audited under the acting one" is
+  // observable: the acting entity of most tests is NOT the default one.
+  entityA2 = randomUUID();
+  await withTx(db, a, systemActor('test'), (tx) =>
+    tx.insert(organizations).values({
+      id: entityA2,
+      tenantId: a.tenantId,
+      organizationId: entityA2,
+      code: 'TA2',
+      name: 'Second entity',
+      legalName: 'Second entity',
+    }),
+  );
+
+  service = new CustomersService(
+    db,
+    new NumberingService(),
+    authz as unknown as AuthzService,
+    caller,
+    () => now,
+  );
+  const moduleRef = await Test.createTestingModule({
+    controllers: [CustomersController],
+    providers: [{ provide: CustomersService, useValue: service }],
+  }).compile();
+  app = moduleRef.createNestApplication({ rawBody: true, logger: false });
+  configureApp(app);
+  app.useGlobalFilters(new ErrorBodyFilter());
+  await app.listen(0, '127.0.0.1');
+  baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
+});
+
+afterAll(async () => {
+  await app?.close();
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+beforeEach(() => {
+  asStaff(a, entityA2);
+});
+
+// ---------------------------------------------------------------------------------------------- helpers
+
+const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+const customerBody = (over: Record<string, unknown> = {}) => ({
+  legalName: `Customer ${randomUUID().slice(0, 8)} Pvt. Ltd.`,
+  address,
+  ...over,
+});
+let keySeq = 0;
+const newKey = () => `test-key-${++keySeq}`;
+
+async function createCustomer(over: Record<string, unknown> = {}) {
+  const res = await request(baseUrl)
+    .post('/v1/customers')
+    .set('Idempotency-Key', newKey())
+    .send(customerBody(over));
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return CustomerDtoSchema.parse(res.body);
+}
+
+const errorOf = (body: unknown) => ErrorBodySchema.parse(body).error;
+
+const panOf = () => `PAN${Math.floor(Math.random() * 1e9)}`;
+
+// ---------------------------------------------------------------------------------------------- tests
+
+describe('schema', () => {
+  it('passes check-tenancy for the customer tables', async () => {
+    const violations = await checkTenancy(ownerPool);
+    expect(violations.filter((v) => v.table.startsWith('app.customer'))).toEqual([]);
+  });
+});
+
+describe('create a customer and read it back', () => {
+  it('creates the party and the customer, numbers from the default entity and audits under the acting one', async () => {
+    const body = customerBody({
+      legalName: 'Himalayan Construction Pvt. Ltd.',
+      panVatNo: 'ab-123456',
+      industry: 'Construction',
+      defaultCurrency: 'NPR',
+    });
+    const res = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(body);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const created = CustomerDtoSchema.parse(res.body);
+    expect(created).toMatchObject({
+      legalName: 'Himalayan Construction Pvt. Ltd.',
+      panVatNo: 'AB-123456',
+      relationship: 'prospect',
+      version: 1,
+      mergedIntoId: null,
+    });
+    // The first number of the tenant's CUS series in this fiscal year.
+    expect(created.number).toBe(`CUS-${fiscalYearOf(now)}-00001`);
+
+    const get = await request(baseUrl).get(`/v1/customers/${created.id}`);
+    expect(get.status).toBe(200);
+    expect(CustomerDtoSchema.parse(get.body)).toEqual(created);
+    expect((get.body as { accounts: unknown[] }).accounts).toEqual([]);
+
+    // The party row and the normalised name.
+    const party = await ownerPool.query<{ kind: string; name: string; code: string }>(
+      'SELECT kind, name, code FROM app.parties WHERE id = $1',
+      [created.id],
+    );
+    expect(party.rows).toEqual([
+      { kind: 'customer', name: 'Himalayan Construction Pvt. Ltd.', code: created.number },
+    ]);
+    const [row] = await db.select().from(customers).where(eq(customers.id, created.id));
+    expect(row?.nameNorm).toBe('himalayan construction');
+
+    // The number came from the DEFAULT entity's series, not the acting entity's.
+    const series = await ownerPool.query<{ organization_id: string }>(
+      `SELECT organization_id FROM app.number_series WHERE tenant_id = $1 AND key = 'CUS'`,
+      [a.tenantId],
+    );
+    expect(series.rows).toEqual([{ organization_id: a.organizationId }]);
+
+    // Every write is audited, and the customer's events carry the ACTING entity (the setting was put back).
+    const audited = await ownerPool.query<{
+      entity_type: string;
+      organization_id: string;
+      actor_id: string;
+    }>(
+      `SELECT entity_type, organization_id, actor_id FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_id = $2 ORDER BY id`,
+      [a.tenantId, created.id],
+    );
+    expect(audited.rows.map((r) => r.entity_type).sort()).toEqual(['customers', 'parties']);
+    for (const event of audited.rows) {
+      expect(event.organization_id).toBe(entityA2);
+      expect(event.actor_id).toBe(a.userId);
+    }
+  });
+
+  it('numbers the next customer 00002, whichever entity acts', async () => {
+    asStaff(a);
+    const second = await createCustomer();
+    expect(second.number).toBe(`CUS-${fiscalYearOf(now)}-00002`);
+  });
+
+  it('is visible from every entity of the tenant (tenant-level)', async () => {
+    const created = await createCustomer();
+    asStaff(a, a.organizationId);
+    expect((await request(baseUrl).get(`/v1/customers/${created.id}`)).status).toBe(200);
+  });
+
+  it('searches by name (normalised, contains) and by PAN/VAT, and pages with a total', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const pan = panOf();
+    const acme = await createCustomer({ legalName: `Zeta${tag} Traders Pvt. Ltd.`, panVatNo: pan });
+    const other = await createCustomer({ legalName: `Other zeta${tag} Company` });
+    await createCustomer({ legalName: `Unrelated ${randomUUID()}` });
+
+    const byName = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `ZETA${tag} Private Limited` });
+    expect(byName.status).toBe(200);
+    // Prefix matches rank first; the other name only contains the text.
+    expect((byName.body as { items: { id: string }[] }).items.map((c) => c.id)).toEqual([
+      acme.id,
+      other.id,
+    ]);
+
+    // Contains, prefix matches first.
+    const contains = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `zeta${tag}` });
+    const found = (contains.body as { items: { legalName: string }[]; total: number }).items.map(
+      (c) => c.legalName,
+    );
+    expect(found).toEqual([`Zeta${tag} Traders Pvt. Ltd.`, `Other zeta${tag} Company`]);
+
+    const byPan = await request(baseUrl).get('/v1/customers').query({ q: pan.toLowerCase() });
+    expect((byPan.body as { items: { id: string }[] }).items.map((c) => c.id)).toEqual([acme.id]);
+
+    const page = await request(baseUrl).get('/v1/customers').query({ q: tag, limit: 1, offset: 1 });
+    const paged = page.body as { items: unknown[]; total: number };
+    expect(paged.items).toHaveLength(1);
+    expect(paged.total).toBe(2);
+
+    // A LIKE metacharacter is matched literally.
+    const percent = await request(baseUrl).get('/v1/customers').query({ q: '%' });
+    expect((percent.body as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it('is a 400 without an Idempotency-Key and for a body that breaks the contract', async () => {
+    const missing = await request(baseUrl).post('/v1/customers').send(customerBody());
+    expect(missing.status).toBe(400);
+    const invalid = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(customerBody({ panVatNo: 'x' }));
+    expect(invalid.status).toBe(400);
+  });
+
+  it('runs a retried create once: same key and body replays, same key and another body is 422', async () => {
+    const key = newKey();
+    const body = customerBody();
+    const first = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', key)
+      .send(body);
+    const replay = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', key)
+      .send(body);
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(201);
+    expect(replay.body).toEqual(first.body);
+    const count = await ownerPool.query<{ n: string }>(
+      'SELECT count(*) AS n FROM app.customers WHERE tenant_id = $1 AND legal_name = $2',
+      [a.tenantId, body.legalName],
+    );
+    expect(count.rows[0]?.n).toBe('1');
+    const other = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', key)
+      .send(customerBody());
+    expect(other.status).toBe(422);
+  });
+});
+
+describe('a duplicate PAN/VAT number', () => {
+  it('is 409 naming the existing customer, whatever the case typed', async () => {
+    const pan = panOf();
+    const existing = await createCustomer({ panVatNo: pan });
+    const res = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(customerBody({ panVatNo: pan.toLowerCase() }));
+    expect(res.status).toBe(409);
+    expect(errorOf(res.body).message).toContain(existing.number);
+  });
+
+  it('carries the code duplicate_pan_vat and the holder in the exception', async () => {
+    const pan = panOf();
+    const existing = await createCustomer({ panVatNo: pan });
+    const error: unknown = await service
+      .create(
+        { legalName: 'Race Pvt. Ltd.', panVatNo: pan, relationship: 'prospect', address },
+        newKey(),
+      )
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    const conflict = error as ConflictException;
+    expect(conflict.getStatus()).toBe(409);
+    expect(conflict.getResponse()).toMatchObject({
+      code: 'duplicate_pan_vat',
+      details: { customerId: existing.id, number: existing.number },
+    });
+  });
+
+  it('is also refused on PATCH, but the same number is fine in another tenant', async () => {
+    const pan = panOf();
+    const holder = await createCustomer({ panVatNo: pan });
+    const other = await createCustomer();
+    const patch = await request(baseUrl)
+      .patch(`/v1/customers/${other.id}`)
+      .send({ expectedVersion: other.version, panVatNo: pan });
+    expect(patch.status).toBe(409);
+    // Patching the holder with its own number is not a duplicate.
+    const same = await request(baseUrl)
+      .patch(`/v1/customers/${holder.id}`)
+      .send({ expectedVersion: holder.version, panVatNo: pan, industry: 'Retail' });
+    expect(same.status).toBe(200);
+
+    asStaff(b);
+    const inB = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(customerBody({ panVatNo: pan }));
+    expect(inB.status).toBe(201);
+  });
+});
+
+describe('PATCH with expectedVersion', () => {
+  it('updates, bumps the version, recomputes name_norm and keeps what was not sent', async () => {
+    const created = await createCustomer({ relationship: 'active', panVatNo: panOf() });
+    const res = await request(baseUrl)
+      .patch(`/v1/customers/${created.id}`)
+      .send({ expectedVersion: 1, legalName: 'Everest Traders Private Limited' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const updated = CustomerDtoSchema.parse(res.body);
+    expect(updated).toMatchObject({
+      legalName: 'Everest Traders Private Limited',
+      // Not sent, so not reset to the schema default 'prospect'.
+      relationship: 'active',
+      panVatNo: created.panVatNo,
+      version: 2,
+    });
+    const [row] = await db.select().from(customers).where(eq(customers.id, created.id));
+    expect(row?.nameNorm).toBe('everest traders');
+    const party = await ownerPool.query<{ name: string }>(
+      'SELECT name FROM app.parties WHERE id = $1',
+      [created.id],
+    );
+    expect(party.rows[0]?.name).toBe('Everest Traders Private Limited');
+  });
+
+  it('is 409 for a stale expectedVersion and leaves the row alone', async () => {
+    const created = await createCustomer();
+    const first = await request(baseUrl)
+      .patch(`/v1/customers/${created.id}`)
+      .send({ expectedVersion: 1, industry: 'Retail' });
+    expect(first.status).toBe(200);
+    const stale = await request(baseUrl)
+      .patch(`/v1/customers/${created.id}`)
+      .send({ expectedVersion: 1, industry: 'Mining' });
+    expect(stale.status).toBe(409);
+    const [row] = await db.select().from(customers).where(eq(customers.id, created.id));
+    expect(row).toMatchObject({ industry: 'Retail', version: 2 });
+  });
+
+  it('is 400 for an unknown owner, an empty edit and a missing expectedVersion; 404 for an unknown id', async () => {
+    const created = await createCustomer();
+    const patch = (body: unknown, id = created.id) =>
+      request(baseUrl)
+        .patch(`/v1/customers/${id}`)
+        .send(body as object);
+    expect((await patch({ expectedVersion: 1, ownerUserId: randomUUID() })).status).toBe(400);
+    expect((await patch({ expectedVersion: 1 })).status).toBe(400);
+    expect((await patch({ industry: 'x' })).status).toBe(400);
+    expect((await patch({ expectedVersion: 1, industry: 'x' }, randomUUID())).status).toBe(404);
+  });
+
+  it('accepts an owner who is a user of the tenant', async () => {
+    const created = await createCustomer();
+    const res = await request(baseUrl)
+      .patch(`/v1/customers/${created.id}`)
+      .send({ expectedVersion: 1, ownerUserId: a.userId });
+    expect(res.status).toBe(200);
+    expect((res.body as { ownerUserId: string }).ownerUserId).toBe(a.userId);
+  });
+});
+
+describe('a caller from another tenant', () => {
+  it('gets 404 on read, PATCH, contacts and does not see the customer in a list', async () => {
+    const created = await createCustomer({ legalName: `Hidden ${randomUUID()}` });
+    const contact = await request(baseUrl)
+      .post(`/v1/customers/${created.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({ fullName: 'Sita Rai' });
+    expect(contact.status).toBe(201);
+
+    asStaff(b);
+    expect((await request(baseUrl).get(`/v1/customers/${created.id}`)).status).toBe(404);
+    const patch = await request(baseUrl)
+      .patch(`/v1/customers/${created.id}`)
+      .send({ expectedVersion: 1, industry: 'Spy' });
+    expect(patch.status).toBe(404);
+    expect((await request(baseUrl).get(`/v1/customers/${created.id}/contacts`)).status).toBe(404);
+    const post = await request(baseUrl)
+      .post(`/v1/customers/${created.id}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send({ fullName: 'Intruder' });
+    expect(post.status).toBe(404);
+    const list = await request(baseUrl).get('/v1/customers').query({ q: 'Hidden' });
+    expect((list.body as { items: unknown[] }).items).toEqual([]);
+
+    // The row was not touched by the foreign PATCH.
+    const [row] = await db.select().from(customers).where(eq(customers.id, created.id));
+    expect(row).toMatchObject({ industry: null, version: 1 });
+  });
+});
+
+describe('contacts', () => {
+  it('creates a contact with a lower-cased e-mail and lists it, the primary one first', async () => {
+    const customer = await createCustomer();
+    const post = (body: object) =>
+      request(baseUrl)
+        .post(`/v1/customers/${customer.id}/contacts`)
+        .set('Idempotency-Key', newKey())
+        .send(body);
+    const plain = await post({ fullName: 'Anil Shrestha', email: 'Anil@Example.COM' });
+    expect(plain.status, JSON.stringify(plain.body)).toBe(201);
+    expect(ContactDtoSchema.parse(plain.body)).toMatchObject({
+      customerId: customer.id,
+      email: 'anil@example.com',
+      phone: null,
+      isPrimary: false,
+      version: 1,
+    });
+    const primary = await post({ fullName: 'Sita Rai', phone: '+9779812345678', isPrimary: true });
+    expect(primary.status).toBe(201);
+
+    const list = await request(baseUrl).get(`/v1/customers/${customer.id}/contacts`);
+    expect(list.status).toBe(200);
+    expect((list.body as { fullName: string }[]).map((c) => c.fullName)).toEqual([
+      'Sita Rai',
+      'Anil Shrestha',
+    ]);
+
+    // Contacts are audited too.
+    const audited = await ownerPool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_type = 'customer_contacts'`,
+      [a.tenantId],
+    );
+    expect(Number(audited.rows[0]?.n)).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each(['9812345678', '+0123456789', '+97798'])(
+    'is 400 for the invalid phone %s',
+    async (phone) => {
+      const customer = await createCustomer();
+      const res = await request(baseUrl)
+        .post(`/v1/customers/${customer.id}/contacts`)
+        .set('Idempotency-Key', newKey())
+        .send({ fullName: 'Sita Rai', phone });
+      expect(res.status).toBe(400);
+      const rows = await db
+        .select()
+        .from(customerContacts)
+        .where(eq(customerContacts.customerId, customer.id));
+      expect(rows).toEqual([]);
+    },
+  );
+
+  it('is also enforced by the database CHECKs, whatever the API does', async () => {
+    const customer = await createCustomer();
+    const insert = (over: Record<string, unknown>) =>
+      ownerPool.query(
+        `INSERT INTO app.customer_contacts (tenant_id, customer_id, full_name, email_norm, phone_e164)
+         VALUES ($1, $2, 'Raw', $3, $4)`,
+        [a.tenantId, customer.id, over.email ?? null, over.phone ?? null],
+      );
+    await expect(insert({ phone: '9812345678' })).rejects.toMatchObject({
+      constraint: 'customer_contacts_phone_e164_check',
+    });
+    await expect(insert({ email: 'Upper@Example.com' })).rejects.toMatchObject({
+      constraint: 'customer_contacts_email_norm_check',
+    });
+  });
+
+  it('is 409 for a second primary contact and 404 for an unknown customer', async () => {
+    const customer = await createCustomer();
+    const post = (id: string, body: object) =>
+      request(baseUrl)
+        .post(`/v1/customers/${id}/contacts`)
+        .set('Idempotency-Key', newKey())
+        .send(body);
+    expect((await post(customer.id, { fullName: 'One', isPrimary: true })).status).toBe(201);
+    const second = await post(customer.id, { fullName: 'Two', isPrimary: true });
+    expect(second.status).toBe(409);
+    expect((await post(randomUUID(), { fullName: 'Nobody' })).status).toBe(404);
+  });
+
+  it('replays a retried create once', async () => {
+    const customer = await createCustomer();
+    const key = newKey();
+    const send = () =>
+      request(baseUrl)
+        .post(`/v1/customers/${customer.id}/contacts`)
+        .set('Idempotency-Key', key)
+        .send({ fullName: 'Once Only' });
+    const first = await send();
+    const replay = await send();
+    expect(replay.body).toEqual(first.body);
+    const rows = await db
+      .select()
+      .from(customerContacts)
+      .where(eq(customerContacts.customerId, customer.id));
+    expect(rows).toHaveLength(1);
+  });
+});
+
+describe('detail accounts', () => {
+  it('lists the terms of the entities the caller can act for and no others', async () => {
+    const customer = await createCustomer();
+    // The caller (tenant A's staff user) acts for the default entity and entityA2; a third entity is not theirs.
+    const entityA3 = randomUUID();
+    await withTx(db, a, systemActor('test'), async (tx) => {
+      await tx.insert(organizations).values({
+        id: entityA3,
+        tenantId: a.tenantId,
+        organizationId: entityA3,
+        code: 'TA3',
+        name: 'Third entity',
+        legalName: 'Third entity',
+      });
+      await tx.insert(userEntities).values({
+        tenantId: a.tenantId,
+        organizationId: entityA2,
+        userId: a.userId,
+        isDefault: false,
+      });
+      for (const organizationId of [a.organizationId, entityA2, entityA3]) {
+        await tx.insert(partyAccounts).values({
+          tenantId: a.tenantId,
+          organizationId,
+          partyId: customer.id,
+          creditLimit: '50000.00',
+        });
+      }
+    });
+    asStaff(a, a.organizationId);
+    const res = await request(baseUrl).get(`/v1/customers/${customer.id}`);
+    expect(res.status).toBe(200);
+    const accounts = (res.body as { accounts: unknown[] }).accounts.map((x) =>
+      PartyAccountDtoSchema.parse(x),
+    );
+    expect(accounts.map((x) => x.organizationId).sort()).toEqual(
+      [a.organizationId, entityA2].sort(),
+    );
+    expect(accounts[0]).toMatchObject({
+      partyId: customer.id,
+      creditLimit: '50000.00',
+      version: 1,
+    });
+  });
+});
+
+describe('a customer portal caller', () => {
+  it('reads only its own company and sees no other customer, in a list or by id', async () => {
+    const mine = await createCustomer();
+    const theirs = await createCustomer();
+    asPortal(a, mine.id);
+    const own = await request(baseUrl).get(`/v1/customers/${mine.id}`);
+    expect(own.status).toBe(200);
+    expect(own.body).not.toHaveProperty('accounts');
+    expect((await request(baseUrl).get(`/v1/customers/${theirs.id}`)).status).toBe(404);
+    const list = await request(baseUrl).get('/v1/customers');
+    expect((list.body as { items: { id: string }[] }).items.map((c) => c.id)).toEqual([mine.id]);
+  });
+
+  it('cannot write, even if a grant were given by mistake', async () => {
+    const mine = await createCustomer();
+    asPortal(a, mine.id);
+    current.grants = new Map<Permission, Scope>([['customer.write', 'all']]);
+    const res = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(customerBody());
+    expect(res.status).toBe(403);
+  });
+});
