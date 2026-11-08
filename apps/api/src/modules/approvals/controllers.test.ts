@@ -6,6 +6,8 @@ import 'reflect-metadata';
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { AuthenticatedRequest } from '../../platform/auth/claims';
+import { STEP_UP_REQUIRED, StepUpRequiredException } from '../../platform/auth/step-up';
 import { CAN_KEY } from '../../platform/authz/decorators';
 import {
   AdminApprovalGroupsController,
@@ -22,11 +24,39 @@ import {
 
 const ID = '3f1c2a52-9a7e-4c41-8f6e-2b1a1d0c9e11';
 
-function approvalsController() {
+/** A request at version 3 whose active step (seq 2) needs `roleKey`. */
+function requestAt(roleKey: string, kind: 'role' | 'group' | 'user' = 'role') {
+  return {
+    requestId: ID,
+    version: 3,
+    currentSeq: 2,
+    steps: [
+      { seq: 1, kind: 'role', roleKey: 'finance', status: 'approved' },
+      { seq: 2, kind, roleKey: kind === 'role' ? roleKey : null, status: 'active' },
+    ],
+  };
+}
+
+const nowS = () => Math.floor(Date.now() / 1000);
+
+/** The request the AuthGuard leaves behind, with the given `auth_time` (seconds). */
+function reqWith(authTime?: number | null): AuthenticatedRequest {
+  return {
+    auth: {
+      userId: 'me',
+      zitadelOrgId: 'o',
+      roles: ['founder'],
+      tokenExp: nowS() + 600,
+      ...(authTime === undefined ? {} : { authTime }),
+    },
+  } as unknown as AuthenticatedRequest;
+}
+
+function approvalsController(current: unknown = requestAt('management'), maxAge?: number) {
   const service = {
     preview: vi.fn(() => Promise.resolve({ steps: [], blocked: true })),
     inbox: vi.fn(() => Promise.resolve([])),
-    get: vi.fn(() => Promise.resolve({})),
+    get: vi.fn(() => Promise.resolve(current)),
     act: vi.fn(() => Promise.resolve({})),
     reroute: vi.fn(() => Promise.resolve({})),
   };
@@ -36,37 +66,132 @@ function approvalsController() {
       principal: { userId: 'me' },
     }),
   };
-  return { service, controller: new ApprovalsController(service as never, caller as never) };
+  return {
+    service,
+    controller: new ApprovalsController(service as never, caller as never, maxAge),
+  };
 }
 
 describe('ApprovalsController', () => {
   it('refuses a decision without an Idempotency-Key header with 400', () => {
     const { controller, service } = approvalsController();
-    expect(() => controller.act(ID, undefined, { action: 'approve', expectedVersion: 1 })).toThrow(
-      BadRequestException,
-    );
     expect(() =>
-      controller.act(ID, 'has space', { action: 'approve', expectedVersion: 1 }),
+      controller.act(ID, undefined, { action: 'approve', expectedVersion: 1 }, reqWith()),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      controller.act(ID, 'has space', { action: 'approve', expectedVersion: 1 }, reqWith()),
     ).toThrow(BadRequestException);
     expect(service.act).not.toHaveBeenCalled();
   });
 
   it('refuses a return without a comment with 400 before the service runs', () => {
     const { controller, service } = approvalsController();
-    expect(() => controller.act(ID, 'key-1', { action: 'return', expectedVersion: 1 })).toThrow(
-      /comment/,
-    );
+    expect(() =>
+      controller.act(ID, 'key-1', { action: 'return', expectedVersion: 1 }, reqWith()),
+    ).toThrow(/comment/);
     expect(service.act).not.toHaveBeenCalled();
   });
 
   it('passes a valid decision through with its key', async () => {
     const { controller, service } = approvalsController();
-    await controller.act(ID, 'key-1', { action: 'approve', expectedVersion: 3 });
+    await controller.act(ID, 'key-1', { action: 'approve', expectedVersion: 3 }, reqWith());
     expect(service.act).toHaveBeenCalledWith(
       ID,
       { action: 'approve', expectedVersion: 3 },
       'key-1',
     );
+  });
+
+  describe('step-up for Founder steps (K7)', () => {
+    const approve = { action: 'approve', expectedVersion: 3 } as const;
+
+    async function refusal(promise: Promise<unknown>): Promise<StepUpRequiredException> {
+      const err: unknown = await promise.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(StepUpRequiredException);
+      const ex = err as StepUpRequiredException;
+      expect(ex.getStatus()).toBe(401);
+      expect(ex.getResponse()).toMatchObject({ code: STEP_UP_REQUIRED });
+      return ex;
+    }
+
+    it('lets a Founder approve with a sign-in inside the window', async () => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      await controller.act(ID, 'key-1', approve, reqWith(nowS() - 60));
+      expect(service.act).toHaveBeenCalledWith(ID, approve, 'key-1');
+    });
+
+    it('refuses a stale sign-in with 401 step_up_required and never acts', async () => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 301)));
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing', reqWith()],
+      ['null', reqWith(null)],
+    ])('fails closed when auth_time is %s', async (_label, req) => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      await refusal(controller.act(ID, 'key-1', approve, req));
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it('needs step-up for return and reject on a Founder step too', async () => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      await refusal(
+        controller.act(
+          ID,
+          'key-1',
+          { action: 'reject', comment: 'no', expectedVersion: 3 },
+          reqWith(nowS() - 301),
+        ),
+      );
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['management role', requestAt('management')],
+      ['finance role', requestAt('finance')],
+      ['group', requestAt('', 'group')],
+      ['named user', requestAt('', 'user')],
+    ])('leaves a %s step alone, even with no auth_time', async (_label, current) => {
+      const { controller, service } = approvalsController(current);
+      await controller.act(ID, 'key-1', approve, reqWith());
+      expect(service.act).toHaveBeenCalledWith(ID, approve, 'key-1');
+    });
+
+    it('fails closed when the client claims a version newer than the request', async () => {
+      // The step could move to Founder between this read and the service's lock.
+      const { controller, service } = approvalsController(requestAt('management'));
+      await refusal(
+        controller.act(ID, 'key-1', { action: 'approve', expectedVersion: 4 }, reqWith()),
+      );
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it('lets an outdated version through to the service, which answers 409', async () => {
+      const { controller, service } = approvalsController(requestAt('founder'));
+      await controller.act(ID, 'key-1', { action: 'approve', expectedVersion: 2 }, reqWith());
+      expect(service.act).toHaveBeenCalled();
+    });
+
+    it('fails closed when the request has no step at currentSeq', async () => {
+      const { controller, service } = approvalsController({
+        ...requestAt('management'),
+        steps: [],
+      });
+      await refusal(controller.act(ID, 'key-1', approve, reqWith()));
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
+    it('uses the configured window', async () => {
+      const { controller, service } = approvalsController(requestAt('founder'), 60);
+      const ex = await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 120)));
+      expect(ex.getResponse()).toMatchObject({ maxAge: 60 });
+      expect(service.act).not.toHaveBeenCalled();
+    });
   });
 
   it('previews with the caller as the SoD user by default', async () => {
