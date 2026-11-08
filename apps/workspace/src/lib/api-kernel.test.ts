@@ -4,6 +4,7 @@ import { ApiError } from './api';
 import {
   actOnApproval,
   createDocument,
+  createMemo,
   failureOf,
   getApprovalRequest,
   getInbox,
@@ -16,6 +17,7 @@ import {
   openSignedFile,
   previewRoute,
   submitMemo,
+  updateMemo,
   uploadDocumentContent,
 } from './api-kernel';
 import { __resetEnvForTests } from './env';
@@ -102,6 +104,30 @@ const version = {
   scannedAt: WHEN,
   uploadedBy: ID_B,
   createdAt: WHEN,
+};
+
+/** An ID token: only decision calls may carry it, in `x-bos-id-token` (K7 step-up). */
+const ID_TOKEN = 'eyJ.secret-id-token-auth-time.sig';
+
+const decided = {
+  requestId: ID_A,
+  documentType: 'test_memo',
+  documentId: ID_B,
+  documentNumber: 'MEMO-1',
+  status: 'pending',
+  blockReason: null,
+  currentSeq: 2,
+  version: 4,
+  requesterUserId: ID_B,
+  snapshot: { title: 'x' },
+  steps: [step],
+  actions: [],
+  submittedAt: WHEN,
+  decidedAt: null,
+};
+
+const stepUpBody = {
+  error: { code: 'step_up_required', message: 'Sign in again', correlationId: 'c-1' },
 };
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -194,6 +220,52 @@ describe('approvals', () => {
       comment: 'Add the quote',
       expectedVersion: 3,
     });
+  });
+
+  it('sends the ID token as x-bos-id-token on a decision when one is given (K7)', async () => {
+    fetchMock.mockResolvedValue(reply(decided));
+    await actOnApproval(session, ID_A, { action: 'approve', expectedVersion: 3 }, 'k-1', ID_TOKEN);
+    expect(lastCall().headers.get('x-bos-id-token')).toBe(ID_TOKEN);
+    expect(lastCall().headers.get('idempotency-key')).toBe('k-1');
+  });
+
+  it('omits x-bos-id-token on a decision without an ID token, so the API asks for step-up', async () => {
+    // A fresh Response per call: a body can be read only once.
+    fetchMock.mockImplementation(() => Promise.resolve(reply(decided)));
+    await actOnApproval(session, ID_A, { action: 'approve', expectedVersion: 3 }, 'k-1');
+    expect(lastCall().headers.has('x-bos-id-token')).toBe(false);
+    await actOnApproval(session, ID_A, { action: 'approve', expectedVersion: 3 }, 'k-1', '');
+    expect(lastCall().headers.has('x-bos-id-token')).toBe(false);
+  });
+
+  it('never puts the ID token in a thrown error or its on-screen wording', async () => {
+    const failures: (() => void)[] = [
+      () => fetchMock.mockResolvedValue(reply(stepUpBody, 401)),
+      () => fetchMock.mockResolvedValue(reply({ ...decided, version: 'four' })),
+      () => fetchMock.mockRejectedValue(new TypeError('fetch failed')),
+    ];
+    for (const arrange of failures) {
+      arrange();
+      const err = await actOnApproval(
+        session,
+        ID_A,
+        { action: 'approve', expectedVersion: 3 },
+        'k-1',
+        ID_TOKEN,
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      const e = err as Error;
+      for (const text of [
+        e.message,
+        e.stack ?? '',
+        JSON.stringify(e),
+        JSON.stringify(failureOf(e, 'approval')),
+      ]) {
+        expect(text).not.toContain(ID_TOKEN);
+      }
+      // The request did carry it, so the absence above is not because it was never sent.
+      expect(lastCall().headers.get('x-bos-id-token')).toBe(ID_TOKEN);
+    }
   });
 
   it('encodes an id so it cannot climb out of the route', async () => {
@@ -457,5 +529,67 @@ describe('audit', () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.action).toBe('test_memos.update');
     expect(lastCall().url).toBe(`http://api:3001/v1/audit?entityId=${ID_A}&limit=50`);
+  });
+});
+
+describe('x-bos-id-token stays on decisions only (K7)', () => {
+  // A regression guard: none of these calls takes an ID token, so none may ever send one. The
+  // header is the API's step-up proof and has no business on reads, memos, files or audit.
+  const created = {
+    documentId: ID_A,
+    versionId: ID_B,
+    uploadPath: `/v1/documents/${ID_A}/versions/${ID_B}/content`,
+  };
+  const calls: [string, () => Promise<unknown>][] = [
+    ['getInbox', () => getInbox(session)],
+    ['getApprovalRequest', () => getApprovalRequest(session, ID_A)],
+    ['previewRoute', () => previewRoute(session, { documentType: 'test_memo', facts: {} })],
+    [
+      'createMemo',
+      () =>
+        createMemo(session, {
+          title: 't',
+          body: 'b',
+          amount: '1.00',
+          currency: 'NPR',
+        }),
+    ],
+    ['getMemo', () => getMemo(session, ID_A)],
+    ['updateMemo', () => updateMemo(session, ID_A, { title: 't' })],
+    ['submitMemo', () => submitMemo(session, ID_A)],
+    [
+      'createDocument',
+      () =>
+        createDocument(session, {
+          ownerType: 'test_memo',
+          ownerId: ID_A,
+          filename: 'quote.pdf',
+          declaredMime: 'application/pdf',
+          sizeBytes: 1,
+        }),
+    ],
+    [
+      'uploadDocumentContent',
+      () =>
+        uploadDocumentContent(session, created, {
+          body: new ReadableStream<Uint8Array>(),
+          contentLength: 1,
+          contentType: 'application/pdf',
+        }),
+    ],
+    ['issueDocumentLink', () => issueDocumentLink(session, ID_A, ID_B)],
+    ['openSignedFile', () => openSignedFile(session, { url: '/v1/files/tok', expiresAt: WHEN })],
+    ['listNotifications', () => listNotifications(session, { limit: 5 })],
+    ['getUnreadCount', () => getUnreadCount(session)],
+    ['markNotificationRead', () => markNotificationRead(session, ID_A)],
+    ['listAudit', () => listAudit(session, { entityId: ID_A })],
+  ];
+
+  it.each(calls)('%s never sends x-bos-id-token', async (_name, run) => {
+    // Any answer will do: the request headers are what is under test, not the parsing.
+    fetchMock.mockResolvedValue(reply({}, 500));
+    await run().catch(() => undefined);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall().headers.has('x-bos-id-token')).toBe(false);
   });
 });
