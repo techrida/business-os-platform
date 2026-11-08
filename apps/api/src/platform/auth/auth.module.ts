@@ -22,6 +22,7 @@ import { AUTH_OPTIONS, type AuthOptions, JwtVerifier } from './jwt-verifier';
       useFactory: (config: AppConfig): AuthOptions => ({
         issuer: config.OIDC_ISSUER,
         audience: config.OIDC_AUDIENCE,
+        allowedAzp: config.OIDC_ALLOWED_AZP,
       }),
     },
     JwtVerifier,
