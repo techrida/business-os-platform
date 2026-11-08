@@ -1,8 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Field } from '@/components/ui/field';
 import {
   type AttachmentView,
   formatBytes,
@@ -11,12 +15,14 @@ import {
   scanLabel,
 } from '@/lib/kernel-ui';
 
-import { Badge } from '../../kit';
 import styles from '../../kit.module.css';
+import { DownloadIcon, PaperclipIcon, UploadIcon } from '../memo-icons';
 
 const POLL_MS = 3000;
 
 type Message = { tone: 'ok' | 'bad'; text: string } | null;
+
+const BADGE_TONE = { good: 'success', wait: 'warning', bad: 'error' } as const;
 
 /**
  * The attachments panel: list with scan status, upload, download. While any file is still being
@@ -47,8 +53,6 @@ export function Attachments({
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
-  const fileId = useId();
-  const hintId = useId();
 
   // A server re-render (after submit or save) brings fresh data: adopt it. Done while rendering,
   // the pattern React documents for "adjust state when a prop changes", not in an effect.
@@ -155,37 +159,34 @@ export function Attachments({
   }
 
   return (
-    <div>
+    <div className={styles.attachments}>
       {files.length === 0 ? (
-        <p className={styles.meta} style={{ margin: '0 0 1rem' }}>
-          No attachments yet.
-        </p>
+        <p className={styles.note}>No attachments yet.</p>
       ) : (
         <ul className={styles.files} aria-label="Attachments">
           {files.map((f) => {
             const scan = scanLabel(f.status);
             return (
               <li key={f.id} className={styles.file}>
-                <div style={{ minWidth: 0 }}>
+                <span className={styles.fileIcon}>
+                  <PaperclipIcon size={18} />
+                </span>
+                <div className={styles.fileText}>
                   <span className={styles.fileName}>{f.filename}</span>
-                  <span className={styles.meta} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {formatBytes(f.sizeBytes)}
-                  </span>
+                  <span className={styles.fileSize}>{formatBytes(f.sizeBytes)}</span>
                 </div>
-                <div className={styles.fileMeta}>
-                  <Badge
-                    tone={scan.tone === 'bad' ? 'bad' : scan.tone === 'wait' ? 'wait' : 'good'}
-                  >
-                    {scan.text}
-                  </Badge>
+                <div className={styles.fileSide}>
+                  <Badge tone={BADGE_TONE[scan.tone]}>{scan.text}</Badge>
                   {f.status === 'clean' ? (
-                    <a
-                      className={`${styles.btn} ${styles.btnSecondary}`}
+                    <LinkButton
+                      variant="secondary"
+                      size="small"
                       href={`/api/documents/${encodeURIComponent(f.documentId)}/versions/${encodeURIComponent(f.id)}/download`}
                       aria-label={`Download ${f.filename}`}
                     >
+                      <DownloadIcon />
                       Download
-                    </a>
+                    </LinkButton>
                   ) : null}
                 </div>
               </li>
@@ -195,54 +196,43 @@ export function Attachments({
       )}
 
       {/* Scan results are announced here, not by re-reading the whole list. */}
-      <p className={styles.visuallyHidden} role="status" aria-live="polite">
+      <p className="sr-only" role="status" aria-live="polite">
         {announce}
       </p>
 
       {canUpload ? (
-        <form onSubmit={(e) => void onSubmit(e)} noValidate>
-          <div className={styles.field} style={{ marginBottom: '0.75rem' }}>
-            <label htmlFor={fileId} className={styles.label}>
-              Attach a file
-            </label>
-            <input
-              ref={inputRef}
-              id={fileId}
-              name="file"
-              type="file"
-              className={styles.input}
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.pptx,.csv"
-              aria-describedby={hintId}
-              disabled={uploading}
-              style={{ padding: '0.3125rem 0.5rem' }}
-            />
-            <span id={hintId} className={styles.hint}>
-              PDF, image, Word, Excel, PowerPoint or CSV, up to {formatBytes(maxBytes)}. Every file
-              is scanned before anyone can download it.
-            </span>
+        <form onSubmit={(e) => void onSubmit(e)} noValidate className={styles.upload}>
+          <div className={styles.dropzone}>
+            <Field
+              label="Attach a file"
+              hint={`PDF, image, Word, Excel, PowerPoint or CSV, up to ${formatBytes(maxBytes)}. Every file is scanned before anyone can download it.`}
+            >
+              {(control) => (
+                <input
+                  ref={inputRef}
+                  name="file"
+                  type="file"
+                  className={styles.fileInput}
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.pptx,.csv"
+                  disabled={uploading}
+                  {...control}
+                />
+              )}
+            </Field>
           </div>
-          <button
-            type="submit"
-            className={`${styles.btn} ${styles.btnSecondary}`}
-            disabled={uploading}
-          >
-            {uploading ? 'Uploading' : 'Upload'}
-          </button>
+          <div className={styles.formActions}>
+            <Button type="submit" variant="secondary" disabled={uploading}>
+              <UploadIcon />
+              {uploading ? 'Uploading' : 'Upload'}
+            </Button>
+          </div>
         </form>
       ) : (
-        <p className={styles.meta} style={{ margin: 0 }}>
-          Files can only be added while the memo is a draft or returned.
-        </p>
+        <p className={styles.note}>Files can only be added while the memo is a draft or returned.</p>
       )}
 
-      <div aria-live="polite" style={{ marginTop: '0.75rem' }}>
-        {message ? (
-          <div
-            className={`${styles.notice} ${message.tone === 'ok' ? styles.noticeOk : styles.noticeBad}`}
-          >
-            <p>{message.text}</p>
-          </div>
-        ) : null}
+      <div aria-live="polite">
+        {message ? <Alert tone={message.tone === 'ok' ? 'success' : 'error'}>{message.text}</Alert> : null}
       </div>
     </div>
   );
