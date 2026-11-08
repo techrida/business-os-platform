@@ -1,6 +1,6 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../db/db.module';
 import { UserMirror } from './user-mirror';
@@ -15,6 +15,7 @@ import {
   fakeQueue,
   zUser,
 } from './users.fakes';
+import { statusFromState } from './zitadel-admin.client';
 
 let store: FakeUsersStore;
 let zitadel: FakeZitadel;
@@ -79,7 +80,9 @@ describe('UserMirror.reconcile', () => {
     zitadel.users.set('gone', zUser('gone'));
     await mirror.syncUser('keep');
     await mirror.syncUser('gone');
-    zitadel.users.delete('gone');
+    // Gone from the list, and ZITADEL itself says inactive when asked about it directly.
+    zitadel.users.set('gone', zUser('gone', { status: 'inactive' }));
+    zitadel.hiddenFromList.add('gone');
     zitadel.users.set('keep', zUser('keep', { displayName: 'Keep Renamed' }));
     // Three more new users, so the pass needs two pages of two.
     for (const id of ['a', 'b', 'c']) zitadel.users.set(id, zUser(id));
@@ -102,7 +105,8 @@ describe('UserMirror.reconcile', () => {
   it('deactivates nobody when the listing fails or resumes mid-org', async () => {
     zitadel.users.set('x', zUser('x'));
     await mirror.syncUser('x');
-    zitadel.users.delete('x');
+    zitadel.users.set('x', zUser('x', { status: 'inactive' }));
+    zitadel.hiddenFromList.add('x');
 
     zitadel.failListFor.add(STAFF_ZORG);
     expect(await mirror.reconcile()).toEqual({ scanned: 0, changed: 0 });
@@ -122,9 +126,168 @@ describe('UserMirror.reconcile', () => {
   it('refuses to deactivate an entire org on an empty listing', async () => {
     zitadel.users.set('x', zUser('x'));
     await mirror.syncUser('x');
-    zitadel.users.clear();
+    // ZITADEL says inactive when asked directly, so only the empty-listing guard keeps x active.
+    zitadel.users.set('x', zUser('x', { status: 'inactive' }));
+    zitadel.hiddenFromList.add('x');
     expect(await mirror.reconcile()).toEqual({ scanned: 0, changed: 0 });
     expect(store.users[0]?.status).toBe('active');
+  });
+});
+
+/** Seeds local rows for `ids` (active), then makes ZITADEL report each as `state` yet omit it from the list. */
+async function unlistedLocals(ids: string[], state: ZitadelUserState = 'inactive') {
+  for (const id of ids) {
+    zitadel.users.set(id, zUser(id));
+    await mirror.syncUser(id);
+    zitadel.users.set(id, zUser(id, { status: state }));
+    zitadel.hiddenFromList.add(id);
+  }
+}
+type ZitadelUserState = ReturnType<typeof zUser>['status'];
+
+const statusOf = (z: string) => store.users.find((u) => u.zitadelUserId === z)?.status;
+
+describe('UserMirror.reconcile paging safeguards (R8)', () => {
+  beforeEach(async () => {
+    // One local user ZITADEL calls inactive but never lists: only a paging abort keeps it active.
+    await unlistedLocals(['gone']);
+    for (const id of ['a', 'b', 'c', 'd', 'e']) zitadel.users.set(id, zUser(id));
+    zitadel.getUserCalls = []; // the seeding above called getUser; only the pass's calls count
+  });
+
+  it('aborts with no deactivations when ZITADEL ignores the offset', async () => {
+    zitadel.ignoreOffset = true;
+    const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await mirror.reconcile();
+    expect(statusOf('gone')).toBe('active');
+    expect(zitadel.getUserCalls).not.toContain('gone');
+    expect(errors).toHaveBeenCalled();
+    // The next run starts the org over instead of resuming from a cursor the server ignored.
+    expect(store.cursors.get(`users.reconcile:${STAFF_ZORG}`)).toBe('0');
+    errors.mockRestore();
+  });
+
+  it('aborts when the collected users do not match totalResult', async () => {
+    zitadel.totalOverride = 12; // ZITADEL says 12 users, the walk collected 5
+    await mirror.reconcile();
+    expect(statusOf('gone')).toBe('active');
+    expect(zitadel.getUserCalls).not.toContain('gone');
+  });
+
+  it('trusts the walk when totalResult is absent, then still confirms each candidate', async () => {
+    zitadel.omitTotal = true;
+    await mirror.reconcile();
+    expect(zitadel.getUserCalls).toContain('gone');
+    expect(statusOf('gone')).toBe('inactive');
+  });
+
+  it('aborts with an error at the page cap and deactivates nobody', async () => {
+    const errors = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await mirror.reconcile({ maxPages: 2 }); // 5 users at 2 per page need 3 pages
+    expect(statusOf('gone')).toBe('active');
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('page cap'));
+    errors.mockRestore();
+  });
+});
+
+describe('UserMirror.reconcile deactivation safeguards (R8, R18)', () => {
+  const HIDDEN = ['h1', 'h2', 'h3', 'h4', 'h5'];
+
+  it('deactivates at most the per-pass cap, and stops there', async () => {
+    zitadel.users.set('live', zUser('live'));
+    await unlistedLocals(HIDDEN);
+    const warns = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await mirror.reconcile({ maxDeactivations: 2 });
+
+    expect(HIDDEN.filter((z) => statusOf(z) === 'inactive')).toHaveLength(2);
+    expect(warns).toHaveBeenCalledWith(expect.stringContaining('cap'));
+    warns.mockRestore();
+    // The next pass picks up the rest.
+    await mirror.reconcile({ maxDeactivations: 2 });
+    expect(HIDDEN.filter((z) => statusOf(z) === 'inactive')).toHaveLength(4);
+  });
+
+  it('deactivates only on a definite inactive answer from getUser', async () => {
+    zitadel.users.set('live', zUser('live'));
+    await unlistedLocals(['off']);
+    await unlistedLocals(['locked']); // a locked ZITADEL user maps to inactive
+    await unlistedLocals(['alive'], 'active');
+    await unlistedLocals(['odd'], null); // ZITADEL state we do not recognise
+    await unlistedLocals(['ghost']);
+    zitadel.users.delete('ghost'); // not found: maybe just invisible to the provisioner token
+    const warns = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await mirror.reconcile();
+
+    expect(statusOf('off')).toBe('inactive');
+    expect(statusOf('locked')).toBe('inactive');
+    expect(statusOf('alive')).toBe('active');
+    expect(statusOf('odd')).toBe('active');
+    expect(statusOf('ghost')).toBe('active');
+    expect(warns).toHaveBeenCalledWith(expect.stringContaining('odd'));
+    warns.mockRestore();
+  });
+
+  it('never deactivates a user created or invited after the pass started', async () => {
+    for (const id of ['live', 'live2', 'live3']) zitadel.users.set(id, zUser(id));
+    // While the pass walks page 2, an admin invites one user and another appears with a creation
+    // date after the pass start. Their local rows exist (invite/JIT) but the list never showed them.
+    zitadel.onListUsers = (call) => {
+      if (call !== 2) return;
+      zitadel.users.set('late-invited', zUser('late-invited', { status: 'invited' }));
+      zitadel.users.set(
+        'late-odd',
+        zUser('late-odd', { status: 'inactive', createdAt: new Date() }),
+      );
+      for (const id of ['late-invited', 'late-odd']) {
+        zitadel.hiddenFromList.add(id);
+        void store.insertUser(tx, scope, {
+          zitadelUserId: id,
+          email: null,
+          displayName: null,
+          status: 'active',
+        });
+      }
+    };
+
+    await mirror.reconcile();
+
+    expect(statusOf('late-invited')).toBe('active');
+    // Even a contrived inactive answer does not count: the user is newer than the pass.
+    expect(statusOf('late-odd')).toBe('active');
+  });
+});
+
+describe('Strict ZITADEL state mapping (R18)', () => {
+  it('maps only explicit states; anything else is unknown (null)', () => {
+    expect(statusFromState('USER_STATE_ACTIVE')).toBe('active');
+    expect(statusFromState('USER_STATE_INITIAL')).toBe('invited');
+    expect(statusFromState('USER_STATE_INACTIVE')).toBe('inactive');
+    expect(statusFromState('USER_STATE_LOCKED')).toBe('inactive');
+    for (const unknown of ['USER_STATE_UNSPECIFIED', '', 'USER_STATE_DELETED', 'WHATEVER']) {
+      expect(statusFromState(unknown)).toBeNull();
+    }
+  });
+
+  it('leaves an existing user unchanged, and inserts no new one, on an unknown state', async () => {
+    zitadel.users.set('known', zUser('known'));
+    await mirror.syncUser('known');
+    const warns = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    zitadel.users.set('known', zUser('known', { status: null, displayName: 'Renamed' }));
+    zitadel.users.set('fresh', zUser('fresh', { status: null }));
+    expect(await mirror.syncUser('known')).toBe(false);
+    expect(await mirror.syncUser('fresh')).toBe(false);
+    await mirror.reconcile();
+
+    expect(store.users.find((u) => u.zitadelUserId === 'known')).toMatchObject({
+      status: 'active',
+      displayName: 'User known',
+    });
+    expect(store.users.find((u) => u.zitadelUserId === 'fresh')).toBeUndefined();
+    expect(warns).toHaveBeenCalledWith(expect.stringContaining('unknown state'));
+    warns.mockRestore();
   });
 });
 
