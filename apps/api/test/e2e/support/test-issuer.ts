@@ -113,7 +113,14 @@ export interface ZitadelClaimsInput {
   userId: string;
   /** The user's own organization (`urn:zitadel:iam:user:resourceowner:id`). */
   orgId: string;
+  /** Roles granted in the user's own org (`orgId`). */
   roles: readonly string[];
+  /**
+   * Extra grants in OTHER orgs: org id -> role keys. ZITADEL lists a role once with every org it
+   * is granted in, so these merge into the same claim. Used to prove a role granted elsewhere
+   * never counts in the caller's own org (P1 plan finding 4).
+   */
+  rolesInOtherOrgs?: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -122,13 +129,20 @@ export interface ZitadelClaimsInput {
  * each role maps org id to org domain. (`iss`, `iat` and `exp` are added by {@link TestIssuer.mint}.)
  */
 export function zitadelClaims(input: ZitadelClaimsInput): JWTPayload {
+  // { role: { orgId: domain } }, the shape `mapClaims` inverts into rolesByOrg.
+  const roleClaim: Record<string, Record<string, string>> = {};
+  const grant = (role: string, orgId: string): void => {
+    roleClaim[role] = { ...roleClaim[role], [orgId]: `${orgId}.example.test` };
+  };
+  for (const role of input.roles) grant(role, input.orgId);
+  for (const [orgId, roles] of Object.entries(input.rolesInOtherOrgs ?? {})) {
+    for (const role of roles) grant(role, orgId);
+  }
   return {
     sub: input.userId,
     aud: [input.projectId, input.clientId],
     azp: input.clientId,
-    [`urn:zitadel:iam:org:project:${input.projectId}:roles`]: Object.fromEntries(
-      input.roles.map((role) => [role, { [input.orgId]: 'org.example.test' }]),
-    ),
+    [`urn:zitadel:iam:org:project:${input.projectId}:roles`]: roleClaim,
     'urn:zitadel:iam:user:resourceowner:id': input.orgId,
   };
 }
