@@ -40,8 +40,9 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { and, asc, eq, isNull, max } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, max } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
+import { z } from 'zod';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
@@ -68,6 +69,10 @@ import { actorUuid, readTxContext } from './tx-context';
 import { checkType, isAllowedMime } from './type-check';
 
 type VersionRow = typeof documentVersions.$inferSelect;
+/** The same id rule as the documents controller: anything else is refused before it reaches Postgres. */
+const Id = z.guid();
+/** The one refusal of issueLinkForOwner: the same body whether the document is missing, foreign or unclean. */
+const OWNER_LINK_NOT_FOUND = 'File not found';
 /** Anything that can run a SELECT: the pool-backed Db or an open transaction. */
 type Reader = Pick<Db, 'select'>;
 
@@ -577,16 +582,59 @@ export class DocumentsService {
         `This file cannot be downloaded: its status is ${row.version.status}, not clean`,
       );
     }
-    try {
-      const { token, expiresAt } = this.links.issue(versionId);
-      return { url: `/v1/files/${token}`, expiresAt: expiresAt.toISOString() };
-    } catch (error) {
-      if (error instanceof LinkError && error.kind === 'secret_missing') {
-        // Fail closed: no secret means no links, never an unsigned or weakly signed one.
-        throw new ServiceUnavailableException('Download links are not configured');
-      }
-      throw error;
+    return this.signLink(versionId);
+  }
+
+  /**
+   * A 60 s single-use link for the newest version of one document of one owner. For the owning module, which
+   * authorized the caller's access to the owner already: like `listForOwner`, this asks no permission. The
+   * customer portal uses it for the quotation PDF, with `{ ownerType: 'quotation_version', ownerId: versionId }`
+   * and the version's rendered document id, after its own visibility checks (customer principals hold no
+   * `documents.read`, and must not: the generic route would show them draft versions).
+   *
+   * The document must be live, belong to exactly that owner, and sit in the scope's tenant and entity. Its
+   * newest version (by number, whatever its status) must be `clean`: an older clean version behind a newer
+   * quarantined one is not served. An owner type nobody registered is refused. Every refusal is the same 404,
+   * never a 403, so the caller learns nothing about whether the document exists. The link is redeemed by
+   * `openDownload`, like the one from `issueLink`.
+   */
+  async issueLinkForOwner(
+    scope: TxScope,
+    owner: { ownerType: string; ownerId: string },
+    documentId: string,
+  ): Promise<SignedLinkDto> {
+    if (
+      !this.owners.has(owner.ownerType) ||
+      !Id.safeParse(owner.ownerId).success ||
+      !Id.safeParse(documentId).success
+    ) {
+      throw new NotFoundException(OWNER_LINK_NOT_FOUND);
     }
+    const s = scoped(scope);
+    const [row] = await this.db
+      .select({ version: documentVersions })
+      .from(documents)
+      .innerJoin(documentVersions, eq(documentVersions.documentId, documents.id))
+      .where(
+        and(
+          s.where(
+            documents,
+            and(
+              eq(documents.id, documentId),
+              eq(documents.ownerType, owner.ownerType),
+              eq(documents.ownerId, owner.ownerId),
+              isNull(documents.removedAt),
+            ),
+          ),
+          s.where(documentVersions),
+        ),
+      )
+      .orderBy(desc(documentVersions.version))
+      .limit(1);
+    if (row === undefined || row.version.status !== 'clean') {
+      throw new NotFoundException(OWNER_LINK_NOT_FOUND);
+    }
+    return this.signLink(row.version.id);
   }
 
   /**
@@ -626,6 +674,19 @@ export class DocumentsService {
   }
 
   // ------------------------------------------------------------------------------------ internals
+
+  /** Signs a link to one version. Fails closed: no secret means no links, never an unsigned one. */
+  private signLink(versionId: string): SignedLinkDto {
+    try {
+      const { token, expiresAt } = this.links.issue(versionId);
+      return { url: `/v1/files/${token}`, expiresAt: expiresAt.toISOString() };
+    } catch (error) {
+      if (error instanceof LinkError && error.kind === 'secret_missing') {
+        throw new ServiceUnavailableException('Download links are not configured');
+      }
+      throw error;
+    }
+  }
 
   private async assertOwner(
     scope: TxScope,
