@@ -19,7 +19,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound }));
+vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const V1 = '22222222-2222-4222-8222-222222222221';
@@ -183,8 +184,12 @@ describe('quotation detail page', () => {
     expect(html).not.toContain('/document"');
   });
 
-  it('leaves an empty action slot for the next unit', async () => {
-    expect(await render()).toMatch(/<div class="[^"]*actions[^"]*"><\/div>/);
+  it('puts the actions of the current status in the action slot', async () => {
+    // The fixture is Sent: record the outcome, or revise. Send is for an approved quotation.
+    const html = await render();
+    expect(html).toMatch(/<div class="[^"]*actions[^"]*"><button[^>]*>Record outcome<\/button>/);
+    expect(html).toContain('>Revise</button>');
+    expect(html).not.toContain('>Send to customer</button>');
   });
 
   it('answers a 404 with notFound, and a non-UUID id without calling the API', async () => {
