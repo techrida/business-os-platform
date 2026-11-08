@@ -201,7 +201,10 @@ function clean(value: string): string {
     // damaging real names, so assertSafeEmail guards the parts we build instead.
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '[link removed]')
     .replace(/\bwww\.\S+/gi, '[link removed]')
-    .replace(/\b(?:javascript|vbscript|data|cid):\S+/gi, '[link removed]')
+    // Only the marker is replaced for the next two (the words after it are harmless), and they match
+    // everything assertSafeEmail rejects, so a caller's text can never make a render throw.
+    .replace(/\b(?:javascript|vbscript|data|cid)\s*:/gi, '[link removed]')
+    .replace(/\b(?:src|href|action|formaction)\s*=/gi, '[link removed]')
     .trim();
   return oneLine.length > MAX_VALUE_LENGTH ? `${oneLine.slice(0, MAX_VALUE_LENGTH - 1)}…` : oneLine;
 }
