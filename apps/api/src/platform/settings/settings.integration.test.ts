@@ -6,7 +6,7 @@
 // the roles, migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
-import { organizations, runMigrations, tenants } from '@bos/db';
+import { createTenantWithEntity, organizations, runMigrations } from '@bos/db';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -30,19 +30,25 @@ let money: MoneyService;
 
 /** Each describe block uses its own tenant, so no test sees another's rows. */
 async function newScope(): Promise<TxScope> {
-  const scope = { tenantId: randomUUID(), organizationId: randomUUID() };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: scope.tenantId });
-    await tx.insert(organizations).values({
-      id: scope.organizationId,
+  const { tenantId, organizationId } = await createTenantWithEntity(appPool);
+  return { tenantId, organizationId };
+}
+
+/** A second legal entity in the tenant of `scope`, to act as when a test needs another entity. */
+async function addEntity(scope: TxScope): Promise<TxScope> {
+  const organizationId = randomUUID();
+  const other = { tenantId: scope.tenantId, organizationId };
+  await withTx(db, other, systemActor('test'), (tx) =>
+    tx.insert(organizations).values({
+      id: organizationId,
       tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${scope.organizationId}`,
-    });
-  });
-  return scope;
+      organizationId,
+      code: `E${organizationId.slice(0, 8)}`,
+      name: 'Second entity',
+      legalName: 'Second entity Pvt. Ltd.',
+    }),
+  );
+  return other;
 }
 
 function urlFor(user: string, password: string, database: string): string {
@@ -238,6 +244,27 @@ describe('MoneyService', () => {
     await expect(attempt).rejects.toMatchObject({
       response: { code: 'conflict', message: 'No NPR rate for USD on or before 2025-07-17' },
     });
+  });
+
+  it('finds a rate entered while acting in entity E1 when acting in E2 of the same tenant', async () => {
+    const e1 = await newScope();
+    const e2 = await addEntity(e1);
+    await withTx(db, e1, systemActor('test'), (tx) =>
+      money.setRate(tx, 'USD', '133.00', '2025-07-10', 'manual'),
+    );
+
+    // A rate is a market fact of the tenant (ADR 0027 section 7), so E2 sees the row E1 entered.
+    expect(
+      await money.toNprSnapshot(db, e2, { amount: '100.00', currency: 'USD' }, KTM_MIDNIGHT),
+    ).toMatchObject({ amountNpr: '13300.00', rateDate: '2025-07-10' });
+    expect(await money.listRates(e2, { limit: 10 })).toHaveLength(1);
+
+    // And the rate is one row per tenant: E2 cannot enter the same day again.
+    await expect(
+      withTx(db, e2, systemActor('test'), (tx) =>
+        money.setRate(tx, 'USD', '140.00', '2025-07-10', 'manual'),
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('turns INR 1000.00 into NPR 1600.00 at the 1.6 peg', async () => {
