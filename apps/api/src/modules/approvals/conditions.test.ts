@@ -1,7 +1,7 @@
 // Unit tests for rule conditions (decimal comparison) and canonical JSON (snapshot hash stability).
 import { describe, expect, it } from 'vitest';
 
-import { canonicalJson, canonicalSha256 } from './canonical-json';
+import { canonicalJson, canonicalSha256 } from '../../platform/hashing/canonical-json';
 import { ConditionError, evaluate } from './conditions';
 
 describe('evaluate', () => {

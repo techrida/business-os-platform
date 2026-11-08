@@ -45,7 +45,7 @@ import { can } from '../../platform/authz/can';
 import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
-import { canonicalSha256 } from './canonical-json';
+import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import { ConditionError } from './conditions';
 import {
   APPROVALS_CLOCK,
