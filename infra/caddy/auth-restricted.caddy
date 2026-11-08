@@ -1,0 +1,27 @@
+# PROD ONLY. Narrows the public auth host to what OIDC sign-in needs. Not part of the dev stack: dev has no file
+# in /etc/caddy/auth.d, so the `import` in the Caddyfile adds nothing and dev routing stays exactly as it was.
+# compose.prod.yaml mounts this file at /etc/caddy/auth.d/restricted.caddy. It is spliced into the auth host's
+# site block (CR-10), before the host's own `handle` blocks, so the 404 below wins.
+#
+# Without it the auth host proxies everything to ZITADEL: the admin console (/ui/console) and the management, admin
+# and gRPC/Connect APIs (/management, /admin, /auth, /v2, /zitadel.*) are reachable from wherever the host is
+# reachable, where the only protection is a ZITADEL login.
+#
+# Allowed (a browser or an OIDC client needs these):
+#   /.well-known/*       discovery document (and jwks pointer)
+#   /oauth/v2/*          authorize, token, keys (JWKS), introspect, revoke, device
+#   /oidc/v1/*           userinfo, end_session (logout)
+#   /ui/v2/login[/*]     Login V2 UI, including its /_next assets; "/" is rewritten to it before this runs
+#   /assets/v1/*         instance assets (logo, icon, font) shown by the login UI
+# Everything else answers 404, including /ui/console, /ui/login (the v1 login, unused because Login V2 is required),
+# /api/* (the dev-only alias), /management/*, /admin/*, /auth/v1/*, /v2/*, /zitadel.* and /saml/*.
+#
+# Not needed on the public host: the Login V2 container calls the API directly over the internal network
+# (ZITADEL_API_URL=http://zitadel-api:8080), so the /zitadel.* Connect paths it uses never pass through here.
+#
+# Caddy matches on the cleaned path (dot segments and doubled slashes resolved), so /oauth/v2/../../ui/console is
+# judged as /ui/console and refused.
+@auth_denied not path /.well-known/* /oauth/v2/* /oidc/v1/* /ui/v2/login /ui/v2/login/* /assets/v1/*
+handle @auth_denied {
+	respond 404
+}

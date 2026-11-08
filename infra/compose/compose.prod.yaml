@@ -8,6 +8,9 @@
 # Hardening still to do before real data (tracked for P1):
 #   - split ZITADEL into init / setup / start (see the "prodlike" overlay in ZITADEL's deploy/compose)
 #   - delete admin.pat plus the bootstrap service account after setup (ZITADEL_PAT_EXPIRATION is already required below)
+#   - the public auth host now answers 404 for the console and admin APIs (infra/caddy/auth-restricted.caddy), but
+#     tools/seed-zitadel reaches those APIs through OIDC_ISSUER, i.e. through that host. In prod the seed needs
+#     another route to ZITADEL (internal URL with the public Host header) or a temporary unrestricted Caddy.
 #   - choose CADDY_TLS (default "internal" = Caddy's private CA; clients must trust it)
 #   - mail: there is no mailpit here; the Postal stack arrives in P1 (mail.<domain> answers 502 until then)
 
@@ -42,6 +45,14 @@ services:
     ports:
       - '${BIND_ADDR:?set BIND_ADDR in .env (the Tailscale IP)}:80:80'
       - '${BIND_ADDR}:443:443'
+    volumes:
+      # Restricts the public auth host to OIDC sign-in paths (the Caddyfile imports /etc/caddy/auth.d/*).
+      - type: bind
+        source: ../caddy/auth-restricted.caddy
+        target: /etc/caddy/auth.d/restricted.caddy
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       # In prod the apps run as containers, never on the host.
       WORKSPACE_UPSTREAM: workspace:3000

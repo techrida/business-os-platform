@@ -13,6 +13,11 @@
 	@root path /
 	rewrite @root /ui/v2/login/
 
+	# Prod only: compose.prod.yaml mounts infra/caddy/auth-restricted.caddy here, which answers 404 for everything
+	# except the paths OIDC sign-in needs (no console, no admin APIs). Dev mounts nothing, a glob that matches no
+	# file imports nothing, so dev stays fully open (the e2e logins and the seed tool need that).
+	import /etc/caddy/auth.d/*
+
 	@login path /ui/v2/login /ui/v2/login/*
 	handle @login {
 		reverse_proxy zitadel-login:3000
