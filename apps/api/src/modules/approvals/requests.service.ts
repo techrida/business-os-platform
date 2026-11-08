@@ -27,6 +27,7 @@ import {
   approvalRequests,
   approvalSteps,
   delegations,
+  users as appUsers,
   workflowDefinitions,
   workflowVersions,
 } from '@bos/db';
@@ -73,6 +74,8 @@ export interface SubmitInput {
   snapshot: unknown;
   facts: Record<string, unknown>;
   requesterUserId: string;
+  /** Who pressed submit, when not the requester (someone submitting on their behalf). Defaults to the requester. */
+  submittedByUserId?: string;
   sodUserIds: string[];
 }
 
@@ -133,7 +136,11 @@ export class ApprovalsService {
   ): Promise<RoutePlan> {
     const { spec } = await this.publishedSpec(this.db, scope, documentType);
     const data = await this.loadDirectory(this.db, scope, spec);
-    return this.plan(spec, facts, data, sodUserIds);
+    const plan = this.plan(spec, facts, data, sodUserIds);
+    // Who can approve is the approvers' business: a requester (read only) sees the steps and whether
+    // each is blocked, not the people. No resource is passed, so only the permission itself counts.
+    if (can(this.caller.current().principal, 'approvals.requests.act').allowed) return plan;
+    return { ...plan, steps: plan.steps.map((s) => ({ ...s, eligibleUserIds: [] })) };
   }
 
   async submit(
@@ -202,7 +209,7 @@ export class ApprovalsService {
     );
     await this.writeAction(tx, scope, {
       requestId,
-      actorUserId: i.requesterUserId,
+      actorUserId: i.submittedByUserId ?? i.requesterUserId,
       action: 'submit',
       requestVersion: 1,
       now,
@@ -277,30 +284,32 @@ export class ApprovalsService {
         throw new ConflictException('This Idempotency-Key was already used for a different action');
       }
 
-      // 3. Stale view.
-      if (request.version !== action.expectedVersion) {
-        throw new ConflictException(
-          `The request changed (version ${request.version}, you saw ${action.expectedVersion}); reload it`,
-        );
-      }
-      if (request.status !== 'pending') {
-        throw new ConflictException(`The request is ${request.status}; nothing to decide`);
-      }
-
-      // 4. Eligibility, then separation of duties.
+      // 3. Eligibility, then separation of duties, before any version or status answer: someone who may
+      // not act learns nothing about the request's state. Checked against the step at currentSeq whatever
+      // its status, because a decided or blocked request has no active step.
       const steps = await this.stepsOf(tx, requestId);
-      const active = steps.find((s) => s.seq === request.currentSeq && s.status === 'active');
-      if (active === undefined) throw new ConflictException('The request has no active step');
+      const current = steps.find((s) => s.seq === request.currentSeq);
+      if (current === undefined) throw new ConflictException('The request has no current step');
       const spec = await this.frozenSpec(tx, request.workflowVersionId);
       const data = await this.loadDirectory(tx, scope, spec);
       const sod = new Set(request.sodUserIds);
       const who = this.directory(data, now, request.documentType).resolveActor(
-        stepSpecOf(active, data),
+        stepSpecOf(current, data),
         userId,
         sod,
       );
       if (!who.eligible)
         throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      // The role mirror lags ZITADEL: a revoked role stays in app.user_roles until the sync runs. The
+      // token's roles are the truth for a direct approver. A delegate acts on the delegator's mirror roles
+      // (the delegator is not the caller, so there is no token to check): an accepted limit.
+      if (
+        who.onBehalfOf === null &&
+        current.kind === 'role' &&
+        !principal.roles.includes(current.roleKey as RoleKey)
+      ) {
+        throw forbidden('out_of_scope', 'You no longer hold the role this step needs');
+      }
       if (sod.has(userId) || (who.onBehalfOf !== null && sod.has(who.onBehalfOf))) {
         throw forbidden(
           'separation_of_duties',
@@ -310,7 +319,7 @@ export class ApprovalsService {
       if (spec.distinctApprovers) {
         const earlier = new Set(
           steps
-            .filter((s) => s.seq < active.seq)
+            .filter((s) => s.seq < current.seq)
             .flatMap((s) => [s.decidedBy, s.decidedOnBehalfOf])
             .filter((id): id is string => id !== null),
         );
@@ -321,6 +330,19 @@ export class ApprovalsService {
           );
         }
       }
+
+      // 4. Stale view.
+      if (request.version !== action.expectedVersion) {
+        throw new ConflictException(
+          `The request changed (version ${request.version}, you saw ${action.expectedVersion}); reload it`,
+        );
+      }
+      if (request.status !== 'pending') {
+        throw new ConflictException(`The request is ${request.status}; nothing to decide`);
+      }
+      if (current.status !== 'active')
+        throw new ConflictException('The request has no active step');
+      const active = current;
 
       // 5. Advance.
       const outcome =
@@ -515,6 +537,10 @@ export class ApprovalsService {
       organizationId: scope.organizationId,
       ownerUserId: dto.requesterUserId,
     });
+    // Out of scope answers like an unknown id, so probing ids tells nobody which requests exist.
+    if (!decision.allowed && decision.reason === 'out_of_scope') {
+      throw new NotFoundException('Approval request not found');
+    }
     if (!decision.allowed) {
       throw new ForbiddenException({
         code: 'forbidden',
@@ -662,10 +688,16 @@ export class ApprovalsService {
         .select({
           id: approvalGroups.id,
           key: approvalGroups.key,
-          userId: approvalGroupMembers.userId,
+          userId: appUsers.id,
         })
         .from(approvalGroups)
         .leftJoin(approvalGroupMembers, eq(approvalGroupMembers.groupId, approvalGroups.id))
+        // Only active people approve, the same rule as userIdsWithRole; an inactive member drops out
+        // here, so their delegates (who act on their behalf) drop out with them.
+        .leftJoin(
+          appUsers,
+          and(eq(appUsers.id, approvalGroupMembers.userId), eq(appUsers.status, 'active')),
+        )
         .where(
           and(
             eq(approvalGroups.tenantId, scope.tenantId),
@@ -697,7 +729,29 @@ export class ApprovalsService {
           isNull(delegations.revokedAt),
         ),
       );
-    return { roleMembers, groups, delegations: delegationRows };
+    const named = [
+      ...new Set(all.flatMap((s) => (s.kind === 'user' && s.user !== undefined ? [s.user] : []))),
+    ];
+    const activeUserIds = new Set(
+      named.length === 0 ? [] : await this.activeUserIds(q, scope, named),
+    );
+    return { roleMembers, groups, delegations: delegationRows, activeUserIds };
+  }
+
+  /** The ids among `ids` of active users of this tenant and org. */
+  async activeUserIds(q: Q, scope: TxScope, ids: readonly string[]): Promise<string[]> {
+    const rows = await q
+      .select({ id: appUsers.id })
+      .from(appUsers)
+      .where(
+        and(
+          eq(appUsers.tenantId, scope.tenantId),
+          eq(appUsers.organizationId, scope.organizationId),
+          eq(appUsers.status, 'active'),
+          inArray(appUsers.id, [...ids]),
+        ),
+      );
+    return rows.map((r) => r.id);
   }
 
   directory(
@@ -902,7 +956,9 @@ export class ApprovalsService {
       .select()
       .from(approvalRequests)
       .where(requestInScope(scope, requestId))
-      .for('update');
+      // NO KEY UPDATE, not UPDATE: still serialises two deciders, but does not block the FOR KEY SHARE
+      // that every approval_actions/approval_steps FK check takes on this row (the SLA tick's inserts).
+      .for('no key update');
     if (request === undefined) throw new NotFoundException('Approval request not found');
     return request;
   }

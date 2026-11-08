@@ -111,6 +111,11 @@ export interface DirectoryData {
   /** Group key → its id and member user ids. */
   groups: ReadonlyMap<string, { id: string; memberIds: readonly string[] }>;
   delegations: readonly DelegationRow[];
+  /**
+   * Active users among the ones user steps name. When given, a named user outside it has no approver.
+   * Optional so pure routing tests can leave it out; the service always loads it.
+   */
+  activeUserIds?: ReadonlySet<string>;
 }
 
 export interface BuiltDirectory extends ApproverDirectory {
@@ -152,7 +157,8 @@ export function buildDirectory(
   const members = (step: StepSpec): string[] => {
     if (step.kind === 'role') return [...(data.roleMembers.get(step.role ?? '') ?? [])];
     if (step.kind === 'group') return [...(data.groups.get(step.group ?? '')?.memberIds ?? [])];
-    return step.user === undefined ? [] : [step.user];
+    if (step.user === undefined) return [];
+    return data.activeUserIds === undefined || data.activeUserIds.has(step.user) ? [step.user] : [];
   };
 
   const direct = (step: StepSpec): string[] => [
