@@ -13,6 +13,8 @@ export const MeResponseSchema = z.object({
   tenantId: z.guid(),
   organizationId: z.guid(),
   orgKind: OrgKindSchema,
+  /** The customer or vendor party of a portal caller (ADR 0027); null for staff. */
+  partyId: z.guid().nullable(),
   roles: z.array(z.string()),
   correlationId: CorrelationIdSchema,
 });

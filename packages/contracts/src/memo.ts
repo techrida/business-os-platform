@@ -13,6 +13,11 @@ export const CreateMemoBodySchema = z.object({
   /** The table has CHECK (amount >= 0), so a negative amount is refused here with a clear message. */
   amount: DecimalString.refine((v) => !v.startsWith('-'), 'must not be negative'),
   currency: CurrencySchema,
+  /**
+   * The customer party a portal would show this memo to (ADR 0027 §5); omit or null for an internal memo. The
+   * database checks that it is a customer party of the tenant (test_memos_customer_party_fk).
+   */
+  customerPartyId: z.guid().nullable().optional(),
 });
 export type CreateMemoBody = z.infer<typeof CreateMemoBodySchema>;
 
@@ -30,8 +35,8 @@ export const MemoDtoSchema = z.object({
   status: MemoStatusSchema,
   ownerUserId: z.guid(),
   departmentId: z.guid().nullable(),
-  /** The counterparty org a portal would show this memo to (ADR 0017); null for internal memos. */
-  customerOrganizationId: z.guid().nullable(),
+  /** The customer party a portal would show this memo to (ADR 0027 §5); null for internal memos. */
+  customerPartyId: z.guid().nullable(),
   editorUserIds: z.array(z.guid()),
   version: z.number().int().min(1),
   createdAt: z.iso.datetime({ offset: true }),
