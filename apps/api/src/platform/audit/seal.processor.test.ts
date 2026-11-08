@@ -20,11 +20,14 @@ interface Statement {
 
 /**
  * A db that renders each statement with drizzle's real Postgres dialect and answers by its text:
- * the tenant list, a tenant's first organization, and audit.seal (which fails for `brokenTenant`).
+ * the tenant list, a tenant's entity, and audit.seal (which fails for `brokenTenant`). A tenant's entity
+ * query answers `orgs` when it asks for the default entity (`is_default`) and `oldestOrgs` when it does
+ * not, so a test can tell the two apart (ADR 0027: the seal scope is the default entity).
  */
 function fakeDb(opts: {
   tenants: string[];
   orgs: Record<string, string>;
+  oldestOrgs?: Record<string, string>;
   alreadySealed?: string[];
   brokenTenant?: string;
 }) {
@@ -39,7 +42,8 @@ function fakeDb(opts: {
       return Promise.resolve({ rows: opts.tenants.map((tenant_id) => ({ tenant_id })) });
     }
     if (text.includes('app.organizations')) {
-      const org = opts.orgs[String(params[0])];
+      const source = text.includes('is_default') ? opts.orgs : (opts.oldestOrgs ?? opts.orgs);
+      const org = source[String(params[0])];
       return Promise.resolve({ rows: org === undefined ? [] : [{ id: org }] });
     }
     if (text.includes('audit.seal')) {
@@ -105,7 +109,7 @@ describe('SealProcessor', () => {
       [['t-2', '2026-10-01'], true],
     ]);
 
-    // withTx's first statement in each transaction sets the scope (first org) and the system actor.
+    // withTx's first statement in each transaction sets the scope (default entity) and the system actor.
     const setConfigs = executed.filter((s) => s.text.includes('set_config'));
     expect(setConfigs).toHaveLength(2);
     expect(setConfigs[0]?.params.slice(0, 4)).toEqual([
@@ -124,6 +128,20 @@ describe('SealProcessor', () => {
     expect(setConfigs[0]?.params[4]).toBe(setConfigs[1]?.params[4]);
   });
 
+  it('seals under the default entity, not the oldest organization', async () => {
+    const { db, executed } = fakeDb({
+      tenants: ['t-1'],
+      orgs: { 't-1': 'o-default' },
+      oldestOrgs: { 't-1': 'o-oldest-but-not-default' },
+    });
+
+    await new SealProcessor(db).process(job(AUDIT_SEAL_JOB));
+
+    const setConfigs = executed.filter((s) => s.text.includes('set_config'));
+    expect(setConfigs).toHaveLength(1);
+    expect(setConfigs[0]?.params.slice(0, 2)).toEqual(['t-1', 'o-default']);
+  });
+
   it('keeps sealing after one tenant fails, then fails the job naming it', async () => {
     const { db, executed } = fakeDb({
       tenants: ['t-1', 't-bad', 't-noorg', 't-3'],
@@ -135,7 +153,7 @@ describe('SealProcessor', () => {
 
     await expect(run).rejects.toThrow(/2 of 4 tenant\(s\) failed/);
     await expect(run).rejects.toThrow(/t-bad: audit\.seal: chain is broken/);
-    await expect(run).rejects.toThrow(/t-noorg: tenant has no organization/);
+    await expect(run).rejects.toThrow(/t-noorg: tenant has no default entity/);
     expect(sealCalls(executed).map((s) => s.params[0])).toEqual(['t-1', 't-bad', 't-3']);
   });
 
