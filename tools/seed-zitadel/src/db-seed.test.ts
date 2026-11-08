@@ -4,7 +4,12 @@ import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema } from '@bos/contracts';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
-import { TEST_MEMO_WORKFLOW_SPEC, seedKernelRows, setSeedActor } from './db-seed.js';
+import {
+  QUOTATION_VERSION_WORKFLOW_SPEC,
+  TEST_MEMO_WORKFLOW_SPEC,
+  seedKernelRows,
+  setSeedActor,
+} from './db-seed.js';
 import { PgTenancyStore, tenancySeed } from './index.js';
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1', correlationId: 'corr-1' };
@@ -93,8 +98,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + definition + version + current_version_id + fx peg
-    expect(changed).toBe(grantCount + 1 + 1 + 1 + 1 + 1);
+    // grants + authz bump + 2 x (definition + version + current_version_id) + fx peg
+    // + 3 tax codes + 2 payment terms
+    expect(changed).toBe(grantCount + 1 + 2 * 3 + 1 + 3 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -159,7 +165,13 @@ describe('seedKernelRows', () => {
     await seedKernelRows(client, scope);
 
     const definition = calls.find((c) => c.text.includes('INTO app.workflow_definitions'));
-    expect(definition?.text).toContain("'test_memo', 'Test memo approval', 'test_memo'");
+    expect(definition?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'test_memo',
+      'Test memo approval',
+      'test_memo',
+    ]);
 
     const version = calls.find((c) => c.text.includes('INTO app.workflow_versions'));
     expect(version?.text).toContain("1, 'published', $4::jsonb, now(), NULL");
@@ -208,6 +220,138 @@ describe('seedKernelRows', () => {
     expect(calls.some((c) => c.text.startsWith('UPDATE'))).toBe(false);
     expect(calls[0]?.text).toBe('BEGIN');
     expect(calls.at(-1)?.text).toBe('COMMIT');
+  });
+});
+
+describe('seedKernelRows: P2 quotation reference data', () => {
+  const quotationDefinition = (calls: Call[]) =>
+    calls.find(
+      (c) =>
+        c.text.includes('INTO app.workflow_definitions') && c.values[2] === 'quotation_version',
+    );
+
+  it('keeps QUOTATION_VERSION_WORKFLOW_SPEC valid, with the base route and both rules', () => {
+    const spec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
+    expect(spec.documentType).toBe('quotation_version');
+    expect(spec.distinctApprovers).toBe(true);
+    expect(spec.steps.map((s) => [s.id, s.role])).toEqual([
+      ['accountant', 'accountant'],
+      ['finance', 'finance'],
+    ]);
+    expect(spec.rules.map((r) => [r.id, r.add.id, r.add.role, r.position])).toEqual([
+      ['management', 'management', 'management', 'end'],
+      ['over-10-lakh', 'founder', 'founder', 'end'],
+    ]);
+    expect(spec.rules[0]?.when).toEqual({
+      any: [
+        { field: 'amountNpr', op: 'gt', value: '100000' },
+        { field: 'discountApprovalRequired', op: 'eq', value: true },
+      ],
+    });
+    expect(spec.rules[0]?.add.reason).toBe(
+      'Management approval: above 1,00,000 NPR or a discount above 12% ({effectiveDiscountPct}%)',
+    );
+    expect(spec.rules[1]?.when).toEqual({ field: 'amountNpr', op: 'gt', value: '1000000' });
+    expect(spec.rules[1]?.add.reason).toBe(
+      'Founder approval because the NPR amount exceeds 10,00,000',
+    );
+  });
+
+  it('seeds the quotation_version workflow for the entity as published v1', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    expect(quotationDefinition(calls)?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'quotation_version',
+      'Quotation version approval',
+      'quotation_version',
+    ]);
+    const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
+    expect(versions).toHaveLength(2);
+    const quotation = versions.find((c) => {
+      const spec = JSON.parse(String(c.values[3])) as { documentType: string };
+      return spec.documentType === 'quotation_version';
+    });
+    expect(quotation?.text).toContain("1, 'published', $4::jsonb, now(), NULL");
+    expect(quotation?.text).toContain('ON CONFLICT (tenant_id, definition_id, version) DO NOTHING');
+  });
+
+  it('seeds VAT13, EXEMPT and ZERO tenant-wide from 2020-01-01, only when the code has no row', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    const rows = calls.filter((c) => c.text.includes('INTO app.tax_codes'));
+    expect(rows.map((c) => c.values)).toEqual([
+      ['tenant-1', 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01'],
+      ['tenant-1', 'EXEMPT', 'VAT exempt', 'exempt', 0, false, '2020-01-01'],
+      ['tenant-1', 'ZERO', 'Zero-rated', 'zero', 0, false, '2020-01-01'],
+    ]);
+    for (const row of rows) {
+      expect(row.text).not.toContain('organization_id');
+      expect(row.text).toContain('WHERE NOT EXISTS');
+    }
+  });
+
+  it('seeds NET30 and ADVANCE payment terms as active, tenant-wide', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    const rows = calls.filter((c) => c.text.includes('INTO app.payment_terms'));
+    expect(rows.map((c) => c.values)).toEqual([
+      ['tenant-1', 'NET30', 'Net 30 days', 30],
+      ['tenant-1', 'ADVANCE', 'Advance payment', 0],
+    ]);
+    for (const row of rows) {
+      expect(row.text).toContain('ON CONFLICT (tenant_id, code) DO NOTHING');
+      expect(row.text).toContain('true');
+      expect(row.text).not.toContain('organization_id');
+    }
+  });
+
+  it('does not pre-create number series: NumberingService makes QT, LD, DEAL and CUS on first use', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    expect(calls.some((c) => c.text.includes('number_series'))).toBe(false);
+  });
+
+  it('inserts each P2 row once: a second run over the same keys changes nothing', async () => {
+    const keys = new Set<string>();
+    // A small model of the unique keys: a repeat insert reports rowCount 0, like Postgres.
+    const keyOf = ({ text, values }: Call): string | undefined => {
+      if (text.includes('INTO app.tax_codes')) return `tax|${String(values[1])}`;
+      if (text.includes('INTO app.payment_terms')) return `term|${String(values[1])}`;
+      if (text.includes('INTO app.workflow_definitions')) return `def|${String(values[2])}`;
+      if (text.includes('INTO app.workflow_versions')) return `ver|${String(values[2])}`;
+      return undefined;
+    };
+    const stateful: Script = (call) => {
+      if (call.text.startsWith('SELECT id FROM app.workflow_definitions')) {
+        return { rows: [{ id: 'def-1' }] };
+      }
+      const key = keyOf(call);
+      if (key === undefined) return nothingChanged(call);
+      if (keys.has(key)) return { rowCount: 0 };
+      keys.add(key);
+      return call.text.includes('INTO app.workflow_versions')
+        ? { rowCount: 1, rows: [{ id: 'ver-1' }] }
+        : { rowCount: 1 };
+    };
+    const first = fakeClient(stateful);
+    await seedKernelRows(first.client, scope);
+    // 3 tax codes + 2 payment terms + 2 definitions (version rows share def-1 here, so 1 key)
+    expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
+    expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(2);
+
+    const second = fakeClient(stateful);
+    expect(await seedKernelRows(second.client, scope)).toBe(0);
+    for (const c of second.calls.filter((q) =>
+      /INTO app\.(tax_codes|payment_terms)/.test(q.text),
+    )) {
+      expect(c.text).not.toContain('DO UPDATE');
+    }
   });
 });
 
@@ -445,8 +589,17 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
     // role_permissions is tenant-scoped, so the grant tuple no longer carries the entity.
     const grant = first.calls.find((c) => c.text.includes('INTO app.role_permissions'));
     expect(grant?.values[0]).toBe('tenant-uuid');
-    const definition = first.calls.find((c) => c.text.includes('INTO app.workflow_definitions'));
-    expect(definition?.values).toEqual(['tenant-uuid', 'org-uuid']);
+    const definitions = first.calls.filter((c) => c.text.includes('INTO app.workflow_definitions'));
+    expect(definitions.map((c) => c.values)).toEqual([
+      ['tenant-uuid', 'org-uuid', 'test_memo', 'Test memo approval', 'test_memo'],
+      [
+        'tenant-uuid',
+        'org-uuid',
+        'quotation_version',
+        'Quotation version approval',
+        'quotation_version',
+      ],
+    ]);
     expect(first.closed()).toBe(1);
 
     const second = storeOver((call) => lookup(call) ?? nothingChanged(call));

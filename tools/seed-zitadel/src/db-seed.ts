@@ -1,5 +1,6 @@
-// Seed rows that the API kernel needs on day one: the default role grants, the `test_memo`
-// approval workflow and the INR peg. Serves the NFR "authorization is deny-by-default" (an empty
+// Seed rows that the API kernel needs on day one: the default role grants, the `test_memo` and
+// `quotation_version` approval workflows, the INR peg and the P2 quotation reference data (tax codes
+// and payment terms). Serves the NFR "authorization is deny-by-default" (an empty
 // role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
 // `bos.actor_id` is unset, so every write here first declares a `seed` actor inside its transaction.
 //
@@ -74,6 +75,59 @@ export const TEST_MEMO_WORKFLOW_SPEC: unknown = {
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
 };
 
+/**
+ * v1 of the quotation approval route (P2). Per entity, like every workflow (ADR 0027). The facts come
+ * from the quotation preview and submit: `amountNpr` (grand total in NPR, a decimal string),
+ * `discountApprovalRequired` (the exact strictly-above-12% flag) and `effectiveDiscountPct` (only
+ * shown in the reason). The conditions engine compares booleans with `===`, so `eq true` is safe.
+ */
+export const QUOTATION_VERSION_WORKFLOW_SPEC: unknown = {
+  documentType: 'quotation_version',
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: 'Base route: accountant checks the quotation',
+    },
+    { id: 'finance', kind: 'role', role: 'finance', reason: 'Base route: finance approves' },
+  ],
+  rules: [
+    {
+      id: 'management',
+      when: {
+        any: [
+          { field: 'amountNpr', op: 'gt', value: '100000' },
+          { field: 'discountApprovalRequired', op: 'eq', value: true },
+        ],
+      },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason:
+          'Management approval: above 1,00,000 NPR or a discount above 12% ({effectiveDiscountPct}%)',
+      },
+      position: 'end',
+      reason: 'Amount over NPR 1,00,000 or discount above 12%',
+    },
+    {
+      id: 'over-10-lakh',
+      when: { field: 'amountNpr', op: 'gt', value: '1000000' },
+      add: {
+        id: 'founder',
+        kind: 'role',
+        role: 'founder',
+        reason: 'Founder approval because the NPR amount exceeds 10,00,000',
+      },
+      position: 'end',
+      reason: 'Amount over NPR 10,00,000',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+
 /** The INR to NPR peg is fixed by Nepal Rastra Bank, so it is data, not code (plan section 3). */
 const INR_PEG_RATE = '1.6';
 /** Earliest date, so a "latest rate on or before the document date" lookup always finds the peg. */
@@ -125,27 +179,34 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
   return changed;
 }
 
-async function seedTestMemoWorkflow(
+interface WorkflowSeed {
+  key: string;
+  name: string;
+  documentType: string;
+  spec: WorkflowSpec;
+}
+
+async function seedWorkflow(
   client: pg.ClientBase,
   scope: SeedScope,
-  spec: WorkflowSpec,
+  workflow: WorkflowSeed,
 ): Promise<number> {
   let changed = 0;
   const definition = await client.query(
     `INSERT INTO app.workflow_definitions (tenant_id, organization_id, key, name, document_type)
-     VALUES ($1, $2, 'test_memo', 'Test memo approval', 'test_memo')
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (tenant_id, organization_id, key) DO NOTHING`,
-    [scope.tenantId, scope.organizationId],
+    [scope.tenantId, scope.organizationId, workflow.key, workflow.name, workflow.documentType],
   );
   changed += definition.rowCount ?? 0;
 
   const found = await client.query<{ id: string }>(
     `SELECT id FROM app.workflow_definitions
-     WHERE tenant_id = $1 AND organization_id = $2 AND key = 'test_memo'`,
-    [scope.tenantId, scope.organizationId],
+     WHERE tenant_id = $1 AND organization_id = $2 AND key = $3`,
+    [scope.tenantId, scope.organizationId, workflow.key],
   );
   const definitionId = found.rows[0]?.id;
-  if (!definitionId) throw new Error('workflow definition test_memo not found after insert');
+  if (!definitionId) throw new Error(`workflow definition ${workflow.key} not found after insert`);
 
   // A published spec is immutable (a trigger enforces it), so an existing v1 is never rewritten.
   const version = await client.query<{ id: string }>(
@@ -154,7 +215,7 @@ async function seedTestMemoWorkflow(
      VALUES ($1, $2, $3, 1, 'published', $4::jsonb, now(), NULL)
      ON CONFLICT (tenant_id, definition_id, version) DO NOTHING
      RETURNING id`,
-    [scope.tenantId, scope.organizationId, definitionId, JSON.stringify(spec)],
+    [scope.tenantId, scope.organizationId, definitionId, JSON.stringify(workflow.spec)],
   );
   const versionId = version.rows[0]?.id;
   if (versionId) {
@@ -165,6 +226,63 @@ async function seedTestMemoWorkflow(
       [versionId, definitionId],
     );
     changed += current.rowCount ?? 0;
+  }
+  return changed;
+}
+
+interface TaxCodeSeed {
+  code: string;
+  name: string;
+  kind: 'vat' | 'exempt' | 'zero';
+  rateBp: number;
+  creditable: boolean;
+}
+
+/** Tenant-level (one list for every entity). Nepal VAT is 13%; exempt and zero-rated carry rate 0. */
+const TAX_CODES: readonly TaxCodeSeed[] = [
+  { code: 'VAT13', name: 'VAT 13%', kind: 'vat', rateBp: 1300, creditable: true },
+  { code: 'EXEMPT', name: 'VAT exempt', kind: 'exempt', rateBp: 0, creditable: false },
+  { code: 'ZERO', name: 'Zero-rated', kind: 'zero', rateBp: 0, creditable: false },
+];
+/** Early enough that any real document date falls inside the first period. */
+const TAX_CODE_EFFECTIVE_FROM = '2020-01-01';
+
+/**
+ * Inserts a tax code only when the tenant has no row for that code at all. A rate change is a new
+ * period (never an edit), so a re-run must not add a second open-ended period beside a later one, and
+ * `tax_codes` has no unique key on the code to hang ON CONFLICT on.
+ */
+async function seedTaxCodes(client: pg.ClientBase, scope: SeedScope): Promise<number> {
+  let changed = 0;
+  for (const t of TAX_CODES) {
+    const result = await client.query(
+      `INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
+       SELECT $1::uuid, $2, $3, $4, $5, $6, $7::date
+       WHERE NOT EXISTS (
+         SELECT 1 FROM app.tax_codes WHERE tenant_id = $1::uuid AND code = $2
+       )`,
+      [scope.tenantId, t.code, t.name, t.kind, t.rateBp, t.creditable, TAX_CODE_EFFECTIVE_FROM],
+    );
+    changed += result.rowCount ?? 0;
+  }
+  return changed;
+}
+
+const PAYMENT_TERMS: readonly { code: string; name: string; netDays: number }[] = [
+  { code: 'NET30', name: 'Net 30 days', netDays: 30 },
+  { code: 'ADVANCE', name: 'Advance payment', netDays: 0 },
+];
+
+async function seedPaymentTerms(client: pg.ClientBase, scope: SeedScope): Promise<number> {
+  let changed = 0;
+  for (const term of PAYMENT_TERMS) {
+    const result = await client.query(
+      `INSERT INTO app.payment_terms (tenant_id, code, name, net_days, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       ON CONFLICT (tenant_id, code) DO NOTHING`,
+      [scope.tenantId, term.code, term.name, term.netDays],
+    );
+    changed += result.rowCount ?? 0;
   }
   return changed;
 }
@@ -180,7 +298,8 @@ async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<numb
 }
 
 // `app.number_series` is not seeded: this package does not depend on @bos/locale (so no
-// fiscalYearOf), and the API's NumberingService creates the MEMO row lazily on first use.
+// fiscalYearOf), and the API's NumberingService creates each row lazily on first use (MEMO, and the
+// P2 series QT, LD, DEAL and CUS).
 
 /**
  * Seeds the kernel rows in ONE transaction and returns how many rows were inserted or changed.
@@ -188,13 +307,27 @@ async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<numb
  */
 export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): Promise<number> {
   // Parse first so a bad spec fails before any SQL, and so we store the schema's defaulted form.
-  const spec = WorkflowSpecSchema.parse(TEST_MEMO_WORKFLOW_SPEC);
+  const memoSpec = WorkflowSpecSchema.parse(TEST_MEMO_WORKFLOW_SPEC);
+  const quotationSpec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
   await client.query('BEGIN');
   try {
     await setSeedActor(client, scope);
     let changed = await seedRolePermissions(client, scope);
-    changed += await seedTestMemoWorkflow(client, scope, spec);
+    changed += await seedWorkflow(client, scope, {
+      key: 'test_memo',
+      name: 'Test memo approval',
+      documentType: 'test_memo',
+      spec: memoSpec,
+    });
     changed += await seedInrPeg(client, scope);
+    changed += await seedWorkflow(client, scope, {
+      key: 'quotation_version',
+      name: 'Quotation version approval',
+      documentType: 'quotation_version',
+      spec: quotationSpec,
+    });
+    changed += await seedTaxCodes(client, scope);
+    changed += await seedPaymentTerms(client, scope);
     await client.query('COMMIT');
     return changed;
   } catch (error) {
