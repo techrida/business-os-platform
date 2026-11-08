@@ -1,0 +1,82 @@
+import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
+
+import styles from './field.module.css';
+
+/** What `Field` hands to its control so the label, hint and error are all wired up. */
+export interface FieldControlProps {
+  id: string;
+  'aria-describedby': string | undefined;
+  'aria-invalid': true | undefined;
+}
+
+/**
+ * Copied from apps/workspace/src/components/ui/field.tsx without Select (dedupe later).
+ *
+ * A labelled form field: label, optional hint, the control, optional error. The control is a
+ * render function so it receives the ids it needs:
+ *
+ *   <Field label="Title" hint="Shown in the inbox" error={errors.title}>
+ *     {(control) => <Input name="title" {...control} />}
+ *   </Field>
+ *
+ * The label is a real `<label for>`, so the control's accessible name is exactly the label text.
+ * The hint and error sit outside the label and are linked through `aria-describedby`. `error`
+ * also sets `aria-invalid`. Works in Server and Client Components (no state).
+ */
+export function Field({
+  label,
+  hint,
+  error,
+  children,
+  className,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: ReactNode;
+  children: (control: FieldControlProps) => ReactNode;
+  className?: string;
+}) {
+  const base = useId();
+  const hintId = `${base}-hint`;
+  const errorId = `${base}-error`;
+  const describedBy =
+    [hint ? hintId : undefined, error ? errorId : undefined].filter(Boolean).join(' ') || undefined;
+  const cls = [styles.field, className].filter(Boolean).join(' ');
+  return (
+    <div className={cls}>
+      <label htmlFor={base} className={styles.label}>
+        {label}
+      </label>
+      {hint ? (
+        <span id={hintId} className={styles.hint}>
+          {hint}
+        </span>
+      ) : null}
+      {children({
+        id: base,
+        'aria-describedby': describedBy,
+        'aria-invalid': error ? true : undefined,
+      })}
+      {error ? (
+        <span id={errorId} className={styles.error}>
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** Text input (Figma Input 26:1449). Invalid state follows `aria-invalid`. */
+export function Input({ className, ...rest }: ComponentPropsWithRef<'input'>) {
+  return <input className={[styles.control, className].filter(Boolean).join(' ')} {...rest} />;
+}
+
+/** Multi-line input (Figma 26:1439). */
+export function Textarea({ className, ...rest }: ComponentPropsWithRef<'textarea'>) {
+  return (
+    <textarea
+      className={[styles.control, styles.textarea, className].filter(Boolean).join(' ')}
+      {...rest}
+    />
+  );
+}
