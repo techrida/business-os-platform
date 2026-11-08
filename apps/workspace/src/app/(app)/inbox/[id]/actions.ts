@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { actOnApproval, failureOf } from '@/lib/api-kernel';
-import { requireStaffSession } from '@/lib/bff';
+import { isStepUpRequired, redirectToStepUp, requireStaffSession } from '@/lib/bff';
 
 /**
  * The approve, return and reject action. Serves the NFR "no double decisions": the form carries an
@@ -67,6 +67,9 @@ export async function decideAction(prev: DecisionState, form: FormData): Promise
   try {
     await actOnApproval(session, requestId, parsed.data, key);
   } catch (err) {
+    // K7: a Founder step needs a recent sign-in. Nothing was decided, so after signing in again the
+    // approver lands back on this request and decides with a fresh form. `redirect` throws.
+    if (isStepUpRequired(err)) redirectToStepUp(`/inbox/${requestId}`);
     const failure = failureOf(err, 'approval');
     return {
       // A 4xx is a final answer (this click is over), so the next try is a new decision. After a
