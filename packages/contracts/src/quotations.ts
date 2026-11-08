@@ -237,7 +237,7 @@ const contentObject = z.strictObject({
 type ContentChecks = {
   issueDate?: string | undefined;
   validUntil?: string | undefined;
-  paymentSchedule?: { percent: string }[] | undefined;
+  paymentSchedule?: { percent: string }[] | null | undefined;
 };
 
 /** ISO dates sort as text, so a plain comparison is exact. A schedule, when present, adds up to 100%. */
@@ -245,7 +245,7 @@ function contentChecks(c: ContentChecks, ctx: z.RefinementCtx): void {
   if (c.issueDate !== undefined && c.validUntil !== undefined && c.validUntil < c.issueDate) {
     ctx.addIssue({ code: 'custom', path: ['validUntil'], message: 'must not be before issueDate' });
   }
-  if (c.paymentSchedule !== undefined && c.paymentSchedule.length > 0) {
+  if (c.paymentSchedule != null && c.paymentSchedule.length > 0) {
     const sum = c.paymentSchedule.reduce((n, m) => n + toHundredths(m.percent), 0);
     if (sum !== 10000) {
       ctx.addIssue({
@@ -267,9 +267,22 @@ export const CreateQuotationBodySchema = contentObject
   .superRefine(contentChecks);
 export type CreateQuotationBody = z.infer<typeof CreateQuotationBodySchema>;
 
+/**
+ * PUT is a partial update: an absent key keeps the saved value, and `null` on one of these optional
+ * keys clears it (an empty `paymentSchedule` clears the schedule too). Without null a person could
+ * never remove a discount or blank a field once saved. The required keys never take null.
+ */
 export const UpdateQuotationDraftBodySchema = contentObject
   .partial()
   .extend({
+    contactId: contentObject.shape.contactId.nullable(),
+    scope: contentObject.shape.scope.nullable(),
+    assumptions: contentObject.shape.assumptions.nullable(),
+    exclusions: contentObject.shape.exclusions.nullable(),
+    deliveryTimeline: contentObject.shape.deliveryTimeline.nullable(),
+    paymentTermId: contentObject.shape.paymentTermId.nullable(),
+    paymentSchedule: contentObject.shape.paymentSchedule.nullable(),
+    discount: contentObject.shape.discount.nullable(),
     /** The row version the client saw; a different current version means 409. */
     expectedVersion: z.number().int().min(1),
   })
