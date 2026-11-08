@@ -5,7 +5,7 @@ import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import { TEST_MEMO_WORKFLOW_SPEC, seedKernelRows, setSeedActor } from './db-seed.js';
-import { PgTenancyStore } from './index.js';
+import { PgTenancyStore, tenancySeed } from './index.js';
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1', correlationId: 'corr-1' };
 
@@ -116,16 +116,19 @@ describe('seedKernelRows', () => {
       .filter((c) => c.text.includes('INTO app.role_permissions'))
       .map((c) => c.values);
     expect(rows).toHaveLength(grantCount);
-    for (const values of rows) expect(values.slice(0, 2)).toEqual(['tenant-1', 'org-1']);
+    // role_permissions is tenant-scoped (ADR 0027): no organization_id column, so $1 is the tenant.
+    for (const values of rows) expect(values).toHaveLength(4);
+    for (const values of rows) expect(values[0]).toBe('tenant-1');
 
-    const written = new Set(rows.map((v) => `${String(v[2])}|${String(v[3])}|${String(v[4])}`));
+    const written = new Set(rows.map((v) => `${String(v[1])}|${String(v[2])}|${String(v[3])}`));
     for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
       for (const [permission, grantScope] of Object.entries(grants)) {
         expect(written.has(`${role}|${permission}|${grantScope}`)).toBe(true);
       }
     }
     const sql = calls.find((c) => c.text.includes('INTO app.role_permissions'))?.text;
-    expect(sql).toContain('ON CONFLICT (tenant_id, organization_id, role_key, permission)');
+    expect(sql).toContain('ON CONFLICT (tenant_id, role_key, permission)');
+    expect(sql).not.toContain('organization_id');
     expect(sql).toContain('IS DISTINCT FROM');
   });
 
@@ -138,7 +141,7 @@ describe('seedKernelRows', () => {
 
     const version = calls.find((c) => c.text.includes('INTO app.workflow_versions'));
     expect(version?.text).toContain("1, 'published', $4::jsonb, now(), NULL");
-    expect(version?.text).toContain('ON CONFLICT (definition_id, version) DO NOTHING');
+    expect(version?.text).toContain('ON CONFLICT (tenant_id, definition_id, version) DO NOTHING');
     expect(version?.values.slice(0, 3)).toEqual(['tenant-1', 'org-1', 'def-1']);
 
     const stored = JSON.parse(String(version?.values[3])) as unknown;
@@ -169,8 +172,9 @@ describe('seedKernelRows', () => {
     const fx = calls.find((c) => c.text.includes('INTO app.fx_rates'));
     expect(fx?.text).toContain("'INR'");
     expect(fx?.text).toContain("'NRB peg'");
-    expect(fx?.text).toContain('ON CONFLICT DO NOTHING');
-    expect(fx?.values).toEqual(['tenant-1', 'org-1', '1.6', '2000-01-01']);
+    expect(fx?.text).toContain('ON CONFLICT (tenant_id, currency, rate_date) DO NOTHING');
+    expect(fx?.text).not.toContain('organization_id');
+    expect(fx?.values).toEqual(['tenant-1', '1.6', '2000-01-01']);
   });
 
   it('returns 0 and does not bump authz_versions or touch v1 when nothing changed', async () => {
@@ -198,9 +202,12 @@ describe('seedKernelRows: stale role grants (R25)', () => {
 
     const del = calls.filter((c) => c.text.startsWith('DELETE FROM app.role_permissions'));
     expect(del).toHaveLength(1);
-    expect(del[0]?.values.slice(0, 2)).toEqual(['tenant-1', 'org-1']);
+    // The stale DELETE filters on tenant_id only: role_permissions has no organization_id any more.
+    expect(del[0]?.text).not.toContain('organization_id');
+    expect(del[0]?.values[0]).toBe('tenant-1');
+    expect(del[0]?.values).toHaveLength(3);
     // The keep-list holds every default (role, permission) pair, in two parallel arrays.
-    const [roles, permissions] = [del[0]?.values[2], del[0]?.values[3]] as [string[], string[]];
+    const [roles, permissions] = [del[0]?.values[1], del[0]?.values[2]] as [string[], string[]];
     const kept = new Set(roles.map((role, i) => `${role}|${String(permissions[i])}`));
     expect(kept.size).toBe(grantCount);
     for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
@@ -216,6 +223,11 @@ describe('seedKernelRows: stale role grants (R25)', () => {
     expect(index('INTO app.authz_versions')).toBeGreaterThan(
       index('DELETE FROM app.role_permissions'),
     );
+    const bump = calls.find((c) => c.text.includes('INTO app.authz_versions'));
+    expect(bump?.text).toContain('(tenant_id, version)');
+    expect(bump?.text).toContain('ON CONFLICT (tenant_id) DO UPDATE');
+    expect(bump?.text).not.toContain('organization_id');
+    expect(bump?.values).toEqual(['tenant-1']);
     // Only the deleted row counts: this fake answers the authz bump with rowCount 0.
     expect(changed).toBe(1);
     expect(calls.at(-1)?.text).toBe('COMMIT');
@@ -229,7 +241,7 @@ describe('seedKernelRows: stale role grants (R25)', () => {
   });
 });
 
-describe('PgTenancyStore (R5)', () => {
+describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
   /** A store over one fake client; counts how often the connection is closed. */
   function storeOver(script: Script) {
     const fake = fakeClient(script);
@@ -245,55 +257,185 @@ describe('PgTenancyStore (R5)', () => {
     );
     return { store, calls: fake.calls, closed: () => closed };
   }
-  const rows = [
-    { zitadelOrgId: 'z-staff', kind: 'staff' as const, name: 'Techrida Staff' },
-    { zitadelOrgId: 'z-cust', kind: 'customer' as const, name: 'Dev Customer Co' },
-  ];
+  const seed = tenancySeed({ staff: 'z-staff', customer: 'z-cust', vendor: 'z-vend' });
+  const inserts = (calls: Call[], table: string) =>
+    calls.filter((c) => c.text.startsWith(`INSERT INTO app.${table} `));
+  const firstWrite = (calls: Call[]) =>
+    calls.findIndex((c) => /^(INSERT|UPDATE|DELETE)/.test(c.text));
+  const actorOf = (calls: Call[]) => calls.find((c) => c.text.startsWith('SELECT set_config'));
 
-  it('sets the seed actor right after BEGIN, before any app.* write, on a fresh database', async () => {
-    const { store, calls, closed } = storeOver(({ text }) =>
-      text.startsWith('INSERT') ? { rowCount: 1 } : undefined,
-    );
-    const changed = await store.upsertOrganizations(rows, 'corr-9');
+  /** Fresh database: no tenant, entity or party yet; every write changes one row. */
+  const fresh: Script = ({ text, values }) => {
+    if (text.startsWith('SELECT id FROM app.parties'))
+      return { rows: [{ id: `party-${String(values[1])}` }] };
+    if (text.startsWith('INSERT') || text.startsWith('UPDATE')) return { rowCount: 1 };
+    return undefined;
+  };
+  /** Everything exists: the staff idp_org names the tenant, the parties are linked; writes are no-ops. */
+  const existing =
+    (partyOf: Record<string, string | null>): Script =>
+    ({ text, values }) => {
+      if (text.startsWith('SELECT tenant_id FROM app.idp_orgs'))
+        return { rows: [{ tenant_id: 't-1' }] };
+      if (text.startsWith('SELECT id FROM app.organizations')) return { rows: [{ id: 'e-1' }] };
+      if (text.startsWith('SELECT party_id FROM app.idp_orgs'))
+        return { rows: [{ party_id: partyOf[String(values[0])] ?? null }] };
+      if (text.startsWith('SELECT id FROM app.parties'))
+        return { rows: [{ id: `party-${String(values[1])}` }] };
+      return undefined;
+    };
+
+  it('first run writes the tenant, the TR entity, both parties and three idp_orgs, after the seed actor', async () => {
+    const { store, calls, closed } = storeOver(fresh);
+    const changed = await store.upsertTenancy(seed, 'corr-9');
 
     expect(calls[0]?.text).toBe('BEGIN');
-    expect(calls[1]?.text).toMatch(/^SELECT set_config\('bos\.tenant_id'/);
-    expect(calls[1]?.values).toEqual(['', '', 'seed', 'seed', 'corr-9', '', '']);
-    const firstWrite = calls.findIndex((c) => /^(INSERT|UPDATE|DELETE)/.test(c.text));
-    expect(firstWrite).toBeGreaterThan(1);
-    expect(calls[firstWrite]?.text).toContain('INTO app.tenants');
+    const actorAt = calls.findIndex((c) => c.text.startsWith('SELECT set_config'));
+    expect(actorAt).toBeGreaterThan(0);
+    expect(actorAt).toBeLessThan(firstWrite(calls));
+    const [tenant] = inserts(calls, 'tenants');
+    const [entity, ...moreEntities] = inserts(calls, 'organizations');
+    expect(moreEntities).toEqual([]);
+    // The audit fallback (bos.organization_id) names the entity this transaction writes.
+    expect(actorOf(calls)?.values).toEqual([
+      tenant?.values[0],
+      entity?.values[0],
+      'seed',
+      'seed',
+      'corr-9',
+      '',
+      '',
+    ]);
+
+    expect(entity?.values).toEqual([
+      entity?.values[0],
+      tenant?.values[0],
+      'TR',
+      'Techrida',
+      'Techrida Pvt. Ltd.',
+    ]);
+    expect(entity?.text).toContain('VALUES ($1, $2, $1, $3, $4, $5, true)');
+    expect(entity?.text).toContain('ON CONFLICT (tenant_id, code) DO UPDATE');
+    expect(entity?.text).toContain('IS DISTINCT FROM');
+    // is_default is set on insert only, never by the DO UPDATE.
+    expect(entity?.text.split('DO UPDATE')[1]).not.toContain('is_default');
+    expect(entity?.text).not.toMatch(/zitadel_org_id|kind/);
+
+    const t = tenant?.values[0];
+    const parties = inserts(calls, 'parties');
+    expect(parties.map((c) => c.values)).toEqual([
+      [t, 'customer', 'CUST-DEV', 'Dev Customer Co'],
+      [t, 'vendor', 'VEND-DEV', 'Dev Vendor Co'],
+    ]);
+    for (const p of parties) {
+      expect(p.text).toContain('ON CONFLICT (tenant_id, code) DO UPDATE');
+      expect(p.text).toContain('IS DISTINCT FROM');
+      expect(p.text).not.toContain('RETURNING');
+    }
+    const idpOrgs = inserts(calls, 'idp_orgs');
+    expect(idpOrgs.map((c) => c.values)).toEqual([
+      [t, 'z-staff', 'staff', null, 'Techrida Staff'],
+      [t, 'z-cust', 'customer', 'party-CUST-DEV', 'Dev Customer Co'],
+      [t, 'z-vend', 'vendor', 'party-VEND-DEV', 'Dev Vendor Co'],
+    ]);
+    for (const o of idpOrgs) {
+      expect(o.text).toContain('ON CONFLICT (zitadel_org_id) DO UPDATE');
+      expect(o.text).toContain('IS DISTINCT FROM');
+    }
+    expect(calls.some((c) => c.text.startsWith('UPDATE app.parties'))).toBe(false);
     expect(calls.at(-1)?.text).toBe('COMMIT');
-    expect(changed).toBe(1 + rows.length);
+    // tenant + entity + 2 parties + 3 idp_orgs
+    expect(changed).toBe(7);
     expect(closed()).toBe(1);
   });
 
-  it('reports 0 when the tenant and every row already exist', async () => {
-    const { store, calls } = storeOver(({ text }) =>
-      text.startsWith('SELECT tenant_id') ? { rows: [{ tenant_id: 't-1' }] } : undefined,
+  it('second run changes nothing and reuses the staff tenant and the TR entity', async () => {
+    const { store, calls } = storeOver(existing({ 'z-cust': 'p-c', 'z-vend': 'p-v' }));
+    expect(await store.upsertTenancy(seed, 'corr-9')).toBe(0);
+
+    const staffTenant = calls.find((c) => c.text.startsWith('SELECT tenant_id FROM app.idp_orgs'));
+    expect(staffTenant?.values).toEqual(['z-staff']);
+    const entityId = calls.find((c) => c.text.startsWith('SELECT id FROM app.organizations'));
+    expect(entityId?.values).toEqual(['t-1', 'TR']);
+    expect(actorOf(calls)?.values.slice(0, 2)).toEqual(['t-1', 'e-1']);
+    expect(calls.some((c) => c.text.includes('INTO app.tenants'))).toBe(false);
+    expect(inserts(calls, 'organizations')[0]?.values[0]).toBe('e-1');
+    expect(inserts(calls, 'idp_orgs').map((c) => c.values[3])).toEqual([null, 'p-c', 'p-v']);
+    expect(calls.at(-1)?.text).toBe('COMMIT');
+  });
+
+  it('re-codes a migrated party in place instead of inserting a duplicate', async () => {
+    const migrated = existing({ 'z-cust': 'migrated-cust', 'z-vend': 'migrated-vend' });
+    const { store, calls } = storeOver((call) =>
+      call.text.startsWith('UPDATE app.parties') ? { rowCount: 1 } : migrated(call),
     );
-    expect(await store.upsertOrganizations(rows, 'corr-9')).toBe(0);
+    const changed = await store.upsertTenancy(seed, 'corr-9');
+
+    const updates = calls.filter((c) => c.text.startsWith('UPDATE app.parties'));
+    expect(updates.map((c) => c.values)).toEqual([
+      ['migrated-cust', 'CUST-DEV', 'Dev Customer Co'],
+      ['migrated-vend', 'VEND-DEV', 'Dev Vendor Co'],
+    ]);
+    for (const u of updates) {
+      expect(u.text).toContain('SET code = $2');
+      expect(u.text).toContain('IS DISTINCT FROM');
+    }
+    expect(calls.some((c) => c.text.startsWith('INSERT INTO app.parties'))).toBe(false);
+    expect(inserts(calls, 'idp_orgs').map((c) => c.values[3])).toEqual([
+      null,
+      'migrated-cust',
+      'migrated-vend',
+    ]);
+    expect(changed).toBe(2);
+  });
+
+  it('falls back to the tenant of app.organizations when no staff idp_org exists yet', async () => {
+    const { store, calls } = storeOver((call) =>
+      call.text.startsWith('SELECT tenant_id FROM app.organizations')
+        ? { rows: [{ tenant_id: 't-old' }] }
+        : fresh(call),
+    );
+    await store.upsertTenancy(seed, 'corr-9');
+    expect(actorOf(calls)?.values[0]).toBe('t-old');
     expect(calls.some((c) => c.text.includes('INTO app.tenants'))).toBe(false);
   });
 
-  it('seeds kernel rows for the staff org by our uuid; a second run returns 0', async () => {
+  it('rolls back and closes the connection when a write fails', async () => {
+    const { store, calls, closed } = storeOver((call) =>
+      call.text.startsWith('INSERT INTO app.idp_orgs')
+        ? (new Error('fk violated') as unknown as Reply)
+        : fresh(call),
+    );
+    await expect(store.upsertTenancy(seed, 'corr-9')).rejects.toThrow('fk violated');
+    expect(calls.at(-1)?.text).toBe('ROLLBACK');
+    expect(closed()).toBe(1);
+  });
+
+  it('seeds kernel rows for the staff tenant default entity; a second run returns 0', async () => {
     const lookup = (call: Call): Reply | undefined =>
-      call.text.startsWith('SELECT id, tenant_id FROM app.organizations')
+      call.text.startsWith('SELECT o.id, o.tenant_id FROM app.idp_orgs i JOIN app.organizations o')
         ? { rows: [{ id: 'org-uuid', tenant_id: 'tenant-uuid' }] }
         : undefined;
     const first = storeOver((call) => lookup(call) ?? firstRun(call));
     expect(await first.store.seedKernel('z-staff', 'corr-9')).toBeGreaterThan(0);
     expect(first.calls[0]?.values).toEqual(['z-staff']);
+    expect(first.calls[0]?.text).toContain('o.tenant_id = i.tenant_id AND o.is_default');
+    // role_permissions is tenant-scoped, so the grant tuple no longer carries the entity.
     const grant = first.calls.find((c) => c.text.includes('INTO app.role_permissions'));
-    expect(grant?.values.slice(0, 2)).toEqual(['tenant-uuid', 'org-uuid']);
+    expect(grant?.values[0]).toBe('tenant-uuid');
+    const definition = first.calls.find((c) => c.text.includes('INTO app.workflow_definitions'));
+    expect(definition?.values).toEqual(['tenant-uuid', 'org-uuid']);
     expect(first.closed()).toBe(1);
 
     const second = storeOver((call) => lookup(call) ?? nothingChanged(call));
     expect(await second.store.seedKernel('z-staff', 'corr-9')).toBe(0);
   });
 
-  it('fails clearly when the staff org has no row yet', async () => {
+  it('fails clearly when the staff org has no idp_org or default entity yet', async () => {
     const { store, closed } = storeOver(() => undefined);
-    await expect(store.seedKernel('z-staff', 'corr-9')).rejects.toThrow(/no row for staff org/);
+    await expect(store.seedKernel('z-staff', 'corr-9')).rejects.toThrow(
+      /no default entity for staff IdP org z-staff/,
+    );
     expect(closed()).toBe(1);
   });
 });
