@@ -17,6 +17,7 @@ export class MeController {
       tenantId: c.tenantId,
       organizationId: c.organizationId,
       orgKind: c.orgKind,
+      partyId: c.partyId,
       // Copy: the context's array is shared for the whole request, and a response body must not alias it.
       roles: [...c.roles],
       correlationId: c.correlationId,
