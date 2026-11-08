@@ -3,8 +3,9 @@
 // (PortalAccessService) pins the policy on every grant, so orgs granted after that change are fine, but an org created
 // before it only gets fixed on its next grant, which may never come. This closes that gap without waiting for a grant.
 //
-// Safe to repeat and to run on two workers at once: ensureOrgLoginPolicy reads the org's policy first and writes only
-// when it differs, so a second run (or a second worker) finds every org 'unchanged' and writes nothing. It uses the
+// Repeat runs are idempotent: ensureOrgLoginPolicy reads the org's policy first and writes only when it differs, so a
+// later run finds every org 'unchanged' and writes nothing. Two workers booting at once may both write: one org then
+// gets a duplicate audit row or one run logs a failure, which is harmless because the org still ends up pinned. It uses the
 // same ZitadelAdminClient and credential as the grant path: no new credential, no way around authorization.
 //
 // Per org: the default legal entity of its tenant is looked up first (the audit row needs an entity scope). An org
