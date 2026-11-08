@@ -2,7 +2,15 @@ import 'server-only';
 
 import { randomUUID } from 'node:crypto';
 
-import { MeResponseSchema } from '@bos/contracts';
+import {
+  type CustomerQuotationView,
+  CustomerQuotationViewSchema,
+  MeResponseSchema,
+  type PortalQuotationListItem,
+  PortalQuotationListItemSchema,
+  type SignedLinkDto,
+  SignedLinkDtoSchema,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 import { getEnv } from './env';
@@ -91,4 +99,133 @@ export async function getMe(session: Pick<Session, 'accessToken'>): Promise<Port
     throw new ApiError(502, 'GET /v1/me returned an invalid body', parsed.error.issues);
   }
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Customer quotations (PT2)
+// ---------------------------------------------------------------------------------------------
+
+/** One path segment from a caller-supplied id: encoded, so `../` can never climb out of the route. */
+const seg = (id: string): string => encodeURIComponent(id);
+
+/**
+ * Calls the API and parses the answer with `schema`. A refusal throws `ApiError` with the API's
+ * status; a body that does not match the contract throws 502. The portal schemas are strict, so an
+ * extra (internal) field fails the parse instead of reaching a page.
+ */
+async function call<T>(
+  session: Pick<Session, 'accessToken'>,
+  path: string,
+  schema: z.ZodType<T>,
+  init: RequestInit = { method: 'GET' },
+): Promise<T> {
+  const res = await authedFetch(session.accessToken, path, init);
+  const body = await readBody(res);
+  const label = `${init.method ?? 'GET'} ${path}`;
+  if (!res.ok) throw new ApiError(res.status, `${label} failed with ${res.status}`, body);
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
+  }
+  return parsed.data;
+}
+
+/**
+ * `POST /v1/portal/quotations/:id/accept`. Local until the lead moves it into @bos/contracts. The
+ * typed name and the ticked box are the customer's signature; the API records them as evidence of
+ * kind `signed_quote`. Strict, so nothing else can ride along.
+ */
+export const AcceptQuotationBodySchema = z.strictObject({
+  acceptedByName: z.string().trim().min(1).max(200),
+  confirm: z.literal(true),
+});
+export type AcceptQuotationBody = z.infer<typeof AcceptQuotationBodySchema>;
+
+/** `POST /v1/portal/quotations/:id/reject`. Local until the lead moves it into @bos/contracts. */
+export const RejectQuotationBodySchema = z.strictObject({
+  comment: z.string().trim().min(1).max(2000),
+});
+export type RejectQuotationBody = z.infer<typeof RejectQuotationBodySchema>;
+
+/** `GET /v1/portal/quotations`: the customer's own quotations, customer-visible states only. */
+export function listPortalQuotations(
+  session: Pick<Session, 'accessToken'>,
+): Promise<PortalQuotationListItem[]> {
+  return call(session, '/v1/portal/quotations', z.array(PortalQuotationListItemSchema));
+}
+
+/** `GET /v1/portal/quotations/:id`. The API answers 404 for a foreign, draft or unknown id. */
+export function getPortalQuotation(
+  session: Pick<Session, 'accessToken'>,
+  id: string,
+): Promise<CustomerQuotationView> {
+  return call(session, `/v1/portal/quotations/${seg(id)}`, CustomerQuotationViewSchema);
+}
+
+/** `GET /v1/portal/quotations/:id/document`: a short-lived signed link to the frozen PDF. */
+export function getPortalQuotationLink(
+  session: Pick<Session, 'accessToken'>,
+  id: string,
+): Promise<SignedLinkDto> {
+  return call(session, `/v1/portal/quotations/${seg(id)}/document`, SignedLinkDtoSchema);
+}
+
+const SIGNED_PATH = /^\/v1\/files\/[A-Za-z0-9._~-]+$/;
+
+/**
+ * Fetches the bytes behind a signed link. The link is a relative `/v1/files/<token>` path on the
+ * API origin, and the portal has no public API URL (its CSP is `connect-src 'self'`), so the BFF
+ * fetches it over the internal URL and the route streams it on. Anything else is refused unfetched.
+ */
+export async function openSignedFile(
+  session: Pick<Session, 'accessToken'>,
+  link: SignedLinkDto,
+): Promise<Response> {
+  if (!SIGNED_PATH.test(link.url)) {
+    throw new ApiError(502, 'The API returned a download link in an unexpected form');
+  }
+  const res = await authedFetch(session.accessToken, link.url, { method: 'GET' });
+  if (!res.ok) {
+    throw new ApiError(res.status, `GET /v1/files failed with ${res.status}`, await readBody(res));
+  }
+  return res;
+}
+
+/**
+ * Sends a customer decision. The key is required, so a missing one is a compile error: a retry
+ * after a timeout must reuse it so the decision cannot apply twice. Any 2xx is success and its
+ * body is not read; the page reloads the view afterwards.
+ */
+async function decide(
+  session: Pick<Session, 'accessToken'>,
+  path: string,
+  body: AcceptQuotationBody | RejectQuotationBody,
+  idempotencyKey: string,
+): Promise<void> {
+  const res = await authedFetch(session.accessToken, path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, `POST ${path} failed with ${res.status}`, await readBody(res));
+  }
+}
+
+export function acceptPortalQuotation(
+  session: Pick<Session, 'accessToken'>,
+  id: string,
+  body: AcceptQuotationBody,
+  idempotencyKey: string,
+): Promise<void> {
+  return decide(session, `/v1/portal/quotations/${seg(id)}/accept`, body, idempotencyKey);
+}
+
+export function rejectPortalQuotation(
+  session: Pick<Session, 'accessToken'>,
+  id: string,
+  body: RejectQuotationBody,
+  idempotencyKey: string,
+): Promise<void> {
+  return decide(session, `/v1/portal/quotations/${seg(id)}/reject`, body, idempotencyKey);
 }
