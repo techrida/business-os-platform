@@ -1,6 +1,7 @@
-// Quotations module (P2 unit Q1): registers how quotation-version files are authorized, provides PricingService
-// and DraftingService, and serves drafting, preview and reference routes. Imports DocumentsModule, SettingsModule
-// (MoneyService, NumberingService), ApprovalsModule (preview route) and AuditModule; the database is global.
+// Quotations module (P2 unit Q1): registers how quotation-version files are authorized, provides PricingService,
+// DraftingService and ReviseService, and serves drafting, revise, preview and reference routes. Imports
+// DocumentsModule, SettingsModule (MoneyService, NumberingService, SettingsService), ApprovalsModule (preview
+// route, approval cancel on revise) and AuditModule; the database is global.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -12,6 +13,8 @@ import { ApprovalsModule } from '../approvals/approvals.module';
 import { DraftingCaller } from './drafting/drafting.caller';
 import { DraftingController } from './drafting/drafting.controller';
 import { DraftingService } from './drafting/drafting.service';
+import { ReviseController } from './drafting/revise.controller';
+import { ReviseService } from './drafting/revise.service';
 import { PricingService } from './pricing/pricing.service';
 import { QuotationPreviewCaller } from './preview/quotation-preview.caller';
 import { QuotationPreviewController } from './preview/quotation-preview.controller';
@@ -23,7 +26,12 @@ import { ReferenceService } from './reference/reference.service';
 
 @Module({
   imports: [ApprovalsModule, AuditModule, DocumentsModule, SettingsModule],
-  controllers: [DraftingController, ReferenceController, QuotationPreviewController],
+  controllers: [
+    DraftingController,
+    ReferenceController,
+    QuotationPreviewController,
+    ReviseController,
+  ],
   providers: [
     PricingService,
     DraftingService,
@@ -32,6 +40,7 @@ import { ReferenceService } from './reference/reference.service';
     ReferenceService,
     QuotationPreviewService,
     QuotationPreviewCaller,
+    ReviseService,
   ],
   exports: [PricingService],
 })
