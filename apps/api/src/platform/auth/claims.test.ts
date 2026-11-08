@@ -17,7 +17,12 @@ const grant = { '290000000000000001': 'staff.auth.localhost' };
 describe('mapClaims', () => {
   it('maps sub and the resourceowner org id', () => {
     const mapped = mapClaims({ sub: 'user-1', [ORG_ID_CLAIM]: 'org-1' }, PROJECT);
-    expect(mapped).toEqual({ userId: 'user-1', zitadelOrgId: 'org-1', roles: [] });
+    expect(mapped).toEqual({
+      userId: 'user-1',
+      zitadelOrgId: 'org-1',
+      roles: [],
+      rolesByOrg: {},
+    });
   });
 
   it('reads roles from the generic project roles claim', () => {
@@ -90,5 +95,88 @@ describe('mapClaims', () => {
 
   it('throws when sub is empty', () => {
     expect(() => mapClaims({ sub: '', [ORG_ID_CLAIM]: 'o' }, PROJECT)).toThrow(InvalidClaimsError);
+  });
+});
+
+describe('mapClaims rolesByOrg', () => {
+  const ORG_A = '290000000000000001';
+  const ORG_B = '290000000000000002';
+  const inA = { [ORG_A]: 'staff.auth.localhost' };
+  const inB = { [ORG_B]: 'other.auth.localhost' };
+  const inBoth = { ...inA, ...inB };
+
+  it('leaves out of org A a role granted only in org B', () => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { sales: inA, finance: inB } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg[ORG_A]).toEqual(['sales']);
+    expect(mapped.rolesByOrg[ORG_B]).toEqual(['finance']);
+    // The P0 flat list still unions every org; the interceptor must use rolesByOrg instead.
+    expect(mapped.roles).toEqual(['finance', 'sales']);
+  });
+
+  it('has no entry for an org where nothing was granted', () => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { founder: inB } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg[ORG_A]).toBeUndefined();
+    expect(Object.keys(mapped.rolesByOrg)).toEqual([ORG_B]);
+  });
+
+  it('lists a role granted in two orgs under both', () => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { management: inBoth } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['management'], [ORG_B]: ['management'] });
+  });
+
+  it('drops role keys that are not in ROLE_KEYS', () => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { admin: inA, sales: inA } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['sales'] });
+  });
+
+  it('merges both claim forms per org, sorted and de-duplicated', () => {
+    const mapped = mapClaims(
+      {
+        sub: 'u',
+        [ORG_ID_CLAIM]: ORG_A,
+        [PROJECT_ROLES_CLAIM]: { sales: inA, finance: inA },
+        [projectRolesClaim(PROJECT)]: { finance: inA, accountant: inB },
+      },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({ [ORG_A]: ['finance', 'sales'], [ORG_B]: ['accountant'] });
+  });
+
+  it("ignores roles scoped to another project's id", () => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [projectRolesClaim(OTHER_PROJECT)]: { founder: inA } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({});
+  });
+
+  it.each([
+    ['an array', [ORG_A]],
+    ['a string', ORG_A],
+    ['null', null],
+  ])('ignores a role whose org value is %s', (_label, value) => {
+    const mapped = mapClaims(
+      { sub: 'u', [ORG_ID_CLAIM]: ORG_A, [PROJECT_ROLES_CLAIM]: { founder: value } },
+      PROJECT,
+    );
+    expect(mapped.rolesByOrg).toEqual({});
+  });
+
+  it('finds no inherited object members when an org id is looked up', () => {
+    const mapped = mapClaims({ sub: 'u', [ORG_ID_CLAIM]: ORG_A }, PROJECT);
+    expect(mapped.rolesByOrg['constructor']).toBeUndefined();
+    expect(mapped.rolesByOrg['toString']).toBeUndefined();
   });
 });
