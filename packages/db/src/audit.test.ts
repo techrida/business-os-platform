@@ -740,3 +740,113 @@ describe('audit hardening (0008)', () => {
     }
   });
 });
+
+// Privileges of 0008_audit_hardening (FIX-C1b): review finding R16.
+describe('privileges after 0008 (R16)', () => {
+  const denied = { code: '42501' };
+
+  it('R16: denies bos_app every statement on the drizzle migration journal (42501)', async () => {
+    // With the journal writable, a compromised API could mark future migrations as applied and skip them.
+    await expect(
+      app.query(`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('x', 1)`),
+    ).rejects.toMatchObject(denied);
+    await expect(app.query('SELECT 1 FROM drizzle.__drizzle_migrations')).rejects.toMatchObject(
+      denied,
+    );
+    await expect(
+      app.query(`UPDATE drizzle.__drizzle_migrations SET hash = 'x'`),
+    ).rejects.toMatchObject(denied);
+    await expect(app.query('DELETE FROM drizzle.__drizzle_migrations')).rejects.toMatchObject(
+      denied,
+    );
+  });
+
+  it('R16: a function bos_owner creates later is not executable by bos_app until it is granted', async () => {
+    // PostgreSQL gives PUBLIC EXECUTE on every new function; the default privileges of 0008 take that away.
+    for (const schema of ['app', 'audit']) {
+      const fn = `${schema}.dp_probe_fn`;
+      await owner.query(`CREATE FUNCTION ${fn}() RETURNS int LANGUAGE sql AS 'SELECT 1'`);
+      try {
+        await expect(app.query(`SELECT ${fn}()`)).rejects.toMatchObject(denied);
+        await owner.query(`GRANT EXECUTE ON FUNCTION ${fn}() TO bos_app`);
+        await expect(app.query(`SELECT ${fn}() AS n`)).resolves.toMatchObject({ rows: [{ n: 1 }] });
+      } finally {
+        await owner.query(`DROP FUNCTION IF EXISTS ${fn}()`);
+      }
+    }
+  });
+
+  it('R16: a table bos_owner creates later in audit is not readable or writable by bos_app', async () => {
+    await owner.query('CREATE TABLE audit.dp_probe_tbl (n int)');
+    try {
+      await expect(app.query('SELECT 1 FROM audit.dp_probe_tbl')).rejects.toMatchObject(denied);
+      await expect(app.query('INSERT INTO audit.dp_probe_tbl VALUES (1)')).rejects.toMatchObject(
+        denied,
+      );
+    } finally {
+      await owner.query('DROP TABLE IF EXISTS audit.dp_probe_tbl');
+    }
+  });
+
+  it('R16: still lets bos_app write to a table bos_owner creates later in app and ops', async () => {
+    // The change to the default table privileges must not take away the API's access to its own schemas.
+    for (const schema of ['app', 'ops']) {
+      const tbl = `${schema}.dp_probe_dml`;
+      await owner.query(`CREATE TABLE ${tbl} (n int)`);
+      try {
+        await app.query(`INSERT INTO ${tbl} VALUES (1)`);
+        await app.query(`UPDATE ${tbl} SET n = 2`);
+        await expect(app.query(`SELECT n FROM ${tbl}`)).resolves.toMatchObject({
+          rows: [{ n: 2 }],
+        });
+        await app.query(`DELETE FROM ${tbl}`);
+      } finally {
+        await owner.query(`DROP TABLE IF EXISTS ${tbl}`);
+      }
+    }
+  });
+
+  it('R16: still lets bos_app call each of the five intended audit functions', async () => {
+    const scope = newScope();
+    await expect(record(scope)).resolves.toMatch(/^\d+$/);
+    await expect(
+      app.query('SELECT id FROM audit.read_events($1, NULL, NULL, NULL, NULL, NULL, NULL, 10)', [
+        scope.tenantId,
+      ]),
+    ).resolves.toMatchObject({ rowCount: 1 });
+    await expect(
+      app.query(`SELECT ok FROM audit.verify_chain($1, (now() AT TIME ZONE 'UTC')::date)`, [
+        scope.tenantId,
+      ]),
+    ).resolves.toMatchObject({ rows: [{ ok: true }] });
+    // A closed month with no rows: nothing to seal, and nothing written.
+    await expect(
+      app.query(`SELECT sealed FROM audit.seal($1, date '2020-01-01')`, [scope.tenantId]),
+    ).resolves.toMatchObject({ rows: [{ sealed: false }] });
+    const { rows: tenants } = await app.query<{ t: string }>(
+      `SELECT t FROM audit.tenants_with_rows((now() AT TIME ZONE 'UTC')::date) AS t`,
+    );
+    expect(tenants.map((r) => r.t)).toContain(scope.tenantId);
+  });
+
+  it('R16: bos_app can execute exactly these five functions in audit, and PUBLIC none', async () => {
+    const { rows } = await owner.query<{ proname: string; app: boolean; public: boolean }>(
+      `SELECT p.proname,
+              has_function_privilege('bos_app', p.oid, 'EXECUTE') AS app,
+              (p.proacl IS NULL OR coalesce(bool_or(a.grantee = 0), false)) AS public
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         LEFT JOIN LATERAL aclexplode(p.proacl) a ON true
+        WHERE n.nspname = 'audit'
+        GROUP BY p.oid, p.proname, p.proacl ORDER BY p.proname`,
+    );
+    expect(rows.filter((r) => r.app).map((r) => r.proname)).toEqual([
+      'read_events',
+      'record',
+      'seal',
+      'tenants_with_rows',
+      'verify_chain',
+    ]);
+    expect(rows.filter((r) => r.public)).toEqual([]);
+  });
+});
