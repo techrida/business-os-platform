@@ -48,7 +48,7 @@ import { DocumentsService } from './documents.service';
 import { FilesController } from './files.controller';
 import { SignedLinks, type LinkStore } from './signed-link';
 import { eicarBytes, startFakeClamd, type FakeClamd } from './fake-clamd';
-import { ScanProcessor } from './scan.processor';
+import { SCAN_JOB_OPTIONS, ScanProcessor } from './scan.processor';
 import { DiskStorageAdapter } from './storage.adapter';
 
 // requestTx() reads the HTTP request context, which does not exist in this in-process setup. Everything
@@ -402,7 +402,7 @@ describe('PUT .../content (raw streamed upload)', () => {
     expect(queue.add).toHaveBeenCalledWith(
       'docs.scan',
       scanJob(c.versionId),
-      expect.objectContaining({ jobId: c.versionId, attempts: 3 }),
+      expect.objectContaining({ jobId: c.versionId, attempts: SCAN_JOB_OPTIONS.attempts }),
     );
   });
 
