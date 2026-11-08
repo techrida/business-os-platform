@@ -277,10 +277,11 @@ export class LeadConvertService {
         reason: 'no_permission',
       });
     }
+    // The owner the row will get (createInTx stores none when the body names none), so an `own` grant agrees.
     const ref: ResourceRef = {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
-      ownerUserId: body.ownerUserId ?? p.userId,
+      ownerUserId: body.ownerUserId ?? null,
     };
     this.authz.assert('customer.write', ref);
   }
