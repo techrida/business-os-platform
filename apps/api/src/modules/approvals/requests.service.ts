@@ -54,7 +54,13 @@ import {
   ApprovalsNotify,
   type Clock,
 } from './ports';
-import { buildDirectory, route, type BuiltDirectory, type DirectoryData } from './router';
+import {
+  buildDirectory,
+  route,
+  type BuiltDirectory,
+  type DirectoryData,
+  type StepDecision,
+} from './router';
 
 /** A document type that can be approved; onDecided runs in the deciding transaction. */
 export interface ApprovalSubject {
@@ -495,6 +501,23 @@ export class ApprovalsService {
       )
       .orderBy(asc(approvalRequests.submittedAt));
 
+    // Earlier decisions of every listed request, for the distinctApprovers check below.
+    const decided = new Map<string, StepDecision[]>();
+    if (rows.length > 0) {
+      const stepRows = await this.db
+        .select({
+          requestId: approvalSteps.requestId,
+          seq: approvalSteps.seq,
+          decidedBy: approvalSteps.decidedBy,
+          decidedOnBehalfOf: approvalSteps.decidedOnBehalfOf,
+        })
+        .from(approvalSteps)
+        .where(inArray(approvalSteps.requestId, [...new Set(rows.map((r) => r.request.id))]));
+      for (const d of stepRows) {
+        decided.set(d.requestId, [...(decided.get(d.requestId) ?? []), ...decisionsOf([d])]);
+      }
+    }
+
     const specs = new Map<string, { spec: WorkflowSpec; data: DirectoryData }>();
     const items: InboxItemDto[] = [];
     for (const { request, step } of rows) {
@@ -504,13 +527,35 @@ export class ApprovalsService {
         entry = { spec, data: await this.loadDirectory(this.db, scope, spec) };
         specs.set(request.workflowVersionId, entry);
       }
-      const who = this.directory(
-        entry.data,
-        now,
-        request.documentType,
-        request.sodUserIds,
-      ).resolveActor(stepSpecOf(step, entry.data), principal.userId);
+      // The same checks as act() step 3, in the same order and with the same directory, so the inbox
+      // never lists an item act() would refuse (and both pick the same principal for a delegate).
+      const userId = principal.userId;
+      const sod = new Set(request.sodUserIds);
+      const who = this.directory(entry.data, now, request.documentType).resolveActor(
+        stepSpecOf(step, entry.data),
+        userId,
+        sod,
+      );
       if (!who.eligible) continue;
+      // The token's roles, not the lagging mirror, decide a direct approver of a role step.
+      if (
+        who.onBehalfOf === null &&
+        step.kind === 'role' &&
+        !principal.roles.includes(step.roleKey as RoleKey)
+      ) {
+        continue;
+      }
+      if (sod.has(userId) || (who.onBehalfOf !== null && sod.has(who.onBehalfOf))) continue;
+      if (entry.spec.distinctApprovers) {
+        const earlier = new Set(
+          (decided.get(request.id) ?? [])
+            .filter((d) => d.seq < step.seq)
+            .flatMap((d) => [...d.deciders]),
+        );
+        if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
+          continue;
+        }
+      }
       const amount = (request.facts as Record<string, unknown>)['amountNpr'];
       items.push({
         requestId: request.id,
@@ -568,13 +613,16 @@ export class ApprovalsService {
       }
       const spec = await this.frozenSpec(tx, request.workflowVersionId);
       const data = await this.loadDirectory(tx, scope, spec);
+      const steps = await this.stepsOf(tx, requestId);
+      // The decisions so far go into routing: under distinctApprovers whoever decided an earlier step
+      // cannot decide a later one, so a later step with only them left is blocked, not pending forever.
       const plan = this.plan(
         spec,
         request.facts as Record<string, unknown>,
         data,
         request.sodUserIds,
+        decisionsOf(steps),
       );
-      const steps = await this.stepsOf(tx, requestId);
       const current = steps.find((s) => s.seq === request.currentSeq)!;
       const open = plan.steps.filter((s) => s.seq >= request.currentSeq);
       const blocked = open.some((s) => s.blocked);
@@ -906,6 +954,7 @@ export class ApprovalsService {
     facts: Record<string, unknown>,
     data: DirectoryData,
     sodUserIds: readonly string[],
+    decisions: readonly StepDecision[] = [],
   ): RoutePlan {
     try {
       return route(
@@ -913,6 +962,7 @@ export class ApprovalsService {
         facts,
         this.directory(data, this.clock(), spec.documentType, sodUserIds),
         sodUserIds,
+        decisions,
       );
     } catch (error) {
       if (error instanceof ConditionError) throw new BadRequestException(error.message);
@@ -1006,6 +1056,16 @@ function activation(now: Date, spec: WorkflowSpec) {
     remindAt: addHours(now, spec.sla.remindAfterHours),
     escalateAt: addHours(now, spec.sla.escalateAfterHours),
   };
+}
+
+/** Who decided each decided step: the decider and, for a delegate, the approver they acted for. */
+function decisionsOf(
+  steps: readonly Pick<StepRow, 'seq' | 'decidedBy' | 'decidedOnBehalfOf'>[],
+): StepDecision[] {
+  return steps.flatMap((s) => {
+    const deciders = [s.decidedBy, s.decidedOnBehalfOf].filter((id): id is string => id !== null);
+    return deciders.length === 0 ? [] : [{ seq: s.seq, deciders }];
+  });
 }
 
 /** Rebuilds the routing view of a stored step (group id back to its key) for the directory. */

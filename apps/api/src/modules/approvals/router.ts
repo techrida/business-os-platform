@@ -9,9 +9,19 @@ import { evaluate } from './conditions';
 
 /** Who may approve a step. `eligible` already includes active delegates (see buildDirectory). */
 export interface ApproverDirectory {
-  eligible(step: StepSpec): string[];
+  /**
+   * `exclude` drops people as if they were SoD for this one step: before their delegates are added (so
+   * nobody stands in for them) and after.
+   */
+  eligible(step: StepSpec, exclude?: ReadonlySet<string>): string[];
   /** The approval_groups id for a group key; the plan carries ids, the spec carries keys. */
   groupIdOf?(key: string): string | undefined;
+}
+
+/** Who decided the step at `seq`: the decider and, for a delegate, the approver they acted for. */
+export interface StepDecision {
+  seq: number;
+  deciders: readonly string[];
 }
 
 interface Placed {
@@ -28,12 +38,18 @@ interface Placed {
  *   late is safer than dropping them.
  * A rule-added step carries the rule's reason ("Founder approval because ..."): it says why the step
  * was added, which is what the approver and the audit trail need.
+ *
+ * `decisions` are the steps of this request already decided (rerouting an open request). Under
+ * `distinctApprovers` the people who decided an earlier step, and their delegates acting for them, are
+ * not eligible for a later one: act() would refuse them, so counting them would leave the step pending
+ * with nobody able to decide it. A step left without anyone is blocked like any other.
  */
 export function route(
   spec: WorkflowSpec,
   facts: Record<string, unknown>,
   dir: ApproverDirectory,
   sodUserIds: readonly string[],
+  decisions: readonly StepDecision[] = [],
 ): RoutePlan {
   const placed: Placed[] = spec.steps.map((s) => ({ spec: s, reason: s.reason }));
   // For each anchor X, the id of the last step inserted after it (initially X itself).
@@ -59,7 +75,14 @@ export function route(
 
   const sod = new Set(sodUserIds);
   const steps: RoutePlan['steps'] = placed.map((p, i) => {
-    const eligibleUserIds = [...new Set(dir.eligible(p.spec))].filter((id) => !sod.has(id));
+    const earlier = new Set(
+      spec.distinctApprovers
+        ? decisions.filter((d) => d.seq < i + 1).flatMap((d) => [...d.deciders])
+        : [],
+    );
+    const eligibleUserIds = [...new Set(dir.eligible(p.spec, earlier))].filter(
+      (id) => !sod.has(id) && !earlier.has(id),
+    );
     const groupId = p.spec.group === undefined ? undefined : dir.groupIdOf?.(p.spec.group);
     return {
       seq: i + 1,
@@ -167,11 +190,12 @@ export function buildDirectory(
 
   return {
     direct,
-    eligible(step) {
-      const base = direct(step);
+    eligible(step, exclude) {
+      const out = (id: string) => sod.has(id) || exclude?.has(id) === true;
+      const base = direct(step).filter((id) => !out(id));
       const baseSet = new Set(base);
       const delegates = active.filter((d) => baseSet.has(d.fromUserId)).map((d) => d.toUserId);
-      return [...new Set([...base, ...delegates])].filter((id) => !sod.has(id));
+      return [...new Set([...base, ...delegates])].filter((id) => !out(id));
     },
     groupIdOf: (key) => data.groups.get(key)?.id,
     resolveActor(step, userId, preferNot) {
