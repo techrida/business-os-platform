@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeQuoteFailure, STALE_FX_MESSAGE, STALE_VERSION_MESSAGE } from './failure';
+import {
+  describeQuoteFailure,
+  isIdempotencyInProgress,
+  STALE_FX_MESSAGE,
+  STALE_VERSION_MESSAGE,
+} from './failure';
 
 const err = (status: number, code: string, message = 'm', details?: Record<string, unknown>) => ({
   status,
@@ -81,6 +86,23 @@ describe('describeQuoteFailure: conflicts that are not a stale version', () => {
       expect(f.message).toBe('Still saving — wait a moment and try again.');
       expect(f.kind).not.toBe('stale');
     }
+  });
+
+  it('tells the in-progress 409s from other conflicts and from the 422', () => {
+    for (const message of [
+      'This Idempotency-Key was released while it was being checked',
+      'The first request with this Idempotency-Key did not finish',
+    ]) {
+      expect(isIdempotencyInProgress(err(409, 'conflict', message))).toBe(true);
+    }
+    expect(isIdempotencyInProgress(err(409, 'conflict', 'stale'))).toBe(false);
+    expect(
+      isIdempotencyInProgress(
+        err(422, 'bad_request', 'This Idempotency-Key was already used for a different request'),
+      ),
+    ).toBe(false);
+    expect(isIdempotencyInProgress(new TypeError('fetch failed'))).toBe(false);
+    expect(isIdempotencyInProgress(null)).toBe(false);
   });
 
   it('says it was already submitted with different content for the idempotency 422', () => {

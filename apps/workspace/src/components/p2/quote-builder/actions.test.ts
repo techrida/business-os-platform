@@ -47,6 +47,14 @@ const m = (percent: string) => ({ key: percent, label: 'Milestone', percent, due
 const apiError = (status: number, code: string) =>
   new ApiError(status, 'x', { error: { code, message: 'm', correlationId: 'c' } });
 
+/** What the API sends for the idempotency guard's 409s (platform/db/idempotency.ts): code `conflict`, header named in the text. */
+const inProgress = (message: string) =>
+  new ApiError(409, 'x', { error: { code: 'conflict', message, correlationId: 'c' } });
+const IN_PROGRESS = [
+  'The first request with this Idempotency-Key did not finish',
+  'This Idempotency-Key was released while it was being checked',
+];
+
 beforeEach(() => vi.clearAllMocks());
 
 describe('submitQuoteAction', () => {
@@ -77,6 +85,34 @@ describe('submitQuoteAction', () => {
     api.submitVersion.mockRejectedValueOnce(apiError(409, 'VERSION_CONFLICT'));
     const res = await submitQuoteAction({ ...submit, values: v });
     expect(res.ok ? '' : res.key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(res.ok ? '' : res.key).not.toBe(KEY);
+  });
+
+  it('keeps the key after the in-progress idempotency 409, so the retry replays', async () => {
+    const v = values();
+    v.schedule = [m('60'), m('40')];
+    for (const message of IN_PROGRESS) {
+      api.submitVersion.mockRejectedValueOnce(inProgress(message));
+      expect(await submitQuoteAction({ ...submit, values: v })).toMatchObject({
+        ok: false,
+        key: KEY,
+      });
+    }
+  });
+
+  it('rotates the key after the idempotency 422 (same key, different content)', async () => {
+    const v = values();
+    v.schedule = [m('60'), m('40')];
+    api.submitVersion.mockRejectedValueOnce(
+      new ApiError(422, 'x', {
+        error: {
+          code: 'bad_request',
+          message: 'This Idempotency-Key was already used for a different request',
+          correlationId: 'c',
+        },
+      }),
+    );
+    const res = await submitQuoteAction({ ...submit, values: v });
     expect(res.ok ? '' : res.key).not.toBe(KEY);
   });
 
@@ -159,6 +195,14 @@ describe('saveDraftAction', () => {
     const next = res.ok ? '' : (res.key ?? '');
     expect(next).toMatch(/^[0-9a-f-]{36}$/);
     expect(next).not.toBe(KEY);
+  });
+
+  it('keeps the key after the in-progress idempotency 409, so a retry cannot create a second quotation', async () => {
+    for (const message of IN_PROGRESS) {
+      api.createQuotation.mockRejectedValueOnce(inProgress(message));
+      const res = await saveDraftAction({ ...create, values: values() });
+      expect(res).toMatchObject({ ok: false, kind: 'error', key: KEY });
+    }
   });
 
   it('keeps the unused key when the form is refused before any call', async () => {
