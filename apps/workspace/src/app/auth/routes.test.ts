@@ -16,7 +16,7 @@ const m = vi.hoisted(() => ({
   getSession: vi.fn(),
   destroySession: vi.fn(),
   safeReturnTo: vi.fn(),
-  getRedis: vi.fn(),
+  getOidcRedis: vi.fn(),
   cookies: vi.fn(),
   cookieSet: vi.fn(),
 }));
@@ -43,6 +43,8 @@ vi.mock('@/lib/oidc', () => ({
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
+  // The login rate limiter (CR-03) runs for real against an in-memory Valkey.
+  getOidcRedis: m.getOidcRedis,
 }));
 vi.mock('next/headers', () => ({ cookies: m.cookies }));
 vi.mock('@/lib/api', () => ({ ApiError, getMe: m.getMe }));
@@ -55,8 +57,6 @@ vi.mock('@/lib/session', () => ({
   getSession: m.getSession,
   destroySession: m.destroySession,
   safeReturnTo: m.safeReturnTo,
-  // The login rate limiter (CR-03) runs for real against an in-memory Valkey.
-  getRedis: m.getRedis,
 }));
 vi.mock('@/lib/env', () => ({
   getEnv: () => ({
@@ -87,7 +87,7 @@ const redis = new RedisMock();
 beforeEach(async () => {
   vi.resetAllMocks();
   await redis.flushall(); // every login test shares one client IP bucket
-  m.getRedis.mockReturnValue(redis);
+  m.getOidcRedis.mockReturnValue(redis);
   // Same contract as the real one: a same-origin relative path survives, anything else is '/'.
   m.safeReturnTo.mockImplementation((raw: string | null | undefined) =>
     raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/',
