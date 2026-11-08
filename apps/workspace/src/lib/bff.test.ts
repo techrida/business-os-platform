@@ -138,12 +138,13 @@ describe('step-up', () => {
     const url = new URL(stepUpLoginUrl('/inbox/abc?x=1'), 'https://app.test');
     expect(url.pathname).toBe('/auth/login');
     expect(url.searchParams.get('prompt')).toBe('login');
+    expect(url.searchParams.get('max_age')).toBe('0');
     expect(url.searchParams.get('returnTo')).toBe('/inbox/abc?x=1');
   });
 
-  it('redirects with prompt=login and the encoded return path', () => {
+  it('redirects with prompt=login, max_age=0 and the encoded return path', () => {
     expect(() => redirectToStepUp('/inbox/abc')).toThrow(
-      'REDIRECT:/auth/login?prompt=login&returnTo=%2Finbox%2Fabc',
+      'REDIRECT:/auth/login?prompt=login&max_age=0&returnTo=%2Finbox%2Fabc',
     );
   });
 });
