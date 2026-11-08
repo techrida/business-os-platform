@@ -1,6 +1,10 @@
 import 'server-only';
 
-import { VerificationCaseDtoSchema, type VerificationCaseDto } from '@bos/contracts';
+import {
+  VerificationCaseDtoSchema,
+  type AttachVerificationDocumentBody,
+  type VerificationCaseDto,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from '@/lib/api';
@@ -69,6 +73,27 @@ export function openVerificationCase(
     '/v1/verification-cases',
     VerificationCaseDtoSchema,
     json('POST', { partyId }, idempotencyKey),
+  );
+}
+
+/**
+ * `PATCH /v1/verification-cases/:id/checklist` (needs `customer.write`): puts one uploaded document
+ * on one checklist item, one item per call. The document must have been uploaded with owner type
+ * `verification_case` and this case id (422 otherwise). 409 unless the case is a draft or
+ * rejected, or when `expectedVersion` is stale; attaching on a rejected case sends it back to a
+ * draft. Answers 200 with the case.
+ */
+export function attachChecklistDocument(
+  session: Session,
+  caseId: string,
+  body: AttachVerificationDocumentBody,
+  idempotencyKey: string,
+): Promise<VerificationCaseDto> {
+  return call(
+    session,
+    `/v1/verification-cases/${encodeURIComponent(caseId)}/checklist`,
+    VerificationCaseDtoSchema,
+    json('PATCH', body, idempotencyKey),
   );
 }
 
