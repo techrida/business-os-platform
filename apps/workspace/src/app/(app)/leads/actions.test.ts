@@ -66,6 +66,17 @@ describe('createLeadAction', () => {
     expect(res.key).not.toBe(IDEM);
   });
 
+  it.each([
+    'The first request with this Idempotency-Key did not finish',
+    'This Idempotency-Key was released while it was being checked',
+  ])('keeps the key after the in-progress 409 "%s", so the retry replays', async (message) => {
+    api.createLead.mockRejectedValueOnce(
+      new ApiError(409, message, { error: { code: 'conflict', message, correlationId: 'c' } }),
+    );
+    const res = await createLeadAction(empty, form());
+    expect(res.key).toBe(IDEM);
+  });
+
   it('keeps the unused key when the form is refused before any call', async () => {
     const res = await createLeadAction(empty, form({ title: '' }));
     expect(res.fieldErrors['title']).toBeTruthy();
