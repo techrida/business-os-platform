@@ -151,7 +151,15 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         phase: 'P2',
         permission: 'verification.read',
       },
-      { label: 'Activities & Tasks', icon: 'list-checks', phase: 'P2' },
+      // No activity permission exists in the contracts yet: the feed covers leads and opportunities,
+      // so it follows the lead read grant (deny by default). The API still decides every call.
+      {
+        label: 'Activities & Tasks',
+        href: '/activities',
+        icon: 'list-checks',
+        phase: 'P2',
+        permission: 'crm.lead.read',
+      },
     ],
   },
   {

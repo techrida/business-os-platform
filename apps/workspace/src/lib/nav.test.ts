@@ -73,6 +73,7 @@ describe('NAV_GROUPS', () => {
       ['Opportunities', '/opportunities'],
       ['Quotations', '/quotations'],
       ['Verification', '/verification'],
+      ['Activities & Tasks', '/activities'],
       ['Settings', '/admin/settings'],
     ]);
   });
@@ -87,6 +88,7 @@ describe('NAV_GROUPS', () => {
       Opportunities: 'crm.opportunity.read',
       Quotations: 'quotation.read',
       Verification: 'verification.read',
+      'Activities & Tasks': 'crm.lead.read',
     });
   });
 
@@ -163,7 +165,7 @@ describe('visibleGroups with permissions', () => {
 
   it('hides every permission-gated item when no predicate is given (deny by default)', () => {
     const labels = labelsWith();
-    for (const hidden of ['Customers', 'Leads', 'Opportunities', 'Quotations', 'Verification']) {
+    for (const hidden of ['Customers', 'Leads', 'Opportunities', 'Quotations', 'Verification', 'Activities & Tasks']) {
       expect(labels).not.toContain(hidden);
     }
     expect(labels).toContain('Inbox');
