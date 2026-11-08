@@ -69,7 +69,9 @@ function checkDockerfile(text, label) {
       return args.get(name) ?? '';
     });
     if (unresolved.length > 0) {
-      problems.push(`${at}: FROM uses ARG ${unresolved.join(', ')} with no default, so the pin is unchecked`);
+      problems.push(
+        `${at}: FROM uses ARG ${unresolved.join(', ')} with no default, so the pin is unchecked`,
+      );
     } else if (ref.toLowerCase() === 'scratch' || stages.has(ref.toLowerCase())) {
       // Nothing to pin: an empty image or an earlier stage of this file.
     } else if (!DIGEST.test(ref)) {
@@ -104,7 +106,9 @@ function main() {
     files += 1;
     const text = readFileSync(file, 'utf8');
     images += (text.match(isDockerfile ? /^\s*FROM\s/gim : /^\s*image:/gm) ?? []).length;
-    problems.push(...(isDockerfile ? checkDockerfile(text, rel(file)) : checkCompose(text, rel(file))));
+    problems.push(
+      ...(isDockerfile ? checkDockerfile(text, rel(file)) : checkCompose(text, rel(file))),
+    );
   }
   if (files === 0) {
     console.error(`check-image-pins: no compose files or Dockerfiles found under ${root}`);
@@ -113,10 +117,14 @@ function main() {
   if (problems.length > 0) {
     console.error(`check-image-pins: ${problems.length} unpinned image reference(s):`);
     for (const p of problems) console.error(`  ${p}`);
-    console.error('Pin with: docker buildx imagetools inspect <name:tag>  (use the top-level "Digest:").');
+    console.error(
+      'Pin with: docker buildx imagetools inspect <name:tag>  (use the top-level "Digest:").',
+    );
     process.exit(1);
   }
-  console.log(`check-image-pins: ok (${images} image references in ${files} files, all pinned or built here)`);
+  console.log(
+    `check-image-pins: ok (${images} image references in ${files} files, all pinned or built here)`,
+  );
 }
 
 main();
