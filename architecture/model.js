@@ -152,7 +152,7 @@
   el("db-app", "db", "store", "Business tables", "Drizzle migrations", "P0", "Customers, quotes, orders, invoices, purchases, approvals. Money as numeric(18,2).");
   el("db-audit", "db", "store", "audit_events", "INSERT-only role", "P1", "Append-only; tampering breaks the hash chain.");
   el("db-outbox", "db", "store", "outbox", null, "P1", "Messages waiting to be sent.");
-  el("valkey", "data", "store", "Job queue", "Valkey 8", "P0", "Queues for the background workers.", { licence: "BSD-3" });
+  el("valkey", "data", "store", "Job queue", "Valkey 9", "P0", "Queues for the background workers and the Workspace's server-side sessions.", { licence: "BSD-3" });
   el("files", "data", "store", "File store", "disk on ZFS mirror · quarantine/clean", "P1", "Private evidence, PDFs and uploads. Garage (S3) is the option if it outgrows one disk.");
 
   // Supporting services
@@ -180,7 +180,9 @@
   rel("caddy", "ws-shell", "serves", "HTTP", "P0");
   rel("caddy", "cp-shell", "serves", "HTTP", "P2");
   rel("caddy", "vp-shell", "serves", "HTTP", "P4");
-  rel("caddy", "z-login", "serves login", "HTTP/2", "P0");
+  rel("caddy", "z-loginui", "serves /ui/v2/login", "HTTP", "P0");
+  rel("z-loginui", "z-login", "checks password / passkey", "gRPC (Connect)", "P0");
+  rel("caddy", "z-oidc", "OIDC endpoints", "h2c", "P0");
   rel("caddy", "k-guard", "routes /api", "HTTP", "P0");
   rel("customer", "public-ip", "opens portal", "HTTPS", "P2");
   rel("vendor", "public-ip", "opens portal", "HTTPS", "P4");
@@ -359,6 +361,37 @@
   rel("backup", "files", "snapshots", "restic", "P1");
   rel("backup", "offsite", "encrypted copy", "S3", "P0");
 
+
+  // ───────────────────────── Dev & measurement layers (hidden by default) ─────────────────────────
+  const D = { layer: "dev" }, M = { layer: "measure" };
+  el("z-loginui", "accounts", "component", "Login UI", "zitadel-login v4 (Next.js)", "P0", "ZITADEL's hosted login pages (Login V2), a second container beside the ZITADEL API.", { licence: "AGPL-3.0 (unmodified)" });
+  el("mailpit", "bos", "container", "Dev mail catcher", "Mailpit", "P0", "Catches every email in development and shows it at mail.localhost. Nothing reaches real inboxes. Replaced by Postal + relay in production.", Object.assign({ licence: "MIT" }, D));
+  el("d-personas", "workspace", "component", "Persona switcher", "/dev/personas (dev build only)", "P0", "Lists seeded test users (Founder, Management, Finance, Sales, Customer, Vendor) and logs in as one through the real ZITADEL login. No bypass in the API; a build check proves it is absent from production.", Object.assign({ refs: ["ADR 0009"] }, D));
+  el("d-seed", null, "worker", "ZITADEL seed tool", "pnpm seed (idempotent)", "P0", "Creates the project, roles, OIDC app, dev orgs, six personas and the load-test machine user, and writes .dev/ files.", D);
+  el("d-ci", null, "external", "CI checks", "GitHub Actions", "P0", "Typecheck, lint, unit, database and API end-to-end tests, web build with the no-switcher check, image builds. Required to merge.", Object.assign({ refs: ["ADR 0016"] }, D));
+  el("m-metrics", "kernel", "component", "Latency metrics", "prom-client · /metrics (internal port)", "P0", "A histogram per route (http_server_request_duration_seconds) with buckets on the target edges 0.3 s / 0.5 s / 0.8 s, plus LCP from real browsers.", Object.assign({ licence: "Apache-2.0", nfr: ["reads p95 < 300 ms", "writes p95 < 500 ms"], refs: ["ADR 0010"] }, M));
+  el("m-telemetry", "api", "component", "Vitals intake", "POST /v1/telemetry/vitals", "P0", "Receives page-speed numbers (LCP etc.) from the Workspace and records them.", M);
+  el("m-vitals", "workspace", "component", "Web vitals reporter", "next/web-vitals", "P0", "Measures how fast each page really loads in the user's browser and reports it.", Object.assign({ nfr: ["LCP < 1.5 s on LAN"] }, M));
+  el("m-prom", "ops", "container", "Prometheus", "optional obs profile", "P0", "Scrapes /metrics so the histograms can be graphed. Not needed for the gates.", Object.assign({ licence: "Apache-2.0" }, M));
+  el("m-k6", null, "external", "Load tests", "k6 (thresholds = NFR table)", "P0", "Pretends to be 50 users; fails the run (exit 99) if p95 or error-rate targets are missed. Exit gate for every phase.", Object.assign({ licence: "AGPL-3.0 (separate tool)", refs: ["ADR 0011"] }, M));
+  el("m-playwright", null, "external", "Browser tests", "Playwright", "P0", "Signs in as every persona through the real login, checks the production build has no switcher, and asserts LCP < 1.5 s.", Object.assign({ licence: "Apache-2.0" }, M));
+
+  rel("staff-admin", "d-personas", "picks a persona", "browser", "P0", D);
+  rel("d-personas", "z-loginui", "login_hint + prompt=login", "OIDC", "P0", D);
+  rel("d-seed", "z-org-staff", "creates project, app, personas", "ZITADEL API", "P0", D);
+  rel("d-seed", "z-org-cust", "creates Dev Customer Co", "ZITADEL API", "P2", D);
+  rel("d-seed", "z-org-vendor", "creates Dev Vendor Co", "ZITADEL API", "P4", D);
+  rel("d-seed", "db-app", "org rows", "SQL", "P0", D);
+  rel("z-loginui", "mailpit", "dev emails", "SMTP", "P0", D);
+  rel("w-outbox", "mailpit", "dev emails", "SMTP", "P1", D);
+  rel("github", "d-ci", "runs on every push", null, "P0", D);
+  rel("k-obs", "m-metrics", "records latency per route", null, "P0", M);
+  rel("m-vitals", "m-telemetry", "LCP, INP, CLS", "HTTPS via Workspace", "P0", M);
+  rel("m-telemetry", "m-metrics", "LCP histogram", null, "P0", M);
+  rel("m-prom", "m-metrics", "scrapes", "HTTP", "P0", M);
+  rel("m-k6", "caddy", "50 users, p95 gates", "HTTPS", "P0", M);
+  rel("m-playwright", "caddy", "persona logins, LCP", "HTTPS", "P0", M);
+
   // ───────────────────────── Flows ─────────────────────────
   const F = [
     { id: "signin", name: "Staff sign-in", since: "P1", desc: "Passkey login, then the first API call with permission checks.", steps: [
@@ -455,7 +488,27 @@
       ["backup", "offsite", "Encrypted copy leaves the building"],
       ["monitor", "k-obs", "Monitoring alerts if a backup or the API fails"],
     ] },
-  ].map((f) => ({ id: f.id, name: f.name, since: f.since, desc: f.desc, steps: f.steps.map(([src, dst, note]) => ({ src, dst, note })) }));
+    { id: "dev-persona", name: "Dev: switch persona", since: "P0", layer: "dev", desc: "Log in as any seeded test user through the real login, so every role's flow can be checked quickly.", steps: [
+      ["staff-admin", "d-personas", "Open /dev/personas (dev build only)"],
+      ["d-personas", "z-loginui", "Choose \"Finance\": login opens with that user filled in"],
+      ["z-loginui", "z-login", "Real password check"],
+      ["z-login", "z-oidc", "Real tokens issued"],
+      ["ws-shell", "k-guard", "API checks the token exactly as in production"],
+    ] },
+    { id: "measure-gate", name: "Measure: load-test gate", since: "P0", layer: "measure", desc: "How a phase proves it meets the speed targets before it ships.", steps: [
+      ["m-k6", "caddy", "k6 runs 50 virtual users for 3 minutes"],
+      ["caddy", "k-guard", "Every request is a real, signed call"],
+      ["k-guard", "z-oidc", "Token checked against cached keys"],
+      ["k-obs", "m-metrics", "Each response time lands in a histogram bucket"],
+      ["m-prom", "m-metrics", "Optional: Prometheus graphs it"],
+      ["m-k6", "caddy", "p95 over 300 ms? The run exits 99 and the phase is not done"],
+    ] },
+    { id: "measure-lcp", name: "Measure: page speed (LCP)", since: "P0", layer: "measure", desc: "Real page-load numbers from browsers.", steps: [
+      ["m-vitals", "m-telemetry", "Browser reports LCP after the page settles"],
+      ["m-telemetry", "m-metrics", "Recorded per route"],
+      ["m-playwright", "caddy", "CI also asserts LCP < 1.5 s on the signed-in shell"],
+    ] },
+  ].map((f) => ({ id: f.id, name: f.name, since: f.since, layer: f.layer, desc: f.desc, steps: f.steps.map(([src, dst, note]) => ({ src, dst, note })) }));
 
   window.BOS_MODEL = {
     meta: {
