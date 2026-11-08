@@ -98,8 +98,11 @@ jobs:
 
       - name: Scan full history
         # --redact keeps any finding's secret out of the job log; exit code 1 fails the job.
+        # --log-opts=HEAD scans every commit this checkout's history holds, not every fetched
+        # branch (gitleaks' default is --all), so another phase branch's finding fails that
+        # branch's own CI instead of every PR.
         run: >-
-          "$RUNNER_TEMP/gitleaks/gitleaks" git
+          "$RUNNER_TEMP/gitleaks/gitleaks" git --log-opts=HEAD
           --config .gitleaks.toml --redact --exit-code 1 --no-banner .
 
   # Real Postgres through Testcontainers (it starts throw-away Docker containers from inside
