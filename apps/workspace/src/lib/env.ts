@@ -20,6 +20,11 @@ export interface WorkspaceEnv {
   SESSION_ENC_KEY: string;
   /** Written into every stored session value, so a rotated key can be told apart. */
   SESSION_ENC_KEY_ID: string;
+  /**
+   * Dev only: replaces the 20-per-minute login limit (CR-03) with a higher one, because all local
+   * traffic shares one Caddy client IP. Accepted only on a `localhost` / `*.localhost` public URL.
+   */
+  BOS_DEV_LOGIN_RATE_LIMIT?: number | undefined;
 }
 
 const nonEmpty = z.string().trim().min(1, 'is required');
@@ -70,20 +75,43 @@ const keyId = z
   .trim()
   .regex(/^[A-Za-z0-9_-]{1,32}$/, 'must be 1 to 32 characters of A-Z, a-z, 0-9, _ or -');
 
-const EnvSchema = z.object({
-  OIDC_ISSUER: httpsUrl,
-  OIDC_CLIENT_ID: nonEmpty,
-  OIDC_REDIRECT_URI: httpsUrl,
-  /** The ZITADEL project id; it becomes the access token audience scope. */
-  OIDC_AUDIENCE: nonEmpty,
-  WORKSPACE_PUBLIC_URL: httpsUrl,
-  /** Container-to-container URL of the API, so plain http is allowed. */
-  API_INTERNAL_URL: httpUrl,
-  VALKEY_URL: redisUrl,
-  OIDC_STATE_VALKEY_URL: redisUrl.optional(),
-  SESSION_ENC_KEY: encryptionKey,
-  SESSION_ENC_KEY_ID: keyId.default('k1'),
-});
+/** True for `localhost` and `*.localhost`: names that resolve to the local machine only. */
+function isLocalhostUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname;
+    return host === 'localhost' || host.endsWith('.localhost');
+  } catch {
+    return false;
+  }
+}
+
+const EnvSchema = z
+  .object({
+    OIDC_ISSUER: httpsUrl,
+    OIDC_CLIENT_ID: nonEmpty,
+    OIDC_REDIRECT_URI: httpsUrl,
+    /** The ZITADEL project id; it becomes the access token audience scope. */
+    OIDC_AUDIENCE: nonEmpty,
+    WORKSPACE_PUBLIC_URL: httpsUrl,
+    /** Container-to-container URL of the API, so plain http is allowed. */
+    API_INTERNAL_URL: httpUrl,
+    VALKEY_URL: redisUrl,
+    OIDC_STATE_VALKEY_URL: redisUrl.optional(),
+    SESSION_ENC_KEY: encryptionKey,
+    SESSION_ENC_KEY_ID: keyId.default('k1'),
+    /** Not gated on NODE_ENV: the compose `app` profile is a production build on `*.localhost`. */
+    BOS_DEV_LOGIN_RATE_LIMIT: z.coerce.number().int().min(21).max(10_000).optional(),
+  })
+  .superRefine((env, ctx) => {
+    if (env.BOS_DEV_LOGIN_RATE_LIMIT !== undefined && !isLocalhostUrl(env.WORKSPACE_PUBLIC_URL)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['BOS_DEV_LOGIN_RATE_LIMIT'],
+        message:
+          'is dev-only and is refused in production: it is allowed only when WORKSPACE_PUBLIC_URL is localhost or *.localhost',
+      });
+    }
+  });
 
 let cached: WorkspaceEnv | undefined;
 

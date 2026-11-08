@@ -16,7 +16,8 @@ const VALID = {
   SESSION_ENC_KEY: KEY_32,
 } as const;
 
-type Name = keyof typeof VALID | 'SESSION_ENC_KEY_ID' | 'OIDC_STATE_VALKEY_URL';
+type Name =
+  keyof typeof VALID | 'SESSION_ENC_KEY_ID' | 'OIDC_STATE_VALKEY_URL' | 'BOS_DEV_LOGIN_RATE_LIMIT';
 
 function stubAll(overrides: Partial<Record<Name, string | undefined>> = {}) {
   for (const [name, value] of Object.entries({ ...VALID, ...overrides })) {
@@ -128,5 +129,55 @@ describe('getEnv', () => {
   it('requires a redis URL for the OIDC state Valkey', () => {
     stubAll({ OIDC_STATE_VALKEY_URL: 'http://valkey-oidc:6379' });
     expect(() => getEnv()).toThrow(/OIDC_STATE_VALKEY_URL must be a redis/);
+  });
+
+  describe('BOS_DEV_LOGIN_RATE_LIMIT', () => {
+    it('is absent by default', () => {
+      stubAll();
+      expect(getEnv().BOS_DEV_LOGIN_RATE_LIMIT).toBeUndefined();
+    });
+
+    it('is accepted as a number on a *.localhost public URL, even in a production build', () => {
+      // The compose `app` profile runs a production build on app.localhost and must keep working.
+      vi.stubEnv('NODE_ENV', 'production');
+      stubAll({ WORKSPACE_PUBLIC_URL: 'https://app.localhost', BOS_DEV_LOGIN_RATE_LIMIT: '200' });
+      expect(getEnv().BOS_DEV_LOGIN_RATE_LIMIT).toBe(200);
+    });
+
+    it('is accepted on plain localhost', () => {
+      stubAll({ WORKSPACE_PUBLIC_URL: 'https://localhost', BOS_DEV_LOGIN_RATE_LIMIT: '50' });
+      expect(getEnv().BOS_DEV_LOGIN_RATE_LIMIT).toBe(50);
+    });
+
+    it.each(['https://app.example.com', 'https://notlocalhost', 'https://app.localhost.evil.test'])(
+      'is refused when the public URL is %s',
+      (url) => {
+        stubAll({ WORKSPACE_PUBLIC_URL: url, BOS_DEV_LOGIN_RATE_LIMIT: '200' });
+        expect(() => getEnv()).toThrow(
+          /BOS_DEV_LOGIN_RATE_LIMIT is dev-only and is refused in production/,
+        );
+      },
+    );
+
+    it('is refused on a public URL that merely has localhost in its credentials or path', () => {
+      stubAll({
+        WORKSPACE_PUBLIC_URL: 'https://app.localhost@app.example.com/x.localhost',
+        BOS_DEV_LOGIN_RATE_LIMIT: '200',
+      });
+      expect(() => getEnv()).toThrow(/refused in production/);
+    });
+
+    it.each(['20', '0', '-5', '10001', '21.5', 'abc'])('rejects %s', (value) => {
+      stubAll({ WORKSPACE_PUBLIC_URL: 'https://app.localhost', BOS_DEV_LOGIN_RATE_LIMIT: value });
+      expect(() => getEnv()).toThrow(/BOS_DEV_LOGIN_RATE_LIMIT/);
+    });
+
+    it('accepts the bounds 21 and 10000', () => {
+      stubAll({ WORKSPACE_PUBLIC_URL: 'https://app.localhost', BOS_DEV_LOGIN_RATE_LIMIT: '21' });
+      expect(getEnv().BOS_DEV_LOGIN_RATE_LIMIT).toBe(21);
+      __resetEnvForTests();
+      stubAll({ WORKSPACE_PUBLIC_URL: 'https://app.localhost', BOS_DEV_LOGIN_RATE_LIMIT: '10000' });
+      expect(getEnv().BOS_DEV_LOGIN_RATE_LIMIT).toBe(10_000);
+    });
   });
 });
