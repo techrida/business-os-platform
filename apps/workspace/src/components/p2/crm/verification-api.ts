@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { ApiError, apiFetch } from '@/lib/api';
 import type { Session } from '@/lib/session';
 
+import { DocumentSchema, type DocumentDetail } from './verification-file';
+
 /**
  * Typed calls from the workspace BFF to the write routes of the KYB cases
  * (apps/api/src/modules/verification/verification.controller.ts). Reads and the reviewer's
@@ -85,4 +87,12 @@ export function submitVerificationCase(
     VerificationCaseDtoSchema,
     json('POST', {}, idempotencyKey),
   );
+}
+
+/**
+ * `GET /v1/documents/:id` (needs `documents.read`, scoped like the owning record): the document with
+ * its versions and their scan status. The case page uses it to find which version to open.
+ */
+export function getDocument(session: Session, documentId: string): Promise<DocumentDetail> {
+  return call(session, `/v1/documents/${encodeURIComponent(documentId)}`, DocumentSchema);
 }
