@@ -142,6 +142,15 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it.each(['duplicate_pan_vat', 'primary_contact_exists'])(
+    'keeps the customer conflict code %s on a 409',
+    (code) => {
+      const out = filter(new ConflictException({ code, message: 'm' }));
+      expect(out.status).toBe(409);
+      expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
+    },
+  );
+
   it('does not let a 409 claim any other code, or a non-409 claim fx_rate_stale', () => {
     expect(
       ErrorBodySchema.parse(filter(new ConflictException({ code: 'whatever', message: 'm' })).body)
