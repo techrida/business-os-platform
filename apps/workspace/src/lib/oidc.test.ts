@@ -8,10 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetEnvForTests } from './env';
 import {
   __resetOidcForTests,
+  __setOidcRedisForTests,
   beginLogin,
   completeLogin,
   endSessionUrl,
   getOidcConfig,
+  getOidcRedis,
   LOGIN_COOKIE,
   LOGIN_COOKIE_MAX_AGE,
   LoginBindingError,
@@ -44,6 +46,8 @@ const ENV = {
   WORKSPACE_PUBLIC_URL: 'https://app.test',
   API_INTERNAL_URL: 'http://api:3001',
   VALKEY_URL: 'redis://valkey.test:6379',
+  OIDC_STATE_VALKEY_URL: 'redis://valkey-oidc.test:6380',
+  SESSION_ENC_KEY: Buffer.alloc(32, 3).toString('base64'),
 };
 
 const T0 = Date.UTC(2026, 10, 8, 12, 0, 0);
@@ -80,7 +84,10 @@ function grantResult(fields: {
   } as unknown as GrantResult;
 }
 
+/** The OIDC state client. */
 let redis: Redis;
+/** The session client: login state must never land here (CR-03). */
+let sessionRedis: Redis;
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -90,13 +97,17 @@ beforeEach(async () => {
   __resetOidcForTests();
   redis = new RedisMock();
   await redis.flushall();
-  __setRedisForTests(redis);
+  __setOidcRedisForTests(redis);
+  // ioredis-mock instances share data, so separation is asserted with spies on this one.
+  sessionRedis = new RedisMock();
+  __setRedisForTests(sessionRedis);
   vi.mocked(client.discovery).mockReset().mockResolvedValue(config);
   vi.mocked(client.authorizationCodeGrant).mockReset();
   vi.mocked(client.refreshTokenGrant).mockReset();
 });
 
 afterEach(() => {
+  __setOidcRedisForTests(undefined);
   __setRedisForTests(undefined);
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -430,5 +441,45 @@ describe('endSessionUrl', () => {
     expect(url.searchParams.has('id_token_hint')).toBe(false);
     expect(url.searchParams.get('client_id')).toBe('client-123');
     expect(url.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');
+  });
+});
+
+// CR-03: login state lives on its own Valkey, so anonymous logins cannot fill the session server.
+describe('OIDC state Valkey', () => {
+  it('stores and consumes login state on the OIDC client, never on the session client', async () => {
+    const sessionCalls = [
+      vi.spyOn(sessionRedis, 'set'),
+      vi.spyOn(sessionRedis, 'get'),
+      vi.spyOn(sessionRedis, 'getdel'),
+    ];
+    const oidcSet = vi.spyOn(redis, 'set');
+    const oidcGetdel = vi.spyOn(redis, 'getdel');
+
+    const { url } = await beginLogin({ returnTo: '/' });
+    const state = url.searchParams.get('state') as string;
+    expect(oidcSet).toHaveBeenCalledWith(`ws:oidc:${state}`, expect.any(String), 'EX', 600);
+
+    await completeLogin(
+      new URL(`https://app.test/auth/callback?code=c&state=${state}`),
+      'not-the-binding',
+    ).catch(() => undefined);
+    expect(oidcGetdel).toHaveBeenCalledWith(`ws:oidc:${state}`);
+    for (const spy of sessionCalls) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('connects to OIDC_STATE_VALKEY_URL and fails fast in an outage', () => {
+    __setOidcRedisForTests(undefined);
+    const client = getOidcRedis();
+    try {
+      expect(client.options).toMatchObject({
+        host: 'valkey-oidc.test',
+        port: 6380,
+        commandTimeout: 1000,
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+    } finally {
+      client.disconnect();
+    }
   });
 });

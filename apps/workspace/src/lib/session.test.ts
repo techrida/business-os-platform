@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import type { Redis, RedisKey } from 'ioredis';
@@ -11,12 +12,14 @@ import {
   clearSessionCookie,
   createSession,
   destroySession,
+  getRedis,
   getSession,
   IDLE_SECONDS,
   safeReturnTo,
   SESSION_COOKIE,
   setSessionCookie,
 } from './session';
+import { type Keyring, openSessionValue, sealSessionValue } from './session-crypto';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -53,8 +56,22 @@ const BASE = {
   roles: ['founder'],
   accessToken: 'access-1',
   refreshToken: 'refresh-1',
-  idToken: 'id-1',
   accessExp: FAR_FUTURE,
+};
+
+const ENC_KEY = Buffer.alloc(32, 9);
+const RING: Keyring = { currentId: 'k1', keys: new Map([['k1', ENC_KEY]]) };
+
+const ENV = {
+  OIDC_ISSUER: 'https://auth.test',
+  OIDC_CLIENT_ID: 'client-123',
+  OIDC_REDIRECT_URI: 'https://app.test/auth/callback',
+  OIDC_AUDIENCE: 'proj-42',
+  WORKSPACE_PUBLIC_URL: 'https://app.test',
+  API_INTERNAL_URL: 'http://api:3001',
+  VALKEY_URL: 'redis://valkey.test:6379',
+  SESSION_ENC_KEY: ENC_KEY.toString('base64'),
+  SESSION_ENC_KEY_ID: 'k1',
 };
 
 let redis: Redis;
@@ -63,9 +80,18 @@ function advance(seconds: number) {
   vi.setSystemTime(Date.now() + seconds * 1000);
 }
 
+/** The Valkey key of a session, computed here independently of session.ts. */
+function keyFor(id: string): string {
+  return `ws:sess:${createHash('sha256').update(id).digest('hex')}`;
+}
+
+/** The decrypted record of a session, or null when there is none. */
 async function stored(id: string): Promise<Record<string, unknown> | null> {
-  const raw = await redis.get(`ws:sess:${id}`);
-  return raw === null ? null : (JSON.parse(raw) as Record<string, unknown>);
+  const raw = await redis.get(keyFor(id));
+  if (raw === null) return null;
+  const plain = openSessionValue(raw, keyFor(id), RING);
+  if (plain === null) throw new Error('stored value does not decrypt');
+  return JSON.parse(plain) as Record<string, unknown>;
 }
 
 async function signedIn(overrides: Partial<typeof BASE> = {}): Promise<string> {
@@ -78,7 +104,7 @@ beforeEach(async () => {
   // Fake only Date: ioredis-mock schedules its own work on real timers.
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(T0);
-  vi.stubEnv('VALKEY_URL', 'redis://valkey.test:6379');
+  for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
   __resetEnvForTests();
   redis = new RedisMock();
   await redis.flushall(); // ioredis-mock instances share data
@@ -101,7 +127,14 @@ describe('createSession', () => {
     expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(Buffer.from(id, 'base64url')).toHaveLength(32);
     expect(await stored(id)).toEqual({ ...BASE, createdAt: T0_SECONDS, lastSeenAt: T0_SECONDS });
-    expect(await redis.ttl(`ws:sess:${id}`)).toBe(IDLE_SECONDS);
+    expect(await redis.ttl(keyFor(id))).toBe(IDLE_SECONDS);
+  });
+
+  it('never stores the ID token, even when the caller passes one', async () => {
+    // Nothing reads it since logout stopped sending id_token_hint (A3).
+    const withIdToken = { ...BASE, idToken: 'id-secret-1' };
+    const id = await createSession(withIdToken);
+    expect(await stored(id)).not.toHaveProperty('idToken');
   });
 
   it('gives every session a different id', async () => {
@@ -157,7 +190,7 @@ describe('getSession', () => {
     const s = await getSession();
     expect(s).toMatchObject({ id, ...BASE, createdAt: T0_SECONDS, lastSeenAt: T0_SECONDS + 1800 });
     expect((await stored(id))?.lastSeenAt).toBe(T0_SECONDS + 1800);
-    expect(await redis.ttl(`ws:sess:${id}`)).toBe(IDLE_SECONDS);
+    expect(await redis.ttl(keyFor(id))).toBe(IDLE_SECONDS);
   });
 
   it('rejects and destroys a session idle for an hour', async () => {
@@ -187,7 +220,7 @@ describe('getSession', () => {
     advance(ABSOLUTE_SECONDS - 1800 - elapsed);
     expect(await getSession()).not.toBeNull();
     // 30 minutes of absolute lifetime left, which is less than the 1 h idle window.
-    expect(await redis.ttl(`ws:sess:${id}`)).toBe(1800);
+    expect(await redis.ttl(keyFor(id))).toBe(1800);
 
     advance(1800);
     expect(await getSession()).toBeNull();
@@ -195,8 +228,17 @@ describe('getSession', () => {
   });
 
   it('destroys a corrupt record', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const id = await signedIn();
-    await redis.set(`ws:sess:${id}`, JSON.stringify({ sub: 'x', orgKind: 'admin' }));
+    await redis.set(keyFor(id), JSON.stringify({ sub: 'x', orgKind: 'admin' }));
+    expect(await getSession()).toBeNull();
+    expect(await redis.exists(keyFor(id))).toBe(0);
+  });
+
+  it('destroys a record that decrypts but fails the schema', async () => {
+    const id = await signedIn();
+    const bad = JSON.stringify({ sub: 'x', orgKind: 'admin' });
+    await redis.set(keyFor(id), sealSessionValue(bad, keyFor(id), RING));
     expect(await getSession()).toBeNull();
     expect(await stored(id)).toBeNull();
   });
@@ -226,18 +268,24 @@ describe('getSession token refresh', () => {
 
     const s = await getSession();
     expect(refreshTokens).toHaveBeenCalledWith('refresh-1');
-    expect(s).toMatchObject({
-      accessToken: 'access-2',
-      refreshToken: 'refresh-2',
-      idToken: 'id-1',
-    });
+    expect(s).toMatchObject({ accessToken: 'access-2', refreshToken: 'refresh-2' });
     expect(await stored(id)).toMatchObject({
       accessToken: 'access-2',
       refreshToken: 'refresh-2',
-      idToken: 'id-1', // kept: the refresh response had none
       accessExp: T0_SECONDS + 300,
     });
-    expect(await redis.exists(`ws:sess:${id}:refresh`)).toBe(0); // lock released
+    expect(await redis.exists(`${keyFor(id)}:refresh`)).toBe(0); // lock released
+  });
+
+  it('does not store an ID token that comes back from the refresh', async () => {
+    const id = await signedIn({ accessExp: T0_SECONDS + 10 });
+    vi.mocked(refreshTokens).mockResolvedValue({
+      accessToken: 'access-2',
+      idToken: 'id-secret-2',
+      accessExp: T0_SECONDS + 300,
+    });
+    expect(await getSession()).not.toHaveProperty('idToken');
+    expect(await stored(id)).not.toHaveProperty('idToken');
   });
 
   it('does not refresh with 60 s or more left', async () => {
@@ -271,7 +319,7 @@ describe('getSession token refresh', () => {
   it('does not spend the refresh token twice while another request holds the lock', async () => {
     const id = await signedIn({ accessExp: T0_SECONDS + 30 });
     // Long enough to still be held after the clock moves on below.
-    await redis.set(`ws:sess:${id}:refresh`, 'other-request', 'PX', 60_000);
+    await redis.set(`${keyFor(id)}:refresh`, 'other-request', 'PX', 60_000);
 
     // Token still valid for 30 s: keep using it.
     expect(await getSession()).toMatchObject({ accessToken: 'access-1' });
@@ -288,11 +336,10 @@ describe('getSession token refresh', () => {
     // Another request completes its refresh right after our first read.
     vi.spyOn(redis, 'get').mockImplementationOnce(async (key: RedisKey) => {
       const value = await realGet(key);
-      const record = JSON.parse(value as string) as Record<string, unknown>;
-      await redis.set(
-        key,
-        JSON.stringify({ ...record, accessToken: 'access-9', accessExp: T0_SECONDS + 300 }),
-      );
+      const plain = openSessionValue(value as string, keyFor(id), RING) as string;
+      const record = JSON.parse(plain) as Record<string, unknown>;
+      const next = { ...record, accessToken: 'access-9', accessExp: T0_SECONDS + 300 };
+      await redis.set(key, sealSessionValue(JSON.stringify(next), keyFor(id), RING));
       return value;
     });
     expect(await getSession()).toMatchObject({ accessToken: 'access-9' });
@@ -323,12 +370,12 @@ describe('getSession when Valkey errors', () => {
   it('returns null when the sliding write rejects, and never logs the record', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const id = await signedIn();
-    const raw = await redis.get(`ws:sess:${id}`);
-    vi.spyOn(redis, 'eval').mockRejectedValue(replyError([`ws:sess:${id}`, raw]));
+    const raw = await redis.get(keyFor(id));
+    vi.spyOn(redis, 'eval').mockRejectedValue(replyError([keyFor(id), raw]));
     await expect(getSession()).resolves.toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
     const logged = JSON.stringify(warn.mock.calls);
-    for (const secret of [BASE.accessToken, BASE.refreshToken, BASE.idToken, id]) {
+    for (const secret of [BASE.accessToken, BASE.refreshToken, id]) {
       expect(logged).not.toContain(secret);
     }
   });
@@ -346,8 +393,97 @@ describe('destroySession', () => {
   it('deletes the record', async () => {
     const id = await signedIn();
     await destroySession(id);
-    expect(await stored(id)).toBeNull();
+    expect(await redis.exists(keyFor(id))).toBe(0);
     expect(await getSession()).toBeNull();
+  });
+});
+
+// CR-13: Valkey's AOF writes every value to disk, and KEYS/SCAN or a dump shows every key.
+describe('sessions at rest', () => {
+  it('never uses the raw session id as or inside a Valkey key', async () => {
+    const id = await signedIn({ accessExp: T0_SECONDS + 10 });
+    const keysDuringRefresh: string[] = [];
+    vi.mocked(refreshTokens).mockImplementation(async () => {
+      keysDuringRefresh.push(...(await redis.keys('*'))); // the refresh lock exists only now
+      return { accessToken: 'access-2', refreshToken: 'refresh-2', accessExp: T0_SECONDS + 300 };
+    });
+    expect(await getSession()).not.toBeNull();
+    const keys = [...keysDuringRefresh, ...(await redis.keys('*'))];
+    expect(keys).toContain(keyFor(id));
+    expect(keys).toContain(`${keyFor(id)}:refresh`);
+    for (const key of keys) {
+      expect(key).toMatch(/^ws:sess:[0-9a-f]{64}(:refresh)?$/);
+      expect(key).not.toContain(id);
+    }
+  });
+
+  it('stores an AES-GCM envelope that contains no token text', async () => {
+    const id = await signedIn();
+    const raw = (await redis.get(keyFor(id))) as string;
+    expect(raw).toMatch(/^v1\.k1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}$/);
+    for (const secret of [BASE.accessToken, BASE.refreshToken, BASE.sub, id]) {
+      expect(raw).not.toContain(secret);
+    }
+  });
+
+  it('rejects a value copied from another session key', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const victim = await createSession({ ...BASE, sub: 'victim' });
+    const attacker = await signedIn({ sub: 'attacker' });
+    await redis.set(keyFor(attacker), (await redis.get(keyFor(victim))) as string);
+    expect(await getSession()).toBeNull();
+    expect(await redis.exists(keyFor(attacker))).toBe(0);
+  });
+
+  it('treats a session in the old plaintext format as signed out', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = 'B'.repeat(43);
+    const legacy = JSON.stringify({ ...BASE, createdAt: T0_SECONDS, lastSeenAt: T0_SECONDS });
+    await redis.set(`ws:sess:${id}`, legacy); // the old key: the raw id
+    await redis.set(keyFor(id), legacy); // and plaintext under the new key
+    jar.values.set(SESSION_COOKIE, id);
+    expect(await getSession()).toBeNull();
+    expect(await redis.exists(keyFor(id))).toBe(0);
+    // Only an event name is logged: no id, key or value.
+    expect(warn.mock.calls).toEqual([[JSON.stringify({ event: 'session.decrypt_failed' })]]);
+  });
+
+  it('cannot read a session after the key id changes to one it was not sealed with', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await signedIn();
+    vi.stubEnv('SESSION_ENC_KEY_ID', 'k2');
+    __resetEnvForTests();
+    expect(await getSession()).toBeNull();
+  });
+});
+
+describe('Valkey client', () => {
+  it('fails fast in an outage: command timeout, no offline queue, one retry', () => {
+    __setRedisForTests(undefined);
+    const client = getRedis();
+    try {
+      expect(client.options).toMatchObject({
+        host: 'valkey.test',
+        commandTimeout: 1000,
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 1,
+      });
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  it('waits for a connecting client to be ready instead of failing the first command', async () => {
+    const id = await signedIn();
+    const getSpy = vi.spyOn(redis, 'get');
+    // Without the offline queue, ioredis rejects a command sent before the connection is ready.
+    Object.defineProperty(redis, 'status', { value: 'connecting', configurable: true });
+    const pending = getSession();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getSpy).not.toHaveBeenCalled();
+    Object.defineProperty(redis, 'status', { value: 'ready', configurable: true });
+    redis.emit('ready');
+    expect(await pending).toMatchObject({ id });
   });
 });
 
