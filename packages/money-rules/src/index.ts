@@ -3,3 +3,4 @@ export * from './version.js';
 export * from './money.js';
 export * from './allocate.js';
 export * from './tax.js';
+export * from './discount.js';
