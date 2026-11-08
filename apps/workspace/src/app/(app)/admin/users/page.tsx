@@ -1,21 +1,47 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { Badge } from '@/components/ui/badge';
+import { LinkButton } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Icon } from '@/components/ui/icon';
+import { Page, PageHeader } from '@/components/ui/page';
+import { Table, Td, Th } from '@/components/ui/table';
 import { listUsers } from '@/lib/api-admin';
 
-import styles from '../admin.module.css';
+import admin from '../admin.module.css';
 import { requireSession } from '../guard';
 import { section } from '../section';
-import { PageHead, SectionError } from '../ui';
-import { InviteForm } from './invite-form';
+import { SectionError } from '../ui';
+import { roleLabel } from './role-checkboxes';
 import { RolesEditor } from './roles-editor';
+import styles from './users.module.css';
+
+export const metadata: Metadata = { title: 'Users · Business OS' };
 
 const PAGE_SIZE = 50;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const STATUS_CLASS: Record<string, string> = {
-  active: styles.chipOk ?? '',
-  invited: styles.chipWarn ?? '',
-};
+/** Active reads as success, invited as waiting, anything else as plain. */
+function statusTone(status: string): 'success' | 'warning' | 'neutral' {
+  if (status === 'active') return 'success';
+  if (status === 'invited') return 'warning';
+  return 'neutral';
+}
+
+/** Up to two letters from the name, else the first letter of the email, else a person glyph. */
+function Avatar({ name, email }: { name: string | null; email: string | null }) {
+  const words = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  const letters =
+    words.length > 1
+      ? `${words[0]?.charAt(0) ?? ''}${words[words.length - 1]?.charAt(0) ?? ''}`
+      : (words[0] ?? email?.trim() ?? '').slice(0, words.length === 1 ? 2 : 1);
+  return (
+    <span aria-hidden="true" className={styles.avatar}>
+      {letters === '' ? <Icon name="user" size={16} /> : letters}
+    </span>
+  );
+}
 
 export default async function UsersPage({
   searchParams,
@@ -31,106 +57,111 @@ export default async function UsersPage({
     listUsers(session, after ? { limit: PAGE_SIZE, after } : { limit: PAGE_SIZE }),
   );
 
+  const invite = <LinkButton href="/admin/users/new">Invite user</LinkButton>;
+
   return (
-    <>
-      <PageHead title="Users">Invite colleagues and set the roles they hold.</PageHead>
+    <Page>
+      <PageHeader
+        title="Users"
+        description="Invite colleagues and set the roles they hold."
+        actions={invite}
+      />
 
-      <section className={styles.section} aria-labelledby="invite-heading" style={{ marginTop: 0 }}>
-        <div className={styles.sectionHead}>
-          <h2 id="invite-heading">Invite a user</h2>
-        </div>
-        <InviteForm />
-      </section>
-
-      <section className={styles.section} aria-labelledby="list-heading">
-        <div className={styles.sectionHead}>
-          <h2 id="list-heading">People</h2>
-        </div>
-        {!users.ok ? (
-          <SectionError message={users.message} />
-        ) : users.data.items.length === 0 ? (
-          <p className={styles.empty}>
-            {after ? 'No more users.' : 'No users yet. Invite the first person above.'}
-          </p>
-        ) : (
-          <>
-            <div
-              className={styles.tableWrap}
-              role="region"
-              aria-labelledby="users-caption"
-              tabIndex={0}
-            >
-              <table className={styles.table}>
-                <caption id="users-caption" className={styles.srOnly}>
-                  Users and their roles
-                </caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Person</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Roles</th>
-                    <th scope="col">Change roles</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.data.items.map((user) => {
-                    const label = user.displayName ?? user.email ?? 'this user';
-                    return (
-                      <tr key={user.id}>
-                        <th scope="row">
-                          <span className={styles.cellWrap}>
+      {!users.ok ? (
+        <SectionError message={users.message} />
+      ) : users.data.items.length === 0 ? (
+        <EmptyState
+          icon="users"
+          title={after ? 'No more users' : 'No users yet'}
+          action={
+            after ? (
+              <LinkButton href="/admin/users" variant="secondary">
+                Back to the first page
+              </LinkButton>
+            ) : (
+              invite
+            )
+          }
+        >
+          {after
+            ? 'You have reached the end of the list.'
+            : 'Invite the first person to give them access.'}
+        </EmptyState>
+      ) : (
+        <>
+          <Table caption="Users and their roles" className={admin.local ?? ''}>
+            <thead>
+              <tr>
+                <Th>Person</Th>
+                <Th>Status</Th>
+                <Th>Roles</Th>
+                <Th align="end">Action</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.data.items.map((user) => {
+                const label = user.displayName ?? user.email ?? 'this user';
+                return (
+                  <tr key={user.id}>
+                    <Th scope="row" className={admin.rowHead ?? ''}>
+                      <div className={styles.person}>
+                        <Avatar name={user.displayName} email={user.email} />
+                        <span className={styles.personText}>
+                          <span className={styles.name}>
                             {user.displayName ?? <span className={styles.muted}>No name yet</span>}
                           </span>
-                          {user.email ? (
-                            <span className={`${styles.hint} ${styles.cellWrap}`}>
-                              {user.email}
-                            </span>
-                          ) : null}
-                        </th>
-                        <td>
-                          <span
-                            className={`${styles.chip} ${STATUS_CLASS[user.status] ?? styles.chipNeutral}`}
-                          >
-                            {user.status}
-                          </span>
-                        </td>
-                        <td>
-                          {user.roles.length === 0 ? (
-                            <span className={styles.muted}>No roles</span>
-                          ) : (
-                            <ul className={styles.chips}>
-                              {user.roles.map((role) => (
-                                <li key={role} className={styles.chip}>
-                                  {role}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </td>
-                        <td>
-                          <RolesEditor userId={user.id} label={label} roles={user.roles} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          {user.email ? <span className={styles.email}>{user.email}</span> : null}
+                        </span>
+                      </div>
+                    </Th>
+                    <Td>
+                      <Badge tone={statusTone(user.status)} className={styles.status ?? ''}>
+                        {user.status}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      {user.roles.length === 0 ? (
+                        <span className={styles.muted}>No roles</span>
+                      ) : (
+                        <ul className={styles.roles}>
+                          {user.roles.map((role) => (
+                            <li key={role}>
+                              <Badge>{roleLabel(role)}</Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </Td>
+                    <Td align="end">
+                      <RolesEditor userId={user.id} label={label} roles={user.roles} />
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+          <div className={styles.pagerRow}>
+            <p className={styles.count}>
+              Showing {users.data.items.length} {users.data.items.length === 1 ? 'user' : 'users'}
+            </p>
             <nav className={styles.pager} aria-label="Users pages">
               {after ? (
-                <Link className={styles.link} href="/admin/users">
+                <Link className={styles.pagerLink} href="/admin/users">
                   Back to the first page
                 </Link>
               ) : null}
               {users.data.nextAfter ? (
-                <Link className={styles.link} href={`/admin/users?after=${users.data.nextAfter}`}>
+                <Link
+                  className={styles.pagerLink}
+                  href={`/admin/users?after=${users.data.nextAfter}`}
+                >
                   Next {PAGE_SIZE} users
                 </Link>
               ) : null}
             </nav>
-          </>
-        )}
-      </section>
-    </>
+          </div>
+        </>
+      )}
+    </Page>
   );
 }
