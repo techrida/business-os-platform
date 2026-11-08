@@ -3,11 +3,11 @@
 // parser and error filter, TestMemoService, NumberingService, MoneyService, the real DocumentsService (for
 // allClean) and the real ApprovalsService with the plan's test_memo workflow. Faked: audit, notify, the user
 // directory, the request context, and authz.assert (which still runs the real pure can() on a fake principal,
-// so the ResourceRef the memo builds is what decides 403, not a canned answer).
+// so the ResourceRef the memo builds is what decides 403 or 404, not a canned answer).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/test-memo
 import 'reflect-metadata';
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -23,6 +23,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  approvalRequests,
   approvalSteps,
   checkTenancy,
   documentVersions,
@@ -316,6 +317,14 @@ async function createMemo(over: Record<string, unknown> = {}): Promise<{ id: str
 
 const submitMemo = (id: string) => request(baseUrl).post(`/v1/test-memos/${id}/submit`);
 
+/** The sha256 a clean attachment gets in `attach`: derived from the version id, so a test can predict it. */
+const shaOf = (versionId: string) => createHash('sha256').update(versionId).digest();
+
+const requestRow = async (requestId: string) => {
+  const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, requestId));
+  return row!;
+};
+
 /** An attachment of the memo in the given scan status, made through the real DocumentsService. */
 async function attach(memoId: string, status: 'quarantined' | 'clean' | 'infected') {
   return withTx(
@@ -335,9 +344,15 @@ async function attach(memoId: string, status: 'quarantined' | 'clean' | 'infecte
         .set({ status: 'quarantined', updatedAt: new Date() })
         .where(eq(documentVersions.id, created.versionId));
       if (status !== 'quarantined') {
+        // A real scan stores the hash and the sniffed type with the verdict; the snapshot freezes both.
         await tx
           .update(documentVersions)
-          .set({ status, updatedAt: new Date() })
+          .set({
+            status,
+            sha256: shaOf(created.versionId),
+            detectedMime: 'application/pdf',
+            updatedAt: new Date(),
+          })
           .where(eq(documentVersions.id, created.versionId));
       }
       return created;
@@ -467,15 +482,12 @@ describe('GET /v1/test-memos/:id', () => {
     expect(res.body).toHaveProperty('attachments.0.status', 'quarantined');
   });
 
-  it('answers 403 for another sales user (scope own), 404 for an unknown id, 400 for a bad id', async () => {
+  it('answers 404 for another sales user (scope own) and for an unknown id, 400 for a bad id', async () => {
     const { id } = await createMemo();
     as(U.salesB, 'sales');
     const res = await request(baseUrl).get(`/v1/test-memos/${id}`);
-    expect(res.status).toBe(403);
-    expect(ErrorBodySchema.parse(res.body).error).toMatchObject({
-      code: 'forbidden',
-      reason: 'out_of_scope',
-    });
+    expect(res.status).toBe(404);
+    expect(ErrorBodySchema.parse(res.body).error).toMatchObject({ code: 'not_found' });
     as(U.boss, 'founder');
     expect((await request(baseUrl).get(`/v1/test-memos/${randomUUID()}`)).status).toBe(404);
     expect((await request(baseUrl).get('/v1/test-memos/not-a-uuid')).status).toBe(400);
@@ -507,11 +519,11 @@ describe('PATCH /v1/test-memos/:id', () => {
     expect(res.body).toMatchObject({ title: 'Renamed', fxDate: '2026-11-08', version: 2 });
   });
 
-  it('answers 403 to a non-owner and leaves the memo untouched', async () => {
+  it('answers 404 to a non-owner and leaves the memo untouched', async () => {
     const { id } = await createMemo();
     as(U.salesB, 'sales');
     const res = await request(baseUrl).patch(`/v1/test-memos/${id}`).send({ title: 'Hijack' });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
     const row = await statusOf(id);
     expect(row).toMatchObject({ title: 'Office chairs', version: 1 });
   });
@@ -590,10 +602,10 @@ describe('POST /v1/test-memos/:id/submit', () => {
     expect((await submitMemo(id)).status).toBe(409);
   });
 
-  it('answers 403 to a non-owner and does not submit', async () => {
+  it('answers 404 to a non-owner and does not submit', async () => {
     const { id } = await createMemo();
     as(U.salesB, 'sales');
-    expect((await submitMemo(id)).status).toBe(403);
+    expect((await submitMemo(id)).status).toBe(404);
     expect((await statusOf(id)).status).toBe('draft');
   });
 
@@ -696,5 +708,143 @@ describe('onDecided', () => {
       );
     await expect(onDecided('approved')).rejects.toMatchObject({ status: 409 });
     expect((await statusOf(id)).status).toBe('draft');
+  });
+});
+
+// ------------------------------------------------------------------------------------ review fixes
+
+describe('submit freezes the attachments (R1)', () => {
+  type Policy = { canAttach?: (s: typeof scope, ownerId: string) => Promise<boolean> };
+  const policy = () =>
+    (documents as unknown as { owners: Map<string, Policy> }).owners.get('test_memo')!;
+
+  it('lists exactly the clean version in the request snapshot', async () => {
+    const { id } = await createMemo();
+    const file = await attach(id, 'clean');
+    const res = await submitMemo(id);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const req = await requestRow((res.body as { requestId: string }).requestId);
+    expect((req.snapshot as { attachments?: unknown }).attachments).toEqual([
+      {
+        documentId: file.documentId,
+        versionId: file.versionId,
+        filename: 'quote.pdf',
+        sha256: shaOf(file.versionId).toString('hex'),
+        detectedMime: 'application/pdf',
+      },
+    ]);
+  });
+
+  it('refuses new attachments through the owner policy once the memo is submitted', async () => {
+    const { id } = await createMemo();
+    expect(policy().canAttach).toBeTypeOf('function');
+    await expect(policy().canAttach!(scope, id)).resolves.toBe(true);
+    expect((await submitMemo(id)).status).toBe(200);
+    await expect(policy().canAttach!(scope, id)).resolves.toBe(false);
+    await expect(policy().canAttach!(scope, randomUUID())).resolves.toBe(false);
+  });
+});
+
+describe('submitter and uploaders join separation of duties (R9)', () => {
+  const approveAs = async (user: string, requestId: string, expectedVersion: number) => {
+    as(user, 'founder');
+    return approvals.act(requestId, { action: 'approve', expectedVersion }, randomUUID());
+  };
+  const sodRefusal = { status: 403, response: { reason: 'separation_of_duties' } };
+
+  it('refuses the founder who submitted a sales memo of NPR 20,00,000 without editing it', async () => {
+    roles.founder = [U.boss, U.founder];
+    const { id } = await createMemo({ amount: '2000000.00' });
+    as(U.boss, 'founder');
+    const res = await submitMemo(id);
+    expect(res.body).toMatchObject({ status: 'pending' });
+    const { requestId } = res.body as { requestId: string };
+    expect((await requestRow(requestId)).sodUserIds).toContain(U.boss);
+    let version = 1;
+    for (const user of [U.acc, U.fin, U.mgmt]) {
+      version = (await approveAs(user, requestId, version)).version;
+    }
+    await expect(approveAs(U.boss, requestId, version)).rejects.toMatchObject(sodRefusal);
+  });
+
+  it('refuses the founder who uploaded a file to the sales draft that sales then submitted', async () => {
+    roles.accountant = [U.boss, U.acc];
+    const { id } = await createMemo();
+    as(U.boss, 'founder');
+    await attach(id, 'clean');
+    as(U.salesA, 'sales');
+    const res = await submitMemo(id);
+    expect(res.body).toMatchObject({ status: 'pending' });
+    const { requestId } = res.body as { requestId: string };
+    expect((await requestRow(requestId)).sodUserIds).toContain(U.boss);
+    await expect(approveAs(U.boss, requestId, 1)).rejects.toMatchObject(sodRefusal);
+  });
+});
+
+describe('submit re-freezes the NPR value (R11)', () => {
+  it('converts at the submit day rate and routes on that value', async () => {
+    const money = new MoneyService(db);
+    // Days after every other test's clock, so these rates change no other memo.
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      money.setRate(tx, 'USD', '133', '2026-11-20', 'manual'),
+    );
+    now = new Date('2026-11-20T04:00:00Z');
+    const memo = await createMemo({ amount: '750.00', currency: 'USD' });
+    expect(memo).toMatchObject({ amountNpr: '99750.00', fxRate: '133' });
+
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      money.setRate(tx, 'USD', '134', '2026-11-21', 'manual'),
+    );
+    now = new Date('2026-11-21T04:00:00Z');
+    const res = await submitMemo(memo.id);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { requestId } = res.body as { requestId: string };
+    const req = await requestRow(requestId);
+    expect(req.facts).toEqual({ amountNpr: '100500.00' });
+    expect(req.snapshot).toMatchObject({
+      amountNpr: '100500.00',
+      fxRate: '134',
+      fxDate: '2026-11-21',
+    });
+    const steps = await db
+      .select()
+      .from(approvalSteps)
+      .where(eq(approvalSteps.requestId, requestId));
+    expect(steps.map((s) => s.roleKey)).toContain('management');
+    expect(await statusOf(memo.id)).toMatchObject({
+      amountNpr: '100500.00',
+      fxDate: '2026-11-21',
+      status: 'submitted',
+    });
+  });
+});
+
+describe('a memo out of scope looks like an unknown id (R23)', () => {
+  it('answers get, update and submit exactly as for a random id', async () => {
+    const { id } = await createMemo();
+    as(U.salesB, 'sales');
+    const calls: [string, (memoId: string) => request.Test][] = [
+      ['get', (memoId) => request(baseUrl).get(`/v1/test-memos/${memoId}`)],
+      [
+        'update',
+        (memoId) => request(baseUrl).patch(`/v1/test-memos/${memoId}`).send({ title: 'x' }),
+      ],
+      ['submit', submitMemo],
+    ];
+    for (const [name, call] of calls) {
+      const answer = async (memoId: string) => {
+        const res = await call(memoId);
+        const { code, message, reason } = ErrorBodySchema.parse(res.body).error;
+        return { name, status: res.status, code, message, reason };
+      };
+      const outOfScope = await answer(id);
+      expect(outOfScope).toEqual(await answer(randomUUID()));
+      expect(outOfScope.status).toBe(404);
+    }
+    expect(await statusOf(id)).toMatchObject({
+      status: 'draft',
+      version: 1,
+      title: 'Office chairs',
+    });
   });
 });
