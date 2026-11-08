@@ -26,6 +26,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/workspace/package.json apps/workspace/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
+COPY packages/locale/package.json packages/locale/package.json
 COPY tools/seed-zitadel/package.json tools/seed-zitadel/package.json
 # `@bos/api...` = the API and the workspace packages it depends on, nothing else (no Next.js).
 RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
@@ -35,8 +36,9 @@ RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
 COPY tsconfig.base.json ./
 COPY packages/contracts packages/contracts
 COPY packages/db packages/db
+COPY packages/locale packages/locale
 COPY apps/api apps/api
-RUN pnpm --filter @bos/contracts --filter @bos/db run build \
+RUN pnpm --filter @bos/contracts --filter @bos/db --filter @bos/locale run build \
  && pnpm --filter @bos/api run build \
  # Tests are compiled too; they import vitest, which is not in the production image.
  && find apps/api/dist -name '*.test.js*' -delete
@@ -50,7 +52,8 @@ RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
 RUN test -f apps/api/dist/main.js \
  && test -f apps/api/dist/worker.js \
  && test -f /out/node_modules/@bos/db/dist/index.js \
- && test -f /out/node_modules/@bos/contracts/dist/index.js
+ && test -f /out/node_modules/@bos/contracts/dist/index.js \
+ && test -f /out/node_modules/@bos/locale/dist/index.js
 
 # ---------------------------------------------------------------- runtime
 FROM ${NODE_IMAGE} AS runtime
@@ -68,6 +71,10 @@ COPY --from=build --chown=node:node /repo/apps/api/dist ./dist
 COPY --from=build --chown=node:node /repo/packages/db/package.json ./packages/db/package.json
 COPY --from=build --chown=node:node /repo/packages/db/dist ./packages/db/dist
 COPY --from=build --chown=node:node /repo/packages/db/migrations ./packages/db/migrations
+
+# Document storage (P1, StorageAdapter). A named volume mounted here copies this directory's
+# owner on first use, so creating it as `node` lets the non-root api and worker write to it.
+RUN mkdir -p /var/lib/bos/files && chown node:node /var/lib/bos/files
 
 # Never run as root. The `node` user (uid 1000) ships with the official image.
 USER node
