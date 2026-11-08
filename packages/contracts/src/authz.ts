@@ -37,6 +37,9 @@ export const PERMISSIONS = [
   'quotation.revise',
   'verification.read',
   'verification.review',
+  // Customer portal: a customer user reads and answers their own company's quotations.
+  'portal.quotation.read',
+  'portal.quotation.respond',
 ] as const;
 export const PermissionSchema = z.enum(PERMISSIONS);
 export type Permission = z.infer<typeof PermissionSchema>;
@@ -130,7 +133,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'quotation.revise': 'own',
     'verification.read': 'own',
   },
-  customer_user: {},
+  // Portal users see and answer only quotations naming their own party (`customer_org`). Staff roles
+  // get no portal grant; founder holds every permission at `all` by construction.
+  customer_user: {
+    'portal.quotation.read': 'customer_org',
+    'portal.quotation.respond': 'customer_org',
+  },
   vendor_user: {},
   pmo: {
     ...staffBaseGrants,

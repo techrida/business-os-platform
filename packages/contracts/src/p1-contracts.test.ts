@@ -211,10 +211,9 @@ describe('DEFAULT_ROLE_PERMISSIONS', () => {
     }
   });
 
-  it('gives founder every permission at scope all and portal users nothing', () => {
+  it('gives founder every permission at scope all and vendor users nothing', () => {
     expect(Object.keys(DEFAULT_ROLE_PERMISSIONS.founder).sort()).toEqual([...PERMISSIONS].sort());
     expect(new Set(Object.values(DEFAULT_ROLE_PERMISSIONS.founder))).toEqual(new Set(['all']));
-    expect(DEFAULT_ROLE_PERMISSIONS.customer_user).toEqual({});
     expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({});
   });
 

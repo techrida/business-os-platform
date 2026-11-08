@@ -144,10 +144,29 @@ describe('P2 permissions', () => {
     }
   });
 
-  it('keeps customer_user and vendor_user empty', () => {
-    expect(DEFAULT_ROLE_PERMISSIONS.customer_user).toEqual({});
+  it('keeps vendor_user empty', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({});
   });
+
+  it('gives customer_user only the two portal quotation grants, at its own company', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.customer_user).toEqual({
+      'portal.quotation.read': 'customer_org',
+      'portal.quotation.respond': 'customer_org',
+    });
+  });
+
+  it.each(['portal.quotation.read', 'portal.quotation.respond'] as const)(
+    'lists %s once, gives founder all, and gives no other role a portal grant',
+    (permission) => {
+      expect(PERMISSIONS.filter((p) => p === permission)).toHaveLength(1);
+      expect(DEFAULT_ROLE_PERMISSIONS.founder[permission]).toBe('all');
+      for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+        if (role !== 'founder' && role !== 'customer_user') {
+          expect(grants[permission], role).toBeUndefined();
+        }
+      }
+    },
+  );
 
   it('only founder holds customer.merge', () => {
     for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
