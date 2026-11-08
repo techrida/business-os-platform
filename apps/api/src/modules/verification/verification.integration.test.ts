@@ -669,7 +669,9 @@ describe('POST /v1/verification-cases/:id/decision', () => {
   });
 
   it('is 409 for a stale expectedVersion and for a case that is not submitted', async () => {
+    // Both cases are opened as the founder (customer.write); only the decisions come from the reviewer.
     const submitted = await submittedCase();
+    const draft = await openCase();
     as(U.pmo, 'pmo');
     const stale = await decide(submitted.id, {
       decision: 'approve',
@@ -677,7 +679,6 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       expectedVersion: submitted.version + 1,
     });
     expect(stale.status).toBe(409);
-    const draft = await openCase();
     const notSubmitted = await decide(draft.id, {
       decision: 'reject',
       comment: 'no',
