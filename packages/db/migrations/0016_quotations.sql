@@ -23,8 +23,8 @@
 --     version therefore writes, in one transaction: old status = 'superseded', INSERT the new draft (supersedes =
 --     old), then old superseded_by_version_id = new.
 --   * Freeze (quotation_versions_guard): a version is inserted as draft. Once its status is not draft or returned,
---     an UPDATE that changes a material column, or a DELETE, is refused; the status may move back to returned
---     only from submitted, and never to draft. Lines, the tax summary and the editor list are frozen with their
+--     an UPDATE that changes a material column, or a DELETE, is refused; the status may move to submitted only
+--     from draft or returned, to returned only from submitted, and never to draft. Lines, the tax summary and the editor list are frozen with their
 --     version (quotation_children_guard, INSERT included). Acceptances and status history are append-only.
 --     The submit UPDATE (draft/returned -> submitted) must also write the FX snapshot, the NPR amounts and both
 --     hashes: afterwards they are frozen, and quotation_versions_snapshot_check requires them.
@@ -38,7 +38,7 @@
 -- extension btree_gist (PostgreSQL 13+), which the tax-code EXCLUDE constraint needs for its uuid and text
 -- equality. Names follow the K1-U2 convention, mirrored in src/schema/quotations.ts.
 
-CREATE EXTENSION IF NOT EXISTS "btree_gist";
+CREATE EXTENSION IF NOT EXISTS "btree_gist" WITH SCHEMA "public";
 --> statement-breakpoint
 
 -- ---------------------------------------------------------------------------------------------------------------
@@ -429,10 +429,12 @@ BEGIN
 		RAISE EXCEPTION 'quotation version %: identity columns cannot change', OLD."id"
 			USING ERRCODE = 'check_violation', CONSTRAINT = 'quotation_versions_identity_check';
 	END IF;
-	-- transitions: draft is only ever the first status, and returned is reached only from submitted, so a
-	-- frozen version cannot be made editable again.
+	-- transitions: draft is only ever the first status, submitted is reached only from draft or returned, and
+	-- returned only from submitted, so a frozen version cannot be made editable again (not even in two hops).
 	IF NEW."status" IS DISTINCT FROM OLD."status"
-		AND (NEW."status" = 'draft' OR (NEW."status" = 'returned' AND OLD."status" <> 'submitted')) THEN
+		AND (NEW."status" = 'draft'
+			OR (NEW."status" = 'submitted' AND OLD."status" NOT IN ('draft', 'returned'))
+			OR (NEW."status" = 'returned' AND OLD."status" <> 'submitted')) THEN
 		RAISE EXCEPTION 'quotation version %: % -> % is not a transition', OLD."id", OLD."status", NEW."status"
 			USING ERRCODE = 'check_violation', CONSTRAINT = 'quotation_versions_transition_check';
 	END IF;
