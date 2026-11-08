@@ -5,6 +5,8 @@ import {
   DiscountSchema,
   EVIDENCE_KINDS,
   NonNegativeDecimalString,
+  PaymentTermSchema,
+  PreviewResultSchema,
   QUOTATION_REVISION_RULES,
   QUOTATION_STATUSES,
   QUOTATION_TRANSITIONS,
@@ -18,6 +20,9 @@ import {
   QuotationVersionDtoSchema,
   RecordOutcomeBodySchema,
   ReviseQuotationBodySchema,
+  TaxCodeSchema,
+  UpdateQuotationDraftBodySchema,
+  UpdateQuotationVersionBodySchema,
   canReviseQuotation,
   isQuotationEditable,
   quotationTransitionsFrom,
@@ -671,5 +676,42 @@ describe('QuotationApprovalSnapshotSchema', () => {
   it('is what the inbox renderer reads: a stored JSON snapshot round-trips', () => {
     const stored = JSON.parse(JSON.stringify(snapshot())) as unknown;
     expect(QuotationApprovalSnapshotSchema.parse(stored)).toEqual(snapshot());
+  });
+});
+
+describe('quote builder lookups and preview', () => {
+  it('TaxCodeSchema keeps the {id, label, rate?} shape and allows the registry fields', () => {
+    const tid = id();
+    expect(TaxCodeSchema.parse({ id: tid, label: 'VAT 13%', rate: '13' })).toEqual({
+      id: tid,
+      label: 'VAT 13%',
+      rate: '13',
+    });
+    const full = { id: tid, label: 'VAT 13%', code: 'VAT13', kind: 'vat', rateBp: 1300 };
+    expect(TaxCodeSchema.parse(full)).toEqual(full);
+    expect(TaxCodeSchema.safeParse({ id: tid, label: 'x', kind: 'sales' }).success).toBe(false);
+    expect(TaxCodeSchema.safeParse({ id: tid, label: 'x', rateBp: 10001 }).success).toBe(false);
+    expect(TaxCodeSchema.safeParse({ id: 'nope', label: 'x' }).success).toBe(false);
+  });
+
+  it('PaymentTermSchema is {id, label}', () => {
+    const tid = id();
+    expect(PaymentTermSchema.parse({ id: tid, label: 'Net 15' })).toEqual({
+      id: tid,
+      label: 'Net 15',
+    });
+    expect(PaymentTermSchema.safeParse({ id: tid }).success).toBe(false);
+  });
+
+  it('PreviewResultSchema needs totals, tax summary and the approval route', () => {
+    expect(PreviewResultSchema.safeParse({ totals: {}, taxSummary: [] }).success).toBe(false);
+    expect(PreviewResultSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('UpdateQuotationVersionBodySchema is the PUT body: partial content plus expectedVersion', () => {
+    expect(UpdateQuotationVersionBodySchema).toBe(UpdateQuotationDraftBodySchema);
+    expect(UpdateQuotationVersionBodySchema.safeParse({ notes: 'x' }).success).toBe(false);
+    expect(UpdateQuotationVersionBodySchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
+    expect(UpdateQuotationVersionBodySchema.safeParse({ expectedVersion: 3 }).success).toBe(true);
   });
 });
