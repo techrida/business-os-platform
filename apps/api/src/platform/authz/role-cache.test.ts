@@ -2,9 +2,10 @@
 // Testcontainers (needs Docker). Run with:
 //   pnpm --filter @bos/api exec vitest run src/platform/authz/role-cache.test.ts
 //
-// It proves the R11 promises (P1 plan §10): the defaults cover an org with no rows, rows replace
-// them, the widest scope wins, the version is read at most once per org every 5 s, and a bump from
-// another api instance is picked up once that window passes. Setup is the same as
+// It proves the R11 promises (P1 plan §10): the defaults cover a tenant with no rows, rows replace
+// them, the widest scope wins, the version is read at most once per tenant every 5 s, and a bump
+// from another api instance is picked up once that window passes. Role rows are tenant policy
+// (ADR 0027 §7), so every entity of a tenant shares one cache entry. Setup is the same as
 // settings/numbering.service.test.ts: roles and default privileges as in init-dbs.sh, migrate as
 // bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
@@ -17,9 +18,9 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
-import { organizations, rolePermissions, runMigrations, tenants } from '@bos/db';
+import { createTenantWithEntity, organizations, rolePermissions, runMigrations } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,44 +47,45 @@ function urlFor(user: string, password: string, database: string): string {
   return url.toString();
 }
 
-/** A fresh tenant and staff org, so every test starts with no rows and no version. */
+/** A fresh tenant and its default entity, so every test starts with no rows and no version. */
 async function newOrg(): Promise<TxScope> {
-  const tenantId = randomUUID();
+  const { tenantId, organizationId } = await createTenantWithEntity(appPool);
+  return { tenantId, organizationId };
+}
+
+/** A second, non-default legal entity in the tenant of `scope`. */
+async function secondEntity(scope: TxScope): Promise<TxScope> {
   const organizationId = randomUUID();
-  const scope = { tenantId, organizationId };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: tenantId });
+  const second = { tenantId: scope.tenantId, organizationId };
+  const code = `E2-${organizationId.slice(0, 8)}`;
+  await withTx(db, second, systemActor('test'), async (tx) => {
     await tx.insert(organizations).values({
       id: organizationId,
-      tenantId,
+      tenantId: scope.tenantId,
       organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${organizationId}`,
+      code,
+      name: code,
+      legalName: code,
     });
   });
-  return scope;
+  return second;
 }
 
 type Row = [role: RoleKey, permission: Permission, scope: Scope];
 
-/** Replaces the org's role_permissions with `rows`, through withTx like every app write. */
+/** Replaces the tenant's role_permissions with `rows`, through withTx like every app write. */
 async function setRows(scope: TxScope, rows: readonly Row[]): Promise<void> {
   await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx
-      .delete(rolePermissions)
-      .where(
-        and(
-          eq(rolePermissions.tenantId, scope.tenantId),
-          eq(rolePermissions.organizationId, scope.organizationId),
-        ),
-      );
+    await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, scope.tenantId));
     if (rows.length > 0) {
-      await tx
-        .insert(rolePermissions)
-        .values(
-          rows.map(([roleKey, permission, s]) => ({ ...scope, roleKey, permission, scope: s })),
-        );
+      await tx.insert(rolePermissions).values(
+        rows.map(([roleKey, permission, s]) => ({
+          tenantId: scope.tenantId,
+          roleKey,
+          permission,
+          scope: s,
+        })),
+      );
     }
   });
 }
@@ -130,7 +132,7 @@ beforeEach(() => {
 });
 
 describe('RoleCache.grantsFor', () => {
-  it('falls back to DEFAULT_ROLE_PERMISSIONS when the org has no role_permissions rows', async () => {
+  it('falls back to DEFAULT_ROLE_PERMISSIONS when the tenant has no role_permissions rows', async () => {
     const org = await newOrg();
     const cache = new RoleCache(db, clock);
 
@@ -142,14 +144,14 @@ describe('RoleCache.grantsFor', () => {
     expect([...founder.values()].every((s) => s === 'all')).toBe(true);
   });
 
-  it('uses the rows instead of the defaults once the org has any', async () => {
+  it('uses the rows instead of the defaults once the tenant has any', async () => {
     const org = await newOrg();
     await setRows(org, [['sales', 'memo.read', 'department']]);
     const cache = new RoleCache(db, clock);
 
     const sales = await cache.grantsFor(org.tenantId, org.organizationId, ['sales']);
     expect(grantsOf(sales)).toEqual({ 'memo.read': 'department' });
-    // A role with no rows in an org that has rows grants nothing: the table is the whole truth.
+    // A role with no rows in a tenant that has rows grants nothing: the table is the whole truth.
     const founder = await cache.grantsFor(org.tenantId, org.organizationId, ['founder']);
     expect(founder.size).toBe(0);
   });
@@ -187,7 +189,7 @@ describe('RoleCache.grantsFor', () => {
     expect(await grants([])).toEqual({});
   });
 
-  it('reads the version at most once per org every 5 s, and reloads rows only when it changed', async () => {
+  it('reads the version at most once per tenant every 5 s, and reloads rows only when it changed', async () => {
     const org = await newOrg();
     await setRows(org, [['sales', 'memo.read', 'own']]);
     await otherInstance().invalidate(org.tenantId, org.organizationId);
@@ -249,7 +251,42 @@ describe('RoleCache.grantsFor', () => {
     expect(after.get('memo.read')).toBe('all');
   });
 
-  it('collapses concurrent cold loads of one org into one load', async () => {
+  it('shares one entry across the entities of a tenant, and one invalidate reloads them all', async () => {
+    const org = await newOrg();
+    const other = await secondEntity(org);
+    await setRows(org, [['sales', 'memo.read', 'own']]);
+    const cache = new RoleCache(db, clock);
+    const memoRead = async (c: RoleCache, scope: TxScope) =>
+      (await c.grantsFor(scope.tenantId, scope.organizationId, ['sales'])).get('memo.read');
+
+    expect(await memoRead(cache, org)).toBe('own');
+    const queries = vi.spyOn(appPool, 'query');
+    // The other entity reads the same tenant rows from memory: no version check, no row load.
+    expect(await memoRead(cache, other)).toBe('own');
+    expect(queries).not.toHaveBeenCalled();
+
+    // An invalidate made while acting for one entity reloads the grants of every entity.
+    queries.mockRestore();
+    await setRows(org, [['sales', 'memo.read', 'all']]);
+    await new AuthzService(db, cache).invalidate(other.tenantId, other.organizationId);
+    expect(await memoRead(cache, org)).toBe('all');
+    expect(await memoRead(cache, other)).toBe('all');
+  });
+
+  it('keeps tenants apart: the rows of one tenant never reach another', async () => {
+    const a = await newOrg();
+    const b = await newOrg();
+    await setRows(a, [['sales', 'memo.read', 'all']]);
+    const cache = new RoleCache(db, clock);
+
+    const aGrants = await cache.grantsFor(a.tenantId, a.organizationId, ['sales']);
+    expect(aGrants.get('memo.read')).toBe('all');
+    // Tenant b has no rows, so it gets the defaults, not tenant a's widened grant.
+    const bGrants = await cache.grantsFor(b.tenantId, b.organizationId, ['sales']);
+    expect(grantsOf(bGrants)).toEqual(DEFAULT_ROLE_PERMISSIONS.sales);
+  });
+
+  it('collapses concurrent cold loads of one tenant into one load', async () => {
     const org = await newOrg();
     const cache = new RoleCache(db, clock);
     const queries = vi.spyOn(appPool, 'query');
