@@ -20,7 +20,9 @@ export const ZITADEL_ENDPOINTS = {
   listProjects: '/zitadel.project.v2.ProjectService/ListProjects',
   // UNVERIFIED: user v2 GetUserByID; body { userId }, response { user }.
   getUser: '/zitadel.user.v2.UserService/GetUserByID',
-  // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object.
+  // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
+  // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
+  // it aborts when the walk shows paging is not working (see UserMirror.reconcile).
   listUsers: '/zitadel.user.v2.UserService/ListUsers',
   // VERIFIED (seed createHumanUser), minus the password: an invited user sets their own.
   createUser: '/zitadel.user.v2.UserService/CreateUser',
@@ -66,13 +68,18 @@ export interface ZitadelUser {
   orgId: string;
   email: string | null;
   displayName: string;
-  status: MirroredStatus;
+  /** Null when ZITADEL sent a state we do not recognise: callers leave the mirrored user unchanged. */
+  status: MirroredStatus | null;
+  /** When ZITADEL created the user (`details.creationDate`), or null when it did not say. */
+  createdAt: Date | null;
 }
 
 export interface ZitadelUserPage {
   users: ZitadelUser[];
   /** Offset of the next page, or null when this was the last one. */
   nextCursor: string | null;
+  /** ZITADEL's own count of matching users (`details.totalResult`), or null when it sent none. */
+  totalResult?: number | null;
 }
 
 export interface CreateHumanInput {
@@ -89,7 +96,9 @@ const UserShape = z.object({
   state: Str.default('USER_STATE_UNSPECIFIED'),
   username: Str.default(''),
   preferredLoginName: Str.default(''),
-  details: z.object({ resourceOwner: Str.default('') }).default({ resourceOwner: '' }),
+  details: z
+    .object({ resourceOwner: Str.default(''), creationDate: Str.optional() })
+    .default({ resourceOwner: '' }),
   human: z
     .object({
       profile: z
@@ -107,7 +116,11 @@ const UserShape = z.object({
 type UserShape = z.infer<typeof UserShape>;
 
 const GetUserResponse = z.object({ user: UserShape });
-const ListUsersResponse = z.object({ result: z.array(UserShape).default([]) });
+// UNVERIFIED: `details.totalResult` (an int64, so ZITADEL sends it as a string).
+const ListUsersResponse = z.object({
+  result: z.array(UserShape).default([]),
+  details: z.object({ totalResult: z.union([Str, z.number()]).optional() }).optional(),
+});
 const IdOnly = z.object({ id: Str.min(1) });
 const ProjectList = z.object({
   projects: z.array(z.object({ projectId: Str.min(1), name: Str })).default([]),
@@ -135,11 +148,36 @@ function parse<S extends z.ZodType>(schema: S, data: unknown, what: string): z.i
   return result.data;
 }
 
-/** USER_STATE_INITIAL = created but never logged in (an open invite). Anything not active is shut out. */
-export function statusFromState(state: string): MirroredStatus {
-  if (state === 'USER_STATE_ACTIVE') return 'active';
-  if (state === 'USER_STATE_INITIAL') return 'invited';
-  return 'inactive';
+/**
+ * USER_STATE_INITIAL = created but never logged in (an open invite). Strict on purpose: only the
+ * explicit INACTIVE and LOCKED states shut a user out. Anything else (UNSPECIFIED, DELETED, an empty
+ * string, a state from a newer ZITADEL) is null = "unknown", and callers leave the user unchanged.
+ * The old default of "not active means inactive" would lock everyone out if the field was renamed.
+ */
+export function statusFromState(state: string): MirroredStatus | null {
+  switch (state) {
+    case 'USER_STATE_ACTIVE':
+      return 'active';
+    case 'USER_STATE_INITIAL':
+      return 'invited';
+    case 'USER_STATE_INACTIVE':
+    case 'USER_STATE_LOCKED':
+      return 'inactive';
+    default:
+      return null;
+  }
+}
+
+function dateOrNull(value: string | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function totalOrNull(value: string | number | undefined): number | null {
+  if (value === undefined) return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
 function toUser(u: UserShape): ZitadelUser {
@@ -157,6 +195,7 @@ function toUser(u: UserShape): ZitadelUser {
     email: email.length > 0 ? email : null,
     displayName,
     status: statusFromState(u.state),
+    createdAt: dateOrNull(u.details.creationDate),
   };
 }
 
@@ -185,13 +224,19 @@ export class ZitadelAdminClient {
     }
   }
 
-  /** One page of the org's users, oldest first so offsets stay stable while users are added. */
+  /**
+   * One page of the org's users, sorted by creation date ascending so offsets stay stable while
+   * users are added (new users land at the end). The sort is sent explicitly: without it ZITADEL
+   * orders by its own default and an offset walk can skip or repeat users. A short page (fewer rows
+   * than asked) is the last one.
+   */
   async listUsers(zitadelOrgId: string, cursor?: string | null): Promise<ZitadelUserPage> {
     const offset = cursor && /^\d+$/.test(cursor) ? Number(cursor) : 0;
     const res = parse(
       ListUsersResponse,
       await this.post(ZITADEL_ENDPOINTS.listUsers, {
         query: { offset: String(offset), limit: PAGE_SIZE, asc: true },
+        sortingColumn: 'USER_FIELD_NAME_CREATION_DATE',
         queries: [{ organizationIdQuery: { organizationId: zitadelOrgId } }],
       }),
       'ListUsers',
@@ -200,6 +245,7 @@ export class ZitadelAdminClient {
     return {
       users,
       nextCursor: res.result.length === PAGE_SIZE ? String(offset + res.result.length) : null,
+      totalResult: totalOrNull(res.details?.totalResult),
     };
   }
 
