@@ -24,6 +24,8 @@ services:
     <<: *restart
   valkey:
     <<: *restart
+  valkey-oidc:
+    <<: *restart
   zitadel-api:
     <<: *restart
     environment:

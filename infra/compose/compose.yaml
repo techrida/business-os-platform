@@ -9,7 +9,7 @@
 #   All relative paths below (../postgres, ../../.dev, ...) are relative to infra/compose.
 #
 # Profiles:
-#   core   postgres, backup-scheduler, valkey, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
+#   core   postgres, backup-scheduler, valkey, valkey-oidc, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
 #   app    migrate, api, worker, workspace   (images bos/api:dev and bos/workspace:dev, built by U3/U5)
 #   tools  seed-zitadel, k6, restore-drill   (one-shot, started with `docker compose run --rm`)
 #   obs    prometheus
@@ -25,12 +25,15 @@
 #   postgres        core      1024 MiB  shared_buffers=256MB, max_connections=100
 #   backup-scheduler core       64 MiB  sleeps; pgbackrest runs for a few minutes a day
 #   valkey          core       256 MiB  maxmemory 192mb, noeviction (BullMQ needs it)
+#   valkey-oidc     core        64 MiB  maxmemory 32mb, volatile-ttl, no persistence (OIDC login state)
 #   zitadel-api     core       960 MiB  measure with `docker stats` after seed + k6, then tighten
 #   zitadel-login   core       512 MiB  Next.js Login V2 UI
 #   caddy           core       128 MiB
-#   mailpit         core        64 MiB  dev file only
+#   mailpit         core        40 MiB  dev file only (was 64 MiB: cut to make room for valkey-oidc)
 #   --------------------------------------------------------------
-#   core total                3008 MiB  = 2.9375 GiB = 3.15 GB decimal
+#   core total (dev)          3048 MiB  = 2.9766 GiB = 3.196 GB decimal  (64 + 1024 + 256 + 64 + 960 + 512 + 128 + 40)
+#   core total (prod)         3008 MiB  = 3.154 GB decimal (no mailpit)
+#   (With mailpit at its old 64 MiB the dev total would be 3072 MiB = 3.221 GB decimal, over the 3.2 GB budget.)
 #
 #   migrate         app        256 MiB  one-shot
 #   api             app        512 MiB
@@ -201,6 +204,37 @@ services:
       resources:
         limits:
           memory: 256M
+
+  # OIDC login state (state, nonce, PKCE verifier; CR-03) on its own server. maxmemory is per server, so a separate
+  # DB index on `valkey` would not stop a flood of login attempts from filling the queue store. Here the flood can
+  # only fill these 32 MB: volatile-ttl evicts the keys closest to expiry (the app must set a TTL on every key),
+  # and nothing is written to disk.
+  valkey-oidc:
+    profiles: [core]
+    image: valkey/valkey:9.1-alpine
+    command:
+      - valkey-server
+      - --maxmemory
+      - 32mb
+      - --maxmemory-policy
+      - volatile-ttl
+      - --appendonly
+      - 'no'
+      - --save
+      - ''
+      - --requirepass
+      - ${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env (infra/scripts/make-dev-env.sh adds it)}
+    healthcheck:
+      test: ['CMD', 'valkey-cli', '-a', '${VALKEY_PASSWORD}', '--no-auth-warning', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
 
   zitadel-api:
     profiles: [core]
@@ -441,6 +475,8 @@ services:
       OIDC_REDIRECT_URI: https://${APP_HOST:-app.localhost}/auth/callback
       API_INTERNAL_URL: http://api:3001
       VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      # Login state (CR-03) lives on its own Valkey with a small memory cap.
+      OIDC_STATE_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey-oidc:6379
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     env_file:
       - path: ../../.dev/zitadel.env
@@ -461,6 +497,8 @@ services:
       start_period: 15s
     depends_on:
       valkey:
+        condition: service_healthy
+      valkey-oidc:
         condition: service_healthy
     networks: [edge, backend]
     deploy:

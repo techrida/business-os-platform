@@ -50,4 +50,5 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64M
+          # 40M, not 64M: keeps the dev core total under 3.2 GB now that valkey-oidc exists (see compose.yaml header).
+          memory: 40M
