@@ -316,11 +316,8 @@ export function AttachForm({
         </Alert>
       ) : null}
 
-      {done !== null ? (
-        <Alert tone="success" role="status">
-          {done}
-        </Alert>
-      ) : null}
+      {/* The region stays in the page, so a screen reader announces the text that arrives in it. */}
+      <div aria-live="polite">{done !== null ? <Alert tone="success">{done}</Alert> : null}</div>
 
       <div className={styles.attachActions}>
         <Button type="submit" disabled={busy}>

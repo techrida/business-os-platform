@@ -177,6 +177,7 @@ export default async function VerificationCasePage({
   // Only a draft or a rejected case can take documents; the API checks both permissions again.
   const mayAttach =
     mayEdit &&
+    c.checklist.length > 0 &&
     hasPermission(session.roles, 'documents.upload') &&
     (c.status === 'draft' || c.status === 'rejected');
   const attach = attachOptions(c);
