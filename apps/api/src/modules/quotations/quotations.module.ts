@@ -1,7 +1,8 @@
 // Quotations module (P2 unit Q1): registers how quotation-version files are authorized, provides PricingService,
 // DraftingService and ReviseService, and serves drafting, revise, preview and reference routes. Imports
 // DocumentsModule, SettingsModule (MoneyService, NumberingService, SettingsService), ApprovalsModule (preview
-// route, approval cancel on revise) and AuditModule; the database is global.
+// route, approval cancel on revise), AuditModule, OpportunitiesModule (markQuotationSent on send) and NotifyModule
+// (the customer email on send); the database is global.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
@@ -9,8 +10,10 @@ import { DocumentsModule } from '../../platform/documents/documents.module';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { AuditModule } from '../../platform/audit/audit.module';
+import { NotifyModule } from '../../platform/notify/notify.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { ApprovalsService } from '../approvals/requests.service';
+import { OpportunitiesModule } from '../opportunities/opportunities.module';
 import { QuotationVersionSubject } from './approval/quotation-version.subject';
 import { QuotationSubmitCaller } from './approval/quotation-submit.caller';
 import { QuotationSubmitController } from './approval/quotation-submit.controller';
@@ -28,15 +31,26 @@ import { drizzleHeadLoader, QuotationOwnerPolicy } from './quotation-owner.polic
 import { ReferenceCaller } from './reference/reference.caller';
 import { ReferenceController } from './reference/reference.controller';
 import { ReferenceService } from './reference/reference.service';
+import { QuotationSendCaller } from './send/quotation-send.caller';
+import { QuotationSendController } from './send/quotation-send.controller';
+import { QuotationSendService, QuotationSendStore } from './send/quotation-send.service';
 
 @Module({
-  imports: [ApprovalsModule, AuditModule, DocumentsModule, SettingsModule],
+  imports: [
+    ApprovalsModule,
+    AuditModule,
+    DocumentsModule,
+    NotifyModule,
+    OpportunitiesModule,
+    SettingsModule,
+  ],
   controllers: [
     DraftingController,
     ReferenceController,
     QuotationPreviewController,
     ReviseController,
     QuotationSubmitController,
+    QuotationSendController,
   ],
   providers: [
     PricingService,
@@ -50,6 +64,9 @@ import { ReferenceService } from './reference/reference.service';
     QuotationSubmitService,
     QuotationSubmitStore,
     QuotationSubmitCaller,
+    QuotationSendService,
+    QuotationSendStore,
+    QuotationSendCaller,
   ],
   exports: [PricingService],
 })
