@@ -4,6 +4,7 @@
 // Serves the NFRs "approvals are auditable" (a reason per step) and "separation of duties" (the people
 // in sodUserIds, such as the requester, can never be an approver of their own document).
 import type { RoutePlan, StepSpec, WorkflowSpec } from '@bos/contracts';
+import Decimal from 'decimal.js';
 
 import { evaluate } from './conditions';
 
@@ -51,13 +52,16 @@ export function route(
   sodUserIds: readonly string[],
   decisions: readonly StepDecision[] = [],
 ): RoutePlan {
-  const placed: Placed[] = spec.steps.map((s) => ({ spec: s, reason: s.reason }));
+  const placed: Placed[] = spec.steps.map((s) => ({
+    spec: s,
+    reason: fillReason(s.reason, facts),
+  }));
   // For each anchor X, the id of the last step inserted after it (initially X itself).
   const tailAfter = new Map<string, string>();
 
   for (const rule of spec.rules) {
     if (!evaluate(rule.when, facts)) continue;
-    const entry: Placed = { spec: rule.add, reason: rule.reason };
+    const entry: Placed = { spec: rule.add, reason: fillReason(rule.reason, facts) };
     if (rule.position === 'end') {
       placed.push(entry);
       continue;
@@ -107,6 +111,41 @@ export function route(
     blocked: true,
     blockReason: `Step ${first.seq} (${describe(placed[first.seq - 1]!.spec)}) has no eligible approver after separation of duties`,
   };
+}
+
+const PLACEHOLDER = /\{([A-Za-z_]\w*(?:\.\w+)*)\}/g;
+const DECIMAL_TEXT = /^-?\d+(\.\d+)?$/;
+
+/**
+ * Fills `{fact}` placeholders in a reason ("Discount {effectiveDiscountPct}% exceeds permitted 12%")
+ * with the request's own facts, so the approver sees the value that triggered the step.
+ * - Only own properties of `facts` are read (never `constructor` or `__proto__`), and only strings,
+ *   numbers and booleans are rendered: an object, array or null stays as the literal placeholder.
+ * - An unknown placeholder stays literal rather than being rejected here: validating names needs the
+ *   subject's fact list, which the frozen spec does not carry, and a typo must not stop an approval.
+ * - Decimal facts are formatted with decimal.js, never through a float: a decimal string keeps its
+ *   written scale ("12.50" stays "12.50") and a number never turns into an exponent ("1e21").
+ * - One pass over the template, so a fact value containing `{other}` is not expanded again. The text
+ *   is plain, so nothing is escaped.
+ */
+function fillReason(template: string, facts: Record<string, unknown>): string {
+  return template.replace(PLACEHOLDER, (literal, path: string) => {
+    let current: unknown = facts;
+    for (const part of path.split('.')) {
+      if (current === null || typeof current !== 'object') return literal;
+      if (!Object.prototype.hasOwnProperty.call(current, part)) return literal;
+      current = (current as Record<string, unknown>)[part];
+    }
+    if (typeof current === 'number') {
+      return Number.isFinite(current) ? new Decimal(current).toFixed() : literal;
+    }
+    if (typeof current === 'string') {
+      if (!DECIMAL_TEXT.test(current)) return current;
+      const scale = current.includes('.') ? current.length - current.indexOf('.') - 1 : 0;
+      return new Decimal(current).toFixed(scale);
+    }
+    return typeof current === 'boolean' ? String(current) : literal;
+  });
 }
 
 function describe(step: StepSpec): string {

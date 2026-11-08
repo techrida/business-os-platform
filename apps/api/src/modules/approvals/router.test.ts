@@ -346,3 +346,89 @@ describe('resolveActor: which approver a delegate acts for (R12)', () => {
     });
   });
 });
+
+describe('route: reasons fill {fact} placeholders from the request facts', () => {
+  const discountSpec: WorkflowSpec = WorkflowSpecSchema.parse({
+    documentType: 'quotation',
+    steps: [{ id: 'sales', kind: 'role', role: 'accountant', reason: 'Base route: sales checks' }],
+    rules: [
+      {
+        id: 'discount',
+        when: { field: 'effectiveDiscountPct', op: 'gt', value: '12' },
+        add: { id: 'management', kind: 'role', role: 'management', reason: 'Management' },
+        position: 'end',
+        reason: 'Discount {effectiveDiscountPct}% exceeds permitted 12%',
+      },
+    ],
+  });
+  const reasonOf = (facts: Record<string, unknown>) =>
+    route(discountSpec, facts, dir, []).steps[1]?.reason;
+
+  it('renders a decimal string exactly', () => {
+    expect(reasonOf({ effectiveDiscountPct: '12.0001' })).toBe(
+      'Discount 12.0001% exceeds permitted 12%',
+    );
+  });
+
+  it('keeps the written scale of a decimal string (money keeps its zeros)', () => {
+    expect(reasonOf({ effectiveDiscountPct: '12.50' })).toBe(
+      'Discount 12.50% exceeds permitted 12%',
+    );
+  });
+
+  it('renders a number and a decimal beyond float precision without exponent or rounding', () => {
+    expect(reasonOf({ effectiveDiscountPct: 12.0001 })).toBe(
+      'Discount 12.0001% exceeds permitted 12%',
+    );
+    expect(reasonOf({ effectiveDiscountPct: '12.000000000000000000001' })).toBe(
+      'Discount 12.000000000000000000001% exceeds permitted 12%',
+    );
+    expect(reasonOf({ effectiveDiscountPct: 1e21 })).toBe(
+      'Discount 1000000000000000000000% exceeds permitted 12%',
+    );
+  });
+
+  const loose = (reason: string, facts: Record<string, unknown>) =>
+    route(
+      WorkflowSpecSchema.parse({
+        ...discountSpec,
+        rules: [{ ...discountSpec.rules[0], reason }],
+      }),
+      facts,
+      dir,
+      [],
+    ).steps[1]?.reason;
+  const over = { effectiveDiscountPct: '13' };
+
+  it('leaves an unknown placeholder literal', () => {
+    expect(loose('Because {nope} and {effectiveDiscountPct}', over)).toBe('Because {nope} and 13');
+  });
+
+  it('never reads inherited or non-scalar data into a reason', () => {
+    expect(loose('{constructor} {__proto__} {toString}', over)).toBe(
+      '{constructor} {__proto__} {toString}',
+    );
+    expect(
+      loose('{obj} {list} {nothing}', { ...over, obj: { a: 1 }, list: [1], nothing: null }),
+    ).toBe('{obj} {list} {nothing}');
+  });
+
+  it('reads nested facts, strings and booleans, and does not expand values twice', () => {
+    expect(
+      loose('{customer.tier} {flag} {note}', {
+        ...over,
+        customer: { tier: 'gold' },
+        flag: true,
+        note: '{effectiveDiscountPct}',
+      }),
+    ).toBe('gold true {effectiveDiscountPct}');
+  });
+
+  it('does not touch reasons without placeholders (memo reasons) or escape plain text', () => {
+    const plan = route(seedSpec, { amountNpr: '1250000.00' }, dir, []);
+    expect(plan.steps[2]?.reason).toBe(
+      'Management approval because NPR equivalent exceeds 1,00,000',
+    );
+    expect(loose('A <b>&</b> {tag}', { ...over, tag: '<i>&' })).toBe('A <b>&</b> <i>&');
+  });
+});
