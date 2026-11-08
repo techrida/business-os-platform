@@ -4,16 +4,23 @@
 //
 // Three ways in, all ending in the same apply(): the webhook (users.sync job), the 10-minute
 // reconcile (the backstop for lost webhooks), and the JIT insert on a user's first request.
-// It imports nothing from platform/authz, so the worker (which has no AuthzModule) can use it.
+// It imports nothing from platform/authz at runtime (only the port's types), so the worker (which
+// has no AuthzModule) can use it.
+//
+// ADR 0027: users are tenant-scoped. A ZITADEL org maps to app.idp_orgs; a staff user acts for the
+// legal entities listed in app.user_entities, and a new staff user gets one membership in the
+// tenant's default entity (the bootstrap rule). Writes run with the default entity as the withTx
+// scope, because the audit fallback for tenant-scoped rows reads bos.organization_id.
 import type { RoleKey } from '@bos/contracts';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bullmq';
 
+import type { EntityMembership, ResolvedUser } from '../authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { type TxScope, systemActor, withTx } from '../db/tx';
 import { USERS_QUEUE, USERS_SYNC_JOB, type UsersSyncData } from './users.constants';
-import { type ListedUser, type OrgRow, type UserRow, UsersStore } from './users.store';
+import { type IdpOrgRow, type ListedUser, type UserRow, UsersStore } from './users.store';
 import {
   ZitadelAdminClient,
   ZitadelHttpError,
@@ -46,19 +53,7 @@ function sameRoles(a: readonly string[], b: readonly string[]): boolean {
   return left.length === right.length && left.every((v, i) => v === right[i]);
 }
 
-const scopeOf = (o: { tenantId: string; organizationId: string }): TxScope => ({
-  tenantId: o.tenantId,
-  organizationId: o.organizationId,
-});
-
-export interface ResolvedUser {
-  userId: string;
-  status: UserRow['status'];
-  departmentId: string | null;
-  /** Where the row lives; the tenancy interceptor checks it against the token's org (R26). */
-  tenantId: string;
-  organizationId: string;
-}
+export type { EntityMembership, ResolvedUser };
 
 @Injectable()
 export class UserMirror {
@@ -87,10 +82,10 @@ export class UserMirror {
       return false;
     }
 
-    const org = await this.store.orgByZitadelId(user.orgId);
+    const org = await this.store.idpOrgByZitadelId(user.orgId);
     if (!org) {
       // P2 adds org sync; until then a user of an unknown org has nowhere to live.
-      this.logger.warn(`users.sync skipped ${zitadelUserId}: its org has no app.organizations row`);
+      this.logger.warn(`users.sync skipped ${zitadelUserId}: its org has no app.idp_orgs row`);
       return false;
     }
     const roles = await this.zitadel.listGrants(zitadelUserId, org.zitadelOrgId);
@@ -98,7 +93,7 @@ export class UserMirror {
   }
 
   /**
-   * Walks every known org page by page and upserts each user. A user missing from a COMPLETE and
+   * Walks every staff IdP org page by page and upserts each user. A user missing from a COMPLETE and
    * TRUSTWORTHY pass of its org is a deactivation candidate (see deactivateMissing). A partial pass
    * (a page failed, or the run resumed from a saved cursor) is not proof of absence, so it
    * deactivates nobody; the next full pass will.
@@ -114,7 +109,7 @@ export class UserMirror {
     const maxDeactivations = limits.maxDeactivations ?? MAX_DEACTIVATIONS_PER_PASS;
     let scanned = 0;
     let changed = 0;
-    for (const org of await this.store.listOrgs()) {
+    for (const org of await this.store.listStaffIdpOrgs()) {
       const name = cursorName(org.zitadelOrgId);
       const start = await this.store.getCursor(name);
       const fullPass = start === null || start === '0';
@@ -189,24 +184,29 @@ export class UserMirror {
   async resolve(i: {
     zitadelUserId: string;
     tenantId: string;
-    organizationId: string;
+    idpOrgId: string;
   }): Promise<ResolvedUser> {
     let row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
     if (!row) {
-      await withTx(this.db, scopeOf(i), zitadelActor(), (tx) =>
-        this.store.insertUser(tx, scopeOf(i), {
+      const org = await this.store.idpOrgById(i.idpOrgId);
+      if (!org || org.tenantId !== i.tenantId) throw new Error('JIT user insert: unknown IdP org');
+      const scope = await this.entityScope(org.tenantId);
+      await withTx(this.db, scope, zitadelActor(), async (tx) => {
+        const userId = await this.store.insertUser(tx, scope, {
           zitadelUserId: i.zitadelUserId,
+          idpOrgId: org.idpOrgId,
           email: null,
           displayName: null,
           status: 'active',
-        }),
-      );
+        });
+        await this.bootstrap(tx, org, scope, userId);
+      });
       await this.enqueueSync(i.zitadelUserId);
       row = await this.store.findByZitadelId(this.db, i.zitadelUserId);
       if (!row) throw new Error('JIT user insert left no row');
     } else if (row.status === 'invited') {
       const invited = row;
-      await withTx(this.db, scopeOf(invited), zitadelActor(), (tx) =>
+      await withTx(this.db, await this.entityScope(invited.tenantId), zitadelActor(), (tx) =>
         this.store.updateUser(tx, invited.id, {
           email: invited.email,
           displayName: invited.displayName,
@@ -218,10 +218,10 @@ export class UserMirror {
     }
     return {
       userId: row.id,
-      status: row.status,
-      departmentId: row.departmentId,
       tenantId: row.tenantId,
-      organizationId: row.organizationId,
+      idpOrgId: row.idpOrgId,
+      status: row.status,
+      memberships: await this.store.membershipsOf(this.db, row.tenantId, row.id),
     };
   }
 
@@ -254,7 +254,7 @@ export class UserMirror {
     b: { email: string; givenName: string; familyName: string; roles: RoleKey[] },
   ): Promise<{ userId: string }> {
     const scope = await this.store.txScope(tx);
-    const org = await this.orgOf(scope);
+    const org = await this.staffOrgOf(scope);
     let zitadelUserId: string;
     try {
       zitadelUserId = await this.zitadel.createHuman(org.zitadelOrgId, b);
@@ -269,10 +269,12 @@ export class UserMirror {
 
     const userId = await this.store.insertUser(tx, scope, {
       zitadelUserId,
+      idpOrgId: org.idpOrgId,
       email: b.email,
       displayName: `${b.givenName} ${b.familyName}`,
       status: 'invited',
     });
+    await this.bootstrap(tx, org, scope, userId);
     if (b.roles.length > 0) {
       await this.store.replaceRoles(tx, scope, userId, b.roles);
       await this.store.bumpAuthzVersion(tx, scope);
@@ -285,17 +287,22 @@ export class UserMirror {
     const scope = await this.store.txScope(tx);
     const user = await this.store.findById(tx, scope, userId);
     if (!user) throw new NotFoundException('User not found');
-    const org = await this.orgOf(scope);
+    const org = await this.staffOrgOf(scope);
+    // Staff roles are granted in the staff org: a portal user is not an admin target (as before 0027).
+    if (user.idpOrgId !== org.idpOrgId) throw new NotFoundException('User not found');
     await this.zitadel.setGrants(user.zitadelUserId, org.zitadelOrgId, roles);
-    if (!sameRoles(await this.store.rolesOf(tx, userId), roles)) {
+    if (!sameRoles(await this.store.rolesOf(tx, scope.tenantId, userId), roles)) {
       await this.store.replaceRoles(tx, scope, userId, roles);
       await this.store.bumpAuthzVersion(tx, scope);
     }
   }
 
   /** The one write path for ZITADEL data: upsert the user, mirror the roles, bump authz on change. */
-  private async apply(org: OrgRow, user: ZitadelUser, roles: readonly RoleKey[]): Promise<boolean> {
-    const scope = scopeOf(org);
+  private async apply(
+    org: IdpOrgRow,
+    user: ZitadelUser,
+    roles: readonly RoleKey[],
+  ): Promise<boolean> {
     const status = user.status;
     if (status === null) {
       // A state we cannot read must never lock anyone out or let anyone in: write nothing at all.
@@ -304,6 +311,7 @@ export class UserMirror {
       );
       return false;
     }
+    const scope = await this.entityScope(org.tenantId);
     return withTx(this.db, scope, zitadelActor(), async (tx) => {
       let changed = false;
       const existing = await this.store.findByZitadelId(tx, user.id, true);
@@ -311,10 +319,12 @@ export class UserMirror {
       if (!existing) {
         userId = await this.store.insertUser(tx, scope, {
           zitadelUserId: user.id,
+          idpOrgId: org.idpOrgId,
           email: user.email,
           displayName: user.displayName,
           status,
         });
+        await this.bootstrap(tx, org, scope, userId);
         changed = true;
       } else {
         userId = existing.id;
@@ -331,7 +341,7 @@ export class UserMirror {
           changed = true;
         }
       }
-      if (!sameRoles(await this.store.rolesOf(tx, userId), roles)) {
+      if (!sameRoles(await this.store.rolesOf(tx, scope.tenantId, userId), roles)) {
         await this.store.replaceRoles(tx, scope, userId, roles);
         await this.store.bumpAuthzVersion(tx, scope);
         changed = true;
@@ -350,12 +360,12 @@ export class UserMirror {
    * any more; an admin must deactivate it by hand until deletion events are mirrored.
    */
   private async deactivateMissing(
-    org: OrgRow,
+    org: IdpOrgRow,
     seen: ReadonlySet<string>,
     passStart: Date,
     max: number,
   ): Promise<number> {
-    const locals = await this.store.notInactiveInOrg(this.db, scopeOf(org));
+    const locals = await this.store.notInactiveInIdpOrg(this.db, org);
     const missing = locals.filter((u) => !seen.has(u.zitadelUserId));
     if (seen.size === 0 && missing.length > 0) {
       // Safeguard: an empty list for an org that has users is far more likely a token that cannot
@@ -407,8 +417,8 @@ export class UserMirror {
     }
   }
 
-  private deactivate(user: UserRow): Promise<void> {
-    return withTx(this.db, scopeOf(user), zitadelActor(), (tx) =>
+  private async deactivate(user: UserRow): Promise<void> {
+    await withTx(this.db, await this.entityScope(user.tenantId), zitadelActor(), (tx) =>
       this.store.updateUser(tx, user.id, {
         email: user.email,
         displayName: user.displayName,
@@ -417,9 +427,37 @@ export class UserMirror {
     );
   }
 
-  private async orgOf(scope: TxScope): Promise<OrgRow> {
-    const org = await this.store.orgById(scope.organizationId);
+  /** The tenant's staff IdP org: invites are created and grants are set there. */
+  private async staffOrgOf(scope: TxScope): Promise<IdpOrgRow> {
+    const org = await this.store.staffIdpOrgOf(scope.tenantId);
     if (!org) throw new NotFoundException('Organization not found');
     return org;
+  }
+
+  /**
+   * The withTx scope for a user write: the tenant and its default entity. users and user_roles have
+   * no organization_id, so their audit rows take bos.organization_id from this scope.
+   */
+  private async entityScope(tenantId: string): Promise<TxScope> {
+    const organizationId = await this.store.defaultEntityOf(tenantId);
+    if (!organizationId) throw new Error(`tenant ${tenantId} has no default entity`);
+    return { tenantId, organizationId };
+  }
+
+  /**
+   * The bootstrap rule (ADR 0027 section 3): a staff user just created with no membership gets one
+   * in the tenant's default entity (role_keys NULL). Portal users get none. Runs in the caller's tx.
+   * Public for UsersService.finishInvite, which repeats the invite's steps.
+   */
+  async bootstrap(
+    tx: DbTransaction,
+    org: IdpOrgRow,
+    scope: TxScope,
+    userId: string,
+  ): Promise<void> {
+    if (org.kind !== 'staff') return;
+    const entityId = await this.store.defaultEntityOf(scope.tenantId);
+    if (!entityId) throw new Error(`tenant ${scope.tenantId} has no default entity`);
+    await this.store.ensureDefaultMembership(tx, scope.tenantId, entityId, userId);
   }
 }

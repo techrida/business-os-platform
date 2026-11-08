@@ -6,10 +6,13 @@
 // placeholder when this was written (columns since checked against 0002_identity_authz.sql). Swap to
 // the drizzle tables at integration if you like; the UsersStore interface is what the rest of
 // k-users (and its tests) depend on.
+//
+// ADR 0027: users and user_roles are tenant-scoped (no organization_id). A ZITADEL org maps to an
+// app.idp_orgs row; which legal entities a staff user may act for lives in app.user_entities.
 import type { RoleKey } from '@bos/contracts';
-import { organizations } from '@bos/db';
+import { idpOrgs, organizations } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { type SQL, eq, sql } from 'drizzle-orm';
+import { type SQL, and, eq, sql } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import type { TxScope } from '../db/tx';
@@ -18,25 +21,37 @@ import type { MirroredStatus } from './zitadel-admin.client';
 /** Either the pool-backed db or an open transaction: both can run a statement. */
 export type Queryable = Db | DbTransaction;
 
-export interface OrgRow {
+/** A ZITADEL org as app.idp_orgs maps it: the tenant, and staff vs portal (ADR 0027 section 2). */
+export interface IdpOrgRow {
+  idpOrgId: string;
   tenantId: string;
-  organizationId: string;
   zitadelOrgId: string;
+  kind: 'staff' | 'customer' | 'vendor';
 }
 
 export interface UserRow {
   id: string;
   tenantId: string;
-  organizationId: string;
+  idpOrgId: string;
   zitadelUserId: string;
   email: string | null;
   displayName: string | null;
   status: MirroredStatus;
+}
+
+/** One app.user_entities row: an entity the staff user may act for (ADR 0027 section 3). */
+export interface MembershipRow {
+  organizationId: string;
+  isDefault: boolean;
+  /** NULL = every role in the token. */
+  roleKeys: string[] | null;
   departmentId: string | null;
 }
 
 export interface UserFields {
   zitadelUserId: string;
+  /** The IdP org the user logs in through; only insertUser reads it. */
+  idpOrgId: string;
   email: string | null;
   displayName: string | null;
   status: MirroredStatus;
@@ -55,9 +70,14 @@ export interface ZitadelEventKey {
 }
 
 export abstract class UsersStore {
-  abstract orgByZitadelId(zitadelOrgId: string): Promise<OrgRow | null>;
-  abstract orgById(organizationId: string): Promise<OrgRow | null>;
-  abstract listOrgs(): Promise<OrgRow[]>;
+  abstract idpOrgByZitadelId(zitadelOrgId: string): Promise<IdpOrgRow | null>;
+  abstract idpOrgById(idpOrgId: string): Promise<IdpOrgRow | null>;
+  /** The tenant's one staff IdP org: where invites are created and grants are set. */
+  abstract staffIdpOrgOf(tenantId: string): Promise<IdpOrgRow | null>;
+  /** Every staff IdP org; reconcile walks these (portal orgs are invisible to the provisioner token). */
+  abstract listStaffIdpOrgs(): Promise<IdpOrgRow[]>;
+  /** The tenant's default entity id: bootstrap memberships land here and user writes are audited under it. */
+  abstract defaultEntityOf(tenantId: string): Promise<string | null>;
   /** The scope withTx put on this transaction (bos.tenant_id / bos.organization_id). */
   abstract txScope(tx: DbTransaction): Promise<TxScope>;
 
@@ -67,29 +87,44 @@ export abstract class UsersStore {
     zitadelUserId: string,
     lock?: boolean,
   ): Promise<UserRow | null>;
+  /** Tenant-scoped: `scope.organizationId` is not a filter, users have no entity. */
   abstract findById(q: Queryable, scope: TxScope, userId: string): Promise<UserRow | null>;
   /** Inserts, or returns the existing row's id when a concurrent insert won. */
   abstract insertUser(tx: DbTransaction, scope: TxScope, u: UserFields): Promise<string>;
   abstract updateUser(
     tx: DbTransaction,
     userId: string,
-    u: Omit<UserFields, 'zitadelUserId'>,
+    u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>,
   ): Promise<void>;
-  abstract notInactiveInOrg(q: Queryable, scope: TxScope): Promise<UserRow[]>;
+  abstract notInactiveInIdpOrg(q: Queryable, org: IdpOrgRow): Promise<UserRow[]>;
 
-  abstract rolesOf(q: Queryable, userId: string): Promise<RoleKey[]>;
+  abstract membershipsOf(q: Queryable, tenantId: string, userId: string): Promise<MembershipRow[]>;
+  /**
+   * The bootstrap rule (ADR 0027 section 3): a membership in `entityId` (is_default, role_keys NULL)
+   * when the user has none at all. Returns whether it inserted one.
+   */
+  abstract ensureDefaultMembership(
+    tx: DbTransaction,
+    tenantId: string,
+    entityId: string,
+    userId: string,
+  ): Promise<boolean>;
+
+  abstract rolesOf(q: Queryable, tenantId: string, userId: string): Promise<RoleKey[]>;
   abstract replaceRoles(
     tx: DbTransaction,
     scope: TxScope,
     userId: string,
     roles: readonly RoleKey[],
   ): Promise<void>;
-  /** Bumps the org's authz_version so every process drops its cached principals and grants. */
+  /** Bumps the tenant's authz_version so every process drops its cached principals and grants. */
   abstract bumpAuthzVersion(tx: DbTransaction, scope: TxScope): Promise<void>;
 
+  /** Active holders of `role` with a membership in the entity whose role_keys is NULL or has the role. */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
   /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
   abstract emailOf(userId: string): Promise<string | null>;
+  /** The tenant's staff users (the staff IdP org's), with their mirrored roles. */
   abstract list(
     scope: TxScope,
     q: { limit: number; after?: string | undefined },
@@ -107,9 +142,15 @@ async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL)
   return result.rows as T[];
 }
 
-const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.organization_id AS "organizationId",
-  u.zitadel_user_id AS "zitadelUserId", u.email, u.display_name AS "displayName", u.status,
-  u.department_id AS "departmentId"`;
+const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.idp_org_id AS "idpOrgId",
+  u.zitadel_user_id AS "zitadelUserId", u.email, u.display_name AS "displayName", u.status`;
+
+const IDP_ORG_COLUMNS = {
+  idpOrgId: idpOrgs.id,
+  tenantId: idpOrgs.tenantId,
+  zitadelOrgId: idpOrgs.zitadelOrgId,
+  kind: idpOrgs.kind,
+};
 
 type UserRecord = UserRow & Record<string, unknown>;
 
@@ -119,40 +160,44 @@ export class SqlUsersStore extends UsersStore {
     super();
   }
 
-  async orgByZitadelId(zitadelOrgId: string): Promise<OrgRow | null> {
+  async idpOrgByZitadelId(zitadelOrgId: string): Promise<IdpOrgRow | null> {
     const found = await this.db
-      .select({
-        tenantId: organizations.tenantId,
-        organizationId: organizations.organizationId,
-        zitadelOrgId: organizations.zitadelOrgId,
-      })
-      .from(organizations)
-      .where(eq(organizations.zitadelOrgId, zitadelOrgId))
+      .select(IDP_ORG_COLUMNS)
+      .from(idpOrgs)
+      .where(eq(idpOrgs.zitadelOrgId, zitadelOrgId))
       .limit(1);
     return found[0] ?? null;
   }
 
-  async orgById(organizationId: string): Promise<OrgRow | null> {
+  async idpOrgById(idpOrgId: string): Promise<IdpOrgRow | null> {
     const found = await this.db
-      .select({
-        tenantId: organizations.tenantId,
-        organizationId: organizations.organizationId,
-        zitadelOrgId: organizations.zitadelOrgId,
-      })
-      .from(organizations)
-      .where(eq(organizations.id, organizationId))
+      .select(IDP_ORG_COLUMNS)
+      .from(idpOrgs)
+      .where(eq(idpOrgs.id, idpOrgId))
       .limit(1);
     return found[0] ?? null;
   }
 
-  listOrgs(): Promise<OrgRow[]> {
-    return this.db
-      .select({
-        tenantId: organizations.tenantId,
-        organizationId: organizations.organizationId,
-        zitadelOrgId: organizations.zitadelOrgId,
-      })
-      .from(organizations);
+  async staffIdpOrgOf(tenantId: string): Promise<IdpOrgRow | null> {
+    const found = await this.db
+      .select(IDP_ORG_COLUMNS)
+      .from(idpOrgs)
+      .where(and(eq(idpOrgs.tenantId, tenantId), eq(idpOrgs.kind, 'staff')))
+      .limit(1);
+    return found[0] ?? null;
+  }
+
+  listStaffIdpOrgs(): Promise<IdpOrgRow[]> {
+    return this.db.select(IDP_ORG_COLUMNS).from(idpOrgs).where(eq(idpOrgs.kind, 'staff'));
+  }
+
+  async defaultEntityOf(tenantId: string): Promise<string | null> {
+    const found = await this.db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(and(eq(organizations.tenantId, tenantId), eq(organizations.isDefault, true)))
+      .limit(1);
+    return found[0]?.id ?? null;
   }
 
   async txScope(tx: DbTransaction): Promise<TxScope> {
@@ -184,8 +229,7 @@ export class SqlUsersStore extends UsersStore {
     const [row] = await rows<UserRecord>(
       q,
       sql`SELECT ${USER_COLUMNS} FROM app.users u
-          WHERE u.tenant_id = ${scope.tenantId} AND u.organization_id = ${scope.organizationId}
-            AND u.id = ${userId}`,
+          WHERE u.tenant_id = ${scope.tenantId} AND u.id = ${userId}`,
     );
     return row ?? null;
   }
@@ -193,8 +237,8 @@ export class SqlUsersStore extends UsersStore {
   async insertUser(tx: DbTransaction, scope: TxScope, u: UserFields): Promise<string> {
     const [inserted] = await rows<{ id: string }>(
       tx,
-      sql`INSERT INTO app.users (tenant_id, organization_id, zitadel_user_id, email, display_name, status, last_synced_at)
-          VALUES (${scope.tenantId}, ${scope.organizationId}, ${u.zitadelUserId}, ${u.email},
+      sql`INSERT INTO app.users (tenant_id, idp_org_id, zitadel_user_id, email, display_name, status, last_synced_at)
+          VALUES (${scope.tenantId}, ${u.idpOrgId}, ${u.zitadelUserId}, ${u.email},
                   ${u.displayName}, ${u.status}, now())
           ON CONFLICT (zitadel_user_id) DO NOTHING
           RETURNING id`,
@@ -208,7 +252,7 @@ export class SqlUsersStore extends UsersStore {
   async updateUser(
     tx: DbTransaction,
     userId: string,
-    u: Omit<UserFields, 'zitadelUserId'>,
+    u: Omit<UserFields, 'zitadelUserId' | 'idpOrgId'>,
   ): Promise<void> {
     await tx.execute(
       sql`UPDATE app.users SET email = ${u.email}, display_name = ${u.displayName},
@@ -217,19 +261,50 @@ export class SqlUsersStore extends UsersStore {
     );
   }
 
-  notInactiveInOrg(q: Queryable, scope: TxScope): Promise<UserRow[]> {
+  notInactiveInIdpOrg(q: Queryable, org: IdpOrgRow): Promise<UserRow[]> {
     return rows<UserRecord>(
       q,
       sql`SELECT ${USER_COLUMNS} FROM app.users u
-          WHERE u.tenant_id = ${scope.tenantId} AND u.organization_id = ${scope.organizationId}
+          WHERE u.tenant_id = ${org.tenantId} AND u.idp_org_id = ${org.idpOrgId}
             AND u.status <> 'inactive'`,
     );
   }
 
-  async rolesOf(q: Queryable, userId: string): Promise<RoleKey[]> {
+  membershipsOf(q: Queryable, tenantId: string, userId: string): Promise<MembershipRow[]> {
+    return rows<MembershipRow & Record<string, unknown>>(
+      q,
+      sql`SELECT organization_id AS "organizationId", is_default AS "isDefault",
+                 role_keys AS "roleKeys", department_id AS "departmentId"
+          FROM app.user_entities WHERE tenant_id = ${tenantId} AND user_id = ${userId}
+          ORDER BY is_default DESC, organization_id`,
+    );
+  }
+
+  async ensureDefaultMembership(
+    tx: DbTransaction,
+    tenantId: string,
+    entityId: string,
+    userId: string,
+  ): Promise<boolean> {
+    // NOT EXISTS: only a user with no membership at all gets one. The explicit target (ADR 0027
+    // section 9) makes a concurrent bootstrap of the same user a no-op instead of an error.
+    const inserted = await rows<{ one: number }>(
+      tx,
+      sql`INSERT INTO app.user_entities (tenant_id, organization_id, user_id, is_default, role_keys)
+          SELECT ${tenantId}::uuid, ${entityId}::uuid, ${userId}::uuid, true, NULL
+          WHERE NOT EXISTS (
+            SELECT 1 FROM app.user_entities WHERE tenant_id = ${tenantId} AND user_id = ${userId})
+          ON CONFLICT (tenant_id, organization_id, user_id) DO NOTHING
+          RETURNING 1 AS one`,
+    );
+    return inserted.length > 0;
+  }
+
+  async rolesOf(q: Queryable, tenantId: string, userId: string): Promise<RoleKey[]> {
     const found = await rows<{ role: RoleKey }>(
       q,
-      sql`SELECT role_key AS role FROM app.user_roles WHERE user_id = ${userId} ORDER BY role_key`,
+      sql`SELECT role_key AS role FROM app.user_roles
+          WHERE tenant_id = ${tenantId} AND user_id = ${userId} ORDER BY role_key`,
     );
     return found.map((r) => r.role);
   }
@@ -244,8 +319,8 @@ export class SqlUsersStore extends UsersStore {
     // Delete only what went away and insert only what is new, so the audit log shows the real diff.
     await tx.execute(
       keep.length === 0
-        ? sql`DELETE FROM app.user_roles WHERE user_id = ${userId}`
-        : sql`DELETE FROM app.user_roles WHERE user_id = ${userId}
+        ? sql`DELETE FROM app.user_roles WHERE tenant_id = ${scope.tenantId} AND user_id = ${userId}`
+        : sql`DELETE FROM app.user_roles WHERE tenant_id = ${scope.tenantId} AND user_id = ${userId}
                 AND role_key NOT IN (${sql.join(
                   keep.map((r) => sql`${r}`),
                   sql`, `,
@@ -253,19 +328,19 @@ export class SqlUsersStore extends UsersStore {
     );
     for (const role of keep) {
       await tx.execute(
-        sql`INSERT INTO app.user_roles (tenant_id, organization_id, user_id, role_key, source)
-            VALUES (${scope.tenantId}, ${scope.organizationId}, ${userId}, ${role}, 'zitadel')
-            ON CONFLICT (user_id, role_key) DO NOTHING`,
+        sql`INSERT INTO app.user_roles (tenant_id, user_id, role_key, source)
+            VALUES (${scope.tenantId}, ${userId}, ${role}, 'zitadel')
+            ON CONFLICT (tenant_id, user_id, role_key) DO NOTHING`,
       );
     }
   }
 
   async bumpAuthzVersion(tx: DbTransaction, scope: TxScope): Promise<void> {
-    // authz_versions_tenant_org_unique (0002) makes this one race-free statement.
+    // authz_versions_tenant_unique (0013) makes this one race-free statement.
     await tx.execute(
-      sql`INSERT INTO app.authz_versions (tenant_id, organization_id, version)
-          VALUES (${scope.tenantId}, ${scope.organizationId}, 1)
-          ON CONFLICT (tenant_id, organization_id)
+      sql`INSERT INTO app.authz_versions (tenant_id, version)
+          VALUES (${scope.tenantId}, 1)
+          ON CONFLICT (tenant_id)
           DO UPDATE SET version = app.authz_versions.version + 1, updated_at = now()`,
     );
   }
@@ -273,9 +348,12 @@ export class SqlUsersStore extends UsersStore {
   async userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]> {
     const found = await rows<{ id: string }>(
       this.db,
-      sql`SELECT u.id FROM app.user_roles ur JOIN app.users u ON u.id = ur.user_id
-          WHERE ur.tenant_id = ${scope.tenantId} AND ur.organization_id = ${scope.organizationId}
-            AND ur.role_key = ${role} AND u.status = 'active'
+      sql`SELECT u.id FROM app.user_roles ur
+          JOIN app.users u ON u.tenant_id = ur.tenant_id AND u.id = ur.user_id
+          JOIN app.user_entities ue ON ue.tenant_id = ur.tenant_id AND ue.user_id = ur.user_id
+            AND ue.organization_id = ${scope.organizationId}
+          WHERE ur.tenant_id = ${scope.tenantId} AND ur.role_key = ${role} AND u.status = 'active'
+            AND (ue.role_keys IS NULL OR ${role}::text = ANY (ue.role_keys))
           ORDER BY u.id`,
     );
     return found.map((r) => r.id);
@@ -297,8 +375,10 @@ export class SqlUsersStore extends UsersStore {
       this.db,
       sql`SELECT ${USER_COLUMNS},
             coalesce(array_agg(ur.role_key ORDER BY ur.role_key) FILTER (WHERE ur.role_key IS NOT NULL), '{}') AS roles
-          FROM app.users u LEFT JOIN app.user_roles ur ON ur.user_id = u.id
-          WHERE u.tenant_id = ${scope.tenantId} AND u.organization_id = ${scope.organizationId}
+          FROM app.users u
+          JOIN app.idp_orgs io ON io.id = u.idp_org_id AND io.tenant_id = u.tenant_id AND io.kind = 'staff'
+          LEFT JOIN app.user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+          WHERE u.tenant_id = ${scope.tenantId}
             ${q.after ? sql`AND u.id > ${q.after}` : sql``}
           GROUP BY u.id
           ORDER BY u.id

@@ -22,11 +22,7 @@ export class UsersService extends UserDirectory {
     super();
   }
 
-  resolve(i: {
-    zitadelUserId: string;
-    tenantId: string;
-    organizationId: string;
-  }): Promise<ResolvedUser> {
+  resolve(i: { zitadelUserId: string; tenantId: string; idpOrgId: string }): Promise<ResolvedUser> {
     return this.mirror.resolve(i);
   }
 
@@ -78,7 +74,7 @@ export class UsersService extends UserDirectory {
     conflict: ConflictException,
   ): Promise<{ userId: string }> {
     const scope = await this.store.txScope(tx);
-    const org = await this.store.orgById(scope.organizationId);
+    const org = await this.store.staffIdpOrgOf(scope.tenantId);
     if (!org) throw new NotFoundException('Organization not found');
 
     const open = await this.findOpenInvite(org.zitadelOrgId, b.email);
@@ -87,15 +83,18 @@ export class UsersService extends UserDirectory {
     if (row && row.status !== 'invited') throw conflict;
 
     // The same steps as a first invite, in the same order. Each one is safe to repeat: setGrants
-    // replaces the whole set, insertUser returns the row that exists, replaceRoles diffs.
+    // replaces the whole set, insertUser returns the row that exists, the bootstrap membership is
+    // added only when the user has none, replaceRoles diffs.
     await this.zitadel.setGrants(open.id, org.zitadelOrgId, b.roles);
     await this.zitadel.sendInviteCode(open.id);
     const userId = await this.store.insertUser(tx, scope, {
       zitadelUserId: open.id,
+      idpOrgId: org.idpOrgId,
       email: b.email,
       displayName: `${b.givenName} ${b.familyName}`,
       status: 'invited',
     });
+    await this.mirror.bootstrap(tx, org, scope, userId);
     if (b.roles.length > 0) {
       await this.store.replaceRoles(tx, scope, userId, b.roles);
       await this.store.bumpAuthzVersion(tx, scope);
