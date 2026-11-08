@@ -3,8 +3,9 @@
 # Every job must pass for a pull request to merge. Nothing here is allowed to fail:
 # no step is marked as tolerating failure, on purpose.
 #
-# Actions are pinned to a major version (`@v7`) so they get fixes without surprise breaking
-# changes. Dependabot can move them to full commit SHAs later.
+# Every third-party action is pinned to a full commit SHA (the comment beside it names the release),
+# because a tag can be moved after the fact. Dependabot (github-actions ecosystem) can bump the SHA.
+# Container images are pinned by digest too; `infra/scripts/check-image-pins.mjs` enforces that.
 name: ci
 
 on:
@@ -38,14 +39,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Order matters: pnpm must exist before setup-node asks it for the store path (cache: pnpm).
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.28.11
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -65,6 +66,10 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+      # Fails if any compose `image:` or Dockerfile `FROM` is not pinned by @sha256 digest (supply chain).
+      - name: Container images are pinned by digest
+        run: node infra/scripts/check-image-pins.mjs
+
   # Real Postgres through Testcontainers (it starts throw-away Docker containers from inside
   # the tests). ubuntu-24.04 runners already have Docker, so nothing extra to install.
   e2e:
@@ -72,13 +77,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.28.11
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -103,13 +108,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.28.11
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -132,14 +137,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # The build context is the repo root (the Dockerfiles need pnpm-lock.yaml and packages/*).
       # Each image has its own cache scope so one image's layers don't evict the other's.
       - name: Build api image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: apps/api/Dockerfile
@@ -149,7 +154,7 @@ jobs:
 
       # load: true keeps the image in the runner's Docker so the next step can look inside it.
       - name: Build workspace image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: apps/workspace/Dockerfile
