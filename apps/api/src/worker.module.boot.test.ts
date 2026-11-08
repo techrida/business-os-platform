@@ -4,6 +4,8 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { ApprovalsSlaProcessor, ApprovalsSlaScheduler } from './modules/approvals/sla.processor';
+import { PortalLoginPolicyReconciler } from './modules/portal-access/portal-login-policy.reconciler';
+import { PortalLoginPolicyWorkerModule } from './modules/portal-access/portal-login-policy.worker.module';
 import {
   QuotationExpiryProcessor,
   QuotationExpiryScheduler,
@@ -78,6 +80,15 @@ describe('WorkerModule boot (DI graph)', () => {
     // The module class itself is a provider too: it only exists if the module's imports resolved.
     expect(moduleRef.get(QuotationExpiryWorkerModule, { strict: false })).toBeInstanceOf(
       QuotationExpiryWorkerModule,
+    );
+  });
+
+  it('resolves the portal login policy reconciler', () => {
+    expect(moduleRef.get(PortalLoginPolicyReconciler, { strict: false })).toBeInstanceOf(
+      PortalLoginPolicyReconciler,
+    );
+    expect(moduleRef.get(PortalLoginPolicyWorkerModule, { strict: false })).toBeInstanceOf(
+      PortalLoginPolicyWorkerModule,
     );
   });
 
