@@ -1,15 +1,17 @@
-// Quotations module (P2 unit Q1, skeleton): it registers how the files of a quotation version are authorized,
-// with the documents module, provides PricingService and serves the reference lists (tax codes, payment terms).
-// The drafting controller, the drafting service and the render job
-// join it in later parts. Imports DocumentsModule for DocumentsService and SettingsModule for MoneyService
-// (PricingService's FX snapshot) and ApprovalsModule for ApprovalsService (the preview's route); the database is global. Only AppModule imports this module.
+// Quotations module (P2 unit Q1): registers how quotation-version files are authorized, provides PricingService
+// and DraftingService, and serves drafting, preview and reference routes. Imports DocumentsModule, SettingsModule
+// (MoneyService, NumberingService), ApprovalsModule (preview route) and AuditModule; the database is global.
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { DB, type Db } from '../../platform/db/db.module';
 import { DocumentsModule } from '../../platform/documents/documents.module';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
+import { AuditModule } from '../../platform/audit/audit.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { DraftingCaller } from './drafting/drafting.caller';
+import { DraftingController } from './drafting/drafting.controller';
+import { DraftingService } from './drafting/drafting.service';
 import { PricingService } from './pricing/pricing.service';
 import { QuotationPreviewCaller } from './preview/quotation-preview.caller';
 import { QuotationPreviewController } from './preview/quotation-preview.controller';
@@ -20,10 +22,12 @@ import { ReferenceController } from './reference/reference.controller';
 import { ReferenceService } from './reference/reference.service';
 
 @Module({
-  imports: [ApprovalsModule, DocumentsModule, SettingsModule],
-  controllers: [ReferenceController, QuotationPreviewController],
+  imports: [ApprovalsModule, AuditModule, DocumentsModule, SettingsModule],
+  controllers: [DraftingController, ReferenceController, QuotationPreviewController],
   providers: [
     PricingService,
+    DraftingService,
+    DraftingCaller,
     ReferenceCaller,
     ReferenceService,
     QuotationPreviewService,
