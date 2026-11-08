@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { BUILT_PHASE, NAV_GROUPS, isBuilt, phaseDescription, phaseTag, titleForPath } from './nav';
+import {
+  NAV_GROUPS,
+  SHIPPED_PHASES,
+  isBuilt,
+  ownsPath,
+  phaseDescription,
+  phaseTag,
+  titleForPath,
+  visibleGroups,
+} from './nav';
 
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
@@ -8,6 +17,8 @@ describe('NAV_GROUPS', () => {
   it('lists the Figma groups in order', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Overview',
+      'Work',
+      'Administration',
       'Organization',
       'CRM',
       'Sales Management',
@@ -31,19 +42,47 @@ describe('NAV_GROUPS', () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
-  it('gives an href to built items only, and it is an absolute path', () => {
+  it('gives an absolute href to every built item, and only shipped phases are built', () => {
     for (const item of items) {
-      if (item.phase === BUILT_PHASE) {
+      if (isBuilt(item)) {
         expect(item.href, item.label).toMatch(/^\//);
+        expect(SHIPPED_PHASES, item.label).toContain(item.phase);
       } else {
         expect(item.href, item.label).toBeUndefined();
       }
     }
   });
 
-  it('builds only Overview in P0', () => {
+  it('never builds an item from a phase that has not shipped', () => {
+    for (const item of items.filter((i) => !SHIPPED_PHASES.includes(i.phase))) {
+      expect(isBuilt(item), item.label).toBe(false);
+    }
+  });
+
+  it('builds the P0 and P1 pages', () => {
     const built = items.filter(isBuilt);
-    expect(built.map((i) => [i.label, i.href])).toEqual([['Overview', '/']]);
+    expect(built.map((i) => [i.label, i.href])).toEqual([
+      ['Overview', '/'],
+      ['Inbox', '/inbox'],
+      ['Memos', '/memos'],
+      ['Users', '/admin/users'],
+      ['Roles & Permissions', '/admin/roles'],
+      ['Approval Workflows', '/admin/workflows'],
+      ['Settings', '/admin/settings'],
+    ]);
+  });
+
+  it('marks every /admin page as admin-only, and nothing else', () => {
+    for (const item of items) {
+      const isAdminPage = item.href?.startsWith('/admin') ?? false;
+      expect(item.audience === 'admin', item.label).toBe(isAdminPage);
+    }
+  });
+
+  it('does not list Approvals or User twice (Inbox and Users replace them)', () => {
+    const labels = items.map((i) => i.label);
+    expect(labels).not.toContain('Approvals');
+    expect(labels).not.toContain('User');
   });
 
   it('leaves Estimates out (decision D3 merged it into Quotations)', () => {
@@ -70,9 +109,44 @@ describe('phase text', () => {
   });
 });
 
+describe('visibleGroups', () => {
+  const labelsFor = (showAdmin: boolean) =>
+    visibleGroups(showAdmin).flatMap((g) => g.items.map((i) => i.label));
+
+  it('hides the admin screens and the empty Administration group from non-admins', () => {
+    expect(visibleGroups(false).map((g) => g.label)).not.toContain('Administration');
+    expect(labelsFor(false)).not.toContain('Users');
+    expect(labelsFor(false)).not.toContain('Settings');
+    expect(labelsFor(false)).toContain('Inbox');
+    expect(labelsFor(false)).toContain('Help');
+  });
+
+  it('shows them to admins', () => {
+    expect(visibleGroups(true).map((g) => g.label)).toContain('Administration');
+    expect(labelsFor(true)).toEqual(expect.arrayContaining(['Users', 'Settings']));
+  });
+});
+
+describe('ownsPath', () => {
+  it('matches the page and the pages under it, not a lookalike', () => {
+    expect(ownsPath('/inbox', '/inbox')).toBe(true);
+    expect(ownsPath('/inbox', '/inbox/123')).toBe(true);
+    expect(ownsPath('/inbox', '/inbox-archive')).toBe(false);
+    expect(ownsPath('/', '/')).toBe(true);
+    expect(ownsPath('/', '/inbox')).toBe(false);
+  });
+});
+
 describe('titleForPath', () => {
   it('names the built page', () => {
     expect(titleForPath('/')).toBe('Overview');
+    expect(titleForPath('/inbox')).toBe('Inbox');
+  });
+
+  it('names a page under a built page by its owner', () => {
+    expect(titleForPath('/inbox/0f3a')).toBe('Inbox');
+    expect(titleForPath('/memos/new')).toBe('Memos');
+    expect(titleForPath('/admin/users/invite')).toBe('Users');
   });
 
   it('falls back to the app name for any other path', () => {
