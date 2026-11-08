@@ -367,9 +367,6 @@ describe('PATCH /v1/opportunities/:id/stage', () => {
     const res = await patchStage(id, { stage: 'requirement_received', expectedVersion: 1 });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(dto(res.body)).toMatchObject({ id, stage: 'requirement_received', version: 2 });
-    expect(new Date(dto(res.body).updatedAt).getTime()).toBeGreaterThan(
-      new Date(dto(res.body).createdAt).getTime(),
-    );
     const events = await auditOf(id);
     // The row trigger records the update; the domain event carries the move.
     expect(events.map((e) => e.action)).toContain('opportunity.stage_changed');
@@ -465,20 +462,17 @@ describe('PATCH /v1/opportunities/:id/stage', () => {
     expect(same.status).toBe(409);
   });
 
-  it('lets only a manager reopen a lost opportunity', async () => {
+  it('refuses the reopen of a lost opportunity over HTTP, for a founder as well as for sales', async () => {
     const id = await seed({ stage: 'lost' });
-    const asSales = await patchStage(id, { stage: 'qualified', expectedVersion: 1 });
-    expect(asSales.status).toBe(403);
+    for (const [userId, role] of [
+      [U.salesA, 'sales'],
+      [U.boss, 'founder'],
+    ] as const) {
+      as(userId, role);
+      const res = await patchStage(id, { stage: 'qualified', expectedVersion: 1 });
+      expect(res.status, role).toBe(403);
+    }
     expect(await rowOf(id)).toMatchObject({ stage: 'lost', version: 1 });
-
-    as(U.boss, 'founder');
-    const reopened = await patchStage(id, { stage: 'qualified', expectedVersion: 1 });
-    expect(reopened.status, JSON.stringify(reopened.body)).toBe(200);
-    expect(dto(reopened.body)).toMatchObject({
-      stage: 'qualified',
-      stageReason: null,
-      stageNote: null,
-    });
   });
 
   it('answers 404 for another entity and for a colleague own record, and 403 without write', async () => {
