@@ -4,12 +4,55 @@ import {
   EMAIL_TEMPLATES,
   EMAIL_TEMPLATE_VARS,
   EmailTemplateError,
+  assertSafeEmail,
   buildLink,
+  buildPortalLink,
   renderEmail,
   type EmailTemplate,
+  type RenderedEmail,
 } from './templates';
 
-const opts = { workspaceUrl: 'https://app.example.com' };
+const WORKSPACE = 'https://app.example.com';
+const PORTAL = 'https://portal.example.com';
+const opts = { workspaceUrl: WORKSPACE, portalUrl: PORTAL };
+
+/** Which base each template links to, and the path it uses in these tests. Written out on purpose: the test must not read the answer from the code under test. */
+const STAFF_TEMPLATES = [
+  'approval.pending',
+  'approval.reminder',
+  'approval.escalated',
+  'approval.decided',
+  'approval.blocked',
+  'document.infected',
+  'outbox.dead_letter',
+] as const;
+const NEW_STAFF_TEMPLATES = ['quotation.accepted', 'crm.assigned', 'crm.follow_up_digest'] as const;
+const PORTAL_TEMPLATES = [
+  'quotation.sent',
+  'quotation.expiring',
+  'quotation.expired',
+  'portal.invite',
+] as const;
+
+const LINK_PATH_OF: Record<EmailTemplate, string> = {
+  'approval.pending': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'approval.reminder': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'approval.escalated': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'approval.decided': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'approval.blocked': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'document.infected': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'outbox.dead_letter': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
+  'quotation.accepted': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
+  'crm.assigned': '/crm/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
+  'crm.follow_up_digest': '/crm/follow-ups',
+  'quotation.sent': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
+  'quotation.expiring': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
+  'quotation.expired': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
+  'portal.invite': '/sign-in/',
+};
+
+const baseOf = (template: EmailTemplate): string =>
+  (PORTAL_TEMPLATES as readonly string[]).includes(template) ? PORTAL : WORKSPACE;
 
 const sample: Record<string, string> = {
   documentNumber: 'MEMO-2082/83-00042',
@@ -22,21 +65,42 @@ const sample: Record<string, string> = {
   filename: 'invoice.pdf',
   failedTemplate: 'approval.pending',
   attempts: '5',
+  quotationNumber: 'QT-2082/83-00007',
+  customerName: 'Himal Traders',
+  validUntil: '2083-01-15',
+  entityType: 'lead',
+  entityName: 'Himal Traders',
+  assignerName: 'Hari Gurung',
+  dueCount: '4',
+  overdueCount: '2',
   linkPath: '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
 };
 
+/** The sample with the link path that is valid for this template. */
+const varsFor = (template: EmailTemplate): Record<string, string> => ({
+  ...sample,
+  linkPath: LINK_PATH_OF[template],
+});
+
 describe('renderEmail', () => {
+  it('knows every template these tests list, and no other', () => {
+    expect([...EMAIL_TEMPLATES].sort()).toEqual(
+      [...STAFF_TEMPLATES, ...NEW_STAFF_TEMPLATES, ...PORTAL_TEMPLATES].sort(),
+    );
+  });
+
   it.each(EMAIL_TEMPLATES)('%s renders with no token, password or file link', (template) => {
-    const { subject, text, html } = renderEmail(template, sample, opts);
+    const { subject, text, html } = renderEmail(template, varsFor(template), opts);
     for (const part of [subject, text, html]) {
       expect(part).not.toMatch(/token/i);
       expect(part).not.toMatch(/password/i);
       expect(part).not.toContain('/files/');
     }
     expect(subject.length).toBeGreaterThan(0);
-    // The one link is the workspace inbox link, in both the text and the html part.
-    expect(text).toContain(`${opts.workspaceUrl}${sample.linkPath}`);
-    expect(html).toContain(`href="${opts.workspaceUrl}${sample.linkPath}"`);
+    // The one link is built from the template's own base, in both the text and the html part.
+    const link = `${baseOf(template)}${LINK_PATH_OF[template]}`;
+    expect(text).toContain(link);
+    expect(html).toContain(`href="${link}"`);
     expect(subject).not.toMatch(/[\r\n]/);
   });
 
@@ -51,13 +115,25 @@ describe('renderEmail', () => {
     const { subject, text } = renderEmail('approval.pending', sample, opts);
     expect(subject).toContain('MEMO-2082/83-00042');
     expect(text).toContain('Sita Sharma');
+
+    const sent = renderEmail('quotation.sent', varsFor('quotation.sent'), opts);
+    expect(sent.subject).toContain('QT-2082/83-00007');
+    expect(sent.text).toContain('Himal Traders');
+    expect(sent.text).toContain('2083-01-15');
+
+    const digest = renderEmail('crm.follow_up_digest', varsFor('crm.follow_up_digest'), opts);
+    expect(digest.text).toContain('4');
+    expect(digest.text).toContain('2');
   });
 
   it('HTML-escapes every variable', () => {
     const evil = '<script>alert("x")</script>';
     for (const template of EMAIL_TEMPLATES) {
       const vars = Object.fromEntries(
-        EMAIL_TEMPLATE_VARS[template].map((k) => [k, k === 'linkPath' ? sample.linkPath! : evil]),
+        EMAIL_TEMPLATE_VARS[template].map((k) => [
+          k,
+          k === 'linkPath' ? LINK_PATH_OF[template] : evil,
+        ]),
       );
       const { html } = renderEmail(template, vars, opts);
       expect(html).not.toContain('<script>');
@@ -72,6 +148,12 @@ describe('renderEmail', () => {
       opts,
     );
     expect(subject).not.toMatch(/[\r\n]/);
+    const sent = renderEmail(
+      'quotation.sent',
+      { ...varsFor('quotation.sent'), quotationNumber: 'X\r\nBcc: attacker@example.com' },
+      opts,
+    );
+    expect(sent.subject).not.toMatch(/[\r\n]/);
   });
 
   it('cuts very long values', () => {
@@ -83,15 +165,28 @@ describe('renderEmail', () => {
     expect(text).not.toContain('a'.repeat(300));
   });
 
-  it('falls back to neutral defaults for missing or empty variables', () => {
-    for (const template of EMAIL_TEMPLATES as readonly EmailTemplate[]) {
+  // The path a template falls back to when the caller gives none, stated per template.
+  const DEFAULT_LINKS: [EmailTemplate, string][] = [
+    ...STAFF_TEMPLATES.map((t): [EmailTemplate, string] => [t, `${WORKSPACE}/inbox/`]),
+    ['quotation.accepted', `${WORKSPACE}/quotations/`],
+    ['crm.assigned', `${WORKSPACE}/crm/`],
+    ['crm.follow_up_digest', `${WORKSPACE}/crm/`],
+    ['quotation.sent', `${PORTAL}/quotations/`],
+    ['quotation.expiring', `${PORTAL}/quotations/`],
+    ['quotation.expired', `${PORTAL}/quotations/`],
+    ['portal.invite', `${PORTAL}/sign-in/`],
+  ];
+
+  it.each(DEFAULT_LINKS)(
+    '%s falls back to neutral defaults for missing or empty variables, linking to %s',
+    (template, expectedLink) => {
       const { subject, text, html } = renderEmail(template, { documentNumber: '' }, opts);
       for (const part of [subject, text, html]) {
         expect(part).not.toMatch(/undefined|null|\{\{/);
       }
-      expect(text).toContain(`${opts.workspaceUrl}/inbox/`);
-    }
-  });
+      expect(text).toContain(expectedLink);
+    },
+  );
 
   it('ignores variables the template does not list', () => {
     const { subject, text, html } = renderEmail(
@@ -123,8 +218,33 @@ describe('renderEmail', () => {
     '/memos/..%2f',
     'inbox/1',
     '/admin/users',
-  ])('throws for the link path %s', (linkPath) => {
+    // Real areas, but not this template's: each template has its own list.
+    '/quotations/1',
+    '/crm/1',
+    '/sign-in/',
+  ])('throws for the link path %s on an approval email', (linkPath) => {
     expect(() => renderEmail('approval.pending', { ...sample, linkPath }, opts)).toThrow(
+      EmailTemplateError,
+    );
+  });
+
+  it.each([
+    ['crm.assigned', '/inbox/1'],
+    ['crm.assigned', '/quotations/1'],
+    ['crm.follow_up_digest', '/memos/1'],
+    ['quotation.accepted', '/crm/1'],
+    ['quotation.sent', '/inbox/1'],
+    ['quotation.sent', '/crm/1'],
+    ['quotation.sent', '/quotations/1?x=1'],
+    ['quotation.sent', '/quotations/../admin'],
+    ['quotation.sent', 'https://evil.example.com/quotations/1'],
+    ['quotation.sent', '//evil.example.com/quotations/1'],
+    ['quotation.expired', '/files/abc'],
+    ['portal.invite', '/quotations/1'],
+    ['portal.invite', '/sign-in/?token=abc'],
+    ['portal.invite', 'https://evil.example.com/sign-in/'],
+  ] as const)('throws for %s with the link path %s', (template, linkPath) => {
+    expect(() => renderEmail(template, { ...varsFor(template), linkPath }, opts)).toThrow(
       EmailTemplateError,
     );
   });
@@ -138,10 +258,14 @@ describe('renderEmail', () => {
     'signature',
     'scanSignature',
     'api_secret_key',
+    'inviteToken',
   ])('throws for the forbidden variable key %s', (key) => {
     expect(() => renderEmail('approval.pending', { ...sample, [key]: 'x' }, opts)).toThrow(
       EmailTemplateError,
     );
+    expect(() =>
+      renderEmail('portal.invite', { ...varsFor('portal.invite'), [key]: 'x' }, opts),
+    ).toThrow(EmailTemplateError);
   });
 
   it('throws for an unknown template and a non-http workspace URL', () => {
@@ -152,10 +276,146 @@ describe('renderEmail', () => {
   });
 });
 
-describe('buildLink', () => {
-  it('joins the workspace URL and an allowed path', () => {
+describe('portal links', () => {
+  it.each(PORTAL_TEMPLATES)(
+    '%s links to the portal host and never the workspace host',
+    (template) => {
+      const { text, html } = renderEmail(template, varsFor(template), opts);
+      expect(text).toContain(PORTAL);
+      expect(html).toContain(PORTAL);
+      expect(`${text}${html}`).not.toContain('app.example.com');
+    },
+  );
+
+  it.each(['quotation.accepted', 'crm.assigned', 'crm.follow_up_digest'] as const)(
+    '%s (a staff email) links to the workspace host and never the portal host',
+    (template) => {
+      const { text, html } = renderEmail(template, varsFor(template), opts);
+      expect(`${text}${html}`).not.toContain('portal.example.com');
+      expect(text).toContain(WORKSPACE);
+    },
+  );
+
+  it.each(PORTAL_TEMPLATES)('%s refuses to render when no portal URL is configured', (template) => {
+    expect(() => renderEmail(template, varsFor(template), { workspaceUrl: WORKSPACE })).toThrow(
+      EmailTemplateError,
+    );
+    expect(() =>
+      renderEmail(template, varsFor(template), { workspaceUrl: WORKSPACE, portalUrl: 'ftp://x' }),
+    ).toThrow(EmailTemplateError);
+  });
+
+  it('a portal invite carries a sign-in link and no invite token', () => {
+    const { subject, text, html } = renderEmail('portal.invite', varsFor('portal.invite'), opts);
+    expect(text).toContain(`${PORTAL}/sign-in/`);
+    for (const part of [subject, text, html]) {
+      expect(part).not.toMatch(/token|code=|invite=|\?/i);
+    }
+  });
+});
+
+describe('buildLink and buildPortalLink', () => {
+  it('join the base URL and an allowed path', () => {
     expect(buildLink('https://app.example.com', '/inbox/abc')).toBe(
       'https://app.example.com/inbox/abc',
+    );
+    expect(buildPortalLink('https://portal.example.com/', '/quotations/abc')).toBe(
+      'https://portal.example.com/quotations/abc',
+    );
+  });
+
+  it('keep each base to its own areas', () => {
+    expect(() => buildLink('https://app.example.com', '/sign-in/')).toThrow(EmailTemplateError);
+    expect(() => buildPortalLink('https://portal.example.com', '/inbox/abc')).toThrow(
+      EmailTemplateError,
+    );
+    expect(() => buildPortalLink('', '/quotations/abc')).toThrow(EmailTemplateError);
+  });
+});
+
+describe('no attachment and no foreign host (ADR 0023: email a portal link, never a file)', () => {
+  const hostile: Record<string, string> = Object.fromEntries(
+    [
+      'documentNumber',
+      'documentType',
+      'requesterName',
+      'escalatedFromName',
+      'deciderName',
+      'decision',
+      'reason',
+      'filename',
+      'failedTemplate',
+      'attempts',
+      'quotationNumber',
+      'customerName',
+      'validUntil',
+      'entityType',
+      'entityName',
+      'assignerName',
+      'dueCount',
+      'overdueCount',
+    ].map((key) => [
+      key,
+      'Pay at https://evil.example/pay or www.evil.example or javascript:alert(1) or data:text/html;base64,AAAA or cid:logo',
+    ]),
+  );
+
+  const allowed = [new URL(WORKSPACE).host, new URL(PORTAL).host];
+
+  function urlsIn(part: string): string[] {
+    return part.match(/\b(?:https?:)?\/\/[^\s"'<>)]+/gi) ?? [];
+  }
+
+  it.each(EMAIL_TEMPLATES)(
+    '%s has exactly subject, text and html, and only our own hosts',
+    (template) => {
+      const rendered = renderEmail(
+        template,
+        { ...hostile, linkPath: LINK_PATH_OF[template] },
+        opts,
+      );
+      expect(Object.keys(rendered).sort()).toEqual(['html', 'subject', 'text']);
+      for (const part of [rendered.subject, rendered.text, rendered.html]) {
+        for (const url of urlsIn(part)) {
+          const full = url.startsWith('//') ? `https:${url}` : url;
+          expect(allowed).toContain(new URL(full).host);
+        }
+        expect(part).not.toMatch(/evil\.example/i);
+        expect(part).not.toMatch(/\bcid:|data:text|javascript:/i);
+      }
+      expect(rendered.html).not.toMatch(/<(?:img|iframe|object|embed|link|form|script)\b/i);
+      expect(rendered.html).not.toMatch(/\bsrc\s*=/i);
+    },
+  );
+
+  const good: RenderedEmail = {
+    subject: 'Quotation ready',
+    text: `Open: ${PORTAL}/quotations/1`,
+    html: `<p><a href="${PORTAL}/quotations/1">Open</a></p>`,
+  };
+
+  it('assertSafeEmail accepts a clean email', () => {
+    expect(() => assertSafeEmail(good, allowed)).not.toThrow();
+  });
+
+  it.each([
+    ['a foreign link in the text', { ...good, text: 'Open https://evil.example/x' }],
+    ['a foreign href in the html', { ...good, html: '<a href="https://evil.example/x">x</a>' }],
+    ['a protocol-relative foreign link', { ...good, html: '<a href="//evil.example/x">x</a>' }],
+    ['a look-alike host', { ...good, text: `Open ${PORTAL}.evil.example/x` }],
+    ['an embedded image', { ...good, html: `${good.html}<img src="${PORTAL}/logo.png">` }],
+    ['a cid: attachment reference', { ...good, html: `${good.html}<p>cid:logo</p>` }],
+    [
+      'a data: payload',
+      { ...good, html: `${good.html}<a href="data:text/html;base64,AAAA">x</a>` },
+    ],
+    ['a javascript: link', { ...good, html: '<a href="javascript:alert(1)">x</a>' }],
+    ['an attachments key', { ...good, attachments: [{ filename: 'quote.pdf' }] }],
+    ['an extra key', { ...good, headers: { Bcc: 'x@example.com' } }],
+    ['a line break in the subject', { ...good, subject: 'a\r\nBcc: x@example.com' }],
+  ])('assertSafeEmail rejects %s', (_name, email) => {
+    expect(() => assertSafeEmail(email, allowed)).toThrow(
+      EmailTemplateError,
     );
   });
 });
