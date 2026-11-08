@@ -13,13 +13,21 @@ const m = vi.hoisted(() => ({
   getSession: vi.fn(),
   destroySession: vi.fn(),
   safeReturnTo: vi.fn(),
+  cookies: vi.fn(),
+  cookieSet: vi.fn(),
 }));
 
+/** The request's cookies, as `cookies().get()` sees them. Reset per test. */
+let requestCookies = new Map<string, string>();
+
 vi.mock('@/lib/oidc', () => ({
+  // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
+  LOGIN_COOKIE: '__Host-bos_login',
   beginLogin: m.beginLogin,
   completeLogin: m.completeLogin,
   endSessionUrl: m.endSessionUrl,
 }));
+vi.mock('next/headers', () => ({ cookies: m.cookies }));
 vi.mock('@/lib/api', () => ({ getMe: m.getMe }));
 vi.mock('@/lib/session', () => ({
   createSession: m.createSession,
@@ -45,6 +53,9 @@ const ORIGIN = 'https://app.localhost';
 const ACCESS = 'secret-access-token';
 const REFRESH = 'secret-refresh-token';
 const ID_TOKEN = 'secret-id-token';
+const LOGIN_COOKIE = '__Host-bos_login';
+const BINDING = 'b'.repeat(43);
+const LOGIN_COOKIE_ATTRS = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' };
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -52,8 +63,27 @@ beforeEach(() => {
   m.safeReturnTo.mockImplementation((raw: string | null | undefined) =>
     raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/',
   );
-  m.beginLogin.mockResolvedValue(new URL('https://idp.example/oauth/v2/authorize?state=abc'));
+  m.beginLogin.mockResolvedValue({
+    url: new URL('https://idp.example/oauth/v2/authorize?state=abc'),
+    binding: BINDING,
+  });
+  requestCookies = new Map();
+  m.cookies.mockResolvedValue({
+    get: (name: string) => {
+      const value = requestCookies.get(name);
+      return value === undefined ? undefined : { name, value };
+    },
+    set: m.cookieSet,
+  });
 });
+
+/** Every cookie name the handler wrote to the response, directly or through the session lib. */
+function cookiesWritten(): string[] {
+  return [
+    ...m.cookieSet.mock.calls.map((c) => String(c[0])),
+    ...(m.setSessionCookie.mock.calls.length > 0 ? ['__Host-bos_session'] : []),
+  ];
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -66,6 +96,18 @@ describe('GET /auth/login', () => {
     const res = await call();
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('https://idp.example/oauth/v2/authorize?state=abc');
+  });
+
+  // CR-01: the callback only completes in the browser that holds this cookie.
+  it('sets the __Host-bos_login binding cookie: HttpOnly, Secure, SameSite=Lax, Path=/, 10 minutes', async () => {
+    const res = await call();
+    expect(res.status).toBe(303);
+    expect(m.cookieSet).toHaveBeenCalledTimes(1);
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, BINDING, {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 600,
+    });
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('falls back to / for an unsafe returnTo', async () => {
@@ -128,6 +170,7 @@ describe('GET /auth/callback', () => {
     m.completeLogin.mockResolvedValue({ tokens, sub: 'user-1', returnTo: '/orders' });
     m.getMe.mockResolvedValue({ organizationId: 'org-1', orgKind: 'staff', roles: ['admin'] });
     m.createSession.mockResolvedValue('sid-1');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
 
     const res = await call('?code=c&state=s');
 
@@ -148,12 +191,51 @@ describe('GET /auth/callback', () => {
     m.completeLogin.mockResolvedValue({ tokens, sub: 'u', returnTo: '/' });
     m.getMe.mockResolvedValue({ organizationId: 'o', orgKind: 'staff', roles: [] });
     m.createSession.mockResolvedValue('sid');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
 
     await call('?code=c&state=s');
 
     const url = m.completeLogin.mock.calls[0]?.[0] as URL;
     expect(url.origin + url.pathname).toBe('https://app.localhost/auth/callback');
     expect(url.search).toBe('?code=c&state=s');
+    expect(m.completeLogin.mock.calls[0]?.[1]).toBe(BINDING);
+  });
+
+  it('passes the login cookie to completeLogin, signs in and clears the cookie', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'u', returnTo: '/orders' });
+    m.getMe.mockResolvedValue({ organizationId: 'o', orgKind: 'staff', roles: [] });
+    m.createSession.mockResolvedValue('sid');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    const res = await call('?code=c&state=s');
+
+    expect(m.completeLogin).toHaveBeenCalledWith(expect.any(URL), BINDING);
+    expect(m.setSessionCookie).toHaveBeenCalledWith('sid');
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://app.localhost/orders');
+  });
+
+  it('without the login cookie: 303 to callback_failed, no session cookie, login cookie cleared', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // Same contract as the real completeLogin: no binding, no token exchange, it throws.
+    m.completeLogin.mockImplementation(async (_url: URL, binding: string | undefined) => {
+      if (binding !== BINDING) throw new Error('oidc: login is not bound to this browser');
+      return { tokens, sub: 'attacker', returnTo: '/' };
+    });
+    m.getMe.mockResolvedValue({ organizationId: 'o', orgKind: 'staff', roles: [] });
+    m.createSession.mockResolvedValue('sid');
+
+    const res = await call('?code=attacker-code&state=attacker-state');
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(
+      'https://app.localhost/auth/error?code=callback_failed',
+    );
+    expect(m.completeLogin).toHaveBeenCalledWith(expect.any(URL), undefined);
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(cookiesWritten()).not.toContain('__Host-bos_session');
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
   });
 
   it('redirects an IdP error to idp_error without touching the token exchange', async () => {
@@ -162,6 +244,7 @@ describe('GET /auth/callback', () => {
     expect(res.headers.get('location')).toBe('https://app.localhost/auth/error?code=idp_error');
     expect(m.completeLogin).not.toHaveBeenCalled();
     expect(m.setSessionCookie).not.toHaveBeenCalled();
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
   });
 
   it('redirects to callback_failed and logs only a correlation id, never a token', async () => {
@@ -187,6 +270,7 @@ describe('GET /auth/callback', () => {
     );
     expect(m.createSession).not.toHaveBeenCalled();
     expect(m.setSessionCookie).not.toHaveBeenCalled();
+    expect(m.cookieSet).toHaveBeenCalledWith(LOGIN_COOKIE, '', { ...LOGIN_COOKIE_ATTRS, maxAge: 0 });
 
     const logged = spies.flatMap((s) => s.mock.calls).map((args) => JSON.stringify(args));
     expect(logged).toHaveLength(1);

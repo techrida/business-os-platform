@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import type { Redis } from 'ioredis';
@@ -11,6 +12,8 @@ import {
   completeLogin,
   endSessionUrl,
   getOidcConfig,
+  LOGIN_COOKIE,
+  LoginBindingError,
   OIDC_SCOPES,
   refreshTokens,
 } from './oidc';
@@ -102,8 +105,21 @@ async function pendingLogin(state: string) {
   const raw = await redis.get(`ws:oidc:${state}`);
   return raw === null
     ? null
-    : (JSON.parse(raw) as { codeVerifier: string; nonce: string; returnTo: string });
+    : (JSON.parse(raw) as {
+        codeVerifier: string;
+        nonce: string;
+        returnTo: string;
+        bindingHash: string;
+      });
 }
+
+const sha256Hex = (v: string) => createHash('sha256').update(v).digest('hex');
+
+describe('LOGIN_COOKIE', () => {
+  it('is a __Host- cookie, so only this exact origin can set or read it', () => {
+    expect(LOGIN_COOKIE).toBe('__Host-bos_login');
+  });
+});
 
 describe('OIDC_SCOPES', () => {
   it('requests a refresh token, the project audience and the resource owner', () => {
@@ -141,7 +157,7 @@ describe('getOidcConfig', () => {
 
 describe('beginLogin', () => {
   it('builds a PKCE S256 authorization URL and stores the login state for 10 minutes', async () => {
-    const url = await beginLogin({
+    const { url } = await beginLogin({
       loginHint: 'ada@bos.test',
       prompt: 'login',
       returnTo: '/orders',
@@ -175,15 +191,30 @@ describe('beginLogin', () => {
   });
 
   it('uses a fresh state, nonce and verifier per login', async () => {
-    const a = await beginLogin({ returnTo: '/' });
-    const b = await beginLogin({ returnTo: '/' });
+    const { url: a } = await beginLogin({ returnTo: '/' });
+    const { url: b } = await beginLogin({ returnTo: '/' });
     expect(a.searchParams.get('state')).not.toBe(b.searchParams.get('state'));
     expect(a.searchParams.get('nonce')).not.toBe(b.searchParams.get('nonce'));
     expect(a.searchParams.get('code_challenge')).not.toBe(b.searchParams.get('code_challenge'));
   });
 
+  it('returns a fresh 32-byte browser binding and stores only its SHA-256', async () => {
+    const a = await beginLogin({ returnTo: '/' });
+    const b = await beginLogin({ returnTo: '/' });
+    expect(a.binding).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes, base64url, no padding
+    expect(Buffer.from(a.binding, 'base64url')).toHaveLength(32);
+    expect(a.binding).not.toBe(b.binding);
+
+    const pending = await pendingLogin(a.url.searchParams.get('state') ?? '');
+    expect(pending?.bindingHash).toBe(sha256Hex(a.binding));
+    // Neither the binding nor its hash goes to the IdP, and Valkey never sees the raw value.
+    expect(a.url.href).not.toContain(a.binding);
+    expect(a.url.href).not.toContain(sha256Hex(a.binding));
+    expect(JSON.stringify(pending)).not.toContain(a.binding);
+  });
+
   it('sanitises returnTo again and drops unknown prompts and missing hints', async () => {
-    const url = await beginLogin({
+    const { url } = await beginLogin({
       returnTo: '//evil.example',
       prompt: 'bogus' as 'login',
     });
@@ -195,14 +226,14 @@ describe('beginLogin', () => {
 
 describe('completeLogin', () => {
   async function startLogin(returnTo = '/orders') {
-    const url = await beginLogin({ returnTo });
+    const { url, binding } = await beginLogin({ returnTo });
     const state = url.searchParams.get('state') ?? '';
     const pending = await pendingLogin(state);
-    return { state, pending };
+    return { state, pending, binding };
   }
 
   it('exchanges the code with the stored verifier, state and nonce', async () => {
-    const { state, pending } = await startLogin();
+    const { state, pending, binding } = await startLogin();
     vi.mocked(client.authorizationCodeGrant).mockResolvedValue(
       grantResult({
         access_token: 'at',
@@ -215,6 +246,7 @@ describe('completeLogin', () => {
 
     const result = await completeLogin(
       new URL(`https://app.test/auth/callback?code=abc&state=${state}`),
+      binding,
     );
 
     expect(result).toEqual({
@@ -234,72 +266,133 @@ describe('completeLogin', () => {
   });
 
   it('refuses a callback URL that is not OIDC_REDIRECT_URI, without consuming the state', async () => {
-    const { state } = await startLogin();
+    const { state, binding } = await startLogin();
     for (const bad of [
       `http://0.0.0.0:3000/auth/callback?code=abc&state=${state}`,
       `https://evil.example/auth/callback?code=abc&state=${state}`,
       `https://app.test/auth/other?code=abc&state=${state}`,
     ]) {
-      await expect(completeLogin(new URL(bad))).rejects.toThrow(/OIDC_REDIRECT_URI/);
+      await expect(completeLogin(new URL(bad), binding)).rejects.toThrow(/OIDC_REDIRECT_URI/);
     }
     expect(client.authorizationCodeGrant).not.toHaveBeenCalled();
     expect(await redis.exists(`ws:oidc:${state}`)).toBe(1);
   });
 
   it('is single use: a replayed callback fails without a second code exchange', async () => {
-    const { state } = await startLogin();
+    const { state, binding } = await startLogin();
     vi.mocked(client.authorizationCodeGrant).mockResolvedValue(
       grantResult({ access_token: 'at', expiresIn: 300, sub: 'u' }),
     );
     const callback = new URL(`https://app.test/auth/callback?code=abc&state=${state}`);
 
-    await completeLogin(callback);
+    await completeLogin(callback, binding);
     expect(await redis.exists(`ws:oidc:${state}`)).toBe(0);
-    await expect(completeLogin(callback)).rejects.toThrow(/already used/);
+    await expect(completeLogin(callback, binding)).rejects.toThrow(/already used/);
     expect(client.authorizationCodeGrant).toHaveBeenCalledTimes(1);
   });
 
   it('consumes the state even when the code exchange fails', async () => {
-    const { state } = await startLogin();
+    const { state, binding } = await startLogin();
     vi.mocked(client.authorizationCodeGrant).mockRejectedValue(new Error('invalid_grant'));
     const callback = new URL(`https://app.test/auth/callback?code=abc&state=${state}`);
-    await expect(completeLogin(callback)).rejects.toThrow('invalid_grant');
-    await expect(completeLogin(callback)).rejects.toThrow(/already used/);
+    await expect(completeLogin(callback, binding)).rejects.toThrow('invalid_grant');
+    await expect(completeLogin(callback, binding)).rejects.toThrow(/already used/);
+  });
+
+  // CR-01: without the binding, anyone could send a victim their own callback link and sign
+  // the victim into the attacker's account (login CSRF). PKCE does not bind the browser.
+  it('refuses a callback without the login cookie, before any token request, and burns the state', async () => {
+    const { state, binding } = await startLogin();
+    const callback = new URL(`https://app.test/auth/callback?code=abc&state=${state}`);
+
+    const err = await completeLogin(callback, undefined).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LoginBindingError);
+    expect(client.authorizationCodeGrant).not.toHaveBeenCalled();
+    expect(await redis.exists(`ws:oidc:${state}`)).toBe(0);
+    // The state is gone, so even the right cookie cannot finish this login afterwards.
+    await expect(completeLogin(callback, binding)).rejects.toThrow(/already used/);
+
+    const other = await startLogin();
+    await expect(
+      completeLogin(new URL(`https://app.test/auth/callback?code=abc&state=${other.state}`), ''),
+    ).rejects.toBeInstanceOf(LoginBindingError);
+    expect(client.authorizationCodeGrant).not.toHaveBeenCalled();
+  });
+
+  it('refuses a callback whose login cookie belongs to another login, before any token request', async () => {
+    const victim = await startLogin();
+    // Wrong lengths too: comparing raw input with timingSafeEqual would throw, not refuse.
+    for (const wrong of [victim.binding, 'x'.repeat(43), 'short', 'y'.repeat(500)]) {
+      const { state } = await startLogin();
+      const err = await completeLogin(
+        new URL(`https://app.test/auth/callback?code=abc&state=${state}`),
+        wrong,
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LoginBindingError);
+      expect(await redis.exists(`ws:oidc:${state}`)).toBe(0);
+    }
+    expect(client.authorizationCodeGrant).not.toHaveBeenCalled();
+  });
+
+  it('completes when the login cookie matches the one set at /auth/login', async () => {
+    const { state, binding } = await startLogin();
+    vi.mocked(client.authorizationCodeGrant).mockResolvedValue(
+      grantResult({ access_token: 'at', expiresIn: 300, sub: 'u' }),
+    );
+    await expect(
+      completeLogin(new URL(`https://app.test/auth/callback?code=abc&state=${state}`), binding),
+    ).resolves.toMatchObject({ sub: 'u' });
+    expect(client.authorizationCodeGrant).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a stored login without a binding hash as corrupt', async () => {
+    const state = 'z'.repeat(43);
+    await redis.set(
+      `ws:oidc:${state}`,
+      JSON.stringify({ codeVerifier: 'v'.repeat(43), nonce: 'n', returnTo: '/' }),
+    );
+    await expect(
+      completeLogin(new URL(`https://app.test/auth/callback?code=abc&state=${state}`), 'b'),
+    ).rejects.toThrow(/corrupt/);
+    expect(client.authorizationCodeGrant).not.toHaveBeenCalled();
   });
 
   it('rejects an unknown state', async () => {
     await expect(
-      completeLogin(new URL(`https://app.test/auth/callback?code=abc&state=${'x'.repeat(43)}`)),
+      completeLogin(
+        new URL(`https://app.test/auth/callback?code=abc&state=${'x'.repeat(43)}`),
+        'b',
+      ),
     ).rejects.toThrow(/unknown/);
     expect(client.authorizationCodeGrant).not.toHaveBeenCalled();
   });
 
   it('rejects a missing or malformed state before touching Redis', async () => {
     const getdel = vi.spyOn(redis, 'getdel');
-    await expect(completeLogin(new URL('https://app.test/auth/callback?code=abc'))).rejects.toThrow(
-      /state/,
-    );
     await expect(
-      completeLogin(new URL('https://app.test/auth/callback?code=abc&state=a:b*')),
+      completeLogin(new URL('https://app.test/auth/callback?code=abc'), 'b'),
+    ).rejects.toThrow(/state/);
+    await expect(
+      completeLogin(new URL('https://app.test/auth/callback?code=abc&state=a:b*'), 'b'),
     ).rejects.toThrow(/state/);
     expect(getdel).not.toHaveBeenCalled();
   });
 
   it('fails closed without an ID token subject or a token expiry', async () => {
-    let { state } = await startLogin();
+    let { state, binding } = await startLogin();
     vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
       grantResult({ access_token: 'at', expiresIn: 300 }),
     );
     await expect(
-      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`)),
+      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding),
     ).rejects.toThrow(/subject/);
 
-    ({ state } = await startLogin());
+    ({ state, binding } = await startLogin());
     vi.mocked(client.authorizationCodeGrant).mockResolvedValueOnce(
       grantResult({ access_token: 'at', sub: 'u' }),
     );
     await expect(
-      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`)),
+      completeLogin(new URL(`https://app.test/auth/callback?code=a&state=${state}`), binding),
     ).rejects.toThrow(/expires_in/);
   });
 });
