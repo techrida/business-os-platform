@@ -413,7 +413,7 @@ describe('RecordOutcomeService.record', () => {
           sql`UPDATE app.quotation_acceptances SET evidence_document_ids = '{}' WHERE version_id = ${q.currentVersionId}`,
         ),
       ),
-    ).rejects.toThrow(/append-only/);
+    ).rejects.toMatchObject({ cause: { constraint: 'quotation_acceptances_append_only' } });
   });
 
   it('answers 422 to evidence the policy (signed_quote by default) does not accept, and changes nothing', async () => {
