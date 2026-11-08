@@ -1,3 +1,20 @@
 node_modules/
-.env*
 *.log
+
+# Environment: keep the template, ignore everything else.
+.env*
+!.env.example
+
+# Local dev state (ZITADEL ids, persona passwords, load-test secret, Caddy root CA).
+.dev/
+
+# Build and test output.
+.next/
+dist/
+# The tracked system-map export in the repo root is not build output.
+!/dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+next-env.d.ts
