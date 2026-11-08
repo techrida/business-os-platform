@@ -4,21 +4,22 @@
 // Roles follow infra/postgres/init-dbs.sh (and packages/db/src/db.test.ts): `bos_owner` owns the
 // schema and runs migrations, `bos_app` is the runtime role with data access only. The API under
 // test connects as `bos_app`, so a missing GRANT shows up here instead of in production.
-import { randomUUID } from 'node:crypto';
-
-import { migrate, organizations, tenants } from '@bos/db';
+import { createParty, createTenantWithEntity, migrate } from '@bos/db';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
-import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { GenericContainer, Wait } from 'testcontainers';
 import type { TestProject } from 'vitest/node';
 
-/** One seeded organization, as the tests need to know it. */
+/** One seeded IdP org (a ZITADEL org), as the tests need to know it (ADR 0027). */
 export interface SeededOrg {
-  /** `organizations.id` (equal to `organization_id`). */
+  /** The legal entity the org's users act in: the tenant's default entity (`organizations.id`). */
   organizationId: string;
+  /** `idp_orgs.id`. */
+  idpOrgId: string;
   /** The ZITADEL org id a token for this org carries in `urn:zitadel:iam:user:resourceowner:id`. */
   zitadelOrgId: string;
+  /** The customer party behind the org; null for the staff org. */
+  partyId: string | null;
 }
 
 export interface E2eContext {
@@ -85,43 +86,48 @@ export default async function setup(project: TestProject): Promise<() => Promise
 
   await migrate(urlFor('bos_owner', OWNER_PW, 'bos'));
 
-  // Seed as bos_app: the same role the API uses at runtime.
+  // Seed as bos_app: the same role the API uses at runtime. The @bos/db fixtures open their own
+  // transaction per call and set the audit context (actor, tenant, entity) in it, as withTx does.
   const databaseUrl = urlFor('bos_app', APP_PW, 'bos');
-  const appPool = new Pool({ connectionString: databaseUrl, max: 1 });
-  const db = drizzle({ client: appPool });
-  // The audit trigger (0001) refuses app writes with no actor. The pool has one connection, so a
-  // session-level (is_local = false) seed actor covers every insert below.
-  await appPool.query(
-    "SELECT set_config('bos.actor_kind', 'seed', false), set_config('bos.actor_id', 'seed:e2e', false), set_config('bos.correlation_id', 'e2e-global-setup', false)",
-  );
-  const [tenant] = await db.insert(tenants).values({}).returning({ id: tenants.id });
-  if (tenant === undefined) throw new Error('tenant insert returned no row');
+  const appPool = new Pool({ connectionString: databaseUrl, max: 2 });
+  // ADR 0027: one tenant, its default legal entity and the staff IdP org (the login container of
+  // staff), plus a customer party behind its own customer IdP org. A customer or vendor user has no
+  // entity of its own: it acts in the tenant's default entity, so both orgs share `organizationId`.
+  const tenantEntity = await createTenantWithEntity(appPool, {
+    code: 'E2E',
+    name: 'Techrida (e2e entity)',
+  });
+  const party = await createParty(appPool, { tenantId: tenantEntity.tenantId, kind: 'customer' });
 
-  const seed = async (
-    kind: 'staff' | 'customer',
-    name: string,
-    zitadelOrgId: string,
-  ): Promise<SeededOrg> => {
-    const id = randomUUID();
-    await db.insert(organizations).values({
-      id,
-      tenantId: tenant.id,
-      organizationId: id,
-      kind,
-      name,
-      zitadelOrgId,
-    });
-    return { organizationId: id, zitadelOrgId };
+  // The fixtures mint a random ZITADEL org id per IdP org. The test issuer must put the same id in
+  // `urn:zitadel:iam:user:resourceowner:id`, so read back what was stored instead of assuming it.
+  const { rows: idpRows } = await appPool.query<{ id: string; zitadel_org_id: string }>(
+    'SELECT id, zitadel_org_id FROM app.idp_orgs WHERE id = ANY($1::uuid[])',
+    [[tenantEntity.idpOrgId, party.idpOrgId]],
+  );
+  const zitadelOrgOf = (idpOrgId: string): string => {
+    const found = idpRows.find((r) => r.id === idpOrgId)?.zitadel_org_id;
+    if (found === undefined) throw new Error(`idp_orgs row ${idpOrgId} was not seeded`);
+    return found;
   };
-  // ZITADEL ids are long numeric strings; use the same shape so nothing depends on a UUID format.
-  const staff = await seed('staff', 'Techrida (e2e staff)', '310000000000000001');
-  const customer = await seed('customer', 'Acme (e2e customer)', '310000000000000002');
+  const staff: SeededOrg = {
+    organizationId: tenantEntity.organizationId,
+    idpOrgId: tenantEntity.idpOrgId,
+    zitadelOrgId: zitadelOrgOf(tenantEntity.idpOrgId),
+    partyId: null,
+  };
+  const customer: SeededOrg = {
+    organizationId: tenantEntity.organizationId,
+    idpOrgId: party.idpOrgId,
+    zitadelOrgId: zitadelOrgOf(party.idpOrgId),
+    partyId: party.partyId,
+  };
   await appPool.end();
 
   project.provide('e2e', {
     databaseUrl,
     valkeyUrl: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}`,
-    tenantId: tenant.id,
+    tenantId: tenantEntity.tenantId,
     staff,
     customer,
     mailpitSmtpUrl: `smtp://${mailpit.getHost()}:${mailpit.getMappedPort(1025)}`,
