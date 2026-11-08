@@ -1,0 +1,61 @@
+// HTTP routes of the leads. Thin on purpose: parsing here, every rule in LeadsService. Each route names its
+// permission with @Can (route level); the service then checks the record itself (entity, own scope), so a
+// salesperson cannot read a colleague's lead by guessing its id. POST /v1/leads/:id/convert is a later unit.
+import { CreateLeadBodySchema, LeadStageChangeBodySchema, type LeadDto } from '@bos/contracts';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+
+import { Can } from '../../platform/authz/decorators';
+import { parseOr400 } from '../approvals/approvals.controller';
+import { requireIdempotencyKey } from '../customers/customers.types';
+import { LeadsService } from './leads.service';
+import { ListLeadsQuerySchema } from './leads.types';
+
+@Controller('v1/leads')
+export class LeadsController {
+  constructor(private readonly leads: LeadsService) {}
+
+  /** 200 with a bare array of LeadDto, newest first. */
+  @Get()
+  @Can('crm.lead.read')
+  list(@Query() query: unknown): Promise<LeadDto[]> {
+    return this.leads.list(parseOr400(ListLeadsQuerySchema, query));
+  }
+
+  /** 200 with the LeadDto. 404 for a record of another entity or outside the caller's scope. */
+  @Get(':id')
+  @Can('crm.lead.read')
+  get(@Param('id', ParseUUIDPipe) id: string): Promise<LeadDto> {
+    return this.leads.get(id);
+  }
+
+  /** 201 with the new LeadDto, numbered from the LD series. An Idempotency-Key, when sent, makes a retry safe. */
+  @Post()
+  @Can('crm.lead.write')
+  create(
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: unknown,
+  ): Promise<LeadDto> {
+    const key = idempotencyKey === undefined ? undefined : requireIdempotencyKey(idempotencyKey);
+    return this.leads.create(parseOr400(CreateLeadBodySchema, body), key);
+  }
+
+  /**
+   * 200 with the updated LeadDto. 400 for converted or a missing reason and note, 409 for a stale version or a
+   * move the stage machine does not have.
+   */
+  @Patch(':id/stage')
+  @Can('crm.lead.write')
+  changeStage(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<LeadDto> {
+    return this.leads.changeStage(id, parseOr400(LeadStageChangeBodySchema, body));
+  }
+}
