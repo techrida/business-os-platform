@@ -238,8 +238,19 @@ describe('P1 exit scenario: two-step approval of a test memo', () => {
     expect(plan.steps).toHaveLength(2);
     expect(plan.steps.map((st) => st.roleKey)).toEqual(['accountant', 'finance']);
     for (const st of plan.steps) expect(st.reason.length).toBeGreaterThan(0);
-    expect(plan.steps[0]?.eligibleUserIds).toEqual([p('accountant').userId]);
-    expect(plan.steps[1]?.eligibleUserIds).toEqual([p('finance').userId]);
+    // Sales cannot act on approvals, so the preview names no approvers to it (review R22).
+    for (const st of plan.steps) expect(st.eligibleUserIds).toEqual([]);
+    // Someone who may act sees who is eligible. Preview treats the caller as the requester, so it is
+    // asked by the founder: an approver on this route would be excluded from their own step by SoD.
+    const asFounder = await t
+      .http()
+      .post('/v1/approvals/preview')
+      .set('authorization', await auth('founder'))
+      .send({ documentType: 'test_memo', facts: { amountNpr: s.amountNpr } });
+    expect(asFounder.status, show(asFounder)).toBe(200);
+    const approverPlan = RoutePlanSchema.parse(asFounder.body);
+    expect(approverPlan.steps[0]?.eligibleUserIds).toEqual([p('accountant').userId]);
+    expect(approverPlan.steps[1]?.eligibleUserIds).toEqual([p('finance').userId]);
 
     const submit = await t
       .http()
