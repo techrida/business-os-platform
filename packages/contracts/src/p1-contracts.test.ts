@@ -204,7 +204,8 @@ describe('DEFAULT_ROLE_PERMISSIONS', () => {
 
   it('matches the plan for the staff roles', () => {
     const { sales, finance, accountant, management } = DEFAULT_ROLE_PERMISSIONS;
-    expect(sales).toEqual({
+    // The P1 grants; the P2 CRM and quotation grants are checked in p2-contracts.test.ts.
+    expect(sales).toMatchObject({
       'memo.create': 'own',
       'memo.update': 'own',
       'memo.read': 'own',
@@ -212,6 +213,7 @@ describe('DEFAULT_ROLE_PERMISSIONS', () => {
       'documents.read': 'own',
       'approvals.requests.read': 'own',
     });
+    expect(sales['approvals.requests.act']).toBeUndefined();
     expect(finance['audit.read']).toBe('all');
     expect(accountant['audit.read']).toBeUndefined();
     expect(management['audit.read']).toBeUndefined();
