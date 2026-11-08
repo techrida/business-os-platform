@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ENDPOINTS,
+  FORCE_MFA_POLICY,
   ZitadelClient,
   ZitadelError,
   createFetchTransport,
@@ -15,23 +16,27 @@ interface Call {
   headers: Record<string, string> | undefined;
 }
 
+// An answer is a plain value, an Error (rejects), or a function of the call (for answers that
+// depend on the request, such as "reject the first condition shape").
 function recording(answers: Record<string, unknown>): { transport: Transport; calls: Call[] } {
   const calls: Call[] = [];
+  const answer = (call: Call): Promise<unknown> => {
+    calls.push(call);
+    try {
+      const raw = answers[call.path];
+      const value = typeof raw === 'function' ? (raw as (c: Call) => unknown)(call) : raw;
+      if (value instanceof Error) return Promise.reject(value);
+      return Promise.resolve(value ?? {});
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  };
   return {
     calls,
     transport: {
-      post(path, body, headers) {
-        calls.push({ method: 'POST', path, body, headers });
-        return Promise.resolve(answers[path] ?? {});
-      },
-      get(path, headers) {
-        calls.push({ method: 'GET', path, body: undefined, headers });
-        return Promise.resolve(answers[path] ?? {});
-      },
-      put(path, body, headers) {
-        calls.push({ method: 'PUT', path, body, headers });
-        return Promise.resolve(answers[path] ?? {});
-      },
+      post: (path, body, headers) => answer({ method: 'POST', path, body, headers }),
+      get: (path, headers) => answer({ method: 'GET', path, body: undefined, headers }),
+      put: (path, body, headers) => answer({ method: 'PUT', path, body, headers }),
     },
   };
 }
@@ -222,6 +227,377 @@ describe('ensureOrgLoginPolicyNoRegister (management v1 login policy, CR-02)', (
   });
 });
 
+const zitadelError = (path: string, status: number, detail: string): ZitadelError =>
+  new ZitadelError(path, status, detail);
+
+describe('ZitadelClient P1 additions: TOTP', () => {
+  it('registerTotp POSTs to the user v2 totp path and returns uri and secret', async () => {
+    const path = ENDPOINTS.registerTotp('u1');
+    const { transport, calls } = recording({
+      [path]: { uri: 'otpauth://totp/x?secret=ABC', secret: 'ABC' },
+    });
+    const reg = await client(transport).registerTotp('u1');
+    expect(reg).toEqual({ uri: 'otpauth://totp/x?secret=ABC', secret: 'ABC' });
+    expect(calls).toEqual([
+      { method: 'POST', path: '/v2/users/u1/totp', body: {}, headers: undefined },
+    ]);
+  });
+
+  it('registerTotp rejects an answer without a secret', async () => {
+    const { transport } = recording({ [ENDPOINTS.registerTotp('u1')]: { uri: 'x' } });
+    await expect(client(transport).registerTotp('u1')).rejects.toThrow(/RegisterTOTP/);
+  });
+
+  it('verifyTotpRegistration POSTs the code', async () => {
+    const { transport, calls } = recording({});
+    await client(transport).verifyTotpRegistration('u1', '287082');
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: '/v2/users/u1/totp/verify',
+        body: { code: '287082' },
+        headers: undefined,
+      },
+    ]);
+  });
+
+  it('listAuthMethods GETs the method types and defaults to none', async () => {
+    const path = ENDPOINTS.listAuthMethods('u1');
+    const { transport, calls } = recording({
+      [path]: {
+        authMethodTypes: ['AUTHENTICATION_METHOD_TYPE_PASSWORD', 'AUTHENTICATION_METHOD_TYPE_TOTP'],
+      },
+    });
+    const methods = await client(transport).listAuthMethods('u1');
+    expect(methods).toContain('AUTHENTICATION_METHOD_TYPE_TOTP');
+    expect(calls).toEqual([
+      {
+        method: 'GET',
+        path: '/v2/users/u1/authentication_methods',
+        body: undefined,
+        headers: undefined,
+      },
+    ]);
+    // Protobuf JSON omits empty arrays.
+    expect(await client(recording({}).transport).listAuthMethods('u1')).toEqual([]);
+  });
+
+  it('encodes user ids in paths', async () => {
+    const { transport, calls } = recording({});
+    await client(transport).verifyTotpRegistration('a/b', '1');
+    expect(calls[0]?.path).toBe('/v2/users/a%2Fb/totp/verify');
+  });
+});
+
+describe('ZitadelClient P1 additions: login policy and second factors', () => {
+  const policy = {
+    allowUsernamePassword: true,
+    passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+    hidePasswordReset: true,
+    defaultRedirectUri: 'https://app.localhost/',
+    isDefault: true,
+    details: { sequence: '4' },
+  };
+
+  it('getLoginPolicy GETs the policy object', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.loginPolicy]: { policy } });
+    expect(await client(transport).getLoginPolicy()).toEqual(policy);
+    expect(calls).toEqual([
+      { method: 'GET', path: '/admin/v1/policies/login', body: undefined, headers: undefined },
+    ]);
+  });
+
+  it('updateLoginPolicy PUTs the existing fields plus the MFA patch, without read-only fields', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.loginPolicy]: { policy } });
+    const changed = await client(transport).updateLoginPolicy(FORCE_MFA_POLICY);
+    expect(changed).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+    const put = calls[1];
+    expect(put?.path).toBe('/admin/v1/policies/login');
+    expect(put?.body).toEqual({
+      allowUsernamePassword: true,
+      passwordlessType: 'PASSWORDLESS_TYPE_ALLOWED',
+      hidePasswordReset: true,
+      defaultRedirectUri: 'https://app.localhost/',
+      forceMfa: true,
+      forceMfaLocalOnly: false,
+      mfaInitSkipLifetime: '0s',
+    });
+  });
+
+  it('updateLoginPolicy does not write when the policy already matches (missing false/0s count as equal)', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.loginPolicy]: { policy: { ...policy, forceMfa: true } },
+    });
+    expect(await client(transport).updateLoginPolicy(FORCE_MFA_POLICY)).toBe(false);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+
+  it('updateLoginPolicy treats a "not changed" answer as success but rethrows other errors', async () => {
+    const get = { policy };
+    const notChanged = recording({
+      [ENDPOINTS.loginPolicy]: (call: Call) =>
+        call.method === 'GET'
+          ? get
+          : zitadelError(call.path, 400, 'COMMAND-3Nf2t Policy not changed'),
+    });
+    expect(await client(notChanged.transport).updateLoginPolicy(FORCE_MFA_POLICY)).toBe(false);
+
+    const denied = recording({
+      [ENDPOINTS.loginPolicy]: (call: Call) =>
+        call.method === 'GET' ? get : zitadelError(call.path, 403, 'permission_denied'),
+    });
+    await expect(client(denied.transport).updateLoginPolicy(FORCE_MFA_POLICY)).rejects.toThrow(
+      /403/,
+    );
+  });
+
+  it('addSecondFactor POSTs the type and reports true', async () => {
+    const { transport, calls } = recording({});
+    expect(await client(transport).addSecondFactor('SECOND_FACTOR_TYPE_OTP')).toBe(true);
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: '/admin/v1/policies/login/second_factors',
+        body: { type: 'SECOND_FACTOR_TYPE_OTP' },
+        headers: undefined,
+      },
+    ]);
+  });
+
+  it('addSecondFactor counts "already exists" (409 or message) as success and rethrows others', async () => {
+    const path = ENDPOINTS.loginSecondFactors;
+    for (const err of [
+      zitadelError(path, 409, 'already_exists'),
+      zitadelError(path, 400, 'COMMAND-Eg2ds MFA type already exists'),
+    ]) {
+      const { transport } = recording({ [path]: err });
+      expect(await client(transport).addSecondFactor('SECOND_FACTOR_TYPE_OTP')).toBe(false);
+    }
+    const { transport } = recording({ [path]: zitadelError(path, 500, 'boom') });
+    await expect(client(transport).addSecondFactor('SECOND_FACTOR_TYPE_OTP')).rejects.toThrow(
+      /500/,
+    );
+  });
+});
+
+describe('ZitadelClient P1 additions: OIDC settings', () => {
+  const settings = {
+    accessTokenLifetime: '43200s',
+    idTokenLifetime: '43200s',
+    refreshTokenIdleExpiration: '1296000s',
+    refreshTokenExpiration: '7776000s',
+    details: { sequence: '2' },
+  };
+
+  it('getOidcSettings GETs the settings object', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.oidcSettings]: { settings } });
+    expect(await client(transport).getOidcSettings()).toEqual(settings);
+    expect(calls).toEqual([
+      { method: 'GET', path: '/admin/v1/settings/oidc', body: undefined, headers: undefined },
+    ]);
+  });
+
+  it('updateOidcSettings PUTs the new access-token lifetime and keeps the other lifetimes', async () => {
+    const { transport, calls } = recording({ [ENDPOINTS.oidcSettings]: { settings } });
+    expect(await client(transport).updateOidcSettings({ accessTokenLifetime: '900s' })).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+    expect(calls[1]?.path).toBe('/admin/v1/settings/oidc');
+    expect(calls[1]?.body).toEqual({
+      accessTokenLifetime: '900s',
+      idTokenLifetime: '43200s',
+      refreshTokenIdleExpiration: '1296000s',
+      refreshTokenExpiration: '7776000s',
+    });
+  });
+
+  it('updateOidcSettings skips the write when the lifetime is already 900s', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.oidcSettings]: { settings: { ...settings, accessTokenLifetime: '900s' } },
+    });
+    expect(await client(transport).updateOidcSettings({ accessTokenLifetime: '900s' })).toBe(false);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+});
+
+describe('ZitadelClient P1 additions: personal access tokens', () => {
+  it('addPat POSTs the expiry and returns tokenId and token', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.pats('u1')]: { tokenId: 't1', token: 'PAT-VALUE' },
+    });
+    const pat = await client(transport).addPat('u1', '2030-01-01T00:00:00Z');
+    expect(pat).toEqual({ tokenId: 't1', token: 'PAT-VALUE' });
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: '/management/v1/users/u1/pats',
+        body: { expirationDate: '2030-01-01T00:00:00Z' },
+        headers: undefined,
+      },
+    ]);
+  });
+
+  it('addPat and listPats send the org header only when an org id is given', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.pats('u1')]: { tokenId: 't1', token: 'x' },
+      [ENDPOINTS.searchPats('u1')]: {
+        result: [{ id: 't1', expirationDate: '2030-01-01T00:00:00Z' }, { id: 't2' }],
+      },
+    });
+    const c = client(transport);
+    await c.addPat('u1', '2030-01-01T00:00:00Z', 'org1');
+    const pats = await c.listPats('u1', 'org1');
+    expect(calls[0]?.headers).toEqual({ 'x-zitadel-orgid': 'org1' });
+    expect(calls[1]).toEqual({
+      method: 'POST',
+      path: '/management/v1/users/u1/pats/_search',
+      body: {},
+      headers: { 'x-zitadel-orgid': 'org1' },
+    });
+    expect(pats).toEqual([{ id: 't1', expirationDate: '2030-01-01T00:00:00Z' }, { id: 't2' }]);
+    await c.listPats('u1');
+    expect(calls[2]?.headers).toBeUndefined();
+  });
+
+  it('listPats returns an empty list when ZITADEL omits the result', async () => {
+    expect(await client(recording({}).transport).listPats('u1')).toEqual([]);
+  });
+});
+
+describe('ZitadelClient P1 additions: Actions v2', () => {
+  const targetSpec = {
+    name: 'bos-user-sync',
+    endpoint: 'http://host.docker.internal:3001/v1/hooks/zitadel',
+    timeout: '10s',
+    restAsync: {},
+  } as const;
+
+  it('createTarget POSTs the spec and returns id and signingKey', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.targets]: { id: 'tg1', creationDate: '2026-11-08T00:00:00Z', signingKey: 'KEY' },
+    });
+    expect(await client(transport).createTarget(targetSpec)).toEqual({
+      id: 'tg1',
+      signingKey: 'KEY',
+    });
+    expect(calls).toEqual([
+      { method: 'POST', path: '/v2/actions/targets', body: targetSpec, headers: undefined },
+    ]);
+  });
+
+  it('createTarget rejects an answer without a signing key', async () => {
+    const { transport } = recording({ [ENDPOINTS.targets]: { id: 'tg1' } });
+    await expect(client(transport).createTarget(targetSpec)).rejects.toThrow(/CreateTarget/);
+  });
+
+  it('listTargets POSTs an empty search and returns id, name and endpoint', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.searchTargets]: {
+        targets: [{ id: 'tg1', name: 'bos-user-sync', endpoint: 'http://x', timeout: '10s' }],
+      },
+    });
+    expect(await client(transport).listTargets()).toEqual([
+      { id: 'tg1', name: 'bos-user-sync', endpoint: 'http://x' },
+    ]);
+    expect(calls).toEqual([
+      { method: 'POST', path: '/v2/actions/targets/search', body: {}, headers: undefined },
+    ]);
+    expect(await client(recording({}).transport).listTargets()).toEqual([]);
+  });
+
+  it('setExecution PUTs the condition and target ids', async () => {
+    const { transport, calls } = recording({});
+    await client(transport).setExecution({ event: { group: 'user' } }, ['tg1']);
+    expect(calls).toEqual([
+      {
+        method: 'PUT',
+        path: '/v2/actions/executions',
+        body: { condition: { event: { group: 'user' } }, targets: ['tg1'] },
+        headers: undefined,
+      },
+    ]);
+  });
+
+  it('setUserEventExecution stops at the first accepted shape', async () => {
+    const { transport, calls } = recording({});
+    expect(await client(transport).setUserEventExecution('tg1')).toEqual({
+      event: { group: 'user' },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('setUserEventExecution falls back in order: group -> event -> all', async () => {
+    const reject = (call: Call): unknown => {
+      const condition = (call.body as { condition: { event: Record<string, unknown> } }).condition;
+      return 'group' in condition.event
+        ? zitadelError(call.path, 400, 'invalid_argument unknown condition')
+        : {};
+    };
+    const second = recording({ [ENDPOINTS.executions]: reject });
+    expect(await client(second.transport).setUserEventExecution('tg1')).toEqual({
+      event: { event: 'user.human.added' },
+    });
+    expect(second.calls.map((c) => (c.body as { condition: unknown }).condition)).toEqual([
+      { event: { group: 'user' } },
+      { event: { event: 'user.human.added' } },
+    ]);
+    expect(second.calls.every((c) => (c.body as { targets: string[] }).targets[0] === 'tg1')).toBe(
+      true,
+    );
+
+    const third = recording({
+      [ENDPOINTS.executions]: (call: Call) => {
+        const event = (call.body as { condition: { event: Record<string, unknown> } }).condition
+          .event;
+        return 'all' in event ? {} : zitadelError(call.path, 400, 'invalid_argument');
+      },
+    });
+    expect(await client(third.transport).setUserEventExecution('tg1')).toEqual({
+      event: { all: true },
+    });
+    expect(third.calls).toHaveLength(3);
+  });
+
+  it('setUserEventExecution throws a summary when every shape is rejected', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.executions]: (call: Call) => zitadelError(call.path, 400, 'invalid_argument'),
+    });
+    await expect(client(transport).setUserEventExecution('tg1')).rejects.toThrow(
+      /rejected every user-event condition shape/,
+    );
+    expect(calls).toHaveLength(3);
+  });
+
+  it('setUserEventExecution does not try other shapes after a 403', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.executions]: (call: Call) => zitadelError(call.path, 403, 'permission_denied'),
+    });
+    await expect(client(transport).setUserEventExecution('tg1')).rejects.toThrow(/403/);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe('ZitadelClient P1 additions: deactivateUser', () => {
+  it('POSTs to the deactivate path and reports true', async () => {
+    const { transport, calls } = recording({});
+    expect(await client(transport).deactivateUser('u1')).toBe(true);
+    expect(calls).toEqual([
+      { method: 'POST', path: '/v2/users/u1/deactivate', body: {}, headers: undefined },
+    ]);
+  });
+
+  it('treats "already deactivated" as success and rethrows other errors', async () => {
+    const path = ENDPOINTS.deactivateUser('u1');
+    const already = recording({
+      [path]: zitadelError(path, 400, 'FAILED_PRECONDITION User already deactivated'),
+    });
+    expect(await client(already.transport).deactivateUser('u1')).toBe(false);
+
+    const missing = recording({ [path]: zitadelError(path, 404, 'not_found User not found') });
+    await expect(client(missing.transport).deactivateUser('u1')).rejects.toThrow(/404/);
+  });
+});
+
 describe('createFetchTransport', () => {
   it('uses GET without a body and PUT with a JSON body for the REST endpoints', async () => {
     const seen: { method: string | undefined; body: unknown; org: string | undefined }[] = [];
@@ -235,6 +611,25 @@ describe('createFetchTransport', () => {
     await transport.put('/b', { x: 1 });
     expect(seen[0]).toEqual({ method: 'GET', body: undefined, org: 'o1' });
     expect(seen[1]).toMatchObject({ method: 'PUT', body: '{"x":1}' });
+  });
+
+  it('sends GET without a body and PUT with a JSON body, both with the bearer token', async () => {
+    const seen: { method: string | undefined; body: unknown; auth: string | undefined }[] = [];
+    const fetchImpl: typeof fetch = (_input, init) => {
+      seen.push({
+        method: init?.method,
+        body: init?.body,
+        auth: (init?.headers as Record<string, string> | undefined)?.['authorization'],
+      });
+      return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+    };
+    const transport = createFetchTransport('https://auth.localhost', 'PAT', fetchImpl);
+    expect(await transport.get('/admin/v1/policies/login')).toEqual({ ok: true });
+    await transport.put('/admin/v1/policies/login', { forceMfa: true }, { 'x-zitadel-orgid': 'o' });
+    expect(seen).toEqual([
+      { method: 'GET', body: undefined, auth: 'Bearer PAT' },
+      { method: 'PUT', body: '{"forceMfa":true}', auth: 'Bearer PAT' },
+    ]);
   });
 
   it('sends Connect JSON with the bearer token and keeps the token out of errors', async () => {
