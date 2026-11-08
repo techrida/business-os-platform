@@ -124,8 +124,16 @@ export function customerRef(row: CustomerRow, p: Principal): ResourceRef {
 
 /** The pg error behind `error`, which drizzle may wrap as `cause`. */
 function pgError(error: unknown): { code?: string; constraint?: string } | undefined {
-  for (let e: unknown = error, depth = 0; typeof e === 'object' && e !== null && depth < 3; depth++) {
-    const { code, constraint, cause } = e as { code?: unknown; constraint?: unknown; cause?: unknown };
+  for (
+    let e: unknown = error, depth = 0;
+    typeof e === 'object' && e !== null && depth < 3;
+    depth++
+  ) {
+    const { code, constraint, cause } = e as {
+      code?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
     if (typeof code === 'string' && code.length === 5) {
       return { code, ...(typeof constraint === 'string' ? { constraint } : {}) };
     }
@@ -146,7 +154,9 @@ const duplicatePan = (pan: string, existing?: { id: string; number: string }) =>
       existing === undefined
         ? `A customer with PAN/VAT number ${pan} already exists`
         : `A customer with PAN/VAT number ${pan} already exists (${existing.number})`,
-    ...(existing === undefined ? {} : { details: { customerId: existing.id, number: existing.number } }),
+    ...(existing === undefined
+      ? {}
+      : { details: { customerId: existing.id, number: existing.number } }),
   });
 
 @Injectable()
@@ -337,7 +347,11 @@ export class CustomersService {
           eq(customerContacts.customerId, customerId),
         ),
       )
-      .orderBy(sql`${customerContacts.isPrimary} DESC`, asc(customerContacts.fullName), asc(customerContacts.id));
+      .orderBy(
+        sql`${customerContacts.isPrimary} DESC`,
+        asc(customerContacts.fullName),
+        asc(customerContacts.id),
+      );
     return rows.map(toContactDto);
   }
 
