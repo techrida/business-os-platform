@@ -3,10 +3,10 @@
 // is not a customer with a party (403) and answers 404 for anything that is not the caller's and customer-visible.
 // The `:id` is a quotation version id (the `id` of CustomerQuotationView).
 //
-// `GET /v1/portal/quotations/:id/document` is deliberately not routed yet: DocumentsService.issueLink checks
-// `documents.read`, which `customer_user` does not hold, so it would refuse every customer. Until the documents
-// module can issue a link for an owner the calling module has authorized, the route answers Nest's 404.
-import type { CustomerQuotationView, PortalQuotationListItem } from '@bos/contracts';
+// `GET /v1/portal/quotations/:id/document` answers a short-lived signed link to the frozen PDF (the portal's
+// `getPortalQuotationLink`). It does not use DocumentsService.issueLink, which checks `documents.read` (a customer
+// does not hold it): PortalService authorizes the caller and the version, then asks for a link by owner.
+import type { CustomerQuotationView, PortalQuotationListItem, SignedLinkDto } from '@bos/contracts';
 import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 
 import { Can } from '../../platform/authz/decorators';
@@ -28,5 +28,12 @@ export class PortalController {
   @Can('portal.quotation.read')
   get(@Param('id', ParseUUIDPipe) id: string): Promise<CustomerQuotationView> {
     return this.portal.get(id);
+  }
+
+  /** 200 with a 60 s single-use link to the PDF; 404 unless the version is the caller's, visible and scanned clean. */
+  @Get(':id/document')
+  @Can('portal.quotation.read')
+  document(@Param('id', ParseUUIDPipe) id: string): Promise<SignedLinkDto> {
+    return this.portal.quotationPdfLink(id);
   }
 }

@@ -39,8 +39,9 @@ async function setup(caller: Principal) {
   const store = {
     listVersions: vi.fn().mockResolvedValue([]),
     loadView: vi.fn().mockResolvedValue(undefined),
+    loadDocumentHead: vi.fn().mockResolvedValue(undefined),
   };
-  const documents = { listForOwner: vi.fn() };
+  const documents = { listForOwner: vi.fn(), issueLinkForOwner: vi.fn() };
   const settings = { get: vi.fn() };
   const moduleRef = await Test.createTestingModule({
     controllers: [PortalController],
@@ -62,15 +63,21 @@ describe('PortalController', () => {
   it('marks every route with portal.quotation.read, and the id with a UUID pipe', async () => {
     const { moduleRef } = await setup(CUSTOMER);
     expect(findUnmarkedRoutes(moduleRef)).toEqual([]);
-    for (const handler of [PortalController.prototype.list, PortalController.prototype.get]) {
+    for (const handler of [
+      PortalController.prototype.list,
+      PortalController.prototype.get,
+      PortalController.prototype.document,
+    ]) {
       expect(Reflect.getMetadata(CAN_KEY, handler)).toBe('portal.quotation.read');
     }
-    const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, PortalController, 'get') as Record<
-      string,
-      { data: string; pipes: unknown[] }
-    >;
-    const id = Object.values(args).find((a) => a.data === 'id');
-    expect(id?.pipes).toContain(ParseUUIDPipe);
+    for (const route of ['get', 'document']) {
+      const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, PortalController, route) as Record<
+        string,
+        { data: string; pipes: unknown[] }
+      >;
+      const id = Object.values(args).find((a) => a.data === 'id');
+      expect(id?.pipes, route).toContain(ParseUUIDPipe);
+    }
     await moduleRef.close();
   });
 
@@ -78,9 +85,12 @@ describe('PortalController', () => {
     const { moduleRef, controller, store, documents, settings } = await setup(FOUNDER);
     await expect(controller.list()).rejects.toBeInstanceOf(ForbiddenException);
     await expect(controller.get(ID)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.document(ID)).rejects.toBeInstanceOf(ForbiddenException);
     expect(store.listVersions).not.toHaveBeenCalled();
     expect(store.loadView).not.toHaveBeenCalled();
+    expect(store.loadDocumentHead).not.toHaveBeenCalled();
     expect(documents.listForOwner).not.toHaveBeenCalled();
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
     expect(settings.get).not.toHaveBeenCalled();
     await moduleRef.close();
   });
@@ -98,6 +108,8 @@ describe('PortalController', () => {
     expect(store.listVersions).toHaveBeenCalledWith(CUSTOMER);
     await expect(controller.get(ID)).rejects.toMatchObject({ status: 404 });
     expect(store.loadView).toHaveBeenCalledWith(CUSTOMER, ID);
+    await expect(controller.document(ID)).rejects.toMatchObject({ status: 404 });
+    expect(store.loadDocumentHead).toHaveBeenCalledWith(CUSTOMER, ID);
     await moduleRef.close();
   });
 });

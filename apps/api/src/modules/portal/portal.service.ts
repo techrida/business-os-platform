@@ -9,6 +9,7 @@
 // still a draft never shows; the version sent before it stays listed (as `superseded`).
 import {
   isCustomerVisibleStatus,
+  type SignedLinkDto,
   PortalQuotationListItemSchema,
   type CustomerQuotationView,
   type PortalQuotationListItem,
@@ -116,6 +117,33 @@ export class PortalService {
       if (error instanceof QuotationNotCustomerVisibleError) throw notFound();
       throw error;
     }
+  }
+
+  /**
+   * A short-lived signed link to the frozen PDF of one version. 404 unless the version is the caller's, customer-visible
+   * and its rendered document scanned clean; the document module then re-checks the owner and the newest version's scan
+   * status itself. DocumentsService.issueLinkForOwner asks no permission (customers hold no `documents.read`, which
+   * would also show them draft versions), so this method is the whole authorization: caller, scope, visibility, scan.
+   * The link is scoped by the quotation's own tenant and entity (the selling entity), read from its row.
+   */
+  async quotationPdfLink(versionId: string): Promise<SignedLinkDto> {
+    const p = this.caller.current();
+    assertCustomerCaller(p);
+    const head = await this.store.loadDocumentHead(p, versionId);
+    if (head === undefined || !isPortalVisible(head)) throw notFound();
+    const scope: TxScope = { tenantId: head.tenantId, organizationId: head.organizationId };
+    const { renderedDocumentId } = head;
+    if (
+      renderedDocumentId === null ||
+      !(await this.renderedScanClean(scope, { id: versionId, ...head }))
+    ) {
+      throw notFound();
+    }
+    return this.documents.issueLinkForOwner(
+      scope,
+      { ownerType: QUOTATION_OWNER_TYPE, ownerId: versionId },
+      renderedDocumentId,
+    );
   }
 
   /**
