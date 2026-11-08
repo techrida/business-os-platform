@@ -21,6 +21,22 @@ export const PERMISSIONS = [
   'memo.create',
   'memo.read',
   'memo.update',
+  // P2 sales: CRM, customers, quotations and customer verification (KYB).
+  'crm.lead.read',
+  'crm.lead.write',
+  'crm.opportunity.read',
+  'crm.opportunity.write',
+  'customer.read',
+  'customer.write',
+  'customer.merge',
+  'quotation.read',
+  'quotation.draft',
+  'quotation.submit',
+  'quotation.send',
+  'quotation.record_acceptance',
+  'quotation.revise',
+  'verification.read',
+  'verification.review',
 ] as const;
 export const PermissionSchema = z.enum(PERMISSIONS);
 export type Permission = z.infer<typeof PermissionSchema>;
@@ -38,6 +54,10 @@ export const ROLE_KEYS = [
   'sales',
   'customer_user',
   'vendor_user',
+  'pmo',
+  'operations_head',
+  'procurement',
+  'receiver',
 ] as const;
 export const RoleKeySchema = z.enum(ROLE_KEYS);
 export type RoleKey = z.infer<typeof RoleKeySchema>;
@@ -55,25 +75,72 @@ const approverGrants: RoleGrants = {
   'documents.read': 'all',
 };
 
+/** Read every CRM, customer, quotation and verification record. Reading is not changing: no write, send or review. */
+const salesReadAllGrants: RoleGrants = {
+  'crm.lead.read': 'all',
+  'crm.opportunity.read': 'all',
+  'customer.read': 'all',
+  'quotation.read': 'all',
+  'verification.read': 'all',
+};
+
+/**
+ * Creator roles (A2 R1 and C14): they start leads and draft and submit their own quotations. Approving is
+ * the workflow's job (an approvals step), so none of these grants approve, send or record acceptance.
+ */
+const salesCreatorGrants: RoleGrants = {
+  'crm.lead.write': 'own',
+  'quotation.draft': 'own',
+  'quotation.submit': 'own',
+};
+
+/** What every internal user who is not an approver may do in the kernel: their own memos, documents and requests. */
+const staffBaseGrants: RoleGrants = {
+  'memo.create': 'own',
+  'memo.update': 'own',
+  'memo.read': 'own',
+  'documents.upload': 'own',
+  'documents.read': 'own',
+  'approvals.requests.read': 'own',
+};
+
 /**
  * What each role may do before an admin edits `app.role_permissions`. The seed copies this into
  * the table, so the table (not this constant) is the live truth at runtime.
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   founder: founderGrants,
-  management: { ...approverGrants },
-  finance: { ...approverGrants, 'audit.read': 'all' },
-  accountant: { ...approverGrants },
+  management: { ...approverGrants, ...salesReadAllGrants },
+  finance: { ...approverGrants, 'audit.read': 'all', ...salesReadAllGrants, ...salesCreatorGrants },
+  accountant: { ...approverGrants, ...salesReadAllGrants, ...salesCreatorGrants },
   sales: {
-    'memo.create': 'own',
-    'memo.update': 'own',
-    'memo.read': 'own',
-    'documents.upload': 'own',
-    'documents.read': 'own',
-    'approvals.requests.read': 'own',
+    ...staffBaseGrants,
+    'crm.lead.read': 'own',
+    'crm.lead.write': 'own',
+    'crm.opportunity.read': 'own',
+    'crm.opportunity.write': 'own',
+    // Customers are shared master data, so a salesperson must see all of them to avoid creating a duplicate.
+    'customer.read': 'all',
+    'customer.write': 'all',
+    'quotation.read': 'own',
+    'quotation.draft': 'own',
+    'quotation.submit': 'own',
+    'quotation.send': 'own',
+    'quotation.record_acceptance': 'own',
+    'quotation.revise': 'own',
+    'verification.read': 'own',
   },
   customer_user: {},
   vendor_user: {},
+  pmo: {
+    ...staffBaseGrants,
+    ...salesReadAllGrants,
+    ...salesCreatorGrants,
+    'verification.review': 'all',
+  },
+  operations_head: { ...staffBaseGrants, ...salesReadAllGrants },
+  procurement: { ...staffBaseGrants },
+  receiver: { ...staffBaseGrants },
 };
 
 /** Permissions where the actor must not be someone who prepared the document (separation of duties). */
