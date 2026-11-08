@@ -47,3 +47,4 @@ export * from './schema/notify.js';
 export * from './schema/approvals.js';
 export * from './schema/memo.js';
 export * from './schema/idempotency.js';
+export * from './schema/crm.js';
