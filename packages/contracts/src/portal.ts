@@ -1,0 +1,120 @@
+// Contracts for the customer portal. Serves the NFR "a customer sees only what we meant to show":
+// `CustomerQuotationView` is a whitelist, and it is the only thing the PDF renderer and the portal
+// API are given. It has no unit cost, margin, FX rate, NPR equivalent, approval or editor data.
+import { z } from 'zod';
+
+import { AddressSchema, PanVatNoSchema } from './crm.js';
+import { CurrencySchema, DecimalString } from './money.js';
+import { PaymentMilestoneSchema, QuantityString, type QuotationStatus } from './quotations.js';
+
+const isoDate = z.iso.date();
+const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
+
+/**
+ * The only states a customer may see. A draft, a version in approval, and an approved version that
+ * was never sent are invisible: the portal answers 404, not 403. A `rejected` version is visible
+ * only when the customer rejected it; the mapper must not expose an internal rejection.
+ */
+export const CUSTOMER_VISIBLE_STATUSES = [
+  'sent',
+  'accepted',
+  'rejected',
+  'expired',
+  'superseded',
+] as const;
+export const CustomerVisibleStatusSchema = z.enum(CUSTOMER_VISIBLE_STATUSES);
+export type CustomerVisibleStatus = z.infer<typeof CustomerVisibleStatusSchema>;
+
+export const isCustomerVisibleStatus = (s: QuotationStatus): s is CustomerVisibleStatus =>
+  (CUSTOMER_VISIBLE_STATUSES as readonly string[]).includes(s);
+
+/**
+ * Words that mark a field as internal. A test splits every key of the view into words (camelCase
+ * and snake_case) and fails if any is listed here; the PDF text check can reuse the list.
+ * The VAT percentage the customer must see is named `percent`, not `rate`, so this list stays strict.
+ */
+export const CUSTOMER_VIEW_FORBIDDEN_WORDS: readonly string[] = [
+  'cost',
+  'margin',
+  'rate',
+  'npr',
+  'markup',
+];
+
+const PartyBlock = z.strictObject({
+  legalName: z.string(),
+  panVatNo: PanVatNoSchema.nullable(),
+  address: AddressSchema,
+});
+
+/**
+ * What the customer sees of one quotation version. Strict on purpose: an object with an extra key,
+ * such as a whole internal version, fails to parse instead of leaking. A mapper builds this field by
+ * field from the internal version; nothing is spread into it.
+ */
+export const CustomerQuotationViewSchema = z.strictObject({
+  /** The version id; the portal checks it against the customer's own party before answering. */
+  id: z.guid(),
+  /** The parent number; a version shows as "<number> Rev <revisionNo>". */
+  number: z.string().min(1).max(32),
+  revisionNo: z.number().int().min(1),
+  status: CustomerVisibleStatusSchema,
+  issueDate: isoDate,
+  validUntil: isoDate,
+  currency: CurrencySchema,
+  /** The selling legal entity. */
+  issuer: PartyBlock,
+  customer: PartyBlock,
+  contact: z.strictObject({ fullName: z.string(), email: z.string().nullable() }).nullable(),
+  scope: z.string().nullable(),
+  assumptions: z.string().nullable(),
+  exclusions: z.string().nullable(),
+  deliveryTimeline: z.string().nullable(),
+  paymentTermName: z.string().nullable(),
+  paymentSchedule: z.array(PaymentMilestoneSchema),
+  lines: z.array(
+    z.strictObject({
+      lineNo: z.number().int().min(1),
+      description: z.string(),
+      uom: z.string(),
+      quantity: QuantityString,
+      unitPrice: DecimalString,
+      /** Quantity times unit price, before the quotation discount. */
+      amount: DecimalString,
+    }),
+  ),
+  totals: z.strictObject({
+    subtotal: DecimalString,
+    discountAmount: DecimalString,
+    taxableAmount: DecimalString,
+    taxAmount: DecimalString,
+    total: DecimalString,
+  }),
+  /** `percent` is the VAT or tax percentage, for example "13". */
+  taxSummary: z.array(
+    z.strictObject({
+      label: z.string(),
+      percent: z.string().regex(/^\d{1,3}(\.\d{1,4})?$/),
+      base: DecimalString,
+      tax: DecimalString,
+    }),
+  ),
+  /** The frozen PDF. Null until it is rendered and scanned clean. The hash lets the customer check a download. */
+  file: z
+    .strictObject({ documentId: z.guid(), filename: z.string(), sha256: sha256Hex })
+    .nullable(),
+});
+export type CustomerQuotationView = z.infer<typeof CustomerQuotationViewSchema>;
+
+/** One row of the customer's quotation list. */
+export const PortalQuotationListItemSchema = z.strictObject({
+  id: z.guid(),
+  number: z.string().min(1).max(32),
+  revisionNo: z.number().int().min(1),
+  status: CustomerVisibleStatusSchema,
+  issueDate: isoDate,
+  validUntil: isoDate,
+  currency: CurrencySchema,
+  total: DecimalString,
+});
+export type PortalQuotationListItem = z.infer<typeof PortalQuotationListItemSchema>;
