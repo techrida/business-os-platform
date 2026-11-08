@@ -27,6 +27,8 @@ export type ErrorCode =
   | 'not_found'
   | 'conflict'
   | 'fx_rate_stale'
+  | 'duplicate_pan_vat'
+  | 'primary_contact_exists'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -62,6 +64,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   not_found: 'Not found',
   conflict: 'Conflict',
   fx_rate_stale: 'The exchange rate is too old',
+  duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
+  primary_contact_exists: 'This customer already has a primary contact',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -109,7 +113,11 @@ function isStepUp(exception: HttpException): boolean {
  * A 409 may name its cause with a code a client can switch on. Only these pass: any other string a thrown
  * object carries still reads as plain `conflict`, so the body stays within what clients know.
  */
-const CONFLICT_CODES: readonly ErrorCode[] = ['fx_rate_stale'];
+const CONFLICT_CODES: readonly ErrorCode[] = [
+  'fx_rate_stale',
+  'duplicate_pan_vat',
+  'primary_contact_exists',
+];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
   if (exception.getStatus() !== 409) return undefined;
