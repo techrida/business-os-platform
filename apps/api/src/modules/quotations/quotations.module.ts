@@ -10,6 +10,8 @@ import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { AuditModule } from '../../platform/audit/audit.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { ApprovalsService } from '../approvals/requests.service';
+import { QuotationVersionSubject } from './approval/quotation-version.subject';
 import { QuotationSubmitCaller } from './approval/quotation-submit.caller';
 import { QuotationSubmitController } from './approval/quotation-submit.controller';
 import { QuotationSubmitService, QuotationSubmitStore } from './approval/quotation-submit.service';
@@ -55,10 +57,15 @@ export class QuotationsModule implements OnModuleInit {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly documents: DocumentsService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
-  /** registerOwner throws on a duplicate, so this runs once, when the module starts. */
+  /**
+   * Both registries throw on a duplicate, so this runs once, when the module starts. onDecided is only called from
+   * ApprovalsService.act, which is an API route, so the worker never needs the subject.
+   */
   onModuleInit(): void {
     this.documents.registerOwner(new QuotationOwnerPolicy(drizzleHeadLoader(this.db)));
+    this.approvals.registerSubject(new QuotationVersionSubject());
   }
 }
