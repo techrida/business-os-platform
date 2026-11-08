@@ -6,7 +6,7 @@
 // migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
-import { appSchema, idempotencyKeys, organizations, runMigrations, tenants } from '@bos/db';
+import { appSchema, createTenantWithEntity, idempotencyKeys, runMigrations } from '@bos/db';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
@@ -46,19 +46,8 @@ function urlFor(user: string, password: string, database: string): string {
 
 /** Each test uses its own tenant, so no test sees another's rows. */
 async function newScope(): Promise<TxScope> {
-  const scope = { tenantId: randomUUID(), organizationId: randomUUID() };
-  await withTx(db, scope, systemActor('test'), async (tx) => {
-    await tx.insert(tenants).values({ id: scope.tenantId });
-    await tx.insert(organizations).values({
-      id: scope.organizationId,
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-      kind: 'staff',
-      name: 'Techrida',
-      zitadelOrgId: `zitadel-${scope.organizationId}`,
-    });
-  });
-  return scope;
+  const { tenantId, organizationId } = await createTenantWithEntity(appPool);
+  return { tenantId, organizationId };
 }
 
 function userActor(id = randomUUID()): Actor {
