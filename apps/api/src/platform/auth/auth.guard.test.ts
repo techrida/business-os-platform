@@ -274,6 +274,8 @@ describe('AuthGuard: token verification', () => {
       userId: 'user-1',
       zitadelOrgId: 'org-1',
       roles: ['admin', 'viewer'],
+      // `admin` and `viewer` are not ROLE_KEYS, so no org gets a role (finding 4).
+      rolesByOrg: {},
       tokenExp: expect.any(Number) as number,
     });
   });
