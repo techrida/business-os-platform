@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { P2_SETTING_DEFAULTS, SETTING_KEYS, SETTINGS } from './index.js';
+import {
+  EVIDENCE_KINDS,
+  EVIDENCE_POLICIES,
+  P2_SETTING_DEFAULTS,
+  SETTING_KEYS,
+  SETTINGS,
+} from './index.js';
 
 describe('P2 settings', () => {
   it('lists the three new keys', () => {
@@ -41,11 +47,21 @@ describe('P2 settings', () => {
     expect(SETTINGS[key].safeParse(value).success).toBe(ok);
   });
 
-  it.each(['contract', 'po', 'both', 'signed_quote'])('accepts evidence policy %s', (v) => {
-    expect(SETTINGS['sales.evidence_policy'].safeParse(v).success).toBe(true);
+  it.each(['contract', 'purchase_order', 'both', 'signed_quote'])(
+    'accepts evidence policy %s',
+    (v) => {
+      expect(SETTINGS['sales.evidence_policy'].safeParse(v).success).toBe(true);
+    },
+  );
+
+  it('builds the policy from the evidence kinds plus both, so the two cannot drift', () => {
+    expect([...EVIDENCE_POLICIES]).toEqual([...EVIDENCE_KINDS, 'both']);
   });
 
-  it.each(['', 'none', 'PO', 'contract,po', 7, null])('rejects evidence policy %j', (v) => {
-    expect(SETTINGS['sales.evidence_policy'].safeParse(v).success).toBe(false);
-  });
+  it.each(['', 'none', 'po', 'PO', 'contract,purchase_order', 7, null])(
+    'rejects evidence policy %j',
+    (v) => {
+      expect(SETTINGS['sales.evidence_policy'].safeParse(v).success).toBe(false);
+    },
+  );
 });
