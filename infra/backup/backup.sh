@@ -37,6 +37,31 @@ fi
 # pgBackRest must run as the postgres OS user inside the container: it reads the data directory directly.
 pgbr() { compose exec -T -u postgres postgres pgbackrest --stanza=bos "$@"; }
 
+# The repository is encrypted (repo1-cipher-type in infra/postgres/pgbackrest.conf). pgBackRest cannot switch an
+# existing stanza from plain to encrypted, and its own error for that is cryptic. An encrypted pgBackRest file starts
+# with the 8 bytes "Salted__"; a plain backup.info is text. Exit code 3 from the check below means "plain repository".
+# (Skipped when the repository has no backup.info yet, i.e. a fresh repository: stanza-create makes it encrypted.)
+check_rc=0
+compose exec -T -u postgres postgres sh -c '
+  f=/var/lib/pgbackrest/backup/bos/backup.info
+  [ -n "${PGBACKREST_REPO1_CIPHER_PASS:-}" ] && [ -f "$f" ] && [ "$(head -c 8 "$f")" != "Salted__" ] && exit 3
+  exit 0' || check_rc=$?
+if [[ $check_rc -eq 3 ]]; then
+  cat >&2 <<'MSG'
+backup: the pgBackRest repository was created WITHOUT encryption, but PGBACKREST_REPO1_CIPHER_PASS is set, so it
+backup: cannot be used any more (and WAL archiving is failing). pgBackRest cannot encrypt an existing stanza.
+backup: Start a fresh repository (the old, unencrypted backups are discarded):
+backup:   1. pnpm stack:down
+backup:   2. docker volume rm bos_pgbackrest-repo
+backup:   3. pnpm stack:up, then run this script again
+backup: The database itself (volume pgdata) is not touched by these steps.
+MSG
+  exit 1
+elif [[ $check_rc -ne 0 ]]; then
+  echo "backup: could not inspect the repository (exit $check_rc)" >&2
+  exit 1
+fi
+
 echo "[backup] creating the stanza (does nothing if it already exists)" >&2
 # Until this has run once, Postgres cannot archive WAL (archive_command fails and WAL piles up in pg_wal);
 # afterwards the queued WAL is archived on its own. stanza-create is safe to repeat.

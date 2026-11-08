@@ -101,6 +101,9 @@ services:
       BOS_DB_OWNER_PASSWORD: ${BOS_DB_OWNER_PASSWORD:?set BOS_DB_OWNER_PASSWORD in .env}
       BOS_DB_APP_PASSWORD: ${BOS_DB_APP_PASSWORD:?set BOS_DB_APP_PASSWORD in .env}
       ZITADEL_DB_PASSWORD: ${ZITADEL_DB_PASSWORD:?set ZITADEL_DB_PASSWORD in .env}
+      # Encryption passphrase of the pgBackRest repository (repo1-cipher-type in pgbackrest.conf). pgBackRest reads
+      # it from this variable, also when Postgres runs archive_command. Never change it for an existing repository.
+      PGBACKREST_REPO1_CIPHER_PASS: ${PGBACKREST_REPO1_CIPHER_PASS:?set PGBACKREST_REPO1_CIPHER_PASS in .env (backups are encrypted)}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - pgbackrest-repo:/var/lib/pgbackrest
@@ -473,6 +476,9 @@ services:
     # U2's restore-drill.sh passes the command, e.g.: docker compose run --rm restore-drill -c '<restore steps>'
     entrypoint: ['/bin/bash']
     user: postgres
+    environment:
+      # Same passphrase as the postgres service: the restore has to decrypt the repository.
+      PGBACKREST_REPO1_CIPHER_PASS: ${PGBACKREST_REPO1_CIPHER_PASS:?set PGBACKREST_REPO1_CIPHER_PASS in .env (backups are encrypted)}
     volumes:
       - pgbackrest-repo:/var/lib/pgbackrest:ro
       - pgdata-drill:/var/lib/postgresql/data
