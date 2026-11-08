@@ -165,7 +165,14 @@ describe('visibleGroups with permissions', () => {
 
   it('hides every permission-gated item when no predicate is given (deny by default)', () => {
     const labels = labelsWith();
-    for (const hidden of ['Customers', 'Leads', 'Opportunities', 'Quotations', 'Verification', 'Activities & Tasks']) {
+    for (const hidden of [
+      'Customers',
+      'Leads',
+      'Opportunities',
+      'Quotations',
+      'Verification',
+      'Activities & Tasks',
+    ]) {
       expect(labels).not.toContain(hidden);
     }
     expect(labels).toContain('Inbox');
