@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { CustomerDto, OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
@@ -88,6 +90,7 @@ export default async function NewQuotationPage({
         contacts={lookups.contacts}
         taxCodes={lookups.taxCodes}
         paymentTerms={lookups.paymentTerms}
+        idempotencyKey={randomUUID()}
       />
     </Page>
   );

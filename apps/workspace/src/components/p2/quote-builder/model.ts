@@ -164,33 +164,38 @@ export function discountAboveThreshold(pct: string): boolean {
 // To and from the contract
 // ---------------------------------------------------------------------------------------------
 
-/** The editable content in the shape of `QuotationVersionContentSchema`; the server action parses it. */
-export function toContent(v: BuilderValues) {
+/**
+ * The editable content in the shape of `QuotationVersionContentSchema`; the server action parses it.
+ * A create leaves a blank optional field out. An update sends `null` for it instead: the PUT keeps
+ * any key it is not sent, so leaving it out would keep the saved value and a cleared field would
+ * come back on reload.
+ */
+export function toContent(v: BuilderValues, mode: 'create' | 'update' = 'create') {
   const opt = (s: string): string | undefined => (s.trim() === '' ? undefined : s.trim());
+  const blank = mode === 'update' ? null : undefined;
   const discount =
     v.discountMode === 'none' || plainNumber(v.discountValue) === ''
       ? undefined
       : ({ mode: v.discountMode, value: plainNumber(v.discountValue) } as const);
-  return {
-    ...(opt(v.contactId) ? { contactId: v.contactId } : {}),
+  const content = {
+    contactId: opt(v.contactId) ?? blank,
     currency: v.currency,
     issueDate: v.issueDate,
     validUntil: v.validUntil,
-    ...(opt(v.scope) ? { scope: v.scope.trim() } : {}),
-    ...(opt(v.assumptions) ? { assumptions: v.assumptions.trim() } : {}),
-    ...(opt(v.exclusions) ? { exclusions: v.exclusions.trim() } : {}),
-    ...(opt(v.deliveryTimeline) ? { deliveryTimeline: v.deliveryTimeline.trim() } : {}),
-    ...(opt(v.paymentTermId) ? { paymentTermId: v.paymentTermId } : {}),
-    ...(v.schedule.length > 0
-      ? {
-          paymentSchedule: v.schedule.map((m) => ({
+    scope: opt(v.scope) ?? blank,
+    assumptions: opt(v.assumptions) ?? blank,
+    exclusions: opt(v.exclusions) ?? blank,
+    deliveryTimeline: opt(v.deliveryTimeline) ?? blank,
+    paymentTermId: opt(v.paymentTermId) ?? blank,
+    paymentSchedule:
+      v.schedule.length > 0
+        ? v.schedule.map((m) => ({
             label: m.label.trim(),
             percent: plainNumber(m.percent),
             ...(opt(m.dueDescription) ? { dueDescription: m.dueDescription.trim() } : {}),
-          })),
-        }
-      : {}),
-    ...(discount ? { discount } : {}),
+          }))
+        : blank,
+    discount: discount ?? blank,
     lines: v.lines.map((l) => ({
       description: l.description.trim(),
       uom: l.uom.trim(),
@@ -199,6 +204,11 @@ export function toContent(v: BuilderValues) {
       taxCodeId: l.taxCodeId,
     })),
   };
+  // Leave absent keys out entirely (not as `undefined`), so the body says only what it means.
+  return Object.fromEntries(Object.entries(content).filter(([, x]) => x !== undefined)) as Partial<
+    typeof content
+  > &
+    Pick<typeof content, 'currency' | 'issueDate' | 'validUntil' | 'lines'>;
 }
 
 /** The slice of a version DTO the form is filled from (structural, so no runtime import). */
