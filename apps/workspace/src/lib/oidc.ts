@@ -271,10 +271,14 @@ export async function refreshTokens(refreshToken: string): Promise<OidcTokens> {
  * logs and Referer headers, and an ID token must not. The cost is that ZITADEL may show its own
  * logout confirmation.
  */
-export async function endSessionUrl(): Promise<URL> {
+export async function endSessionUrl(options: { idTokenHint?: string } = {}): Promise<URL> {
   const env = getEnv();
   const config = await getOidcConfig();
   return client.buildEndSessionUrl(config, {
+    // Without the hint ZITADEL's end_session does not end the user's ZITADEL session, and the
+    // next visit signs straight back in. It does put the ID token in the redirect URL (history,
+    // proxy logs, Referer; CR-05a): accepted, since the API refuses ID tokens as credentials.
+    ...(options.idTokenHint !== undefined ? { id_token_hint: options.idTokenHint } : {}),
     client_id: env.OIDC_CLIENT_ID,
     post_logout_redirect_uri: env.WORKSPACE_PUBLIC_URL.replace(/\/+$/, '') + '/',
   });

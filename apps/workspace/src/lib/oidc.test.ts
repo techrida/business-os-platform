@@ -433,14 +433,25 @@ describe('refreshTokens', () => {
 });
 
 describe('endSessionUrl', () => {
-  // CR-05a: this URL is a browser redirect, so it lands in history, proxy logs and Referer
-  // headers. It carries no ID token; client_id ties post_logout_redirect_uri to the client.
-  it('sends the client id and the public URL as post-logout redirect, never an ID token hint', async () => {
-    const url = await endSessionUrl();
+  // Without id_token_hint ZITADEL's end_session leaves the user's ZITADEL session alive, and the
+  // next visit signs straight back in. The hint travels in the redirect URL (the CR-05a
+  // exposure, accepted: the ID token is not a bearer credential for the API). client_id ties
+  // post_logout_redirect_uri to the client either way.
+  it('sends the ID token hint, the client id and the post-logout redirect when given a hint', async () => {
+    const url = await endSessionUrl({ idTokenHint: 'idt-1' });
     expect(url.origin + url.pathname).toBe('https://auth.test/oidc/v1/end_session');
-    expect(url.searchParams.has('id_token_hint')).toBe(false);
+    expect(url.searchParams.get('id_token_hint')).toBe('idt-1');
     expect(url.searchParams.get('client_id')).toBe('client-123');
     expect(url.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');
+  });
+
+  it('sends no id_token_hint without one, but still the client id and the redirect', async () => {
+    for (const url of [await endSessionUrl(), await endSessionUrl({})]) {
+      expect(url.origin + url.pathname).toBe('https://auth.test/oidc/v1/end_session');
+      expect(url.searchParams.has('id_token_hint')).toBe(false);
+      expect(url.searchParams.get('client_id')).toBe('client-123');
+      expect(url.searchParams.get('post_logout_redirect_uri')).toBe('https://app.test/');
+    }
   });
 });
 
