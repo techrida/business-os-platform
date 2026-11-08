@@ -373,12 +373,22 @@ export function drizzleExpiryStore(db: Db): ExpiryStore {
             versionId: quotationVersions.id,
           })
           .from(quotationVersions)
-          // Only versions whose contact has an email: the others would be re-read every hour for nothing.
+          .innerJoin(
+            quotations,
+            and(
+              eq(quotations.tenantId, quotationVersions.tenantId),
+              eq(quotations.organizationId, quotationVersions.organizationId),
+              eq(quotations.id, quotationVersions.quotationId),
+            ),
+          )
+          // Only versions expiringNotice can send (same join: a contact of the quotation's customer, with an
+          // email): the others would be re-read every hour of the window for nothing.
           .innerJoin(
             customerContacts,
             and(
               eq(customerContacts.tenantId, quotationVersions.tenantId),
               eq(customerContacts.id, quotationVersions.contactId),
+              eq(customerContacts.customerId, quotations.customerPartyId),
             ),
           )
           .where(
