@@ -102,6 +102,26 @@ describe('MoneyService.toNprSnapshot staleness', () => {
     ).rejects.toMatchObject({ response: { code: 'fx_rate_stale' } });
   });
 
+  it('converts INR on a peg dated 2000-01-01: a fixed peg never goes stale', async () => {
+    const { money, asked } = service();
+    const inr = { amount: '1000.00', currency: 'INR' } as const;
+    const peg = { rate: '1.600000', source: 'NRB peg', rateDate: '2000-01-01' };
+    expect(await money.toNprSnapshot(executor([peg]), SCOPE, inr, ON)).toEqual({
+      amountNpr: '1600.00',
+      rate: '1.6',
+      rateSource: 'NRB peg',
+      rateDate: '2000-01-01',
+    });
+    expect(asked).toEqual([]);
+  });
+
+  it('still refuses USD at today minus 8 days while INR is exempt', async () => {
+    const { money } = service();
+    await expect(
+      money.toNprSnapshot(executor([row('2026-11-01')]), SCOPE, usd, ON),
+    ).rejects.toMatchObject({ response: { code: 'fx_rate_stale' } });
+  });
+
   it('does not read the setting or check age for NPR', async () => {
     const { money, asked } = service();
     expect(
