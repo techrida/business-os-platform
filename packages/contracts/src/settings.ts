@@ -7,6 +7,7 @@ import { SlaSpecSchema } from './approvals.js';
 import { AddressSchema, PanVatNoSchema } from './crm.js';
 import { CurrencySchema, DecimalString } from './money.js';
 import { EVIDENCE_KINDS } from './quotations.js';
+import { DEFAULT_SALES_SCHEDULE, ScheduleTemplateSchema } from './sales.js';
 
 /**
  * Evidence an accepted quotation needs before Won: one evidence kind, or `both`, which means a contract AND a
@@ -44,6 +45,9 @@ export const SETTINGS = {
   'entity.pan_vat_no': PanVatNoSchema.nullable(),
   /** The selling entity's address as quotations print it. Per entity; null until set, and no PDF renders without it. */
   'entity.address': AddressSchema.nullable(),
+  // P3 sales and invoicing.
+  /** Billing split used when the accepted quotation has no payment schedule: slices that add up to 100%. */
+  'sales.default_schedule': ScheduleTemplateSchema,
 } as const;
 
 /** Defaults of the P2 keys. The API's SETTING_DEFAULTS reuses these, so the two cannot drift apart. */
@@ -63,6 +67,11 @@ export const P2_SETTING_DEFAULTS = {
       | 'entity.address'
   ]: z.infer<(typeof SETTINGS)[K]>;
 };
+
+/** Defaults of the P3 keys. The API's SETTING_DEFAULTS spreads these in beside the P2 ones. */
+export const P3_SETTING_DEFAULTS = {
+  'sales.default_schedule': DEFAULT_SALES_SCHEDULE,
+} as const satisfies { [K in 'sales.default_schedule']: z.infer<(typeof SETTINGS)[K]> };
 
 export type SettingKey = keyof typeof SETTINGS;
 export type SettingValue<K extends SettingKey> = z.infer<(typeof SETTINGS)[K]>;
