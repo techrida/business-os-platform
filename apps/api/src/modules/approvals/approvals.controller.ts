@@ -111,7 +111,7 @@ export class ApprovalsController {
   }
 
   @Get('requests/:id')
-  @Can('approvals.requests.read')
+  @AnyAuthenticated()
   get(@Param('id', ParseUUIDPipe) id: string): Promise<ApprovalRequestDto> {
     return this.approvals.get(id);
   }
