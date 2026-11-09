@@ -338,8 +338,19 @@ describe('the quotation entry page', () => {
     expect(out).not.toMatch(/<input[^>]*name="lines\.0\.taxCodeId"/);
   });
 
-  it.each([403, 500])('disables entry with a retry when tax codes fail (%i)', async (status) => {
-    quoteApi.listTaxCodes.mockRejectedValue(apiError(status));
+  it('explains a refused tax lookup without offering a retry', async () => {
+    quoteApi.listTaxCodes.mockRejectedValue(apiError(403));
+    const out = await quotePage();
+    expect(out).toContain('Your roles do not include tax codes');
+    expect(out).toContain('Ask an administrator');
+    expect(out).not.toContain('Try loading tax codes again');
+    expect(out).not.toContain('Try again');
+    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"[^>]*disabled/);
+    expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+  });
+
+  it('disables entry with a retry when tax codes fail', async () => {
+    quoteApi.listTaxCodes.mockRejectedValue(apiError(500));
     const out = await quotePage();
     expect(out).toContain('Tax codes did not load');
     expect(out).toContain('Try loading tax codes again');
