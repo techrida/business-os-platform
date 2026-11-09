@@ -11,6 +11,7 @@ import {
   type PurchaseRequestLineBody,
 } from '@bos/contracts';
 import { PURCHASE_REQUEST_EDITABLE_STATUSES, type purchaseRequests } from '@bos/db';
+import { UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 
@@ -130,7 +131,16 @@ export interface PurchaseRequestLineInsert {
 }
 
 /** The stored lines of a body: numbered from 1 in body order, amounts computed here and never taken from the client. */
-export function lineRowsOf(lines: readonly PurchaseRequestLineBody[]): PurchaseRequestLineInsert[] {
+export function lineRowsOf(
+  lines: readonly PurchaseRequestLineBody[],
+  requestType: PrRequestType,
+): PurchaseRequestLineInsert[] {
+  if (requestType === 'service' && lines.some((line) => line.requiresSerials)) {
+    throw new UnprocessableEntityException({
+      code: 'serials_not_allowed',
+      message: 'Service purchase request lines cannot require serial numbers',
+    });
+  }
   return lines.map((l, i) => ({
     lineNo: i + 1,
     description: l.description,
