@@ -6,8 +6,6 @@ import {
   SHIPPED_PHASES,
   isBuilt,
   ownsPath,
-  phaseDescription,
-  phaseTag,
   titleForPath,
   visibleGroups,
 } from './nav';
