@@ -356,11 +356,11 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
   return { id, lineId, vendorId };
 }
 
-async function doc(): Promise<string> {
+async function doc(vendorId: string): Promise<string> {
   const { rows } = await exec(
     scopeA,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill', ${randomUUID()}) RETURNING id`,
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill_intake', ${vendorId}) RETURNING id`,
   );
   return (rows[0] as { id: string }).id;
 }
@@ -570,7 +570,7 @@ describe('convert a bill submission', () => {
         vendorInvoiceNo: 'INV-TAKEN',
         invoiceDate: '2026-11-05',
         currency: 'NPR',
-        documentId: await doc(),
+        documentId: await doc(vendorId),
         lines: plainLines(),
       },
       randomUUID(),
