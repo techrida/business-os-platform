@@ -1,13 +1,18 @@
-// The dev seed (tools/seed-zitadel) cannot import apps/api, so it holds word-for-word copies of the two P4
+// The dev seed (tools/seed-zitadel) cannot import apps/api, so it holds word-for-word copies of the three P4
 // workflow specs the API publishes through ApprovalsAdminService. This test is the drift alarm: if either
 // side changes alone, it fails. The copies live in a small import-free module of the tool.
 import { WorkflowSpecSchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PO_AMENDMENT_WORKFLOW_SPEC as SEEDED_PO_AMENDMENT_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC as SEEDED_PR_COMMITMENT_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC as SEEDED_PURCHASE_REQUEST_SPEC,
 } from '../../../../../tools/seed-zitadel/src/workflow-specs';
+import {
+  PO_AMENDMENT_DOCUMENT_TYPE,
+  PO_AMENDMENT_WORKFLOW_SPEC,
+} from './orders/purchase-order.rules';
 import {
   PURCHASE_REQUEST_DOCUMENT_TYPE,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
@@ -36,6 +41,16 @@ describe('seed workflow parity', () => {
     );
     expect(WorkflowSpecSchema.parse(SEEDED_PR_COMMITMENT_SPEC).documentType).toBe(
       PR_COMMITMENT_DOCUMENT_TYPE,
+    );
+  });
+
+  it('seeds po_amendment with exactly the spec the API publishes', () => {
+    expect(SEEDED_PO_AMENDMENT_SPEC).toStrictEqual(PO_AMENDMENT_WORKFLOW_SPEC);
+    expect(WorkflowSpecSchema.parse(SEEDED_PO_AMENDMENT_SPEC)).toStrictEqual(
+      WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC),
+    );
+    expect(WorkflowSpecSchema.parse(SEEDED_PO_AMENDMENT_SPEC).documentType).toBe(
+      PO_AMENDMENT_DOCUMENT_TYPE,
     );
   });
 });

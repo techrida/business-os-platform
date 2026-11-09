@@ -1,5 +1,5 @@
 // Seed rows that the API kernel needs on day one: the default role grants, the `test_memo`,
-// `quotation_version`, `purchase_request` and `pr_commitment` approval workflows, the INR peg and the
+// `quotation_version`, `purchase_request`, `pr_commitment` and `po_amendment` approval workflows, the INR peg and the
 // P2 quotation reference data (tax codes and payment terms), and, when the dev personas are passed, the dev
 // department and the VEND-DEV vendor (P4). Serves the NFR "authorization is deny-by-default" (an empty
 // role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
@@ -11,10 +11,14 @@ import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema, type WorkflowSpec } from 
 import type pg from 'pg';
 
 import { PERSONAS } from './personas.js';
-import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
+import {
+  PO_AMENDMENT_WORKFLOW_SPEC,
+  PR_COMMITMENT_WORKFLOW_SPEC,
+  PURCHASE_REQUEST_WORKFLOW_SPEC,
+} from './workflow-specs.js';
 
 // The P4 specs live in `workflow-specs.ts` (word-for-word copies; a test in apps/api pins them to the API's).
-export { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC };
+export { PO_AMENDMENT_WORKFLOW_SPEC, PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC };
 
 export interface SeedScope {
   tenantId: string;
@@ -504,6 +508,7 @@ export async function seedKernelRows(
   const quotationSpec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
   const purchaseRequestSpec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
   const prCommitmentSpec = WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC);
+  const poAmendmentSpec = WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC);
   // A missing persona fails here, before BEGIN, like a bad spec.
   if (personas && personas.length > 0) devPeople(personas);
   await client.query('BEGIN');
@@ -535,6 +540,13 @@ export async function seedKernelRows(
       name: 'Purchase commitment approval',
       documentType: 'pr_commitment',
       spec: prCommitmentSpec,
+    });
+    // An amendment of an approved PO is re-approved on the amended total, on the commitment's route (AD7).
+    changed += await seedWorkflow(client, scope, {
+      key: 'po_amendment',
+      name: 'Purchase order amendment',
+      documentType: 'po_amendment',
+      spec: poAmendmentSpec,
     });
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);

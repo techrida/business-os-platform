@@ -13,7 +13,11 @@ import {
   setSeedActor,
 } from './db-seed.js';
 import { PgTenancyStore, SEED_PARTIES, tenancySeed } from './index.js';
-import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
+import {
+  PO_AMENDMENT_WORKFLOW_SPEC,
+  PR_COMMITMENT_WORKFLOW_SPEC,
+  PURCHASE_REQUEST_WORKFLOW_SPEC,
+} from './workflow-specs.js';
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1', correlationId: 'corr-1' };
 
@@ -101,9 +105,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 4 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 5 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 4 * 3 + 1 + 3 + 2 + 2);
+    expect(changed).toBe(grantCount + 1 + 5 * 3 + 1 + 3 + 2 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -272,7 +276,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(4);
+    expect(versions).toHaveLength(5);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -345,10 +349,10 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 4 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 5 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(4);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(5);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -372,7 +376,7 @@ describe('seedKernelRows: P4 purchasing', () => {
     return call ? (JSON.parse(String(call.values[3])) as unknown) : undefined;
   };
 
-  it('seeds purchase_request and pr_commitment for the entity, keyed by their document type', async () => {
+  it('seeds purchase_request, pr_commitment and po_amendment for the entity, keyed by their document type', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
 
@@ -390,6 +394,13 @@ describe('seedKernelRows: P4 purchasing', () => {
       'Purchase commitment approval',
       'pr_commitment',
     ]);
+    expect(definitionOf(calls, 'po_amendment')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'po_amendment',
+      'Purchase order amendment',
+      'po_amendment',
+    ]);
     // What is stored is the schema's defaulted form of the API's spec (the parity test pins the copies).
     expect(specOf(calls, 'purchase_request')).toEqual(
       WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC),
@@ -397,15 +408,24 @@ describe('seedKernelRows: P4 purchasing', () => {
     expect(specOf(calls, 'pr_commitment')).toEqual(
       WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC),
     );
+    expect(specOf(calls, 'po_amendment')).toEqual(
+      WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC),
+    );
   });
 
-  it('does not seed the routes whose specs a later unit exports', async () => {
+  it('seeds the workflow definitions in a stable order, with po_amendment last', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
     const keys = calls
       .filter((c) => c.text.includes('INTO app.workflow_definitions'))
       .map((c) => c.values[2]);
-    expect(keys).toEqual(['test_memo', 'quotation_version', 'purchase_request', 'pr_commitment']);
+    expect(keys).toEqual([
+      'test_memo',
+      'quotation_version',
+      'purchase_request',
+      'pr_commitment',
+      'po_amendment',
+    ]);
   });
 
   it('keeps the withholding codes at 0 bp and inserts each only when absent', async () => {
@@ -872,6 +892,7 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
         'purchase_request',
       ],
       ['tenant-uuid', 'org-uuid', 'pr_commitment', 'Purchase commitment approval', 'pr_commitment'],
+      ['tenant-uuid', 'org-uuid', 'po_amendment', 'Purchase order amendment', 'po_amendment'],
     ]);
     expect(first.closed()).toBe(1);
 

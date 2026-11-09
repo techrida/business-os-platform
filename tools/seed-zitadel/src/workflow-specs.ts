@@ -106,3 +106,75 @@ export const PR_COMMITMENT_WORKFLOW_SPEC: unknown = {
   distinctApprovers: true,
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'management' } },
 };
+
+/**
+ * Copy of PO_AMENDMENT_WORKFLOW_SPEC (apps/api/src/modules/procurement/orders/purchase-order.rules.ts).
+ * `documentType` is the literal of PO_AMENDMENT_DOCUMENT_TYPE.
+ */
+export const PO_AMENDMENT_WORKFLOW_SPEC: unknown = {
+  documentType: 'po_amendment',
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: 'Base route: an Accountant checks the amended purchase order',
+    },
+    {
+      id: 'finance',
+      kind: 'role',
+      role: 'finance',
+      reason: 'Base route: Finance commits the amended budget',
+    },
+  ],
+  rules: [
+    {
+      id: 'management',
+      when: { field: 'amountNpr', op: 'gt', value: '100000.00' },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason: 'Management approval because the amended order exceeds NPR 100,000.00',
+      },
+      position: 'end',
+      reason: 'Amended order of NPR {amountNpr} is above NPR 100,000.00',
+    },
+    {
+      id: 'founder',
+      when: {
+        all: [
+          { field: 'amountNpr', op: 'gt', value: '1000000.00' },
+          { field: 'requesterIsFounder', op: 'eq', value: false },
+        ],
+      },
+      add: {
+        id: 'founder',
+        kind: 'role',
+        role: 'founder',
+        reason: 'Founder approval because the amended order exceeds NPR 1,000,000.00',
+      },
+      position: 'end',
+      reason: 'Amended order of NPR {amountNpr} is above NPR 1,000,000.00',
+    },
+    {
+      id: 'management_second',
+      when: {
+        all: [
+          { field: 'amountNpr', op: 'gt', value: '1000000.00' },
+          { field: 'requesterIsFounder', op: 'eq', value: true },
+        ],
+      },
+      add: {
+        id: 'management_second',
+        kind: 'role',
+        role: 'management',
+        reason: 'A second Management approval replaces the Founder, who amended this order (AD8)',
+      },
+      position: 'end',
+      reason: 'The Founder amended an order to NPR {amountNpr}, above NPR 1,000,000.00',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'management' } },
+};
