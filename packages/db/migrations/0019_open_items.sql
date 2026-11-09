@@ -308,9 +308,10 @@ CREATE TRIGGER "open_item_allocations_match" BEFORE INSERT ON "app"."open_item_a
 FOR EACH ROW EXECUTE FUNCTION "app"."open_item_allocations_match"();
 --> statement-breakpoint
 
--- At commit, each item touched keeps 0 <= net allocated <= amount. The FOR UPDATE takes both item locks in ascending
--- id order (waiting for a concurrent allocator to commit); the sum after it runs with a fresh snapshot (READ
--- COMMITTED), so it counts that allocator's committed rows.
+-- At commit, each item touched keeps 0 <= net allocated <= amount. The row lock takes both items in ascending id
+-- order (waiting for a concurrent allocator to commit); the sum after it runs with a fresh snapshot (READ COMMITTED),
+-- so it counts that allocator's committed rows. FOR NO KEY UPDATE, not FOR UPDATE: it must not wait on the KEY SHARE
+-- locks that a concurrent transaction's allocation FKs hold on the same items until it commits (a deadlock).
 CREATE FUNCTION "app"."open_item_allocations_cap"() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, app, pg_temp
@@ -322,7 +323,7 @@ BEGIN
 		WHERE "tenant_id" = NEW."tenant_id" AND "organization_id" = NEW."organization_id"
 			AND "id" IN (NEW."debit_item_id", NEW."credit_item_id")
 		ORDER BY "id"
-		FOR UPDATE;
+		FOR NO KEY UPDATE;
 	FOR v_item IN
 		SELECT oi."id", oi."amount",
 			COALESCE((
