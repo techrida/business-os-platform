@@ -1,0 +1,384 @@
+import type { ApprovalRequestDto } from '@bos/contracts';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+
+import { isGuid } from '@/components/p2/customers/format';
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { LinkButton } from '@/components/ui/button';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { Table, Td, Th } from '@/components/ui/table';
+import { getApprovalRequest } from '@/lib/api-kernel';
+import { getPurchaseRequest } from '@/lib/api-procurement';
+import { getComparison, getRfq, listSubmissions, type RfqDto } from '@/lib/api-rfqs';
+import { requireStaffSession } from '@/lib/bff';
+import { money, when } from '@/lib/kernel-format';
+import { humanizeKey, shortId } from '@/lib/kernel-ui';
+
+import styles from '../../requests/requests.module.css';
+import { rfqFailure } from '../_lib/failure';
+import {
+  RFQ_STATUS_LABEL,
+  RFQ_STATUS_NOTE,
+  rfqGrants,
+  submissionConvertibility,
+  takesQuotations,
+} from '../_lib/model';
+import { loadVendors, nameIndex } from '../_lib/vendors';
+
+export const metadata: Metadata = { title: 'RFQ · Business OS' };
+export const dynamic = 'force-dynamic';
+
+const STEP_TONE: Record<string, 'neutral' | 'info' | 'success' | 'warning' | 'error'> = {
+  approved: 'success',
+  rejected: 'error',
+  returned: 'warning',
+  active: 'warning',
+  pending: 'neutral',
+};
+
+type Problem = { message: string; status: number };
+type Load<T> = { value: T; problem?: undefined } | { value?: undefined; problem: Problem };
+
+async function attempt<T>(run: () => Promise<T>): Promise<Load<T>> {
+  try {
+    return { value: await run() };
+  } catch (err) {
+    const f = rfqFailure(err, 'load');
+    return { problem: { message: f.message, status: f.status } };
+  }
+}
+
+function Degraded({ what, problem, retry }: { what: string; problem: Problem; retry: string }) {
+  const forbidden = problem.status === 403;
+  return (
+    <Alert
+      tone={forbidden ? 'info' : 'error'}
+      role={forbidden ? 'status' : 'alert'}
+      title={forbidden ? `Your roles do not include ${what}` : `${what} did not load`}
+      actions={!forbidden ? <Link href={retry}>Try again</Link> : null}
+    >
+      {problem.message}
+    </Alert>
+  );
+}
+
+/** Where the commitment approval stands: the steps the route planned and what each one is doing. */
+function ApprovalPanel({ load, retry }: { load: Load<ApprovalRequestDto>; retry: string }) {
+  const approval = load.value;
+  return (
+    <Panel
+      title="Commitment approval"
+      description="Accountant, then Finance, then Management or the Founder when the amount is high."
+    >
+      {approval === undefined ? (
+        <Degraded what="The approval" problem={load.problem} retry={retry} />
+      ) : (
+        <>
+          <p className={styles.note}>
+            Approval {humanizeKey(approval.status).toLowerCase()}
+            {approval.decidedAt !== null ? `, decided ${when(approval.decidedAt)}` : ''}.
+          </p>
+          {approval.steps.length === 0 ? (
+            <p className={styles.note}>No approval steps were planned.</p>
+          ) : (
+            <ol className={styles.steps}>
+              {approval.steps.map((s) => (
+                <li key={s.seq} className={styles.step}>
+                  <span className={styles.stepReason}>
+                    {s.seq}. {s.reason}
+                  </span>
+                  <Badge tone={STEP_TONE[s.status] ?? 'neutral'}>{humanizeKey(s.status)}</Badge>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+export default async function RfqPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ created?: string | string[]; quoted?: string | string[] }>;
+}) {
+  const { id } = await params;
+  if (!isGuid(id)) notFound();
+  const session = await requireStaffSession(`/procurement/rfqs/${id}`);
+  const sp = await searchParams;
+  const self = `/procurement/rfqs/${encodeURIComponent(id)}`;
+
+  let rfq: RfqDto;
+  try {
+    rfq = await getRfq(session, id);
+  } catch (err) {
+    const f = rfqFailure(err, 'load');
+    if (f.status === 404) notFound();
+    return (
+      <Page>
+        <Breadcrumb
+          items={[{ label: 'Requests for quotation', href: '/procurement/rfqs' }, { label: 'RFQ' }]}
+        />
+        <Alert
+          tone={f.status === 403 ? 'info' : 'error'}
+          role="alert"
+          title={f.status === 403 ? 'Your roles do not include sourcing' : 'The RFQ did not load'}
+          actions={f.status !== 403 ? <Link href={self}>Try again</Link> : null}
+        >
+          {f.message}
+        </Alert>
+      </Page>
+    );
+  }
+
+  const grants = rfqGrants(session.roles);
+  const open = takesQuotations(rfq.status);
+  const [comparison, submissions, pr, vendors, approval] = await Promise.all([
+    attempt(() => getComparison(session, id)),
+    grants.sourcing && open ? attempt(() => listSubmissions(session, id)) : Promise.resolve(null),
+    attempt(() => getPurchaseRequest(session, rfq.purchaseRequestId)),
+    loadVendors(session),
+    rfq.commitmentApprovalRequestId !== null
+      ? attempt(() => getApprovalRequest(session, rfq.commitmentApprovalRequestId as string))
+      : Promise.resolve(null),
+  ]);
+  const names = nameIndex(vendors);
+  const vendorLabel = (vendorId: string): string => names.get(vendorId) ?? shortId(vendorId);
+  const status = RFQ_STATUS_LABEL[rfq.status];
+  const prNumber = pr.value?.number ?? null;
+
+  const facts: Fact[] = [
+    {
+      key: 'pr',
+      label: 'Purchase request',
+      value: (
+        <Link
+          href={`/procurement/requests/${encodeURIComponent(rfq.purchaseRequestId)}`}
+          className={styles.numeric}
+        >
+          {prNumber ?? shortId(rfq.purchaseRequestId)}
+        </Link>
+      ),
+    },
+    { key: 'deadline', label: 'Quotation deadline', value: when(rfq.deadline) },
+    {
+      key: 'vendors',
+      label: `Invited vendors (${rfq.vendorIds.length})`,
+      value: (
+        <span className={styles.long}>{rfq.vendorIds.map(vendorLabel).join(', ') || 'None'}</span>
+      ),
+      wide: true,
+    },
+    ...(rfq.recommendedQuotationId !== null
+      ? [
+          {
+            key: 'recommended',
+            label: 'Recommended quotation',
+            value: (
+              <span className={styles.long}>
+                {(() => {
+                  const row = comparison.value?.find((q) => q.id === rfq.recommendedQuotationId);
+                  return row !== undefined
+                    ? `${vendorLabel(row.vendorId)}, ${money(row.total, row.currency)}`
+                    : shortId(rfq.recommendedQuotationId);
+                })()}
+              </span>
+            ),
+            wide: true,
+          },
+          {
+            key: 'why',
+            label: 'Why this one',
+            value: (
+              <span className={styles.long}>{rfq.recommendationRationale ?? 'Not given'}</span>
+            ),
+            wide: true,
+          },
+          ...(rfq.fewerThanThreeReason !== null
+            ? [
+                {
+                  key: 'few',
+                  label: 'Why fewer quotations',
+                  value: <span className={styles.long}>{rfq.fewerThanThreeReason}</span>,
+                  wide: true,
+                },
+              ]
+            : []),
+        ]
+      : []),
+  ];
+
+  return (
+    <Page>
+      <Breadcrumb
+        items={[
+          { label: 'Requests for quotation', href: '/procurement/rfqs' },
+          { label: rfq.number },
+        ]}
+      />
+      <PageHeader
+        title={rfq.number}
+        status={<Badge tone={status.tone}>{status.text}</Badge>}
+        description={RFQ_STATUS_NOTE[rfq.status]}
+        actions={
+          grants.sourcing && open ? (
+            <LinkButton href={`${self}/quotations/new`}>Enter a quotation</LinkButton>
+          ) : null
+        }
+      />
+
+      {sp.created !== undefined ? (
+        <Alert tone="success" role="status">
+          The RFQ was opened and the purchase request moved to sourcing.
+        </Alert>
+      ) : sp.quoted !== undefined ? (
+        <Alert tone="success" role="status">
+          The quotation was recorded.
+        </Alert>
+      ) : null}
+
+      <div className={styles.columns}>
+        <div className={styles.main}>
+          <Panel title="RFQ">
+            <FactList facts={facts} />
+          </Panel>
+
+          <Panel
+            title="Quotations"
+            description="Cheapest first, by total in NPR. Every figure is the platform's."
+          >
+            {comparison.value === undefined ? (
+              <Degraded what="Quotations" problem={comparison.problem} retry={self} />
+            ) : comparison.value.length === 0 ? (
+              <p className={styles.note}>
+                No quotation has been recorded yet.
+                {grants.sourcing && open
+                  ? ' Enter one from a vendor’s document, or convert a vendor submission.'
+                  : ''}
+              </p>
+            ) : (
+              <Table caption="Quotations received" minWidth={720}>
+                <thead>
+                  <tr>
+                    <Th>Vendor</Th>
+                    <Th align="end">Total</Th>
+                    <Th align="end">Total in NPR</Th>
+                    <Th align="end">Delivery</Th>
+                    <Th align="end">Score</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.value.map((q) => (
+                    <tr key={q.id}>
+                      <Td>
+                        <span className={styles.badges}>
+                          <span className={styles.name}>{vendorLabel(q.vendorId)}</span>
+                          {q.id === rfq.recommendedQuotationId ? (
+                            <Badge tone="success">Recommended</Badge>
+                          ) : null}
+                        </span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>{money(q.total, q.currency)}</span>
+                      </Td>
+                      <Td align="end" nowrap>
+                        <span className={styles.numeric}>{money(q.totalNpr, 'NPR')}</span>
+                        {q.currency !== 'NPR' ? (
+                          <span className={styles.quiet}> at {q.fxRate}</span>
+                        ) : null}
+                      </Td>
+                      <Td align="end" nowrap>
+                        {q.deliveryDays !== null ? (
+                          `${q.deliveryDays} days`
+                        ) : (
+                          <span className={styles.quiet}>Not stated</span>
+                        )}
+                      </Td>
+                      <Td align="end" nowrap>
+                        {q.averageScore !== null ? (
+                          <span className={styles.numeric}>{q.averageScore}</span>
+                        ) : (
+                          <span className={styles.quiet}>Not scored</span>
+                        )}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Panel>
+
+          {submissions !== null ? (
+            <Panel
+              title="Vendor submissions"
+              description="Quotations vendors uploaded in the portal. Convert one after its file scan passes."
+            >
+              {submissions.value === undefined ? (
+                <Degraded what="Vendor submissions" problem={submissions.problem} retry={self} />
+              ) : submissions.value.length === 0 ? (
+                <p className={styles.note}>No vendor has uploaded a quotation for this RFQ.</p>
+              ) : (
+                <Table caption="Vendor submissions waiting to be converted" minWidth={640}>
+                  <thead>
+                    <tr>
+                      <Th>Vendor</Th>
+                      <Th>Their reference</Th>
+                      <Th>Sent</Th>
+                      <Th>File</Th>
+                      <Th>
+                        <span className="sr-only">Action</span>
+                      </Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {submissions.value.map((s) => {
+                      const c = submissionConvertibility(s.scanStatus);
+                      return (
+                        <tr key={s.id}>
+                          <Td>
+                            <span className={styles.name}>{s.vendorName}</span>
+                          </Td>
+                          <Td>
+                            <span className={styles.long}>
+                              {s.vendorRef ?? <span className={styles.quiet}>None</span>}
+                            </span>
+                          </Td>
+                          <Td nowrap>{when(s.submittedAt)}</Td>
+                          <Td>
+                            <Badge tone={c.tone}>{c.label}</Badge>
+                            {c.reason !== '' ? <p className={styles.note}>{c.reason}</p> : null}
+                          </Td>
+                          <Td nowrap>
+                            {c.convertible ? (
+                              <LinkButton
+                                href={`${self}/quotations/new?submission=${encodeURIComponent(s.id)}`}
+                                variant="secondary"
+                                aria-label={`Convert the submission from ${s.vendorName}`}
+                              >
+                                Convert
+                              </LinkButton>
+                            ) : null}
+                          </Td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              )}
+            </Panel>
+          ) : null}
+        </div>
+
+        <div className={styles.sideStack}>
+          {approval !== null ? <ApprovalPanel load={approval} retry={self} /> : null}
+        </div>
+      </div>
+    </Page>
+  );
+}
