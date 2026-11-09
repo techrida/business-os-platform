@@ -1,6 +1,6 @@
-// Seed rows that the API kernel needs on day one: the default role grants, the `test_memo` and
-// `quotation_version` approval workflows, the INR peg and the P2 quotation reference data (tax codes
-// and payment terms). Serves the NFR "authorization is deny-by-default" (an empty
+// Seed rows that the API kernel needs on day one: the default role grants, the `test_memo`,
+// `quotation_version`, `purchase_request` and `pr_commitment` approval workflows, the INR peg and the
+// P2 quotation reference data (tax codes and payment terms). Serves the NFR "authorization is deny-by-default" (an empty
 // role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
 // `bos.actor_id` is unset, so every write here first declares a `seed` actor inside its transaction.
 //
@@ -8,6 +8,11 @@
 // schema. Every statement is idempotent, and `seedKernelRows` returns 0 on a second run.
 import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema, type WorkflowSpec } from '@bos/contracts';
 import type pg from 'pg';
+
+import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
+
+// The P4 specs live in `workflow-specs.ts` (word-for-word copies; a test in apps/api pins them to the API's).
+export { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC };
 
 export interface SeedScope {
   tenantId: string;
@@ -323,8 +328,8 @@ async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<numb
 }
 
 // `app.number_series` is not seeded: this package does not depend on @bos/locale (so no
-// fiscalYearOf), and the API's NumberingService creates each row lazily on first use (MEMO, and the
-// P2 series QT, LD, DEAL and CUS).
+// fiscalYearOf), and the API's NumberingService creates each row lazily on first use (MEMO, the
+// P2 series QT, LD, DEAL and CUS, and the P4 series PR, RFQ, PO, GRN, BILL and PAY).
 
 /**
  * Seeds the kernel rows in ONE transaction and returns how many rows were inserted or changed.
@@ -334,6 +339,8 @@ export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): P
   // Parse first so a bad spec fails before any SQL, and so we store the schema's defaulted form.
   const memoSpec = WorkflowSpecSchema.parse(TEST_MEMO_WORKFLOW_SPEC);
   const quotationSpec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
+  const purchaseRequestSpec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
+  const prCommitmentSpec = WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC);
   await client.query('BEGIN');
   try {
     await setSeedActor(client, scope);
@@ -350,6 +357,19 @@ export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): P
       name: 'Quotation version approval',
       documentType: 'quotation_version',
       spec: quotationSpec,
+    });
+    // P4: the PR route ends at the department head (AD10); the commitment route runs on the recommended quote.
+    changed += await seedWorkflow(client, scope, {
+      key: 'purchase_request',
+      name: 'Purchase request approval',
+      documentType: 'purchase_request',
+      spec: purchaseRequestSpec,
+    });
+    changed += await seedWorkflow(client, scope, {
+      key: 'pr_commitment',
+      name: 'Purchase commitment approval',
+      documentType: 'pr_commitment',
+      spec: prCommitmentSpec,
     });
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
