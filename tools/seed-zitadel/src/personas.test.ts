@@ -59,7 +59,7 @@ describe('personas', () => {
   it('creates a ZITADEL project role for every role key the API knows (ADR 0027 section 3)', () => {
     // A token can only carry a role ZITADEL has, so a role missing here can never be granted to anyone.
     expect([...PROJECT_ROLES].sort()).toEqual([...ROLE_KEYS].sort());
-    for (const role of ['pmo', 'operations_head', 'procurement', 'receiver']) {
+    for (const role of ['pmo', 'operations_head', 'procurement', 'warehouse', 'operations_officer']) {
       expect(PROJECT_ROLES).toContain(role);
     }
   });
