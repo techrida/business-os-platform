@@ -66,6 +66,7 @@ const header = {
   kind: 'bill',
   number: null,
   vendorPartyId: VENDOR,
+  vendorName: 'Himal Traders',
   vendorInvoiceNo: 'INV-001',
   invoiceDate: '2026-11-08',
   fiscalYear: '2083/84',
