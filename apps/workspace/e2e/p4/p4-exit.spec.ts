@@ -175,7 +175,9 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await expect(page).toHaveURL(new RegExp(`/procurement/receipts\\?po=${poId}$`));
       await page.locator(`main a[href="/procurement/receipts/${receiptId}"]`).click();
       await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
-      await page.getByText('2 serial numbers', { exact: true }).click();
+      const serialDetails = page.locator('main details');
+      for (const details of await serialDetails.all()) await details.locator('summary').click();
+      await expect(serialDetails.getByRole('listitem')).toHaveCount(2);
       for (const serial of serials)
         await expect(page.getByRole('listitem').filter({ hasText: serial })).toBeVisible();
     });
