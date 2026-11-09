@@ -31,13 +31,17 @@ import {
 } from './portal-vendor.js';
 import {
   ConfirmReceiptBodySchema,
+  ConvertSubmissionBodySchema,
   CreatePurchaseRequestBodySchema,
+  CreateRfqBodySchema,
   P4_DOCUMENT_TYPES,
   PO_STATUSES,
   PO_TRANSITIONS,
   PR_STATUSES,
   PR_TRANSITIONS,
   RecommendQuotationBodySchema,
+  RecordQuotationBodySchema,
+  ScoreQuotationBodySchema,
   canTransitionPo,
   canTransitionPr,
 } from './procurement.js';
@@ -393,6 +397,112 @@ describe('procurement DTOs', () => {
         emergencyReason: 'Server room is down',
       }).success,
     ).toBe(true);
+  });
+
+  it('parses an RFQ body: distinct vendors, a zoned deadline, no server fields', () => {
+    const rfq = {
+      purchaseRequestId: id(9),
+      deadline: '2026-11-20T10:00:00+05:45',
+      vendorIds: [id(10), id(11)],
+    };
+    expect(CreateRfqBodySchema.safeParse(rfq).success).toBe(true);
+    expect(CreateRfqBodySchema.safeParse({ ...rfq, vendorIds: [] }).success).toBe(false);
+    expect(CreateRfqBodySchema.safeParse({ ...rfq, vendorIds: [id(10), id(10)] }).success).toBe(
+      false,
+    );
+    expect(
+      CreateRfqBodySchema.safeParse({
+        ...rfq,
+        vendorIds: Array.from({ length: 51 }, (_, i) => id(i)),
+      }).success,
+    ).toBe(false);
+    expect(CreateRfqBodySchema.safeParse({ ...rfq, deadline: '2026-11-20' }).success).toBe(false);
+    expect(CreateRfqBodySchema.safeParse({ ...rfq, status: 'open' }).success).toBe(false);
+  });
+
+  describe('quotation bodies', () => {
+    const qline = { prLineId: id(12), quantity: '2.5', unitPrice: '1500.50', taxCodeId: id(13) };
+    const fields = { currency: 'NPR', lines: [qline] };
+    const record = { vendorId: id(14), documentId: id(15), ...fields };
+    const convert = { submissionId: id(16), ...fields };
+
+    it('parses a recorded quotation and a converted submission', () => {
+      expect(RecordQuotationBodySchema.safeParse(record).success).toBe(true);
+      expect(ConvertSubmissionBodySchema.safeParse(convert).success).toBe(true);
+      expect(
+        RecordQuotationBodySchema.safeParse({
+          ...record,
+          vendorRef: 'Q-77',
+          validUntil: '2026-12-31',
+          deliveryDays: 14,
+          warranty: '1 year',
+          terms: 'Net 30',
+        }).success,
+      ).toBe(true);
+    });
+
+    it('keeps the two bodies apart: each takes its own source id and nothing else', () => {
+      expect(RecordQuotationBodySchema.safeParse(convert).success).toBe(false);
+      expect(ConvertSubmissionBodySchema.safeParse(record).success).toBe(false);
+      expect(RecordQuotationBodySchema.safeParse({ ...record, total: '1.00' }).success).toBe(false);
+    });
+
+    it('holds quantity to 4 places and price to 2, as plain unsigned decimals', () => {
+      const withLine = (over: Record<string, unknown>) => ({
+        ...record,
+        lines: [{ ...qline, ...over }],
+      });
+      expect(RecordQuotationBodySchema.safeParse(withLine({ quantity: '1.2345' })).success).toBe(
+        true,
+      );
+      expect(RecordQuotationBodySchema.safeParse(withLine({ quantity: '1.23456' })).success).toBe(
+        false,
+      );
+      expect(RecordQuotationBodySchema.safeParse(withLine({ unitPrice: '1.234' })).success).toBe(
+        false,
+      );
+      expect(RecordQuotationBodySchema.safeParse(withLine({ unitPrice: '-1' })).success).toBe(
+        false,
+      );
+      expect(RecordQuotationBodySchema.safeParse(withLine({ unitPrice: 'abc' })).success).toBe(
+        false,
+      );
+      expect(RecordQuotationBodySchema.safeParse(withLine({ unitPrice: 15 })).success).toBe(false);
+    });
+
+    it('needs a currency and at least one line, and bounds the optional fields', () => {
+      expect(RecordQuotationBodySchema.safeParse({ ...record, lines: [] }).success).toBe(false);
+      expect(RecordQuotationBodySchema.safeParse({ ...record, currency: 'XYZ' }).success).toBe(
+        false,
+      );
+      expect(RecordQuotationBodySchema.safeParse({ ...record, deliveryDays: -1 }).success).toBe(
+        false,
+      );
+      expect(RecordQuotationBodySchema.safeParse({ ...record, validUntil: 'soon' }).success).toBe(
+        false,
+      );
+    });
+  });
+
+  it('parses quotation scores between 0 and 100, one to twenty of them', () => {
+    const score = { criterion: 'price', score: 80 };
+    expect(ScoreQuotationBodySchema.safeParse({ scores: [score] }).success).toBe(true);
+    expect(
+      ScoreQuotationBodySchema.safeParse({ scores: [{ ...score, score: 0, comment: 'ok' }] })
+        .success,
+    ).toBe(true);
+    expect(ScoreQuotationBodySchema.safeParse({ scores: [] }).success).toBe(false);
+    expect(ScoreQuotationBodySchema.safeParse({ scores: [{ ...score, score: 101 }] }).success).toBe(
+      false,
+    );
+    expect(ScoreQuotationBodySchema.safeParse({ scores: [{ ...score, score: -1 }] }).success).toBe(
+      false,
+    );
+    expect(ScoreQuotationBodySchema.safeParse({ scores: [{ score: 5 }] }).success).toBe(false);
+    expect(
+      ScoreQuotationBodySchema.safeParse({ scores: Array.from({ length: 21 }, () => score) })
+        .success,
+    ).toBe(false);
   });
 
   it('parses a receipt line with a null, absent or well-formed over-receipt exception id only', () => {

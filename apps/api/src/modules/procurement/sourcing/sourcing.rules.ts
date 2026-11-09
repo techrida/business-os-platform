@@ -1,12 +1,11 @@
 // Pure rules of sourcing and the commitment approval (P4 unit P2; AD3, AD4, AD8, AD10, AD12, AD13): the
 // `pr_commitment` workflow spec, the commitment facts, the PO band, the quote-count rule, quotation line
-// arithmetic and the request bodies. No I/O, so every rule is cheap to table-test.
+// arithmetic and a re-export of the request bodies (the contracts own them). No I/O, so every rule is cheap to table-test.
 // Serves the NFRs "money moves only after the right people agree" (the bands are strict `>` on the grand total
 // including VAT, in NPR, from the recommended quote) and "amounts are exact" (decimal.js, ROUND_HALF_UP, strings).
-import { CurrencySchema, type PoApprovedBand } from '@bos/contracts';
+import type { PoApprovedBand } from '@bos/contracts';
 import { bandFor, parseDecimal } from '@bos/money-rules';
 import Decimal from 'decimal.js';
-import { z } from 'zod';
 
 /** approval_requests.document_type of a commitment; the document id is the RFQ id. */
 export const PR_COMMITMENT_DOCUMENT_TYPE = 'pr_commitment';
@@ -176,68 +175,17 @@ export function sumMoney(values: readonly string[]): string {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Bodies (procurement.ts has only RecommendQuotationBodySchema; these are proposed for the contracts unit)
+// Bodies (the contracts own them; re-exported so the controller and the service keep one import)
 // ---------------------------------------------------------------------------------------------------------------
 
-const text = (max: number) => z.string().trim().min(1).max(max);
-const decimalText = (scale: number) =>
-  z
-    .string()
-    .regex(new RegExp(`^\\d{1,14}(\\.\\d{1,${scale}})?$`), `a decimal with up to ${scale} places`);
-
-export const CreateRfqBodySchema = z.strictObject({
-  purchaseRequestId: z.guid(),
-  deadline: z.iso.datetime({ offset: true }),
-  vendorIds: z
-    .array(z.guid())
-    .min(1)
-    .max(50)
-    .refine((ids) => new Set(ids).size === ids.length, 'vendorIds must be distinct'),
-});
-export type CreateRfqBody = z.infer<typeof CreateRfqBodySchema>;
-
-export const QuotationLineBodySchema = z.strictObject({
-  prLineId: z.guid(),
-  quantity: decimalText(4),
-  unitPrice: decimalText(2),
-  taxCodeId: z.guid(),
-});
-
-const quotationFields = {
-  vendorRef: text(100).optional(),
-  validUntil: z.iso.date().optional(),
-  currency: CurrencySchema,
-  deliveryDays: z.number().int().min(0).max(3650).optional(),
-  warranty: text(500).optional(),
-  terms: text(2000).optional(),
-  lines: z.array(QuotationLineBodySchema).min(1).max(200),
-};
-
-/** A quotation Procurement types in from the vendor's document (already uploaded through DocumentsService). */
-export const RecordQuotationBodySchema = z.strictObject({
-  vendorId: z.guid(),
-  documentId: z.guid(),
-  ...quotationFields,
-});
-export type RecordQuotationBody = z.infer<typeof RecordQuotationBodySchema>;
-
-/** A clean inbox submission turned into a quotation: vendor and document come from the submission row. */
-export const ConvertSubmissionBodySchema = z.strictObject({
-  submissionId: z.guid(),
-  ...quotationFields,
-});
-export type ConvertSubmissionBody = z.infer<typeof ConvertSubmissionBodySchema>;
-
-export const ScoreQuotationBodySchema = z.strictObject({
-  scores: z
-    .array(
-      z.strictObject({
-        criterion: text(64),
-        score: z.number().min(0).max(100),
-        comment: text(500).optional(),
-      }),
-    )
-    .min(1)
-    .max(20),
-});
-export type ScoreQuotationBody = z.infer<typeof ScoreQuotationBodySchema>;
+export {
+  ConvertSubmissionBodySchema,
+  CreateRfqBodySchema,
+  QuotationLineBodySchema,
+  RecordQuotationBodySchema,
+  ScoreQuotationBodySchema,
+  type ConvertSubmissionBody,
+  type CreateRfqBody,
+  type RecordQuotationBody,
+  type ScoreQuotationBody,
+} from '@bos/contracts';
