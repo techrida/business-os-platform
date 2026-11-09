@@ -1,6 +1,9 @@
+import { randomBytes } from 'node:crypto';
+import { inspect } from 'node:util';
+
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, isLoopbackHost, loadAppConfig, loadCoreConfig } from './config';
+import { ConfigError, FieldKeyring, isLoopbackHost, loadAppConfig, loadCoreConfig } from './config';
 
 const base = {
   DATABASE_URL: 'postgresql://bos_app:s3cret-pw@postgres:5432/bos',
@@ -20,6 +23,7 @@ const kernelProd = {
   PORTAL_PUBLIC_URL: 'https://portal.example.com',
   DOCS_LINK_SECRET: 'd'.repeat(32),
   ZITADEL_ACTIONS_SIGNING_KEY: 'signing-key-value',
+  FIELD_ENC_KEYS: `k1:${randomBytes(32).toString('base64')}`,
 };
 const prod = { ...base, ...kernelProd, NODE_ENV: 'production' };
 
@@ -235,6 +239,7 @@ describe('P1 kernel settings', () => {
       'WORKSPACE_PUBLIC_URL: is required in production',
       'PORTAL_PUBLIC_URL: is required in production',
       'DOCS_LINK_SECRET: is required in production',
+      'FIELD_ENC_KEYS: is required in production',
     ]);
   });
 
@@ -361,5 +366,126 @@ describe('the PDF renderer (Gotenberg)', () => {
     expect(
       loadCoreConfig({ ...worker, GOTENBERG_MAX_BYTES: '26214400' }, 'worker').GOTENBERG_MAX_BYTES,
     ).toBe(26_214_400);
+  });
+});
+
+describe('FIELD_ENC_KEYS (the field-encryption keyring)', () => {
+  const key1 = randomBytes(32).toString('base64');
+  const key2 = randomBytes(32).toString('base64');
+
+  function ring(env: Record<string, string>): FieldKeyring {
+    const keyring = loadAppConfig({ ...base, ...env }).FIELD_ENC_KEYS;
+    if (keyring === undefined) throw new Error('expected a keyring');
+    return keyring;
+  }
+
+  it('is optional outside production and stays undefined when unset or blank', () => {
+    expect(loadAppConfig(base).FIELD_ENC_KEYS).toBeUndefined();
+    expect(loadAppConfig({ ...base, FIELD_ENC_KEYS: '  ' }).FIELD_ENC_KEYS).toBeUndefined();
+  });
+
+  it('is required in production, and a blank value counts as missing', () => {
+    const { FIELD_ENC_KEYS: _drop, ...withoutKeys } = prod;
+    expect(problems(() => loadAppConfig(withoutKeys))).toEqual([
+      'FIELD_ENC_KEYS: is required in production',
+    ]);
+    expect(problems(() => loadAppConfig({ ...prod, FIELD_ENC_KEYS: '' }))).toEqual([
+      'FIELD_ENC_KEYS: is required in production',
+    ]);
+    expect(loadAppConfig(prod).FIELD_ENC_KEYS).toBeInstanceOf(FieldKeyring);
+  });
+
+  it('parses one key and makes it both the active and the fingerprint key', () => {
+    const keyring = ring({ FIELD_ENC_KEYS: `k1:${key1}` });
+    expect(keyring.activeKid).toBe('k1');
+    expect(keyring.fingerprintKid).toBe('k1');
+    expect(keyring.kids).toEqual(['k1']);
+    expect(keyring.key('k1')).toEqual(Buffer.from(key1, 'base64'));
+    expect(keyring.key('k2')).toBeUndefined();
+  });
+
+  it('parses several keys, trimming blanks, with the active and fingerprint ids named', () => {
+    const keyring = ring({
+      FIELD_ENC_KEYS: ` k1:${key1} , k2:${key2},`,
+      FIELD_ENC_ACTIVE_KID: 'k2',
+      FIELD_ENC_FP_KID: 'k1',
+    });
+    expect(keyring.kids).toEqual(['k1', 'k2']);
+    expect(keyring.activeKid).toBe('k2');
+    expect(keyring.fingerprintKid).toBe('k1');
+    expect(keyring.key('k2')).toEqual(Buffer.from(key2, 'base64'));
+  });
+
+  it.each([
+    ['no separator', key1, 'FIELD_ENC_KEYS: entry 1 must be <kid>:<base64 of 32 bytes>'],
+    ['an empty list', ' , ', 'FIELD_ENC_KEYS: must list at least one key'],
+    ['a bad key id', `k 1:${key1}`, 'FIELD_ENC_KEYS: entry 1 has an invalid key id'],
+    ['a key id over 32 characters', `${'k'.repeat(33)}:${key1}`, 'FIELD_ENC_KEYS: entry 1 has an invalid key id'],
+    ['a short key', `k1:${randomBytes(16).toString('base64')}`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
+    ['a long key', `k1:${randomBytes(33).toString('base64')}`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
+    ['a non-base64 key', `k1:${key1.slice(0, -2)}!=`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
+    ['a base64url key', `k1:${randomBytes(32).toString('base64url')}`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
+    ['a repeated key id', `k1:${key1},k1:${key2}`, 'FIELD_ENC_KEYS: entry 2 repeats a key id'],
+  ])('refuses %s in every environment, without echoing the value', (_name, value, message) => {
+    for (const env of [base, { ...base, NODE_ENV: 'test' }, prod]) {
+      const list = problems(() => loadAppConfig({ ...env, FIELD_ENC_KEYS: value }));
+      expect(list).toEqual([message]);
+      expect(list.join('\n')).not.toContain(key1);
+      expect(list.join('\n')).not.toContain(value);
+    }
+  });
+
+  it('needs FIELD_ENC_ACTIVE_KID and FIELD_ENC_FP_KID once there is more than one key', () => {
+    const list = problems(() => loadAppConfig({ ...base, FIELD_ENC_KEYS: `k1:${key1},k2:${key2}` }));
+    expect(list).toEqual([
+      'FIELD_ENC_ACTIVE_KID: is required when FIELD_ENC_KEYS holds more than one key',
+      'FIELD_ENC_FP_KID: is required when FIELD_ENC_KEYS holds more than one key',
+    ]);
+  });
+
+  it('refuses an active or fingerprint id that names no key', () => {
+    const list = problems(() =>
+      loadAppConfig({
+        ...base,
+        FIELD_ENC_KEYS: `k1:${key1}`,
+        FIELD_ENC_ACTIVE_KID: 'k9',
+        FIELD_ENC_FP_KID: 'k8',
+      }),
+    );
+    expect(list).toEqual([
+      'FIELD_ENC_ACTIVE_KID: names no key in FIELD_ENC_KEYS',
+      'FIELD_ENC_FP_KID: names no key in FIELD_ENC_KEYS',
+    ]);
+  });
+
+  it('keeps no key material where a log could print it', () => {
+    const raw = `k1:${key1},k2:${key2}`;
+    const config = loadAppConfig({
+      ...base,
+      FIELD_ENC_KEYS: raw,
+      FIELD_ENC_ACTIVE_KID: 'k2',
+      FIELD_ENC_FP_KID: 'k1',
+    });
+    const hexKey = Buffer.from(key1, 'base64').toString('hex');
+    for (const text of [
+      JSON.stringify(config),
+      inspect(config, { depth: 10, showHidden: true }),
+      String(config.FIELD_ENC_KEYS),
+      inspect(config.FIELD_ENC_KEYS, { depth: 10, showHidden: true }),
+    ]) {
+      for (const secret of [raw, key1, key2, hexKey]) expect(text).not.toContain(secret);
+    }
+    expect(JSON.stringify(config.FIELD_ENC_KEYS)).toBe(
+      '{"activeKid":"k2","fingerprintKid":"k1","kids":["k1","k2"]}',
+    );
+    expect(Object.isFrozen(config.FIELD_ENC_KEYS)).toBe(true);
+  });
+
+  it('is an API-only setting: the worker config never carries it', () => {
+    const config = loadCoreConfig(
+      { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL, FIELD_ENC_KEYS: `k1:${key1}` },
+      'worker',
+    );
+    expect('FIELD_ENC_KEYS' in config).toBe(false);
   });
 });
