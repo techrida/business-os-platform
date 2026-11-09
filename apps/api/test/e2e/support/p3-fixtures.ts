@@ -11,7 +11,7 @@
 // so the extra accountant and finance users must not leak into another e2e file's approver set.
 import { randomUUID } from 'node:crypto';
 
-import { documents, userEntities, userRoles, users } from '@bos/db';
+import { documents, documentVersions, userEntities, userRoles, users } from '@bos/db';
 import { drizzle } from 'drizzle-orm/node-postgres';
 
 import { systemActor, withTx } from '../../../src/platform/db/tx';
@@ -112,4 +112,46 @@ export async function seedEvidenceDocument(world: P3World): Promise<string> {
   );
   if (row === undefined) throw new Error('evidence document insert returned no row');
   return row.id;
+}
+
+/**
+ * A clean payment proof for `customerId`, as if `uploadedBy` had uploaded a bank slip through the staff proof route and
+ * the scan had cleared it. A SHORTCUT, the same rows payments.integration.test.ts seeds (`proof()`): one document
+ * owned by `payment_intake` / the customer and one `clean` version. It skips only the upload and the virus scan, which
+ * p3-exit covers end to end; the payment routes still check every rule of the proof (entity, customer, clean, unused).
+ */
+export async function seedCleanProof(
+  world: P3World,
+  customerId: string,
+  uploadedBy: string,
+): Promise<string> {
+  const documentId = randomUUID();
+  const versionId = randomUUID();
+  await withTx(
+    drizzle({ client: world.pool }),
+    world.scope,
+    systemActor('e2e-p3-proof'),
+    async (tx) => {
+      await tx.insert(documents).values({
+        id: documentId,
+        ...world.scope,
+        ownerType: 'payment_intake',
+        ownerId: customerId,
+        createdBy: uploadedBy,
+      });
+      await tx.insert(documentVersions).values({
+        id: versionId,
+        ...world.scope,
+        documentId,
+        version: 1,
+        filename: 'slip.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 1000,
+        storageKey: `${world.scope.tenantId}/${versionId}`,
+        status: 'clean',
+        uploadedBy,
+      });
+    },
+  );
+  return documentId;
 }
