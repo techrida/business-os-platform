@@ -19,7 +19,6 @@ import {
   type VendorStatus,
 } from '@bos/contracts';
 import {
-  organizations,
   parties,
   paymentTerms,
   userEntities,
@@ -27,7 +26,6 @@ import {
   vendorAccounts,
   vendorContacts,
   vendors,
-  verificationCases,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -46,10 +44,11 @@ import { AuthzService } from '../../platform/authz/authz.service';
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { systemActor, withTx } from '../../platform/db/tx';
+import { withTx } from '../../platform/db/tx';
 import { escapeLike, normalizeEmail } from '../customers/customers.normalize';
 import { VerificationService } from '../verification/verification.service';
 import { VendorsCaller } from './vendors.caller';
+import { kybCaseOf, lockVendor, type VendorRow } from './vendors.queries';
 import {
   isoDay,
   kindCountryProblem,
@@ -59,7 +58,6 @@ import {
   LIFECYCLE,
   lifecycleAllowed,
   vendorPartyCode,
-  type KycItem,
   type LifecycleCommand,
 } from './vendors.rules';
 import {
@@ -72,7 +70,6 @@ import {
   type VendorList,
 } from './vendors.types';
 
-type VendorRow = typeof vendors.$inferSelect;
 type ContactRow = typeof vendorContacts.$inferSelect;
 type AccountRow = typeof vendorAccounts.$inferSelect;
 type Q = Db | DbTransaction;
@@ -167,7 +164,8 @@ const isUnique = (error: unknown, constraint: string): boolean => {
 
 const duplicatePan = (pan: string, existingId?: string) =>
   new ConflictException({
-    code: 'duplicate_pan',
+    // An existing code of the error filter, so clients can switch on it (the customers module uses it too).
+    code: 'duplicate_pan_vat',
     message: `A vendor with PAN ${pan} already exists`,
     ...(existingId === undefined ? {} : { details: { vendorId: existingId } }),
   });
@@ -390,13 +388,13 @@ export class VendorsService {
         tx,
         { command: 'vendor.submit_kyc', key: idempotencyKey, body: { id } },
         async () => {
-          const row = await this.lock(tx, scope.tenantId, id);
+          const row = await lockVendor(tx, scope.tenantId, id);
           if (row === undefined) throw vendorNotFound();
           let to: VendorStatus;
           if (row.status === 'draft') {
             to = 'pending_kyc';
           } else if (row.status === 'pending_kyc') {
-            const kyb = await this.kybCase(tx, scope.tenantId, id);
+            const kyb = await kybCaseOf(tx, scope.tenantId, id);
             if (kyb?.status !== 'submitted' && kyb?.status !== 'approved') {
               throw new ConflictException({
                 code: 'kyb_not_submitted',
@@ -447,7 +445,7 @@ export class VendorsService {
         tx,
         { command: `vendor.${command}`, key: idempotencyKey, body: { id, reason: reason ?? null } },
         async () => {
-          const row = await this.lock(tx, scope.tenantId, id);
+          const row = await lockVendor(tx, scope.tenantId, id);
           if (row === undefined) throw vendorNotFound();
           this.assertVisible('vendor.activate', row, principal);
           if (!lifecycleAllowed(command, row.status)) {
@@ -462,7 +460,7 @@ export class VendorsService {
                 reason: 'separation_of_duties',
               });
             }
-            const kyb = await this.kybCase(tx, scope.tenantId, id);
+            const kyb = await kybCaseOf(tx, scope.tenantId, id);
             if (kyb?.status !== 'approved') {
               throw new ConflictException({
                 // Reuses the existing 409 code of the error filter: a domain code it does not list reads as `conflict`.
@@ -494,59 +492,6 @@ export class VendorsService {
       );
       return done.response;
     });
-  }
-
-  /**
-   * The daily KYC expiry check: every approved vendor whose KYB case holds a tax clearance with `expiresOn`
-   * before `today` becomes `suspended`, under the system actor, in the default entity of its tenant. No request
-   * context is read, so a scheduler (a BullMQ repeatable job in the worker) can call it. Returns the vendor ids.
-   */
-  async suspendLapsedKyc(now: Date = this.clock()): Promise<{ suspended: string[] }> {
-    const today = isoDay(now);
-    const candidates = await this.db.execute<{ tenant_id: string; id: string }>(sql`
-      SELECT v.tenant_id, v.id
-        FROM app.vendors v
-        JOIN app.verification_cases c ON c.tenant_id = v.tenant_id AND c.party_id = v.id
-       WHERE v.status = 'approved'
-         AND EXISTS (
-           SELECT 1 FROM jsonb_array_elements(c.checklist) i
-            WHERE i->>'key' = 'tax_clearance' AND i->>'expiresOn' < ${today})
-       ORDER BY v.tenant_id, v.id`);
-    const suspended: string[] = [];
-    for (const c of candidates.rows) {
-      const [entity] = await this.db
-        .select({ id: organizations.id })
-        .from(organizations)
-        .where(and(eq(organizations.tenantId, c.tenant_id), eq(organizations.isDefault, true)))
-        .limit(1);
-      if (entity === undefined) continue;
-      const done = await withTx(
-        this.db,
-        { tenantId: c.tenant_id, organizationId: entity.id },
-        systemActor('vendors.kyc-expiry'),
-        async (tx) => {
-          const row = await this.lock(tx, c.tenant_id, c.id);
-          // Re-read under the lock: it may have been suspended, blocked or renewed since the scan.
-          if (row === undefined || row.status !== 'approved') return false;
-          const kyb = await this.kybCase(tx, c.tenant_id, c.id);
-          if (kyb === undefined || !lapsedTaxClearance(kyb.items, today)) return false;
-          await updateVersioned(tx, vendors, row.id, row.version, {
-            status: 'suspended',
-            updatedAt: now,
-          });
-          await this.audit.record(tx, {
-            action: 'vendor.suspended',
-            entityType: 'vendor',
-            entityId: row.id,
-            before: { status: 'approved' },
-            after: { status: 'suspended', reason: 'tax_clearance_expired' },
-          });
-          return true;
-        },
-      );
-      if (done) suspended.push(c.id);
-    }
-    return { suspended };
   }
 
   // ----------------------------------------------------------------------------------------------- contacts
@@ -585,7 +530,7 @@ export class VendorsService {
         { command: 'vendor.contact.create', key: idempotencyKey, body: { vendorId, ...body } },
         async () => {
           // The vendor row lock serialises two first contacts, so only one of them becomes primary.
-          const vendor = await this.lock(tx, scope.tenantId, vendorId);
+          const vendor = await lockVendor(tx, scope.tenantId, vendorId);
           if (vendor === undefined) throw vendorNotFound();
           this.assertVisible('vendor.write', vendor, principal);
           const [existing] = await tx
@@ -632,7 +577,7 @@ export class VendorsService {
     }
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
-      const vendor = await this.lock(tx, scope.tenantId, vendorId);
+      const vendor = await lockVendor(tx, scope.tenantId, vendorId);
       if (vendor === undefined) throw vendorNotFound();
       this.assertVisible('vendor.write', vendor, principal);
       await this.requireContact(tx, scope.tenantId, vendorId, contactId);
@@ -678,7 +623,7 @@ export class VendorsService {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     await withTx(this.db, scope, actor, async (tx) => {
-      const vendor = await this.lock(tx, scope.tenantId, vendorId);
+      const vendor = await lockVendor(tx, scope.tenantId, vendorId);
       if (vendor === undefined) throw vendorNotFound();
       this.assertVisible('vendor.write', vendor, principal);
       await this.requireContact(tx, scope.tenantId, vendorId, contactId);
@@ -731,7 +676,7 @@ export class VendorsService {
         tx,
         { command: 'vendor.account.create', key: idempotencyKey, body: { vendorId, ...body } },
         async () => {
-          const vendor = await this.lock(tx, scope.tenantId, vendorId);
+          const vendor = await lockVendor(tx, scope.tenantId, vendorId);
           if (vendor === undefined) throw vendorNotFound();
           this.assertVisible('vendor.write', vendor, principal);
           if (vendor.status === 'blocked' || vendor.status === 'archived') {
@@ -864,37 +809,6 @@ export class VendorsService {
       .from(vendors)
       .where(and(eq(vendors.tenantId, tenantId), eq(vendors.id, id)));
     return row;
-  }
-
-  /** The vendor row under `FOR UPDATE`: lifecycle moves, contacts and accounts of one vendor run one at a time. */
-  private async lock(
-    tx: DbTransaction,
-    tenantId: string,
-    id: string,
-  ): Promise<VendorRow | undefined> {
-    const [row] = await tx
-      .select()
-      .from(vendors)
-      .where(and(eq(vendors.tenantId, tenantId), eq(vendors.id, id)))
-      .for('update');
-    return row;
-  }
-
-  /** The KYB case of the vendor party: its status and the checklist items the expiry check reads. */
-  private async kybCase(
-    q: Q,
-    tenantId: string,
-    partyId: string,
-  ): Promise<{ status: string; items: KycItem[] } | undefined> {
-    const [row] = await q
-      .select({ status: verificationCases.status, checklist: verificationCases.checklist })
-      .from(verificationCases)
-      .where(and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.partyId, partyId)));
-    if (row === undefined) return undefined;
-    return {
-      status: row.status,
-      items: (Array.isArray(row.checklist) ? row.checklist : []) as KycItem[],
-    };
   }
 
   private async requireContact(
