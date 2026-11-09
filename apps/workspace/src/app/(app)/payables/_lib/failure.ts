@@ -37,8 +37,8 @@ export function billFailure(err: unknown, op: BillOp): ProcFailure {
         case 'BILL_DOCUMENT_NOT_CLEAN':
           return {
             message:
-              'The invoice file has not scanned clean. Wait for its scan to finish, or upload a replacement if the scan failed.',
-            reload: false,
+              'The invoice file has not scanned clean. Reload the draft bill to check its scan status. If the file failed or was never uploaded, use "Upload a replacement file" on the bill.',
+            reload: true,
           };
         case 'DUPLICATE_BILL':
           return {
