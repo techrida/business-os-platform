@@ -23,6 +23,13 @@ export const KIND_LABEL: Record<ReceiptKind, string> = {
   service: 'Service confirmation',
 };
 
+/** The kind of an order in the receiving list: `mixed` when it has goods and service lines. */
+export const WAITING_KIND_LABEL: Record<'goods' | 'service' | 'mixed', string> = {
+  goods: 'Goods',
+  service: 'Service',
+  mixed: 'Mixed',
+};
+
 export interface ReceiptGrants {
   /** `procurement.receipt.confirm`: the warehouse, who receives goods. */
   confirm: boolean;
