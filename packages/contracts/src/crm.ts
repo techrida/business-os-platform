@@ -568,7 +568,23 @@ export const CHECKLIST_ITEM_KEYS = [
   'address_proof',
   'other',
 ] as const;
-export const ChecklistItemKeySchema = z.enum(CHECKLIST_ITEM_KEYS);
+/** The checklist of a vendor case (P4 K3): which party kind a case is for decides which keys it has. */
+export const VENDOR_CHECKLIST_ITEM_KEYS = [
+  'pan_certificate',
+  'vat_certificate',
+  'company_registration',
+  'tax_clearance',
+  'bank_proof',
+  'proprietor_citizenship',
+  'foreign_registration',
+] as const;
+export const VERIFICATION_PARTY_KINDS = ['customer', 'vendor'] as const;
+export const VerificationPartyKindSchema = z.enum(VERIFICATION_PARTY_KINDS);
+export type VerificationPartyKind = z.infer<typeof VerificationPartyKindSchema>;
+export const ChecklistItemKeySchema = z.enum([
+  ...CHECKLIST_ITEM_KEYS,
+  ...VENDOR_CHECKLIST_ITEM_KEYS,
+]);
 
 export const CHECKLIST_ITEM_STATUSES = ['missing', 'provided', 'accepted', 'rejected'] as const;
 export const ChecklistItemStatusSchema = z.enum(CHECKLIST_ITEM_STATUSES);
