@@ -11,6 +11,7 @@ import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
 import { PaymentProofsModule } from './modules/payment-proofs/payment-proofs.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { BillSubmissionsModule } from './modules/payables/bills/bill-submissions.module';
 import { VendorBillsModule } from './modules/payables/bills/vendor-bills.module';
 import { PaymentRequestsModule } from './modules/payables/payment-requests/payment-requests.module';
 import { PortalModule } from './modules/portal/portal.module';
@@ -102,6 +103,7 @@ import { UsersModule } from './platform/users/users.module';
     PurchaseOrdersModule,
     PurchaseOrderRenderModule,
     VendorBillsModule,
+    BillSubmissionsModule,
     PaymentRequestsModule,
   ],
 })
