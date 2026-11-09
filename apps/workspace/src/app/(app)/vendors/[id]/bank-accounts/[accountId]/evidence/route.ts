@@ -1,6 +1,6 @@
 import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
-import { createDocument, uploadDocumentContent } from '@/lib/api-kernel';
+import { createBankEvidence, uploadBankEvidenceContent } from '@/lib/api-vendors';
 import {
   errorResponse,
   forbiddenOrigin,
@@ -14,11 +14,15 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * The owner type the bank verify looks for: it lists the documents owned by `vendor_bank_account`
- * plus the account id and accepts only one of those, scanned clean, as the call-back evidence.
- * The API also checks that the caller may upload, so no extra lookup is needed here.
+ * What the browser may declare. The account in the path owns the file (the API sets the owner type
+ * the bank verify looks for), so the body has no owner. The API also checks that the caller may
+ * upload, so no extra lookup is needed here.
  */
-const OWNER_TYPE = 'vendor_bank_account';
+const EvidenceFileSchema = CreateDocumentBodySchema.pick({
+  filename: true,
+  declaredMime: true,
+  sizeBytes: true,
+});
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const bad = (message: string, status = 400): Response =>
@@ -28,7 +32,8 @@ const bad = (message: string, status = 400): Response =>
  * Upload the call-back evidence for one proposed bank account; the browser then sends the returned
  * document id with the verify action. Same wire format as the verification upload: the raw file is
  * the request body with its own Content-Type and its name in `x-file-name` (no multipart, so a
- * 25 MB file is never buffered here). Answers 201 with the ids.
+ * 25 MB file is never buffered here). Two API calls: `POST /v1/vendors/:id/bank-accounts/:accountId/evidence`
+ * declares the file, then a raw `PUT` streams it to the returned `uploadPath`. Answers 201 with the ids.
  */
 export async function POST(
   req: Request,
@@ -52,9 +57,7 @@ export async function POST(
 
   const filename = decodeFileName(req.headers.get('x-file-name'));
   const contentType = baseMime(req.headers.get('content-type'));
-  const parsed = CreateDocumentBodySchema.safeParse({
-    ownerType: OWNER_TYPE,
-    ownerId: accountId,
+  const parsed = EvidenceFileSchema.safeParse({
     filename,
     declaredMime: contentType,
     sizeBytes: length,
@@ -62,8 +65,8 @@ export async function POST(
   if (!parsed.success) return bad('That file name or type is not allowed.');
 
   try {
-    const created = await createDocument(session, parsed.data);
-    await uploadDocumentContent(session, created, {
+    const created = await createBankEvidence(session, id, accountId, parsed.data);
+    await uploadBankEvidenceContent(session, id, accountId, created, {
       body: req.body,
       contentLength: length,
       contentType,

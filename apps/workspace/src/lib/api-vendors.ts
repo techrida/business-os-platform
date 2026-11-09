@@ -2,6 +2,8 @@ import 'server-only';
 
 import {
   type CreateVendorBody,
+  type DocumentVersionDto,
+  DocumentVersionDtoSchema,
   type ProposeBankAccountBody,
   type RejectBankAccountBody,
   type VendorAccountDto,
@@ -285,6 +287,92 @@ export function rejectBankAccount(
     VendorBankAccountDtoSchema,
     jsonInit('POST', body, idempotencyKey),
   );
+}
+
+// ------------------------------------------------------------------- bank call-back evidence
+
+const BankEvidenceCreatedSchema = z.object({
+  documentId: z.guid(),
+  versionId: z.guid(),
+  uploadPath: z.string(),
+});
+export type BankEvidenceCreated = z.infer<typeof BankEvidenceCreatedSchema>;
+
+/** What the browser declares about the file. The account in the path owns it, so there is no owner field. */
+export interface BankEvidenceFile {
+  filename: string;
+  declaredMime: string;
+  sizeBytes: number;
+}
+
+/**
+ * `POST /v1/vendors/:id/bank-accounts/:accountId/evidence` (needs `vendor.bank.propose`): step 1 of
+ * the call-back evidence upload. Sends no Idempotency-Key, because the API takes none (a retry only
+ * leaves an empty draft document). Answers 201 `{ documentId, versionId, uploadPath }`.
+ */
+export function createBankEvidence(
+  session: Session,
+  id: string,
+  accountId: string,
+  file: BankEvidenceFile,
+): Promise<BankEvidenceCreated> {
+  return call(
+    session,
+    `/v1/vendors/${seg(id)}/bank-accounts/${seg(accountId)}/evidence`,
+    BankEvidenceCreatedSchema,
+    jsonInit('POST', file),
+  );
+}
+
+const UUID_PART = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const EVIDENCE_UPLOAD_PATH = new RegExp(
+  `^/v1/vendors/(${UUID_PART})/bank-accounts/(${UUID_PART})/evidence/(${UUID_PART})/versions/(${UUID_PART})/content$`,
+  'i',
+);
+
+/**
+ * The content route the API hands back must be this vendor's, this account's and the ids it just
+ * returned. Nothing is sent, and no token leaves, to any other path.
+ */
+function evidenceContentPath(id: string, accountId: string, created: BankEvidenceCreated): string {
+  const match = EVIDENCE_UPLOAD_PATH.exec(created.uploadPath);
+  const same = (a: string | undefined, b: string): boolean => a?.toLowerCase() === b.toLowerCase();
+  if (
+    match === null ||
+    !same(match[1], id) ||
+    !same(match[2], accountId) ||
+    !same(match[3], created.documentId) ||
+    !same(match[4], created.versionId)
+  ) {
+    throw new ApiError(502, 'POST bank-accounts evidence returned an unexpected uploadPath');
+  }
+  return created.uploadPath;
+}
+
+/**
+ * Step 2: a raw `PUT` of the bytes to the `uploadPath` from `createBankEvidence`. The API requires
+ * `Content-Length` (411 without it), so the browser's length is forwarded and the body is never
+ * buffered here; `duplex: 'half'` is what Node's fetch demands for a streamed request body.
+ */
+export async function uploadBankEvidenceContent(
+  session: Session,
+  id: string,
+  accountId: string,
+  created: BankEvidenceCreated,
+  upload: { body: ReadableStream<Uint8Array>; contentLength: number; contentType: string },
+): Promise<DocumentVersionDto> {
+  const init: RequestInit & { duplex: 'half' } = {
+    method: 'PUT',
+    headers: {
+      // The file's own type: the API's JSON and form parsers only act on their own types and
+      // would consume the stream otherwise.
+      'content-type': upload.contentType,
+      'content-length': String(upload.contentLength),
+    },
+    body: upload.body,
+    duplex: 'half',
+  };
+  return call(session, evidenceContentPath(id, accountId, created), DocumentVersionDtoSchema, init);
 }
 
 // ---------------------------------------------------------------------------------- portal access
