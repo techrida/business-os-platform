@@ -178,3 +178,79 @@ export const PO_AMENDMENT_WORKFLOW_SPEC: unknown = {
   distinctApprovers: true,
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'management' } },
 };
+
+/**
+ * Copy of VENDOR_BILL_WORKFLOW_SPEC (apps/api/src/modules/payables/bills/vendor-bill.rules.ts).
+ * `documentType` is the literal of VENDOR_BILL_DOCUMENT_TYPE.
+ */
+export const VENDOR_BILL_WORKFLOW_SPEC: unknown = {
+  documentType: 'vendor_bill',
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: 'Base route: an Accountant who did not enter the bill checks it',
+    },
+    {
+      id: 'finance',
+      kind: 'role',
+      role: 'finance',
+      reason: 'Base route: Finance accepts the payable',
+    },
+  ],
+  rules: [
+    {
+      id: 'management',
+      when: {
+        all: [
+          { field: 'poMatched', op: 'eq', value: false },
+          { field: 'band', op: 'in', value: ['management', 'founder'] },
+        ],
+      },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason:
+          'Management approval because a bill without a purchase order exceeds NPR 100,000.00',
+      },
+      position: 'end',
+      reason: 'Non-PO bill of NPR {amountNpr} is above NPR 100,000.00',
+    },
+    {
+      id: 'founder',
+      when: {
+        all: [
+          { field: 'poMatched', op: 'eq', value: false },
+          { field: 'band', op: 'eq', value: 'founder' },
+        ],
+      },
+      add: {
+        id: 'founder',
+        kind: 'role',
+        role: 'founder',
+        reason: 'Founder approval because a bill without a purchase order exceeds NPR 1,000,000.00',
+      },
+      position: 'end',
+      reason: 'Non-PO bill of NPR {amountNpr} is above NPR 1,000,000.00',
+    },
+  ],
+};
+
+/**
+ * Copy of MATCH_EXCEPTION_WORKFLOW_SPEC (apps/api/src/modules/payables/bills/vendor-bill.rules.ts).
+ * `documentType` is the literal of MATCH_EXCEPTION_DOCUMENT_TYPE.
+ */
+export const MATCH_EXCEPTION_WORKFLOW_SPEC: unknown = {
+  documentType: 'match_exception',
+  steps: [
+    {
+      id: 'finance',
+      kind: 'role',
+      role: 'finance',
+      reason: 'Finance decides whether a bill outside the match tolerance may go to approval',
+    },
+  ],
+  rules: [],
+};

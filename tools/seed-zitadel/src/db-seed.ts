@@ -1,5 +1,5 @@
 // Seed rows that the API kernel needs on day one: the default role grants, the `test_memo`,
-// `quotation_version`, `purchase_request`, `pr_commitment` and `po_amendment` approval workflows, the INR peg and the
+// `quotation_version`, `purchase_request`, `pr_commitment`, `po_amendment`, `vendor_bill` and `match_exception` approval workflows, the INR peg and the
 // P2 quotation reference data (tax codes and payment terms), and, when the dev personas are passed, the dev
 // department and the VEND-DEV vendor (P4). Serves the NFR "authorization is deny-by-default" (an empty
 // role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
@@ -12,13 +12,21 @@ import type pg from 'pg';
 
 import { PERSONAS } from './personas.js';
 import {
+  MATCH_EXCEPTION_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
+  VENDOR_BILL_WORKFLOW_SPEC,
 } from './workflow-specs.js';
 
 // The P4 specs live in `workflow-specs.ts` (word-for-word copies; a test in apps/api pins them to the API's).
-export { PO_AMENDMENT_WORKFLOW_SPEC, PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC };
+export {
+  MATCH_EXCEPTION_WORKFLOW_SPEC,
+  PO_AMENDMENT_WORKFLOW_SPEC,
+  PR_COMMITMENT_WORKFLOW_SPEC,
+  PURCHASE_REQUEST_WORKFLOW_SPEC,
+  VENDOR_BILL_WORKFLOW_SPEC,
+};
 
 export interface SeedScope {
   tenantId: string;
@@ -509,6 +517,8 @@ export async function seedKernelRows(
   const purchaseRequestSpec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
   const prCommitmentSpec = WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC);
   const poAmendmentSpec = WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC);
+  const vendorBillSpec = WorkflowSpecSchema.parse(VENDOR_BILL_WORKFLOW_SPEC);
+  const matchExceptionSpec = WorkflowSpecSchema.parse(MATCH_EXCEPTION_WORKFLOW_SPEC);
   // A missing persona fails here, before BEGIN, like a bad spec.
   if (personas && personas.length > 0) devPeople(personas);
   await client.query('BEGIN');
@@ -547,6 +557,19 @@ export async function seedKernelRows(
       name: 'Purchase order amendment',
       documentType: 'po_amendment',
       spec: poAmendmentSpec,
+    });
+    // A vendor bill goes Accountant then Finance; a bill outside the match tolerance goes to Finance first (AD5).
+    changed += await seedWorkflow(client, scope, {
+      key: 'vendor_bill',
+      name: 'Vendor bill approval',
+      documentType: 'vendor_bill',
+      spec: vendorBillSpec,
+    });
+    changed += await seedWorkflow(client, scope, {
+      key: 'match_exception',
+      name: 'Match exception approval',
+      documentType: 'match_exception',
+      spec: matchExceptionSpec,
     });
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
