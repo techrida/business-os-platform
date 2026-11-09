@@ -14,48 +14,175 @@ import { Table, Td, Th } from '@/components/ui/table';
 import {
   getPoProgress,
   listReceipts,
+  listReceivableOrders,
   type PoProgress,
+  type ReceivableOrder,
   type Receipt,
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import type { Session } from '@/lib/session';
 
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../orders/_lib/model';
 import { receiptFailure } from './_lib/failure';
-import { KIND_LABEL, kindsOffered, receiptGrants, RECEIPT_STATUS_LABEL } from './_lib/model';
+import {
+  KIND_LABEL,
+  kindsOffered,
+  receiptGrants,
+  RECEIPT_STATUS_LABEL,
+  WAITING_KIND_LABEL,
+} from './_lib/model';
 import styles from './receipts.module.css';
 
 export const metadata: Metadata = { title: 'Receipts · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function Picker({ invalid, canOpenOrders }: { invalid: boolean; canOpenOrders: boolean }) {
+/** What the picker knows about the orders waiting for receipt: absent when it is not offered. */
+type Waiting =
+  { state: 'list'; orders: readonly ReceivableOrder[] } | { state: 'failed'; message: string };
+
+/**
+ * The receiving list is offered to the warehouse only. A 403 (grants changed since the roles were
+ * read) quietly leaves the ID form alone; any other failure is shown, and the form still works.
+ */
+async function loadWaiting(session: Session, mayReceive: boolean): Promise<Waiting | undefined> {
+  if (!mayReceive) return undefined;
+  try {
+    return { state: 'list', orders: await listReceivableOrders(session) };
+  } catch (err) {
+    const f = receiptFailure(err, 'load');
+    if (f.status === 403) return undefined;
+    return { state: 'failed', message: f.message };
+  }
+}
+
+function WaitingOrders({ orders }: { orders: readonly ReceivableOrder[] }) {
   return (
-    <Page width="narrow">
+    <Panel
+      title="Waiting to be received"
+      description="Issued and partly received purchase orders, newest first. Open one to see its receipts, or start a receipt straight away."
+    >
+      {orders.length === 0 ? (
+        <EmptyState
+          title="No purchase orders are waiting to be received"
+          icon="file-text"
+          headingLevel={3}
+        >
+          Orders appear here once they are issued, and leave when everything has arrived.
+        </EmptyState>
+      ) : (
+        <Table caption="Purchase orders waiting to be received" minWidth={900}>
+          <thead>
+            <tr>
+              <Th>Order</Th>
+              <Th>Vendor</Th>
+              <Th>Kind</Th>
+              <Th>Status</Th>
+              <Th>Issued</Th>
+              <Th align="end">Still open</Th>
+              <Th>
+                <span className={styles.srOnly}>Start a receipt</span>
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => {
+              const status = PO_STATUS_LABEL[o.status];
+              return (
+                <tr key={o.id}>
+                  <Td>
+                    <Link
+                      href={`/procurement/receipts?po=${encodeURIComponent(o.id)}`}
+                      className={styles.name}
+                    >
+                      {o.number}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <span className={styles.long}>{o.vendorName}</span>
+                  </Td>
+                  <Td nowrap>{WAITING_KIND_LABEL[o.kind]}</Td>
+                  <Td nowrap>
+                    <Badge tone={status.tone}>{status.text}</Badge>
+                  </Td>
+                  <Td nowrap>
+                    {o.issuedAt !== undefined ? (
+                      <time dateTime={o.issuedAt}>{when(o.issuedAt, 'date')}</time>
+                    ) : (
+                      <span className={styles.quiet}>Not recorded</span>
+                    )}
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{qtyText(o.openQuantity)}</span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <LinkButton
+                      href={`/procurement/receipts/new?po=${encodeURIComponent(o.id)}`}
+                      variant="secondary"
+                      size="small"
+                      aria-label={`New receipt for ${o.number}`}
+                    >
+                      New receipt
+                    </LinkButton>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
+    </Panel>
+  );
+}
+
+function Picker({
+  invalid,
+  canOpenOrders,
+  waiting,
+}: {
+  invalid: boolean;
+  canOpenOrders: boolean;
+  waiting: Waiting | undefined;
+}) {
+  return (
+    <Page width={waiting?.state === 'list' ? 'full' : 'narrow'}>
       <PageHeader
         title="Receipts"
-        description="Goods and services are received against one purchase order. Open an order's receipts from the order page, or paste the order's ID here."
+        description={
+          waiting?.state === 'list'
+            ? 'Goods and services are received against one purchase order. Pick an order that is waiting, or paste its ID below.'
+            : "Goods and services are received against one purchase order. Open an order's receipts from the order page, or paste the order's ID here."
+        }
       />
-      {invalid ? (
-        <Alert tone="warning" role="alert" title="That is not a purchase order ID">
-          An ID looks like 3f2b8c1e-0d4a-4c1b-9e7a-5b6d2f1a8c90. Copy it from the link you were
-          sent.
-        </Alert>
-      ) : null}
-      <form method="get" action="/procurement/receipts" role="search" className={styles.picker}>
-        <Field label="Purchase order ID" hint="Paste the ID from the order's link.">
-          {(control) => (
-            <Input name="po" autoComplete="off" spellCheck={false} required {...control} />
-          )}
-        </Field>
-        <Button type="submit" variant="secondary">
-          Open receipts
-        </Button>
-      </form>
-      {canOpenOrders ? (
-        <p className={styles.note}>
-          Or <Link href="/procurement/orders">pick the order from the purchase order list</Link>.
-        </p>
-      ) : null}
+      <div className={styles.stack}>
+        {invalid ? (
+          <Alert tone="warning" role="alert" title="That is not a purchase order ID">
+            An ID looks like 3f2b8c1e-0d4a-4c1b-9e7a-5b6d2f1a8c90. Copy it from the link you were
+            sent.
+          </Alert>
+        ) : null}
+        {waiting?.state === 'failed' ? (
+          <Alert tone="error" role="alert" title="The waiting orders did not load">
+            {waiting.message} You can still open an order with its ID below.
+          </Alert>
+        ) : null}
+        {waiting?.state === 'list' ? <WaitingOrders orders={waiting.orders} /> : null}
+        <form method="get" action="/procurement/receipts" role="search" className={styles.picker}>
+          <Field label="Purchase order ID" hint="Paste the ID from the order's link.">
+            {(control) => (
+              <Input name="po" autoComplete="off" spellCheck={false} required {...control} />
+            )}
+          </Field>
+          <Button type="submit" variant="secondary">
+            Open receipts
+          </Button>
+        </form>
+        {canOpenOrders ? (
+          <p className={styles.note}>
+            Or <Link href="/procurement/orders">pick the order from the purchase order list</Link>.
+          </p>
+        ) : null}
+      </div>
     </Page>
   );
 }
@@ -195,7 +322,9 @@ export default async function ReceiptsPage({
   // Without a valid purchase order ID there is nothing to list, and nothing reaches the API.
   if (!isGuid(po)) {
     const session = await requireStaffSession('/procurement/receipts');
-    return <Picker invalid={po !== ''} canOpenOrders={receiptGrants(session.roles).issue} />;
+    const grants = receiptGrants(session.roles);
+    const waiting = await loadWaiting(session, grants.confirm);
+    return <Picker invalid={po !== ''} canOpenOrders={grants.issue} waiting={waiting} />;
   }
 
   const here = `/procurement/receipts?po=${po}`;
