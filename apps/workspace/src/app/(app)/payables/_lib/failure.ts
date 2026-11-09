@@ -6,7 +6,7 @@ import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/fai
  * status that moved on). Only a 400 shows any API text, through `failureWith`.
  */
 
-export type BillOp = 'load' | 'match' | 'submit' | 'void' | 'convert' | 'reject';
+export type BillOp = 'load' | 'match' | 'submit' | 'void' | 'convert' | 'reject' | 'exception';
 
 const MOVED: Record<BillOp, string> = {
   load: 'This bill changed since you opened it. Reload and try again.',
@@ -15,6 +15,8 @@ const MOVED: Record<BillOp, string> = {
   void: 'This bill can no longer be voided. Only an approved bill can be. Reload to see where it stands.',
   convert: 'This submission changed since you opened it. Reload the inbox and try again.',
   reject: 'This submission changed since you opened it. Reload the inbox and try again.',
+  exception:
+    'This bill is no longer awaiting a match exception. Reload to see its match and approval status.',
 };
 
 export function billFailure(err: unknown, op: BillOp): ProcFailure {

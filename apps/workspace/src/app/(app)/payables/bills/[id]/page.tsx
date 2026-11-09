@@ -17,7 +17,12 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
 import { poGrants, poMoney, qtyText } from '../../../procurement/orders/_lib/model';
-import { MatchDialog, SubmitDialog, VoidDialog } from '../../_components/bill-actions';
+import {
+  ExceptionDialog,
+  MatchDialog,
+  SubmitDialog,
+  VoidDialog,
+} from '../../_components/bill-actions';
 import { billFailure } from '../../_lib/failure';
 import {
   BILL_STATUS_LABEL,
@@ -317,8 +322,8 @@ export default async function BillPage({
         {inVariance ? (
           <Alert tone="warning" role="status" title="This bill is outside the tolerance">
             It cannot be submitted for approval while a line is outside the tolerance. Match it
-            again after goods arrive or the order changes. Asking for a match exception is not on
-            this page yet.
+            again after goods arrive or the order changes, or request an exception for Finance to
+            review.
           </Alert>
         ) : null}
         <Panel title="Bill">
@@ -329,7 +334,14 @@ export default async function BillPage({
         </Panel>
         <Lines bill={bill} />
         <MatchPanel bill={bill} />
-        {/* Match exceptions section: the next unit puts it here, under the match result. */}
+        {grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance' ? (
+          <Panel
+            title="Match exception"
+            description="Finance can approve a reasoned exception to the match tolerance."
+          >
+            <ExceptionDialog {...common} idempotencyKey={randomUUID()} />
+          </Panel>
+        ) : null}
       </div>
     </Page>
   );
