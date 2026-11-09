@@ -25,6 +25,7 @@ describe('NAV_GROUPS', () => {
       'Sales',
       'Payments',
       'Purchases',
+      'Payables',
       'System',
     ]);
   });
@@ -43,19 +44,19 @@ describe('NAV_GROUPS', () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 
-  it('gives an absolute href to every built item, and only shipped phases are built', () => {
+  it('gives an absolute href to every built item', () => {
     for (const item of items) {
       if (isBuilt(item)) {
         expect(item.href, item.label).toMatch(/^\//);
-        expect(SHIPPED_PHASES, item.label).toContain(item.phase);
       } else {
         expect(item.href, item.label).toBeUndefined();
       }
     }
   });
 
-  it('never builds an item from a phase that has not shipped', () => {
-    for (const item of items.filter((i) => !SHIPPED_PHASES.includes(i.phase))) {
+  it('keeps later work unbuilt and does not declare P4 fully shipped', () => {
+    expect(SHIPPED_PHASES).not.toContain('P4');
+    for (const item of items.filter((i) => i.phase === 'later')) {
       expect(isBuilt(item), item.label).toBe(false);
     }
   });
@@ -75,6 +76,10 @@ describe('NAV_GROUPS', () => {
       ['Quotations', '/quotations'],
       ['Verification', '/verification'],
       ['Activities & Tasks', '/activities'],
+      ['Bill inbox', '/payables/inbox'],
+      ['Bills', '/payables/bills'],
+      ['Payment requests', '/payables/payment-requests'],
+      ['Purchase VAT register', '/payables/vat-register'],
       ['Settings', '/admin/settings'],
     ]);
   });
@@ -131,6 +136,44 @@ describe('NAV_GROUPS', () => {
 
   it('sets no counts in P0 (there is nothing to count yet)', () => {
     for (const item of items) expect(item.count, item.label).toBeUndefined();
+  });
+
+  it('links each Payables screen with its own permission and owns its nested paths', () => {
+    expect(NAV_GROUPS.find((group) => group.label === 'Payables')?.items).toEqual([
+      expect.objectContaining({
+        label: 'Bill inbox',
+        href: '/payables/inbox',
+        permission: 'payables.bill.enter',
+      }),
+      expect.objectContaining({
+        label: 'Bills',
+        href: '/payables/bills',
+        permission: 'payables.bill.read',
+      }),
+      expect.objectContaining({
+        label: 'Payment requests',
+        href: '/payables/payment-requests',
+        permission: 'payables.payment.request',
+      }),
+      expect.objectContaining({
+        label: 'Purchase VAT register',
+        href: '/payables/vat-register',
+        permission: 'payables.vat_register.read',
+      }),
+    ]);
+    expect(titleForPath('/payables/bills/new')).toBe('Bills');
+    expect(titleForPath('/payables/payment-requests/11111111-1111-4111-8111-111111111111')).toBe(
+      'Payment requests',
+    );
+    const denied = visibleGroups(false, () => false);
+    expect(denied.find((group) => group.label === 'Payables')).toBeUndefined();
+    const requestOnly = visibleGroups(
+      false,
+      (permission) => permission === 'payables.payment.request',
+    );
+    expect(
+      requestOnly.find((group) => group.label === 'Payables')?.items.map((item) => item.label),
+    ).toEqual(['Payment requests']);
   });
 
   it('uses only known phases', () => {
