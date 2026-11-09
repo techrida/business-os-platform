@@ -414,8 +414,9 @@ export class SourcingService {
 
   /**
    * Recommends one of the RFQ's quotations (AD13: fewer than `procurement.min_quotes` needs fewerThanThreeReason;
-   * an emergency request may use its emergency reason, AD12). An open RFQ is closed first (open → closed →
-   * recommended). 409 when the RFQ is not open or closed, or the quote count is short without a reason.
+   * an emergency request may use its emergency reason, AD12). An open RFQ is closed first, in the same transaction
+   * (RFQ_TRANSITIONS allows open → closed → recommended, not open → recommended; the close is audited as
+   * procurement.rfq.closed). 409 when the RFQ is not open or closed, or the quote count is short without a reason.
    */
   async recommend(
     rfqId: string,
@@ -450,6 +451,20 @@ export class SourcingService {
             emergencyReason: pr.emergencyReason,
           });
           if (!verdict.ok) throw conflict(verdict.message, 'FEWER_THAN_MIN_QUOTES');
+          if (rfq.status === 'open') {
+            // RFQ_TRANSITIONS has no open → recommended: close first, in this same transaction.
+            await tx
+              .update(rfqs)
+              .set({ status: 'closed', version: sql`${rfqs.version} + 1`, updatedAt: now })
+              .where(eq(rfqs.id, rfqId));
+            await this.audit.record(tx, {
+              action: 'procurement.rfq.closed',
+              entityType: RFQ_AUDIT_ENTITY,
+              entityId: rfqId,
+              before: { status: 'open' },
+              after: { status: 'closed' },
+            });
+          }
           const [row] = await tx
             .update(rfqs)
             .set({
@@ -466,7 +481,7 @@ export class SourcingService {
             action: RECOMMENDED_ACTION,
             entityType: RFQ_AUDIT_ENTITY,
             entityId: rfqId,
-            before: { status: rfq.status },
+            before: { status: 'closed' },
             after: {
               status: 'recommended',
               recommendedQuotationId: body.vendorQuotationId,
