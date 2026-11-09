@@ -603,3 +603,53 @@ describe('purchase request: scope', () => {
     ).not.toContain(d.id);
   });
 });
+
+describe('purchase request: the live RFQ', () => {
+  /** An RFQ row of entity A for the request, as the sourcing unit leaves it. */
+  const insertRfq = async (prId: string, status: 'open' | 'cancelled') => {
+    const id = randomUUID();
+    await read((tx) =>
+      tx.execute(
+        sql`INSERT INTO app.rfqs (id, tenant_id, organization_id, purchase_request_id, number, deadline, status, created_by)
+            VALUES (${id}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${prId}, ${`RFQ-T-${id.slice(0, 8)}`},
+                    '2026-11-20T10:00:00Z', ${status}, ${U.proc})`,
+      ),
+    );
+    return id;
+  };
+
+  it('is null before an RFQ exists, on get, list and every write answer', async () => {
+    const d = await draft();
+    expect(d.rfqId).toBeNull();
+    expect((await service.get(d.id)).rfqId).toBeNull();
+    const listed = (await service.list({ limit: 200 })).find((r) => r.id === d.id);
+    expect(listed?.rfqId).toBeNull();
+    expect((await service.update(d.id, body(), undefined, randomUUID())).rfqId).toBeNull();
+    expect((await service.submit(d.id, undefined, randomUUID())).rfqId).toBeNull();
+    const c = await draft();
+    expect((await service.cancel(c.id, undefined, randomUUID())).rfqId).toBeNull();
+  });
+
+  it('names the live RFQ on get and list, and ignores a cancelled one', async () => {
+    const withRfq = await draft();
+    const cancelledOnly = await draft();
+    const dead = await insertRfq(cancelledOnly.id, 'cancelled');
+    const old = await insertRfq(withRfq.id, 'cancelled');
+    const live = await insertRfq(withRfq.id, 'open');
+    expect(dead).not.toBe(old);
+
+    expect((await service.get(withRfq.id)).rfqId).toBe(live);
+    expect((await service.get(cancelledOnly.id)).rfqId).toBeNull();
+    const listed = await service.list({ limit: 200 });
+    expect(listed.find((r) => r.id === withRfq.id)?.rfqId).toBe(live);
+    expect(listed.find((r) => r.id === cancelledOnly.id)?.rfqId).toBeNull();
+  });
+
+  it('never shows the RFQ of another entity: that request is a 404 there', async () => {
+    const d = await draft();
+    await insertRfq(d.id, 'open');
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.get(d.id))).getStatus()).toBe(404);
+    expect(await service.list({ limit: 200 })).toEqual([]);
+  });
+});
