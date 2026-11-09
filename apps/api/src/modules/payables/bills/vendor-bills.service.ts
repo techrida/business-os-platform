@@ -30,7 +30,6 @@ import type {
 } from '@bos/contracts';
 import {
   documents,
-  documentVersions,
   matchExceptions,
   matchResults,
   openItems,
@@ -66,6 +65,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { newestDocumentVersion } from '../../../platform/documents/documents.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
@@ -135,6 +135,7 @@ export interface VendorBillDto {
   currency: BillRow['currency'];
   purchaseOrderId: string | null;
   documentId: string;
+  fileStatus?: string | null;
   status: BillStatus;
   matchStatus: MatchStatus;
   netTotal: string;
@@ -496,7 +497,8 @@ export class VendorBillsService {
       );
     if (
       doc === undefined ||
-      (doc.ownerType === 'vendor_bill_intake' && doc.ownerId !== body.vendorPartyId)
+      !['vendor_bill_intake', 'vendor_portal_intake'].includes(doc.ownerType) ||
+      doc.ownerId !== body.vendorPartyId
     ) {
       throw unprocessable('DOCUMENT_NOT_FOUND', 'The invoice file was not found');
     }
@@ -1248,16 +1250,11 @@ export class VendorBillsService {
           and(eq(documents.id, documentId), isNull(documents.removedAt)),
         ),
       )
-      .for('update');
+      .for('share');
     if (document === undefined) {
       throw unprocessable('DOCUMENT_NOT_FOUND', 'The invoice file was not found');
     }
-    const [latest] = await tx
-      .select({ status: documentVersions.status })
-      .from(documentVersions)
-      .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, documentId)))
-      .orderBy(desc(documentVersions.version))
-      .limit(1);
+    const latest = await newestDocumentVersion(tx, scope, documentId);
     if (latest?.status !== 'clean') {
       throw conflict('BILL_DOCUMENT_NOT_CLEAN', 'The invoice file has not scanned clean');
     }
@@ -1329,12 +1326,15 @@ export class VendorBillsService {
       )
       .where(scoped(scope).where(vendorBills, eq(vendorBills.id, id)));
     if (bill === undefined) throw notFound('Bill');
-    return toDto(
-      bill.bill,
-      bill.vendorName,
-      await this.linesOf(tx, scope, id),
-      await this.latestResults(tx, scope, id),
-    );
+    return {
+      ...toDto(
+        bill.bill,
+        bill.vendorName,
+        await this.linesOf(tx, scope, id),
+        await this.latestResults(tx, scope, id),
+      ),
+      fileStatus: (await newestDocumentVersion(tx, scope, bill.bill.documentId))?.status ?? null,
+    };
   }
 }
 
