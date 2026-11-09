@@ -1,7 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 const session = vi.hoisted(() => ({ roles: ['accountant'] as string[] }));
-const api = vi.hoisted(() => ({ createBillDocument: vi.fn(), uploadBillDocumentContent: vi.fn() }));
+const api = vi.hoisted(() => ({
+  createBillDocument: vi.fn(),
+  replaceBillDocument: vi.fn(),
+  uploadBillDocumentContent: vi.fn(),
+}));
 const bff = vi.hoisted(() => ({ isSameOrigin: vi.fn(), routeSession: vi.fn() }));
 vi.mock('@/lib/api-payables', () => api);
 vi.mock('@/lib/bff', () => ({
@@ -38,6 +42,7 @@ beforeEach(() => {
   bff.isSameOrigin.mockReturnValue(true);
   bff.routeSession.mockResolvedValue(session);
   api.createBillDocument.mockResolvedValue(created);
+  api.replaceBillDocument.mockResolvedValue(created);
   api.uploadBillDocumentContent.mockResolvedValue({});
 });
 
@@ -85,4 +90,24 @@ it.each([
 it('returns the normal upload failure response when the stream fails', async () => {
   api.uploadBillDocumentContent.mockRejectedValue(new Error('network'));
   expect((await POST(req())).status).toBe(502);
+});
+
+it('replaces the existing invoice document without creating a second document', async () => {
+  const response = await POST(req({ 'x-document-id': id, 'x-vendor-id': '' }));
+  expect(response.status).toBe(201);
+  expect(api.replaceBillDocument).toHaveBeenCalledWith(session, id, {
+    filename: 'invoice.pdf',
+    declaredMime: 'application/pdf',
+    sizeBytes: 4,
+  });
+  expect(api.createBillDocument).not.toHaveBeenCalled();
+  const upload: unknown = api.uploadBillDocumentContent.mock.calls[0]?.[2];
+  expect(upload).toMatchObject({ contentType: 'application/pdf', contentLength: 4 });
+  expect((upload as { body: unknown }).body).toBeInstanceOf(ReadableStream);
+});
+
+it('rejects a malformed replacement id instead of silently creating a new document', async () => {
+  expect((await POST(req({ 'x-document-id': '../wrong' }))).status).toBe(400);
+  expect(api.replaceBillDocument).not.toHaveBeenCalled();
+  expect(api.createBillDocument).not.toHaveBeenCalled();
 });
