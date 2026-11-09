@@ -1,0 +1,174 @@
+'use client';
+
+import { useActionState, useEffect, useRef, useState } from 'react';
+
+import { Alert } from '@/components/ui/alert';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Field, Input, Select } from '@/components/ui/field';
+import { Panel } from '@/components/ui/panel';
+
+import styles from '../../requests/requests.module.css';
+import type { RfqFormState } from '../_lib/state';
+
+const WIDE = styles.wide ?? '';
+
+export interface RequestOption {
+  id: string;
+  label: string;
+}
+export interface VendorOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * Opens an RFQ on a department-approved purchase request. Inputs are controlled so a refusal does
+ * not wipe what was chosen (React 19 resets uncontrolled fields after every action). The deadline
+ * is typed in Kathmandu time; the server action adds the +05:45 offset.
+ */
+export function RfqForm({
+  action,
+  idempotencyKey,
+  requests,
+  vendors,
+  initialRequestId,
+  cancelHref,
+  reloadHref,
+}: {
+  action: (prev: RfqFormState, form: FormData) => Promise<RfqFormState>;
+  /** A UUID the server made for this render. */
+  idempotencyKey: string;
+  requests: RequestOption[];
+  vendors: VendorOption[];
+  initialRequestId: string;
+  cancelHref: string;
+  reloadHref: string;
+}) {
+  const [state, formAction, pending] = useActionState<RfqFormState, FormData>(action, {
+    key: idempotencyKey,
+    errors: {},
+  });
+  const [requestId, setRequestId] = useState(initialRequestId);
+  const [deadline, setDeadline] = useState('');
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
+  const formRef = useRef<HTMLFormElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (state.error) summaryRef.current?.focus();
+    else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [state]);
+
+  const err = state.errors;
+  const toggle = (id: string, on: boolean): void =>
+    setChosen((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  return (
+    <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <input type="hidden" name="idempotencyKey" value={state.key} />
+
+      {state.error ? (
+        <Alert
+          ref={summaryRef}
+          tabIndex={-1}
+          tone="error"
+          role="alert"
+          title={state.reload ? 'This page is out of date' : 'The RFQ was not opened'}
+          actions={state.reload ? <a href={reloadHref}>Reload this page</a> : null}
+        >
+          {state.error}
+        </Alert>
+      ) : null}
+
+      <Panel
+        title="RFQ"
+        description="Vendors are asked to quote on the lines of the purchase request."
+      >
+        <div className={styles.grid}>
+          <Field label="Purchase request" error={err.purchaseRequestId} className={WIDE}>
+            {(control) => (
+              <Select
+                name="purchaseRequestId"
+                value={requestId}
+                onChange={(e) => setRequestId(e.target.value)}
+                required
+                {...control}
+              >
+                <option value="">Choose a purchase request</option>
+                {requests.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field
+            label="Quotation deadline"
+            hint="Kathmandu time. The RFQ stays open until it is recommended."
+            error={err.deadline}
+          >
+            {(control) => (
+              <Input
+                type="datetime-local"
+                name="deadline"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                required
+                {...control}
+              />
+            )}
+          </Field>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Vendors to invite"
+        description="Only approved vendors with an account in this entity can be invited. A quotation needs three where possible."
+      >
+        <fieldset
+          className={styles.line}
+          aria-describedby={err.vendorIds ? 'vendors-error' : undefined}
+        >
+          <legend>Invited vendors ({chosen.size} chosen)</legend>
+          {vendors.map((v) => (
+            <label key={v.id} className={styles.check}>
+              <input
+                type="checkbox"
+                name="vendorIds"
+                value={v.id}
+                checked={chosen.has(v.id)}
+                onChange={(e) => toggle(v.id, e.target.checked)}
+              />
+              <span className={styles.long}>{v.name}</span>
+            </label>
+          ))}
+        </fieldset>
+        {err.vendorIds ? (
+          <p id="vendors-error" role="alert" className={styles.status}>
+            {err.vendorIds}
+          </p>
+        ) : null}
+      </Panel>
+
+      <div className={styles.actions}>
+        <Button type="submit" disabled={pending}>
+          {pending ? 'Opening' : 'Open RFQ'}
+        </Button>
+        <LinkButton href={cancelHref} variant="ghost">
+          Cancel
+        </LinkButton>
+        {pending ? (
+          <span role="status" className={styles.status}>
+            Opening the RFQ
+          </span>
+        ) : null}
+      </div>
+    </form>
+  );
+}
