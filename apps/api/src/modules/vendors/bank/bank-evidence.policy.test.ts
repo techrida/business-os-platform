@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Db } from '../../../platform/db/db.module';
-import { bankEvidenceOwnerPolicy } from './bank.module';
+import { bankEvidenceOwnerPolicy } from './bank-evidence.policy';
 import { BANK_EVIDENCE_OWNER_TYPE } from './bank.rules';
 
 describe('bankEvidenceOwnerPolicy', () => {
