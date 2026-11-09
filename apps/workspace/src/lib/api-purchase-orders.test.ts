@@ -82,6 +82,8 @@ const { lines: _lines, ...listFields } = {
 const order = { ...listFields, lines: [line] };
 const progress = {
   purchaseOrderId: PO,
+  vendorId: VENDOR,
+  vendorName: 'Himal Traders',
   number: 'PO-2082-0001',
   status: 'issued',
   lines: [
