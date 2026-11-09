@@ -46,6 +46,10 @@ const SETTING_COPY: Record<SettingKey, { label: string; help: string }> = {
     label: 'Evidence before an opportunity is won',
     help: 'What must be on file for an accepted quotation: a signed quote, a contract, a purchase order, or both a contract and a purchase order.',
   },
+  'sales.default_schedule': {
+    label: 'Default billing schedule',
+    help: 'Billing slices used when an accepted quotation has no payment schedule. Percentages must add up to 100. Enter as JSON: label, percent, trigger.',
+  },
   'entity.pan_vat_no': {
     label: 'Our PAN or VAT number',
     help: 'Printed on this legal entity’s quotations. Letters, digits and hyphens, 5 to 20 characters. Leave empty for none.',

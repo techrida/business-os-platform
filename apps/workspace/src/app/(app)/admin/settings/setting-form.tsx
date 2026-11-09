@@ -94,7 +94,11 @@ export function SettingForm({
         </div>
       </fieldset>
     );
-  } else if (settingKey === 'approvals.sla_defaults' || settingKey === 'entity.address') {
+  } else if (
+    settingKey === 'approvals.sla_defaults' ||
+    settingKey === 'sales.default_schedule' ||
+    settingKey === 'entity.address'
+  ) {
     control = (
       <Field label={`${label} (JSON)`}>
         {(field) => (
