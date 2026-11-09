@@ -403,6 +403,24 @@ async function renderAndScan(scope: TestScope, inv: Seeded): Promise<void> {
 // ------------------------------------------------------------------------------------------- tests
 
 describe('invoice render', () => {
+  it('renders its invoice without depending on the global sweep batch', async () => {
+    const older = await newScope();
+    for (let i = 0; i < 10; i += 1) await seedInvoice(older);
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    const batch = await store.candidates(10, []);
+    expect(batch).toHaveLength(10);
+    expect(batch.some((candidate) => candidate.invoiceId === inv.invoiceId)).toBe(false);
+
+    // A journey needs its own PDF even when another fixture has a full batch pending.
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+    const docs = await documentRows(inv.invoiceId);
+    expect(docs).toHaveLength(1);
+    expect(first(docs).status).toBe('quarantined');
+    expect(await processor.scanVersion(scanJob(scope, first(docs).version_id), true)).toBe('clean');
+    expect(first(await documentRows(inv.invoiceId)).status).toBe('clean');
+  });
+
   it('prints the golden invoice as NPR 20,18,180.00 and stores a clean PDF owned by the invoice', async () => {
     const scope = await newScope();
     const inv = await seedInvoice(scope);
