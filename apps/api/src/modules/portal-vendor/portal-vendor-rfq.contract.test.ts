@@ -112,7 +112,9 @@ describe('vendor portal RFQ DTO key sets (a new key fails here)', () => {
   });
   it('refuses a view with an extra key', () => {
     const item = toRfqListItem(rfq);
-    expect(() => VendorPortalRfqListItemSchema.parse({ ...item, estimatedTotal: '1.00' })).toThrow();
+    expect(() =>
+      VendorPortalRfqListItemSchema.parse({ ...item, estimatedTotal: '1.00' }),
+    ).toThrow();
     const view = toRfqView(rfq, prLines);
     expect(() => VendorPortalRfqViewSchema.parse({ ...view, vendorIds: [] })).toThrow();
     expect(() =>
