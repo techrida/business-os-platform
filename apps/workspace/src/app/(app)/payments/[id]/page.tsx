@@ -13,7 +13,13 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
-import { getPayment, listPaymentAllocations } from '@/lib/api-receivables';
+import { hasPermission } from '@/components/p2/customers/permissions';
+import {
+  getCustomerAdvance,
+  getCustomerStatement,
+  getPayment,
+  listPaymentAllocations,
+} from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
@@ -21,6 +27,8 @@ import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
 import { actionsFor, methodLabel, paymentStatusMeta } from '../_lib/status';
 import styles from '../payments.module.css';
 
+import { AllocatePanel } from './allocate-panel';
+import { DeallocateDialog } from './deallocate-dialog';
 import { ReviewDialogs } from './review-dialogs';
 
 export const metadata: Metadata = { title: 'Payment · Business OS' };
@@ -86,35 +94,59 @@ function ProofList({ proofs }: { proofs: Proof[] }) {
   );
 }
 
+/** What the allocations table needs to offer "Deallocate": null when the person cannot. */
+interface DeallocateAccess {
+  paymentId: string;
+  /** One idempotency key per allocation row, generated on the server for this render. */
+  keys: ReadonlyMap<string, string>;
+}
+
+/** A live allocation: not itself a reversal, and no later row reverses it. */
+function liveAllocationIds(rows: readonly AllocationDto[]): Set<string> {
+  const reversed = new Set(
+    rows.flatMap((r) => (r.reversesAllocationId ? [r.reversesAllocationId] : [])),
+  );
+  return new Set(
+    rows.filter((r) => r.reversesAllocationId === null && !reversed.has(r.id)).map((r) => r.id),
+  );
+}
+
 function AllocationsTable({
   rows,
   currency,
+  labels,
+  deallocate,
 }: {
   rows: AllocationDto[];
   currency: PaymentDto['currency'];
+  /** Invoice id to invoice number, from the customer statement when it could be read. */
+  labels: ReadonlyMap<string, string>;
+  deallocate: DeallocateAccess | null;
 }) {
   if (rows.length === 0) {
     return <p className={styles.note}>This payment has not been allocated to any invoice yet.</p>;
   }
+  const live = liveAllocationIds(rows);
   return (
-    <Table caption="Allocations of this payment" minWidth={560}>
+    <Table caption="Allocations of this payment" minWidth={deallocate !== null ? 720 : 560}>
       <thead>
         <tr>
           <Th>Invoice</Th>
           <Th align="end">Amount</Th>
           <Th>Allocated on</Th>
           <Th>Note</Th>
+          {deallocate !== null ? <Th>Action</Th> : null}
         </tr>
       </thead>
       <tbody>
         {rows.map((row) => {
           const reversal = row.reversesAllocationId !== null;
+          const label = labels.get(row.invoiceId) ?? `Invoice ${shortId(row.invoiceId)}`;
+          const key = live.has(row.id) ? deallocate?.keys.get(row.id) : undefined;
           return (
             <tr key={row.id}>
               <Td nowrap>
-                <Link href={`/invoices/${encodeURIComponent(row.invoiceId)}`}>
-                  Invoice {shortId(row.invoiceId)}
-                </Link>
+                <Link href={`/invoices/${encodeURIComponent(row.invoiceId)}`}>{label}</Link>
               </Td>
               <Td align="end" nowrap>
                 <span className={reversal ? styles.negative : styles.amount}>
@@ -127,6 +159,19 @@ function AllocationsTable({
                   {reversal ? `Reversed${row.reason ? `: ${row.reason}` : ''}` : (row.reason ?? '')}
                 </span>
               </Td>
+              {deallocate !== null ? (
+                <Td>
+                  {key !== undefined ? (
+                    <DeallocateDialog
+                      paymentId={deallocate.paymentId}
+                      allocationId={row.id}
+                      label={label}
+                      idempotencyKey={key}
+                      reloadHref={`/payments/${encodeURIComponent(deallocate.paymentId)}`}
+                    />
+                  ) : null}
+                </Td>
+              ) : null}
             </tr>
           );
         })}
@@ -197,6 +242,15 @@ function facts(p: PaymentDto, customerName: string): Fact[] {
   return out;
 }
 
+/** One optional read: a failure (a missing role, an outage) becomes null, and the page words the gap. */
+async function attempt<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
+  }
+}
+
 export default async function PaymentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const here = `/payments/${id}`;
@@ -234,11 +288,48 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
   }
 
   // The rest is context: if it fails the payment itself still shows, with words in the gap.
-  const [customer, allocations, proofs] = await Promise.all([
+  // Allocating needs a verified payment and the `payment.allocate` role; the API still decides.
+  const canAllocate =
+    payment.status === 'verified' && hasPermission(session.roles, 'payment.allocate');
+  const [customer, allocations, proofs, openItems, advance] = await Promise.all([
     getCustomer(session, payment.customerId).catch(() => null),
     listPaymentAllocations(session, id).catch(() => null),
     loadProofs(session, payment.proofDocumentIds),
+    canAllocate
+      ? attempt(() =>
+          getCustomerStatement(session, payment.customerId, {
+            openOnly: true,
+            currency: payment.currency,
+          }),
+        )
+      : Promise.resolve(null),
+    canAllocate
+      ? attempt(async () => {
+          const rows = await getCustomerAdvance(session, payment.customerId);
+          // No row for this currency is the server saying the customer has no credit in it.
+          return rows.find((r) => r.currency === payment.currency)?.amount ?? '0.00';
+        })
+      : Promise.resolve(null),
   ]);
+
+  // Labels for the allocations table. A fully settled invoice is not in the open-only list, so the
+  // full statement is read, and only when there is something to label.
+  const statement =
+    allocations !== null && allocations.length > 0
+      ? await attempt(() =>
+          getCustomerStatement(session, payment.customerId, { currency: payment.currency }),
+        )
+      : null;
+  const labels = new Map(
+    [...(statement ?? []), ...(openItems ?? [])].map((i) => [i.invoiceId, i.number] as const),
+  );
+  const deallocate: DeallocateAccess | null =
+    canAllocate && allocations !== null
+      ? {
+          paymentId: payment.id,
+          keys: new Map([...liveAllocationIds(allocations)].map((rowId) => [rowId, randomUUID()])),
+        }
+      : null;
 
   const meta = paymentStatusMeta(payment.status);
   const actions = actionsFor(payment.status);
@@ -297,6 +388,18 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
           <ProofList proofs={proofs} />
         </Panel>
 
+        {canAllocate ? (
+          <AllocatePanel
+            paymentId={payment.id}
+            currency={payment.currency}
+            remaining={payment.unallocatedAmount}
+            advance={advance}
+            items={openItems}
+            idempotencyKey={randomUUID()}
+            reloadHref={here}
+          />
+        ) : null}
+
         <Panel
           title="Allocations"
           description="How the verified amount settles invoices. Reversals are listed as their own rows."
@@ -306,7 +409,12 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
               The allocations could not be loaded. Reload the page to try again.
             </Alert>
           ) : (
-            <AllocationsTable rows={allocations} currency={payment.currency} />
+            <AllocationsTable
+              rows={allocations}
+              currency={payment.currency}
+              labels={labels}
+              deallocate={deallocate}
+            />
           )}
         </Panel>
       </div>
