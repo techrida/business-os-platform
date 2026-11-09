@@ -95,7 +95,8 @@ describe('check-no-dev-routes', () => {
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('OK');
-  });
+    // Spawns the checker on a fixture build: allow a loaded machine more than vitest's 5 s.
+  }, 30_000);
 
   it('fails when the manifest has a /dev route, even without the marker', () => {
     const nextDir = fixtureBuild({
