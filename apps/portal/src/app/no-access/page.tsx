@@ -1,20 +1,17 @@
-import { redirect } from 'next/navigation';
-
 import { NoticeCard } from '@/components/shell/notice-card';
 import { Button } from '@/components/ui/button';
 import { CenteredPage } from '@/components/ui/centered-page';
-import { getSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * A signed-in user the portal cannot serve yet: the API refused them (403), or their customer
- * account is not linked to a company record. No session exists, so sending them to
- * /auth/login would loop.
+ * A signed-in user the portal cannot serve yet: the API refused them (403), or their customer or
+ * vendor account is not linked to a company record. It renders for everyone, with or without a
+ * portal session: sending them to /auth/login would loop when there is none, and sending a
+ * session holder to `/` would loop too (a refused customer lands back here, a vendor bounces via
+ * /vendor). Its Sign out ends the ZITADEL session, so the user can sign in as someone else.
  */
-export default async function NoAccessPage() {
-  if (await getSession()) redirect('/');
-
+export default function NoAccessPage() {
   return (
     <CenteredPage>
       <NoticeCard
@@ -26,7 +23,7 @@ export default async function NoAccessPage() {
         }
       >
         <p>
-          You are signed in, but your account is not linked to a customer yet. Please ask your
+          You are signed in, but your account is not linked to a company record yet. Please ask your
           contact with us to finish setting up your portal access.
         </p>
       </NoticeCard>
