@@ -145,7 +145,10 @@ async function addEntity(scope: Scope): Promise<{ organizationId: string; depart
      VALUES ($1, $2, $1, $3, $3, $3, false)`,
     [id, scope.tenantId, `E-${id}`],
   );
-  const { departmentId } = await createDepartment(app, { tenantId: scope.tenantId, organizationId: id });
+  const { departmentId } = await createDepartment(app, {
+    tenantId: scope.tenantId,
+    organizationId: id,
+  });
   return { organizationId: id, departmentId };
 }
 
@@ -201,7 +204,14 @@ async function orderOf(
         justification, required_by, budget_code, currency, is_emergency)
      VALUES ($1, $2, $3, 'goods', $4, $5, $6, 'Replace two failed switches', '2026-12-31', 'IT-2026', 'NPR', false)
      RETURNING id`,
-    [scope.tenantId, organizationId, `PR-${randomUUID()}`, entity.departmentId, scope.userId, randomUUID()],
+    [
+      scope.tenantId,
+      organizationId,
+      `PR-${randomUUID()}`,
+      entity.departmentId,
+      scope.userId,
+      randomUUID(),
+    ],
   );
   const seq = nextSeq();
   const poId = await insertReturningId(
@@ -283,7 +293,11 @@ interface BillOptions {
 }
 
 /** A vendor bill of 500.00 + 65.00 VAT = 565.00 (NPR), in the scope's default entity. */
-async function insertBill(scope: Scope, vendorId: string, options: BillOptions = {}): Promise<string> {
+async function insertBill(
+  scope: Scope,
+  vendorId: string,
+  options: BillOptions = {},
+): Promise<string> {
   const documentId = await insertDocument(scope);
   return insertReturningId(
     scope.organizationId,
@@ -321,7 +335,11 @@ interface BillLineOptions {
 }
 
 /** A bill line of `quantity` at 100.00 with 13% VAT. */
-function insertBillLine(scope: Scope, billId: string, options: BillLineOptions = {}): Promise<string> {
+function insertBillLine(
+  scope: Scope,
+  billId: string,
+  options: BillLineOptions = {},
+): Promise<string> {
   const q = Number(options.quantity ?? '5');
   return insertReturningId(
     scope.organizationId,
@@ -562,9 +580,9 @@ describe('vendor_bill_lines link only inside their entity and PO', () => {
         receiptLineId: receiptLineOfSecond,
       }),
     ).rejects.toMatchObject({ code: '23503', constraint: 'vendor_bill_lines_receipt_line_fk' });
-    await expect(
-      insertBillLine(scope, billId, { poLineId: first.poLineId }),
-    ).rejects.toMatchObject({ code: '23514', constraint: 'vendor_bill_lines_po_link_check' });
+    await expect(insertBillLine(scope, billId, { poLineId: first.poLineId })).rejects.toMatchObject(
+      { code: '23514', constraint: 'vendor_bill_lines_po_link_check' },
+    );
   });
 });
 
@@ -624,7 +642,16 @@ describe('payment_request_lines', () => {
          (tenant_id, organization_id, number, number_seq, fiscal_year, vendor_id, payment_type, currency,
           total_amount, from_bank_account_id, vendor_bank_account_id, bank_last4, requested_by)
        VALUES ($1, $2, $3, $4, '2083/84', $5, 'settlement', 'NPR', 565.00, $6, $7, '4321', $8) RETURNING id`,
-      [scope.tenantId, scope.organizationId, `PAY-${seq}`, seq, vendorId, randomUUID(), bankId, scope.userId],
+      [
+        scope.tenantId,
+        scope.organizationId,
+        `PAY-${seq}`,
+        seq,
+        vendorId,
+        randomUUID(),
+        bankId,
+        scope.userId,
+      ],
     );
     const line = (openItemId: string, amount: string, lineNo = 1) =>
       insertReturningId(
