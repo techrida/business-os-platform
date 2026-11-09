@@ -31,6 +31,8 @@ export async function GET(
 ): Promise<Response> {
   const session = await getSession();
   if (!session) return plain('Sign in to download this quotation.', 401);
+  // No layout runs here, so a vendor session is turned away with the same answer as a foreign id.
+  if (session.orgKind !== 'customer') return plain(NOT_FOUND, 404);
 
   const { id } = await params;
   if (!UUID.test(id)) return plain(NOT_FOUND, 404);
