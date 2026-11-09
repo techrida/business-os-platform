@@ -24,10 +24,9 @@ import {
   vendorQuotations,
 } from './schema/procurement.js';
 
-const SQL_TEXT = readFileSync(
-  new URL('../migrations/0033_procurement_sourcing.sql', import.meta.url),
-  'utf8',
-);
+const SQL_TEXT = ['0033_procurement_sourcing', '0036_purchase_request_serials']
+  .map((name) => readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), 'utf8'))
+  .join('\n');
 
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
@@ -86,6 +85,9 @@ function parseSql(text: string): Map<string, Shape> {
       const column = /^\s*"(\w+)" /.exec(line);
       if (column) shape.columns.push(column[1] ?? '');
     }
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)"\s+ADD COLUMN "(\w+)" /g)) {
+    shapeOf(m[1] ?? '').columns.push(m[2] ?? '');
   }
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
     const kind = kindOf(m[3] ?? '');
