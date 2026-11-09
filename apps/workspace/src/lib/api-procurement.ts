@@ -31,6 +31,7 @@ export const PurchaseRequestLineSchema = z.object({
   lineNo: z.number().int().min(1),
   description: z.string(),
   specification: z.string().nullable(),
+  requiresSerials: z.boolean().optional(),
   uom: z.string(),
   quantity: money,
   estimatedUnitPrice: money,

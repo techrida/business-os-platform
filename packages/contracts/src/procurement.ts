@@ -176,6 +176,8 @@ export type ReceiptKind = z.infer<typeof ReceiptKindSchema>;
 export const PurchaseRequestLineBodySchema = z.strictObject({
   description: text(500),
   specification: text(2000).optional(),
+  /** Goods that must be identified individually when received. Defaults to false for existing callers. */
+  requiresSerials: z.boolean().optional(),
   uom: text(20),
   quantity: QuantityString,
   estimatedUnitPrice: NonNegativeDecimalString,

@@ -67,7 +67,7 @@ export function PrForm({
     (e: { target: { value: string } }): void =>
       setValues((v) => ({ ...v, [field]: e.target.value }));
   const setLine =
-    (uid: number, field: keyof LineValues) =>
+    (uid: number, field: Exclude<keyof LineValues, 'requiresSerials'>) =>
     (e: { target: { value: string } }): void =>
       setRows((rs) =>
         rs.map((r) => (r.uid === uid ? { ...r, line: { ...r.line, [field]: e.target.value } } : r)),
@@ -321,6 +321,24 @@ export function PrForm({
                     />
                   )}
                 </Field>
+                <label>
+                  <input
+                    type="checkbox"
+                    name={`lines.${i}.requiresSerials`}
+                    checked={row.line.requiresSerials ?? false}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setRows((rs) =>
+                        rs.map((r) =>
+                          r.uid === row.uid
+                            ? { ...r, line: { ...r.line, requiresSerials: checked } }
+                            : r,
+                        ),
+                      );
+                    }}
+                  />{' '}
+                  Record serial numbers at receipt
+                </label>
                 <Field label="Unit" error={err[`lines.${i}.uom`]}>
                   {(control) => (
                     <Input
