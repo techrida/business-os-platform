@@ -13,6 +13,12 @@ const apiError = (status: number, code: string, extra: Record<string, unknown> =
   });
 
 describe('billFailure', () => {
+  it('directs an unclean draft invoice back to its available replacement action', () => {
+    const result = billFailure(apiError(409, 'BILL_DOCUMENT_NOT_CLEAN'), 'submit');
+    expect(result.message).toContain('Upload a replacement file');
+    expect(result.message).toContain('draft bill');
+    expect(result.reload).toBe(true);
+  });
   it('names each refusal the bill routes make and rotates the key after a definite answer', () => {
     const cases: [number, string, Parameters<typeof billFailure>[1], RegExp][] = [
       [409, 'DUPLICATE_BILL', 'convert', /already has a bill with this invoice number/i],
