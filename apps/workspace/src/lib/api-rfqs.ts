@@ -192,11 +192,7 @@ export function recommendQuotation(
 }
 
 /** `POST .../:id/commitment`: 200. 422 `NO_ELIGIBLE_APPROVER` (nothing submitted) when a step has nobody. */
-export function commitRfq(
-  session: Session,
-  id: string,
-  idempotencyKey: string,
-): Promise<RfqDto> {
+export function commitRfq(session: Session, id: string, idempotencyKey: string): Promise<RfqDto> {
   return call(
     session,
     `${RFQ_PATH}/${seg(id)}/commitment`,
