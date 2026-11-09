@@ -21,7 +21,6 @@ import {
   vendorQuotationSubmissions,
   vendorQuotations,
   vendors,
-  approvalRequests,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -42,7 +41,6 @@ import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
-import { buildDirectory, route } from '../../approvals/router';
 import { PurchaseRequestsCaller } from '../requests/purchase-requests.caller';
 import {
   DEFAULT_MIN_QUOTES,
@@ -50,7 +48,6 @@ import {
   RFQ_AUDIT_ENTITY,
   RFQ_SERIES,
   commitmentFactsOf,
-  hasDistinctApprovers,
   poBandOf,
   quotationLineAmounts,
   quoteCountVerdict,
@@ -564,14 +561,6 @@ export class SourcingService {
               sodUserIds,
             });
             if (request.status === 'blocked') throw new NoEligibleApprover('No eligible approver');
-            await this.assertDistinctApprovers(
-              tx,
-              scope,
-              request.requestId,
-              facts,
-              sodUserIds,
-              now,
-            );
 
             const [row] = await tx
               .update(rfqs)
@@ -756,35 +745,6 @@ export class SourcingService {
       if (!withAccount.has(id)) {
         throw conflict(`Vendor ${id} has no account in this entity`, 'VENDOR_NOT_IN_ENTITY');
       }
-    }
-  }
-
-  /**
-   * Re-plans the request just inserted (frozen spec, same directory the engine read, same SoD list) and refuses it
-   * when its steps cannot each get a different person: the router separates only approvers who have already
-   * decided, so AD8 with one Management user would otherwise stay pending forever after the first decision.
-   */
-  private async assertDistinctApprovers(
-    tx: DbTransaction,
-    scope: TxScope,
-    requestId: string,
-    facts: Record<string, unknown>,
-    sodUserIds: string[],
-    now: Date,
-  ): Promise<void> {
-    const [req] = await tx
-      .select({ workflowVersionId: approvalRequests.workflowVersionId })
-      .from(approvalRequests)
-      .where(eq(approvalRequests.id, requestId));
-    const spec = await this.approvals.frozenSpec(tx, req!.workflowVersionId);
-    if (!spec.distinctApprovers) return;
-    const data = await this.approvals.loadDirectory(tx, scope, spec);
-    const dir = buildDirectory(data, { now, documentType: spec.documentType, sodUserIds });
-    const plan = route(spec, facts, dir, sodUserIds);
-    if (!hasDistinctApprovers(plan.steps)) {
-      throw new NoEligibleApprover(
-        'the route needs a different approver for each step and there are not enough eligible people',
-      );
     }
   }
 
