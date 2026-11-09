@@ -129,7 +129,7 @@ export function RfqForm({
 
       <Panel
         title="Vendors to invite"
-        description="Only approved vendors with an account in this entity can be invited. A quotation needs three where possible."
+        description="Only approved vendors with an account in this entity can be invited. Invite enough to meet the minimum number of quotations your company requires."
       >
         <fieldset
           className={styles.line}
