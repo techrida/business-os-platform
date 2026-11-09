@@ -1,8 +1,9 @@
 // Seed rows that the API kernel needs on day one: the default role grants, the `test_memo` and
 // `quotation_version` approval workflows, the INR peg and the P2 quotation reference data (tax codes
-// and payment terms). Serves the NFR "authorization is deny-by-default" (an empty
-// role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
-// `bos.actor_id` is unset, so every write here first declares a `seed` actor inside its transaction.
+// and payment terms), and the P3 `tax_invoice`, `credit_note` and `debit_note` approval workflows.
+// Serves the NFR "authorization is deny-by-default" (an empty role_permissions table would deny
+// everyone) and R5 of the P1 plan: the audit trigger RAISEs when `bos.actor_id` is unset, so every
+// write here first declares a `seed` actor inside its transaction.
 //
 // Raw SQL on purpose: this tool runs as the table owner and must not depend on the API's Drizzle
 // schema. Every statement is idempotent, and `seedKernelRows` returns 0 on a second run.
@@ -127,6 +128,31 @@ export const QUOTATION_VERSION_WORKFLOW_SPEC: unknown = {
   distinctApprovers: true,
   sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
 };
+
+/**
+ * The P3 invoice approval route (plan A5), the same for all three document types: Accountant checks,
+ * then Finance approves. Per entity, like every workflow (ADR 0027). There are no amount rules: the
+ * route is fixed. An entity whose route is empty refuses submit, so nothing is auto-issued.
+ */
+const invoiceApprovalSpec = (documentType: string, what: string): unknown => ({
+  documentType,
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: `Base route: accountant checks the ${what}`,
+    },
+    { id: 'finance', kind: 'role', role: 'finance', reason: 'Base route: finance approves' },
+  ],
+  rules: [],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+});
+
+export const TAX_INVOICE_WORKFLOW_SPEC: unknown = invoiceApprovalSpec('tax_invoice', 'tax invoice');
+export const CREDIT_NOTE_WORKFLOW_SPEC: unknown = invoiceApprovalSpec('credit_note', 'credit note');
+export const DEBIT_NOTE_WORKFLOW_SPEC: unknown = invoiceApprovalSpec('debit_note', 'debit note');
 
 /** The INR to NPR peg is fixed by Nepal Rastra Bank, so it is data, not code (plan section 3). */
 const INR_PEG_RATE = '1.6';
@@ -334,6 +360,9 @@ export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): P
   // Parse first so a bad spec fails before any SQL, and so we store the schema's defaulted form.
   const memoSpec = WorkflowSpecSchema.parse(TEST_MEMO_WORKFLOW_SPEC);
   const quotationSpec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
+  const taxInvoiceSpec = WorkflowSpecSchema.parse(TAX_INVOICE_WORKFLOW_SPEC);
+  const creditNoteSpec = WorkflowSpecSchema.parse(CREDIT_NOTE_WORKFLOW_SPEC);
+  const debitNoteSpec = WorkflowSpecSchema.parse(DEBIT_NOTE_WORKFLOW_SPEC);
   await client.query('BEGIN');
   try {
     await setSeedActor(client, scope);
@@ -354,6 +383,25 @@ export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): P
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
     changed += await seedWithholdingCodes(client, scope);
+    // P3 sales and invoicing: one Accountant to Finance route per money document (plan A5).
+    changed += await seedWorkflow(client, scope, {
+      key: 'tax_invoice',
+      name: 'Tax invoice approval',
+      documentType: 'tax_invoice',
+      spec: taxInvoiceSpec,
+    });
+    changed += await seedWorkflow(client, scope, {
+      key: 'credit_note',
+      name: 'Credit note approval',
+      documentType: 'credit_note',
+      spec: creditNoteSpec,
+    });
+    changed += await seedWorkflow(client, scope, {
+      key: 'debit_note',
+      name: 'Debit note approval',
+      documentType: 'debit_note',
+      spec: debitNoteSpec,
+    });
     await client.query('COMMIT');
     return changed;
   } catch (error) {
