@@ -50,3 +50,4 @@ export * from './schema/idempotency.js';
 export * from './schema/crm.js';
 export * from './schema/quotations.js';
 export * from './schema/ledger.js';
+export * from './schema/vendors.js';
