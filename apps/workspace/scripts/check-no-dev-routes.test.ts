@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // (a child `node`) and read its exit code. Importing it would skip the argv and cwd handling.
 const SCRIPT = fileURLToPath(new URL('./check-no-dev-routes.mjs', import.meta.url));
 const MARKER = 'BOS_DEV_PERSONA_SWITCHER';
+const DEV_MENU_MARKER = 'BOS_DEV_MENU';
 
 /**
  * The manifest of a real `next build` of this app (Next 16.4.5, Turbopack), copied from
@@ -134,6 +135,39 @@ describe('check-no-dev-routes', () => {
       files: { 'standalone/apps/workspace/.next/server/app/dev/personas/page.js': MARKER },
     });
     expect(run([nextDir]).status).toBe(1);
+  });
+
+  it('fails when the DEV MENU marker is in a client static chunk', () => {
+    const nextDir = fixtureBuild({
+      files: { 'static/chunks/dev-menu.js': `h("div",{"data-marker":"${DEV_MENU_MARKER}"})` },
+    });
+    const result = run([nextDir]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(DEV_MENU_MARKER);
+    expect(result.stderr).toContain(path.join('static', 'chunks', 'dev-menu.js'));
+  });
+
+  it('fails when the DEV MENU marker is in the standalone output', () => {
+    const nextDir = fixtureBuild({
+      files: { 'standalone/apps/workspace/.next/server/chunks/a.js': DEV_MENU_MARKER },
+    });
+    expect(run([nextDir]).status).toBe(1);
+  });
+
+  it('ignores the DEV MENU marker under .next/cache and .next/dev (not shipped)', () => {
+    const nextDir = fixtureBuild({
+      files: { 'cache/a.js': DEV_MENU_MARKER, 'dev/static/chunks/a.js': DEV_MENU_MARKER },
+    });
+    expect(run([nextDir]).status).toBe(0);
+  });
+
+  it('fails when the manifest has the /dev/api/whoami route, even without a marker', () => {
+    const nextDir = fixtureBuild({
+      manifest: { ...REAL_BUILD_MANIFEST, '/dev/api/whoami/route': 'app/dev/api/whoami/route.js' },
+    });
+    const result = run([nextDir]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('/dev/api/whoami/route');
   });
 
   it('reports every problem, not just the first', () => {
