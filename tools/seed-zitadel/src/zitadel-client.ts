@@ -555,9 +555,17 @@ export interface ClientOptions {
 /** Read-only fields of the admin v1 GET answers; a PUT must not echo them back. */
 const READ_ONLY_FIELDS = ['details', 'isDefault'];
 
-/** Protobuf JSON omits false booleans and zero durations, so "missing" can mean `false` or `0s`. */
-function sameValue(current: unknown, wanted: unknown): boolean {
-  if (current === undefined) return wanted === false || wanted === '0s';
+/** Proto3 JSON omits default scalars. Named enum defaults depend on the field, not their spelling. */
+function sameValue(current: unknown, wanted: unknown, field: string): boolean {
+  if (current === undefined) {
+    return (
+      wanted === false ||
+      wanted === 0 ||
+      wanted === '' ||
+      wanted === '0s' ||
+      (field === 'passwordlessType' && wanted === 'PASSWORDLESS_TYPE_NOT_ALLOWED')
+    );
+  }
   return current === wanted;
 }
 
@@ -568,7 +576,9 @@ function mergeSettings<T extends Record<string, unknown>>(
 ): { next: Record<string, unknown>; changed: boolean } {
   const next: Record<string, unknown> = { ...current };
   for (const field of READ_ONLY_FIELDS) delete next[field];
-  const changed = Object.entries(patch).some(([key, value]) => !sameValue(current[key], value));
+  const changed = Object.entries(patch).some(
+    ([key, value]) => !sameValue(current[key], value, key),
+  );
   return { next: { ...next, ...patch }, changed };
 }
 
@@ -979,7 +989,9 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
     );
     const { policy } = current;
     const inherited = policy.isDefault || current.isDefault;
-    const matches = Object.entries(patch).every(([key, value]) => sameValue(policy[key], value));
+    const matches = Object.entries(patch).every(([key, value]) =>
+      sameValue(policy[key], value, key),
+    );
     if (!inherited && matches) return false;
 
     const body: Record<string, unknown> = {};
