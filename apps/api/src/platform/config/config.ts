@@ -181,6 +181,12 @@ function issuerProblem(issuer: string, nodeEnv: string): string | undefined {
   return undefined;
 }
 
+/** An optional value where blank means unset, as compose writes `${VAR:-}` for an unset variable. */
+const blankAsUnset = z
+  .string()
+  .optional()
+  .transform((v) => (v === undefined || v.trim() === '' ? undefined : v.trim()));
+
 const apiShape = {
   API_PORT: port.default(3001),
   // There is no switch that turns authentication off. Tests point OIDC_ISSUER at an in-process
@@ -203,12 +209,9 @@ const apiShape = {
   POSTAL_WEBHOOK_SECRET: z.string().min(32).optional(),
   // Field-level encryption keyring (M20), see parseFieldKeyring for the format. Required in production;
   // blank counts as unset. Parsed into a FieldKeyring, so the raw string never stays on the config.
-  FIELD_ENC_KEYS: z
-    .string()
-    .optional()
-    .transform((v) => (v === undefined || v.trim() === '' ? undefined : v)),
-  FIELD_ENC_ACTIVE_KID: z.string().trim().min(1).optional(),
-  FIELD_ENC_FP_KID: z.string().trim().min(1).optional(),
+  FIELD_ENC_KEYS: blankAsUnset,
+  FIELD_ENC_ACTIVE_KID: blankAsUnset,
+  FIELD_ENC_FP_KID: blankAsUnset,
 };
 
 /**
