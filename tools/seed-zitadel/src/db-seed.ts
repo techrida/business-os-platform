@@ -287,6 +287,31 @@ async function seedPaymentTerms(client: pg.ClientBase, scope: SeedScope): Promis
   return changed;
 }
 
+/**
+ * Withholding (TDS) codes, tenant-level (P3 A4). Seeded at 0 bp until the accountant signs the rates; a rate change
+ * is a new period, never an edit. Same insert-if-absent rule as seedTaxCodes, for the same reason.
+ */
+const WITHHOLDING_CODES: readonly { code: string; name: string }[] = [
+  { code: 'TDS_SERVICE', name: 'TDS on services' },
+  { code: 'TDS_GOODS', name: 'TDS on goods' },
+];
+
+async function seedWithholdingCodes(client: pg.ClientBase, scope: SeedScope): Promise<number> {
+  let changed = 0;
+  for (const w of WITHHOLDING_CODES) {
+    const result = await client.query(
+      `INSERT INTO app.withholding_codes (tenant_id, code, name, applies_to, rate_bp, effective_from)
+       SELECT $1::uuid, $2, $3, 'both', 0, $4::date
+       WHERE NOT EXISTS (
+         SELECT 1 FROM app.withholding_codes WHERE tenant_id = $1::uuid AND code = $2
+       )`,
+      [scope.tenantId, w.code, w.name, TAX_CODE_EFFECTIVE_FROM],
+    );
+    changed += result.rowCount ?? 0;
+  }
+  return changed;
+}
+
 async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<number> {
   const result = await client.query(
     `INSERT INTO app.fx_rates (tenant_id, currency, rate_npr, source, rate_date)
@@ -328,6 +353,7 @@ export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): P
     });
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
+    changed += await seedWithholdingCodes(client, scope);
     await client.query('COMMIT');
     return changed;
   } catch (error) {
