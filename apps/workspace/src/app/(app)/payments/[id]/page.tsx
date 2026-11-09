@@ -209,7 +209,7 @@ function facts(p: PaymentDto, customerName: string): Fact[] {
     },
     {
       key: 'advance',
-      label: 'Customer advance (not yet allocated)',
+      label: 'Left to allocate',
       value: money(p.unallocatedAmount, p.currency),
     },
     {
