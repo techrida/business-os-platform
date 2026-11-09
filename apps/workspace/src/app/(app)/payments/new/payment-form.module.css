@@ -1,0 +1,104 @@
+/* Layout for the Record payment form. Controls come from components/ui; colours are Figma tokens
+   from styles/tokens.css. */
+
+.form {
+  display: grid;
+  gap: 24px;
+}
+
+/* Fields flow into as many columns as fit, so a narrow screen gets one. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 20px;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.tds summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  font-weight: var(--font-weight-medium);
+}
+
+.tds .grid {
+  margin-top: 12px;
+}
+
+.note {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.proofs {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proofs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-body-small);
+  overflow-wrap: anywhere;
+}
+
+.problems {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 0;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  font-weight: var(--font-weight-medium);
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.status:empty {
+  display: none;
+}
+
+/* The customer search is a plain GET form that sits above the payment form. */
+.search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.searchField {
+  flex: 1 1 16rem;
+  min-width: min(100%, 12rem);
+}
