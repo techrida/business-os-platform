@@ -18,10 +18,10 @@ export interface ScanJobData {
 }
 
 /**
- * The portal org kinds whose callers an owner policy may let upload (`allowsCounterparty`). Customers only for
- * now; P4 adds 'vendor' here and nowhere else in documents.
+ * The portal org kinds whose callers an owner policy may let upload (`allowsCounterparty`): customers (P3 U5) and
+ * vendors (P4 PV2). Each policy checks `kind` itself; one that only serves customers refuses a vendor.
  */
-export const COUNTERPARTY_KINDS = ['customer'] as const;
+export const COUNTERPARTY_KINDS = ['customer', 'vendor'] as const;
 export type CounterpartyKind = (typeof COUNTERPARTY_KINDS)[number];
 
 /**
@@ -32,7 +32,7 @@ export interface CounterpartyPrincipal {
   kind: CounterpartyKind;
   /** `app.users.id` of the portal user. */
   userId: string;
-  /** The customer (later: vendor) party the caller acts for (`idp_orgs.party_id`), never empty. */
+  /** The customer or vendor party the caller acts for (`idp_orgs.party_id`), never empty. */
   partyId: string;
   /** The tenant and acting entity of the request, so the policy can scope its lookup. */
   tenantId: string;
