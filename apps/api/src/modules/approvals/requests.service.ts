@@ -46,6 +46,7 @@ import {
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import { can } from '../../platform/authz/can';
+import type { Principal } from '../../platform/authz/principal';
 import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
@@ -300,7 +301,7 @@ export class ApprovalsService {
       // 2. Idempotency: a retried click returns what the first one returned.
       const requestHash = canonicalSha256({ requestId, ...action });
       const [previous] = await tx
-        .select({ requestHash: approvalActions.requestHash, result: approvalActions.result })
+        .select()
         .from(approvalActions)
         .where(
           and(
@@ -310,6 +311,12 @@ export class ApprovalsService {
           ),
         );
       if (previous !== undefined) {
+        if (
+          !can(principal, 'approvals.requests.act').allowed &&
+          !(await this.prHeadReplay(tx, scope, principal, request, previous, requestHash, now))
+        ) {
+          throw forbidden('out_of_scope', 'You are not an approver for this request');
+        }
         if (previous.requestHash?.equals(requestHash) === true)
           return previous.result as ApprovalRequestDto;
         throw new ConflictException('This Idempotency-Key was already used for a different action');
@@ -323,6 +330,16 @@ export class ApprovalsService {
       if (current === undefined) throw new ConflictException('The request has no current step');
       const spec = await this.frozenSpec(tx, request.workflowVersionId);
       const data = await this.loadDirectory(tx, scope, spec);
+      if (
+        !can(principal, 'approvals.requests.act').allowed &&
+        !(
+          request.status === 'pending' &&
+          current.status === 'active' &&
+          this.prHeadAssignment(principal, request, current, spec, data, now)
+        )
+      ) {
+        throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      }
       const sod = new Set(request.sodUserIds);
       const earlier = spec.distinctApprovers
         ? earlierDeciders(decisionsOf(steps), current.seq)
@@ -626,6 +643,7 @@ export class ApprovalsService {
   async inbox(): Promise<InboxItemDto[]> {
     const { scope, principal } = this.caller.current();
     const now = this.clock();
+    const genericApprover = can(principal, 'approvals.requests.act').allowed;
     const rows = await this.db
       .select({ request: approvalRequests, step: approvalSteps })
       .from(approvalRequests)
@@ -672,6 +690,12 @@ export class ApprovalsService {
         entry = { spec, data: await this.loadDirectory(this.db, scope, spec) };
         specs.set(request.workflowVersionId, entry);
       }
+      if (
+        !genericApprover &&
+        !this.prHeadAssignment(principal, request, step, entry.spec, entry.data, now)
+      ) {
+        continue;
+      }
       // The same checks as act() step 3, in the same order and with the same directory, so the inbox
       // never lists an item act() would refuse (and both pick the same principal for a delegate).
       const userId = principal.userId;
@@ -711,11 +735,30 @@ export class ApprovalsService {
         version: request.version,
       });
     }
+    if (!genericApprover && items.length === 0 && !(await this.hasPrHeadDuty(scope, principal))) {
+      throw forbidden('out_of_scope', 'You have no approval assignment');
+    }
     return items;
   }
 
-  /** One request, if the caller may read it: the requester (own scope) or an approver (all scope). */
+  /** One request for its requester, a generic reader, or its currently eligible PR department head. */
   async get(requestId: string): Promise<ApprovalRequestDto> {
+    return this.readRequest(requestId);
+  }
+
+  /** Internal pre-action read; an exact own retry does not grant a public historical read. */
+  async getForAction(
+    requestId: string,
+    action: ApprovalActionBody,
+    idempotencyKey: string,
+  ): Promise<ApprovalRequestDto> {
+    return this.readRequest(requestId, { action, idempotencyKey });
+  }
+
+  private async readRequest(
+    requestId: string,
+    replay?: { action: ApprovalActionBody; idempotencyKey: string },
+  ): Promise<ApprovalRequestDto> {
     const { scope, principal } = this.caller.current();
     const dto = await this.loadDto(this.db, scope, requestId);
     const decision = can(principal, 'approvals.requests.read', {
@@ -723,6 +766,53 @@ export class ApprovalsService {
       organizationId: scope.organizationId,
       ownerUserId: dto.requesterUserId,
     });
+    if (!decision.allowed && principal.status === 'active' && principal.orgKind === 'staff') {
+      const [request] = await this.db
+        .select()
+        .from(approvalRequests)
+        .where(requestInScope(scope, requestId));
+      if (request !== undefined && request.documentType === 'purchase_request') {
+        const steps = await this.stepsOf(this.db, requestId);
+        const current = steps.find((s) => s.seq === request.currentSeq);
+        const spec = await this.frozenSpec(this.db, request.workflowVersionId);
+        const data = await this.loadDirectory(this.db, scope, spec);
+        if (
+          request.status === 'pending' &&
+          current?.status === 'active' &&
+          this.prHeadAssignment(principal, request, current, spec, data, this.clock())
+        ) {
+          return dto;
+        }
+        if (replay !== undefined) {
+          const [previous] = await this.db
+            .select()
+            .from(approvalActions)
+            .where(
+              and(
+                eq(approvalActions.tenantId, scope.tenantId),
+                eq(approvalActions.organizationId, scope.organizationId),
+                eq(approvalActions.requestId, requestId),
+                eq(approvalActions.actorUserId, principal.userId),
+                eq(approvalActions.idempotencyKey, replay.idempotencyKey),
+              ),
+            );
+          if (
+            previous !== undefined &&
+            (await this.prHeadReplay(
+              this.db,
+              scope,
+              principal,
+              request,
+              previous,
+              canonicalSha256({ requestId, ...replay.action }),
+              this.clock(),
+            ))
+          ) {
+            return dto;
+          }
+        }
+      }
+    }
     // Out of scope answers like an unknown id, so probing ids tells nobody which requests exist.
     if (!decision.allowed && decision.reason === 'out_of_scope') {
       throw new NotFoundException('Approval request not found');
@@ -735,6 +825,102 @@ export class ApprovalsService {
       });
     }
     return dto;
+  }
+
+  /** PR department-head duty grants no rights on another document type or a named-user step. */
+  private prHeadAssignment(
+    p: Principal,
+    request: RequestRow,
+    step: StepRow,
+    spec: WorkflowSpec,
+    data: DirectoryData,
+    now: Date,
+  ): boolean {
+    if (
+      p.status !== 'active' ||
+      p.orgKind !== 'staff' ||
+      p.tenantId !== request.tenantId ||
+      p.organizationId !== request.organizationId ||
+      request.documentType !== 'purchase_request' ||
+      step.kind !== 'department_head' ||
+      (step.roleKey !== null && step.roleKey !== DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE)
+    ) {
+      return false;
+    }
+    // A designation can change while a request is open. Until reroute, the stored target must still
+    // agree with today's department head (or the default fallback), not merely name an active user.
+    const planned = this.plan(
+      spec,
+      request.facts as Record<string, unknown>,
+      data,
+      request.sodUserIds,
+    ).steps.find((s) => s.seq === step.seq);
+    if (
+      planned?.kind !== 'department_head' ||
+      (planned.userId ?? null) !== step.userId ||
+      (planned.roleKey ?? null) !== step.roleKey
+    ) {
+      return false;
+    }
+    const sod = new Set(request.sodUserIds);
+    const who = this.directory(data, now, request.documentType).resolveActor(
+      stepSpecOf(step, data),
+      p.userId,
+      sod,
+    );
+    return (
+      who.eligible &&
+      !sod.has(p.userId) &&
+      (who.onBehalfOf === null || !sod.has(who.onBehalfOf)) &&
+      (who.onBehalfOf !== null || step.roleKey === null || p.roles.includes(step.roleKey))
+    );
+  }
+
+  private async prHeadReplay(
+    q: Q,
+    scope: TxScope,
+    p: Principal,
+    request: RequestRow,
+    previous: typeof approvalActions.$inferSelect,
+    hash: Buffer,
+    now: Date,
+  ): Promise<boolean> {
+    if (
+      previous.requestId !== request.id ||
+      previous.actorUserId !== p.userId ||
+      !previous.requestHash?.equals(hash) ||
+      previous.stepId === null
+    ) {
+      return false;
+    }
+    const step = (await this.stepsOf(q, request.id)).find((s) => s.id === previous.stepId);
+    if (step === undefined) return false;
+    const spec = await this.frozenSpec(q, request.workflowVersionId);
+    const data = await this.loadDirectory(q, scope, spec);
+    return this.prHeadAssignment(p, request, step, spec, data, now);
+  }
+
+  /** Empty inboxes remain available to current heads; this never adds rows to the filtered list. */
+  private async hasPrHeadDuty(scope: TxScope, p: Principal): Promise<boolean> {
+    if (p.status !== 'active' || p.orgKind !== 'staff') return false;
+    const [head] = await this.db
+      .select({ id: departments.id })
+      .from(departments)
+      .where(
+        and(
+          eq(departments.tenantId, scope.tenantId),
+          eq(departments.organizationId, scope.organizationId),
+          eq(departments.headUserId, p.userId),
+        ),
+      )
+      .limit(1);
+    if (head !== undefined) return true;
+    return (
+      p.roles.includes(DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE) &&
+      (await this.users.userIdsWithRole(scope, DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE)).includes(
+        p.userId,
+      )
+    );
   }
 
   /**

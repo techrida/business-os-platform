@@ -35,7 +35,7 @@ import {
   ID_TOKEN_HEADER,
   STEP_UP_MAX_AGE_SECONDS,
 } from '../../platform/auth/step-up';
-import { Can } from '../../platform/authz/decorators';
+import { AnyAuthenticated, Can } from '../../platform/authz/decorators';
 import { ApprovalsCaller } from './ports';
 import { ApprovalsService } from './requests.service';
 
@@ -105,7 +105,7 @@ export class ApprovalsController {
   }
 
   @Get('inbox')
-  @Can('approvals.requests.act')
+  @AnyAuthenticated()
   inbox(): Promise<InboxItemDto[]> {
     return this.approvals.inbox();
   }
@@ -118,7 +118,7 @@ export class ApprovalsController {
 
   @Post('requests/:id/actions')
   @HttpCode(200)
-  @Can('approvals.requests.act')
+  @AnyAuthenticated()
   act(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
@@ -148,8 +148,8 @@ export class ApprovalsController {
     auth: AuthIdentity | undefined,
     idToken: string | undefined,
   ): Promise<ApprovalRequestDto> {
-    // `get` applies the read permission; every role that may act also reads at scope `all`.
-    const request = await this.approvals.get(id);
+    // The service admits a generic approver or this PR's designated head, including an exact retry.
+    const request = await this.approvals.getForAction(id, action, idempotencyKey);
     if (needsStepUp(request, action.expectedVersion)) {
       // The ID token must belong to the access token's user (`sub`, held in `auth.userId`).
       // Other steps never read the header.
