@@ -21,7 +21,9 @@ import {
 import {
   approvalRequests,
   createStaffUser,
+  invoiceLines,
   invoices,
+  invoiceTaxSummary,
   openItems,
   postingEvents,
   runMigrations,
@@ -29,7 +31,7 @@ import {
 } from '@bos/db';
 import { ForbiddenException, HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -209,6 +211,68 @@ async function issuedInvoice(): Promise<string> {
   await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
   expect((await invoiceRow(id)).status).toBe('issued');
   return id;
+}
+
+interface TypedLine {
+  description: string;
+  uom: string;
+  quantity: string;
+  unitPrice: string;
+  taxCodeId: string;
+}
+const typedLine = (description: string, quantity: string, unitPrice: string, taxCodeId: string) =>
+  ({ description, uom: 'unit', quantity, unitPrice, taxCodeId }) satisfies TypedLine;
+
+/** An issued NPR manual tax invoice with `lines` (drafted by U.acc, issued by U.fin). */
+async function issuedInvoiceOf(lines: TypedLine[]): Promise<string> {
+  as(U.acc, 'accountant');
+  const draft = await drafting.draftManual(
+    { customerId: f.customerPartyId, currency: 'NPR', manualReason: 'Several lines', lines },
+    key(),
+  );
+  const id = draft.invoice.id;
+  await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+    tx.execute(
+      sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+    ),
+  );
+  as(U.fin, 'finance');
+  await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+  return id;
+}
+
+/** Drafts a credit note on `originalId` for `quantity` of each listed original line. */
+async function creditLines(
+  originalId: string,
+  lines: { originalLineNo: number; quantity: string }[],
+): Promise<InvoiceDetail> {
+  as(U.fin, 'finance');
+  return notes.draftCreditNote({ originalInvoiceId: originalId, reason: 'Returned', lines }, key());
+}
+
+const linesOf = async (invoiceId: string) =>
+  db
+    .select()
+    .from(invoiceLines)
+    .where(eq(invoiceLines.invoiceId, invoiceId))
+    .orderBy(asc(invoiceLines.lineNo));
+
+/** The tax summary rows of `invoiceIds` on `taxCodeId`, summed: base and tax as numbers of paisa. */
+async function codeTotals(invoiceIds: string[], taxCodeId: string) {
+  const rows = await db
+    .select({ base: invoiceTaxSummary.base, tax: invoiceTaxSummary.tax })
+    .from(invoiceTaxSummary)
+    .where(
+      and(
+        inArray(invoiceTaxSummary.invoiceId, invoiceIds),
+        eq(invoiceTaxSummary.taxCodeId, taxCodeId),
+      ),
+    );
+  const paisa = (v: string) => Math.round(Number(v) * 100);
+  return {
+    base: rows.reduce((a, r) => a + paisa(r.base), 0),
+    tax: rows.reduce((a, r) => a + paisa(r.tax), 0),
+  };
 }
 
 const creditBody = (originalInvoiceId: string, quantity: string) => ({
@@ -467,6 +531,86 @@ describe('credit notes: the credit cap (done check 7)', () => {
     expect(responseOf(err)).toMatchObject({ code: 'CREDIT_EXCEEDS_INVOICE' });
     // The whole transaction rolled back: neither row is there.
     expect(await liveCreditNotes(original)).toHaveLength(0);
+  });
+});
+
+describe('credit notes: the cap per original line and per tax code (U12D)', () => {
+  it('two notes each crediting line 1 in full: the second is refused naming the line, and line 2 can still be credited', async () => {
+    // 2 x 500.00 + 2 x 500.00 at VAT 13% = 2,260.00; line 1 alone is 1,130.00, exactly half, so the total cap alone
+    // would let line 1 be credited twice.
+    const original = await issuedInvoiceOf([
+      typedLine('Design', '2', '500.00', f.taxCodeVat13Id),
+      typedLine('Build', '2', '500.00', f.taxCodeVat13Id),
+    ]);
+    const [line1, line2] = await linesOf(original);
+
+    const first = await creditLines(original, [{ originalLineNo: 1, quantity: '2' }]);
+    expect(first.invoice.totals).toMatchObject({ total: '1130.00' });
+    expect((await linesOf(first.invoice.id)).map((l) => l.originalLineId)).toEqual([line1!.id]);
+
+    for (const quantity of ['2', '1']) {
+      const err = await creditLines(original, [{ originalLineNo: 1, quantity }]).catch(
+        (e: unknown) => e,
+      );
+      expect(statusOf(err)).toBe(409);
+      expect(responseOf(err)).toMatchObject({
+        code: 'CREDIT_EXCEEDS_INVOICE',
+        details: { originalLineNo: 1, remainingQuantity: '0.0000' },
+      });
+    }
+    expect(await liveCreditNotes(original)).toHaveLength(1);
+
+    const second = await creditLines(original, [{ originalLineNo: 2, quantity: '2' }]);
+    expect(second.invoice.totals).toMatchObject({ total: '1130.00' });
+    expect((await linesOf(second.invoice.id)).map((l) => l.originalLineId)).toEqual([line2!.id]);
+    expect(await liveCreditNotes(original)).toHaveLength(2);
+  });
+
+  it('a discarded note frees its line again', async () => {
+    const original = await issuedInvoiceOf([
+      typedLine('Design', '2', '500.00', f.taxCodeVat13Id),
+      typedLine('Build', '2', '500.00', f.taxCodeVat13Id),
+    ]);
+    const first = await creditLines(original, [{ originalLineNo: 1, quantity: '2' }]);
+    await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoices SET status = 'discarded', discarded_at = now(), version = version + 1 WHERE id = ${first.invoice.id}`,
+      ),
+    );
+    const again = await creditLines(original, [{ originalLineNo: 1, quantity: '2' }]);
+    expect(again.invoice.totals).toMatchObject({ total: '1130.00' });
+  });
+
+  it('on a two-code invoice the VAT credited on a code across notes never exceeds the VAT charged on it', async () => {
+    // VAT 13% on 3 x 0.05 = 0.15 charges 0.02 (0.0195 half up). Each one-unit credit is a third of the bucket: 0.01 of
+    // VAT, half up, so three of them would credit 0.03 of a 0.02 VAT. The large exempt line keeps the total cap far away.
+    const original = await issuedInvoiceOf([
+      typedLine('Cable', '3', '0.05', f.taxCodeVat13Id),
+      typedLine('Training', '1', '1000.00', f.taxCodeExemptId),
+    ]);
+    expect(await codeTotals([original], f.taxCodeVat13Id)).toEqual({ base: 15, tax: 2 });
+
+    const noteIds: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      noteIds.push(
+        (await creditLines(original, [{ originalLineNo: 1, quantity: '1' }])).invoice.id,
+      );
+    }
+    expect(await codeTotals(noteIds, f.taxCodeVat13Id)).toEqual({ base: 15, tax: 2 });
+
+    const err = await creditLines(original, [{ originalLineNo: 1, quantity: '1' }]).catch(
+      (e: unknown) => e,
+    );
+    expect(statusOf(err)).toBe(409);
+    expect(responseOf(err)).toMatchObject({ code: 'CREDIT_EXCEEDS_INVOICE' });
+
+    // The exempt line is untouched by all of it and is credited in full.
+    const exempt = await creditLines(original, [{ originalLineNo: 2, quantity: '1' }]);
+    expect(exempt.invoice.totals).toMatchObject({ total: '1000.00' });
+    expect(await codeTotals([exempt.invoice.id], f.taxCodeExemptId)).toEqual({
+      base: 100000,
+      tax: 0,
+    });
   });
 });
 
