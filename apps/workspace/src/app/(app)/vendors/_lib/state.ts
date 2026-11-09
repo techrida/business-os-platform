@@ -1,0 +1,30 @@
+import type { FieldErrors, VendorField } from './forms';
+
+/** What the vendor create and edit actions hand back to their form. */
+export interface VendorFormState {
+  /** The idempotency key the next submit will use (create). Rotated after a definite refusal. */
+  key: string;
+  errors: FieldErrors<VendorField>;
+  /** A refusal that is not about one field: 403, 409, 5xx or a lost connection. */
+  error?: string;
+  /** The page is out of date: offer a reload instead of a retry. */
+  reload?: boolean;
+}
+
+/**
+ * What the panel actions (contact, lifecycle, bank account, portal grant) hand back. `savedCount`
+ * rises on each success, so the form keyed on it clears itself while a refusal keeps what was typed.
+ */
+export interface PanelState<K extends string = string> {
+  key: string;
+  errors: FieldErrors<K>;
+  error?: string;
+  reload?: boolean;
+  /** A short confirmation, such as "Sita Sharma was added." */
+  saved?: string;
+  savedCount: number;
+}
+
+export function panelStart<K extends string = string>(key: string): PanelState<K> {
+  return { key, errors: {}, savedCount: 0 };
+}
