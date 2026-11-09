@@ -303,7 +303,7 @@ describe('DocumentsService.create for a portal customer', () => {
   it('gives every refusal the same 403 body as staff without the grant gets today', async () => {
     const run = (hook: 'allow' | 'refuse' | 'absent', p: Principal, actorId?: string) => {
       const { service } = setup(hook);
-      const { tx } = fakeTx({ actorId });
+      const { tx } = fakeTx(actorId === undefined ? {} : { actorId });
       return forbiddenBody(asCaller(p, () => service.create(tx, body())));
     };
     const today = await run('absent', staff());
