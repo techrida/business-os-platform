@@ -12,9 +12,9 @@
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per version by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
 // stores a file; the other answers `skipped`. Failure backoff has no durable home, so a failed version is remembered in
-// this process for FAILED_RETRY_MS and left out of the candidate query; a restart forgets it and retries at once. A
-// document that never got its bytes (a crash between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes
-// its version a candidate again.
+// this process for FAILED_RETRY_MS and left out of the candidate query. A rotating cursor keeps expired failures from
+// filling every batch; a restart forgets both the backoff and cursor. A document that never got its bytes (a crash
+// between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes its version a candidate again.
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
@@ -95,8 +95,8 @@ export interface OrphanDocument {
 
 /** The sweeper's database access, as a port. `tx` is the transaction `PO_RENDER_TX` opened for the version's scope. */
 export interface RenderStore {
-  /** Versions with no live document, oldest first, except `exclude`. */
-  candidates(limit: number, exclude: readonly string[]): Promise<RenderCandidate[]>;
+  /** Versions with no live document, oldest first after `after`, wrapping when exhausted, except `exclude`. */
+  candidates(limit: number, exclude: readonly string[], after?: string): Promise<RenderCandidate[]>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this version's render lock for the rest of `tx` and answers whether it already has a live document. The
@@ -150,6 +150,8 @@ export class PurchaseOrderRenderSweeper {
   private readonly logger = new Logger(PurchaseOrderRenderSweeper.name);
   /** version id -> when it last failed. In memory on purpose: see the file header. */
   private readonly failedAt = new Map<string, number>();
+  /** The last attempted row's immutable position; one cursor rather than an unbounded attempt history. */
+  private after: string | undefined;
 
   constructor(
     @Inject(PO_RENDER_STORE) private readonly store: RenderStore,
@@ -169,10 +171,11 @@ export class PurchaseOrderRenderSweeper {
       orphansRemoved: 0,
       failures: [],
     };
-    const candidates = await this.store.candidates(BATCH, this.backedOff());
+    const candidates = await this.store.candidates(BATCH, this.backedOff(), this.after);
     // One at a time: Chromium is the scarce resource, and a version's failure must not touch the next one.
     for (const c of candidates) {
       const { outcome, kind } = await this.attempt(c);
+      this.after = c.versionId;
       result[outcome] += 1;
       if (kind !== undefined) result.failures.push({ versionId: c.versionId, kind });
     }
@@ -266,7 +269,7 @@ export class PurchaseOrderRenderSweeper {
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
   return {
-    async candidates(limit, exclude) {
+    async candidates(limit, exclude, after) {
       const hasLiveDocument = db
         .select({ one: sql`1` })
         .from(documents)
@@ -279,21 +282,30 @@ export function drizzlePurchaseOrderRenderStore(db: Db): RenderStore {
             isNull(documents.removedAt),
           ),
         );
-      return db
-        .select({
-          tenantId: purchaseOrderVersions.tenantId,
-          organizationId: purchaseOrderVersions.organizationId,
-          versionId: purchaseOrderVersions.id,
-        })
-        .from(purchaseOrderVersions)
-        .where(
-          and(
-            notExists(hasLiveDocument),
-            exclude.length === 0 ? undefined : notInArray(purchaseOrderVersions.id, [...exclude]),
-          ),
-        )
-        .orderBy(asc(purchaseOrderVersions.createdAt))
-        .limit(limit);
+      const page = (cursor?: string) =>
+        db
+          .select({
+            tenantId: purchaseOrderVersions.tenantId,
+            organizationId: purchaseOrderVersions.organizationId,
+            versionId: purchaseOrderVersions.id,
+          })
+          .from(purchaseOrderVersions)
+          .where(
+            and(
+              notExists(hasLiveDocument),
+              cursor === undefined
+                ? undefined
+                : sql`(${purchaseOrderVersions.createdAt}, ${purchaseOrderVersions.id}) >
+                    (SELECT created_at, id FROM ${purchaseOrderVersions} WHERE id = ${cursor})`,
+              exclude.length === 0 ? undefined : notInArray(purchaseOrderVersions.id, [...exclude]),
+            ),
+          )
+          .orderBy(asc(purchaseOrderVersions.createdAt), asc(purchaseOrderVersions.id))
+          .limit(limit);
+      // Read the cursor row independently of document eligibility. A rendered or removed cursor still advances;
+      // a missing cursor yields an empty page and safely restarts from the beginning.
+      const next = await page(after);
+      return next.length > 0 || after === undefined ? next : page();
     },
 
     async load(tx, c) {
