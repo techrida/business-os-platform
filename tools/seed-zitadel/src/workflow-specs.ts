@@ -1,0 +1,108 @@
+// Word-for-word copies of the P4 approval workflow specs that the API owns. This tool does not depend on
+// apps/api, so it cannot import them; `apps/api/src/modules/procurement/workflow-seed-parity.test.ts` imports
+// both sides and fails when they drift. This file has no imports on purpose, so that test can load it.
+// Change a spec in the API first, then copy it here; never edit one side alone.
+
+/**
+ * Copy of PURCHASE_REQUEST_WORKFLOW_SPEC (apps/api/src/modules/procurement/requests/purchase-request.rules.ts).
+ * `documentType` is the literal of PURCHASE_REQUEST_DOCUMENT_TYPE.
+ */
+export const PURCHASE_REQUEST_WORKFLOW_SPEC: unknown = {
+  documentType: 'purchase_request',
+  steps: [
+    {
+      id: 'department_head',
+      kind: 'department_head',
+      fallbackRole: 'operations_head',
+      reason: 'Base route: the head of the requesting department approves the need',
+    },
+  ],
+  rules: [
+    {
+      id: 'emergency',
+      when: { field: 'isEmergency', op: 'eq', value: true },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason: 'Management approval because this is an emergency purchase request',
+      },
+      position: 'end',
+      reason: 'Emergency purchase request',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+};
+
+/**
+ * Copy of PR_COMMITMENT_WORKFLOW_SPEC (apps/api/src/modules/procurement/sourcing/sourcing.rules.ts).
+ * `documentType` is the literal of PR_COMMITMENT_DOCUMENT_TYPE.
+ */
+export const PR_COMMITMENT_WORKFLOW_SPEC: unknown = {
+  documentType: 'pr_commitment',
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: 'Base route: an Accountant checks the recommended quotation',
+    },
+    {
+      id: 'finance',
+      kind: 'role',
+      role: 'finance',
+      reason: 'Base route: Finance commits the budget',
+    },
+  ],
+  rules: [
+    {
+      id: 'management',
+      when: { field: 'amountNpr', op: 'gt', value: '100000.00' },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason: 'Management approval because the commitment exceeds NPR 100,000.00',
+      },
+      position: 'end',
+      reason: 'Commitment of NPR {amountNpr} is above NPR 100,000.00',
+    },
+    {
+      id: 'founder',
+      when: {
+        all: [
+          { field: 'amountNpr', op: 'gt', value: '1000000.00' },
+          { field: 'requesterIsFounder', op: 'eq', value: false },
+        ],
+      },
+      add: {
+        id: 'founder',
+        kind: 'role',
+        role: 'founder',
+        reason: 'Founder approval because the commitment exceeds NPR 1,000,000.00',
+      },
+      position: 'end',
+      reason: 'Commitment of NPR {amountNpr} is above NPR 1,000,000.00',
+    },
+    {
+      id: 'management_second',
+      when: {
+        all: [
+          { field: 'amountNpr', op: 'gt', value: '1000000.00' },
+          { field: 'requesterIsFounder', op: 'eq', value: true },
+        ],
+      },
+      add: {
+        id: 'management_second',
+        kind: 'role',
+        role: 'management',
+        reason: 'A second Management approval replaces the Founder, who raised this request (AD8)',
+      },
+      position: 'end',
+      reason: 'The Founder raised a commitment of NPR {amountNpr}, above NPR 1,000,000.00',
+    },
+  ],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'management' } },
+};
