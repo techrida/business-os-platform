@@ -87,6 +87,27 @@ const OWNER_LINK_NOT_FOUND = 'File not found';
 /** Anything that can run a SELECT: the pool-backed Db or an open transaction. */
 type Reader = Pick<Db, 'select'>;
 
+/** Rejected bytes never became an attachment; the newest remaining version controls usability. */
+export function newestNonRejected<T extends { version: number; status: string }>(
+  versions: readonly T[],
+): T | undefined {
+  return versions.reduce<T | undefined>(
+    (latest, version) =>
+      version.status !== 'rejected' && (latest === undefined || version.version > latest.version)
+        ? version
+        : latest,
+    undefined,
+  );
+}
+
+export async function newestDocumentVersion(reader: Reader, scope: TxScope, documentId: string) {
+  const versions = await reader
+    .select()
+    .from(documentVersions)
+    .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, documentId)));
+  return newestNonRejected(versions);
+}
+
 export interface DocumentDto {
   id: string;
   ownerType: string;
@@ -310,10 +331,12 @@ export class DocumentsService {
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
     const who = await readTxContext(tx);
     const s = scoped(who.scope);
-    // The row lock serializes concurrent new versions of one document, so the numbers stay 1, 2, 3, ...
-    const doc = await this.loadDocument(tx, who.scope, documentId, true);
+    // Lock the owning records before the document, matching submit's owner -> document order.
+    // The document lock then serializes version numbers: 1, 2, 3, ...
+    const doc = await this.loadDocument(tx, who.scope, documentId);
     await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
-    await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx);
+    await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
+    await this.loadDocument(tx, who.scope, documentId, true);
     assertUploadAllowed(b);
 
     const [top] = await tx
@@ -356,9 +379,10 @@ export class DocumentsService {
     const who = opts.who ?? requestTx();
     const s = scoped(who.scope);
     const unclean = await withTx(this.db, who.scope, who.actor, async (tx) => {
-      const doc = await this.loadDocument(tx, who.scope, documentId, true);
+      const doc = await this.loadDocument(tx, who.scope, documentId);
       await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
-      await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx);
+      await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
+      await this.loadDocument(tx, who.scope, documentId, true);
       const versions = await tx
         .select()
         .from(documentVersions)
@@ -418,15 +442,22 @@ export class DocumentsService {
     // Step 1, one short transaction: check, then claim the version. The row lock makes the claim atomic, so
     // two uploads of the same version cannot both pass: the second sees `quarantined` and gets 409.
     const row = await withTx(this.db, who.scope, who.actor, async (tx) => {
-      const found = await this.loadVersion(tx, who.scope, versionId, opts.documentId, true);
+      let found = await this.loadVersion(tx, who.scope, versionId, opts.documentId);
       if (who.actor.kind === 'system') {
         // A generated file: the owner's system policy decides, never the request principal (there is none).
         await this.assertSystemOwner(who.scope, found.ownerType, found.ownerId, who.actor, tx);
       } else {
         await this.assertUploader(who.scope, found.ownerType, found.ownerId, who.actor, tx);
         // The memo may have been submitted since the document was created: no bytes are written then.
-        await this.assertCanAttach(who.scope, found.ownerType, found.ownerId, tx);
+        await this.assertCanAttach(
+          who.scope,
+          found.ownerType,
+          found.ownerId,
+          tx,
+          found.version.documentId,
+        );
       }
+      found = await this.loadVersion(tx, who.scope, versionId, opts.documentId, true);
       if (found.version.status !== 'awaiting_content') {
         throw new ConflictException('Content was already received for this version');
       }
@@ -583,7 +614,8 @@ export class DocumentsService {
     for (const v of versions) {
       if (v.status === 'rejected') continue;
       const seen = latest.get(v.documentId);
-      if (seen === undefined || v.version > seen.version) latest.set(v.documentId, v);
+      const newest = newestNonRejected(seen === undefined ? [v] : [seen, v]);
+      if (newest !== undefined) latest.set(v.documentId, newest);
     }
     return [...latest.values()].every((v) => v.status === 'clean');
   }
@@ -780,11 +812,12 @@ export class DocumentsService {
     ownerType: string,
     ownerId: string,
     tx: DbTransaction,
+    documentId?: string,
   ): Promise<void> {
     const policy = this.owners.get(ownerType);
     if (policy?.canAttach === undefined) return;
     // Called as a method, not detached: a policy class may use `this`.
-    if (!(await policy.canAttach(scope, ownerId, tx))) {
+    if (!(await policy.canAttach(scope, ownerId, tx, documentId))) {
       throw new ConflictException({
         code: 'conflict',
         message: 'This record no longer accepts attachments',
