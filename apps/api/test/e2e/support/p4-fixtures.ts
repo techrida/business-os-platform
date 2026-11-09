@@ -25,6 +25,8 @@ import {
 
 const EXTRA_ROLES = {
   requester: ['operations_officer'],
+  departmentHead: ['operations_officer'],
+  unrelatedOfficer: ['operations_officer'],
   procurement: ['procurement', 'accountant'],
   enterer: ['accountant', 'finance'],
   paymentRequester: ['finance'],
@@ -72,7 +74,7 @@ export async function seedP4World(e2e: E2eContext) {
       });
       await tx
         .update(departments)
-        .set({ headUserId: approvals.personas.management.userId })
+        .set({ headUserId: extra.departmentHead.userId })
         .where(eq(departments.id, departmentId));
     });
     approvals.personas.accountant = {
