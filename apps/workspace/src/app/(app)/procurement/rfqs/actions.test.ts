@@ -87,7 +87,7 @@ describe('createRfqAction', () => {
   it('refreshes the RFQ list and the purchase request, which moves to sourcing', async () => {
     api.createRfq.mockResolvedValue({ id: RFQ });
     await createRfqAction(start, form(rfqEntries)).catch(() => undefined);
-    const paths = cache.revalidatePath.mock.calls.map((c) => c[0]);
+    const paths = cache.revalidatePath.mock.calls.map((c) => String(c[0]));
     expect(paths).toContain('/procurement/rfqs');
     expect(paths).toContain(`/procurement/requests/${PR}`);
   });
@@ -133,7 +133,7 @@ describe('recordQuotationAction', () => {
     await expect(recordQuotationAction(start, form(quoteEntries))).rejects.toThrow(
       `redirect /procurement/rfqs/${RFQ}?quoted=1`,
     );
-    const [, id, body, key] = api.recordQuotation.mock.calls[0] ?? [];
+    const [, id, body, key] = api.recordQuotation.mock.calls[0] as unknown[];
     expect(id).toBe(RFQ);
     expect(key).toBe(KEY);
     expect(body).toEqual({
@@ -154,7 +154,7 @@ describe('recordQuotationAction', () => {
         ['submissionId', SUB],
       ]);
     await recordQuotationAction(start, form(entries)).catch(() => undefined);
-    const [, id, body] = api.convertSubmission.mock.calls[0] ?? [];
+    const [, id, body] = api.convertSubmission.mock.calls[0] as unknown[];
     expect(id).toBe(RFQ);
     expect(body).toHaveProperty('submissionId', SUB);
     expect(body).not.toHaveProperty('vendorId');
@@ -165,9 +165,11 @@ describe('recordQuotationAction', () => {
     api.convertSubmission.mockRejectedValue(
       apiError(409, 'conflict', 'The submitted file has not scanned clean'),
     );
-    const entries = quoteEntries.concat([['submissionId', SUB]]).map(([k, v]) =>
-      k === 'mode' ? ([k, 'convert'] as [string, string]) : ([k, v] as [string, string]),
-    );
+    const entries = quoteEntries
+      .concat([['submissionId', SUB]])
+      .map(([k, v]) =>
+        k === 'mode' ? ([k, 'convert'] as [string, string]) : ([k, v] as [string, string]),
+      );
     const r = await recordQuotationAction(start, form(entries));
     expect(r.error).toContain('has not scanned clean');
     expect(r.key).not.toBe(KEY);
@@ -179,7 +181,9 @@ describe('recordQuotationAction', () => {
   });
 
   it('refuses a form without a real RFQ id and a person without the grant', async () => {
-    const bad = quoteEntries.map(([k, v]) => (k === 'rfqId' ? ([k, 'nope'] as [string, string]) : [k, v] as [string, string]));
+    const bad = quoteEntries.map(([k, v]) =>
+      k === 'rfqId' ? ([k, 'nope'] as [string, string]) : ([k, v] as [string, string]),
+    );
     const r = await recordQuotationAction(start, form(bad));
     expect(r.reload).toBe(true);
     session.roles = ['sales'];
@@ -189,7 +193,9 @@ describe('recordQuotationAction', () => {
   });
 
   it('shows field errors without calling the API', async () => {
-    const entries = quoteEntries.map(([k, v]) => (k === 'lines.0.unitPrice' ? ([k, '1.234'] as [string, string]) : [k, v] as [string, string]));
+    const entries = quoteEntries.map(([k, v]) =>
+      k === 'lines.0.unitPrice' ? ([k, '1.234'] as [string, string]) : ([k, v] as [string, string]),
+    );
     const r = await recordQuotationAction(start, form(entries));
     expect(r.errors['lines.0.unitPrice']).toMatch(/2 decimal places/);
     expect(api.recordQuotation).not.toHaveBeenCalled();
