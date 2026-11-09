@@ -145,8 +145,14 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       const commitment = page.getByRole('region', { name: 'Commitment approval', exact: true });
       await expect(commitment.getByRole('listitem')).toHaveCount(3);
       await expect(commitment).toContainText('Approval approved');
-      for (const [index, role] of ['Accountant', 'Finance', 'Management'].entries()) {
-        await expect(commitment.getByRole('listitem').nth(index)).toContainText(role);
+      // The UI displays each step's routing reason; the API journey verifies its roleKey.
+      const stepReasons = [
+        'Base route: an Accountant checks the recommended quotation',
+        'Base route: Finance commits the budget',
+        'Commitment of NPR 120000.00 is above NPR 100,000.00',
+      ];
+      for (const [index, reason] of stepReasons.entries()) {
+        await expect(commitment.getByRole('listitem').nth(index)).toContainText(reason);
         await expect(commitment.getByRole('listitem').nth(index)).toContainText('Approved');
       }
     });
@@ -167,10 +173,18 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       const response = await page.request.get(href ?? '');
       expect(response.status()).toBe(200);
       expect(response.headers()['content-type']).toContain('application/pdf');
-      await page.getByRole('link', { name: 'Receipts', exact: true }).click();
+      await page
+        .locator('main')
+        .getByRole('link', { name: 'Receipts', exact: true })
+        .click();
       await expect(page).toHaveURL(new RegExp(`/procurement/receipts\\?po=${poId}$`));
       await page.locator(`main a[href="/procurement/receipts/${receiptId}"]`).click();
-      await expect(page.getByText('Confirmed', { exact: true })).toBeVisible();
+      await expect(
+        page
+          .getByRole('heading', { level: 1 })
+          .locator('..')
+          .getByText('Confirmed', { exact: true }),
+      ).toBeVisible();
       const serialDetails = page.locator('main details');
       for (const details of await serialDetails.all()) await details.locator('summary').click();
       await expect(serialDetails.getByRole('listitem')).toHaveCount(2);
