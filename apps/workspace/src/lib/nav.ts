@@ -2,9 +2,10 @@
  * The sidebar as data. Groups and items follow the Figma sidebar (node 727:10457). Pure data
  * with no React import, so unit tests and the header title lookup can use it anywhere.
  *
- * An item is "built" when its phase is BUILT_PHASE (P0 today). Built items have an `href` and
- * render as links. Every other item has no `href`, renders disabled with a phase tag, and so
- * shows the roadmap. When a phase ships, give its items an `href` and move BUILT_PHASE.
+ * An item is "built" when its phase is BUILT_PHASE. Built items have an `href` and render as
+ * links. Every other item has no `href` and renders as a plain disabled row. `phase` is internal
+ * data (which phase will enable the item) and is never shown to users: no label, tag or text on
+ * screen may mention it. When a phase ships, give its items an `href` and move BUILT_PHASE.
  *
  * "Estimates" is left out on purpose: decision D3 merged it into Quotations.
  */
@@ -37,7 +38,7 @@ export interface NavItem {
   /** Present only on built items. */
   href?: string;
   icon: NavIconName;
-  /** The phase that builds this item. */
+  /** Internal: the phase that will enable this item. Never shown to users. */
   phase: Phase;
   /**
    * Optional number shown in a pill at the row's end (the Figma "Organizations 4"). Only built
@@ -51,7 +52,7 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
-/** Items in this phase are built and linked. */
+/** Internal: items in this phase are built and linked. Never shown to users. */
 export const BUILT_PHASE: Phase = 'P0';
 
 export const NAV_GROUPS: readonly NavGroup[] = [
@@ -114,16 +115,6 @@ export const APP_NAME = 'Business OS';
 /** True when the item is built and links somewhere. */
 export function isBuilt(item: NavItem): item is NavItem & { href: string } {
   return item.phase === BUILT_PHASE && item.href !== undefined;
-}
-
-/** Text for the phase tag: "P2", or "Later". */
-export function phaseTag(phase: Phase): string {
-  return phase === 'later' ? 'Later' : phase;
-}
-
-/** Screen-reader text for the phase of an unbuilt item. */
-export function phaseDescription(phase: Phase): string {
-  return phase === 'later' ? 'planned for a later phase' : `planned for phase ${phase}`;
 }
 
 /** Page title for a route: the label of the built item that owns the path, else the app name. */
