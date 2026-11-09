@@ -10,6 +10,7 @@ import { OpportunitiesModule } from './modules/opportunities/opportunities.modul
 import { VendorBillsModule } from './modules/payables/bills/vendor-bills.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
+import { VendorPortalInboxModule } from './modules/portal-vendor/inbox/portal-vendor-inbox.module';
 import { VendorPortalModule } from './modules/portal-vendor/portal-vendor.module';
 import { PurchaseOrdersModule } from './modules/procurement/orders/purchase-orders.module';
 import { PurchaseOrderRenderModule } from './modules/procurement/orders/render/purchase-order-render.module';
@@ -75,6 +76,7 @@ import { UsersModule } from './platform/users/users.module';
     VerificationModule,
     PortalModule,
     VendorPortalModule,
+    VendorPortalInboxModule,
     PortalAccessModule,
     // P4: procurement master data and requests.
     VendorsModule,
