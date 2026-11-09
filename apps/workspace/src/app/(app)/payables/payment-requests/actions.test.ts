@@ -9,7 +9,7 @@ const api = vi.hoisted(() => ({
   submitPaymentRequest: vi.fn(),
   cancelPaymentRequest: vi.fn(),
 }));
-vi.mock('@/lib/bff', () => ({ requireStaffSession: async () => session }));
+vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve(session) }));
 vi.mock('@/lib/api-payables', () => api);
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({
