@@ -11,7 +11,7 @@ const taxCodes = z.union([
   z.object({ items: z.array(TaxCodeSchema) }).transform((body) => body.items),
 ]);
 
-/** Shared registry for sourcing and bill entry; every read carries the staff session. */
+/** Shared registry for sourcing and quotation entry; bills still use the builder API pending integration. */
 export function listTaxCodes(session: Session): Promise<TaxCode[]> {
   return call(session, '/v1/tax-codes', taxCodes);
 }
