@@ -433,7 +433,7 @@ async function issuedPo(opts: PoOptions = {}): Promise<IssuedPo> {
           {} as ApprovalsService,
           new AuditService(db),
           caller,
-          () => opts.issuedAt!,
+          () => opts.issuedAt ?? now,
         );
   await issuer.issue(id, randomUUID());
   return { id, number, lineId, vendor: v, scope };
@@ -527,9 +527,9 @@ describe('purchase order render', () => {
     const load = vi.spyOn(fairStore, 'load');
     let clock = now;
     const pdf = {
-      htmlToPdf: vi.fn(async (html: string) => {
-        if (html.includes(healthyPo.number)) return PDF;
-        throw new Error('permanent render failure');
+      htmlToPdf: vi.fn((html: string) => {
+        if (html.includes(healthyPo.number)) return Promise.resolve(PDF);
+        return Promise.reject(new Error('permanent render failure'));
       }),
     };
     const worker = new PurchaseOrderRenderSweeper(
