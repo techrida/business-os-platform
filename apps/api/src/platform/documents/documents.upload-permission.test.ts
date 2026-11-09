@@ -123,15 +123,15 @@ describe('DocumentsService.create and the owner policy uploadPermission', () => 
     });
 
     it('refuses a caller holding only another permission', async () => {
-      expect(await tryCreate(service, staff([['payment.record', 'all']]))).toBe('403 0');
+      expect(await tryCreate(service, staff([['vendor.bank.propose', 'all']]))).toBe('403 0');
     });
   });
 
-  describe("a policy with uploadPermission: 'payment.record'", () => {
-    const service = serviceWith({ uploadPermission: 'payment.record' });
+  describe("a policy with uploadPermission: 'vendor.bank.propose'", () => {
+    const service = serviceWith({ uploadPermission: 'vendor.bank.propose' });
 
     it('authorises with that permission', async () => {
-      expect(await tryCreate(service, staff([['payment.record', 'all']]))).toBe('created 2');
+      expect(await tryCreate(service, staff([['vendor.bank.propose', 'all']]))).toBe('created 2');
     });
 
     it('no longer accepts documents.upload in its place', async () => {
