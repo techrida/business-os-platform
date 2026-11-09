@@ -1,7 +1,8 @@
-// The Drizzle schema of 0021_invoices (src/schema/invoicing.ts) must describe the SQL: the same tables and columns,
-// the same foreign keys (name, columns, parent table and parent columns), unique keys and indexes (name and columns)
-// and checks (name only), and the same allow-lists as the exported catalogues. It also pins the guards the database
-// enforces with triggers and indexes: G3 (issued is immutable), G4 (one live tax invoice per schedule line), the
+// The Drizzle schema of 0021_invoices and 0023_invoice_credit_release (src/schema/invoicing.ts) must describe the
+// SQL: the same tables and columns, the same foreign keys (name, columns, parent table and parent columns), unique
+// keys and indexes (name and columns) and checks (name only), and the same allow-lists as the exported catalogues. It
+// also pins the guards the database enforces with triggers and indexes: G3 (issued is immutable, but for the one
+// credit-release marker), G4 (one live tax invoice per schedule line, until its invoice is credited in full), the
 // credit-note cap, the append-only print log and the schedule line's invoice FK (SQL only; see sales.ts).
 // No database needed: this reads the migration file.
 // Run with: pnpm --filter @bos/db exec vitest run src/invoicing-schema.test.ts
@@ -22,6 +23,10 @@ import {
 } from './schema/invoicing.js';
 
 const SQL_TEXT = readFileSync(new URL('../migrations/0021_invoices.sql', import.meta.url), 'utf8');
+const SQL_0023 = readFileSync(
+  new URL('../migrations/0023_invoice_credit_release.sql', import.meta.url),
+  'utf8',
+);
 
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
@@ -79,6 +84,9 @@ function parseSql(text: string): Map<string, Shape> {
       if (column) shape.columns.push(column[1] ?? '');
     }
   }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
+    shapeOf(m[1] ?? '').columns.push(m[2] ?? '');
+  }
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
     const kind = kindOf(m[3] ?? '');
     shapeOf(m[1] ?? '').names[kind].push(sqlEntry(kind, m[2] ?? '', m[3] ?? ''));
@@ -86,7 +94,10 @@ function parseSql(text: string): Map<string, Shape> {
   for (const m of text.matchAll(
     /CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)" USING btree \(([^)]*)\)/g,
   )) {
-    shapeOf(m[2] ?? '').names.index.push(`${m[1] ?? ''} (${cols(m[3] ?? '')})`);
+    // 0023 recreates an index of 0021 under the same name and columns (only its predicate changes).
+    const entry = `${m[1] ?? ''} (${cols(m[3] ?? '')})`;
+    const indexes = shapeOf(m[2] ?? '').names.index;
+    if (!indexes.includes(entry)) indexes.push(entry);
   }
   return tables;
 }
@@ -144,7 +155,7 @@ function checkList(constraint: string, column: string): string[] {
 }
 
 describe('0021_invoices and src/schema/invoicing.ts', () => {
-  const parsed = parseSql(SQL_TEXT);
+  const parsed = parseSql(`${SQL_TEXT}\n${SQL_0023}`);
 
   it('create the same four tables', () => {
     const created = [...SQL_TEXT.matchAll(/CREATE TABLE "app"\."(\w+)"/g)].map((m) => m[1]);
@@ -173,6 +184,18 @@ describe('0021_invoices and src/schema/invoicing.ts', () => {
     expect(SQL_TEXT).toContain(
       `CREATE UNIQUE INDEX "invoices_one_live_tax_invoice_per_schedule_line" ON "app"."invoices" USING btree ("tenant_id", "organization_id", "schedule_line_id") WHERE "kind" = 'tax_invoice' AND "status" <> 'discarded' AND "schedule_line_id" IS NOT NULL;`,
     );
+  });
+
+  it('0023 adds the credit-release marker and recreates the G4 index and the guard', () => {
+    expect(SQL_0023).toContain(
+      `ALTER TABLE "app"."invoices" ADD COLUMN "credited_in_full_at" timestamp with time zone;`,
+    );
+    expect(SQL_0023).toContain(
+      `CREATE UNIQUE INDEX "invoices_one_live_tax_invoice_per_schedule_line" ON "app"."invoices" USING btree ("tenant_id", "organization_id", "schedule_line_id") WHERE "kind" = 'tax_invoice' AND "status" <> 'discarded' AND "schedule_line_id" IS NOT NULL AND "credited_in_full_at" IS NULL;`,
+    );
+    expect(SQL_0023).toContain(`CREATE OR REPLACE FUNCTION "app"."invoices_guard"()`);
+    // The trigger of 0021 stays attached (CREATE OR REPLACE) and 0023 adds no table, so it needs no audit.attach.
+    expect(SQL_0023).not.toMatch(/CREATE TRIGGER|CREATE TABLE|audit\.attach/);
   });
 
   it('G3: guards invoices, and their lines and tax summary while not editable', () => {
