@@ -504,7 +504,8 @@ describe('lines and the bank snapshot', () => {
     expect(over.getStatus()).toBe(409);
     expect(codeOf(over)).toBe('OVER_ALLOCATION');
 
-    const ok = await draft(v, [{ openItemId: bill.openItemId, amount: '113000.00' }]);
+    // An uppercase id names the same item (ids are folded before they are compared).
+    const ok = await draft(v, [{ openItemId: bill.openItemId.toUpperCase(), amount: '113000.00' }]);
     expect(ok).toMatchObject({
       status: 'draft',
       totalAmount: '113000.00',
