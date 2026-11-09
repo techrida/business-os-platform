@@ -1,0 +1,175 @@
+// Unit tests of the purchase request rules (P4 unit P1): line arithmetic, the approval facts, the body envelope, and
+// above all the `purchase_request` route, planned by the real router from the real spec (AD10, AD11, AD12).
+// Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/requests/purchase-request.rules.test.ts
+import { WorkflowSpecSchema, type RoutePlan } from '@bos/contracts';
+import { describe, expect, it } from 'vitest';
+
+import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
+import {
+  ExpectedVersionEnvelopeSchema,
+  PR_STATUS_AFTER_DECISION,
+  PURCHASE_REQUEST_DOCUMENT_TYPE,
+  PURCHASE_REQUEST_WORKFLOW_SPEC,
+  approvalFactsOf,
+  isPrEditable,
+  lineAmount,
+  lineRowsOf,
+  sumAmounts,
+} from './purchase-request.rules';
+
+const spec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
+
+const DEPT = '11111111-1111-4111-8111-111111111111';
+const REQUESTER = 'user-requester';
+const HEAD = 'user-head';
+const OPS = 'user-ops';
+const MGMT = 'user-mgmt';
+const now = new Date('2026-11-09T04:00:00Z');
+
+function plan(
+  facts: Record<string, unknown>,
+  data: { heads?: [string, string][]; roles?: Record<string, string[]> },
+): RoutePlan {
+  const directory: DirectoryData = {
+    roleMembers: new Map(Object.entries(data.roles ?? {})),
+    groups: new Map(),
+    delegations: [],
+    departmentHeads: new Map(data.heads ?? []),
+  };
+  const sod = [REQUESTER];
+  return route(
+    spec,
+    facts,
+    buildDirectory(directory, {
+      now,
+      documentType: PURCHASE_REQUEST_DOCUMENT_TYPE,
+      sodUserIds: sod,
+    }),
+    sod,
+  );
+}
+
+const facts = (over: Partial<{ isEmergency: boolean; departmentId: string }> = {}) =>
+  approvalFactsOf({ departmentId: DEPT, isEmergency: false, amountNpr: '125000.00', ...over });
+
+describe('the purchase_request route', () => {
+  it('has the department head as its only step: no Accountant, no Finance (AD10)', () => {
+    const p = plan(facts(), { heads: [[DEPT, HEAD]], roles: { operations_head: [OPS] } });
+    expect(p.blocked).toBe(false);
+    expect(p.steps).toHaveLength(1);
+    const [step] = p.steps;
+    expect(step).toMatchObject({ seq: 1, kind: 'department_head', userId: HEAD });
+    expect(step!.eligibleUserIds).toEqual([HEAD]);
+    // Nothing in the spec itself names the commitment route's roles, even as a rule.
+    const roles = [...spec.steps, ...spec.rules.map((r) => r.add)].map((s) => s.role);
+    expect(roles).not.toContain('accountant');
+    expect(roles).not.toContain('finance');
+  });
+
+  it('does not change with the amount: a big estimate adds no step', () => {
+    const p = plan(facts(), { heads: [[DEPT, HEAD]] });
+    const big = plan(
+      approvalFactsOf({ departmentId: DEPT, isEmergency: false, amountNpr: '99999999.00' }),
+      { heads: [[DEPT, HEAD]] },
+    );
+    expect(big.steps.map((s) => s.kind)).toEqual(p.steps.map((s) => s.kind));
+  });
+
+  it('adds Management after the head for an emergency request (AD12)', () => {
+    const p = plan(facts({ isEmergency: true }), {
+      heads: [[DEPT, HEAD]],
+      roles: { management: [MGMT] },
+    });
+    expect(p.blocked).toBe(false);
+    expect(p.steps.map((s) => [s.kind, s.roleKey ?? s.userId])).toEqual([
+      ['department_head', HEAD],
+      ['role', 'management'],
+    ]);
+  });
+
+  it('falls back to operations_head when the head is the requester (AD11)', () => {
+    const p = plan(facts(), { heads: [[DEPT, REQUESTER]], roles: { operations_head: [OPS] } });
+    expect(p.blocked).toBe(false);
+    expect(p.steps[0]).toMatchObject({ kind: 'department_head', roleKey: 'operations_head' });
+    expect(p.steps[0]!.eligibleUserIds).toEqual([OPS]);
+  });
+
+  it('falls back to operations_head when the department has no head (AD11)', () => {
+    const p = plan(facts(), { roles: { operations_head: [OPS] } });
+    expect(p.steps[0]).toMatchObject({ roleKey: 'operations_head' });
+    expect(p.steps[0]!.eligibleUserIds).toEqual([OPS]);
+  });
+
+  it('is blocked when there is no head and no operations_head', () => {
+    const p = plan(facts(), {});
+    expect(p.blocked).toBe(true);
+    expect(p.steps[0]!.eligibleUserIds).toEqual([]);
+  });
+
+  it('is blocked when the only operations_head is the requester', () => {
+    const p = plan(facts(), { roles: { operations_head: [REQUESTER] } });
+    expect(p.blocked).toBe(true);
+  });
+});
+
+describe('line arithmetic', () => {
+  it('rounds a line half up to 2 places and sums exactly', () => {
+    expect(lineAmount('3', '0.10')).toBe('0.30');
+    expect(lineAmount('0.3333', '1.50')).toBe('0.50');
+    expect(lineAmount('1.0050', '1.00')).toBe('1.01');
+    expect(lineAmount('2', '1234567.89')).toBe('2469135.78');
+    expect(sumAmounts(['0.10', '0.20', '0.30'])).toBe('0.60');
+    expect(sumAmounts([])).toBe('0.00');
+  });
+
+  it('numbers lines from 1 in body order and never trusts a client amount', () => {
+    const rows = lineRowsOf([
+      { description: 'Chairs', uom: 'pcs', quantity: '10', estimatedUnitPrice: '4500.00' },
+      {
+        description: 'Desk',
+        specification: 'Oak',
+        uom: 'pcs',
+        quantity: '2.5',
+        estimatedUnitPrice: '100.10',
+      },
+    ]);
+    expect(rows.map((r) => [r.lineNo, r.specification, r.estimatedAmount])).toEqual([
+      [1, null, '45000.00'],
+      [2, 'Oak', '250.25'],
+    ]);
+  });
+});
+
+describe('approval facts and statuses', () => {
+  it('carries exactly departmentId, isEmergency and the NPR estimate', () => {
+    expect(facts({ isEmergency: true })).toEqual({
+      departmentId: DEPT,
+      isEmergency: true,
+      amountNpr: '125000.00',
+    });
+  });
+
+  it('maps a decision to the status of the PR_TRANSITIONS table', () => {
+    expect(PR_STATUS_AFTER_DECISION).toEqual({
+      approved: 'dept_approved',
+      returned: 'returned',
+      rejected: 'rejected',
+    });
+  });
+
+  it('allows edits in draft and returned only', () => {
+    expect(['draft', 'returned'].every(isPrEditable)).toBe(true);
+    for (const s of ['submitted', 'dept_approved', 'rejected', 'cancelled', 'sourcing']) {
+      expect(isPrEditable(s)).toBe(false);
+    }
+  });
+
+  it('reads expectedVersion off a body and refuses a bad one', () => {
+    expect(ExpectedVersionEnvelopeSchema.parse({ a: 1, expectedVersion: 3 })).toMatchObject({
+      expectedVersion: 3,
+    });
+    expect(ExpectedVersionEnvelopeSchema.safeParse({ expectedVersion: 0 }).success).toBe(false);
+    expect(ExpectedVersionEnvelopeSchema.safeParse({ expectedVersion: '2' }).success).toBe(false);
+    expect(ExpectedVersionEnvelopeSchema.safeParse('x').success).toBe(false);
+  });
+});
