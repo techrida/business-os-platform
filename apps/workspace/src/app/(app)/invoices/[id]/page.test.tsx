@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
-import { APPROVAL, CUSTOMER, ID, invoiceDetail, SALES_ORDER } from '../_lib/test-fixtures';
+import { APPROVAL, CUSTOMER, ID, invoiceDetail, SALES_ORDER, TAX } from '../_lib/test-fixtures';
 
 import InvoiceDetailPage from './page';
 
@@ -13,6 +13,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getInvoice: vi.fn(),
+  listTaxCodes: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -23,6 +24,7 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-billing')>()),
   getInvoice: mocks.getInvoice,
 }));
+vi.mock('@/components/p2/quote-builder/api', () => ({ listTaxCodes: mocks.listTaxCodes }));
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 // A marked anchor, so a test can tell the PDF link (a plain anchor) from a prefetching Link.
@@ -44,6 +46,7 @@ const issued = (over: Record<string, unknown> = {}) =>
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['finance'] });
   mocks.getInvoice.mockReset().mockResolvedValue(issued());
+  mocks.listTaxCodes.mockReset().mockResolvedValue([{ id: TAX, label: 'VAT 13%' }]);
   mocks.notFound.mockClear();
 });
 
@@ -190,6 +193,24 @@ describe('invoice detail page', () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['finance'] });
     mocks.getInvoice.mockResolvedValue(invoiceDetail());
     expect(await render()).not.toContain('data-slot="invoice-note-actions"');
+  });
+
+  it('puts the Credit note and Debit note buttons into the slot for Finance, and asks for tax codes only then', async () => {
+    const html = await render();
+    expect(html).toMatch(/<button[^>]*>Credit note<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Debit note<\/button>/);
+    expect(mocks.listTaxCodes).toHaveBeenCalledTimes(1);
+    mocks.listTaxCodes.mockClear();
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    const other = await render();
+    expect(other).not.toMatch(/>Credit note<\/button>/);
+    expect(mocks.listTaxCodes).not.toHaveBeenCalled();
+  });
+
+  it('still opens when the tax codes fail to load, and says so in the debit note dialog', async () => {
+    mocks.listTaxCodes.mockRejectedValue(new Error('down'));
+    const html = await render();
+    expect(html).toContain('tax codes did not load');
   });
 
   it('puts the actions the role may take into the action slot, and none on an issued invoice', async () => {
