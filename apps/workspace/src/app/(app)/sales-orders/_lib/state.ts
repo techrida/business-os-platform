@@ -1,0 +1,16 @@
+import type { FieldErrors } from './forms';
+
+/** What a sales-order action answers to its form. Types only, so the `'use server'` file stays pure. */
+export interface ActionState {
+  /** The key the next submit will use. Rotated after a final refusal, kept after an unknown outcome. */
+  key: string;
+  error?: string;
+  /** Set when the page is out of date and the person should reload it. */
+  reload?: boolean;
+  /** One sentence per wrong field; the request never reached the API. */
+  errors?: FieldErrors;
+  /** The API accepted the request. */
+  done?: boolean;
+  /** Draft invoice answered SCHEDULE_LINE_TAKEN: the invoice already drafted for the line. */
+  takenInvoiceId?: string;
+}
