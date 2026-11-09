@@ -11,7 +11,7 @@ import { JwtVerifier } from '../../platform/auth/jwt-verifier';
 
 import type { AuthenticatedRequest } from '../../platform/auth/claims';
 import { STEP_UP_REQUIRED, StepUpRequiredException } from '../../platform/auth/step-up';
-import { CAN_KEY } from '../../platform/authz/decorators';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import {
   AdminApprovalGroupsController,
   AdminDelegationsController,
@@ -87,6 +87,7 @@ function approvalsController(current: unknown = requestAt('management'), maxAge?
     preview: vi.fn(() => Promise.resolve({ steps: [], blocked: true })),
     inbox: vi.fn(() => Promise.resolve([])),
     get: vi.fn(() => Promise.resolve(current)),
+    getForAction: vi.fn(() => Promise.resolve(current)),
     act: vi.fn(() => Promise.resolve({})),
     reroute: vi.fn(() => Promise.resolve({})),
   };
@@ -126,6 +127,11 @@ describe('ApprovalsController', () => {
     const { controller, service } = approvalsController();
     await controller.act(ID, 'key-1', { action: 'approve', expectedVersion: 3 }, reqWith());
     expect(service.act).toHaveBeenCalledWith(
+      ID,
+      { action: 'approve', expectedVersion: 3 },
+      'key-1',
+    );
+    expect(service.getForAction).toHaveBeenCalledWith(
       ID,
       { action: 'approve', expectedVersion: 3 },
       'key-1',
@@ -285,17 +291,22 @@ describe('ApprovalsController', () => {
     expect(service.reroute).toHaveBeenCalledWith(ID);
   });
 
-  it('puts a permission on every route', () => {
+  it('keeps static permissions where possible and delegates record-specific head eligibility to the service', () => {
     const expected: Record<string, string> = {
       preview: 'approvals.requests.read',
-      inbox: 'approvals.requests.act',
       get: 'approvals.requests.read',
-      act: 'approvals.requests.act',
       reroute: 'approvals.requests.reroute',
     };
     for (const [method, permission] of Object.entries(expected)) {
       const handler = ApprovalsController.prototype[method as keyof ApprovalsController];
       expect(Reflect.getMetadata(CAN_KEY, handler)).toBe(permission);
+    }
+    for (const handler of [
+      ApprovalsController.prototype.inbox,
+      ApprovalsController.prototype.act,
+    ]) {
+      expect(Reflect.getMetadata(CAN_KEY, handler)).toBeUndefined();
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, handler)).toBe(true);
     }
   });
 });
