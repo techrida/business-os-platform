@@ -364,12 +364,12 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
   return { id, lineId, vendorId };
 }
 
-async function doc(): Promise<string> {
+async function doc(vendorId: string): Promise<string> {
   const s = scopeNow();
   const { rows } = await exec(
     s,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${s.tenantId}, ${s.organizationId}, 'vendor_bill', ${randomUUID()}) RETURNING id`,
+        VALUES (${s.tenantId}, ${s.organizationId}, 'vendor_bill_intake', ${vendorId}) RETURNING id`,
   );
   return (rows[0] as { id: string }).id;
 }
@@ -389,7 +389,7 @@ async function billFor(
       invoiceDate: '2026-11-09',
       currency: 'NPR',
       purchaseOrderId: po.id,
-      documentId: await doc(),
+      documentId: await doc(po.vendorId),
       lines: [
         { poLineId: po.lineId, accountId: randomUUID(), quantity, unitPrice, taxCodeId: vatCode },
       ],
@@ -406,14 +406,15 @@ interface LineSpec {
 
 /** A bill without a PO, of a fresh vendor, in the caller's entity (draft). */
 async function plainBill(lines: LineSpec[], invoiceDate = '2026-11-09'): Promise<VendorBillDto> {
+  const vendorId = await vendor();
   return service.create(
     {
-      vendorPartyId: await vendor(),
+      vendorPartyId: vendorId,
       kind: 'bill',
       vendorInvoiceNo: `INV-${randomUUID().slice(0, 8)}`,
       invoiceDate,
       currency: 'NPR',
-      documentId: await doc(),
+      documentId: await doc(vendorId),
       lines: lines.map((l) => ({ accountId: randomUUID(), ...l })),
     },
     randomUUID(),
