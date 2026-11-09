@@ -40,6 +40,25 @@ export const PERMISSIONS = [
   // Customer portal: a customer user reads and answers their own company's quotations.
   'portal.quotation.read',
   'portal.quotation.respond',
+  // P4 purchases and vendor accounts (kept in one block). Approving money is the workflow's job, so
+  // none of these approves a bill or a payment; `payables.payment.request` only starts the request.
+  'vendor.read',
+  'vendor.write',
+  'vendor.activate',
+  'vendor.bank.propose',
+  'vendor.bank.verify',
+  'procurement.pr.create',
+  'procurement.pr.read',
+  'procurement.sourcing',
+  'procurement.po.issue',
+  'procurement.receipt.confirm',
+  'payables.bill.enter',
+  'payables.bill.read',
+  'payables.payment.request',
+  'payables.vat_register.read',
+  // Vendor portal: a vendor user reads their own company's orders and bills and submits to the inbox.
+  'portal.vendor.read',
+  'portal.vendor.submit',
 ] as const;
 export const PermissionSchema = z.enum(PERMISSIONS);
 export type Permission = z.infer<typeof PermissionSchema>;
@@ -60,7 +79,9 @@ export const ROLE_KEYS = [
   'pmo',
   'operations_head',
   'procurement',
-  'receiver',
+  // P4 roles (Kuu D03). `receiver` is dropped: receipts go to `warehouse`. PMO stays the `pmo` key.
+  'warehouse',
+  'operations_officer',
 ] as const;
 export const RoleKeySchema = z.enum(ROLE_KEYS);
 export type RoleKey = z.infer<typeof RoleKeySchema>;
@@ -107,6 +128,43 @@ const staffBaseGrants: RoleGrants = {
   'approvals.requests.read': 'own',
 };
 
+// P4 grants, kept apart from the P1 and P2 constants so a parallel edit merges cleanly. Procurement,
+// warehouse and operations_officer hold no `approvals.requests.act`, `payables.payment.request`,
+// `payables.bill.enter`, `vendor.bank.verify` or `vendor.activate` (D03, AD5, AD9).
+
+/** Any internal user who raises requests: they create purchase requests and read their own. */
+const prRequesterGrants: RoleGrants = {
+  'procurement.pr.create': 'own',
+  'procurement.pr.read': 'own',
+};
+const p4ProcurementGrants: RoleGrants = {
+  ...prRequesterGrants,
+  'procurement.pr.read': 'all',
+  'procurement.sourcing': 'all',
+  'procurement.po.issue': 'all',
+  'vendor.read': 'all',
+  'vendor.write': 'all',
+};
+const p4WarehouseGrants: RoleGrants = { 'procurement.receipt.confirm': 'all' };
+const p4AccountantGrants: RoleGrants = {
+  'payables.bill.enter': 'all',
+  'payables.bill.read': 'all',
+  'payables.vat_register.read': 'all',
+  'vendor.read': 'all',
+};
+const p4FinanceGrants: RoleGrants = {
+  'vendor.bank.verify': 'all',
+  'payables.payment.request': 'all',
+  'payables.bill.read': 'all',
+  'payables.vat_register.read': 'all',
+  'vendor.read': 'all',
+};
+/** Vendor users see only rows naming their own party (`customer_org` already covers vendor callers in can.ts). */
+const p4VendorUserGrants: RoleGrants = {
+  'portal.vendor.read': 'customer_org',
+  'portal.vendor.submit': 'customer_org',
+};
+
 /**
  * What each role may do before an admin edits `app.role_permissions`. The seed copies this into
  * the table, so the table (not this constant) is the live truth at runtime.
@@ -114,8 +172,19 @@ const staffBaseGrants: RoleGrants = {
 export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   founder: founderGrants,
   management: { ...approverGrants, ...salesReadAllGrants },
-  finance: { ...approverGrants, 'audit.read': 'all', ...salesReadAllGrants, ...salesCreatorGrants },
-  accountant: { ...approverGrants, ...salesReadAllGrants, ...salesCreatorGrants },
+  finance: {
+    ...approverGrants,
+    'audit.read': 'all',
+    ...salesReadAllGrants,
+    ...salesCreatorGrants,
+    ...p4FinanceGrants,
+  },
+  accountant: {
+    ...approverGrants,
+    ...salesReadAllGrants,
+    ...salesCreatorGrants,
+    ...p4AccountantGrants,
+  },
   sales: {
     ...staffBaseGrants,
     'crm.lead.read': 'own',
@@ -139,7 +208,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'portal.quotation.read': 'customer_org',
     'portal.quotation.respond': 'customer_org',
   },
-  vendor_user: {},
+  vendor_user: p4VendorUserGrants,
   pmo: {
     ...staffBaseGrants,
     ...salesReadAllGrants,
@@ -147,8 +216,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'verification.review': 'all',
   },
   operations_head: { ...staffBaseGrants, ...salesReadAllGrants },
-  procurement: { ...staffBaseGrants },
-  receiver: { ...staffBaseGrants },
+  procurement: { ...staffBaseGrants, ...p4ProcurementGrants },
+  warehouse: { ...staffBaseGrants, ...p4WarehouseGrants },
+  operations_officer: { ...staffBaseGrants, ...prRequesterGrants },
 };
 
 /** Permissions where the actor must not be someone who prepared the document (separation of duties). */
