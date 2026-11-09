@@ -550,7 +550,9 @@ describe('P4 exit Journey 11: department request to approved payment request ove
 
   it('7. refuses the entering accountant, then an independent Accountant and Finance approve and post one payable', async () => {
     s.bill = await post<VendorBillDto>(`${BILLS}/${s.bill!.id}/submit`, await auth('enterer'));
+    expect(s.bill.number).toMatch(/^BILL-\d{4}\/\d{2}-\d{5}$/);
     const id = s.bill.approvalRequestId!;
+    expect((await request(id)).documentNumber).toBe(s.bill.number);
     expect((await request(id)).steps.map((step) => step.roleKey)).toEqual([
       'accountant',
       'finance',
@@ -710,6 +712,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       await get(`${VP}/bills/${s.bill!.id}`, s.vendorAuth),
     );
     expect(view).toMatchObject({
+      number: s.bill!.number,
       status: 'approved_for_payment',
       payableTotal: '120000.00',
       payments: [],
