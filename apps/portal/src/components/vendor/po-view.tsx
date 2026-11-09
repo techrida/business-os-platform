@@ -1,4 +1,4 @@
-import type { VendorPortalPurchaseOrderView } from '@bos/contracts';
+import type { VendorPortalPurchaseOrderView, VendorVisiblePoStatus } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
 
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,13 @@ import { formatDay } from '../portal/quotation-status';
 import styles from './vendor.module.css';
 import { PO_STATUS_LOOK, trimQuantity } from './vendor-status';
 
+/** Orders a bill can still be raised against: closed, short-closed and cancelled ones take none. */
+const BILLABLE: ReadonlySet<VendorVisiblePoStatus> = new Set([
+  'issued',
+  'partially_received',
+  'fully_received',
+]);
+
 /**
  * One issued purchase order as the vendor sees it. It reads only `VendorPortalPurchaseOrderView`
  * (a strict allow-list), and every figure is the server's: the order total and the unit prices
@@ -16,6 +23,7 @@ import { PO_STATUS_LOOK, trimQuantity } from './vendor-status';
  * API sends it as an attachment, so an error reads as text.
  */
 export function PurchaseOrderView({ view }: { view: VendorPortalPurchaseOrderView }) {
+  const canBill = BILLABLE.has(view.status);
   const look = PO_STATUS_LOOK[view.status];
   const money = (amount: string) => formatMoney(amount, view.currency);
   return (
@@ -59,6 +67,13 @@ export function PurchaseOrderView({ view }: { view: VendorPortalPurchaseOrderVie
             The PDF is not ready yet. Please check back in a few minutes.
           </p>
         )}
+        {canBill ? (
+          <div className={styles.download}>
+            <LinkButton href={`/vendor/bills/new?po=${encodeURIComponent(view.id)}`}>
+              Submit a bill
+            </LinkButton>
+          </div>
+        ) : null}
       </header>
 
       <section aria-labelledby="po-lines-heading" className={styles.section}>
