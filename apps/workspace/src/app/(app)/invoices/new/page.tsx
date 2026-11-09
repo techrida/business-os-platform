@@ -1,0 +1,105 @@
+import { randomUUID } from 'node:crypto';
+
+import type { TaxCode } from '@bos/contracts';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
+import { listCustomers } from '@/components/p2/customers/api';
+import { hasPermission } from '@/components/p2/customers/permissions';
+import { listTaxCodes } from '@/components/p2/quote-builder/api';
+import { Alert } from '@/components/ui/alert';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { failureOf } from '@/lib/api-kernel';
+import { requireStaffSession } from '@/lib/bff';
+
+import { createManualInvoiceAction } from './actions';
+import { ManualInvoiceForm, type CustomerOption } from './manual-invoice-form';
+
+export const metadata: Metadata = { title: 'New invoice · Business OS' };
+export const dynamic = 'force-dynamic';
+
+/** How many customers the picker holds. A longer list says so instead of silently cutting. */
+const CUSTOMER_LIMIT = 200;
+
+export default async function NewInvoicePage() {
+  const session = await requireStaffSession('/invoices/new');
+  const crumbs = [{ label: 'Invoices', href: '/invoices' }, { label: 'New invoice' }];
+
+  if (!hasPermission(session.roles, 'invoice.draft')) {
+    return (
+      <Page width="narrow">
+        <Breadcrumb items={crumbs} />
+        <PageHeader title="New invoice" />
+        <Alert tone="info" role="status" title="Your roles do not include drafting invoices">
+          Ask an administrator if you need to. You can still read invoices.
+        </Alert>
+      </Page>
+    );
+  }
+
+  const [customerResult, taxResult] = await Promise.allSettled([
+    listCustomers(session, { limit: CUSTOMER_LIMIT }),
+    listTaxCodes(session),
+  ]);
+
+  if (customerResult.status === 'rejected') {
+    const f = failureOf(customerResult.reason);
+    return (
+      <Page width="narrow">
+        <Breadcrumb items={crumbs} />
+        <PageHeader title="New invoice" />
+        <Alert
+          tone={f.status === 403 ? 'info' : 'error'}
+          role="alert"
+          title={
+            f.status === 403 ? 'Your roles do not include customers' : 'The customers did not load'
+          }
+          actions={f.status !== 403 ? <Link href="/invoices/new">Try again</Link> : null}
+        >
+          {f.status === 403
+            ? 'An invoice is raised for a customer, so you need to be able to read customers. Ask an administrator if you need access.'
+            : f.message}
+        </Alert>
+      </Page>
+    );
+  }
+
+  const { items, total } = customerResult.value;
+  const customers: CustomerOption[] = items
+    .filter((c) => c.mergedIntoId === null)
+    .map((c) => ({
+      id: c.id,
+      label: `${c.legalName} (${c.number})`,
+      currency: c.defaultCurrency,
+    }));
+  const taxCodes: TaxCode[] | null = taxResult.status === 'fulfilled' ? taxResult.value : null;
+  const cut = total !== null ? total > items.length : items.length >= CUSTOMER_LIMIT;
+
+  return (
+    <Page>
+      <Breadcrumb items={crumbs} />
+      <PageHeader
+        title="New invoice"
+        description="For work billed without a sales order. Save it as a draft first: the platform then works out the totals, and it goes to the approvers from the invoice page."
+      />
+      {customers.length === 0 ? (
+        <Alert tone="info" role="status" title="There are no customers to invoice yet">
+          Add the customer first, then come back here.
+        </Alert>
+      ) : (
+        <ManualInvoiceForm
+          action={createManualInvoiceAction}
+          customers={customers}
+          customersNote={
+            cut
+              ? `Showing the first ${items.length} customers. If yours is missing, ask an administrator to raise the invoice.`
+              : undefined
+          }
+          taxCodes={taxCodes}
+          // One key per render of this page: a double click or a retry creates the invoice once.
+          idempotencyKey={randomUUID()}
+        />
+      )}
+    </Page>
+  );
+}

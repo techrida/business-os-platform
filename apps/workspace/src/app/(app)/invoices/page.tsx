@@ -4,7 +4,8 @@ import Link from 'next/link';
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { hasPermission } from '@/components/p2/customers/permissions';
+import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
@@ -102,11 +103,16 @@ export default async function InvoicesPage({
         title="Invoices"
         description="Every tax invoice, proforma, credit note and debit note with its customer, status and total."
         actions={
-          items !== null && items.length > 0 ? (
-            <Badge tone="info" role="status" className={styles.count}>
-              {items.length} {items.length === 1 ? 'invoice' : 'invoices'}
-            </Badge>
-          ) : null
+          <>
+            {items !== null && items.length > 0 ? (
+              <Badge tone="info" role="status" className={styles.count}>
+                {items.length} {items.length === 1 ? 'invoice' : 'invoices'}
+              </Badge>
+            ) : null}
+            {hasPermission(session.roles, 'invoice.draft') ? (
+              <LinkButton href="/invoices/new">New invoice</LinkButton>
+            ) : null}
+          </>
         }
       />
 
