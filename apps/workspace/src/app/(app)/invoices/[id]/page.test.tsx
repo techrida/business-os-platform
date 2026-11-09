@@ -24,7 +24,7 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-billing')>()),
   getInvoice: mocks.getInvoice,
 }));
-vi.mock('@/components/p2/quote-builder/api', () => ({ listTaxCodes: mocks.listTaxCodes }));
+vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: mocks.listTaxCodes }));
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 // A marked anchor, so a test can tell the PDF link (a plain anchor) from a prefetching Link.
