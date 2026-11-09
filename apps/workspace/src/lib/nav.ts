@@ -182,6 +182,14 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     ],
   },
   {
+    label: 'Purchases',
+    items: [
+      // P4 is not shipped yet, so Vendors has no href and shows as a roadmap item. When P4 ships, add
+      // `href: '/vendors'` and 'P4' to SHIPPED_PHASES together (nav.test.ts keeps the two in step).
+      { label: 'Vendors', icon: 'building', phase: 'P4', permission: 'vendor.read' },
+    ],
+  },
+  {
     label: 'System',
     items: [
       {
