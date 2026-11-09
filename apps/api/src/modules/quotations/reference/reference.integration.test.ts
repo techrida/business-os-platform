@@ -19,6 +19,7 @@ import { z } from 'zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configureApp } from '../../../app.setup';
+import type { AuthzService } from '../../../platform/authz/authz.service';
 import { systemActor, withTx } from '../../../platform/db/tx';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { startHarness, type EntityScope, type Harness } from '../../leads/test/harness';
@@ -110,7 +111,9 @@ beforeAll(async () => {
   });
 
   const caller: ReferenceCaller = { tenantId: () => actingTenant };
-  const service = new ReferenceService(h.db, caller);
+  // The grant is covered by reference.service.test.ts; here the caller is allowed so the read itself is tested.
+  const authz = { assert: () => undefined } as unknown as AuthzService;
+  const service = new ReferenceService(h.db, caller, authz);
   const moduleRef = await Test.createTestingModule({
     controllers: [ReferenceController],
     providers: [{ provide: ReferenceService, useValue: service }],
