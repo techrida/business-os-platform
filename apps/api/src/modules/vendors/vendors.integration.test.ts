@@ -39,6 +39,7 @@ import type { Db } from '../../platform/db/db.module';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { VerificationController } from '../verification/verification.controller';
 import { VerificationService } from '../verification/verification.service';
+import { VendorKycExpiryService } from './vendor-kyc-expiry.service';
 import { VendorsController } from './vendors.controller';
 import { VendorPartyOwnerRegistrar } from './vendors.module';
 import { VendorsService } from './vendors.service';
@@ -55,6 +56,7 @@ let db: Db;
 let app: INestApplication;
 let baseUrl: string;
 let service: VendorsService;
+let expiry: VendorKycExpiryService;
 let tenantId: string;
 let orgA: string;
 let orgB: string;
@@ -203,6 +205,7 @@ beforeAll(async () => {
     verification,
     new AuditService(db),
   );
+  expiry = new VendorKycExpiryService(db, new AuditService(db));
   const moduleRef = await Test.createTestingModule({
     controllers: [VendorsController, VerificationController],
     providers: [
@@ -361,6 +364,7 @@ describe('create', () => {
     expect((await createVendor({ pan })).status).toBe(201);
     const dup = await createVendor({ pan, legalName: 'Same PAN Again' });
     expect(dup.status, JSON.stringify(dup.body)).toBe(409);
+    expect(dup.body.error.code).toBe('duplicate_pan_vat');
     expect(dup.body.error.message).toMatch(/PAN .* already exists/);
 
     const racePan = nextPan();
@@ -491,6 +495,7 @@ describe('lifecycle and activation', () => {
 
     const res = await post(`/v1/vendors/${v.id}/activate`);
     expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error.reason).toBe('separation_of_duties');
     const [row] = await rowOf<{ status: string; approved_by: string | null }>(
       'SELECT status, approved_by FROM app.vendors WHERE id = $1',
       [v.id],
@@ -558,14 +563,14 @@ describe('daily KYC expiry (suspendLapsedKyc)', () => {
 
     // Ten days on, the clearance that ran out five days ahead has lapsed; the other one has not.
     const later = new Date(Date.now() + 10 * DAY);
-    expect((await service.suspendLapsedKyc(later)).suspended).toEqual([lapsed.id]);
+    expect((await expiry.run(later)).suspended).toEqual([lapsed.id]);
     const status = async (id: string) =>
       (await rowOf<{ status: string }>('SELECT status FROM app.vendors WHERE id = $1', [id]))[0]
         ?.status;
     expect(await status(lapsed.id)).toBe('suspended');
     expect(await status(valid.id)).toBe('approved');
     // A second run finds nothing left to do.
-    expect((await service.suspendLapsedKyc(later)).suspended).toEqual([]);
+    expect((await expiry.run(later)).suspended).toEqual([]);
 
     await setCase(lapsed.id, 'approved', '2020-01-01');
     const refused = await post(`/v1/vendors/${lapsed.id}/activate`);
