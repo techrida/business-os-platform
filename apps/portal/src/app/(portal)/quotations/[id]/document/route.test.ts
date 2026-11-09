@@ -65,6 +65,15 @@ describe('GET /quotations/:id/document', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('answers a vendor session with the plain 404 and calls nothing', async () => {
+    getSession.mockResolvedValue({ ...session, orgKind: 'vendor' });
+    const res = await call(ID);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
+    expect(await res.text()).toBe('Quotation not found.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('answers a non-id, a 404 and a 403 with the same "Quotation not found"', async () => {
     const bad = await call('not-an-id');
     expect(fetchMock).not.toHaveBeenCalled();
