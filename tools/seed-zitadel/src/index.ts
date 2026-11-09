@@ -31,7 +31,7 @@ import {
   type DevFiles,
   type TokenReport,
 } from './outputs.js';
-import { seedKernelRows, setSeedActor } from './db-seed.js';
+import { seedKernelRows, setSeedActor, type DevPersona } from './db-seed.js';
 import {
   APP_NAME,
   ORG_NAMES,
@@ -174,8 +174,13 @@ export interface TenancyStore {
   /**
    * P1 step 8: role grants, the `test_memo` workflow and the INR peg for the tenant of the staff
    * org, found by its ZITADEL org id, and that tenant's default entity. Returns 0 on a second run.
+   * With the staff personas it also seeds the dev department and the VEND-DEV vendor (P4 SEED-2).
    */
-  seedKernel(staffZitadelOrgId: string, correlationId: string): Promise<number>;
+  seedKernel(
+    staffZitadelOrgId: string,
+    correlationId: string,
+    personas?: readonly DevPersona[],
+  ): Promise<number>;
 }
 
 export interface SeedDeps {
@@ -592,7 +597,19 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
   if (dbChanges > 0) changed(`upserted ${dbChanges} tenancy row(s) (entity, parties, idp_orgs)`);
 
   // --- P1 step 8: kernel rows (deny-by-default needs grants to exist; test_memo workflow v1). ---
-  const kernelChanges = await store.seedKernel(orgIds.staff, correlationId);
+  // The staff personas go along so the DB seed can create the dev department and VEND-DEV, which need user ids.
+  const devPersonas: DevPersona[] = [];
+  for (const persona of PERSONAS) {
+    const state = personaState.get(persona.key);
+    if (persona.orgKind !== 'staff' || !state) continue;
+    devPersonas.push({
+      personaKey: persona.key,
+      zitadelUserId: state.userId,
+      email: personaUsername(persona.key),
+      displayName: `${persona.givenName} ${persona.familyName}`,
+    });
+  }
+  const kernelChanges = await store.seedKernel(orgIds.staff, correlationId, devPersonas);
   log(`kernel rows changed: ${kernelChanges}`);
   if (kernelChanges > 0) {
     changed(`seeded ${kernelChanges} kernel row(s) (grants, workflow, INR peg)`);
@@ -900,7 +917,11 @@ export class PgTenancyStore implements TenancyStore {
     return { partyId, changed: inserted.rowCount ?? 0 };
   }
 
-  async seedKernel(staffZitadelOrgId: string, correlationId: string): Promise<number> {
+  async seedKernel(
+    staffZitadelOrgId: string,
+    correlationId: string,
+    personas?: readonly DevPersona[],
+  ): Promise<number> {
     const { client, close } = await this.connect();
     try {
       // The staff IdP org names the tenant; the kernel rows go to that tenant's default entity.
@@ -917,11 +938,11 @@ export class PgTenancyStore implements TenancyStore {
         );
       }
       // seedKernelRows opens its own transaction and sets the seed actor inside it.
-      return await seedKernelRows(client, {
-        tenantId: staff.tenant_id,
-        organizationId: staff.id,
-        correlationId,
-      });
+      return await seedKernelRows(
+        client,
+        { tenantId: staff.tenant_id, organizationId: staff.id, correlationId },
+        personas,
+      );
     } finally {
       await close();
     }
