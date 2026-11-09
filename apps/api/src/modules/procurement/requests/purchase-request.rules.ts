@@ -262,6 +262,8 @@ export interface PurchaseRequestListItem {
   emergencyReason: string | null;
   status: PrStatus;
   approvalRequestId: string | null;
+  /** The request's live RFQ (not cancelled; at most one exists), or null before sourcing starts. */
+  rfqId: string | null;
   submittedAt: string | null;
   version: number;
   createdAt: string;
@@ -272,7 +274,7 @@ export interface PurchaseRequestDto extends PurchaseRequestListItem {
   lines: PurchaseRequestLineDto[];
 }
 
-export function toListItem(row: PurchaseRequestRow): PurchaseRequestListItem {
+export function toListItem(row: PurchaseRequestRow, rfqId: string | null): PurchaseRequestListItem {
   return {
     id: row.id,
     number: row.number,
@@ -295,6 +297,7 @@ export function toListItem(row: PurchaseRequestRow): PurchaseRequestListItem {
     emergencyReason: row.emergencyReason,
     status: row.status,
     approvalRequestId: row.approvalRequestId,
+    rfqId,
     submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
     version: row.version,
     createdAt: row.createdAt.toISOString(),
@@ -305,9 +308,10 @@ export function toListItem(row: PurchaseRequestRow): PurchaseRequestListItem {
 export function toDto(
   row: PurchaseRequestRow,
   lines: readonly PurchaseRequestLineRow[],
+  rfqId: string | null,
 ): PurchaseRequestDto {
   return {
-    ...toListItem(row),
+    ...toListItem(row, rfqId),
     lines: [...lines]
       .sort((a, b) => a.lineNo - b.lineNo)
       .map((l) => ({
