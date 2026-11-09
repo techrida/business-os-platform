@@ -30,6 +30,7 @@ import {
   forbiddenPortalKeys,
 } from './portal-vendor.js';
 import {
+  ConfirmReceiptBodySchema,
   CreatePurchaseRequestBodySchema,
   P4_DOCUMENT_TYPES,
   PO_STATUSES,
@@ -237,6 +238,16 @@ describe('P4 state machines', () => {
     expect(canTransitionPo('closed', 'issued')).toBe(false);
   });
 
+  it('lets a receipt reversal move a purchase order back, and nothing else', () => {
+    expect(canTransitionPo('fully_received', 'partially_received')).toBe(true);
+    expect(canTransitionPo('fully_received', 'issued')).toBe(true);
+    expect(canTransitionPo('partially_received', 'issued')).toBe(true);
+    expect(canTransitionPo('fully_received', 'closed')).toBe(true);
+    expect(canTransitionPo('fully_received', 'cancelled')).toBe(false);
+    expect(canTransitionPo('closed', 'fully_received')).toBe(false);
+    expect(canTransitionPo('short_closed', 'partially_received')).toBe(false);
+  });
+
   it('follows the bill flow, and a bill reaches approval only through matching', () => {
     expect(canTransitionBill('draft', 'matching')).toBe(true);
     expect(canTransitionBill('matching', 'pending_approval')).toBe(true);
@@ -382,6 +393,32 @@ describe('procurement DTOs', () => {
         emergencyReason: 'Server room is down',
       }).success,
     ).toBe(true);
+  });
+
+  it('parses a receipt line with a null, absent or well-formed over-receipt exception id only', () => {
+    const body = {
+      purchaseOrderId: id(6),
+      kind: 'goods',
+      receivedAt: '2026-11-09',
+      lines: [{ poLineId: id(7), quantity: '3' }],
+    };
+    const withLine = (extra: Record<string, unknown>) => ({
+      ...body,
+      lines: [{ ...body.lines[0], ...extra }],
+    });
+    expect(ConfirmReceiptBodySchema.safeParse(body).success).toBe(true);
+    expect(
+      ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: null })).success,
+    ).toBe(true);
+    expect(
+      ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: id(8) })).success,
+    ).toBe(true);
+    expect(
+      ConfirmReceiptBodySchema.safeParse(withLine({ overReceiptExceptionId: 'x' })).success,
+    ).toBe(false);
+    expect(ConfirmReceiptBodySchema.safeParse(withLine({ status: 'confirmed' })).success).toBe(
+      false,
+    );
   });
 
   it('keeps the recommendation reason for fewer than the minimum quotes optional but bounded', () => {

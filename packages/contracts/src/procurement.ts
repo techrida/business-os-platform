@@ -133,8 +133,9 @@ export type PoStatus = z.infer<typeof PoStatusSchema>;
 export const PO_TRANSITIONS: Readonly<Record<PoStatus, readonly PoStatus[]>> = {
   draft: ['issued'],
   issued: ['partially_received', 'fully_received', 'amendment_pending', 'cancelled'],
-  partially_received: ['fully_received', 'amendment_pending', 'short_closed'],
-  fully_received: ['closed'],
+  // The two moves back are receipt reversals: the status follows the quantities received.
+  partially_received: ['fully_received', 'issued', 'amendment_pending', 'short_closed'],
+  fully_received: ['partially_received', 'issued', 'closed'],
   amendment_pending: ['issued'],
   closed: [],
   short_closed: [],
@@ -220,6 +221,11 @@ export const ReceiptLineBodySchema = z.strictObject({
   poLineId: z.guid(),
   /** Above zero. A return is a reversal of a confirmed receipt, not a negative line typed by hand. */
   quantity: QuantityString,
+  /**
+   * The approved over-receipt exception that allows this line to exceed what is open. There is no exceptions table
+   * yet, so the receipts service accepts only null or absent and answers 422 for an id.
+   */
+  overReceiptExceptionId: z.guid().nullable().optional(),
   inspection: text(500).optional(),
   discrepancyNote: text(1000).optional(),
   serials: z

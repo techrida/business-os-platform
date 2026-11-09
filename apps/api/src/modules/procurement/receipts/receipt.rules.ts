@@ -3,8 +3,8 @@
 // table-test. Serves the NFRs "amounts are exact" (decimal.js on numeric(18,4) strings, never JS numbers) and
 // "no gaps in a numbered series" (the GRN number is the service's, taken last).
 import {
-  ReceiptKindSchema,
-  ReceiptLineBodySchema,
+  ConfirmReceiptBodySchema,
+  type ConfirmReceiptBody,
   type PoStatus,
   type ReceiptKind,
 } from '@bos/contracts';
@@ -23,8 +23,9 @@ export const RECEIVING_PO_STATUSES: readonly PoStatus[] = ['issued', 'partially_
 
 /**
  * The PO statuses that follow the quantities received. Within these the service derives the status instead of
- * walking PO_TRANSITIONS, which has no fully_received -> partially_received or partially_received -> issued move
- * (a reversal needs both). Any other status (amendment_pending, closed, short_closed, cancelled) is not touched.
+ * walking PO_TRANSITIONS (a reversal moves fully_received -> partially_received -> issued, which the table now
+ * allows, but the status is what the quantities say, not a step). Any other status (amendment_pending, closed,
+ * short_closed, cancelled) is not touched.
  */
 export const RECEIPT_DERIVED_PO_STATUSES: readonly PoStatus[] = [
   'issued',
@@ -57,21 +58,12 @@ const violation = (code: ReceiptErrorCode, message: string): ReceiptViolation =>
 // ------------------------------------------------------------------------------------------------- body
 
 /**
- * The create body: the contract's confirm body (one PO, kind, date, lines with serials) with the one field the
- * contract's line lacks: `overReceiptExceptionId`. There is no exceptions table yet, so only null is accepted
- * (validateDraftLines answers 422 `over_receipt_exception_unknown` for an id). Still strict.
+ * The create body is the contract's confirm body: one PO, kind, date, and lines with serials and an optional
+ * `overReceiptExceptionId`. There is no exceptions table yet, so only null is accepted (validateDraftLines answers
+ * 422 `over_receipt_exception_unknown` for an id). Still strict.
  */
-export const CreateReceiptBodySchema = z.strictObject({
-  purchaseOrderId: z.guid(),
-  kind: ReceiptKindSchema,
-  receivedAt: z.iso.date(),
-  location: z.string().trim().min(1).max(200).optional(),
-  lines: z
-    .array(ReceiptLineBodySchema.extend({ overReceiptExceptionId: z.guid().nullable().optional() }))
-    .min(1)
-    .max(200),
-});
-export type CreateReceiptBody = z.infer<typeof CreateReceiptBodySchema>;
+export const CreateReceiptBodySchema = ConfirmReceiptBodySchema;
+export type CreateReceiptBody = ConfirmReceiptBody;
 
 export const ListReceiptsQuerySchema = z.strictObject({ purchaseOrderId: z.guid() });
 export type ListReceiptsQuery = z.infer<typeof ListReceiptsQuerySchema>;
