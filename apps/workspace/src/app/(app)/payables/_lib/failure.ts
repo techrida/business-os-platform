@@ -6,9 +6,11 @@ import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/fai
  * status that moved on). Only a 400 shows any API text, through `failureWith`.
  */
 
-export type BillOp = 'load' | 'match' | 'submit' | 'void' | 'convert' | 'reject' | 'exception';
+export type BillOp =
+  'load' | 'match' | 'submit' | 'void' | 'convert' | 'reject' | 'exception' | 'create';
 
 const MOVED: Record<BillOp, string> = {
+  create: 'The vendor or purchase order changed. Check its current status and try again.',
   load: 'This bill changed since you opened it. Reload and try again.',
   match: 'This bill can no longer be matched. Reload to see where it stands.',
   submit: 'This bill can no longer be submitted. Reload to see where it stands.',
@@ -32,6 +34,12 @@ export function billFailure(err: unknown, op: BillOp): ProcFailure {
     conflictFallback: MOVED[op],
     conflict: (code) => {
       switch (code) {
+        case 'BILL_DOCUMENT_NOT_CLEAN':
+          return {
+            message:
+              'The invoice file has not scanned clean. Wait for its scan to finish, or upload a replacement if the scan failed.',
+            reload: false,
+          };
         case 'DUPLICATE_BILL':
           return {
             message:

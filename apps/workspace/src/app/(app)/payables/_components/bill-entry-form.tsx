@@ -8,7 +8,8 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
-import { convertSubmissionAction } from '../actions';
+import { convertSubmissionAction, createBillAction } from '../actions';
+import { BillHeaderInputs, type BillEntryHeader } from './bill-header-inputs';
 import { EMPTY_ROW, MAX_LINES, type LineRow } from '../_lib/forms';
 import styles from '../payables.module.css';
 
@@ -46,8 +47,10 @@ export function BillEntryForm({
   taxCodes,
   cancelHref,
   reloadHref,
+  entry,
 }: {
-  submissionId: string;
+  submissionId?: string;
+  entry?: BillEntryHeader;
   idempotencyKey: string;
   /** Empty for a bill without a purchase order. */
   orderLines: readonly OrderLine[];
@@ -56,7 +59,7 @@ export function BillEntryForm({
   reloadHref: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
-    convertSubmissionAction,
+    entry === undefined ? convertSubmissionAction : createBillAction,
     { key: idempotencyKey },
   );
   const [rows, setRows] = useState<LineRow[]>(() =>
@@ -64,6 +67,7 @@ export function BillEntryForm({
       ? orderLines.map((l) => ({ ...EMPTY_ROW, poLineId: l.poLineId }))
       : [{ ...EMPTY_ROW }],
   );
+  const [invoiceReady, setInvoiceReady] = useState(entry === undefined);
   const wrapRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrapRef, summaryRef);
@@ -76,7 +80,9 @@ export function BillEntryForm({
   return (
     <div ref={wrapRef}>
       <form action={formAction} noValidate className={styles.form}>
-        <input type="hidden" name="submissionId" value={submissionId} />
+        {submissionId !== undefined ? (
+          <input type="hidden" name="submissionId" value={submissionId} />
+        ) : null}
         <input type="hidden" name="idempotencyKey" value={state.key} />
         <input type="hidden" name="lineCount" value={rows.length} />
 
@@ -95,6 +101,15 @@ export function BillEntryForm({
           <p role="alert" className={styles.fieldError}>
             {errors['lines']}
           </p>
+        ) : null}
+
+        {entry !== undefined ? (
+          <BillHeaderInputs
+            entry={entry}
+            errors={errors}
+            pending={pending}
+            onReady={setInvoiceReady}
+          />
         ) : null}
 
         <p className={styles.note}>
@@ -224,7 +239,7 @@ export function BillEntryForm({
         ) : null}
 
         <div className={styles.formButtons}>
-          <Button type="submit" variant="primary" disabled={pending}>
+          <Button type="submit" variant="primary" disabled={pending || !invoiceReady}>
             Create bill
           </Button>
           <LinkButton href={cancelHref} variant="secondary">

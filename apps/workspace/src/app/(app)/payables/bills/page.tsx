@@ -41,9 +41,12 @@ export default async function BillsPage({
       description="Vendor invoices keyed in, matched against their purchase orders and receipts, and sent for approval."
       actions={
         grants.enter ? (
-          <LinkButton href="/payables/inbox" variant="secondary">
-            Open the inbox
-          </LinkButton>
+          <div className={styles.headActions}>
+            <LinkButton href="/payables/bills/new">New bill</LinkButton>
+            <LinkButton href="/payables/inbox" variant="secondary">
+              Open the inbox
+            </LinkButton>
+          </div>
         ) : null
       }
     />
@@ -117,6 +120,7 @@ export default async function BillsPage({
             <thead>
               <tr>
                 <Th>Bill</Th>
+                <Th>Vendor</Th>
                 <Th>Vendor invoice</Th>
                 <Th>Invoice date</Th>
                 <Th>Status</Th>
@@ -140,6 +144,9 @@ export default async function BillsPage({
                       {b.kind === 'vendor_credit_note' ? (
                         <span className={styles.note}> Credit note</span>
                       ) : null}
+                    </Td>
+                    <Td>
+                      <span className={styles.long}>{b.vendorName}</span>
                     </Td>
                     <Td>
                       <span className={styles.long}>{b.vendorInvoiceNo}</span>
