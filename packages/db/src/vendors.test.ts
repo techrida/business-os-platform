@@ -577,7 +577,7 @@ describe('vendor accounts belong to one legal entity of the vendor tenant', () =
     });
   });
 
-  it('leaves default_withholding_code_id as a plain uuid for S-AP to constrain', async () => {
+  it('constrains default_withholding_code_id to a withholding code of the tenant (S-AP, 0035)', async () => {
     const a = await newScope();
     const vendorId = await insertVendor(a);
     await expect(
@@ -588,7 +588,10 @@ describe('vendor accounts belong to one legal entity of the vendor tenant', () =
           [a.tenantId, a.organizationId, vendorId, randomUUID()],
         ),
       ),
-    ).resolves.toBeDefined();
+    ).rejects.toMatchObject({
+      code: '23503',
+      constraint: 'vendor_accounts_default_withholding_code_fk',
+    });
   });
 });
 
