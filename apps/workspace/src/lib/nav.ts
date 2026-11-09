@@ -6,7 +6,8 @@
  * An item is "built" when it has an `href`: it renders as a link. Every other item renders
  * disabled with its phase tag, and so shows the roadmap. When an item ships, give it an `href`
  * as its screen becomes available. SHIPPED_PHASES tracks completion of whole phases; individual
- * screens can become available earlier. nav.test.ts keeps the linked screen list explicit.
+ * screens in EARLY_LINKED_PHASES can become available earlier. nav.test.ts keeps the linked
+ * screen list explicit and rejects links in every other future phase.
  *
  * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
  * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
@@ -55,13 +56,13 @@ export interface NavItem {
   /** `admin`: shown only to people who can see the admin screens. */
   audience?: 'admin';
   /**
-   * The permission that lets a person see this item (a read permission such as `customer.read`).
+   * The permission, or any one of a list, that lets a person see this item.
    * The server decides, as with `audience`, and passes the answer in as the predicate of
    * `visibleGroups`: this file stays free of runtime contract imports because the header title (a
    * client component) imports it. With no predicate, a gated item stays hidden (deny by default).
    * The pages and the API still enforce the permission themselves.
    */
-  permission?: string;
+  permission?: string | readonly string[];
 }
 
 export interface NavGroup {
@@ -71,6 +72,9 @@ export interface NavGroup {
 
 /** Phases whose planned work is completely shipped. */
 export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2', 'P3'];
+
+/** Explicit exceptions for available screens in a phase whose full delivery is still pending. */
+export const EARLY_LINKED_PHASES: readonly Phase[] = ['P4'];
 
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -238,7 +242,11 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         href: '/procurement/receipts',
         icon: 'receipt',
         phase: 'P4',
-        permission: 'procurement.receipt.confirm',
+        permission: [
+          'procurement.receipt.confirm',
+          'procurement.po.issue',
+          'procurement.pr.create',
+        ],
       },
       {
         label: 'Vendors',
@@ -301,12 +309,15 @@ export const APP_NAME = 'Business OS';
 
 /** True when the item is built and links somewhere. */
 export function isBuilt(item: NavItem): item is NavItem & { href: string } {
-  return item.href !== undefined;
+  return (
+    item.href !== undefined &&
+    (SHIPPED_PHASES.includes(item.phase) || EARLY_LINKED_PHASES.includes(item.phase))
+  );
 }
 
 /**
  * The groups a person sees: unbuilt items stay (they show the roadmap), admin-only items go
- * unless `showAdmin`, items with a `permission` go unless `can` grants it (no `can` means none
+ * unless `showAdmin`, items with a `permission` go unless `can` grants any of them (no `can` means none
  * is granted), and a group left with no items goes too.
  */
 export function visibleGroups(
@@ -318,7 +329,10 @@ export function visibleGroups(
     items: group.items.filter(
       (item) =>
         (item.audience !== 'admin' || showAdmin) &&
-        (item.permission === undefined || can?.(item.permission) === true),
+        (item.permission === undefined ||
+          (typeof item.permission === 'string' ? [item.permission] : item.permission).some(
+            (permission) => can?.(permission) === true,
+          )),
     ),
   })).filter((group) => group.items.length > 0);
 }
