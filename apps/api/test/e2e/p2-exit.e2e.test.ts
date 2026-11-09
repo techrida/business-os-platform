@@ -433,9 +433,9 @@ describe('P2 exit: lead to won over HTTP', () => {
       reason: 'separation_of_duties',
     });
 
-    // As plain sales (no approver grant at all) it is refused too.
+    // Plain sales has no approver grant, so refusal conceals whether the request exists.
     const asSales = await approve(s.salesAuth, before.version);
-    expect(asSales.status, show(asSales)).toBe(403);
+    expect(asSales.status, show(asSales)).toBe(404);
 
     const after = await getRequest(await auth('founder'));
     expect(after).toMatchObject({ status: 'pending', currentSeq: 1, version: before.version });
