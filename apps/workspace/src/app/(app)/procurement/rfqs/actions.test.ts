@@ -20,10 +20,19 @@ const api = vi.hoisted(() => ({
   createRfq: vi.fn(),
   recordQuotation: vi.fn(),
   convertSubmission: vi.fn(),
+  scoreQuotation: vi.fn(),
+  recommendQuotation: vi.fn(),
+  commitRfq: vi.fn(),
 }));
 vi.mock('@/lib/api-rfqs', () => api);
 
-const { createRfqAction, recordQuotationAction } = await import('./actions');
+const {
+  commitRfqAction,
+  createRfqAction,
+  recommendQuotationAction,
+  recordQuotationAction,
+  scoreQuotationAction,
+} = await import('./actions');
 
 const RFQ = '11111111-1111-4111-8111-111111111111';
 const PR = '22222222-2222-4222-8222-222222222222';
@@ -199,5 +208,221 @@ describe('recordQuotationAction', () => {
     const r = await recordQuotationAction(start, form(entries));
     expect(r.errors['lines.0.unitPrice']).toMatch(/2 decimal places/);
     expect(api.recordQuotation).not.toHaveBeenCalled();
+  });
+});
+
+const QUOTE = '99999999-9999-4999-8999-999999999999';
+const IN_PROGRESS = apiError(
+  409,
+  'conflict',
+  'A request with this Idempotency-Key is still in progress',
+);
+
+describe('the Idempotency-Key rule across every RFQ write', () => {
+  it('keeps the key on 408 and 429 as well as 5xx, and rotates it on other 4xx', async () => {
+    for (const status of [408, 429, 500, 503]) {
+      api.createRfq.mockRejectedValue(new ApiError(status, 'x'));
+      expect((await createRfqAction(start, form(rfqEntries))).key).toBe(KEY);
+    }
+    for (const status of [400, 403, 404, 422]) {
+      api.createRfq.mockRejectedValue(apiError(status, 'x'));
+      expect((await createRfqAction(start, form(rfqEntries))).key).not.toBe(KEY);
+    }
+  });
+  it('record: 429 keeps the key', async () => {
+    api.recordQuotation.mockRejectedValue(new ApiError(429, 'x'));
+    expect((await recordQuotationAction(start, form(quoteEntries))).key).toBe(KEY);
+  });
+});
+
+describe('scoreQuotationAction', () => {
+  const scoreStart = { key: KEY, errors: {}, count: 0 };
+  const entries: [string, string][] = [
+    ['idempotencyKey', KEY],
+    ['rfqId', RFQ],
+    ['quotationId', QUOTE],
+    ['scores.0.criterion', 'Price'],
+    ['scores.0.score', '80'],
+    ['scores.1.criterion', 'Delivery'],
+    ['scores.1.score', '72.5'],
+  ];
+  const swap = (name: string, value: string): [string, string][] =>
+    entries.map(([k, v]) => [k, k === name ? value : v]);
+
+  it('sends the contract body with the form key, shows the API average as-is, and rotates the key', async () => {
+    api.scoreQuotation.mockResolvedValue([
+      { id: '1', averageScore: '1.00' },
+      { id: QUOTE, averageScore: '76.25' },
+    ]);
+    const r = await scoreQuotationAction(scoreStart, form(entries));
+    expect(api.scoreQuotation).toHaveBeenCalledWith(
+      expect.anything(),
+      RFQ,
+      QUOTE,
+      {
+        scores: [
+          { criterion: 'Price', score: 80 },
+          { criterion: 'Delivery', score: 72.5 },
+        ],
+      },
+      KEY,
+    );
+    expect(r.saved).toContain('76.25');
+    expect(r.count).toBe(1);
+    expect(r.key).not.toBe(KEY);
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/procurement/rfqs/${RFQ}`);
+  });
+
+  it('says so when the API has no average for the quotation', async () => {
+    api.scoreQuotation.mockResolvedValue([]);
+    const r = await scoreQuotationAction(scoreStart, form(entries));
+    expect(r.saved).toMatch(/saved/i);
+    expect(r.saved).not.toMatch(/undefined|null/);
+  });
+
+  it('shows field errors without calling the API', async () => {
+    const r = await scoreQuotationAction(scoreStart, form(swap('scores.0.score', '120')));
+    expect(r.errors['scores.0.score']).toBeTruthy();
+    expect(r.key).toBe(KEY);
+    expect(api.scoreQuotation).not.toHaveBeenCalled();
+  });
+
+  it('refuses a person without the sourcing grant and a form without real ids', async () => {
+    session.roles = ['viewer'];
+    expect((await scoreQuotationAction(scoreStart, form(entries))).error).toMatch(/sourcing/i);
+    session.roles = ['procurement'];
+    const r = await scoreQuotationAction(scoreStart, form(swap('quotationId', 'nope')));
+    expect(r.reload).toBe(true);
+    expect(api.scoreQuotation).not.toHaveBeenCalled();
+  });
+
+  it('rotates on a definite refusal, keeps the key on 408, 429, 5xx and the in-progress 409', async () => {
+    api.scoreQuotation.mockRejectedValue(apiError(404, 'not_found'));
+    const refused = await scoreQuotationAction(scoreStart, form(entries));
+    expect(refused.key).not.toBe(KEY);
+    expect(refused.error).toMatch(/quotation/i);
+    for (const err of [
+      new ApiError(408, 'x'),
+      new ApiError(429, 'x'),
+      new ApiError(502, 'x'),
+      IN_PROGRESS,
+    ]) {
+      api.scoreQuotation.mockRejectedValue(err);
+      expect((await scoreQuotationAction(scoreStart, form(entries))).key).toBe(KEY);
+    }
+  });
+});
+
+describe('recommendQuotationAction', () => {
+  const entries: [string, string][] = [
+    ['idempotencyKey', KEY],
+    ['rfqId', RFQ],
+    ['vendorQuotationId', QUOTE],
+    ['rationale', 'Lowest total.'],
+    ['fewerThanThreeReason', ''],
+  ];
+
+  it('sends the contract body and returns to the RFQ with a confirmation', async () => {
+    api.recommendQuotation.mockResolvedValue({ id: RFQ });
+    await expect(recommendQuotationAction(start, form(entries))).rejects.toThrow(
+      `redirect /procurement/rfqs/${RFQ}?recommended=1`,
+    );
+    expect(api.recommendQuotation).toHaveBeenCalledWith(
+      expect.anything(),
+      RFQ,
+      { vendorQuotationId: QUOTE, rationale: 'Lowest total.' },
+      KEY,
+    );
+    expect(cache.revalidatePath).toHaveBeenCalledWith('/procurement/rfqs');
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/procurement/rfqs/${RFQ}`);
+  });
+
+  it('words fewer quotations than the minimum without the field name, and rotates the key', async () => {
+    api.recommendQuotation.mockRejectedValue(
+      apiError(409, 'FEWER_THAN_MIN_QUOTES', 'Only 2 of 3: fewerThanThreeReason is required'),
+    );
+    const r = await recommendQuotationAction(start, form(entries));
+    expect(r.error).toMatch(/fewer quotations than the minimum/i);
+    expect(r.error).not.toMatch(/fewerThanThreeReason/);
+    expect(r.key).not.toBe(KEY);
+  });
+
+  it('shows field errors, refuses without the grant, and keeps the key on 429', async () => {
+    const empty = await recommendQuotationAction(
+      start,
+      form([
+        ['rfqId', RFQ],
+        ['idempotencyKey', KEY],
+      ]),
+    );
+    expect(empty.errors.vendorQuotationId).toBeTruthy();
+    expect(api.recommendQuotation).not.toHaveBeenCalled();
+    session.roles = ['viewer'];
+    expect((await recommendQuotationAction(start, form(entries))).error).toMatch(/sourcing/i);
+    session.roles = ['procurement'];
+    api.recommendQuotation.mockRejectedValue(new ApiError(429, 'x'));
+    expect((await recommendQuotationAction(start, form(entries))).key).toBe(KEY);
+  });
+});
+
+describe('commitRfqAction', () => {
+  const commitStart = { key: KEY, count: 0 };
+  const entries: [string, string][] = [
+    ['idempotencyKey', KEY],
+    ['rfqId', RFQ],
+  ];
+
+  it('submits with the form key and refreshes the RFQ, its list and the purchase request', async () => {
+    api.commitRfq.mockResolvedValue({ id: RFQ, purchaseRequestId: PR });
+    const r = await commitRfqAction(commitStart, form(entries));
+    expect(api.commitRfq).toHaveBeenCalledWith(expect.anything(), RFQ, KEY);
+    expect(r.count).toBe(1);
+    expect(r.saved).toMatch(/approval/i);
+    expect(r.key).not.toBe(KEY);
+    for (const path of [
+      '/procurement/rfqs',
+      `/procurement/rfqs/${RFQ}`,
+      '/procurement/requests',
+      `/procurement/requests/${PR}`,
+    ]) {
+      expect(cache.revalidatePath).toHaveBeenCalledWith(path);
+    }
+  });
+
+  it('no eligible approver (422) says nothing was submitted and rotates the key', async () => {
+    api.commitRfq.mockRejectedValue(
+      apiError(422, 'NO_ELIGIBLE_APPROVER', 'No Finance approver can decide step 2'),
+    );
+    const r = await commitRfqAction(commitStart, form(entries));
+    expect(r.error).toContain('No Finance approver can decide step 2');
+    expect(r.error).toMatch(/nothing was submitted/i);
+    expect(r.key).not.toBe(KEY);
+    expect(r.count).toBe(0);
+  });
+
+  it('a stale RFQ (409) offers a reload', async () => {
+    api.commitRfq.mockRejectedValue(
+      apiError(409, 'conflict', 'The purchase request is draft, not sourcing'),
+    );
+    const r = await commitRfqAction(commitStart, form(entries));
+    expect(r.reload).toBe(true);
+    expect(r.error).toContain('not sourcing');
+  });
+
+  it('refuses without the grant or a real id, and keeps the key on 408, 429, 5xx, in-progress', async () => {
+    session.roles = ['viewer'];
+    expect((await commitRfqAction(commitStart, form(entries))).error).toMatch(/sourcing/i);
+    session.roles = ['procurement'];
+    expect((await commitRfqAction(commitStart, form([['rfqId', 'x']]))).reload).toBe(true);
+    expect(api.commitRfq).not.toHaveBeenCalled();
+    for (const err of [
+      new ApiError(408, 'x'),
+      new ApiError(429, 'x'),
+      new ApiError(500, 'x'),
+      IN_PROGRESS,
+    ]) {
+      api.commitRfq.mockRejectedValue(err);
+      expect((await commitRfqAction(commitStart, form(entries))).key).toBe(KEY);
+    }
   });
 });
