@@ -2,9 +2,10 @@ import type { PaymentListItem } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
@@ -78,17 +79,25 @@ export default async function PaymentsPage({
     problem = { message: f.message, status: f.status };
   }
 
+  const hasCount = items !== null && items.length > 0;
+  const mayRecord = hasPermission(session.roles, 'payment.record');
+
   return (
     <Page>
       <PageHeader
         title="Payments"
         description="Money customers have paid, from submitted to verified. A verified payment is allocated to invoices; only then do they count as paid."
         actions={
-          items !== null && items.length > 0 ? (
-            <Badge tone="info" role="status" className={styles.count}>
-              {items.length} {items.length === 1 ? 'payment' : 'payments'}
-              {status !== undefined ? ` · ${paymentStatusMeta(status).label}` : ''}
-            </Badge>
+          hasCount || mayRecord ? (
+            <>
+              {items !== null && items.length > 0 ? (
+                <Badge tone="info" role="status" className={styles.count}>
+                  {items.length} {items.length === 1 ? 'payment' : 'payments'}
+                  {status !== undefined ? ` · ${paymentStatusMeta(status).label}` : ''}
+                </Badge>
+              ) : null}
+              {mayRecord ? <LinkButton href="/payments/new">Record payment</LinkButton> : null}
+            </>
           ) : null
         }
       />
