@@ -18,6 +18,28 @@ export interface ScanJobData {
 }
 
 /**
+ * The portal org kinds whose callers an owner policy may let upload (`allowsCounterparty`). Customers only for
+ * now; P4 adds 'vendor' here and nowhere else in documents.
+ */
+export const COUNTERPARTY_KINDS = ['customer'] as const;
+export type CounterpartyKind = (typeof COUNTERPARTY_KINDS)[number];
+
+/**
+ * A portal caller as an owner policy sees it: plain data, no authz internals. Only an active caller with a
+ * party, acting in the transaction's tenant and entity as itself, is ever handed to a policy.
+ */
+export interface CounterpartyPrincipal {
+  kind: CounterpartyKind;
+  /** `app.users.id` of the portal user. */
+  userId: string;
+  /** The customer (later: vendor) party the caller acts for (`idp_orgs.party_id`), never empty. */
+  partyId: string;
+  /** The tenant and acting entity of the request, so the policy can scope its lookup. */
+  tenantId: string;
+  organizationId: string;
+}
+
+/**
  * An owner record type (for example a test memo) tells documents who may touch its attachments.
  * Registered by the module that owns the record; U8 registers 'test_memo'.
  */
@@ -45,6 +67,20 @@ export interface DocumentOwnerPolicy {
     ownerId: string,
     actor: Pick<Actor, 'kind' | 'id'>,
     tx?: DbTransaction,
+  ): Promise<boolean>;
+  /**
+   * Whether this portal caller may upload to this owner without the `documents.upload` grant, for example a
+   * customer attaching payment proof to their own submitted payment. Asked by `create` and the receive step
+   * only, inside their transaction, and only for a counterparty principal; staff never reach it. True skips
+   * the grant check and nothing else: the owner must exist (404), `canAttach` still applies (409), and the
+   * type, size and scan rules are unchanged. Absent or false means the usual grant check, which refuses a
+   * portal caller with the usual 403 (deny by default). The policy must check that the record names
+   * `principal.partyId` itself: documents does not.
+   */
+  allowsCounterparty?(
+    principal: CounterpartyPrincipal,
+    ownerId: string,
+    tx: DbTransaction,
   ): Promise<boolean>;
 }
 
