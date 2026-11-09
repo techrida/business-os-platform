@@ -1,0 +1,605 @@
+// Integration tests of the purchase request round trip on a real Postgres (Testcontainers, needs Docker in WSL).
+// Real: migrations as bos_owner, queries as bos_app (so every 0033 CHECK and the lines freeze trigger run),
+// PurchaseRequestsService, the real ApprovalsService with the `purchase_request` workflow published through
+// ApprovalsAdminService (the spec is PURCHASE_REQUEST_WORKFLOW_SPEC, which the seed unit copies), the real
+// PurchaseRequestSubject, NumberingService, MoneyService (NPR needs no rate) and AuditService (the editors of the
+// SoD list are read from it). Faked: notify (it still runs the real link and template validation, as NotifyService
+// does at enqueue), the user directory (role -> users; the users themselves are real staff users of entity A), the
+// request context, and authz.assert, which still runs the real pure can() on a fake principal.
+// Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/requests/purchase-requests.integration.test.ts
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type ApprovalRequestDto,
+  type CreatePurchaseRequestBody,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
+import {
+  approvalRequests,
+  approvalSteps,
+  createDepartment,
+  createStaffUser,
+  createTenantWithEntity,
+  purchaseRequestLines,
+  purchaseRequests,
+  runMigrations,
+} from '@bos/db';
+import { ForbiddenException, HttpException } from '@nestjs/common';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AuditService } from '../../../platform/audit/audit.service';
+import type { AuthzService } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
+import type { Principal } from '../../../platform/authz/principal';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { buildLink, renderEmail } from '../../../platform/notify/templates';
+import { MoneyService } from '../../../platform/settings/money.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
+import { ApprovalsAdminService } from '../../approvals/admin.service';
+import type { ApprovalEmailTemplate } from '../../approvals/ports';
+import { ApprovalsService } from '../../approvals/requests.service';
+import {
+  PURCHASE_REQUEST_DOCUMENT_TYPE,
+  PURCHASE_REQUEST_WORKFLOW_SPEC,
+} from './purchase-request.rules';
+import { PurchaseRequestSubject } from './purchase-request.subject';
+import { PurchaseRequestsService } from './purchase-requests.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+const WORKSPACE_URL = 'http://workspace.test';
+const now = new Date('2026-11-09T04:00:00Z');
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: Db;
+let scopeA: TxScope;
+let scopeB: TxScope;
+let approvals: ApprovalsService;
+let service: PurchaseRequestsService;
+
+/** Real staff users of entity A. `req` and `other` raise requests, `head` heads `dept.headed`. */
+const U = { req: '', other: '', head: '', ops: '', mgmt: '', proc: '', admin: '' };
+/** Departments: one headed by `head`, one with no head, one headed by the requester, one in entity B. */
+const dept = { headed: '', headless: '', selfHeaded: '', otherEntity: '' };
+/** The fake directory's role members (the engine still checks each one is active in the entity). */
+const roles: Partial<Record<RoleKey, string[]>> = {};
+const resetRoles = () => {
+  roles.operations_head = [U.ops];
+  roles.management = [U.mgmt];
+  roles.founder = [U.admin];
+};
+
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+/** Who calls: by default the requester, an operations officer of entity A. */
+const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+  userId: '',
+  role: 'operations_officer',
+  scope: null,
+};
+const as = (userId: string, role: RoleKey) => {
+  current.userId = userId;
+  current.role = role;
+};
+const scopeNow = (): TxScope => current.scope ?? scopeA;
+
+const principalNow = (): Principal => ({
+  userId: current.userId,
+  zitadelUserId: `z-${current.userId}`,
+  ...scopeNow(),
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: 'unused',
+  roles: [current.role],
+  departmentId: null,
+  status: 'active',
+  grants: grantsOf(current.role),
+});
+/** One caller for every service, so switching the user or the entity switches it everywhere. */
+const caller = {
+  current: () => ({
+    scope: scopeNow(),
+    actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const authz = {
+  assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+    const d = can(principalNow(), action, ref);
+    if (!d.allowed) {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+    }
+  },
+};
+
+type Notice = {
+  link: string;
+  email?: { template: ApprovalEmailTemplate; vars: Record<string, string> };
+};
+const validate = (n: Notice) => {
+  buildLink(WORKSPACE_URL, n.link);
+  if (n.email !== undefined) {
+    renderEmail(n.email.template, n.email.vars, { workspaceUrl: WORKSPACE_URL });
+  }
+  return Promise.resolve(undefined);
+};
+const notify = {
+  notifyUser: vi.fn((_tx: unknown, n: Notice) => validate(n)),
+  notifyRole: vi.fn((_tx: unknown, _role: unknown, n: Notice) => validate(n)),
+};
+const directory = {
+  userIdsWithRole: vi.fn((_s: unknown, role: RoleKey) => Promise.resolve(roles[role] ?? [])),
+  resolve: vi.fn(),
+  emailOf: vi.fn(() => Promise.resolve(null)),
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+
+const read = <T>(fn: (tx: DbTransaction) => Promise<T>) =>
+  withTx(db, scopeA, systemActor('test'), fn);
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  db = drizzle({ client: appPool });
+
+  // One tenant, entity A (the acting one) and entity B.
+  const tenant = await createTenantWithEntity(appPool);
+  scopeA = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
+  const otherEntityId = randomUUID();
+  await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`INSERT INTO app.organizations (id, tenant_id, organization_id, name, code, legal_name, is_default)
+          VALUES (${otherEntityId}, ${scopeA.tenantId}, ${otherEntityId}, ${`E-${otherEntityId}`},
+                  ${`E-${otherEntityId}`}, ${`E-${otherEntityId}`}, false)`,
+    ),
+  );
+  scopeB = { tenantId: scopeA.tenantId, organizationId: otherEntityId };
+
+  const staff = async (roleKey: RoleKey) =>
+    (await createStaffUser(appPool, { ...scopeA, idpOrgId: tenant.idpOrgId, roleKeys: [roleKey] }))
+      .userId;
+  U.req = await staff('operations_officer');
+  U.other = await staff('operations_officer');
+  U.head = await staff('operations_officer');
+  U.ops = await staff('operations_head');
+  U.mgmt = await staff('management');
+  U.proc = await staff('procurement');
+  U.admin = await staff('founder');
+  resetRoles();
+
+  dept.headed = (await createDepartment(appPool, scopeA)).departmentId;
+  dept.headless = (await createDepartment(appPool, scopeA)).departmentId;
+  dept.selfHeaded = (await createDepartment(appPool, scopeA)).departmentId;
+  dept.otherEntity = (await createDepartment(appPool, scopeB)).departmentId;
+  // The head must be an active staff user of entity A, or the engine counts the department as headless.
+  for (const [d, head] of [
+    [dept.headed, U.head],
+    [dept.selfHeaded, U.req],
+  ] as const) {
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(sql`UPDATE app.departments SET head_user_id = ${head} WHERE id = ${d}`),
+    );
+  }
+
+  const audit = new AuditService(db);
+  // The workflow the seed unit publishes, published in entity A as an admin would.
+  as(U.admin, 'founder');
+  const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  await admin.createWorkflow({
+    key: PURCHASE_REQUEST_DOCUMENT_TYPE,
+    name: 'Purchase request',
+    spec: PURCHASE_REQUEST_WORKFLOW_SPEC,
+  });
+  await admin.publish(PURCHASE_REQUEST_DOCUMENT_TYPE, 1);
+
+  approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
+  approvals.registerSubject(new PurchaseRequestSubject(() => now));
+  service = new PurchaseRequestsService(
+    db,
+    authz as unknown as AuthzService,
+    approvals,
+    notify,
+    audit,
+    new NumberingService(),
+    // NPR needs no rate row, so the settings are never read.
+    new MoneyService(db, {} as never),
+    caller,
+    () => now,
+  );
+});
+
+afterAll(async () => {
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetRoles();
+  current.scope = null;
+  as(U.req, 'operations_officer');
+});
+
+// ---------------------------------------------------------------------------------------- helpers
+
+/** The HttpException `promise` rejects with; fails the test when it resolves. */
+async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpException) return error;
+    throw error;
+  }
+  throw new Error('expected the call to fail');
+}
+const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code;
+
+const body = (over: Partial<CreatePurchaseRequestBody> = {}): CreatePurchaseRequestBody => ({
+  requestType: 'goods',
+  departmentId: dept.headed,
+  costCenterId: randomUUID(),
+  justification: 'Chairs for the new training room',
+  requiredBy: '2026-12-01',
+  budgetCode: 'OPS-2083',
+  currency: 'NPR',
+  isEmergency: false,
+  lines: [{ description: 'Chairs', uom: 'pcs', quantity: '10', estimatedUnitPrice: '4500.00' }],
+  ...over,
+});
+
+const draft = (over: Partial<CreatePurchaseRequestBody> = {}) =>
+  service.create(body(over), randomUUID());
+
+const prRow = async (id: string) => {
+  const [row] = await read((tx) =>
+    tx.select().from(purchaseRequests).where(eq(purchaseRequests.id, id)),
+  );
+  return row!;
+};
+
+const requestsOf = (prId: string) =>
+  read((tx) =>
+    tx
+      .select()
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.documentType, PURCHASE_REQUEST_DOCUMENT_TYPE),
+          eq(approvalRequests.documentId, prId),
+        ),
+      ),
+  );
+
+const stepsOf = (requestId: string) =>
+  read((tx) =>
+    tx
+      .select({
+        kind: approvalSteps.kind,
+        roleKey: approvalSteps.roleKey,
+        userId: approvalSteps.userId,
+      })
+      .from(approvalSteps)
+      .where(eq(approvalSteps.requestId, requestId))
+      .orderBy(asc(approvalSteps.seq)),
+  );
+
+/** `user` (holding `role`) acts on the request's active step at its current version. */
+async function act(
+  user: string,
+  role: RoleKey,
+  requestId: string,
+  action: 'approve' | 'return' | 'reject',
+): Promise<ApprovalRequestDto> {
+  const [req] = await read((tx) =>
+    tx
+      .select({ version: approvalRequests.version })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId)),
+  );
+  as(user, role);
+  try {
+    return await approvals.act(
+      requestId,
+      {
+        action,
+        expectedVersion: req!.version,
+        ...(action === 'approve' ? {} : { comment: `${action} for the test` }),
+      },
+      randomUUID(),
+    );
+  } finally {
+    as(U.req, 'operations_officer');
+  }
+}
+
+/** Drafts and submits a request, returning its id and its (only) approval request. */
+async function submitted(over: Partial<CreatePurchaseRequestBody> = {}) {
+  const d = await draft(over);
+  const dto = await service.submit(d.id, undefined, randomUUID());
+  const [request] = await requestsOf(d.id);
+  return { id: d.id, dto, request: request! };
+}
+
+// ------------------------------------------------------------------------------------------------ tests
+
+describe('purchase request: the department route (AD10, AD11, AD12)', () => {
+  it('routes to the department head only: no Accountant, no Finance step', async () => {
+    const { id, dto, request } = await submitted();
+    expect(dto.status).toBe('submitted');
+    expect(dto.number).toMatch(/^PR-\d{4}\/\d{2}-\d{5}$/);
+    // The snapshot the approval thresholds read, written by the same UPDATE as the status.
+    expect(dto).toMatchObject({
+      estimatedTotal: '45000.00',
+      estimatedTotalNpr: '45000.00',
+      fxRate: '1.000000',
+      approvalRequestId: request.id,
+    });
+    expect(dto.submittedAt).toBe(now.toISOString());
+
+    expect(request.status).toBe('pending');
+    expect(request.documentNumber).toBe(dto.number);
+    expect(request.facts).toEqual({
+      departmentId: dept.headed,
+      isEmergency: false,
+      amountNpr: '45000.00',
+    });
+    expect(request.sodUserIds).toContain(U.req);
+    const steps = await stepsOf(request.id);
+    expect(steps).toEqual([{ kind: 'department_head', roleKey: null, userId: U.head }]);
+    expect(steps.some((s) => s.roleKey === 'accountant' || s.roleKey === 'finance')).toBe(false);
+    expect((await prRow(id)).status).toBe('submitted');
+  });
+
+  it('adds a Management step for an emergency request', async () => {
+    const { request } = await submitted({ isEmergency: true, emergencyReason: 'Pump failed' });
+    expect(await stepsOf(request.id)).toEqual([
+      { kind: 'department_head', roleKey: null, userId: U.head },
+      { kind: 'role', roleKey: 'management', userId: null },
+    ]);
+  });
+
+  it('falls back to operations_head when the department head is the requester', async () => {
+    const { request } = await submitted({ departmentId: dept.selfHeaded });
+    expect(await stepsOf(request.id)).toEqual([
+      { kind: 'department_head', roleKey: 'operations_head', userId: null },
+    ]);
+  });
+
+  it('falls back to operations_head when the department has no head', async () => {
+    const { request } = await submitted({ departmentId: dept.headless });
+    expect(await stepsOf(request.id)).toEqual([
+      { kind: 'department_head', roleKey: 'operations_head', userId: null },
+    ]);
+  });
+
+  it('with no head and no operations_head: 422 NO_ELIGIBLE_APPROVER, no request row, still a draft', async () => {
+    roles.operations_head = [];
+    const d = await draft({ departmentId: dept.headless });
+    const error = await httpErrorOf(service.submit(d.id, undefined, randomUUID()));
+    expect(error.getStatus()).toBe(422);
+    expect(codeOf(error)).toBe('NO_ELIGIBLE_APPROVER');
+
+    expect(await requestsOf(d.id)).toEqual([]);
+    const row = await prRow(d.id);
+    expect(row.status).toBe('draft');
+    expect(row.number).toBeNull();
+    expect(row.approvalRequestId).toBeNull();
+    // The admins are told, in a transaction of their own, and the notice opens the inbox.
+    expect(notify.notifyRole).toHaveBeenCalled();
+    expect(notify.notifyRole.mock.calls[0]![2]).toMatchObject({ link: '/inbox/' });
+
+    // Once someone holds the role, the same draft submits and takes the first number only now.
+    roles.operations_head = [U.ops];
+    const ok = await service.submit(d.id, undefined, randomUUID());
+    expect(ok.status).toBe('submitted');
+    expect(ok.number).not.toBeNull();
+  });
+
+  it('a retried submit with the same Idempotency-Key opens one approval request', async () => {
+    const d = await draft();
+    const key = randomUUID();
+    const first = await service.submit(d.id, undefined, key);
+    const second = await service.submit(d.id, undefined, key);
+    expect(second).toEqual(first);
+    expect(await requestsOf(d.id)).toHaveLength(1);
+  });
+});
+
+describe('purchase request: the decision', () => {
+  it('approve moves it to dept_approved', async () => {
+    const { id, request } = await submitted();
+    await act(U.head, 'operations_officer', request.id, 'approve');
+    const row = await prRow(id);
+    expect(row.status).toBe('dept_approved');
+    expect(row.version).toBe(3);
+    expect((await service.get(id)).status).toBe('dept_approved');
+  });
+
+  it('an emergency request is dept_approved only after Management too', async () => {
+    const { id, request } = await submitted({ isEmergency: true, emergencyReason: 'Pump failed' });
+    await act(U.head, 'operations_officer', request.id, 'approve');
+    expect((await prRow(id)).status).toBe('submitted');
+    await act(U.mgmt, 'management', request.id, 'approve');
+    expect((await prRow(id)).status).toBe('dept_approved');
+  });
+
+  it('reject moves it to rejected', async () => {
+    const { id, request } = await submitted();
+    await act(U.head, 'operations_officer', request.id, 'reject');
+    expect((await prRow(id)).status).toBe('rejected');
+  });
+
+  it('the requester cannot approve their own request when they head the department', async () => {
+    const { request } = await submitted({ departmentId: dept.selfHeaded });
+    const error = await httpErrorOf(act(U.req, 'operations_officer', request.id, 'approve'));
+    expect(error.getStatus()).toBe(403);
+  });
+
+  it('return moves it to returned; it is editable, keeps its number on resubmit and gets a new request', async () => {
+    const { id, dto, request } = await submitted();
+    await act(U.head, 'operations_officer', request.id, 'return');
+    expect((await prRow(id)).status).toBe('returned');
+
+    const edited = await service.update(
+      id,
+      body({
+        lines: [
+          { description: 'Chairs', uom: 'pcs', quantity: '12', estimatedUnitPrice: '4500.00' },
+        ],
+      }),
+      undefined,
+      randomUUID(),
+    );
+    expect(edited).toMatchObject({
+      status: 'returned',
+      estimatedTotal: '54000.00',
+      estimatedTotalNpr: null,
+      fxRate: null,
+    });
+
+    const again = await service.submit(id, undefined, randomUUID());
+    expect(again).toMatchObject({ status: 'submitted', number: dto.number });
+    expect(again.estimatedTotalNpr).toBe('54000.00');
+    expect(await requestsOf(id)).toHaveLength(2);
+  });
+});
+
+describe('purchase request: lines are frozen after submit', () => {
+  it('the service refuses an edit with 409', async () => {
+    const { id } = await submitted();
+    const error = await httpErrorOf(service.update(id, body(), undefined, randomUUID()));
+    expect(error.getStatus()).toBe(409);
+  });
+
+  it('the database trigger refuses a line insert, update and delete on a submitted request', async () => {
+    const { id } = await submitted();
+    const [line] = await read((tx) =>
+      tx.select().from(purchaseRequestLines).where(eq(purchaseRequestLines.purchaseRequestId, id)),
+    );
+    await expect(
+      read((tx) =>
+        tx
+          .update(purchaseRequestLines)
+          .set({ quantity: '99' })
+          .where(eq(purchaseRequestLines.id, line!.id)),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      read((tx) => tx.delete(purchaseRequestLines).where(eq(purchaseRequestLines.id, line!.id))),
+    ).rejects.toThrow();
+    await expect(
+      read((tx) =>
+        tx.insert(purchaseRequestLines).values({
+          ...scopeA,
+          purchaseRequestId: id,
+          lineNo: 2,
+          description: 'Sneaked in',
+          uom: 'pcs',
+          quantity: '1',
+          estimatedUnitPrice: '1.00',
+          estimatedAmount: '1.00',
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('a submitted request cannot be cancelled; a draft can', async () => {
+    const { id } = await submitted();
+    expect((await httpErrorOf(service.cancel(id, undefined, randomUUID()))).getStatus()).toBe(409);
+    const d = await draft();
+    expect((await service.cancel(d.id, undefined, randomUUID())).status).toBe('cancelled');
+  });
+
+  it('a stale expectedVersion is a 409', async () => {
+    const d = await draft();
+    const error = await httpErrorOf(service.submit(d.id, d.version + 1, randomUUID()));
+    expect(error.getStatus()).toBe(409);
+  });
+});
+
+describe('purchase request: scope', () => {
+  it('another entity sees 404 on every route, and cannot name our department', async () => {
+    const d = await draft();
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.get(d.id))).getStatus()).toBe(404);
+    expect(
+      (await httpErrorOf(service.update(d.id, body(), undefined, randomUUID()))).getStatus(),
+    ).toBe(404);
+    expect((await httpErrorOf(service.submit(d.id, undefined, randomUUID()))).getStatus()).toBe(
+      404,
+    );
+    expect((await httpErrorOf(service.cancel(d.id, undefined, randomUUID()))).getStatus()).toBe(
+      404,
+    );
+    expect(await service.list({ limit: 200 })).toEqual([]);
+    // A department of entity B is not a department of the acting entity A.
+    current.scope = null;
+    const error = await httpErrorOf(draft({ departmentId: dept.otherEntity }));
+    expect(error.getStatus()).toBe(400);
+    expect((await prRow(d.id)).status).toBe('draft');
+  });
+
+  it('under own scope another requester gets 404, and Procurement (all) reads it', async () => {
+    const d = await draft();
+    as(U.other, 'operations_officer');
+    expect((await httpErrorOf(service.get(d.id))).getStatus()).toBe(404);
+    expect((await httpErrorOf(service.submit(d.id, undefined, randomUUID()))).getStatus()).toBe(
+      404,
+    );
+    expect((await service.list({ limit: 200 })).map((r) => r.id)).not.toContain(d.id);
+
+    as(U.proc, 'procurement');
+    expect((await service.get(d.id)).id).toBe(d.id);
+    expect((await service.list({ limit: 200 })).map((r) => r.id)).toContain(d.id);
+    // Reading everything does not let Procurement edit someone else's request.
+    expect(
+      (await httpErrorOf(service.update(d.id, body(), undefined, randomUUID()))).getStatus(),
+    ).toBe(404);
+
+    // The requester's own list is not empty under `own` scope.
+    as(U.req, 'operations_officer');
+    expect((await service.list({ limit: 200 })).map((r) => r.id)).toContain(d.id);
+    expect(
+      (await service.list({ status: 'cancelled', limit: 200 })).map((r) => r.id),
+    ).not.toContain(d.id);
+  });
+});
