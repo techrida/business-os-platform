@@ -171,10 +171,8 @@ export class VendorBillSubject implements ApprovalSubject {
     const tdsTotal = roundMoney(tds);
     const payable = payableTotal({ net: bill.netTotal, vat: bill.vatTotal, tds: tdsTotal });
     const payableNpr = toNpr(payable, bill.currency, bill.fxRate);
-    // vendor_bills_tds_code_check: a bill that withholds names a code.
-    const withholdingCodeId = tdsTotal.gt(0)
-      ? (fallbackCodeId ?? firstLineCodeId)
-      : bill.withholdingCodeId;
+    // vendor_bills_tds_code_check: a bill that withholds names a code, the first one that withheld.
+    const withholdingCodeId = tdsTotal.gt(0) ? firstLineCodeId : bill.withholdingCodeId;
     const [approved] = await tx
       .update(vendorBills)
       .set({
