@@ -216,7 +216,7 @@ export class PurchaseRequestsService {
     now: Date,
   ): Promise<PurchaseRequestDto> {
     await this.assertDepartment(tx, scope, body.departmentId);
-    const lineRows = lineRowsOf(body.lines);
+    const lineRows = lineRowsOf(body.lines, body.requestType);
     const total = sumAmounts(lineRows.map((l) => l.estimatedAmount));
     const [row] = await tx
       .insert(purchaseRequests)
@@ -288,7 +288,7 @@ export class PurchaseRequestsService {
     if (body.departmentId !== pr.departmentId) {
       await this.assertDepartment(tx, scope, body.departmentId);
     }
-    const lineRows = lineRowsOf(body.lines);
+    const lineRows = lineRowsOf(body.lines, body.requestType);
     const total = sumAmounts(lineRows.map((l) => l.estimatedAmount));
 
     // The lines first: the trigger lets this through only while the request is a draft or returned.
