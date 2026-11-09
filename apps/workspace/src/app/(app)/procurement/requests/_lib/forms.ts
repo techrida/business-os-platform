@@ -127,7 +127,7 @@ export function valuesFromDto(dto: {
   lines: readonly {
     description: string;
     specification: string | null;
-    requiresSerials?: boolean;
+    requiresSerials?: boolean | undefined;
     uom: string;
     quantity: string;
     estimatedUnitPrice: string;
