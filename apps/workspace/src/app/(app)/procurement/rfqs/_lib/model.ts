@@ -108,3 +108,38 @@ export function submissionConvertibility(scanStatus: string | null): Convertibil
       };
   }
 }
+
+/**
+ * Scores and a recommendation are taken while the RFQ is open or closed. The API refuses a
+ * recommendation in any other status; scoring has no status check there, so this is the screen's
+ * own choice: scoring a recommended or cancelled RFQ would change nothing anyone acts on.
+ */
+export function takesDecisions(status: RfqStatus): boolean {
+  return status === 'open' || status === 'closed';
+}
+
+export interface CommitOffer {
+  show: boolean;
+  /** Why the button is missing when the person would otherwise expect it. */
+  why?: string;
+}
+
+/**
+ * The commitment submit: the RFQ holds a recommendation and its purchase request is back in
+ * `sourcing` (the same two facts the API checks), and the person may source. Not the approval
+ * request id: a request returned to sourcing after a decision may be submitted again.
+ */
+export function canCommit(
+  rfq: { status: RfqStatus; recommendedQuotationId: string | null; prStatus: string | null },
+  roles: readonly string[],
+): CommitOffer {
+  if (!rfqGrants(roles).sourcing) return { show: false };
+  if (rfq.status !== 'recommended' || rfq.recommendedQuotationId === null) return { show: false };
+  if (rfq.prStatus === null) {
+    return {
+      show: false,
+      why: 'The purchase request did not load, so we cannot tell whether this can be submitted. Reload the page to try again.',
+    };
+  }
+  return { show: rfq.prStatus === 'sourcing' };
+}
