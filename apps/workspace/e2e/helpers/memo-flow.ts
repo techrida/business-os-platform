@@ -23,7 +23,8 @@ export interface Signed {
  */
 export async function signInAs(browser: Browser, baseURL: string, key: string): Promise<Signed> {
   const who = persona(key);
-  const context = await browser.newContext({ baseURL });
+  // Override a runner's storageState so a portal vendor cannot pre-authenticate a staff context.
+  const context = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
   const page = await context.newPage();
   await page.goto('/');
   await expect(page).toHaveURL((url) => url.origin === authOrigin, { timeout: 30_000 });
