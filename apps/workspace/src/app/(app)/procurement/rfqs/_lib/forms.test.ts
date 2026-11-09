@@ -4,9 +4,13 @@ import {
   deadlineToIso,
   emptyQuoteValues,
   parseQuoteValues,
+  parseRecommendValues,
   parseRfqValues,
+  parseScoreValues,
   quoteValuesFromForm,
+  recommendValuesFromForm,
   rfqValuesFromForm,
+  scoreValuesFromForm,
   type QuoteValues,
 } from './forms';
 
@@ -163,5 +167,118 @@ describe('parseQuoteValues', () => {
     const out = parseQuoteValues(quoteValuesFromForm(quoteForm([['deliveryDays', '2.5']])));
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.errors.deliveryDays).toMatch(/whole number/i);
+  });
+});
+
+describe('scores', () => {
+  const errorsOf = (r: ReturnType<typeof parseScoreValues>): Record<string, string> =>
+    r.ok ? {} : r.errors;
+  const rows = (...r: [string, string][]) =>
+    form([
+      ...r.flatMap(
+        ([c, v], i) =>
+          [
+            [`scores.${i}.criterion`, c],
+            [`scores.${i}.score`, v],
+          ] as [string, string][],
+      ),
+    ]);
+
+  it('reads rows in index order and sends numbers, with no comment', () => {
+    const v = scoreValuesFromForm(rows(['Price', '80'], ['Delivery', '72.5']));
+    expect(parseScoreValues(v)).toEqual({
+      ok: true,
+      data: {
+        scores: [
+          { criterion: 'Price', score: 80 },
+          { criterion: 'Delivery', score: 72.5 },
+        ],
+      },
+    });
+  });
+
+  it('skips a row left completely blank and keeps the on-screen index in errors', () => {
+    const v = scoreValuesFromForm(rows(['', ''], ['Price', 'abc']));
+    const r = parseScoreValues(v);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(Object.keys(r.errors)).toEqual(['scores.1.score']);
+  });
+
+  it('asks for at least one scored criterion', () => {
+    const r = parseScoreValues(scoreValuesFromForm(rows(['', ''])));
+    expect(errorsOf(r).scores).toMatch(/at least one/i);
+  });
+
+  it.each(['', '  ', '101', '-1', '1e2', '80.123', '8 0'])('refuses the score %j', (bad) => {
+    const r = parseScoreValues(scoreValuesFromForm(rows(['Price', bad])));
+    expect(r.ok).toBe(false);
+  });
+
+  it.each(['0', '100', '100.00', '0.5'])('accepts the score %j', (good) => {
+    expect(parseScoreValues(scoreValuesFromForm(rows(['Price', good]))).ok).toBe(true);
+  });
+
+  it('refuses a score without a criterion, a long criterion and a repeated one', () => {
+    const noName = parseScoreValues(scoreValuesFromForm(rows(['', '50'])));
+    expect(errorsOf(noName)['scores.0.criterion']).toBeTruthy();
+    const long = parseScoreValues(scoreValuesFromForm(rows(['x'.repeat(65), '50'])));
+    expect(errorsOf(long)['scores.0.criterion']).toBeTruthy();
+    const dup = parseScoreValues(scoreValuesFromForm(rows(['Price', '50'], [' price ', '60'])));
+    expect(errorsOf(dup)['scores.1.criterion']).toMatch(/once/i);
+  });
+
+  it('refuses more than 20 rows', () => {
+    const many = rows(...Array.from({ length: 21 }, (_, i): [string, string] => [`C${i}`, '50']));
+    expect(parseScoreValues(scoreValuesFromForm(many)).ok).toBe(false);
+  });
+});
+
+describe('recommendation', () => {
+  const Q = '99999999-9999-4999-8999-999999999999';
+  const base: [string, string][] = [
+    ['vendorQuotationId', Q],
+    ['rationale', ' Lowest total and the best warranty. '],
+  ];
+
+  it('sends the quotation and trimmed rationale and omits a blank reason', () => {
+    const r = parseRecommendValues(
+      recommendValuesFromForm(form([...base, ['fewerThanThreeReason', '  ']])),
+    );
+    expect(r).toEqual({
+      ok: true,
+      data: { vendorQuotationId: Q, rationale: 'Lowest total and the best warranty.' },
+    });
+  });
+
+  it('carries the reason when one is given', () => {
+    const r = parseRecommendValues(
+      recommendValuesFromForm(
+        form([...base, ['fewerThanThreeReason', 'Only two vendors stock it.']]),
+      ),
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      data: { fewerThanThreeReason: 'Only two vendors stock it.' },
+    });
+  });
+
+  it('needs a quotation and a rationale, and words the reason limit', () => {
+    const r = parseRecommendValues(
+      recommendValuesFromForm(
+        form([
+          ['rationale', ''],
+          ['fewerThanThreeReason', 'x'.repeat(1001)],
+        ]),
+      ),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(Object.keys(r.errors).sort()).toEqual([
+        'fewerThanThreeReason',
+        'rationale',
+        'vendorQuotationId',
+      ]);
+      expect(r.errors.fewerThanThreeReason).toMatch(/1000/);
+    }
   });
 });
