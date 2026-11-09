@@ -15,6 +15,8 @@
 // - "a void leaves a trail" (unit A1c): open items are append-only, so a void opens a vendor_debit_note payable
 //   debit for the full amount and allocates it against the bill's credit item through LedgerService; only a bill
 //   with nothing allocated yet may be voided;
+// - "a portal invoice becomes a bill once" (unit A1d): converting an inbox submission locks the row, checks its file
+//   scanned clean, creates the bill and marks the row converted in one transaction, so a second convert is a 409;
 // - the purchase VAT register (check 17): its total is the creditable VAT of the approved bills of the period.
 // Approval of a bill (the payable open item and `vendor_bill_posted`) is the subject's (vendor-bill.subject.ts).
 import { randomUUID } from 'node:crypto';
@@ -39,6 +41,7 @@ import {
   taxCodes,
   vendorAccounts,
   vendorBillLines,
+  vendorBillSubmissions,
   vendorBills,
   vendors,
   withholdingCodes,
@@ -78,12 +81,14 @@ import {
   matchLine,
   submittable,
 } from './vendor-bill.rules';
+import type { ConvertBillSubmissionBody } from './bill-submissions.types';
 import { VendorBillsCaller } from './vendor-bills.caller';
 
 /** Injection token for a test clock; production falls back to the system time. */
 export const VENDOR_BILLS_CLOCK = Symbol('VENDOR_BILLS_CLOCK');
 
 type BillRow = typeof vendorBills.$inferSelect;
+type SubmissionRow = typeof vendorBillSubmissions.$inferSelect;
 type BillLineRow = typeof vendorBillLines.$inferSelect;
 type MatchResultRow = typeof matchResults.$inferSelect;
 type ExceptionRow = typeof matchExceptions.$inferSelect;
@@ -204,6 +209,18 @@ function pgErrorOf(error: unknown): { code: string; constraint: string | undefin
   return undefined;
 }
 
+/** The 409 for a duplicate invoice number (the dedup key), or the error itself. */
+function duplicateBillOr(error: unknown): unknown {
+  const pg = pgErrorOf(error);
+  if (pg?.code === '23505' && pg.constraint === BILL_DEDUP_CONSTRAINT) {
+    return conflict(
+      'DUPLICATE_BILL',
+      'This vendor already has a bill with this invoice number in the fiscal year',
+    );
+  }
+  return error;
+}
+
 const sum = (values: readonly string[]) =>
   values.reduce((acc, v) => acc.plus(v), new Decimal(0)).toFixed(2);
 
@@ -269,7 +286,17 @@ export class VendorBillsService {
           tx,
           { command: 'payables.bill.create', key: idempotencyKey, body },
           async () => {
-            const bill = await this.insertBill(tx, scope, principal.userId, body, now);
+            const bill =
+              body.sourceSubmissionId === undefined
+                ? await this.insertBill(tx, scope, principal.userId, body, now)
+                : await this.insertFromSubmission(
+                    tx,
+                    scope,
+                    principal.userId,
+                    await this.lockSubmission(tx, scope, body.sourceSubmissionId),
+                    body,
+                    now,
+                  );
             if (bill.purchaseOrderId !== null) {
               await this.runMatch(tx, scope, bill.id, principal.userId, tolerance, now);
             }
@@ -279,15 +306,153 @@ export class VendorBillsService {
         return done.response;
       });
     } catch (error) {
-      const pg = pgErrorOf(error);
-      if (pg?.code === '23505' && pg.constraint === BILL_DEDUP_CONSTRAINT) {
-        throw conflict(
-          'DUPLICATE_BILL',
-          'This vendor already has a bill with this invoice number in the fiscal year',
-        );
-      }
-      throw error;
+      throw duplicateBillOr(error);
     }
+  }
+
+  // ------------------------------------------------------------------------------------ convert a submission
+
+  /**
+   * Turns a `received` portal inbox submission into a vendor bill (Journey 11): the vendor, invoice number, date,
+   * PO and file are the submission's, the lines are the accountant's. The bill is created, matched when it names a
+   * PO, and the submission marked converted with the bill and the reviewer, all in one transaction. 201 with the
+   * bill; a replayed key answers the same bill. 404 for a submission of another entity; 409 when it is not
+   * `received` or its file has not scanned clean; 422 when it has no vendor or invoice number or date; the other
+   * refusals are those of `create`.
+   */
+  async convertSubmission(
+    submissionId: string,
+    body: ConvertBillSubmissionBody,
+    idempotencyKey: string,
+  ): Promise<VendorBillDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    const tolerance = await this.tolerance(scope);
+    try {
+      return await withTx(this.db, scope, actor, async (tx) => {
+        const done = await withIdempotency(
+          tx,
+          {
+            command: 'payables.bill.convert_submission',
+            key: idempotencyKey,
+            body: { submissionId, body },
+          },
+          async () => {
+            const sub = await this.lockSubmission(tx, scope, submissionId);
+            if (sub.vendorInvoiceNo === null || sub.invoiceDate === null) {
+              throw unprocessable(
+                'SUBMISSION_INCOMPLETE',
+                'The submission has no invoice number or invoice date',
+              );
+            }
+            const bill = await this.insertFromSubmission(
+              tx,
+              scope,
+              principal.userId,
+              sub,
+              {
+                vendorPartyId: sub.vendorPartyId!,
+                kind: 'bill',
+                vendorInvoiceNo: sub.vendorInvoiceNo,
+                invoiceDate: sub.invoiceDate,
+                currency: 'NPR',
+                ...(sub.purchaseOrderId === null ? {} : { purchaseOrderId: sub.purchaseOrderId }),
+                documentId: sub.documentId,
+                sourceSubmissionId: sub.id,
+                lines: body.lines,
+              },
+              now,
+            );
+            if (bill.purchaseOrderId !== null) {
+              await this.runMatch(tx, scope, bill.id, principal.userId, tolerance, now);
+            }
+            return { status: 201, response: await this.dto(tx, scope, bill.id) };
+          },
+        );
+        return done.response;
+      });
+    } catch (error) {
+      throw duplicateBillOr(error);
+    }
+  }
+
+  /**
+   * Locks an inbox row of the acting entity and refuses unless it can become a bill: 404 when it is not in this
+   * entity, 409 SUBMISSION_NOT_RECEIVED unless `received`, 422 SUBMISSION_HAS_NO_VENDOR for a row without a vendor
+   * (a bill needs one), 409 SUBMISSION_FILE_NOT_CLEAN unless the newest version of its file scanned clean.
+   */
+  private async lockSubmission(
+    tx: DbTransaction,
+    scope: TxScope,
+    id: string,
+  ): Promise<SubmissionRow> {
+    const [sub] = await tx
+      .select()
+      .from(vendorBillSubmissions)
+      .where(scoped(scope).where(vendorBillSubmissions, eq(vendorBillSubmissions.id, id)))
+      .for('update');
+    if (sub === undefined) throw notFound('Submission');
+    if (sub.status !== 'received') {
+      throw conflict('SUBMISSION_NOT_RECEIVED', `The submission is ${sub.status}`);
+    }
+    if (sub.vendorPartyId === null) {
+      throw unprocessable('SUBMISSION_HAS_NO_VENDOR', 'The submission names no vendor');
+    }
+    const latest = await tx.execute<{ status: string }>(sql`
+      SELECT status FROM app.document_versions
+       WHERE tenant_id = ${scope.tenantId} AND organization_id = ${scope.organizationId}
+         AND document_id = ${sub.documentId}
+       ORDER BY version DESC LIMIT 1`);
+    if (latest.rows[0]?.status !== 'clean') {
+      throw conflict('SUBMISSION_FILE_NOT_CLEAN', 'The submitted file has not scanned clean');
+    }
+    return sub;
+  }
+
+  /**
+   * Inserts the bill of a locked submission and marks the row converted (the bill, the reviewer and the time). A
+   * body that is not the submission's (another vendor, invoice number, date, PO or file) is a 422
+   * SUBMISSION_MISMATCH: the submission is what the vendor sent, staff only add the lines.
+   */
+  private async insertFromSubmission(
+    tx: DbTransaction,
+    scope: TxScope,
+    userId: string,
+    sub: SubmissionRow,
+    body: CreateVendorBillBody,
+    now: Date,
+  ): Promise<BillRow> {
+    if (
+      body.vendorPartyId !== sub.vendorPartyId ||
+      body.vendorInvoiceNo !== sub.vendorInvoiceNo ||
+      body.invoiceDate !== sub.invoiceDate ||
+      body.documentId !== sub.documentId ||
+      (body.purchaseOrderId ?? null) !== sub.purchaseOrderId
+    ) {
+      throw unprocessable(
+        'SUBMISSION_MISMATCH',
+        'The bill does not match the submission it is keyed from',
+      );
+    }
+    const bill = await this.insertBill(tx, scope, userId, body, now);
+    await tx
+      .update(vendorBillSubmissions)
+      .set({
+        status: 'converted',
+        convertedBillId: bill.id,
+        reviewedBy: userId,
+        reviewedAt: now,
+        version: sql`${vendorBillSubmissions.version} + 1`,
+        updatedAt: now,
+      })
+      .where(scoped(scope).where(vendorBillSubmissions, eq(vendorBillSubmissions.id, sub.id)));
+    await this.audit.record(tx, {
+      action: 'payables.bill_submission.converted',
+      entityType: 'vendor_bill_submission',
+      entityId: sub.id,
+      after: { vendorBillId: bill.id, vendorInvoiceNo: bill.vendorInvoiceNo },
+    });
+    return bill;
   }
 
   private async insertBill(
@@ -302,12 +467,6 @@ export class VendorBillsService {
     }
     if (body.currency !== 'NPR') {
       throw unprocessable('CURRENCY_NOT_SUPPORTED', 'Only NPR bills can be keyed in for now');
-    }
-    if (body.sourceSubmissionId !== undefined) {
-      throw unprocessable(
-        'SUBMISSION_NOT_SUPPORTED',
-        'Converting a portal submission is not available yet',
-      );
     }
     const s = scoped(scope);
     const [account] = await tx
