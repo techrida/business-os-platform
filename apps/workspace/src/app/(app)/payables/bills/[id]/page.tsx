@@ -12,7 +12,6 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getBill, type VendorBill } from '@/lib/api-payables';
 import { getPoProgress } from '@/lib/api-purchase-orders';
-import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
@@ -204,14 +203,12 @@ export default async function BillPage({
   }
 
   // Both are context only: a failure leaves the bill and its buttons usable.
-  const [vendor, order] = await Promise.allSettled([
-    getVendor(session, bill.vendorPartyId),
-    bill.purchaseOrderId !== null
-      ? getPoProgress(session, bill.purchaseOrderId)
-      : Promise.resolve(undefined),
-  ]);
-  const vendorName = vendor.status === 'fulfilled' ? vendor.value.legalName : undefined;
-  const orderNumber = order.status === 'fulfilled' ? order.value?.number : undefined;
+  const order =
+    bill.purchaseOrderId === null
+      ? undefined
+      : await getPoProgress(session, bill.purchaseOrderId).catch(() => undefined);
+  const vendorName = bill.vendorName;
+  const orderNumber = order?.number;
 
   const grants = billGrants(session.roles);
   const can = billActions(bill, grants);
@@ -316,7 +313,7 @@ export default async function BillPage({
       <div className={styles.stack}>
         {justCreated ? (
           <Alert tone="success" role="status" title="The bill was created">
-            It was made from the vendor&apos;s submission and matched where it names an order.
+            It was matched where it names an order. Its totals come from the invoice lines.
           </Alert>
         ) : null}
         {inVariance ? (
