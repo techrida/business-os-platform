@@ -3,6 +3,7 @@ import 'server-only';
 import {
   BillKindSchema,
   BillStatusSchema,
+  CurrencySchema,
   MatchStatusSchema,
   DocumentVersionDtoSchema,
   type CreateVendorBillBody,
@@ -347,6 +348,25 @@ export const PaymentRequestSchema = z.object({
 export type PaymentRequest = z.infer<typeof PaymentRequestSchema>;
 export type PaymentRequestListItem = z.infer<typeof PaymentRequestListSchema>;
 const REQUESTS = '/v1/payables/payment-requests';
+
+export const PaymentRequestItemSchema = z.object({
+  openItemId: z.guid(),
+  vendorPartyId: z.guid(),
+  vendorName: Text,
+  vendorBillId: z.guid(),
+  billNumber: Text.nullable(),
+  vendorInvoiceNo: Text,
+  currency: CurrencySchema,
+  openAmount: Text,
+  claimedAmount: Text,
+  availableAmount: Text,
+});
+export type PaymentRequestItem = z.infer<typeof PaymentRequestItemSchema>;
+
+/** Approved bill items with availability calculated by the server after existing payment requests. */
+export function listPaymentRequestItems(session: Session): Promise<PaymentRequestItem[]> {
+  return call(session, `${REQUESTS}/items`, z.array(PaymentRequestItemSchema));
+}
 
 export function listPaymentRequests(
   session: Session,
