@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { CustomerDto } from '@bos/contracts';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { todayInKathmandu } from '@/app/(app)/admin/format';
 import { getCustomer, listCustomers } from '@/components/p2/customers/api';
@@ -144,7 +145,7 @@ export default async function NewPaymentPage({
               <Button type="submit" variant="secondary">
                 Search
               </Button>
-              {q !== '' ? <a href="/payments/new">Clear search</a> : null}
+              {q !== '' ? <Link href="/payments/new">Clear search</Link> : null}
             </form>
           ) : null}
 
