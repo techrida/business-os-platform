@@ -8,7 +8,6 @@ import {
   CreateRfqBodySchema,
   PR_COMMITMENT_WORKFLOW_SPEC,
   commitmentFactsOf,
-  hasDistinctApprovers,
   poBandOf,
   quotationLineAmounts,
   quoteCountVerdict,
@@ -78,15 +77,16 @@ describe('Founder as requester (AD8, done check 5)', () => {
   it('two distinct Management steps replace the Founder step', () => {
     const p = plan('1500000.00', { founder: true, mgmt: ['mgmt1', 'mgmt2'] });
     expect(rolesOf(p)).toEqual(['accountant', 'finance', 'management', 'management']);
-    expect(hasDistinctApprovers(p.steps)).toBe(true);
+    expect(p.blocked).toBe(false);
   });
 
-  it('with one Management user the router plans it, but no distinct approvers exist', () => {
+  it('with one Management user the router blocks the second Management step', () => {
     const p = plan('1500000.00', { founder: true, mgmt: ['mgmt1'] });
-    // The router alone does not see it (it separates only approvers who already decided) ...
-    expect(p.blocked).toBe(false);
-    // ... so the service must refuse it.
-    expect(hasDistinctApprovers(p.steps)).toBe(false);
+    expect(p.steps.map((s) => s.blocked)).toEqual([false, false, false, true]);
+    expect(p.blocked).toBe(true);
+    expect(p.blockReason).toBe(
+      "Step 4 (role management) has no eligible approver distinct from the other steps' approvers",
+    );
   });
 
   it('a Founder request at exactly 1,000,000.00 has a single Management step', () => {
@@ -95,26 +95,6 @@ describe('Founder as requester (AD8, done check 5)', () => {
       'finance',
       'management',
     ]);
-  });
-});
-
-describe('hasDistinctApprovers', () => {
-  it.each([
-    [[], true],
-    [[['a'], ['b']], true],
-    [[['a'], ['a']], false],
-    [[['a', 'b'], ['a']], true],
-    [
-      [
-        ['a', 'b'],
-        ['a', 'b'],
-        ['a', 'b'],
-      ],
-      false,
-    ],
-    [[['a', 'b', 'c'], ['a'], ['b']], true],
-  ])('%j -> %s', (sets, ok) => {
-    expect(hasDistinctApprovers(sets.map((eligibleUserIds) => ({ eligibleUserIds })))).toBe(ok);
   });
 });
 
