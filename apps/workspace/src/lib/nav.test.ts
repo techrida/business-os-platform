@@ -72,12 +72,14 @@ describe('NAV_GROUPS', () => {
     for (const item of items.filter(isBuilt)) {
       expect(SHIPPED_PHASES, item.label).toContain(item.phase);
     }
-    for (const phase of ['P3', 'later'] as const) {
-      expect(isBuilt({ label: 'Future screen', href: '/future', icon: 'home', phase })).toBe(false);
-    }
-    expect(isBuilt({ label: 'Shipped screen', href: '/shipped', icon: 'home', phase: 'P4' })).toBe(
-      true,
+    expect(isBuilt({ label: 'Future screen', href: '/future', icon: 'home', phase: 'later' })).toBe(
+      false,
     );
+    for (const phase of ['P3', 'P4'] as const) {
+      expect(isBuilt({ label: 'Shipped screen', href: '/shipped', icon: 'home', phase })).toBe(
+        true,
+      );
+    }
     expect(isBuilt({ label: 'No destination', icon: 'home', phase: 'P4' })).toBe(false);
   });
 
