@@ -6,8 +6,15 @@
 // - "only vetted vendors": an RFQ invites only `approved` vendors that trade with the acting entity (409 otherwise);
 // - "no double effects" and "no lost updates": every write runs in withIdempotency and locks its row FOR UPDATE;
 // - "one legal entity at a time": every read and write is scoped(); another entity's RFQ is a 404.
-import { WorkflowSpecSchema, type RecommendQuotationBody } from '@bos/contracts';
 import {
+  WorkflowSpecSchema,
+  type ListRfqsQuery,
+  type RecommendQuotationBody,
+  type RfqListItem,
+  type RfqSubmissionItem,
+} from '@bos/contracts';
+import {
+  documentVersions,
   documents,
   purchaseRequestLines,
   purchaseRequests,
@@ -31,7 +38,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
@@ -205,6 +212,115 @@ export class SourcingService {
       );
       return done.response;
     });
+  }
+
+  /**
+   * The acting entity's RFQs, newest first, optionally of one status. The two counts come from one grouped query
+   * each (not one per row); a quotation is a row of vendor_quotations, an invitation a row of rfq_vendors.
+   */
+  async listRfqs(query: ListRfqsQuery): Promise<RfqListItem[]> {
+    const { scope } = this.caller.current();
+    const rows = await this.db
+      .select({ rfq: rfqs, purchaseRequestNumber: purchaseRequests.number })
+      .from(rfqs)
+      .innerJoin(
+        purchaseRequests,
+        and(
+          eq(purchaseRequests.tenantId, rfqs.tenantId),
+          eq(purchaseRequests.organizationId, rfqs.organizationId),
+          eq(purchaseRequests.id, rfqs.purchaseRequestId),
+        ),
+      )
+      .where(
+        scoped(scope).where(
+          rfqs,
+          query.status === undefined ? undefined : eq(rfqs.status, query.status),
+        ),
+      )
+      .orderBy(desc(rfqs.createdAt), desc(rfqs.id))
+      .limit(query.limit);
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.rfq.id);
+    const invited = await this.db
+      .select({ rfqId: rfqVendors.rfqId, n: sql<number>`count(*)::int` })
+      .from(rfqVendors)
+      .where(scoped(scope).where(rfqVendors, inArray(rfqVendors.rfqId, ids)))
+      .groupBy(rfqVendors.rfqId);
+    const quoted = await this.db
+      .select({ rfqId: vendorQuotations.rfqId, n: sql<number>`count(*)::int` })
+      .from(vendorQuotations)
+      .where(scoped(scope).where(vendorQuotations, inArray(vendorQuotations.rfqId, ids)))
+      .groupBy(vendorQuotations.rfqId);
+    const invitedBy = new Map(invited.map((r) => [r.rfqId, r.n]));
+    const quotedBy = new Map(quoted.map((r) => [r.rfqId, r.n]));
+    return rows.map((r) => ({
+      id: r.rfq.id,
+      number: r.rfq.number,
+      purchaseRequestId: r.rfq.purchaseRequestId,
+      purchaseRequestNumber: r.purchaseRequestNumber,
+      status: r.rfq.status,
+      deadline: r.rfq.deadline.toISOString(),
+      invitedVendorCount: invitedBy.get(r.rfq.id) ?? 0,
+      quotationCount: quotedBy.get(r.rfq.id) ?? 0,
+    }));
+  }
+
+  /**
+   * The RFQ's `received` inbox submissions (uploads that name this RFQ), oldest first, each with the scan status of
+   * its document's latest version. 404 outside the acting entity, before anything else is read.
+   */
+  async listSubmissions(rfqId: string): Promise<RfqSubmissionItem[]> {
+    const { scope } = this.caller.current();
+    await this.findRfq(this.db, scope, rfqId);
+    const rows = await this.db
+      .select({ sub: vendorQuotationSubmissions, vendorName: vendors.legalName })
+      .from(vendorQuotationSubmissions)
+      .innerJoin(
+        vendors,
+        and(
+          eq(vendors.tenantId, vendorQuotationSubmissions.tenantId),
+          eq(vendors.id, vendorQuotationSubmissions.vendorId),
+        ),
+      )
+      .where(
+        scoped(scope).where(
+          vendorQuotationSubmissions,
+          and(
+            eq(vendorQuotationSubmissions.rfqId, rfqId),
+            eq(vendorQuotationSubmissions.status, 'received'),
+          ),
+        ),
+      )
+      .orderBy(asc(vendorQuotationSubmissions.receivedAt), asc(vendorQuotationSubmissions.id));
+    if (rows.length === 0) return [];
+    const versions = await this.db
+      .select({
+        documentId: documentVersions.documentId,
+        status: documentVersions.status,
+      })
+      .from(documentVersions)
+      .where(
+        scoped(scope).where(
+          documentVersions,
+          inArray(
+            documentVersions.documentId,
+            rows.map((r) => r.sub.documentId),
+          ),
+        ),
+      )
+      .orderBy(desc(documentVersions.version));
+    // Newest version first, so the first row seen per document is its latest.
+    const latest = new Map<string, RfqSubmissionItem['scanStatus']>();
+    for (const v of versions) if (!latest.has(v.documentId)) latest.set(v.documentId, v.status);
+    return rows.map((r) => ({
+      id: r.sub.id,
+      vendorId: r.sub.vendorId,
+      vendorName: r.vendorName,
+      vendorRef: r.sub.vendorRef,
+      submittedAt: r.sub.receivedAt.toISOString(),
+      documentId: r.sub.documentId,
+      scanStatus: latest.get(r.sub.documentId) ?? null,
+    }));
   }
 
   /** One RFQ with its invited vendors; 404 outside the acting entity. */

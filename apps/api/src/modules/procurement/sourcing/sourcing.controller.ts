@@ -1,6 +1,11 @@
 // HTTP routes of sourcing (P4 unit P2). Thin on purpose: parsing here, every rule in SourcingService. Every write
 // needs an Idempotency-Key. The route-level grant is procurement.sourcing; another entity's RFQ is a 404.
-import { RecommendQuotationBodySchema } from '@bos/contracts';
+import {
+  ListRfqsQuerySchema,
+  RecommendQuotationBodySchema,
+  type RfqListItem,
+  type RfqSubmissionItem,
+} from '@bos/contracts';
 import {
   Body,
   Controller,
@@ -10,6 +15,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 
 import { Can } from '../../../platform/authz/decorators';
@@ -45,6 +51,13 @@ export class SourcingController {
     );
   }
 
+  /** The entity's RFQs, newest first. Query: `status`, `limit` (default 50, at most 200). */
+  @Get()
+  @Can('procurement.sourcing')
+  list(@Query() query: unknown): Promise<RfqListItem[]> {
+    return this.sourcing.listRfqs(parseOr400(ListRfqsQuerySchema, query));
+  }
+
   @Get(':id')
   @Can('procurement.sourcing')
   get(@Param('id', ParseUUIDPipe) id: string): Promise<RfqDto> {
@@ -56,6 +69,13 @@ export class SourcingController {
   @Can('procurement.sourcing')
   quotations(@Param('id', ParseUUIDPipe) id: string): Promise<ComparisonRow[]> {
     return this.sourcing.comparison(id);
+  }
+
+  /** The RFQ's `received` vendor uploads for the convert screen. 404 for another entity's RFQ. */
+  @Get(':id/submissions')
+  @Can('procurement.sourcing')
+  submissions(@Param('id', ParseUUIDPipe) id: string): Promise<RfqSubmissionItem[]> {
+    return this.sourcing.listSubmissions(id);
   }
 
   /** 201. Records a quotation of an invited vendor; 409 when not invited, already quoted or the RFQ is not open. */
