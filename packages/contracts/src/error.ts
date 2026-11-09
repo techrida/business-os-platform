@@ -47,6 +47,7 @@ export type ErrorBody = z.infer<typeof ErrorBodySchema>;
  * name it. Facts such as the currency and rate date travel in `ErrorBody.error.details`.
  */
 export const BILLING_ERROR_CODES = {
+  CREDIT_EXCEEDS_INVOICE: 409,
   SCHEDULE_LINE_TAKEN: 409,
   OVER_ALLOCATION: 409,
   MISMATCHED_ITEMS: 409,
