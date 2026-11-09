@@ -4,6 +4,7 @@
 // Quantities are numeric(18,4) strings and money is numeric(18,2) strings, never JS numbers.
 import { z } from 'zod';
 
+import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema } from './money.js';
 import { NonNegativeDecimalString, QuantityString } from './quotations.js';
 
@@ -281,6 +282,43 @@ export const ScoreQuotationBodySchema = z.strictObject({
     .max(20),
 });
 export type ScoreQuotationBody = z.infer<typeof ScoreQuotationBodySchema>;
+
+/** Query of `GET /v1/procurement/rfqs`: the acting entity's RFQs, newest first. */
+export const ListRfqsQuerySchema = z.strictObject({
+  status: RfqStatusSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ListRfqsQuery = z.infer<typeof ListRfqsQuerySchema>;
+
+/** One row of the RFQ list. `purchaseRequestNumber` is null while the request has no number. */
+export const RfqListItemSchema = z.strictObject({
+  id: z.guid(),
+  number: z.string(),
+  purchaseRequestId: z.guid(),
+  purchaseRequestNumber: z.string().nullable(),
+  status: RfqStatusSchema,
+  /** ISO timestamp. */
+  deadline: z.string(),
+  invitedVendorCount: z.number().int().min(0),
+  quotationCount: z.number().int().min(0),
+});
+export type RfqListItem = z.infer<typeof RfqListItemSchema>;
+
+/**
+ * A `received` vendor upload that names the RFQ, for the staff convert screen. `scanStatus` is the status of the
+ * document's latest version (only `clean` can be converted); null when the document has no version yet.
+ */
+export const RfqSubmissionItemSchema = z.strictObject({
+  id: z.guid(),
+  vendorId: z.guid(),
+  vendorName: z.string(),
+  vendorRef: z.string().nullable(),
+  /** ISO timestamp. */
+  submittedAt: z.string(),
+  documentId: z.guid(),
+  scanStatus: DocumentVersionStatusSchema.nullable(),
+});
+export type RfqSubmissionItem = z.infer<typeof RfqSubmissionItemSchema>;
 
 export const ReceiptLineBodySchema = z.strictObject({
   poLineId: z.guid(),
