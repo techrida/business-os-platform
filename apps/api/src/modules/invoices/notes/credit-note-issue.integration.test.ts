@@ -504,6 +504,21 @@ describe('credit-note issue: settlement and release (done checks 7 and 8)', () =
     await expectNoNegativeOpenAmount();
   });
 
+  it('a partial credit that covers what is left open flips partly_paid to paid and releases nothing', async () => {
+    const original = await issuedInvoice();
+    const payment = await verifiedPayment('847.50');
+    await allocate(payment, original, '847.50');
+    expect(await settlementOf(original)).toMatchObject({
+      openAmount: '282.50',
+      settlement: 'partly_paid',
+    });
+    const note = await approvedCredit(original, [{ originalLineNo: 1, quantity: '1' }]);
+    await issueAs(note);
+    expect(await settlementOf(original)).toMatchObject({ openAmount: '0.00', settlement: 'paid' });
+    expect(await reversalsFrom(await paymentItemId(payment))).toHaveLength(0);
+    await expectNoNegativeOpenAmount();
+  });
+
   it('a partial credit on a fully paid invoice releases the newest payment only, re-allocates what it did not need and stays paid', async () => {
     const original = await issuedInvoice();
     const older = await verifiedPayment('600.00');
