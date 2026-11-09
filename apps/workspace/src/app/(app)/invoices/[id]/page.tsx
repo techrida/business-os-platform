@@ -3,12 +3,12 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
-import { listTaxCodes } from '@/components/p2/quote-builder/api';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { getInvoice } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
+import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { shortId } from '@/lib/kernel-ui';

@@ -6,10 +6,10 @@ import Link from 'next/link';
 
 import { listCustomers } from '@/components/p2/customers/api';
 import { hasPermission } from '@/components/p2/customers/permissions';
-import { listTaxCodes } from '@/components/p2/quote-builder/api';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
+import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 
 import { createManualInvoiceAction } from './actions';
