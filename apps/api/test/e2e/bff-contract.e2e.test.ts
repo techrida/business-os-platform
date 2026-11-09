@@ -795,7 +795,7 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
     expect(contacts.status, show(contacts)).toBe(200);
     p3.contactId = (contacts.body as { id: string }[])[0]!.id;
 
-    const codes = await bff.builder.listTaxCodes(await session('sales'));
+    const codes = await bff.taxCodes.listTaxCodes(await session('sales'));
     const vat13 = codes.find((c) => c.code === 'VAT13');
     expect(vat13, 'the production seed gives the tenant VAT13').toBeDefined();
     p3.vat13Id = vat13!.id;
