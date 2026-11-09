@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { minimalPdf } from '../../../workspace/e2e/helpers/memo-flow';
+
 /**
  * Vendor portal uploads, end to end: a KYC document, a bill, and a bank-account change request.
  * Needs a running portal and API with seed data and a signed-in vendor user's storage state. The
@@ -21,7 +23,7 @@ if (storageState) test.use({ storageState, baseURL: base });
 const PDF = {
   name: 'scan.pdf',
   mimeType: 'application/pdf',
-  buffer: Buffer.from('%PDF-1.7\n%%EOF'),
+  buffer: minimalPdf('P4 portal upload'),
 };
 const stamp = () => Date.now().toString(36).toUpperCase();
 
