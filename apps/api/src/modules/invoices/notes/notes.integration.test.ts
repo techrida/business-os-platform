@@ -1,0 +1,540 @@
+// Integration tests of credit-note and debit-note drafting (P3 unit U12 part B) on a real Postgres (Testcontainers, needs
+// Docker in WSL). Real: migrations as bos_owner, queries as bos_app (every CHECK and the deferred invoices_notes trigger
+// of 0021 run), the approvals engine with the seed's tax_invoice, credit_note and debit_note workflows, the invoice and
+// note services, NumberingService, LedgerService and AuditService. Faked: the request context, authz.assert (the real
+// pure can() on a fake principal), notify, the role directory, MoneyService (NPR at 1) and the entity settings.
+// Covers done check 7 (credit cap in the service, two concurrent credits, and the trigger's 23514 at commit mapped), the
+// cross-entity 404, self-approval refused on a note (U6 subject) and a debit note issued end to end.
+// Run: pnpm --filter @bos/api exec vitest run src/modules/invoices/notes/notes.integration.test.ts
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  IssueInvoiceResultSchema,
+  type InvoiceDetail,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
+import {
+  approvalRequests,
+  createStaffUser,
+  invoices,
+  openItems,
+  postingEvents,
+  runMigrations,
+  users,
+} from '@bos/db';
+import { ForbiddenException, HttpException } from '@nestjs/common';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { and, eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { AuditService } from '../../../platform/audit/audit.service';
+import type { AuthzService } from '../../../platform/authz/authz.service';
+import { can } from '../../../platform/authz/can';
+import type { Principal } from '../../../platform/authz/principal';
+import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import type { MoneyService } from '../../../platform/settings/money.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
+import type { SettingsService } from '../../../platform/settings/settings.service';
+import { ApprovalsAdminService } from '../../approvals/admin.service';
+import type { ApprovalsNotify } from '../../approvals/ports';
+import { ApprovalsService } from '../../approvals/requests.service';
+import { LedgerService } from '../../ledger/ledger.service';
+import {
+  seedQuotationFixture,
+  type QuotationFixture,
+  type QuotationFixtureDb,
+} from '../../quotations/drafting/quotation.fixture';
+import { InvoiceApprovalService, InvoiceApprovalSubject } from '../invoice-approval.service';
+import { InvoiceDraftingService } from '../invoice-drafting.service';
+import { InvoiceIssueService } from '../invoice-issue.service';
+import { NoteDraftingService } from './note-drafting.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+/** 2026-11-09 11:45 in Kathmandu: BS 2083-07-23, fiscal year 2083/84. */
+const NOW = new Date('2026-11-09T06:00:00Z');
+
+// The seed's invoiceApprovalSpec (tools/seed-zitadel/src/db-seed.ts), one per approvable type; keep the two in step.
+const approvalSpec = (documentType: string, what: string): unknown => ({
+  documentType,
+  steps: [
+    {
+      id: 'accountant',
+      kind: 'role',
+      role: 'accountant',
+      reason: `Base route: accountant checks the ${what}`,
+    },
+    { id: 'finance', kind: 'role', role: 'finance', reason: 'Base route: finance approves' },
+  ],
+  rules: [],
+  distinctApprovers: true,
+  sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+});
+const WORKFLOWS = [
+  ['tax_invoice', 'Tax invoice', 'tax invoice'],
+  ['credit_note', 'Credit note', 'credit note'],
+  ['debit_note', 'Debit note', 'debit note'],
+] as const;
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: QuotationFixtureDb;
+let f: QuotationFixture;
+let scopeA: TxScope;
+let scopeB: TxScope;
+let approvals: ApprovalsService;
+let drafting: InvoiceDraftingService;
+let issuing: InvoiceIssueService;
+let submitting: InvoiceApprovalService;
+let notes: NoteDraftingService;
+let audit: AuditService;
+
+/** Real staff users of entity A: two accountants, two finance users (a note drafter and a checker), and the admin. */
+const U = { acc: '', acc2: '', fin: '', fin2: '', admin: '' };
+const roles: Partial<Record<RoleKey, string[]>> = {};
+
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+  userId: '',
+  role: 'accountant',
+  scope: null,
+};
+const as = (userId: string, role: RoleKey) => {
+  current.userId = userId;
+  current.role = role;
+};
+const scopeNow = (): TxScope => current.scope ?? scopeA;
+const principalNow = (): Principal => ({
+  userId: current.userId,
+  zitadelUserId: `z-${current.userId}`,
+  ...scopeNow(),
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: 'unused',
+  roles: [current.role],
+  departmentId: null,
+  status: 'active',
+  grants: grantsOf(current.role),
+});
+const caller = {
+  current: () => ({
+    scope: scopeNow(),
+    actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const authz = {
+  assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+    const d = can(principalNow(), action, ref);
+    if (!d.allowed) {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+    }
+  },
+} as unknown as AuthzService;
+const money = {
+  toNprSnapshot: (_tx: unknown, _scope: unknown, m: { amount: string }) =>
+    Promise.resolve({ amountNpr: m.amount, rate: '1', rateSource: 'NPR', rateDate: '2026-11-09' }),
+} as unknown as MoneyService;
+const settings = {
+  get: (_scope: unknown, k: string) =>
+    Promise.resolve(
+      k === 'entity.address'
+        ? { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }
+        : k === 'entity.pan_vat_no'
+          ? '301234567'
+          : null,
+    ),
+} as unknown as SettingsService;
+const notify = {
+  notifyUser: vi.fn(() => Promise.resolve(undefined)),
+  notifyRole: vi.fn(() => Promise.resolve(undefined)),
+} as unknown as ApprovalsNotify;
+const directory = {
+  userIdsWithRole: vi.fn((_s: unknown, role: RoleKey) => Promise.resolve(roles[role] ?? [])),
+  resolve: vi.fn(),
+  emailOf: vi.fn(() => Promise.resolve(null)),
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+const key = () => `key-${randomUUID()}`;
+const responseOf = (e: unknown): unknown => (e as HttpException).getResponse();
+const statusOf = (e: unknown): number => (e as HttpException).getStatus();
+const invoiceRow = async (id: string) =>
+  (await db.select().from(invoices).where(eq(invoices.id, id)))[0]!;
+
+/** An issued NPR tax invoice: 4 x 250.00 at VAT 13% = 1,130.00 (drafted by U.acc, issued by U.fin). */
+async function issuedInvoice(): Promise<string> {
+  as(U.acc, 'accountant');
+  const draft = await drafting.draftManual(
+    {
+      customerId: f.customerPartyId,
+      currency: 'NPR',
+      manualReason: 'Consulting delivered without a sales order',
+      lines: [
+        {
+          description: 'Implementation',
+          uom: 'day',
+          quantity: '4',
+          unitPrice: '250.00',
+          taxCodeId: f.taxCodeVat13Id,
+        },
+      ],
+    },
+    key(),
+  );
+  const id = draft.invoice.id;
+  await withTx(db, scopeA, systemActor('note-fixture'), (tx) =>
+    tx.execute(
+      sql`UPDATE app.invoices SET status = 'approved', version = version + 1 WHERE id = ${id}`,
+    ),
+  );
+  as(U.fin, 'finance');
+  await issuing.issue(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+  expect((await invoiceRow(id)).status).toBe('issued');
+  return id;
+}
+
+const creditBody = (originalInvoiceId: string, quantity: string) => ({
+  originalInvoiceId,
+  reason: 'Two days were not delivered',
+  lines: [{ originalLineNo: 1, quantity }],
+});
+const debitBody = (originalInvoiceId: string) => ({
+  originalInvoiceId,
+  reason: 'Extra day of support',
+  lines: [
+    {
+      description: 'Extra support',
+      uom: 'day',
+      quantity: '1',
+      unitPrice: '100.00',
+      taxCodeId: f.taxCodeVat13Id,
+    },
+  ],
+});
+
+async function credit(originalId: string, quantity: string, svc = notes): Promise<InvoiceDetail> {
+  as(U.fin, 'finance');
+  return svc.draftCreditNote(creditBody(originalId, quantity), key());
+}
+
+const liveCreditNotes = async (originalId: string) =>
+  db
+    .select({ id: invoices.id, total: invoices.total })
+    .from(invoices)
+    .where(and(eq(invoices.originalInvoiceId, originalId), eq(invoices.kind, 'credit_note')));
+
+const requestOf = async (kind: string, invoiceId: string) =>
+  (
+    await db
+      .select()
+      .from(approvalRequests)
+      .where(
+        and(eq(approvalRequests.documentType, kind), eq(approvalRequests.documentId, invoiceId)),
+      )
+  )[0];
+
+async function submit(id: string, userId: string, role: RoleKey): Promise<void> {
+  as(userId, role);
+  await submitting.submit(id, { expectedVersion: (await invoiceRow(id)).version }, key());
+}
+
+async function act(user: string, role: RoleKey, requestId: string): Promise<void> {
+  const [r] = await db
+    .select({ version: approvalRequests.version })
+    .from(approvalRequests)
+    .where(eq(approvalRequests.id, requestId));
+  as(user, role);
+  await approvals.act(requestId, { action: 'approve', expectedVersion: r!.version }, randomUUID());
+}
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 10 });
+  db = drizzle({ client: appPool });
+
+  f = await seedQuotationFixture(db);
+  scopeA = { tenantId: f.tenantId, organizationId: f.entityId };
+  scopeB = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+  const [owner] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .select({ idpOrgId: users.idpOrgId })
+      .from(users)
+      .where(and(eq(users.tenantId, f.tenantId), eq(users.id, f.ownerUserId))),
+  );
+  const staff = async (roleKey: RoleKey) =>
+    (await createStaffUser(appPool, { ...scopeA, idpOrgId: owner!.idpOrgId, roleKeys: [roleKey] }))
+      .userId;
+  U.acc = await staff('accountant');
+  U.acc2 = await staff('accountant');
+  U.fin = await staff('finance');
+  U.fin2 = await staff('finance');
+  U.admin = await staff('founder');
+  roles.accountant = [U.acc, U.acc2];
+  roles.finance = [U.fin, U.fin2];
+  roles.founder = [U.admin];
+
+  audit = new AuditService(db);
+  as(U.admin, 'founder');
+  const admin = new ApprovalsAdminService(db, audit, caller, () => NOW);
+  approvals = new ApprovalsService(db, audit, notify, directory, caller, () => NOW);
+  for (const [type, name, what] of WORKFLOWS) {
+    await admin.createWorkflow({ key: type, name, spec: approvalSpec(type, what) });
+    await admin.publish(type, 1);
+    approvals.registerSubject(new InvoiceApprovalSubject(type, () => NOW));
+  }
+  const ledger = new LedgerService();
+  drafting = new InvoiceDraftingService(db, authz, audit, caller, ledger, () => NOW);
+  issuing = new InvoiceIssueService(
+    db,
+    authz,
+    audit,
+    caller,
+    ledger,
+    new NumberingService(),
+    money,
+    settings,
+    () => NOW,
+  );
+  submitting = new InvoiceApprovalService(
+    db,
+    authz,
+    audit,
+    caller,
+    approvals,
+    notify,
+    money,
+    drafting,
+    () => NOW,
+  );
+  notes = new NoteDraftingService(db, authz, audit, caller, ledger, drafting, () => NOW);
+});
+
+afterAll(async () => {
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+describe('credit notes: the credit cap (done check 7)', () => {
+  it('drafts a partial credit priced from the original, then refuses a credit over what is left', async () => {
+    const original = await issuedInvoice();
+    const k = key();
+    as(U.fin, 'finance');
+    const first = await notes.draftCreditNote(creditBody(original, '3'), k);
+    expect(first.invoice).toMatchObject({
+      kind: 'credit_note',
+      status: 'draft',
+      number: null,
+      originalInvoiceId: original,
+      noteReason: 'Two days were not delivered',
+      customerId: f.customerPartyId,
+      currency: 'NPR',
+    });
+    expect(first.invoice.totals).toMatchObject({
+      taxableAmount: '750.00',
+      taxAmount: '97.50',
+      total: '847.50',
+    });
+    expect(first.lines).toEqual([
+      expect.objectContaining({
+        lineNo: 1,
+        quantity: '3.0000',
+        unitPrice: '250.00',
+        taxable: '750.00',
+      }),
+    ]);
+    // A replay with the same key gives the same note, not a second one.
+    expect((await notes.draftCreditNote(creditBody(original, '3'), k)).invoice.id).toBe(
+      first.invoice.id,
+    );
+
+    // 282.50 is left; two more days (565.00) is over it.
+    const err = await credit(original, '2').catch((e: unknown) => e);
+    expect(statusOf(err)).toBe(409);
+    expect(responseOf(err)).toMatchObject({ code: 'CREDIT_EXCEEDS_INVOICE' });
+    expect(await liveCreditNotes(original)).toHaveLength(1);
+  });
+
+  it('refuses a quantity above the original line (400) and an original that is not issued (409)', async () => {
+    const original = await issuedInvoice();
+    const over = await credit(original, '5').catch((e: unknown) => e);
+    expect(statusOf(over)).toBe(400);
+
+    as(U.acc, 'accountant');
+    const draft = await drafting.draftManual(
+      {
+        customerId: f.customerPartyId,
+        currency: 'NPR',
+        manualReason: 'Not issued yet',
+        lines: [
+          {
+            description: 'X',
+            uom: 'lot',
+            quantity: '1',
+            unitPrice: '10.00',
+            taxCodeId: f.taxCodeVat13Id,
+          },
+        ],
+      },
+      key(),
+    );
+    const notIssued = await credit(draft.invoice.id, '1').catch((e: unknown) => e);
+    expect(statusOf(notIssued)).toBe(409);
+  });
+
+  it('two concurrent 3-day credits on one invoice: one note, one CREDIT_EXCEEDS_INVOICE', async () => {
+    const original = await issuedInvoice();
+    const results = await Promise.allSettled([credit(original, '3'), credit(original, '3')]);
+    const ok = results.filter((r) => r.status === 'fulfilled');
+    const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(ok).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect(responseOf(refused[0]!.reason)).toMatchObject({ code: 'CREDIT_EXCEEDS_INVOICE' });
+    expect(await liveCreditNotes(original)).toHaveLength(1);
+  });
+
+  it('the deferred trigger is the backstop: its 23514 at commit answers CREDIT_EXCEEDS_INVOICE', async () => {
+    const original = await issuedInvoice();
+    // The service check passes (3 days = 847.50 of 1,130.00). Then, in the same transaction and before commit, a second
+    // 847.50 credit row on the same original appears (as a concurrent writer that skipped the service would add it),
+    // so only the deferred invoices_notes trigger can catch the excess: its 23514 at commit maps to the same 409.
+    // (Two real concurrent inserts cannot be staged here: the tenant audit lock serialises them.)
+    const held = new InvoiceDraftingService(
+      db,
+      authz,
+      audit,
+      caller,
+      new LedgerService(),
+      () => NOW,
+    );
+    const realLoad = held.loadDetail.bind(held);
+    vi.spyOn(held, 'loadDetail').mockImplementation(async (tx, scope, id) => {
+      await tx.execute(
+        sql`INSERT INTO app.invoices (tenant_id, organization_id, kind, status, customer_party_id, original_invoice_id,
+              note_reason, currency, subtotal, taxable_vat_amount, tax_amount, total)
+            VALUES (${scope.tenantId}, ${scope.organizationId}, 'credit_note', 'draft', ${f.customerPartyId},
+              ${original}, 'Written past the service', 'NPR', 750.00, 750.00, 97.50, 847.50)`,
+      );
+      return realLoad(tx, scope, id);
+    });
+    const bypassed = new NoteDraftingService(
+      db,
+      authz,
+      audit,
+      caller,
+      new LedgerService(),
+      held,
+      () => NOW,
+    );
+    const err = await credit(original, '3', bypassed).catch((e: unknown) => e);
+    expect(held.loadDetail).toHaveBeenCalledTimes(1);
+    expect(statusOf(err)).toBe(409);
+    expect(responseOf(err)).toMatchObject({ code: 'CREDIT_EXCEEDS_INVOICE' });
+    // The whole transaction rolled back: neither row is there.
+    expect(await liveCreditNotes(original)).toHaveLength(0);
+  });
+});
+
+describe('notes outside the entity and approval', () => {
+  it('a source invoice of another entity is a 404 for both notes', async () => {
+    const original = await issuedInvoice();
+    current.scope = scopeB;
+    try {
+      const e1 = await credit(original, '1').catch((e: unknown) => e);
+      expect(statusOf(e1)).toBe(404);
+      as(U.fin, 'finance');
+      const e2 = await notes.draftDebitNote(debitBody(original), key()).catch((e: unknown) => e);
+      expect(statusOf(e2)).toBe(404);
+    } finally {
+      current.scope = null;
+    }
+    expect(await liveCreditNotes(original)).toHaveLength(0);
+  });
+
+  it('the drafter of a credit note cannot approve it (U6 subject)', async () => {
+    const original = await issuedInvoice();
+    const note = (await credit(original, '1')).invoice.id;
+    await submit(note, U.fin, 'finance');
+    const request = await requestOf('credit_note', note);
+    expect(request).toBeDefined();
+    await act(U.acc2, 'accountant', request!.id);
+    const err = await act(U.fin, 'finance', request!.id).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((await invoiceRow(note)).status).toBe('submitted');
+  });
+
+  it('a debit note drafted, submitted, approved by Accountant then Finance and issued opens one receivable debit and one event', async () => {
+    const original = await issuedInvoice();
+    as(U.fin, 'finance');
+    const drafted = await notes.draftDebitNote(debitBody(original), key());
+    expect(drafted.invoice).toMatchObject({
+      kind: 'debit_note',
+      status: 'draft',
+      originalInvoiceId: original,
+    });
+    expect(drafted.invoice.totals.total).toBe('113.00');
+    const id = drafted.invoice.id;
+
+    await submit(id, U.fin, 'finance');
+    const request = await requestOf('debit_note', id);
+    await act(U.acc2, 'accountant', request!.id);
+    expect((await invoiceRow(id)).status).toBe('submitted');
+    await act(U.fin2, 'finance', request!.id);
+    const approved = await invoiceRow(id);
+    expect(approved.status).toBe('approved');
+
+    as(U.fin2, 'finance');
+    const result = IssueInvoiceResultSchema.parse(
+      await issuing.issue(id, { expectedVersion: approved.version }, key()),
+    );
+    expect(result).toMatchObject({ kind: 'issued', invoiceId: id });
+    expect(result.number).toMatch(/^DN-/);
+    expect((await invoiceRow(id)).status).toBe('issued');
+
+    const items = await db.select().from(openItems).where(eq(openItems.sourceId, id));
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      side: 'receivable',
+      direction: 'debit',
+      sourceType: 'debit_note',
+      amount: '113.00',
+    });
+    const events = await db.select().from(postingEvents).where(eq(postingEvents.sourceId, id));
+    expect(events.map((e) => e.event)).toEqual(['debit_note_issued']);
+  });
+});
