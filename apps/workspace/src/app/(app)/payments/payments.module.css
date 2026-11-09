@@ -1,0 +1,93 @@
+/* Layout and small pieces that belong to the payment screens only. Everything else comes from
+   components/ui. Colours are Figma tokens from styles/tokens.css. */
+
+.count {
+  white-space: nowrap;
+}
+
+/* The filter is a plain GET form: it works without script, and the URL carries the choice. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.filterField {
+  flex: 0 1 240px;
+  min-width: min(100%, 200px);
+}
+
+.toolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.number {
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* A long customer name wraps inside its column instead of widening the table. */
+.customer {
+  min-width: 12ch;
+  max-width: 36ch;
+  overflow-wrap: anywhere;
+}
+
+.amount {
+  font-weight: var(--font-weight-medium);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* Free text (a bank reference, a reason, a file name) wraps instead of widening the page. */
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions:empty {
+  display: none;
+}
+
+.stack {
+  display: grid;
+  gap: 24px;
+}
+
+.files {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.negative {
+  color: var(--status-error);
+}
