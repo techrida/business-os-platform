@@ -51,6 +51,10 @@ interface Placed {
  * `distinctApprovers` the people who decided an earlier step, and their delegates acting for them, are
  * not eligible for a later one: act() would refuse them, so counting them would leave the step pending
  * with nobody able to decide it. A step left without anyone is blocked like any other.
+ *
+ * Under `distinctApprovers` the plan is also blocked when the steps not yet decided cannot each get a
+ * different person (two Management steps with one Management user, AD8): it would otherwise stick after
+ * the first decision. The first step left without its own person is the one marked blocked.
  */
 export function route(
   spec: WorkflowSpec,
@@ -115,12 +119,53 @@ export function route(
     return { steps, blocked: true, blockReason: 'The workflow produced no approval steps' };
   }
   const first = steps.find((s) => s.blocked);
-  if (first === undefined) return { steps, blocked: false };
-  return {
-    steps,
-    blocked: true,
-    blockReason: `Step ${first.seq} (${describe(placed[first.seq - 1]!.spec)}) has no eligible approver after separation of duties`,
+  if (first !== undefined) {
+    return {
+      steps,
+      blocked: true,
+      blockReason: `Step ${first.seq} (${describe(placed[first.seq - 1]!.spec)}) has no eligible approver after separation of duties`,
+    };
+  }
+  if (spec.distinctApprovers) {
+    // Decided steps are left out: their deciders are already kept off the later steps above.
+    const decided = new Set(decisions.map((d) => d.seq));
+    const unassigned = firstUnassignable(steps.filter((s) => !decided.has(s.seq)));
+    if (unassigned !== undefined) {
+      // The step itself is marked, so reroute (which reads the open steps) blocks it too.
+      unassigned.blocked = true;
+      return {
+        steps,
+        blocked: true,
+        blockReason: `Step ${unassigned.seq} (${describe(placed[unassigned.seq - 1]!.spec)}) has no eligible approver distinct from the other steps' approvers`,
+      };
+    }
+  }
+  return { steps, blocked: false };
+}
+
+/**
+ * Under distinctApprovers one person decides at most one step, so every open step needs its own person
+ * from its eligible set (a system of distinct representatives). Bipartite matching with augmenting paths
+ * (Kuhn), steps in seq order: the first step that cannot be given a person is returned, or undefined
+ * when everyone can be placed. Routes have a handful of steps, so the simple search is plenty.
+ */
+function firstUnassignable<S extends { eligibleUserIds: readonly string[] }>(
+  steps: readonly S[],
+): S | undefined {
+  const holder = new Map<string, number>();
+  const assign = (step: number, seen: Set<string>): boolean => {
+    for (const user of steps[step]!.eligibleUserIds) {
+      if (seen.has(user)) continue;
+      seen.add(user);
+      const current = holder.get(user);
+      if (current === undefined || assign(current, seen)) {
+        holder.set(user, step);
+        return true;
+      }
+    }
+    return false;
   };
+  return steps.find((_, i) => !assign(i, new Set()));
 }
 
 const PLACEHOLDER = /\{([A-Za-z_]\w*(?:\.\w+)*)\}/g;
