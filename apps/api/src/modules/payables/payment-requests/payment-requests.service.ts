@@ -34,6 +34,7 @@ import {
   vendorBills,
   vendors,
 } from '@bos/db';
+import { moneyToString, parseDecimal } from '@bos/money-rules';
 import {
   ConflictException,
   Inject,
@@ -102,6 +103,19 @@ export interface PaymentRequestDto {
   lines: PaymentRequestLineDto[];
 }
 
+export interface PaymentRequestItemDto {
+  openItemId: string;
+  vendorPartyId: string;
+  vendorName: string;
+  vendorBillId: string;
+  billNumber: string | null;
+  vendorInvoiceNo: string;
+  currency: RequestRow['currency'];
+  openAmount: string;
+  claimedAmount: string;
+  availableAmount: string;
+}
+
 /** A checked line: the item, the bill it pays and the amount asked for. */
 interface CheckedLine {
   openItemId: string;
@@ -165,6 +179,69 @@ export class PaymentRequestsService {
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
+
+  /** Approved bill credits with a balance left after pending and approved payment requests. */
+  async listItems(): Promise<PaymentRequestItemDto[]> {
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const rows = await tx
+        .select({
+          openItemId: openItems.id,
+          vendorPartyId: vendorBills.vendorId,
+          vendorName: vendors.legalName,
+          vendorBillId: vendorBills.id,
+          billNumber: vendorBills.number,
+          vendorInvoiceNo: vendorBills.vendorInvoiceNo,
+          currency: openItems.currency,
+        })
+        .from(openItems)
+        .innerJoin(
+          vendorBills,
+          and(
+            eq(vendorBills.tenantId, openItems.tenantId),
+            eq(vendorBills.organizationId, openItems.organizationId),
+            eq(vendorBills.id, openItems.sourceId),
+            eq(vendorBills.vendorId, openItems.vendorPartyId),
+            eq(vendorBills.currency, openItems.currency),
+          ),
+        )
+        .innerJoin(
+          vendors,
+          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+        )
+        .where(
+          scoped(scope).where(
+            openItems,
+            and(
+              eq(openItems.side, 'payable'),
+              eq(openItems.direction, 'credit'),
+              eq(openItems.sourceType, 'vendor_bill'),
+              eq(vendorBills.kind, 'bill'),
+              inArray(vendorBills.status, [...PAYABLE_BILL_STATUSES]),
+            ),
+          ),
+        )
+        .orderBy(asc(vendors.legalName), asc(vendorBills.invoiceDate), asc(openItems.id));
+      if (rows.length === 0) return [];
+      const ids = rows.map((row) => row.openItemId);
+      const open = await this.ledger.openAmounts(tx, scope, ids);
+      const claimed = await this.claims(tx, scope, ids, null);
+      return rows.flatMap((row) => {
+        const openAmount = parseDecimal(open.get(row.openItemId) ?? '0');
+        const claimedAmount = parseDecimal(claimed.get(row.openItemId) ?? '0');
+        const availableAmount = openAmount.minus(claimedAmount);
+        if (availableAmount.lte(0)) return [];
+        return [
+          {
+            ...row,
+            openAmount: moneyToString(openAmount),
+            claimedAmount: moneyToString(claimedAmount),
+            availableAmount: moneyToString(availableAmount),
+          },
+        ];
+      });
+    });
+  }
 
   async list(status?: PaymentRequestStatus): Promise<Omit<PaymentRequestDto, 'lines'>[]> {
     const { scope, actor } = this.caller.current();
