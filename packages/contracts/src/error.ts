@@ -31,3 +31,32 @@ export const ErrorBodySchema = z.object({
   }),
 });
 export type ErrorBody = z.infer<typeof ErrorBodySchema>;
+
+// ---------------------------------------------------------------------------------------------
+// P3 sales and invoicing: domain codes (ErrorBody.code), kept apart from the reasons above so a
+// parallel phase's additions merge cleanly. Each code has one fixed HTTP status.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Codes the P3 commands answer with, mapped to their HTTP status. `SCHEDULE_LINE_TAKEN` is a double
+ * draft; `OVER_ALLOCATION` and `MISMATCHED_ITEMS` come from the ledger (an allocation above the open
+ * amount, or across customers, currencies or sides); `evidence_policy_unmet` blocks a sales order
+ * confirm; `fx_rate_stale` blocks issue with a rate older than `fx.max_rate_age_days`; `NOT_APPROVED`
+ * and `PERIOD_FY_MISMATCH` refuse an issue. `already_issued` is the replay answer of `issue`: the
+ * command returns it as a 200 result (`IssueInvoiceResult`), and the code is listed so a client can
+ * name it. Facts such as the currency and rate date travel in `ErrorBody.error.details`.
+ */
+export const BILLING_ERROR_CODES = {
+  SCHEDULE_LINE_TAKEN: 409,
+  OVER_ALLOCATION: 409,
+  MISMATCHED_ITEMS: 409,
+  NOT_APPROVED: 409,
+  PERIOD_FY_MISMATCH: 409,
+  already_issued: 200,
+  fx_rate_stale: 409,
+  evidence_policy_unmet: 422,
+} as const;
+export type BillingErrorCode = keyof typeof BILLING_ERROR_CODES;
+export const BillingErrorCodeSchema = z.enum(
+  Object.keys(BILLING_ERROR_CODES) as [BillingErrorCode, ...BillingErrorCode[]],
+);
