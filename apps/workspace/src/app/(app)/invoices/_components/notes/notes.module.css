@@ -1,0 +1,73 @@
+/* The credit and debit note forms inside their dialogs. The dialog frame comes from the shared
+   ActionDialog; the lines editor of a debit note comes with its own styles. Colours are Figma tokens. */
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.error {
+  margin: 0;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+/* Credit: one row per original line, the line on the left and the quantity to credit on the right. */
+.credit {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.creditLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-block: 12px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.creditLine:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.creditText {
+  display: grid;
+  flex: 1 1 14rem;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Descriptions are free text: they wrap instead of widening the dialog. */
+.creditName {
+  overflow-wrap: anywhere;
+}
+
+.creditHeld {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-height-body-small);
+}
+
+.creditField {
+  flex: 0 1 10rem;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}

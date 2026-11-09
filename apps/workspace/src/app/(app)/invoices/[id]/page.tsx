@@ -1,8 +1,9 @@
-import type { InvoiceDetail } from '@bos/contracts';
+import type { InvoiceDetail, TaxCode } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { listTaxCodes } from '@/components/p2/quote-builder/api';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
@@ -16,6 +17,7 @@ import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { DayValue, Lines, NprSnapshot, Totals } from '../_components/detail-parts';
 import { InvoiceActions } from '../_components/invoice-actions';
 import styles from '../_components/invoice.module.css';
+import { InvoiceNoteActions } from '../_components/notes/note-actions';
 import { invoiceGates } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
 
@@ -185,6 +187,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const { invoice } = detail;
   const gates = invoiceGates(invoice, session.roles);
   const kind = kindMeta(invoice.kind).label;
+  // Only a debit note needs the tax codes, and only the people who may write one are shown the button.
+  // A list that fails to load degrades the dialog (it says so); it never fails the page.
+  const taxCodes: TaxCode[] | null = gates.notes
+    ? await listTaxCodes(session).catch((): null => null)
+    : null;
 
   return (
     <Page>
@@ -209,9 +216,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
         {gates.notes ? (
           <div className={styles.noteSlot} data-slot="invoice-note-actions">
-            {/* MOUNT POINT for the credit-note and debit-note units: render the "Credit note" and
-                "Debit note" buttons here. The slot exists only for an issued tax invoice and a person
-                with invoice.credit_note, and takes no room while it is empty. */}
+            <InvoiceNoteActions
+              invoice={invoice}
+              lines={detail.lines}
+              taxCodes={taxCodes}
+              gates={gates}
+            />
           </div>
         ) : null}
       </div>
