@@ -310,6 +310,46 @@ describe('ensureOrgLoginPolicy (pins the customer org policy)', () => {
     expect(calls.map((c) => c.method)).toEqual(['GET']);
   });
 
+  it.each([
+    ['forceMfaLocalOnly'],
+    ['mfaInitSkipLifetime'],
+    ['allowRegister', 'forceMfaLocalOnly', 'mfaInitSkipLifetime'],
+  ])(
+    'does not rewrite a matching custom policy with omitted protobuf defaults: %j',
+    async (...omitted) => {
+      const policy: Record<string, unknown> = { ...custom({}).policy };
+      for (const key of omitted) delete policy[key];
+      const { transport, calls } = recording({
+        [ENDPOINTS.orgLoginPolicy]: (call: Call) =>
+          call.method === 'GET'
+            ? { policy }
+            : new ZitadelError(
+                call.path,
+                400,
+                '9 Errors.Org.LoginPolicy.NotChanged (Org-5M9vdd)',
+              ),
+      });
+
+      expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+        false,
+      );
+      expect(calls.map((c) => c.method)).toEqual(['GET']);
+    },
+  );
+
+  it('keeps an unrelated code9 error visible when the custom policy needs an update', async () => {
+    const failure = new ZitadelError(ENDPOINTS.orgLoginPolicy, 400, '9 permission precondition');
+    const { transport, calls } = recording({
+      [ENDPOINTS.orgLoginPolicy]: (call: Call) =>
+        call.method === 'GET' ? custom({ forceMfa: false }) : failure,
+    });
+
+    await expect(
+      client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY),
+    ).rejects.toBe(failure);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+  });
+
   it('updates a custom policy whose omitted false boolean differs from a true patch', async () => {
     // Protobuf JSON omits false: forceMfa is absent here, so it is false and must be updated.
     const { forceMfa: _omit, ...rest } = inherited.policy;
