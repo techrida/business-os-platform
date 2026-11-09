@@ -1,0 +1,275 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { CUSTOMER_ID, PAYMENT_ID, PROOF_ID, payment } from '../_lib/fixtures';
+import { UNAVAILABLE_MESSAGE } from '../_lib/failure';
+
+import { recordPaymentAction } from './actions';
+import {
+  INVALID_PROOF_MESSAGE,
+  NO_RECORD_WORDS,
+  NOT_FOUND_MESSAGE,
+  type RecordPaymentState,
+  STALE_MESSAGE,
+  UNKNOWN_CODE_MESSAGE,
+} from './form-state';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+
+const mocks = vi.hoisted(() => ({
+  requireStaffSession: vi.fn(),
+  apiFetch: vi.fn(),
+  revalidatePath: vi.fn(),
+  redirect: vi.fn((url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  }),
+}));
+
+vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  apiFetch: mocks.apiFetch,
+}));
+vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
+
+const KEY = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const PROOF_2 = '99999999-9999-4999-8999-999999999999';
+const prev: RecordPaymentState = { key: KEY };
+
+function form(over: Record<string, string | string[]> = {}): FormData {
+  const f = new FormData();
+  const fields: Record<string, string | string[]> = {
+    idempotencyKey: KEY,
+    customerId: CUSTOMER_ID,
+    currency: 'NPR',
+    amount: '1000000.00',
+    method: 'bank_transfer',
+    receivedOn: '2020-01-02',
+    bankReference: 'NIC-77812',
+    tdsWithheld: '',
+    withholdingCode: '',
+    proofDocumentId: [PROOF_ID],
+    ...over,
+  };
+  for (const [k, v] of Object.entries(fields)) {
+    for (const one of Array.isArray(v) ? v : [v]) f.append(k, one);
+  }
+  return f;
+}
+
+function answer(status: number, body: unknown = {}) {
+  return Promise.resolve(new Response(JSON.stringify(body), { status }));
+}
+const call = (n: number) => mocks.apiFetch.mock.calls[n] as [unknown, string, RequestInit];
+const sentKey = (n: number) => (call(n)[2].headers as Record<string, string>)['idempotency-key'];
+const sentBody = (n: number) => JSON.parse(call(n)[2].body as string) as Record<string, unknown>;
+const refusal = (status: number, code: string, message = 'x') =>
+  answer(status, { error: { code, message, correlationId: 'c' } });
+
+/** The action finishes with `redirect`, which throws; this returns its target or the state. */
+async function run(f: FormData, state: RecordPaymentState = prev) {
+  try {
+    return { state: await recordPaymentAction(state, f), to: null as string | null };
+  } catch (err) {
+    const m = /^REDIRECT:(.*)$/.exec(err instanceof Error ? err.message : '');
+    if (m === null) throw err;
+    return { state: null, to: m[1] ?? null };
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+});
+
+describe('recordPaymentAction', () => {
+  it('posts the contract body with the page key and opens the new payment', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    const out = await run(form({ proofDocumentId: [PROOF_ID, PROOF_2, PROOF_ID] }));
+    expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+    const [, path, init] = call(0);
+    expect(path).toBe('/v1/payments');
+    expect(init.method).toBe('POST');
+    expect(sentKey(0)).toBe(KEY);
+    expect(sentBody(0)).toEqual({
+      customerId: CUSTOMER_ID,
+      currency: 'NPR',
+      amount: '1000000.00',
+      method: 'bank_transfer',
+      receivedOn: '2020-01-02',
+      bankReference: 'NIC-77812',
+      tdsWithheld: '0.00',
+      proofDocumentIds: [PROOF_ID, PROOF_2],
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/payments');
+  });
+
+  it('turns typed lakh grouping into plain digits and sends tax with its code', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    await run(
+      form({
+        amount: '20,18,180.00',
+        tdsWithheld: '15,000.00',
+        withholdingCode: ' TDS-1.5 ',
+        bankReference: '',
+      }),
+    );
+    expect(sentBody(0)).toMatchObject({
+      amount: '2018180.00',
+      tdsWithheld: '15000.00',
+      withholdingCode: 'TDS-1.5',
+    });
+    expect(sentBody(0)).not.toHaveProperty('bankReference');
+  });
+
+  it('asks for the withholding code when tax was withheld, and sends nothing', async () => {
+    const out = await run(form({ tdsWithheld: '15000.00', withholdingCode: '  ' }));
+    expect(out.state?.fieldErrors?.withholdingCode).toMatch(/withholding code/);
+    expect(out.state?.key).toBe(KEY);
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('needs no code when no tax was withheld', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    for (const tds of ['', '0', '0.00']) {
+      mocks.apiFetch.mockClear();
+      const out = await run(form({ tdsWithheld: tds }));
+      expect(out.to).toBe(`/payments/${PAYMENT_ID}`);
+    }
+  });
+
+  it('requires at least one proof file, and ignores ids that are not UUIDs', async () => {
+    for (const ids of [[], ['not-a-uuid', '../x']]) {
+      const out = await run(form({ proofDocumentId: ids }));
+      expect(out.state?.fieldErrors?.proof).toMatch(/bank slip or receipt/);
+    }
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('names every wrong field at once and keeps the unused key', async () => {
+    const out = await run(
+      form({
+        customerId: 'nope',
+        amount: '12.345',
+        method: 'barter',
+        currency: 'EUR',
+        receivedOn: '2999-01-01',
+        proofDocumentId: [],
+      }),
+    );
+    expect(Object.keys(out.state?.fieldErrors ?? {}).sort()).toEqual([
+      'amount',
+      'currency',
+      'customerId',
+      'method',
+      'proof',
+      'receivedOn',
+    ]);
+    expect(out.state?.key).toBe(KEY);
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not let a negative or zero amount through', async () => {
+    for (const amount of ['0', '0.00', '-5.00', '']) {
+      const out = await run(form({ amount }));
+      expect(out.state?.fieldErrors?.amount).toBeDefined();
+    }
+  });
+
+  it('refuses a role without payment.record before calling the API', async () => {
+    for (const roles of [[], ['management'], ['sales']]) {
+      mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles });
+      const out = await run(form());
+      expect(out.state?.error).toBe(NO_RECORD_WORDS);
+    }
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it('says plainly to wait and retry on 422 invalid_proof, with a new key', async () => {
+    mocks.apiFetch.mockImplementation(() => refusal(422, 'invalid_proof', 'internal detail'));
+    const out = await run(form());
+    expect(out.state?.error).toBe(INVALID_PROOF_MESSAGE);
+    expect(out.state?.error).toMatch(/Wait a moment/);
+    expect(out.state?.error).not.toMatch(/internal detail/);
+    expect(out.state?.key).not.toBe(KEY);
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('reuses the key after a timeout, a 5xx, a dropped connection and the in-progress 409', async () => {
+    const cases: (() => Promise<Response>)[] = [
+      () => answer(503, {}),
+      () => answer(500, { error: { code: 'internal', message: 'boom', correlationId: 'c' } }),
+      () => Promise.reject(new TypeError('fetch failed')),
+      () =>
+        refusal(409, 'conflict', 'A request with this Idempotency-Key is still being processed'),
+    ];
+    for (const make of cases) {
+      mocks.apiFetch.mockImplementation(make);
+      const out = await run(form());
+      expect(out.state?.key).toBe(KEY);
+      expect(out.state?.error).toBeTruthy();
+    }
+  });
+
+  it('words an unknown outcome as safe to retry', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(502, {}));
+    const out = await run(form());
+    expect(out.state?.error).toBe(UNAVAILABLE_MESSAGE);
+  });
+
+  it('takes a new key after a definite refusal, so the next try is a new decision', async () => {
+    for (const make of [
+      () => refusal(400, 'validation_failed', 'bad field'),
+      () => refusal(403, 'forbidden'),
+      () => refusal(404, 'not_found'),
+      () => refusal(422, 'unprocessable'),
+    ]) {
+      mocks.apiFetch.mockImplementation(make);
+      const out = await run(form());
+      expect(out.state?.key).not.toBe(KEY);
+      expect(out.state?.key).toMatch(/^[0-9a-f-]{36}$/);
+    }
+  });
+
+  it('words a missing customer and a stale page in the form’s own terms', async () => {
+    mocks.apiFetch.mockImplementation(() => refusal(404, 'not_found'));
+    expect((await run(form())).state?.error).toBe(NOT_FOUND_MESSAGE);
+    mocks.apiFetch.mockImplementation(() => refusal(409, 'conflict', 'changed'));
+    const stale = await run(form());
+    expect(stale.state?.error).toBe(STALE_MESSAGE);
+    expect(stale.state?.reload).toBe(true);
+  });
+
+  it('shows an unknown withholding code on its own field, and an unknown customer in words', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      refusal(422, 'unknown_withholding_code', 'No code TDS-9'),
+    );
+    const code = await run(form({ tdsWithheld: '15.00', withholdingCode: 'TDS-9' }));
+    expect(code.state?.fieldErrors?.withholdingCode).toBe(UNKNOWN_CODE_MESSAGE);
+    expect(code.state?.error).toBeUndefined();
+    expect(code.state?.key).not.toBe(KEY);
+    mocks.apiFetch.mockImplementation(() => refusal(422, 'unknown_customer', 'No such customer'));
+    expect((await run(form())).state?.error).toBe(NOT_FOUND_MESSAGE);
+  });
+
+  it('sends a signed-out person to sign in and back to the form', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(401, {}));
+    const out = await run(form());
+    expect(out.to).toBe('/auth/login?returnTo=%2Fpayments%2Fnew');
+  });
+
+  it('falls back to the state key when the hidden key was tampered with', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, payment()));
+    await run(form({ idempotencyKey: 'x' }));
+    expect(sentKey(0)).toBe(KEY);
+  });
+
+  it('treats an API answer that breaks the contract as a failure, not a success', async () => {
+    mocks.apiFetch.mockImplementation(() => answer(201, { id: PAYMENT_ID }));
+    const out = await run(form());
+    expect(out.to).toBeNull();
+    expect(out.state?.key).toBe(KEY);
+    expect(out.state?.error).toBeTruthy();
+  });
+});
