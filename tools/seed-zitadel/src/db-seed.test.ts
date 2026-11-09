@@ -7,13 +7,14 @@ import { describe, expect, it } from 'vitest';
 import {
   CREDIT_NOTE_WORKFLOW_SPEC,
   DEBIT_NOTE_WORKFLOW_SPEC,
-  QUOTATION_VERSION_WORKFLOW_SPEC,
   TAX_INVOICE_WORKFLOW_SPEC,
+  QUOTATION_VERSION_WORKFLOW_SPEC,
   TEST_MEMO_WORKFLOW_SPEC,
   seedKernelRows,
   setSeedActor,
 } from './db-seed.js';
 import { PgTenancyStore, tenancySeed } from './index.js';
+import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1', correlationId: 'corr-1' };
 
@@ -101,9 +102,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 5 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 4 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 5 * 3 + 1 + 3 + 2 + 2);
+    expect(changed).toBe(grantCount + 1 + 4 * 3 + 1 + 3 + 2 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -272,7 +273,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(5);
+    expect(versions).toHaveLength(4);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -313,7 +314,9 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     }
   });
 
-  it('does not pre-create number series: NumberingService makes QT, LD, DEAL and CUS on first use', async () => {
+  it('does not pre-create number series: NumberingService makes QT, LD, DEAL, CUS and the P4 PR, RFQ, PO, GRN, BILL and PAY on first use', async () => {
+    // A counter row is keyed by fiscal year, and this tool has no fiscalYearOf, so a seeded row would be wrong
+    // after the next year end. NumberingService.issue inserts the row on first use for every key.
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
     expect(calls.some((c) => c.text.includes('number_series'))).toBe(false);
@@ -343,10 +346,10 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 5 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 4 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(5);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(4);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -358,102 +361,78 @@ describe('seedKernelRows: P2 quotation reference data', () => {
   });
 });
 
-describe('seedKernelRows: P3 invoice approval workflows and grants', () => {
-  const P3_WORKFLOWS = [
-    ['tax_invoice', 'Tax invoice approval', TAX_INVOICE_WORKFLOW_SPEC],
-    ['credit_note', 'Credit note approval', CREDIT_NOTE_WORKFLOW_SPEC],
-    ['debit_note', 'Debit note approval', DEBIT_NOTE_WORKFLOW_SPEC],
-  ] as const;
+describe('seedKernelRows: P4 purchasing', () => {
+  const definitionOf = (calls: Call[], key: string) =>
+    calls.find((c) => c.text.includes('INTO app.workflow_definitions') && c.values[2] === key);
+  const specOf = (calls: Call[], documentType: string) => {
+    const call = calls.find(
+      (c) =>
+        c.text.includes('INTO app.workflow_versions') &&
+        (JSON.parse(String(c.values[3])) as { documentType: string }).documentType === documentType,
+    );
+    return call ? (JSON.parse(String(call.values[3])) as unknown) : undefined;
+  };
 
-  it.each(P3_WORKFLOWS)(
-    'keeps the %s spec valid: accountant, then finance, distinct approvers, no amount rules',
-    (documentType, _name, rawSpec) => {
-      const spec = WorkflowSpecSchema.parse(rawSpec);
-      expect(spec.documentType).toBe(documentType);
-      expect(spec.distinctApprovers).toBe(true);
-      expect(spec.steps.map((s) => [s.id, s.kind, s.role])).toEqual([
-        ['accountant', 'role', 'accountant'],
-        ['finance', 'role', 'finance'],
-      ]);
-      expect(spec.rules).toEqual([]);
-    },
-  );
-
-  it.each(P3_WORKFLOWS)(
-    'seeds the %s workflow for the entity as published v1',
-    async (documentType, name) => {
-      const { client, calls } = fakeClient(firstRun);
-      await seedKernelRows(client, scope);
-
-      const definition = calls.find(
-        (c) => c.text.includes('INTO app.workflow_definitions') && c.values[2] === documentType,
-      );
-      expect(definition?.values).toEqual(['tenant-1', 'org-1', documentType, name, documentType]);
-      expect(definition?.text).toContain(
-        'ON CONFLICT (tenant_id, organization_id, key) DO NOTHING',
-      );
-      const version = calls.find((c) => {
-        if (!c.text.includes('INTO app.workflow_versions')) return false;
-        return (
-          (JSON.parse(String(c.values[3])) as { documentType: string }).documentType ===
-          documentType
-        );
-      });
-      expect(version?.text).toContain("1, 'published', $4::jsonb, now(), NULL");
-      expect(version?.text).toContain('ON CONFLICT (tenant_id, definition_id, version) DO NOTHING');
-    },
-  );
-
-  it('writes the invoice, payment and portal grants of the plan to role_permissions', async () => {
+  it('seeds purchase_request and pr_commitment for the entity, keyed by their document type', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
 
+    expect(definitionOf(calls, 'purchase_request')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'purchase_request',
+      'Purchase request approval',
+      'purchase_request',
+    ]);
+    expect(definitionOf(calls, 'pr_commitment')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'pr_commitment',
+      'Purchase commitment approval',
+      'pr_commitment',
+    ]);
+    // What is stored is the schema's defaulted form of the API's spec (the parity test pins the copies).
+    expect(specOf(calls, 'purchase_request')).toEqual(
+      WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC),
+    );
+    expect(specOf(calls, 'pr_commitment')).toEqual(
+      WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC),
+    );
+  });
+
+  it('does not seed the routes whose specs a later unit exports', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const keys = calls
+      .filter((c) => c.text.includes('INTO app.workflow_definitions'))
+      .map((c) => c.values[2]);
+    expect(keys).toEqual(['test_memo', 'quotation_version', 'purchase_request', 'pr_commitment']);
+  });
+
+  it('keeps the withholding codes at 0 bp and inserts each only when absent', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const rows = calls.filter((c) => c.text.includes('INTO app.withholding_codes'));
+    expect(rows.map((c) => c.values[1])).toEqual(['TDS_SERVICE', 'TDS_GOODS']);
+    for (const row of rows) {
+      expect(row.text).toContain("'both', 0,");
+      expect(row.text).toContain('WHERE NOT EXISTS');
+    }
+  });
+
+  it('grants receipt confirmation to warehouse and PR creation to operations_officer', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
     const written = new Set(
       calls
         .filter((c) => c.text.includes('INTO app.role_permissions'))
         .map((c) => `${String(c.values[1])}|${String(c.values[2])}|${String(c.values[3])}`),
     );
-    expect(written.has('finance|invoice.issue|all')).toBe(true);
-    expect(written.has('finance|payment.verify|all')).toBe(true);
-    expect(written.has('finance|invoice.credit_note|all')).toBe(true);
-    expect(written.has('accountant|invoice.draft|all')).toBe(true);
-    expect(written.has('accountant|payment.record|all')).toBe(true);
-    expect(written.has('customer_user|portal.invoice.read|customer_org')).toBe(true);
-    expect(written.has('customer_user|portal.payment.submit|customer_org')).toBe(true);
-    expect(written.has('founder|invoice.issue|all')).toBe(true);
-    // The maker never holds the checker's power.
-    expect(written.has('accountant|payment.verify|all')).toBe(false);
-    expect(written.has('accountant|invoice.issue|all')).toBe(false);
-    expect(written.has('sales|invoice.read|own')).toBe(false);
-  });
-
-  it('is idempotent: a second run over the same keys inserts nothing and rewrites no version', async () => {
-    const keys = new Set<string>();
-    const keyOf = ({ text, values }: Call): string | undefined => {
-      if (text.includes('INTO app.workflow_definitions')) return `def|${String(values[2])}`;
-      if (text.includes('INTO app.workflow_versions')) return `ver|${String(values[2])}`;
-      return undefined;
-    };
-    const stateful: Script = (call) => {
-      if (call.text.startsWith('SELECT id FROM app.workflow_definitions')) {
-        return { rows: [{ id: 'def-1' }] };
-      }
-      const key = keyOf(call);
-      if (key === undefined) return nothingChanged(call);
-      if (keys.has(key)) return { rowCount: 0 };
-      keys.add(key);
-      return call.text.includes('INTO app.workflow_versions')
-        ? { rowCount: 1, rows: [{ id: 'ver-1' }] }
-        : { rowCount: 1 };
-    };
-    await seedKernelRows(fakeClient(stateful).client, scope);
-    for (const [documentType] of P3_WORKFLOWS) expect(keys.has(`def|${documentType}`)).toBe(true);
-
-    const second = fakeClient(stateful);
-    expect(await seedKernelRows(second.client, scope)).toBe(0);
-    for (const c of second.calls.filter((q) => q.text.includes('INTO app.workflow_'))) {
-      expect(c.text).not.toContain('DO UPDATE');
-    }
+    expect(written.has('warehouse|procurement.receipt.confirm|all')).toBe(true);
+    expect(written.has('operations_officer|procurement.pr.create|own')).toBe(true);
+    expect(written.has('procurement|procurement.po.issue|all')).toBe(true);
+    // Kuu D03: there is no receiver role.
+    expect([...written].some((w) => w.startsWith('receiver|'))).toBe(false);
   });
 });
 
@@ -701,9 +680,14 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
         'Quotation version approval',
         'quotation_version',
       ],
-      ['tenant-uuid', 'org-uuid', 'tax_invoice', 'Tax invoice approval', 'tax_invoice'],
-      ['tenant-uuid', 'org-uuid', 'credit_note', 'Credit note approval', 'credit_note'],
-      ['tenant-uuid', 'org-uuid', 'debit_note', 'Debit note approval', 'debit_note'],
+      [
+        'tenant-uuid',
+        'org-uuid',
+        'purchase_request',
+        'Purchase request approval',
+        'purchase_request',
+      ],
+      ['tenant-uuid', 'org-uuid', 'pr_commitment', 'Purchase commitment approval', 'pr_commitment'],
     ]);
     expect(first.closed()).toBe(1);
 
@@ -717,5 +701,104 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       /no default entity for staff IdP org z-staff/,
     );
     expect(closed()).toBe(1);
+  });
+});
+
+describe('seedKernelRows: P3 invoice approval workflows and grants', () => {
+  const P3_WORKFLOWS = [
+    ['tax_invoice', 'Tax invoice approval', TAX_INVOICE_WORKFLOW_SPEC],
+    ['credit_note', 'Credit note approval', CREDIT_NOTE_WORKFLOW_SPEC],
+    ['debit_note', 'Debit note approval', DEBIT_NOTE_WORKFLOW_SPEC],
+  ] as const;
+
+  it.each(P3_WORKFLOWS)(
+    'keeps the %s spec valid: accountant, then finance, distinct approvers, no amount rules',
+    (documentType, _name, rawSpec) => {
+      const spec = WorkflowSpecSchema.parse(rawSpec);
+      expect(spec.documentType).toBe(documentType);
+      expect(spec.distinctApprovers).toBe(true);
+      expect(spec.steps.map((s) => [s.id, s.kind, s.role])).toEqual([
+        ['accountant', 'role', 'accountant'],
+        ['finance', 'role', 'finance'],
+      ]);
+      expect(spec.rules).toEqual([]);
+    },
+  );
+
+  it.each(P3_WORKFLOWS)(
+    'seeds the %s workflow for the entity as published v1',
+    async (documentType, name) => {
+      const { client, calls } = fakeClient(firstRun);
+      await seedKernelRows(client, scope);
+
+      const definition = calls.find(
+        (c) => c.text.includes('INTO app.workflow_definitions') && c.values[2] === documentType,
+      );
+      expect(definition?.values).toEqual(['tenant-1', 'org-1', documentType, name, documentType]);
+      expect(definition?.text).toContain(
+        'ON CONFLICT (tenant_id, organization_id, key) DO NOTHING',
+      );
+      const version = calls.find((c) => {
+        if (!c.text.includes('INTO app.workflow_versions')) return false;
+        return (
+          (JSON.parse(String(c.values[3])) as { documentType: string }).documentType ===
+          documentType
+        );
+      });
+      expect(version?.text).toContain("1, 'published', $4::jsonb, now(), NULL");
+      expect(version?.text).toContain('ON CONFLICT (tenant_id, definition_id, version) DO NOTHING');
+    },
+  );
+
+  it('writes the invoice, payment and portal grants of the plan to role_permissions', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    const written = new Set(
+      calls
+        .filter((c) => c.text.includes('INTO app.role_permissions'))
+        .map((c) => `${String(c.values[1])}|${String(c.values[2])}|${String(c.values[3])}`),
+    );
+    expect(written.has('finance|invoice.issue|all')).toBe(true);
+    expect(written.has('finance|payment.verify|all')).toBe(true);
+    expect(written.has('finance|invoice.credit_note|all')).toBe(true);
+    expect(written.has('accountant|invoice.draft|all')).toBe(true);
+    expect(written.has('accountant|payment.record|all')).toBe(true);
+    expect(written.has('customer_user|portal.invoice.read|customer_org')).toBe(true);
+    expect(written.has('customer_user|portal.payment.submit|customer_org')).toBe(true);
+    expect(written.has('founder|invoice.issue|all')).toBe(true);
+    // The maker never holds the checker's power.
+    expect(written.has('accountant|payment.verify|all')).toBe(false);
+    expect(written.has('accountant|invoice.issue|all')).toBe(false);
+    expect(written.has('sales|invoice.read|own')).toBe(false);
+  });
+
+  it('is idempotent: a second run over the same keys inserts nothing and rewrites no version', async () => {
+    const keys = new Set<string>();
+    const keyOf = ({ text, values }: Call): string | undefined => {
+      if (text.includes('INTO app.workflow_definitions')) return `def|${String(values[2])}`;
+      if (text.includes('INTO app.workflow_versions')) return `ver|${String(values[2])}`;
+      return undefined;
+    };
+    const stateful: Script = (call) => {
+      if (call.text.startsWith('SELECT id FROM app.workflow_definitions')) {
+        return { rows: [{ id: 'def-1' }] };
+      }
+      const key = keyOf(call);
+      if (key === undefined) return nothingChanged(call);
+      if (keys.has(key)) return { rowCount: 0 };
+      keys.add(key);
+      return call.text.includes('INTO app.workflow_versions')
+        ? { rowCount: 1, rows: [{ id: 'ver-1' }] }
+        : { rowCount: 1 };
+    };
+    await seedKernelRows(fakeClient(stateful).client, scope);
+    for (const [documentType] of P3_WORKFLOWS) expect(keys.has(`def|${documentType}`)).toBe(true);
+
+    const second = fakeClient(stateful);
+    expect(await seedKernelRows(second.client, scope)).toBe(0);
+    for (const c of second.calls.filter((q) => q.text.includes('INTO app.workflow_'))) {
+      expect(c.text).not.toContain('DO UPDATE');
+    }
   });
 });
