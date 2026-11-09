@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import type { TaxCode } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -145,13 +144,14 @@ export default async function NewQuotationPage({
     };
   }
 
-  const [vendorLookup, taxCodes] = await Promise.all([
+  const [vendorLookup, taxLookup] = await Promise.all([
     loadVendors(session),
     listTaxCodes(session).then(
-      (rows): TaxCode[] => rows,
-      () => null,
+      (rows) => ({ taxCodes: rows, problem: undefined }),
+      (err) => ({ taxCodes: null, problem: rfqFailure(err, 'load') }),
     ),
   ]);
+  const { taxCodes, problem: taxCodeProblem } = taxLookup;
   const names = nameIndex(vendorLookup);
 
   return (
@@ -177,6 +177,7 @@ export default async function NewQuotationPage({
           quantity: l.quantity,
         }))}
         taxCodes={taxCodes}
+        {...(taxCodeProblem !== undefined ? { taxCodeProblem } : {})}
         cancelHref={back}
         reloadHref={here}
       />
