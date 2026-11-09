@@ -85,7 +85,14 @@ export function ManualInvoiceForm({
           tone="error"
           role="alert"
           title="Nothing was saved"
-          actions={state.reload ? <a href="/invoices/new">Reload this page</a> : null}
+          actions={
+            state.reload ? (
+              // A plain anchor on purpose: a full page load clears the form and its idempotency key,
+              // which a client-side <Link> to the same URL would keep.
+              // eslint-disable-next-line @next/next/no-html-link-for-pages
+              <a href="/invoices/new">Reload this page</a>
+            ) : null
+          }
         >
           {state.error ?? errors['form']}
         </Alert>
