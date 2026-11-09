@@ -4,8 +4,8 @@ import { CenteredPage } from '@/components/ui/centered-page';
 
 /**
  * The no-access notice for a signed-in vendor the API refused (403). Rendered in place, not by a
- * redirect to /no-access: that page sends anyone who has a session back to `/`, and the vendor
- * pages would bounce between the two. Its Sign out posts to /auth/logout like the original.
+ * redirect to /no-access, so the vendor keeps the URL they asked for and the wording says
+ * "vendor". Its Sign out posts to /auth/logout like the /no-access page.
  */
 export function VendorNoAccess() {
   return (
