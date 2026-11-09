@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import type { UserDirectory } from '../../platform/authz/user-directory';
 import type { DbTransaction } from '../../platform/db/db.module';
 import { ApprovalsService } from './requests.service';
-import type { ApprovalsAudit, ApprovalsCaller, ApprovalsNotify, UserNotice } from './ports';
+import type { ApprovalsNotify, UserNotice } from './ports';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ORG = '22222222-2222-4222-8222-222222222222';
@@ -45,7 +45,7 @@ function fakeTx() {
     throw new Error('unexpected select');
   };
   const tx = {
-    execute: async () => ({ rows: [{ tenant_id: TENANT, organization_id: ORG }] }),
+    execute: () => Promise.resolve({ rows: [{ tenant_id: TENANT, organization_id: ORG }] }),
     select: () => {
       let table: unknown;
       const chain = {
@@ -64,7 +64,7 @@ function fakeTx() {
       values: (values: unknown) => {
         inserts.push({ table, values });
         return Object.assign(Promise.resolve(), {
-          returning: async () => [{ id: REQUEST_ID }],
+          returning: () => Promise.resolve([{ id: REQUEST_ID }]),
         });
       },
     }),
@@ -75,24 +75,25 @@ function fakeTx() {
 function setup() {
   const notices: UserNotice[] = [];
   const notify = {
-    notifyUser: async (_tx: DbTransaction, n: UserNotice) => {
+    notifyUser: (_tx: DbTransaction, n: UserNotice) => {
       notices.push(n);
+      return Promise.resolve();
     },
   };
-  const audit = { record: async () => undefined };
+  const audit = { record: () => Promise.resolve(undefined) };
   const users = {
-    userIdsWithRole: async () => [APPROVER],
-    emailOf: async () => 'sita.sharma@example.com',
+    userIdsWithRole: () => Promise.resolve([APPROVER]),
+    emailOf: () => Promise.resolve('sita.sharma@example.com'),
   };
   const service = new ApprovalsService(
     {} as never,
-    audit as unknown as ApprovalsAudit,
+    audit,
     notify as unknown as ApprovalsNotify,
     users as unknown as UserDirectory,
-    {} as ApprovalsCaller,
+    {} as never,
     () => new Date('2026-11-09T06:00:00Z'),
   );
-  service.registerSubject({ documentType: 'quotation', onDecided: async () => undefined });
+  service.registerSubject({ documentType: 'quotation', onDecided: () => Promise.resolve() });
   return { service, notices, ...fakeTx() };
 }
 
