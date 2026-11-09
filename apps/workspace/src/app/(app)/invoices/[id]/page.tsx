@@ -14,6 +14,7 @@ import { shortId } from '@/lib/kernel-ui';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { DayValue, Lines, NprSnapshot, Totals } from '../_components/detail-parts';
+import { InvoiceActions } from '../_components/invoice-actions';
 import styles from '../_components/invoice.module.css';
 import { invoiceGates } from '../_lib/gates';
 import { approvalWords, kindMeta } from '../_lib/meta';
@@ -205,6 +206,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       />
 
       <div className={styles.actions}>
+        <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
         {gates.notes ? (
           <div className={styles.noteSlot} data-slot="invoice-note-actions">
             {/* MOUNT POINT for the credit-note and debit-note units: render the "Credit note" and
