@@ -294,7 +294,6 @@ describe('ApprovalsController', () => {
   it('keeps static permissions where possible and delegates record-specific head eligibility to the service', () => {
     const expected: Record<string, string> = {
       preview: 'approvals.requests.read',
-      get: 'approvals.requests.read',
       reroute: 'approvals.requests.reroute',
     };
     for (const [method, permission] of Object.entries(expected)) {
@@ -303,6 +302,7 @@ describe('ApprovalsController', () => {
     }
     for (const handler of [
       ApprovalsController.prototype.inbox,
+      ApprovalsController.prototype.get,
       ApprovalsController.prototype.act,
     ]) {
       expect(Reflect.getMetadata(CAN_KEY, handler)).toBeUndefined();
