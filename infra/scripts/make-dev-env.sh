@@ -75,3 +75,7 @@ ensure RESTIC_PASSWORD "$(r 32)"
 # SESSION_ENC_KEY above: 32 random bytes, base64. Added only when missing or empty. Values are never printed.
 ensure PORTAL_SESSION_ENC_KEY "$(openssl rand -base64 32)"
 ensure PORTAL_SESSION_ENC_KEY_ID p1
+
+# P4 field-encryption keyring (vendor bank details): `<kid>:<base64 of 32 random bytes>`. Added only when missing or
+# empty; a single key needs no FIELD_ENC_ACTIVE_KID or FIELD_ENC_FP_KID. Value is never printed.
+ensure FIELD_ENC_KEYS "k1:$(openssl rand -base64 32)"
