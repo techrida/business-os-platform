@@ -8,7 +8,6 @@ import {
   CreateManualInvoiceBodySchema,
   CreateProformaBodySchema,
   DiscardInvoiceBodySchema,
-  DiscountSchema,
   DraftFromScheduleBodySchema,
   InvoiceKindSchema,
   InvoiceStatusSchema,
@@ -35,15 +34,6 @@ import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { InvoiceDraftingService } from './invoice-drafting.service';
 import { InvoiceIssueService } from './invoice-issue.service';
-
-/**
- * The manual invoice body of the contract plus one optional document `discount` (`{mode: 'pct' | 'amount', value}`).
- * The contract's strict body has no discount, so the plan's golden invoice (5% off) cannot be sent without it; moving
- * this one field into `CreateManualInvoiceBodySchema` lets this line go.
- */
-const ManualInvoiceBodySchema = CreateManualInvoiceBodySchema.extend({
-  discount: DiscountSchema.optional(),
-});
 
 /** The contract body plus the order id the workspace also names (checked against the line's own order). */
 const FromScheduleBodySchema = DraftFromScheduleBodySchema.extend({
@@ -80,7 +70,7 @@ export class InvoicesController {
     @Body() body: unknown,
   ): Promise<InvoiceDetail> {
     const key = requireIdempotencyKey(idempotencyKey);
-    return this.drafting.draftManual(parseOr400(ManualInvoiceBodySchema, body), key);
+    return this.drafting.draftManual(parseOr400(CreateManualInvoiceBodySchema, body), key);
   }
 
   /** 201 with the InvoiceDetail. 409 SCHEDULE_LINE_TAKEN when the line already has an invoice. */

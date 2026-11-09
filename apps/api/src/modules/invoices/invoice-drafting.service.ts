@@ -59,8 +59,8 @@ import {
 const AUDIT_ENTITY = 'invoices';
 const G4_INDEX = 'invoices_one_live_tax_invoice_per_schedule_line';
 
-/** A manual invoice body. The optional `discount` is one document discount (see the hand-back: not yet in the contract). */
-export type ManualInvoiceInput = CreateManualInvoiceBody & { discount?: Discount | undefined };
+/** A manual invoice body; the optional `discount` is one document discount, part of the contract body. */
+export type ManualInvoiceInput = CreateManualInvoiceBody;
 export type FromScheduleInput = { scheduleLineId: string; salesOrderId?: string | undefined };
 
 export interface InvoiceListFilter {

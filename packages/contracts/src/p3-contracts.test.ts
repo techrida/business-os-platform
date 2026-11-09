@@ -503,6 +503,24 @@ describe('invoice contracts', () => {
         lines: [line],
       }).success,
     ).toBe(false);
+    expect(
+      invoicing.CreateManualInvoiceBodySchema.safeParse({
+        customerId: id(2),
+        currency: 'USD',
+        manualReason: 'One-off',
+        discount: { mode: 'pct', value: '5.00' },
+        lines: [line],
+      }).success,
+    ).toBe(true);
+    expect(
+      invoicing.CreateManualInvoiceBodySchema.safeParse({
+        customerId: id(2),
+        currency: 'USD',
+        manualReason: 'One-off',
+        discount: { mode: 'pct', value: '150.00' },
+        lines: [line],
+      }).success,
+    ).toBe(false);
     for (const forged of [
       { number: 'INV-1' },
       { issueDate: '2026-01-01' },

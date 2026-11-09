@@ -5,7 +5,7 @@
 import { z } from 'zod';
 
 import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
-import { NonNegativeDecimalString, QuantityString } from './quotations.js';
+import { DiscountSchema, NonNegativeDecimalString, QuantityString } from './quotations.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const isoDate = z.iso.date();
@@ -238,6 +238,8 @@ export const CreateManualInvoiceBodySchema = z.strictObject({
   currency: CurrencySchema,
   manualReason: text(1000),
   dueDate: isoDate.optional(),
+  /** One document discount, the same shape a quotation carries. */
+  discount: DiscountSchema.optional(),
   lines: z.array(InvoiceLineInputSchema).min(1).max(200),
 });
 export type CreateManualInvoiceBody = z.infer<typeof CreateManualInvoiceBodySchema>;
