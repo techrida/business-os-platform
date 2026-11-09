@@ -1,8 +1,9 @@
 // Integration test of the vendor bank accounts (P4 V2, done check 14) on a real Postgres (Testcontainers, needs
 // Docker in WSL). Real parts: every migration as bos_owner, queries as bos_app, VendorBankController,
 // VendorBankService, a FieldCipher on a test keyring, DocumentsService on disk storage with the evidence owner
-// policy the module registers, AuditService and the pure can(). The scanner is skipped: a test moves a version to
-// quarantined and then clean (or infected) by hand, as the verification test does.
+// policy the module registers, AuditService and the pure can(). Most tests move a version to quarantined and then
+// clean (or infected) by hand; the evidence-upload tests (V2b) go through VendorBankEvidenceController, the real
+// type check and ScanProcessor against the fake clamd over TCP.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/vendors/bank/bank.integration.test.ts
 // supertest bodies are `any`; the assertions below read them directly, as the HTTP contract is what is under test.
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
@@ -50,12 +51,17 @@ import { FieldKeyring } from '../../../platform/config/config';
 import { FieldCipher, FieldCipherError } from '../../../platform/crypto/field-cipher';
 import type { Db } from '../../../platform/db/db.module';
 import { withTx } from '../../../platform/db/tx';
+import { ClamdClient } from '../../../platform/documents/clamd.client';
 import { DiskStorageAdapter } from '../../../platform/documents/storage.adapter';
 import { DocumentsService } from '../../../platform/documents/documents.service';
+import { startFakeClamd, type FakeClamd } from '../../../platform/documents/fake-clamd';
+import { ScanProcessor } from '../../../platform/documents/scan.processor';
 import { SignedLinks } from '../../../platform/documents/signed-link';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
+import { VendorBankEvidenceController } from './bank-evidence.controller';
+import { bankEvidenceOwnerPolicy } from './bank-evidence.policy';
+import { VendorBankEvidenceService } from './bank-evidence.service';
 import { VendorBankController } from './bank.controller';
-import { bankEvidenceOwnerPolicy } from './bank.module';
 import { bankAccountAad } from './bank.rules';
 import { VendorBankService } from './bank.service';
 
@@ -74,6 +80,9 @@ let baseUrl: string;
 let storageRoot: string;
 let service: VendorBankService;
 let documents: DocumentsService;
+let evidenceService: VendorBankEvidenceService;
+let processor: ScanProcessor;
+let fakeClamd: FakeClamd;
 let cipher: FieldCipher;
 let tenantId: string;
 let tenant2Id: string;
@@ -241,9 +250,11 @@ beforeAll(async () => {
   // The test keyring (the e2e app uses FIELD_ENC_KEYS: 'k1:' + randomBytes(32).toString('base64')).
   cipher = new FieldCipher(new FieldKeyring('k1', 'k1', new Map([['k1', randomBytes(32)]])));
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-bank-it-'));
+  // One storage for upload and scan: the scanner reads the quarantined file the upload wrote.
+  const storage = new DiskStorageAdapter(storageRoot);
   documents = new DocumentsService(
     db,
-    new DiskStorageAdapter(storageRoot),
+    storage,
     new SignedLinks(SECRET, { claim: () => Promise.resolve(true) }),
     { add: vi.fn().mockResolvedValue({}) } as unknown as Queue,
     authz,
@@ -259,9 +270,21 @@ beforeAll(async () => {
     documents,
     new AuditService(db),
   );
+  evidenceService = new VendorBankEvidenceService(db, caller, documents);
+  fakeClamd = await startFakeClamd();
+  processor = new ScanProcessor(
+    db,
+    storage,
+    new ClamdClient({ host: fakeClamd.host, port: fakeClamd.port, timeoutMs: 5_000 }),
+    documentsAudit,
+    { notifyUser: vi.fn(() => Promise.resolve(undefined)) },
+  );
   const moduleRef = await Test.createTestingModule({
-    controllers: [VendorBankController],
-    providers: [{ provide: VendorBankService, useValue: service }],
+    controllers: [VendorBankController, VendorBankEvidenceController],
+    providers: [
+      { provide: VendorBankService, useValue: service },
+      { provide: VendorBankEvidenceService, useValue: evidenceService },
+    ],
   }).compile();
   app = moduleRef.createNestApplication({ rawBody: true, logger: false });
   configureApp(app);
@@ -272,6 +295,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
+  await fakeClamd?.close();
   await appPool?.end();
   await ownerPool?.end();
   await container?.stop();
@@ -649,5 +673,139 @@ describe('proposeFromPortal (PV2)', () => {
         accountNumber: nextNumber().digits,
       }),
     ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('call-back evidence upload (V2b)', () => {
+  const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+  const evidencePath = (vendorId: string, accountId: string) =>
+    `/v1/vendors/${vendorId}/bank-accounts/${accountId}/evidence`;
+  const createEvidence = (vendorId: string, accountId: string) =>
+    api().post(evidencePath(vendorId, accountId)).send({
+      filename: 'callback-note.pdf',
+      declaredMime: 'application/pdf',
+      sizeBytes: PDF.length,
+    });
+  const putContent = (uploadPath: string) =>
+    api().put(uploadPath).set('Content-Type', 'application/pdf').send(PDF);
+  const scanJob = (versionId: string) => ({ versionId, tenantId, organizationId: orgA });
+  /** The default procurement role without `documents.upload`: only `vendor.bank.propose` can allow the upload. */
+  const asProcurementOnly = () => {
+    as('procurement', 'procurement');
+    current.grants.delete('documents.upload');
+  };
+  /** Create, upload and scan one evidence file as procurement; returns the document id. */
+  async function uploadedClean(vendorId: string, accountId: string): Promise<string> {
+    asProcurementOnly();
+    const created = await createEvidence(vendorId, accountId);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const put = await putContent(created.body.uploadPath);
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(await processor.scanVersion(scanJob(created.body.versionId), true)).toBe('clean');
+    return created.body.documentId as string;
+  }
+
+  it('procurement without documents.upload uploads evidence, it scans clean, and finance verifies with it', async () => {
+    const vendorId = await newVendor();
+    const a = await proposed(vendorId);
+
+    asProcurementOnly();
+    expect(current.grants.has('documents.upload')).toBe(false);
+    expect(current.grants.get('vendor.bank.propose')).toBe('all');
+    const created = await createEvidence(vendorId, a.id);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const { documentId, versionId, uploadPath } = created.body;
+    expect(uploadPath).toBe(
+      `${evidencePath(vendorId, a.id)}/${documentId}/versions/${versionId}/content`,
+    );
+    const put = await putContent(uploadPath);
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(put.body.status).toBe('quarantined');
+    expect(await processor.scanVersion(scanJob(versionId), true)).toBe('clean');
+    const [version] = await db
+      .select({ status: documentVersions.status, uploadedBy: documentVersions.uploadedBy })
+      .from(documentVersions)
+      .where(eq(documentVersions.id, versionId));
+    expect(version).toEqual({ status: 'clean', uploadedBy: U.procurement });
+
+    asVerifier();
+    const ok = await verify(vendorId, a.id, documentId);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.status).toBe('active');
+    expect(
+      await service.activeVerifiedAccount({ tenantId, organizationId: orgA }, vendorId),
+    ).toMatchObject({ id: a.id, verifiedBy: U.finance, callbackEvidenceDocumentId: documentId });
+  });
+
+  it('is 403 without vendor.bank.propose, even with documents.upload at all', async () => {
+    const vendorId = await newVendor();
+    const a = await proposed(vendorId);
+    asProcurementOnly();
+    const created = await createEvidence(vendorId, a.id);
+    expect(created.status).toBe(201);
+
+    as('accountant', 'accountant', { extra: ['documents.upload'] });
+    expect((await createEvidence(vendorId, a.id)).status).toBe(403);
+    expect((await putContent(created.body.uploadPath)).status).toBe(403);
+    // The checker cannot attach the evidence it is about to judge.
+    asVerifier();
+    expect((await createEvidence(vendorId, a.id)).status).toBe(403);
+    expect((await putContent(created.body.uploadPath)).status).toBe(403);
+  });
+
+  it('takes no evidence once the account is active or retired, nor bytes for a file created before verify', async () => {
+    const vendorId = await newVendor();
+    const a = await proposed(vendorId);
+    const b = await proposed(vendorId);
+    const doc = await uploadedClean(vendorId, a.id);
+    const pending = await createEvidence(vendorId, a.id);
+    expect(pending.status).toBe(201);
+
+    asVerifier();
+    expect((await verify(vendorId, a.id, doc)).status).toBe(200);
+    asProcurementOnly();
+    expect((await putContent(pending.body.uploadPath)).status).toBe(409);
+    expect((await createEvidence(vendorId, a.id)).status).toBe(409);
+
+    const docB = await uploadedClean(vendorId, b.id);
+    asVerifier('finance2');
+    expect((await verify(vendorId, b.id, docB)).status).toBe(200);
+    expect((await rawAccount(a.id)).status).toBe('retired');
+    asProcurementOnly();
+    expect((await createEvidence(vendorId, a.id)).status).toBe(409);
+  });
+
+  it('another tenant, another vendor or account path, and another entity are 404', async () => {
+    const vendorId = await newVendor();
+    const otherVendor = await newVendor();
+    const a = await proposed(vendorId);
+    const b = await proposed(vendorId);
+    asProcurementOnly();
+    const created = await createEvidence(vendorId, a.id);
+    expect(created.status).toBe(201);
+    const { documentId, versionId } = created.body;
+
+    as('other', 'founder', { tenant: tenant2Id, org: tenant2Org });
+    expect((await createEvidence(vendorId, a.id)).status).toBe(404);
+    expect((await putContent(created.body.uploadPath)).status).toBe(404);
+
+    asProcurementOnly();
+    expect((await createEvidence(otherVendor, a.id)).status).toBe(404);
+    expect((await createEvidence(vendorId, randomUUID())).status).toBe(404);
+    for (const path of [
+      `${evidencePath(otherVendor, a.id)}/${documentId}/versions/${versionId}/content`,
+      `${evidencePath(vendorId, b.id)}/${documentId}/versions/${versionId}/content`,
+      `${evidencePath(vendorId, a.id)}/${randomUUID()}/versions/${versionId}/content`,
+      `${evidencePath(vendorId, a.id)}/not-a-uuid/versions/${versionId}/content`,
+    ]) {
+      expect((await putContent(path)).status, path).toBe(404);
+    }
+
+    // A file created while acting for entity B is not reachable from entity A.
+    as('founder', 'founder', { org: orgB });
+    const inB = await createEvidence(vendorId, a.id);
+    expect(inB.status).toBe(201);
+    asProcurementOnly();
+    expect((await putContent(inB.body.uploadPath)).status).toBe(404);
   });
 });
