@@ -464,7 +464,7 @@ describe('purchase request: the decision', () => {
     expect((await httpErrorOf(approvals.getForAction(request.id, action, key))).getStatus()).toBe(
       404,
     );
-    expect((await httpErrorOf(approvals.act(request.id, action, key))).getStatus()).toBe(403);
+    expect((await httpErrorOf(approvals.act(request.id, action, key))).getStatus()).toBe(404);
     as(U.head, 'operations_officer');
     expect(
       (await httpErrorOf(approvals.getForAction(request.id, action, randomUUID()))).getStatus(),
@@ -489,7 +489,7 @@ describe('purchase request: the decision', () => {
           approvals.act(request.id, { action: 'approve', expectedVersion: 99 }, randomUUID()),
         )
       ).getStatus(),
-    ).toBe(403);
+    ).toBe(404);
     as(U.head, 'operations_officer');
     for (const foreign of [scopeB, { ...scopeA, tenantId: randomUUID() }]) {
       current.scope = foreign;
@@ -526,7 +526,7 @@ describe('purchase request: the decision', () => {
             approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
           )
         ).getStatus(),
-      ).toBe(403);
+      ).toBe(404);
     } finally {
       await read((tx) =>
         tx.execute(
@@ -553,7 +553,7 @@ describe('purchase request: the decision', () => {
           approvals.act(request.id, { action: 'approve', expectedVersion: 2 }, randomUUID()),
         )
       ).getStatus(),
-    ).toBe(403);
+    ).toBe(404);
   });
 
   it('keeps a head delegate eligible but never lets the requester act through a delegation', async () => {
@@ -581,7 +581,7 @@ describe('purchase request: the decision', () => {
             approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
           )
         ).getStatus(),
-      ).toBe(403);
+      ).toBe(404);
       as(U.other, 'operations_officer');
       expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(true);
       expect((await approvals.get(request.id)).requestId).toBe(request.id);
@@ -616,7 +616,7 @@ describe('purchase request: the decision', () => {
           approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
         )
       ).getStatus(),
-    ).toBe(403);
+    ).toBe(404);
     as(U.ops, 'operations_head');
     expect(
       (await approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()))
@@ -662,7 +662,7 @@ describe('purchase request: the decision', () => {
             approvals.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID()),
           )
         ).getStatus(),
-      ).toBe(403);
+      ).toBe(404);
     },
   );
 
@@ -692,7 +692,7 @@ describe('purchase request: the decision', () => {
   it('the requester cannot approve their own request when they head the department', async () => {
     const { request } = await submitted({ departmentId: dept.selfHeaded });
     const error = await httpErrorOf(act(U.req, 'operations_officer', request.id, 'approve'));
-    expect(error.getStatus()).toBe(403);
+    expect(error.getStatus()).toBe(404);
   });
 
   it('return moves it to returned; it is editable, keeps its number on resubmit and gets a new request', async () => {
