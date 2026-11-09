@@ -157,15 +157,31 @@ describe('InvoiceRenderSweeper.sweep', () => {
     const f = fixture({ candidates: [candidate(1)] });
     f.pdf.htmlToPdf.mockRejectedValueOnce(new GotenbergError('boom', 'timeout'));
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, []);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], undefined);
 
     f.advance(FAILED_RETRY_MS - 1_000);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [candidate(1).invoiceId]);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(
+      10,
+      [candidate(1).invoiceId],
+      candidate(1).invoiceId,
+    );
 
     f.advance(2_000);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, []);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(1).invoiceId);
+  });
+
+  it('advances past failed candidates and keeps its position across an empty tick', async () => {
+    const f = fixture();
+    f.pdf.htmlToPdf.mockRejectedValue(new GotenbergError('boom', 'timeout'));
+    f.store.candidates.mockResolvedValueOnce([candidate(1), candidate(2)]).mockResolvedValue([]);
+    await f.sweeper.sweep();
+    f.advance(FAILED_RETRY_MS + 1);
+    await f.sweeper.sweep();
+    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(2).invoiceId);
+    await f.sweeper.sweep();
+    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [], candidate(2).invoiceId);
   });
 
   it('removes orphans an hour old and counts them', async () => {
