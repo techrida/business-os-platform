@@ -22,5 +22,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Testcontainers teardown (pool.end + container.stop) can take > 10 s on a loaded gate machine.
+    hookTimeout: 60_000,
   },
 });
