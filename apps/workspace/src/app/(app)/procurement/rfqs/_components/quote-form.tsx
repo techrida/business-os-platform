@@ -1,0 +1,381 @@
+'use client';
+
+import { CURRENCIES, type TaxCode } from '@bos/contracts';
+import { useActionState, useEffect, useRef, useState } from 'react';
+
+import { Alert } from '@/components/ui/alert';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { FactList, Panel } from '@/components/ui/panel';
+
+import styles from '../../requests/requests.module.css';
+import {
+  emptyQuoteValues,
+  type QuoteLineValues,
+  type QuoteMode,
+  type QuoteValues,
+} from '../_lib/forms';
+import type { RfqFormState } from '../_lib/state';
+import type { VendorOption } from './rfq-form';
+
+const WIDE = styles.wide ?? '';
+
+export interface PrLineOption {
+  id: string;
+  lineNo: number;
+  description: string;
+  uom: string;
+  quantity: string;
+}
+
+/** The vendor upload being converted: its vendor and file come from the submission, not the form. */
+export interface SubmissionInfo {
+  id: string;
+  vendorName: string;
+  vendorRef: string | null;
+  sentAt: string;
+}
+
+/**
+ * Staff enter a quotation from a vendor's document (`record`), or convert a clean vendor upload
+ * (`convert`). One component for both, like the purchase request form: the lines are the purchase
+ * request's lines, each one ticked to quote or left out. Inputs are controlled so a refusal does
+ * not wipe what was typed. There is no running total on purpose: quantities and prices go to the
+ * platform as typed, and the platform's totals appear on the RFQ page.
+ */
+export function QuoteForm({
+  action,
+  idempotencyKey,
+  rfqId,
+  mode,
+  vendors,
+  submission,
+  prLines,
+  taxCodes,
+  cancelHref,
+  reloadHref,
+}: {
+  action: (prev: RfqFormState, form: FormData) => Promise<RfqFormState>;
+  /** A UUID the server made for this render. */
+  idempotencyKey: string;
+  rfqId: string;
+  mode: QuoteMode;
+  /** The invited vendors, for `record`. */
+  vendors: VendorOption[];
+  submission?: SubmissionInfo;
+  prLines: PrLineOption[];
+  /** Null when the list could not be read: the tax code is then typed as an id. */
+  taxCodes: TaxCode[] | null;
+  cancelHref: string;
+  reloadHref: string;
+}) {
+  const [state, formAction, pending] = useActionState<RfqFormState, FormData>(action, {
+    key: idempotencyKey,
+    errors: {},
+  });
+  const [values, setValues] = useState<QuoteValues>(() => ({
+    ...emptyQuoteValues(mode, prLines),
+    submissionId: submission?.id ?? '',
+    vendorRef: submission?.vendorRef ?? '',
+  }));
+  const formRef = useRef<HTMLFormElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (state.error) summaryRef.current?.focus();
+    else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [state]);
+
+  type HeaderKey = Exclude<keyof QuoteValues, 'lines' | 'mode'>;
+  const set =
+    (field: HeaderKey) =>
+    (e: { target: { value: string } }): void =>
+      setValues((v) => ({ ...v, [field]: e.target.value }));
+  const setLine = (i: number, patch: Partial<QuoteLineValues>): void =>
+    setValues((v) => ({
+      ...v,
+      lines: v.lines.map((l, k) => (k === i ? { ...l, ...patch } : l)),
+    }));
+
+  const err = state.errors;
+
+  return (
+    <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <input type="hidden" name="idempotencyKey" value={state.key} />
+      <input type="hidden" name="rfqId" value={rfqId} />
+      <input type="hidden" name="mode" value={mode} />
+      {mode === 'convert' ? (
+        <input type="hidden" name="submissionId" value={values.submissionId} />
+      ) : null}
+
+      {state.error ? (
+        <Alert
+          ref={summaryRef}
+          tabIndex={-1}
+          tone="error"
+          role="alert"
+          title={state.reload ? 'This page is out of date' : 'The quotation was not recorded'}
+          actions={state.reload ? <a href={reloadHref}>Reload this page</a> : null}
+        >
+          {state.error}
+        </Alert>
+      ) : null}
+
+      <Panel
+        title="Quotation"
+        description={
+          mode === 'convert'
+            ? 'The vendor and the uploaded file come from their submission. Type in what their document says.'
+            : 'Type in what the vendor’s document says. The platform works out the totals.'
+        }
+      >
+        {mode === 'convert' && submission !== undefined ? (
+          <FactList
+            facts={[
+              { key: 'vendor', label: 'Vendor', value: submission.vendorName },
+              { key: 'sent', label: 'Sent', value: submission.sentAt },
+            ]}
+          />
+        ) : null}
+        <div className={styles.grid}>
+          {mode === 'record' ? (
+            <>
+              <Field label="Vendor" hint="Only invited vendors." error={err.vendorId}>
+                {(control) => (
+                  <Select
+                    name="vendorId"
+                    value={values.vendorId}
+                    onChange={set('vendorId')}
+                    required
+                    {...control}
+                  >
+                    <option value="">Choose a vendor</option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field
+                label="Quotation document"
+                hint="The id of the vendor’s file, already uploaded to documents."
+                error={err.documentId}
+              >
+                {(control) => (
+                  <Input
+                    name="documentId"
+                    value={values.documentId}
+                    onChange={set('documentId')}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className={styles.numeric}
+                    required
+                    {...control}
+                  />
+                )}
+              </Field>
+            </>
+          ) : null}
+          <Field label="Vendor’s reference" hint="Optional." error={err.vendorRef}>
+            {(control) => (
+              <Input
+                name="vendorRef"
+                value={values.vendorRef}
+                onChange={set('vendorRef')}
+                maxLength={100}
+                {...control}
+              />
+            )}
+          </Field>
+          <Field label="Currency" error={err.currency}>
+            {(control) => (
+              <Select
+                name="currency"
+                value={values.currency}
+                onChange={set('currency')}
+                {...control}
+              >
+                {CURRENCIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Valid until" hint="Optional." error={err.validUntil}>
+            {(control) => (
+              <Input
+                type="date"
+                name="validUntil"
+                value={values.validUntil}
+                onChange={set('validUntil')}
+                {...control}
+              />
+            )}
+          </Field>
+          <Field label="Delivery time (days)" hint="Optional." error={err.deliveryDays}>
+            {(control) => (
+              <Input
+                name="deliveryDays"
+                value={values.deliveryDays}
+                onChange={set('deliveryDays')}
+                inputMode="numeric"
+                autoComplete="off"
+                className={styles.numeric}
+                {...control}
+              />
+            )}
+          </Field>
+          <Field label="Warranty" hint="Optional." error={err.warranty} className={WIDE}>
+            {(control) => (
+              <Input
+                name="warranty"
+                value={values.warranty}
+                onChange={set('warranty')}
+                maxLength={500}
+                {...control}
+              />
+            )}
+          </Field>
+          <Field label="Terms" hint="Optional." error={err.terms} className={WIDE}>
+            {(control) => (
+              <Textarea
+                name="terms"
+                value={values.terms}
+                onChange={set('terms')}
+                rows={2}
+                maxLength={2000}
+                {...control}
+              />
+            )}
+          </Field>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Lines"
+        description="One row for each line of the purchase request. Untick a line the vendor did not quote."
+      >
+        <div className={styles.lines}>
+          {prLines.map((pl, i) => {
+            const line = values.lines[i];
+            if (line === undefined) return null;
+            return (
+              <fieldset key={pl.id} className={styles.line}>
+                <legend>Line {pl.lineNo}</legend>
+                <input type="hidden" name={`lines.${i}.prLineId`} value={pl.id} />
+                <div className={styles.lineGrid}>
+                  <div className={WIDE}>
+                    <label className={styles.check}>
+                      <input
+                        type="checkbox"
+                        name={`lines.${i}.include`}
+                        checked={line.include}
+                        onChange={(e) => setLine(i, { include: e.target.checked })}
+                      />
+                      <span className={styles.long}>
+                        Quote this line: {pl.description} ({pl.quantity} {pl.uom} requested)
+                      </span>
+                    </label>
+                  </div>
+                  <Field label="Quantity" error={err[`lines.${i}.quantity`]}>
+                    {(control) => (
+                      <Input
+                        name={`lines.${i}.quantity`}
+                        value={line.quantity}
+                        onChange={(e) => setLine(i, { quantity: e.target.value })}
+                        inputMode="decimal"
+                        autoComplete="off"
+                        className={styles.numeric}
+                        disabled={!line.include}
+                        {...control}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label={`Unit price (${values.currency})`}
+                    error={err[`lines.${i}.unitPrice`]}
+                  >
+                    {(control) => (
+                      <Input
+                        name={`lines.${i}.unitPrice`}
+                        value={line.unitPrice}
+                        onChange={(e) => setLine(i, { unitPrice: e.target.value })}
+                        inputMode="decimal"
+                        autoComplete="off"
+                        className={styles.numeric}
+                        disabled={!line.include}
+                        {...control}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label="Tax code"
+                    hint={
+                      taxCodes === null
+                        ? 'The tax code list is not available to you. Enter its id.'
+                        : undefined
+                    }
+                    error={err[`lines.${i}.taxCodeId`]}
+                  >
+                    {(control) =>
+                      taxCodes !== null ? (
+                        <Select
+                          name={`lines.${i}.taxCodeId`}
+                          value={line.taxCodeId}
+                          onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
+                          disabled={!line.include}
+                          {...control}
+                        >
+                          <option value="">Choose a tax code</option>
+                          {taxCodes.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input
+                          name={`lines.${i}.taxCodeId`}
+                          value={line.taxCodeId}
+                          onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
+                          autoComplete="off"
+                          spellCheck={false}
+                          className={styles.numeric}
+                          disabled={!line.include}
+                          {...control}
+                        />
+                      )
+                    }
+                  </Field>
+                </div>
+              </fieldset>
+            );
+          })}
+        </div>
+        {err.lines ? (
+          <p role="alert" className={styles.status}>
+            {err.lines}
+          </p>
+        ) : null}
+      </Panel>
+
+      <div className={styles.actions}>
+        <Button type="submit" disabled={pending}>
+          {pending ? 'Saving' : mode === 'convert' ? 'Convert to quotation' : 'Record quotation'}
+        </Button>
+        <LinkButton href={cancelHref} variant="ghost">
+          Cancel
+        </LinkButton>
+        {pending ? (
+          <span role="status" className={styles.status}>
+            Saving the quotation
+          </span>
+        ) : null}
+      </div>
+    </form>
+  );
+}
