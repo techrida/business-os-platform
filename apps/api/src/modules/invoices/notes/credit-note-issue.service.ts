@@ -187,6 +187,12 @@ export class CreditNoteIssueService {
     );
     const releasable = await this.releasable(tx, scope, debitItemId);
     const needed = total.minus(open);
+    // A payment allocated between the unlocked read and the lock: take its item now, still before the number.
+    const seen = new Set(before.map((a) => a.creditItemId));
+    const late = releasable.map((a) => a.creditItemId).filter((id) => !seen.has(id));
+    if (late.length > 0) {
+      await this.ledger.lockForMoneyCommand(tx, scope, [{ rank: 'open_item', ids: late }]);
+    }
 
     const issueDate = kathmanduDay(now);
     // The series is the last row lock of the transaction (plan section 2).
@@ -213,7 +219,7 @@ export class CreditNoteIssueService {
     });
 
     // Release payment allocations on the original, newest first, until it has room for the credit. Each locks open
-    // items this transaction holds already (or, for one committed after the read above, waits as allocate does).
+    // items this transaction holds already.
     const released: string[] = [];
     if (needed.gt(ZERO)) {
       let freed = ZERO;
