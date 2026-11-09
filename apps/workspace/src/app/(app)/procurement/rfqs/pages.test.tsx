@@ -39,7 +39,7 @@ vi.mock('@/lib/api-vendors', () => vendorApi);
 const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
 vi.mock('@/lib/api-kernel', () => kernel);
 const quoteApi = vi.hoisted(() => ({ listTaxCodes: vi.fn() }));
-vi.mock('@/components/p2/quote-builder/api', () => quoteApi);
+vi.mock('@/lib/api-tax-codes', () => quoteApi);
 
 const { default: ListPage } = await import('./page');
 const { default: DetailPage } = await import('./[id]/page');
@@ -155,7 +155,7 @@ beforeEach(() => {
   prApi.getPurchaseRequest.mockResolvedValue(prDetail);
   prApi.listPurchaseRequests.mockResolvedValue([]);
   vendorApi.listVendors.mockResolvedValue(vendors);
-  quoteApi.listTaxCodes.mockResolvedValue([]);
+  quoteApi.listTaxCodes.mockResolvedValue([{ id: Q1, label: 'VAT 13%', rate: '13' }]);
 });
 
 describe('the list', () => {
@@ -331,9 +331,40 @@ describe('the quotation entry page', () => {
     expect(out).toContain('Quotation document');
   });
 
-  it('falls back to an id field for the tax code when the list is not available', async () => {
-    quoteApi.listTaxCodes.mockRejectedValue(apiError(403));
-    expect(await quotePage()).toContain('The tax code list is not available to you');
+  it('renders a labelled tax-code select with the API ids as option values', async () => {
+    const out = await quotePage();
+    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"/);
+    expect(out).toContain(`<option value="${Q1}">VAT 13%</option>`);
+    expect(out).not.toMatch(/<input[^>]*name="lines\.0\.taxCodeId"/);
+  });
+
+  it.each([403, 500])('disables entry with a retry when tax codes fail (%i)', async (status) => {
+    quoteApi.listTaxCodes.mockRejectedValue(apiError(status));
+    const out = await quotePage();
+    expect(out).toContain('Tax codes did not load');
+    expect(out).toContain('Try loading tax codes again');
+    expect(out).toContain(`/procurement/rfqs/${RFQ}/quotations/new`);
+    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"[^>]*disabled/);
+    expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+    expect(out).not.toMatch(/<input[^>]*name="lines\.0\.taxCodeId"/);
+    expect(out).not.toContain('Enter its id');
+  });
+
+  it('explains an empty tax registry and prevents submission', async () => {
+    quoteApi.listTaxCodes.mockResolvedValue([]);
+    const out = await quotePage();
+    expect(out).toContain('No tax codes are available');
+    expect(out).toContain('Ask an administrator to configure tax codes');
+    expect(out).toMatch(/<select[^>]*name="lines\.0\.taxCodeId"[^>]*disabled/);
+    expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+  });
+
+  it('keeps the submission conversion link when retrying tax codes', async () => {
+    quoteApi.listTaxCodes.mockRejectedValue(apiError(500));
+    rfqApi.listSubmissions.mockResolvedValue([submission()]);
+    const out = await quotePage({ submission: SUB });
+    expect(out).toContain(`/procurement/rfqs/${RFQ}/quotations/new?submission=${SUB}`);
+    expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
   });
 
   it('a closed RFQ takes no quotation', async () => {
