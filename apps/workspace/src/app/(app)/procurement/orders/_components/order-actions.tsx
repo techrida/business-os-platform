@@ -73,6 +73,7 @@ function Form({
             error={state.error}
             reload={state.reload}
             reloadHref={common.reloadHref}
+            reloadLabel="Reload this purchase order"
             summaryRef={summaryRef}
           />
           {fields?.(state.errors ?? {})}
