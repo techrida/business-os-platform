@@ -333,22 +333,17 @@ describe('ErrorBodyFilter', () => {
   );
 
   it.each([
-    'quotation_not_accepted',
-    'sales_order_not_open',
-    'schedule_line_not_planned',
-    'SCHEDULE_LINE_TAKEN',
-    'NOT_APPROVED',
-    'payment_not_submitted',
-    'payment_not_verified',
-    'proof_not_clean',
-    'CREDIT_EXCEEDS_INVOICE',
-  ])('keeps the P3 conflict code %s on a 409, and only on a 409', (code) => {
-    const out = filter(new ConflictException({ code, message: 'Not now' }));
-
+    'DUPLICATE_BILL',
+    'BILL_NOT_MATCHED',
+    'PO_NOT_BILLABLE',
+    'MATCH_NOT_REQUIRED',
+    'BILL_NOT_POSTED',
+    'BILL_HAS_ALLOCATIONS',
+    'OVER_ALLOCATION',
+  ])('keeps the payables conflict code %s on a 409, and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);
-    const parsed = ErrorBodySchema.parse(out.body);
-    expect(parsed.error.code).toBe(code);
-    expect(parsed.error.message).toBe('Not now');
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
     expect(
       ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
         .error.code,
@@ -356,20 +351,29 @@ describe('ErrorBodyFilter', () => {
   });
 
   it.each([
-    'invalid_proof',
-    'unknown_customer',
-    'unknown_withholding_code',
-    'reason_required',
-    'invalid_evidence_document',
-    'invalid_payment_schedule',
-    'evidence_required',
-  ])('keeps the P3 validation code %s on a 422, and only on a 422', (code) => {
-    const out = filter(new UnprocessableEntityException({ code, message: 'Cannot do that' }));
-
+    'BILL_KIND_NOT_SUPPORTED',
+    'CURRENCY_NOT_SUPPORTED',
+    'SUBMISSION_NOT_SUPPORTED',
+    'DOCUMENT_NOT_FOUND',
+    'PO_REQUIRED',
+    'PO_LINE_REQUIRED',
+    'PO_LINE_NOT_FOUND',
+    'RECEIPT_LINE_NOT_FOUND',
+    'PO_VENDOR_MISMATCH',
+    'TAX_CODE_NOT_FOUND',
+    'WITHHOLDING_CODE_NOT_FOUND',
+    'ADVANCE_NOT_SUPPORTED',
+    'DUPLICATE_OPEN_ITEM',
+    'NOT_A_VENDOR_BILL_ITEM',
+    'BILL_NOT_PAYABLE',
+    'CURRENCY_MISMATCH',
+    'PURCHASE_ORDER_NOT_FOUND',
+  ])('keeps the payables refusal code %s on a 422, and only on a 422', (code) => {
+    const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
     expect(out.status).toBe(422);
     const parsed = ErrorBodySchema.parse(out.body);
     expect(parsed.error.code).toBe(code);
-    expect(parsed.error.message).toBe('Cannot do that');
+    expect(parsed.error.message).toBe('Not accepted');
     expect(
       ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
     ).toBe('conflict');
@@ -518,16 +522,22 @@ describe('ErrorBodyFilter', () => {
   });
 
   it.each([
-    'DUPLICATE_BILL',
-    'BILL_NOT_MATCHED',
-    'PO_NOT_BILLABLE',
-    'MATCH_NOT_REQUIRED',
-    'BILL_NOT_POSTED',
-    'BILL_HAS_ALLOCATIONS',
-  ])('keeps the vendor bill conflict code %s on a 409, and only on a 409', (code) => {
-    const out = filter(new ConflictException({ code, message: 'm' }));
+    'quotation_not_accepted',
+    'sales_order_not_open',
+    'schedule_line_not_planned',
+    'SCHEDULE_LINE_TAKEN',
+    'NOT_APPROVED',
+    'payment_not_submitted',
+    'payment_not_verified',
+    'proof_not_clean',
+    'CREDIT_EXCEEDS_INVOICE',
+  ])('keeps the P3 conflict code %s on a 409, and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'Not now' }));
+
     expect(out.status).toBe(409);
-    expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('Not now');
     expect(
       ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
         .error.code,
@@ -535,23 +545,20 @@ describe('ErrorBodyFilter', () => {
   });
 
   it.each([
-    'BILL_KIND_NOT_SUPPORTED',
-    'CURRENCY_NOT_SUPPORTED',
-    'SUBMISSION_NOT_SUPPORTED',
-    'DOCUMENT_NOT_FOUND',
-    'PO_REQUIRED',
-    'PO_LINE_REQUIRED',
-    'PO_LINE_NOT_FOUND',
-    'RECEIPT_LINE_NOT_FOUND',
-    'PO_VENDOR_MISMATCH',
-    'TAX_CODE_NOT_FOUND',
-    'WITHHOLDING_CODE_NOT_FOUND',
-  ])('keeps the vendor bill refusal code %s on a 422, and only on a 422', (code) => {
-    const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
+    'invalid_proof',
+    'unknown_customer',
+    'unknown_withholding_code',
+    'reason_required',
+    'invalid_evidence_document',
+    'invalid_payment_schedule',
+    'evidence_required',
+  ])('keeps the P3 validation code %s on a 422, and only on a 422', (code) => {
+    const out = filter(new UnprocessableEntityException({ code, message: 'Cannot do that' }));
+
     expect(out.status).toBe(422);
     const parsed = ErrorBodySchema.parse(out.body);
     expect(parsed.error.code).toBe(code);
-    expect(parsed.error.message).toBe('Not accepted');
+    expect(parsed.error.message).toBe('Cannot do that');
     expect(
       ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
     ).toBe('conflict');
