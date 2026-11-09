@@ -70,7 +70,7 @@ test.describe('persona sign-in and sign-out', () => {
       await test.step('lands where the organisation kind says', async () => {
         if (who.orgKind === 'staff') {
           await expect(page).toHaveURL(`${appOrigin}/`);
-          await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toBeVisible();
+          await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
           // The header shows the org kind badge and the roles that came from the token.
           const header = page.getByRole('banner');
           await expect(header).toContainText('staff');
@@ -130,7 +130,7 @@ test.describe('persona sign-in and sign-out', () => {
           await page.getByRole('button', { name: new RegExp(name, 'i') }).click();
         }
         await expectZitadelCredentialForm(page);
-        await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toHaveCount(0);
+        await expect(page.getByRole('heading', { name: 'Welcome back' })).toHaveCount(0);
       });
     });
   }
@@ -168,6 +168,6 @@ test.describe('dev persona switcher', () => {
     await page.getByRole('link', { name: sales.label, exact: true }).click();
     // login_hint makes ZITADEL open the password page directly.
     await signInOnZitadel(page, sales, new URL(baseURL ?? '').origin);
-    await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   });
 });
