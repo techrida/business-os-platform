@@ -4,7 +4,13 @@ import {
   BillKindSchema,
   BillStatusSchema,
   MatchStatusSchema,
+  MatchExceptionStatusSchema,
+  PaymentRequestStatusSchema,
+  PaymentTypeSchema,
   type BillStatus,
+  type PaymentRequestStatus,
+  type RequestPaymentBody,
+  type RequestMatchExceptionBody,
   type VendorBillLineBody,
 } from '@bos/contracts';
 import { z } from 'zod';
@@ -25,7 +31,7 @@ import type { Session } from './session';
  * Idempotency-Key as a required argument, so a missing key is a compile error (the API answers 400
  * without one).
  *
- * Not here yet: match exceptions, payment requests and the VAT register (the next unit).
+ * Includes match exceptions, payment requests and the purchase VAT register.
  */
 
 const Text = z.string();
@@ -240,5 +246,135 @@ export function rejectBillSubmission(
     `${SUBMISSIONS}/${seg(id)}/reject`,
     RejectedSubmissionSchema,
     post(idempotencyKey, { reason }),
+  );
+}
+
+export const MatchExceptionSchema = z.object({
+  id: z.guid(),
+  vendorBillId: z.guid(),
+  reason: Text,
+  status: MatchExceptionStatusSchema,
+  requestedBy: z.guid(),
+  decidedBy: z.guid().nullable(),
+  approvalRequestId: z.guid().nullable(),
+});
+
+export function requestBillException(
+  session: Session,
+  id: string,
+  body: RequestMatchExceptionBody,
+  key: string,
+) {
+  return call(session, `${BILLS}/${seg(id)}/exceptions`, MatchExceptionSchema, post(key, body));
+}
+
+const paymentFields = {
+  id: z.guid(),
+  number: Text.nullable(),
+  vendorPartyId: z.guid(),
+  paymentType: PaymentTypeSchema,
+  purchaseOrderId: z.guid().nullable(),
+  currency: Text,
+  totalAmount: Text,
+  fromBankAccountId: z.guid(),
+  vendorBankAccountId: z.guid(),
+  bankLast4: Text,
+  status: PaymentRequestStatusSchema,
+  requestedBy: z.guid(),
+  approvalRequestId: z.guid().nullable(),
+  cancelReason: Text.nullable(),
+  version: z.number().int(),
+};
+export const PaymentRequestListSchema = z.object(paymentFields);
+export const PaymentRequestSchema = z.object({
+  ...paymentFields,
+  lines: z.array(
+    z.object({
+      id: z.guid(),
+      lineNo: z.number().int(),
+      openItemId: z.guid(),
+      amount: Text,
+    }),
+  ),
+});
+export type PaymentRequest = z.infer<typeof PaymentRequestSchema>;
+export type PaymentRequestListItem = z.infer<typeof PaymentRequestListSchema>;
+const REQUESTS = '/v1/payables/payment-requests';
+
+export function listPaymentRequests(
+  session: Session,
+  status?: PaymentRequestStatus,
+): Promise<PaymentRequestListItem[]> {
+  const query = status === undefined ? '' : `?status=${PaymentRequestStatusSchema.parse(status)}`;
+  return call(session, `${REQUESTS}${query}`, z.array(PaymentRequestListSchema));
+}
+
+export function getPaymentRequest(session: Session, id: string): Promise<PaymentRequest> {
+  return call(session, `${REQUESTS}/${seg(id)}`, PaymentRequestSchema);
+}
+
+export function createPaymentRequest(
+  session: Session,
+  body: RequestPaymentBody,
+  key: string,
+): Promise<PaymentRequest> {
+  return call(session, REQUESTS, PaymentRequestSchema, post(key, body));
+}
+
+export function submitPaymentRequest(
+  session: Session,
+  id: string,
+  key: string,
+): Promise<PaymentRequest> {
+  return call(session, `${REQUESTS}/${seg(id)}/submit`, PaymentRequestSchema, post(key));
+}
+
+export function cancelPaymentRequest(
+  session: Session,
+  id: string,
+  reason: string,
+  key: string,
+): Promise<PaymentRequest> {
+  return call(
+    session,
+    `${REQUESTS}/${seg(id)}/cancel`,
+    PaymentRequestSchema,
+    post(key, { reason }),
+  );
+}
+
+export const VatPeriodSchema = z
+  .object({ from: z.iso.date(), to: z.iso.date() })
+  .refine((v) => v.from <= v.to, {
+    message: 'The end date must be on or after the start date.',
+    path: ['to'],
+  });
+export const VatRegisterSchema = z.object({
+  from: Text,
+  to: Text,
+  rows: z.array(
+    z.object({
+      vendorBillId: z.guid(),
+      billNumber: Text.nullable(),
+      vendorPartyId: z.guid(),
+      vendorName: Text,
+      vendorPan: Text.nullable(),
+      vendorInvoiceNo: Text,
+      invoiceDate: Text,
+      invoiceDateBs: Text,
+      taxableAmount: Text,
+      vatAmount: Text,
+    }),
+  ),
+  total: z.object({ taxableAmount: Text, vatAmount: Text }),
+});
+export type VatRegister = z.infer<typeof VatRegisterSchema>;
+
+export function getVatRegister(session: Session, from: string, to: string): Promise<VatRegister> {
+  const period = VatPeriodSchema.parse({ from, to });
+  return call(
+    session,
+    `/v1/payables/vat-register?${new URLSearchParams(period)}`,
+    VatRegisterSchema,
   );
 }
