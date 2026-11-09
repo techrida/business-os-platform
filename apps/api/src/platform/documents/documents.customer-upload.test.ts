@@ -199,6 +199,20 @@ describe('DocumentsService.create for a portal customer', () => {
     );
   });
 
+  it('hands a vendor portal caller to the hook as kind vendor (P4 PV2), and creates on yes', async () => {
+    const { service, allowsCounterparty } = setup('allow');
+    const { tx, inserted } = fakeTx();
+
+    await asCaller(caller({ orgKind: 'vendor' }), () => service.create(tx, body()));
+
+    expect(inserted).toHaveLength(2);
+    expect(allowsCounterparty).toHaveBeenCalledWith(
+      { kind: 'vendor', userId: USER, partyId: PARTY, tenantId: TENANT, organizationId: ORG },
+      OWNER_ID,
+      tx,
+    );
+  });
+
   it('refuses with 403 and writes nothing when the owner policy says no', async () => {
     const { service } = setup('refuse');
     const { tx, inserted } = fakeTx();
@@ -224,7 +238,6 @@ describe('DocumentsService.create for a portal customer', () => {
     ['an invited customer', caller({ status: 'invited' })],
     ['a customer with no party', caller({ partyId: null })],
     ['a customer with an empty party', caller({ partyId: '' })],
-    ['a vendor (until P4 widens the kinds)', caller({ orgKind: 'vendor' })],
     ['staff without the grant', staff()],
     ['a customer of another acting entity', caller({ organizationId: randomUUID() })],
     ['a customer of another tenant', caller({ tenantId: randomUUID() })],
@@ -310,7 +323,6 @@ describe('DocumentsService.create for a portal customer', () => {
       run('absent', caller()),
       run('allow', caller({ status: 'inactive' })),
       run('allow', caller({ partyId: null })),
-      run('allow', caller({ orgKind: 'vendor' })),
       run('allow', staff()),
       run('allow', caller({ organizationId: randomUUID() })),
       run('allow', caller(), randomUUID()),
