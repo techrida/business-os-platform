@@ -91,7 +91,12 @@ export interface ApprovalSubject {
 export interface SubmitInput {
   documentType: string;
   documentId: string;
-  documentNumber: string;
+  /**
+   * The document's number. Optional: a document that is numbered only at issue (after approval) has none
+   * yet, so the request carries `Draft <documentType> <first 8 chars of documentId>` instead. That text is
+   * stored on the request and is what the inbox titles and notices show.
+   */
+  documentNumber?: string;
   title: string;
   snapshot: unknown;
   facts: Record<string, unknown>;
@@ -113,6 +118,9 @@ const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
 );
 const inboxLink = (requestId: string) => `/inbox/${requestId}`;
 const MAX_CANCEL_REASON = 2000;
+/** What a request shows as its number while its document has none yet (numbered at issue, after approval). */
+const draftReference = (documentType: string, documentId: string) =>
+  `Draft ${documentType} ${documentId.slice(0, 8)}`;
 /** Email vars are plain strings; a value that is not known is left out so the template default applies. */
 const emailVars = (v: Record<string, string | undefined>): Record<string, string> =>
   Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => e[1] !== undefined));
@@ -181,6 +189,7 @@ export class ApprovalsService {
       }
     }
     const status = plan.blocked ? 'blocked' : 'pending';
+    const documentNumber = i.documentNumber ?? draftReference(i.documentType, i.documentId);
 
     let requestId: string;
     try {
@@ -192,7 +201,7 @@ export class ApprovalsService {
           workflowVersionId: versionId,
           documentType: i.documentType,
           documentId: i.documentId,
-          documentNumber: i.documentNumber,
+          documentNumber,
           title: i.title,
           snapshot: i.snapshot,
           snapshotSha256: canonicalSha256(i.snapshot),
@@ -253,12 +262,12 @@ export class ApprovalsService {
     });
 
     if (plan.blocked) {
-      await this.notifyBlocked(tx, requestId, i.documentNumber, plan.blockReason, 1);
+      await this.notifyBlocked(tx, requestId, documentNumber, plan.blockReason, 1);
     } else {
       await this.notifyApprovers(
         tx,
         requestId,
-        i.documentNumber,
+        documentNumber,
         i.title,
         plan.steps[0]!.eligibleUserIds,
         1,
