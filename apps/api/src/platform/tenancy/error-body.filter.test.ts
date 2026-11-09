@@ -62,6 +62,18 @@ function filter(
 }
 
 describe('ErrorBodyFilter', () => {
+  it('preserves the bill invoice scan refusal only on a conflict', () => {
+    const code = 'BILL_DOCUMENT_NOT_CLEAN';
+    const conflict = ErrorBodySchema.parse(
+      filter(new ConflictException({ code, message: 'The invoice scan is not clean.' })).body,
+    );
+    expect(conflict.error.code).toBe(code);
+    expect(conflict.error.message).toBe('The invoice scan is not clean.');
+    const wrongStatus = ErrorBodySchema.parse(
+      filter(new UnprocessableEntityException({ code, message: 'private' })).body,
+    );
+    expect(wrongStatus.error.code).not.toBe(code);
+  });
   let errorLog: MockInstance<Logger['error']>;
   beforeEach(() => {
     errorLog = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
