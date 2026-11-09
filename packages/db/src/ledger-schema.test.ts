@@ -22,7 +22,10 @@ import {
   withholdingCodes,
 } from './schema/ledger.js';
 
-const SQL_TEXT = readFileSync(new URL('../migrations/0019_open_items.sql', import.meta.url), 'utf8');
+const SQL_TEXT = readFileSync(
+  new URL('../migrations/0019_open_items.sql', import.meta.url),
+  'utf8',
+);
 
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
@@ -154,7 +157,8 @@ function checkList(constraint: string, column: string): string[] {
 
 /** The output column names of CREATE VIEW open_item_balances: the alias, or the column itself. */
 function viewColumns(): string[] {
-  const m = /CREATE VIEW "app"\."open_item_balances"[^\n]*\nSELECT\n([\s\S]*?)\nFROM /.exec(SQL_TEXT);
+  const view = /CREATE VIEW "app"\."open_item_balances"[^\n]*\nSELECT\n([\s\S]*?)\nFROM /;
+  const m = view.exec(SQL_TEXT);
   if (!m) throw new Error('no open_item_balances view in 0019');
   return (m[1] ?? '').split('\n').map((line) => {
     const names = [...line.matchAll(/"(\w+)"/g)].map((n) => n[1] ?? '');
