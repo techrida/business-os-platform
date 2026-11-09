@@ -8,11 +8,23 @@
 // version; anything that is not a live `payment_intake` document of the caller's party in this entity (a bad id, a
 // missing one, another party's) is the same 404, checked before DocumentsService is asked, so a stranger never sees
 // the 403 the grant check would give and learns nothing about whether the id exists.
+//
+// Staff: whoever records payments (`payment.record`, for example the Accountant, who holds no `documents.upload`)
+// uploads proof for a customer named in the body. The intake owner policy names `payment.record` as its upload
+// permission, so DocumentsService checks that grant on the customer, nothing wider. A `customerId` that is not a
+// customer party of the tenant, and a PUT naming anything but a live `payment_intake` document of this entity, are
+// the same 404 as the portal's.
 import type { Readable } from 'node:stream';
 
 import { CreateDocumentBodySchema, type DocumentVersionDto } from '@bos/contracts';
-import { documents, documentVersions } from '@bos/db';
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { documents, documentVersions, parties } from '@bos/db';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -33,6 +45,11 @@ export const PaymentProofFileSchema = CreateDocumentBodySchema.pick({
 });
 export type PaymentProofFile = z.infer<typeof PaymentProofFileSchema>;
 
+/** A staff upload names the customer the proof is for; its existence is checked, not parsed (404, not 400). */
+export const StaffPaymentProofSchema = PaymentProofFileSchema.extend({
+  customerId: z.string().min(1),
+});
+
 export interface CreatedPaymentProof {
   documentId: string;
   versionId: string;
@@ -50,6 +67,20 @@ export const PAYMENT_PROOF_NOT_FOUND = 'Payment proof not found';
 
 export const portalUploadPath = (documentId: string, versionId: string): string =>
   `/v1/portal/payment-proofs/${documentId}/versions/${versionId}/content`;
+
+export const staffUploadPath = (documentId: string, versionId: string): string =>
+  `/v1/payment-proofs/${documentId}/versions/${versionId}/content`;
+
+/** 403 unless `p` is a staff principal. Same body as AuthzService.assert; the staff routes are not a portal door. */
+function assertStaffCaller(p: Principal): void {
+  if (p.orgKind !== 'staff') {
+    throw new ForbiddenException({
+      code: 'forbidden',
+      message: 'Forbidden',
+      reason: 'no_permission',
+    });
+  }
+}
 
 /** Field names only: echoing values back would reflect attacker-controlled text. */
 function invalidFile(error: z.ZodError): BadRequestException {
@@ -104,10 +135,71 @@ export class PaymentProofsService {
     return this.documents.receiveContent(versionId, src, contentLength, { documentId, who });
   }
 
-  /** 404 unless the version belongs to a live `payment_intake` document of `partyId` in this entity. */
+  /**
+   * Creates the proof document (version 1, awaiting_content) for the customer named in the body. The route holds
+   * `payment.record`; DocumentsService checks it again on the customer (the intake policy's upload permission).
+   */
+  async createForStaff(
+    principal: Principal,
+    who: ProofCaller,
+    body: unknown,
+  ): Promise<CreatedPaymentProof> {
+    assertStaffCaller(principal);
+    const parsed = StaffPaymentProofSchema.safeParse(body);
+    if (!parsed.success) throw invalidFile(parsed.error);
+    const { customerId, ...file } = parsed.data;
+    await this.assertCustomer(who.scope, customerId);
+    const created = await withTx(this.db, who.scope, who.actor, (tx) =>
+      this.documents.create(tx, {
+        ownerType: PAYMENT_INTAKE_OWNER_TYPE,
+        ownerId: customerId,
+        ...file,
+      }),
+    );
+    return { ...created, uploadPath: staffUploadPath(created.documentId, created.versionId) };
+  }
+
+  /**
+   * Streams the bytes of a staff-created proof version into the documents pipeline. Any id that is not a live
+   * `payment_intake` document of this entity is the same 404; DocumentsService then checks `payment.record`.
+   */
+  async receiveForStaff(
+    principal: Principal,
+    who: ProofCaller,
+    documentId: string,
+    versionId: string,
+    src: Readable,
+    contentLength: number,
+  ): Promise<DocumentVersionDto> {
+    assertStaffCaller(principal);
+    await this.assertIntakeVersion(who.scope, undefined, documentId, versionId);
+    return this.documents.receiveContent(versionId, src, contentLength, { documentId, who });
+  }
+
+  /** 404 unless `customerId` is a customer party of the tenant. */
+  private async assertCustomer(scope: TxScope, customerId: string): Promise<void> {
+    if (!Id.safeParse(customerId).success) throw new NotFoundException(PAYMENT_PROOF_NOT_FOUND);
+    const [found] = await this.db
+      .select({ id: parties.id })
+      .from(parties)
+      .where(
+        and(
+          eq(parties.tenantId, scope.tenantId),
+          eq(parties.id, customerId),
+          eq(parties.kind, 'customer'),
+        ),
+      )
+      .limit(1);
+    if (found === undefined) throw new NotFoundException(PAYMENT_PROOF_NOT_FOUND);
+  }
+
+  /**
+   * 404 unless the version belongs to a live `payment_intake` document in this entity, of `partyId` when given
+   * (the portal); staff may reach any customer's intake document of the entity.
+   */
   private async assertIntakeVersion(
     scope: TxScope,
-    partyId: string,
+    partyId: string | undefined,
     documentId: string,
     versionId: string,
   ): Promise<void> {
@@ -132,7 +224,7 @@ export class PaymentProofsService {
           eq(documents.organizationId, scope.organizationId),
           eq(documents.id, documentId),
           eq(documents.ownerType, PAYMENT_INTAKE_OWNER_TYPE),
-          eq(documents.ownerId, partyId),
+          partyId === undefined ? undefined : eq(documents.ownerId, partyId),
           isNull(documents.removedAt),
         ),
       )
