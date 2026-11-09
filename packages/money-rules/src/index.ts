@@ -7,3 +7,4 @@ export * from './discount.js';
 export * from './fx.js';
 export * from './pricing.js';
 export { invoiceSlice, splitSchedule, type SliceAmounts } from './schedule.js';
+export { creditNoteSlice, type CreditNoteInput } from './notes.js';
