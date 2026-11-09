@@ -368,22 +368,27 @@ describe('ErrorBodyFilter', () => {
       'supporting_document_unsupported',
       'A supporting document cannot be attached to a bank change request yet',
     ],
-  ])('keeps the portal vendor refusal %s only on a 422, with a default message', (code, message) => {
-    const out = filter(new UnprocessableEntityException({ code }));
-    expect(out.status).toBe(422);
-    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({ code, message });
-    expect(
-      ErrorBodySchema.parse(
-        filter(new UnprocessableEntityException({ code, message: 'Specific refusal' })).body,
-      ).error.message,
-    ).toBe('Specific refusal');
-    expect(
-      ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
-    ).toBe('conflict');
-    expect(
-      ErrorBodySchema.parse(filter(new BadRequestException({ code, message: 'm' })).body).error.code,
-    ).toBe('bad_request');
-  });
+  ])(
+    'keeps the portal vendor refusal %s only on a 422, with a default message',
+    (code, message) => {
+      const out = filter(new UnprocessableEntityException({ code }));
+      expect(out.status).toBe(422);
+      expect(ErrorBodySchema.parse(out.body).error).toMatchObject({ code, message });
+      expect(
+        ErrorBodySchema.parse(
+          filter(new UnprocessableEntityException({ code, message: 'Specific refusal' })).body,
+        ).error.message,
+      ).toBe('Specific refusal');
+      expect(
+        ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error
+          .code,
+      ).toBe('conflict');
+      expect(
+        ErrorBodySchema.parse(filter(new BadRequestException({ code, message: 'm' })).body).error
+          .code,
+      ).toBe('bad_request');
+    },
+  );
 
   it.each([
     'BILL_KIND_NOT_SUPPORTED',
