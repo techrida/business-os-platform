@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   voidBill: vi.fn(),
   convertBillSubmission: vi.fn(),
   rejectBillSubmission: vi.fn(),
+  requestBillException: vi.fn(),
 }));
 vi.mock('@/lib/api-payables', () => api);
 
@@ -30,6 +31,7 @@ const {
   rejectSubmissionAction,
   submitBillAction,
   voidBillAction,
+  requestExceptionAction,
 } = await import('./actions');
 
 const BILL = '11111111-1111-4111-8111-111111111111';
@@ -39,6 +41,60 @@ const TAX = '44444444-4444-4444-8444-444444444444';
 const POLINE = '55555555-5555-4555-8555-555555555555';
 const KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const prev = { key: KEY };
+
+describe('request a match exception', () => {
+  it('sends the reason and preserves the approval link', async () => {
+    api.requestBillException.mockResolvedValue({ approvalRequestId: SUB });
+    const out = await requestExceptionAction(
+      prev,
+      form({
+        billId: BILL,
+        idempotencyKey: KEY,
+        reason: ' Agreed price ',
+        evidenceDocumentId: ACCOUNT,
+      }),
+    );
+    expect(api.requestBillException).toHaveBeenCalledWith(
+      expect.anything(),
+      BILL,
+      { reason: 'Agreed price', evidenceDocumentId: ACCOUNT },
+      KEY,
+    );
+    expect(out.done).toMatch(/finance/i);
+  });
+
+  it('rejects malformed evidence and a blank reason before writing', async () => {
+    const out = await requestExceptionAction(
+      prev,
+      form({ billId: BILL, idempotencyKey: KEY, reason: ' ', evidenceDocumentId: 'wrong' }),
+    );
+    expect(out.errors?.['reason']).toBeTruthy();
+    expect(api.requestBillException).not.toHaveBeenCalled();
+  });
+
+  it('checks the bill-enter permission and keeps the key after an uncertain result', async () => {
+    session.roles = ['finance'];
+    expect(
+      (
+        await requestExceptionAction(
+          prev,
+          form({ billId: BILL, idempotencyKey: KEY, reason: 'Agreed' }),
+        )
+      ).error,
+    ).toMatch(/roles/i);
+    expect(api.requestBillException).not.toHaveBeenCalled();
+    session.roles = ['accountant'];
+    api.requestBillException.mockRejectedValue(new ApiError(503, 'unavailable'));
+    expect(
+      (
+        await requestExceptionAction(
+          prev,
+          form({ billId: BILL, idempotencyKey: KEY, reason: 'Agreed' }),
+        )
+      ).key,
+    ).toBe(KEY);
+  });
+});
 
 const apiError = (status: number, code: string) =>
   new ApiError(status, 'x', {
