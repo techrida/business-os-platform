@@ -1,7 +1,7 @@
 // Unit tests of the purchase request rules (P4 unit P1): line arithmetic, the approval facts, the body envelope, and
 // above all the `purchase_request` route, planned by the real router from the real spec (AD10, AD11, AD12).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/requests/purchase-request.rules.test.ts
-import { WorkflowSpecSchema, type RoutePlan } from '@bos/contracts';
+import { PurchaseRequestLineBodySchema, WorkflowSpecSchema, type RoutePlan } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
@@ -113,6 +113,14 @@ describe('the purchase_request route', () => {
 });
 
 describe('line arithmetic', () => {
+  it('preserves the serial requirement from the request body for issued goods', () => {
+    const input = { description: 'Laptop', uom: 'pcs', quantity: '2', estimatedUnitPrice: '50000' };
+    const required = PurchaseRequestLineBodySchema.parse({ ...input, requiresSerials: true });
+    expect(lineRowsOf([required])[0]).toMatchObject({ requiresSerials: true });
+    const ordinary = PurchaseRequestLineBodySchema.parse(input);
+    expect(lineRowsOf([ordinary])[0]).toMatchObject({ requiresSerials: false });
+  });
+
   it('rounds a line half up to 2 places and sums exactly', () => {
     expect(lineAmount('3', '0.10')).toBe('0.30');
     expect(lineAmount('0.3333', '1.50')).toBe('0.50');
