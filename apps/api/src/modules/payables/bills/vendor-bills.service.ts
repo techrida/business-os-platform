@@ -66,6 +66,7 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { newestDocumentVersion } from '../../../platform/documents/documents.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
@@ -241,10 +242,12 @@ export class VendorBillsService {
     @Optional()
     @Inject(VENDOR_BILLS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
-    // Last, optional and defaulted so callers that build the service by hand keep working and the module boots
+    // Optional and defaulted so callers that build the service by hand keep working and the module boots
     // before it imports LedgerModule; LedgerService holds no state, so the fallback is the same service.
     @Optional()
     private readonly ledger: LedgerService = new LedgerService(),
+    @Optional()
+    private readonly numbering: NumberingService = new NumberingService(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -935,12 +938,16 @@ export class VendorBillsService {
               fxRate: bill.fxRate,
               thresholds,
             });
+            // Take the series lock after the bill/document checks. A replay or returned bill keeps its
+            // number; a blocked approval rolls back this increment with the rest of the submission.
+            const number = bill.number ?? (await this.numbering.issue(tx, 'BILL', now)).number;
             const request = await this.approvals.submit(tx, {
               documentType: VENDOR_BILL_DOCUMENT_TYPE,
               documentId: bill.id,
-              ...(bill.number === null ? {} : { documentNumber: bill.number }),
+              documentNumber: number,
               title: `Vendor bill ${bill.vendorInvoiceNo}`,
               snapshot: {
+                number,
                 vendorPartyId: bill.vendorId,
                 vendorInvoiceNo: bill.vendorInvoiceNo,
                 purchaseOrderId: bill.purchaseOrderId,
@@ -958,6 +965,7 @@ export class VendorBillsService {
               .update(vendorBills)
               .set({
                 status: 'pending_approval',
+                number,
                 approvalRequestId: request.requestId,
                 version: sql`${vendorBills.version} + 1`,
                 updatedAt: now,
@@ -972,8 +980,13 @@ export class VendorBillsService {
               action: 'payables.bill.submitted',
               entityType: BILL_AUDIT_ENTITY,
               entityId: bill.id,
-              before: { status: bill.status },
-              after: { status: 'pending_approval', approvalRequestId: request.requestId, ...facts },
+              before: { status: bill.status, number: bill.number },
+              after: {
+                status: 'pending_approval',
+                number,
+                approvalRequestId: request.requestId,
+                ...facts,
+              },
             });
             return { status: 200, response: await this.dto(tx, scope, bill.id) };
           },
