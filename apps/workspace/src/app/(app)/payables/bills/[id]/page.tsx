@@ -1,0 +1,336 @@
+import { randomUUID } from 'node:crypto';
+
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+
+import { isGuid } from '@/components/p2/customers/format';
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { Table, Td, Th } from '@/components/ui/table';
+import { getBill, type VendorBill } from '@/lib/api-payables';
+import { getPoProgress } from '@/lib/api-purchase-orders';
+import { getVendor } from '@/lib/api-vendors';
+import { requireStaffSession } from '@/lib/bff';
+import { when } from '@/lib/kernel-format';
+
+import { poGrants, poMoney, qtyText } from '../../../procurement/orders/_lib/model';
+import { MatchDialog, SubmitDialog, VoidDialog } from '../../_components/bill-actions';
+import { billFailure } from '../../_lib/failure';
+import {
+  BILL_STATUS_LABEL,
+  MATCH_STATUS_LABEL,
+  billActions,
+  billGrants,
+  matchResultLabel,
+} from '../../_lib/model';
+import styles from '../../payables.module.css';
+
+export const metadata: Metadata = { title: 'Bill · Business OS' };
+export const dynamic = 'force-dynamic';
+
+function Lines({ bill }: { bill: VendorBill }) {
+  return (
+    <Panel
+      title="Lines"
+      description="As keyed in from the vendor's invoice. The net, VAT and withholding are the platform's, not typed."
+    >
+      <Table caption="Bill lines" minWidth={900}>
+        <thead>
+          <tr>
+            <Th align="end">#</Th>
+            <Th>Item</Th>
+            <Th align="end">Quantity</Th>
+            <Th align="end">Unit price</Th>
+            <Th align="end">Net</Th>
+            <Th align="end">VAT</Th>
+            <Th align="end">Withholding</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {bill.lines.map((l) => (
+            <tr key={l.id}>
+              <Td align="end" nowrap>
+                {l.lineNo}
+              </Td>
+              <Td>
+                <span className={styles.long}>{l.description}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{qtyText(l.quantity)}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{poMoney(l.unitPrice, bill.currency)}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{poMoney(l.netAmount, bill.currency)}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{poMoney(l.vatAmount, bill.currency)}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{poMoney(l.tdsAmount, bill.currency)}</span>
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Panel>
+  );
+}
+
+function MatchPanel({ bill }: { bill: VendorBill }) {
+  if (bill.purchaseOrderId === null) {
+    return (
+      <Panel title="Match">
+        <p className={styles.note}>
+          This bill names no purchase order, so there is nothing to match it against. It goes to
+          approval as it is.
+        </p>
+      </Panel>
+    );
+  }
+  const matched = bill.lines.filter((l) => l.match !== null);
+  return (
+    <Panel
+      title="Match against the order and receipts"
+      description="What the invoice bills, compared with what was ordered and received. Variances are as the platform worked them out."
+    >
+      {matched.length === 0 ? (
+        <p className={styles.note}>
+          This bill has not been matched yet. Match it to see the result.
+        </p>
+      ) : (
+        <Table caption="Match result by bill line" minWidth={900}>
+          <thead>
+            <tr>
+              <Th align="end">#</Th>
+              <Th>Item</Th>
+              <Th align="end">Billed</Th>
+              <Th align="end">Received</Th>
+              <Th align="end">Quantity variance</Th>
+              <Th align="end">Price variance</Th>
+              <Th align="end">VAT variance</Th>
+              <Th>Result</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {matched.map((l) => {
+              const m = l.match;
+              if (m === null) return null;
+              const result = matchResultLabel(m.status);
+              return (
+                <tr key={l.id}>
+                  <Td align="end" nowrap>
+                    {l.lineNo}
+                  </Td>
+                  <Td>
+                    <span className={styles.long}>{l.description}</span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{qtyText(m.billedQuantity)}</span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    {m.receivedQuantity !== null ? (
+                      <span className={styles.numeric}>{qtyText(m.receivedQuantity)}</span>
+                    ) : (
+                      <span className={styles.quiet}>Nothing received</span>
+                    )}
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{qtyText(m.quantityVariance)}</span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>
+                      {poMoney(m.priceVariance, bill.currency)}
+                    </span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{poMoney(m.taxVariance, bill.currency)}</span>
+                  </Td>
+                  <Td nowrap>
+                    <Badge tone={result.tone}>{result.text}</Badge>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
+    </Panel>
+  );
+}
+
+export default async function BillPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<{ created?: string | string[] }>;
+}) {
+  const { id } = await params;
+  // An id that is not a GUID cannot be a bill, so it never reaches the API.
+  if (!isGuid(id)) notFound();
+  const justCreated = searchParams !== undefined && (await searchParams).created === '1';
+  const here = `/payables/bills/${id}`;
+  const session = await requireStaffSession(here);
+
+  let bill: VendorBill;
+  try {
+    bill = await getBill(session, id);
+  } catch (err) {
+    const f = billFailure(err, 'load');
+    if (f.status === 404) notFound();
+    return (
+      <Page width="narrow">
+        <Breadcrumb items={[{ label: 'Bills', href: '/payables/bills' }]} />
+        <Alert
+          tone={f.status === 403 ? 'info' : 'error'}
+          role="alert"
+          title={f.status === 403 ? 'You cannot open this bill' : 'This bill did not load'}
+          actions={f.status !== 403 ? <a href={here}>Try again</a> : null}
+        >
+          {f.message}
+        </Alert>
+      </Page>
+    );
+  }
+
+  // Both are context only: a failure leaves the bill and its buttons usable.
+  const [vendor, order] = await Promise.allSettled([
+    getVendor(session, bill.vendorPartyId),
+    bill.purchaseOrderId !== null
+      ? getPoProgress(session, bill.purchaseOrderId)
+      : Promise.resolve(undefined),
+  ]);
+  const vendorName = vendor.status === 'fulfilled' ? vendor.value.legalName : undefined;
+  const orderNumber = order.status === 'fulfilled' ? order.value?.number : undefined;
+
+  const grants = billGrants(session.roles);
+  const can = billActions(bill, grants);
+  const status = BILL_STATUS_LABEL[bill.status];
+  const match = MATCH_STATUS_LABEL[bill.matchStatus];
+  const common = {
+    targetId: bill.id,
+    label: bill.number ?? `invoice ${bill.vendorInvoiceNo}`,
+    reloadHref: here,
+  };
+  const inVariance = bill.status === 'variance' || bill.matchStatus === 'variance';
+
+  const facts: Fact[] = [
+    {
+      key: 'vendor',
+      label: 'Vendor',
+      value: (
+        <Link href={`/vendors/${encodeURIComponent(bill.vendorPartyId)}`} className={styles.long}>
+          {vendorName ?? 'Open the vendor'}
+        </Link>
+      ),
+    },
+    {
+      key: 'invoice',
+      label: 'Vendor invoice',
+      value: <span className={styles.long}>{bill.vendorInvoiceNo}</span>,
+    },
+    {
+      key: 'date',
+      label: 'Invoice date',
+      value: <time dateTime={bill.invoiceDate}>{when(bill.invoiceDate, 'date')}</time>,
+    },
+    { key: 'fy', label: 'Fiscal year', value: bill.fiscalYear },
+    {
+      key: 'po',
+      label: 'Purchase order',
+      value:
+        bill.purchaseOrderId === null ? (
+          <span className={styles.quiet}>None</span>
+        ) : poGrants(session.roles).issue ? (
+          <Link href={`/procurement/orders/${encodeURIComponent(bill.purchaseOrderId)}`}>
+            {orderNumber ?? 'Open the order'}
+          </Link>
+        ) : (
+          (orderNumber ?? 'An order')
+        ),
+    },
+    { key: 'match', label: 'Match', value: <Badge tone={match.tone}>{match.text}</Badge> },
+    {
+      key: 'approval',
+      label: 'Approval',
+      value:
+        bill.approvalRequestId !== null ? (
+          <Link href={`/inbox/${encodeURIComponent(bill.approvalRequestId)}`}>
+            See the approval request
+          </Link>
+        ) : (
+          <span className={styles.quiet}>Not submitted yet</span>
+        ),
+    },
+  ];
+  const totals: Fact[] = [
+    { key: 'net', label: 'Net', value: poMoney(bill.netTotal, bill.currency) },
+    { key: 'vat', label: 'VAT', value: poMoney(bill.vatTotal, bill.currency) },
+    { key: 'tds', label: 'Withholding', value: poMoney(bill.tdsTotal, bill.currency) },
+    {
+      key: 'payable',
+      label: 'Payable',
+      value: <strong>{poMoney(bill.payableTotal, bill.currency)}</strong>,
+    },
+  ];
+
+  return (
+    <Page>
+      <Breadcrumb
+        items={[
+          { label: 'Bills', href: '/payables/bills' },
+          { label: bill.number ?? 'Draft bill' },
+        ]}
+      />
+      <PageHeader
+        title={
+          <span className={styles.long}>{bill.number ?? `Invoice ${bill.vendorInvoiceNo}`}</span>
+        }
+        status={<Badge tone={status.tone}>{status.text}</Badge>}
+        description={
+          bill.kind === 'vendor_credit_note'
+            ? 'A credit note from the vendor.'
+            : 'A vendor invoice, matched before it goes for approval.'
+        }
+        actions={
+          can.match || can.submit || can.void ? (
+            <div className={styles.headActions}>
+              {can.match ? <MatchDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.submit ? <SubmitDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.void ? <VoidDialog {...common} idempotencyKey={randomUUID()} /> : null}
+            </div>
+          ) : null
+        }
+      />
+
+      <div className={styles.stack}>
+        {justCreated ? (
+          <Alert tone="success" role="status" title="The bill was created">
+            It was made from the vendor&apos;s submission and matched where it names an order.
+          </Alert>
+        ) : null}
+        {inVariance ? (
+          <Alert tone="warning" role="status" title="This bill is outside the tolerance">
+            It cannot be submitted for approval while a line is outside the tolerance. Match it
+            again after goods arrive or the order changes. Asking for a match exception is not on
+            this page yet.
+          </Alert>
+        ) : null}
+        <Panel title="Bill">
+          <FactList facts={facts} />
+        </Panel>
+        <Panel title="Totals" description="Worked out by the platform from the lines.">
+          <FactList facts={totals} />
+        </Panel>
+        <Lines bill={bill} />
+        <MatchPanel bill={bill} />
+        {/* Match exceptions section: the next unit puts it here, under the match result. */}
+      </div>
+    </Page>
+  );
+}
