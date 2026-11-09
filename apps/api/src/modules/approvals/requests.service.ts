@@ -286,11 +286,12 @@ export class ApprovalsService {
     body: ApprovalActionBody,
     idempotencyKey: string,
   ): Promise<ApprovalRequestDto> {
+    const { scope, actor, principal } = this.caller.current();
+    this.requireStaff(scope, principal);
     const parsed = ApprovalActionBodySchema.safeParse(body);
     if (!parsed.success)
       throw new BadRequestException(parsed.error.issues.map((x) => x.message).join('; '));
     const action = parsed.data;
-    const { scope, actor, principal } = this.caller.current();
     const userId = principal.userId;
     // Refuse unassigned callers before acquiring the row lock; repeat eligibility under the lock.
     await this.eligibleRequest(requestId, { action, idempotencyKey });
