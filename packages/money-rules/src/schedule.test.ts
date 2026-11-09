@@ -116,9 +116,9 @@ describe('invoiceSlice: absorbing rounding and refusing bad input', () => {
   });
 
   it('refuses a billed tax code the sales order does not have', () => {
-    expect(() =>
-      invoiceSlice(soBuckets, d('1.00'), [bucket(RC13, '1.00', '0')], false),
-    ).toThrow(RangeError);
+    expect(() => invoiceSlice(soBuckets, d('1.00'), [bucket(RC13, '1.00', '0')], false)).toThrow(
+      RangeError,
+    );
   });
 
   it('refuses a sales order that is already billed beyond a bucket', () => {
