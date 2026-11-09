@@ -1,0 +1,626 @@
+// Integration tests of sourcing and the commitment approval on a real Postgres (Testcontainers, needs Docker in WSL).
+// Real: migrations as bos_owner, queries as bos_app, SourcingService, the real ApprovalsService with the
+// `pr_commitment` workflow published through ApprovalsAdminService (spec PR_COMMITMENT_WORKFLOW_SPEC, which the seed
+// copies), the real PrCommitmentSubject (draft PO), NumberingService, MoneyService (NPR) and AuditService. Faked:
+// notify, the role directory (role -> real staff users of entity A), settings (min_quotes 3), the request context.
+// Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/sourcing/sourcing.integration.test.ts
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
+import {
+  approvalRequests,
+  approvalSteps,
+  createDepartment,
+  createParty,
+  createStaffUser,
+  createTenantWithEntity,
+  purchaseOrders,
+  purchaseRequests,
+  runMigrations,
+} from '@bos/db';
+import { HttpException } from '@nestjs/common';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AuditService } from '../../../platform/audit/audit.service';
+import type { Principal } from '../../../platform/authz/principal';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import { MoneyService } from '../../../platform/settings/money.service';
+import { NumberingService } from '../../../platform/settings/numbering.service';
+import { ApprovalsAdminService } from '../../approvals/admin.service';
+import { ApprovalsService } from '../../approvals/requests.service';
+import { PrCommitmentSubject } from './pr-commitment.subject';
+import { PR_COMMITMENT_DOCUMENT_TYPE, PR_COMMITMENT_WORKFLOW_SPEC } from './sourcing.rules';
+import { SourcingService } from './sourcing.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+const now = new Date('2026-11-09T04:00:00Z');
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: Db;
+let scopeA: TxScope;
+let scopeB: TxScope;
+let approvals: ApprovalsService;
+let service: SourcingService;
+let deptA = '';
+let deptB = '';
+let vatCode = '';
+
+const U = { req: '', proc: '', proc2: '', acct: '', fin: '', mgmt: '', mgmt2: '', founder: '' };
+const roles: Partial<Record<RoleKey, string[]>> = {};
+const resetRoles = () => {
+  roles.accountant = [U.acct];
+  roles.finance = [U.fin];
+  roles.management = [U.mgmt];
+  roles.founder = [U.founder];
+};
+
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+  userId: '',
+  role: 'procurement',
+  scope: null,
+};
+const as = (userId: string, role: RoleKey) => {
+  current.userId = userId;
+  current.role = role;
+};
+const scopeNow = (): TxScope => current.scope ?? scopeA;
+const principalNow = (): Principal => ({
+  userId: current.userId,
+  zitadelUserId: `z-${current.userId}`,
+  ...scopeNow(),
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: 'unused',
+  roles: [current.role],
+  departmentId: null,
+  status: 'active',
+  grants: grantsOf(current.role),
+});
+const caller = {
+  current: () => ({
+    scope: scopeNow(),
+    actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const notify = {
+  notifyUser: vi.fn(() => Promise.resolve(undefined)),
+  notifyRole: vi.fn(() => Promise.resolve(undefined)),
+};
+const directory = {
+  userIdsWithRole: vi.fn((_s: unknown, role: RoleKey) => Promise.resolve(roles[role] ?? [])),
+  resolve: vi.fn(),
+  emailOf: vi.fn(() => Promise.resolve(null)),
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+const exec = (scope: TxScope, q: ReturnType<typeof sql>) =>
+  withTx(db, scope, systemActor('test'), (tx) => tx.execute(q));
+const read = <T>(fn: (tx: DbTransaction) => Promise<T>) =>
+  withTx(db, scopeA, systemActor('test'), fn);
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  db = drizzle({ client: appPool });
+
+  const tenant = await createTenantWithEntity(appPool);
+  scopeA = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
+  const otherEntityId = randomUUID();
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.organizations (id, tenant_id, organization_id, name, code, legal_name, is_default)
+        VALUES (${otherEntityId}, ${scopeA.tenantId}, ${otherEntityId}, ${`E-${otherEntityId}`},
+                ${`E-${otherEntityId}`}, ${`E-${otherEntityId}`}, false)`,
+  );
+  scopeB = { tenantId: scopeA.tenantId, organizationId: otherEntityId };
+
+  const staff = async (roleKey: RoleKey) =>
+    (await createStaffUser(appPool, { ...scopeA, idpOrgId: tenant.idpOrgId, roleKeys: [roleKey] }))
+      .userId;
+  U.req = await staff('operations_officer');
+  U.proc = await staff('procurement');
+  U.proc2 = await staff('procurement');
+  U.acct = await staff('accountant');
+  U.fin = await staff('finance');
+  U.mgmt = await staff('management');
+  U.mgmt2 = await staff('management');
+  U.founder = await staff('founder');
+  resetRoles();
+  deptA = (await createDepartment(appPool, scopeA)).departmentId;
+  deptB = (await createDepartment(appPool, scopeB)).departmentId;
+
+  const { rows } = await exec(
+    scopeA,
+    sql`INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
+        VALUES (${scopeA.tenantId}, 'VAT13', 'VAT 13%', 'vat', 1300, true, '2020-01-01') RETURNING id`,
+  );
+  vatCode = (rows[0] as { id: string }).id;
+
+  const audit = new AuditService(db);
+  as(U.founder, 'founder');
+  const admin = new ApprovalsAdminService(db, audit, caller, () => now);
+  await admin.createWorkflow({
+    key: PR_COMMITMENT_DOCUMENT_TYPE,
+    name: 'Purchase commitment',
+    spec: PR_COMMITMENT_WORKFLOW_SPEC,
+  });
+  await admin.publish(PR_COMMITMENT_DOCUMENT_TYPE, 1);
+
+  const numbering = new NumberingService();
+  approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
+  approvals.registerSubject(new PrCommitmentSubject(numbering, () => now));
+  service = new SourcingService(
+    db,
+    approvals,
+    audit,
+    numbering,
+    new MoneyService(db, {} as never),
+    { get: () => Promise.resolve(3) } as never,
+    caller,
+    () => now,
+  );
+});
+
+afterAll(async () => {
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetRoles();
+  current.scope = null;
+  as(U.proc, 'procurement');
+});
+
+// ---------------------------------------------------------------------------------------- helpers
+
+async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpException) return error;
+    throw error;
+  }
+  throw new Error('expected the call to fail');
+}
+const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code;
+
+let panSeq = 0;
+/** A vendor in `status`, with an account in each of `accountIn`. */
+async function vendor(
+  status: 'approved' | 'draft',
+  accountIn: TxScope[] = [scopeA],
+): Promise<string> {
+  const { partyId } = await createParty(appPool, {
+    tenantId: scopeA.tenantId,
+    kind: 'vendor',
+    organizationId: scopeA.organizationId,
+  });
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.vendors (id, tenant_id, legal_name, pan, status, created_by, approved_by)
+        VALUES (${partyId}, ${scopeA.tenantId}, ${`Vendor ${partyId.slice(0, 6)}`},
+                ${String(100_000_000 + (panSeq += 1))}, ${status}, ${U.proc},
+                ${status === 'approved' ? U.mgmt : null})`,
+  );
+  for (const s of accountIn) {
+    await exec(
+      s,
+      sql`INSERT INTO app.vendor_accounts (tenant_id, organization_id, vendor_id)
+          VALUES (${s.tenantId}, ${s.organizationId}, ${partyId})`,
+    );
+  }
+  return partyId;
+}
+
+/** A dept_approved request of `requester` in `scope`, with one line; returns its id and line id. */
+async function deptApprovedPr(
+  opts: { requester?: string; scope?: TxScope; emergency?: boolean } = {},
+): Promise<{ id: string; lineId: string }> {
+  const scope = opts.scope ?? scopeA;
+  const id = randomUUID();
+  const lineId = randomUUID();
+  await exec(
+    scope,
+    sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
+          requester_user_id, cost_center_id, justification, required_by, budget_code, currency, is_emergency,
+          emergency_reason)
+        VALUES (${id}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
+                ${scope === scopeA ? deptA : deptB}, ${opts.requester ?? U.req}, ${randomUUID()}, 'Laptops',
+                '2026-12-01', 'IT-2083', 'NPR', ${opts.emergency ?? false},
+                ${opts.emergency ? 'Server room flood' : null})`,
+  );
+  await exec(
+    scope,
+    sql`INSERT INTO app.purchase_request_lines (id, tenant_id, organization_id, purchase_request_id, line_no,
+          description, uom, quantity, estimated_unit_price, estimated_amount)
+        VALUES (${lineId}, ${scope.tenantId}, ${scope.organizationId}, ${id}, 1, 'Laptop', 'pcs', 1, 100000, 100000)`,
+  );
+  await exec(
+    scope,
+    sql`UPDATE app.purchase_requests SET status = 'dept_approved', fx_rate = 1, estimated_total = 100000,
+          estimated_total_npr = 100000, number = ${`PR-T-${id.slice(0, 8)}`} WHERE id = ${id}`,
+  );
+  return { id, lineId };
+}
+
+async function doc(): Promise<string> {
+  const { rows } = await exec(
+    scopeA,
+    sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'rfq', ${randomUUID()}) RETURNING id`,
+  );
+  return (rows[0] as { id: string }).id;
+}
+
+/** An RFQ with `n` approved vendors that each quote; quotation i has net `nets[i]` + 13% VAT. */
+async function rfqWithQuotes(
+  nets: string[],
+  pr?: { id: string; lineId: string },
+): Promise<{ rfqId: string; prId: string; quoteIds: string[] }> {
+  const p = pr ?? (await deptApprovedPr());
+  const vendorIds: string[] = [];
+  for (const _ of nets) vendorIds.push(await vendor('approved'));
+  const rfq = await service.createRfq(
+    { purchaseRequestId: p.id, deadline: '2026-11-20T10:00:00+05:45', vendorIds },
+    randomUUID(),
+  );
+  const quoteIds: string[] = [];
+  for (const [i, net] of nets.entries()) {
+    const q = await service.recordQuotation(
+      rfq.id,
+      {
+        vendorId: vendorIds[i]!,
+        documentId: await doc(),
+        currency: 'NPR',
+        lines: [{ prLineId: p.lineId, quantity: '1', unitPrice: net, taxCodeId: vatCode }],
+      },
+      randomUUID(),
+    );
+    quoteIds.push(q.id);
+  }
+  return { rfqId: rfq.id, prId: p.id, quoteIds };
+}
+
+/** Recommends quotation `pick` (by U.proc) and submits the commitment (by `submitter`). */
+async function committed(nets: string[], pick = 0, pr?: { id: string; lineId: string }) {
+  const r = await rfqWithQuotes(nets, pr);
+  await service.recommend(
+    r.rfqId,
+    {
+      vendorQuotationId: r.quoteIds[pick]!,
+      rationale: 'Cheapest compliant quote',
+      ...(nets.length < 3 ? { fewerThanThreeReason: 'Only these vendors stock it' } : {}),
+    },
+    randomUUID(),
+  );
+  return { ...r, commit: () => service.submitCommitment(r.rfqId, randomUUID()) };
+}
+
+const requestsOf = (rfqId: string) =>
+  read((tx) =>
+    tx
+      .select()
+      .from(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.documentType, PR_COMMITMENT_DOCUMENT_TYPE),
+          eq(approvalRequests.documentId, rfqId),
+        ),
+      ),
+  );
+const stepRoles = async (requestId: string) =>
+  (
+    await read((tx) =>
+      tx
+        .select({ roleKey: approvalSteps.roleKey })
+        .from(approvalSteps)
+        .where(eq(approvalSteps.requestId, requestId))
+        .orderBy(asc(approvalSteps.seq)),
+    )
+  ).map((s) => s.roleKey);
+
+async function approve(user: string, role: RoleKey, requestId: string) {
+  const [req] = await read((tx) =>
+    tx
+      .select({ version: approvalRequests.version })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, requestId)),
+  );
+  as(user, role);
+  try {
+    return await approvals.act(
+      requestId,
+      { action: 'approve', expectedVersion: req!.version },
+      randomUUID(),
+    );
+  } finally {
+    as(U.proc, 'procurement');
+  }
+}
+
+// ---------------------------------------------------------------------------------------- RFQ
+
+describe('RFQ', () => {
+  it('refuses an unapproved vendor with 409 VENDOR_NOT_APPROVED', async () => {
+    const pr = await deptApprovedPr();
+    const v = await vendor('draft');
+    const e = await httpErrorOf(
+      service.createRfq(
+        { purchaseRequestId: pr.id, deadline: '2026-11-20T10:00:00Z', vendorIds: [v] },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(409);
+    expect(codeOf(e)).toBe('VENDOR_NOT_APPROVED');
+  });
+
+  it('refuses an approved vendor with no account in the entity with 409 VENDOR_NOT_IN_ENTITY', async () => {
+    const pr = await deptApprovedPr();
+    const v = await vendor('approved', [scopeB]);
+    const e = await httpErrorOf(
+      service.createRfq(
+        { purchaseRequestId: pr.id, deadline: '2026-11-20T10:00:00Z', vendorIds: [v] },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(409);
+    expect(codeOf(e)).toBe('VENDOR_NOT_IN_ENTITY');
+  });
+
+  it('needs a dept_approved request and moves it to sourcing', async () => {
+    const { prId } = await rfqWithQuotes(['1000.00']);
+    const [pr] = await read((tx) =>
+      tx.select().from(purchaseRequests).where(eq(purchaseRequests.id, prId)),
+    );
+    expect(pr!.status).toBe('sourcing');
+    const v = await vendor('approved');
+    const e = await httpErrorOf(
+      service.createRfq(
+        { purchaseRequestId: prId, deadline: '2026-11-20T10:00:00Z', vendorIds: [v] },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(409);
+  });
+
+  it("is a 404 for another entity's request and another entity's RFQ", async () => {
+    const prB = await deptApprovedPr({ scope: scopeB });
+    const v = await vendor('approved');
+    const e = await httpErrorOf(
+      service.createRfq(
+        { purchaseRequestId: prB.id, deadline: '2026-11-20T10:00:00Z', vendorIds: [v] },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(404);
+    const { rfqId } = await rfqWithQuotes(['1000.00']);
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.getRfq(rfqId))).getStatus()).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------------------- recommendation (AD13)
+
+describe('recommendation', () => {
+  it('fewer than 3 quotes without a reason is 409; with a reason it is recommended', async () => {
+    const r = await rfqWithQuotes(['1000.00', '1100.00']);
+    const e = await httpErrorOf(
+      service.recommend(
+        r.rfqId,
+        { vendorQuotationId: r.quoteIds[0]!, rationale: 'Cheapest' },
+        randomUUID(),
+      ),
+    );
+    expect(e.getStatus()).toBe(409);
+    expect(codeOf(e)).toBe('FEWER_THAN_MIN_QUOTES');
+    const ok = await service.recommend(
+      r.rfqId,
+      {
+        vendorQuotationId: r.quoteIds[0]!,
+        rationale: 'Cheapest',
+        fewerThanThreeReason: 'Sole distributors',
+      },
+      randomUUID(),
+    );
+    expect(ok.status).toBe('recommended');
+    expect(ok.fewerThanThreeReason).toBe('Sole distributors');
+  });
+
+  it('an emergency request goes below 3 quotes on its emergency reason', async () => {
+    const pr = await deptApprovedPr({ emergency: true });
+    const r = await rfqWithQuotes(['1000.00'], pr);
+    const ok = await service.recommend(
+      r.rfqId,
+      { vendorQuotationId: r.quoteIds[0]!, rationale: 'Only one in stock' },
+      randomUUID(),
+    );
+    expect(ok.fewerThanThreeReason).toBe('Emergency purchase: Server room flood');
+  });
+});
+
+// ---------------------------------------------------------------------------------------- commitment
+
+describe('commitment bands (done check 2)', () => {
+  // Nets whose total incl. 13% VAT lands on the band edges: 88495.58 * 1.13 = 99999.99 (rounded half up)...
+  it.each([
+    // [net, total incl. VAT, roles]
+    ['88495.57', '99999.99', ['accountant', 'finance']],
+    ['90000.00', '101700.00', ['accountant', 'finance', 'management']],
+    ['884955.76', '1000000.01', ['accountant', 'finance', 'management', 'founder']],
+  ])('net %s (total %s) routes %j', async (net, total, expected) => {
+    const c = await committed([net, '999999.00', '999999.00']);
+    await c.commit();
+    const [request] = await requestsOf(c.rfqId);
+    expect((request!.facts as { amountNpr: string }).amountNpr).toBe(total);
+    expect(await stepRoles(request!.id)).toEqual(expected);
+  });
+
+  it('a total of exactly 100,000.00 routes Accountant and Finance only; 100,000.01 adds Management', async () => {
+    // 0% VAT code so the total is the net exactly.
+    const { rows } = await exec(
+      scopeA,
+      sql`INSERT INTO app.tax_codes (tenant_id, code, name, kind, rate_bp, creditable, effective_from)
+          VALUES (${scopeA.tenantId}, ${`Z${randomUUID().slice(0, 6)}`}, 'Zero', 'zero', 0, false, '2020-01-01')
+          RETURNING id`,
+    );
+    const zero = (rows[0] as { id: string }).id;
+    for (const [net, expected] of [
+      ['100000.00', ['accountant', 'finance']],
+      ['100000.01', ['accountant', 'finance', 'management']],
+    ] as const) {
+      const pr = await deptApprovedPr();
+      const v = await vendor('approved');
+      const rfq = await service.createRfq(
+        { purchaseRequestId: pr.id, deadline: '2026-11-20T10:00:00Z', vendorIds: [v] },
+        randomUUID(),
+      );
+      const q = await service.recordQuotation(
+        rfq.id,
+        {
+          vendorId: v,
+          documentId: await doc(),
+          currency: 'NPR',
+          lines: [{ prLineId: pr.lineId, quantity: '1', unitPrice: net, taxCodeId: zero }],
+        },
+        randomUUID(),
+      );
+      await service.recommend(
+        rfq.id,
+        { vendorQuotationId: q.id, rationale: 'Only one', fewerThanThreeReason: 'Sole vendor' },
+        randomUUID(),
+      );
+      await service.submitCommitment(rfq.id, randomUUID());
+      const [request] = await requestsOf(rfq.id);
+      expect(await stepRoles(request!.id)).toEqual(expected);
+    }
+  });
+});
+
+describe('separation of duties (done check 4)', () => {
+  it('the recommender is excluded from the commitment route', async () => {
+    // The recommender (U.proc2) is also the only Accountant: the route has nobody for step 1.
+    roles.accountant = [U.proc2];
+    const r = await rfqWithQuotes(['1000.00', '1000.00', '1000.00']);
+    as(U.proc2, 'procurement');
+    await service.recommend(
+      r.rfqId,
+      { vendorQuotationId: r.quoteIds[0]!, rationale: 'Cheapest' },
+      randomUUID(),
+    );
+    as(U.proc, 'procurement');
+    const e = await httpErrorOf(service.submitCommitment(r.rfqId, randomUUID()));
+    expect(e.getStatus()).toBe(422);
+    expect(codeOf(e)).toBe('NO_ELIGIBLE_APPROVER');
+    expect(await requestsOf(r.rfqId)).toHaveLength(0);
+    // With a second Accountant it routes, and the recommender is on the SoD list.
+    roles.accountant = [U.proc2, U.acct];
+    await service.submitCommitment(r.rfqId, randomUUID());
+    const [request] = await requestsOf(r.rfqId);
+    expect(request!.sodUserIds).toEqual(expect.arrayContaining([U.req, U.proc2, U.proc]));
+  });
+});
+
+describe('Founder as requester (AD8, done check 5)', () => {
+  const big = '1327433.63'; // * 1.13 = 1,500,000.00
+
+  it('with one Management user: 422 NO_ELIGIBLE_APPROVER and no request row', async () => {
+    const pr = await deptApprovedPr({ requester: U.founder });
+    const c = await committed([big, '1400000.00', '1400000.00'], 0, pr);
+    const e = await httpErrorOf(c.commit());
+    expect(e.getStatus()).toBe(422);
+    expect(codeOf(e)).toBe('NO_ELIGIBLE_APPROVER');
+    expect(await requestsOf(c.rfqId)).toHaveLength(0);
+    const [row] = await read((tx) =>
+      tx.select().from(purchaseRequests).where(eq(purchaseRequests.id, pr.id)),
+    );
+    expect(row!.status).toBe('sourcing');
+  });
+
+  it('with two Management users: two distinct Management steps, no Founder step', async () => {
+    roles.management = [U.mgmt, U.mgmt2];
+    const pr = await deptApprovedPr({ requester: U.founder });
+    const c = await committed([big, '1400000.00', '1400000.00'], 0, pr);
+    await c.commit();
+    const [request] = await requestsOf(c.rfqId);
+    expect((request!.facts as { amountNpr: string }).amountNpr).toBe('1500000.00');
+    expect(await stepRoles(request!.id)).toEqual([
+      'accountant',
+      'finance',
+      'management',
+      'management',
+    ]);
+  });
+});
+
+describe('approval creates the draft PO', () => {
+  it('writes a draft PO with the approved total, its NPR snapshot and the band', async () => {
+    const c = await committed(['90000.00', '95000.00', '99000.00']);
+    await c.commit();
+    const [request] = await requestsOf(c.rfqId);
+    await approve(U.acct, 'accountant', request!.id);
+    await approve(U.fin, 'finance', request!.id);
+    await approve(U.mgmt, 'management', request!.id);
+    const pos = await read((tx) =>
+      tx.select().from(purchaseOrders).where(eq(purchaseOrders.purchaseRequestId, c.prId)),
+    );
+    expect(pos).toHaveLength(1);
+    expect(pos[0]).toMatchObject({
+      status: 'draft',
+      approvedTotal: '101700.00',
+      approvedTotalNpr: '101700.00',
+      approvedBand: 'management',
+      vendorQuotationId: c.quoteIds[0],
+      rfqId: c.rfqId,
+    });
+    const [pr] = await read((tx) =>
+      tx.select().from(purchaseRequests).where(eq(purchaseRequests.id, c.prId)),
+    );
+    expect(pr!.status).toBe('approved');
+  });
+});
