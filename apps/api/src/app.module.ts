@@ -12,6 +12,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { QuotationsModule } from './modules/quotations/quotations.module';
+import { ReceivablesModule } from './modules/receivables/receivables.module';
 import { SalesOrdersModule } from './modules/sales-orders/sales-orders.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
@@ -63,6 +64,7 @@ import { UsersModule } from './platform/users/users.module';
     LedgerModule,
     SalesOrdersModule,
     PaymentsModule,
+    ReceivablesModule,
     InvoicesModule,
     CustomersModule,
     OpportunitiesModule,
