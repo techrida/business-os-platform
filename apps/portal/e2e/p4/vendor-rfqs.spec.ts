@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { minimalPdf } from '../../../workspace/e2e/helpers/memo-flow';
+
 /**
  * Vendor portal requests for quotation, end to end: the list, one request, and a quotation sent
  * for it. Needs a running portal and API with seed data and a signed-in vendor user's storage
@@ -24,7 +26,7 @@ if (storageState) test.use({ storageState, baseURL: base });
 const PDF = {
   name: 'quotation.pdf',
   mimeType: 'application/pdf',
-  buffer: Buffer.from('%PDF-1.7\n%%EOF'),
+  buffer: minimalPdf('P4 portal quotation'),
 };
 const stamp = () => Date.now().toString(36).toUpperCase();
 
