@@ -1,13 +1,14 @@
-// Unit tests of the reference routes without a database: both are bare-array GETs behind quotation.read, the
-// route sweep finds no unmarked route, and the pure mapping from a tax_codes row to TaxCodeSchema is exact
-// (rate is percent as text, rateBp the basis points, the day is Kathmandu's, not UTC's).
+// Unit tests of the reference routes without a database: both are bare-array GETs (payment-terms behind
+// quotation.read, tax-codes behind a service any-of check), the route sweep finds no unmarked route, and the pure
+// mapping from a tax_codes row to TaxCodeSchema is exact (rate is percent as text, rateBp the basis points, the day
+// is Kathmandu's, not UTC's).
 import 'reflect-metadata';
 
 import { PaymentTermSchema, TaxCodeSchema } from '@bos/contracts';
 import { Test } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CAN_KEY } from '../../../platform/authz/decorators';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../../platform/authz/decorators';
 import { findUnmarkedRoutes } from '../../../platform/authz/route-policy.check';
 import { ReferenceController } from './reference.controller';
 import { ReferenceService } from './reference.service';
@@ -28,14 +29,17 @@ async function setup() {
 }
 
 describe('ReferenceController', () => {
-  it('guards both routes with quotation.read and leaves none unmarked', async () => {
+  it('guards payment-terms with quotation.read, leaves tax-codes to the service any-of check, and leaves none unmarked', async () => {
     const { moduleRef } = await setup();
     expect(findUnmarkedRoutes(moduleRef)).toEqual([]);
-    for (const name of ['taxCodes', 'paymentTerms'] as const) {
-      expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype[name])).toBe(
-        'quotation.read',
-      );
-    }
+    expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.paymentTerms)).toBe(
+      'quotation.read',
+    );
+    // Three permissions may read the tax codes and one @Can names one, so the grant is checked in ReferenceService.
+    expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.taxCodes)).toBeUndefined();
+    expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, ReferenceController.prototype.taxCodes)).toBe(
+      true,
+    );
     await moduleRef.close();
   });
 
