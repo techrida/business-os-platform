@@ -1,25 +1,33 @@
 // InvoiceIssueService: THE issue entry point of an invoice (P3 units U10 and U6). The route is
 // `POST /v1/invoices/:id/issue` and needs `invoice.issue`. It locks the invoice, then switches on its kind:
 // - `proforma` (U10, plan A12): draft -> issued with a PI number, no approval, no open item, no posting event;
-// - `tax_invoice`, `credit_note`, `debit_note`: NOT_APPROVED for now. **U6 extends the `switch (invoice.kind)` in
-//   `issueInTx` below**: add a case that locks sales order -> schedule line first (before the invoice lock, which this
-//   method takes first for a proforma, a kind with no order lock to take), requires status `approved`, then does the
-//   plan's steps (FX snapshot, BS date, snapshots, hash, number as the LAST lock, open item and event through
-//   LedgerService, schedule line -> invoiced, outbox render). `issueSnapshot` and `contentHashOf` below are reusable.
+// - `tax_invoice`, `debit_note` (U6, plan A5): approved -> issued after Accountant -> Finance approval. Locks sales
+//   order -> schedule line -> invoice, then FX snapshot (409 fx_rate_stale), BS date, snapshots, hash, the INV / DN
+//   number as the LAST lock, the receivable debit and its posting event through LedgerService, and schedule line ->
+//   invoiced. Anything not approved answers NOT_APPROVED;
+// - `credit_note`: 409 not_implemented; its issue (a receivable credit) belongs to unit U12.
 // Serves the NFRs "an issued invoice never changes" (one UPDATE sets every issue field at once: invoices_guard freezes
 // the row afterwards) and "no gaps in a numbered series" (NumberingService.issue is the last row lock).
 import { AddressSchema, type IssueInvoiceBody, type IssueInvoiceResult } from '@bos/contracts';
 import {
+  billingScheduleLines,
   customers,
   invoiceLines,
   invoices,
   invoiceTaxSummary,
   organizations,
+  salesOrders,
   scoped,
 } from '@bos/db';
 import { formatBs } from '@bos/locale';
-import { Inject, Injectable, Optional, UnprocessableEntityException } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Optional,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -46,6 +54,16 @@ import {
 
 /** The numbering series of a proforma: PI-2083/84-00001 (plan A15). */
 export const PROFORMA_SERIES = 'PI';
+/** The numbering series of a tax invoice and a debit note: INV-2083/84-00001, DN-2083/84-00001 (plan A15). */
+export const TAX_INVOICE_SERIES = 'INV';
+export const DEBIT_NOTE_SERIES = 'DN';
+
+/** `YYYY-MM-DD` plus `days` calendar days (UTC arithmetic on a date with no time, so no zone shift). */
+export function addDays(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 type InvoiceRow = typeof invoices.$inferSelect;
 
@@ -119,14 +137,29 @@ export class InvoiceIssueService {
     body: IssueInvoiceBody,
     now: Date,
   ): Promise<IssueInvoiceResult> {
-    const [seen] = await tx
-      .select({ id: invoices.id })
+    // Read the head without a lock to learn which order and schedule line to lock, then take every lock in one call
+    // in the plan's order (sales order -> schedule line -> invoice), the same order as discard, so the two never
+    // deadlock. A proforma has neither and locks the invoice alone.
+    const [head] = await tx
+      .select({ salesOrderId: invoices.salesOrderId, scheduleLineId: invoices.scheduleLineId })
       .from(invoices)
       .where(scoped(scope).where(invoices, eq(invoices.id, id)))
       .limit(1);
-    if (seen === undefined) throw invoiceNotFound();
+    if (head === undefined) throw invoiceNotFound();
     await this.ledger.lockForMoneyCommand(tx, scope, [
-      { rank: 'invoice', ids: [id], table: invoices },
+      ...(head.salesOrderId === null
+        ? []
+        : [{ rank: 'sales_order' as const, ids: [head.salesOrderId], table: salesOrders }]),
+      ...(head.scheduleLineId === null
+        ? []
+        : [
+            {
+              rank: 'schedule_line' as const,
+              ids: [head.scheduleLineId],
+              table: billingScheduleLines,
+            },
+          ]),
+      { rank: 'invoice' as const, ids: [id], table: invoices },
     ]);
     const [invoice] = await tx
       .select()
@@ -138,11 +171,160 @@ export class InvoiceIssueService {
       case 'proforma':
         return this.issueProforma(tx, scope, actor, invoice, body, now);
       case 'tax_invoice':
-      case 'credit_note':
       case 'debit_note':
-        // U6: replace this refusal with the approved-invoice issue (see the file header).
-        throw notApproved();
+        return this.issueApproved(tx, scope, actor, invoice, body, now);
+      case 'credit_note':
+        // A credit note reverses part of an invoice: its issue (a receivable credit) belongs to unit U12.
+        throw new ConflictException({
+          code: 'not_implemented',
+          message: 'Issuing a credit note is not available yet',
+        });
     }
+  }
+
+  /**
+   * A tax invoice or debit note that Accountant -> Finance approved (plan A5): approved -> issued in one transaction.
+   * The FX snapshot comes before the number so a stale rate (409 fx_rate_stale) consumes nothing. The number is the
+   * last row lock: the open item, the posting event and the schedule line follow it in the same transaction (inserts,
+   * and an UPDATE of the schedule line this transaction already holds, so no new row lock is waited on), and a
+   * failure after numbering rolls the number back with everything else.
+   */
+  private async issueApproved(
+    tx: DbTransaction,
+    scope: TxScope,
+    actor: Actor,
+    invoice: InvoiceRow,
+    body: IssueInvoiceBody,
+    now: Date,
+  ): Promise<IssueInvoiceResult> {
+    // Replay, second caller or double click: the number it has, before looking at the version the caller held.
+    if (invoice.status === 'issued' && invoice.number !== null) {
+      return { kind: 'already_issued', invoiceId: invoice.id, number: invoice.number };
+    }
+    if (invoice.status !== 'approved') throw notApproved();
+    if (invoice.version !== body.expectedVersion) {
+      throw conflict('This invoice was changed by someone else; reload it and try again');
+    }
+    if (invoice.customerPartyId === null) throw new Error('the invoice has no customer');
+    const issueDate = kathmanduDay(now);
+    const dueDate = await this.dueDateOf(tx, scope, invoice, issueDate);
+    const snapshot = await this.issueSnapshot(tx, scope, invoice, now);
+    // The series is the last row lock of the transaction (plan section 2).
+    const sourceType = invoice.kind === 'debit_note' ? 'debit_note' : 'tax_invoice';
+    const series = sourceType === 'debit_note' ? DEBIT_NOTE_SERIES : TAX_INVOICE_SERIES;
+    const { number, seq, fiscalYear } = await this.numbering.issue(tx, series, now);
+    const contentHash = await this.contentHashOf(
+      tx,
+      scope,
+      invoice,
+      { number, issueDate },
+      snapshot,
+    );
+    // Conditional approved -> issued: updateVersioned matches the version read under the lock, and this one UPDATE
+    // sets every issue field (invoices_issued_check ties the status to the number).
+    await updateVersioned(tx, invoices, invoice.id, body.expectedVersion, {
+      status: 'issued',
+      number,
+      seq,
+      fiscalYear,
+      issueDate,
+      issueDateBs: formatBs(now, 'YYYY-MM-DD'),
+      dueDate,
+      issuedAt: now,
+      issuedBy: actor.kind === 'user' ? actor.id : null,
+      ...snapshot,
+      contentHash,
+    });
+    // What the customer owes: a receivable debit (plan A1), through the ledger only.
+    const { item } = await this.ledger.openItem(tx, scope, actor, {
+      side: 'receivable',
+      direction: 'debit',
+      partyId: invoice.customerPartyId,
+      sourceType,
+      sourceId: invoice.id,
+      currency: invoice.currency,
+      amount: invoice.total,
+      amountNpr: snapshot.amountNpr,
+      fxRate: snapshot.fxRate,
+      fxSource: snapshot.fxSource,
+      fxDate: snapshot.fxDate,
+      documentDate: issueDate,
+      dueDate,
+    });
+    await this.ledger.recordEvent(tx, scope, actor, {
+      sourceType,
+      sourceId: invoice.id,
+      event: invoice.kind === 'debit_note' ? 'debit_note_issued' : 'invoice_issued',
+      payload: {
+        openItemId: item.id,
+        number,
+        currency: invoice.currency,
+        total: invoice.total,
+        taxAmount: invoice.taxAmount,
+        amountNpr: snapshot.amountNpr,
+        fxRate: snapshot.fxRate,
+        issueDate,
+        dueDate,
+      },
+    });
+    if (invoice.scheduleLineId !== null) {
+      // The line was locked above; billing_schedule_lines_invoice_check keeps invoice_id while invoiced.
+      const moved = await tx
+        .update(billingScheduleLines)
+        .set({
+          status: 'invoiced',
+          version: sql`${billingScheduleLines.version} + 1`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          scoped(scope).where(
+            billingScheduleLines,
+            and(
+              eq(billingScheduleLines.id, invoice.scheduleLineId),
+              eq(billingScheduleLines.invoiceId, invoice.id),
+              eq(billingScheduleLines.status, 'drafted'),
+            ),
+          ),
+        )
+        .returning({ id: billingScheduleLines.id });
+      if (moved.length === 0) throw conflict('The schedule line of this invoice is not drafted');
+    }
+    // No render row is written here: app.outbox carries email only and invoices have no render state yet. The PDF
+    // job (U11) finds issued invoices without a rendered document, as the quotation render sweeper does.
+    await this.audit.record(tx, {
+      action: invoice.kind === 'debit_note' ? 'invoice.debit_note_issued' : 'invoice.issued',
+      entityType: 'invoices',
+      entityId: invoice.id,
+      before: { status: 'approved', version: invoice.version },
+      after: { status: 'issued', number, issueDate, dueDate, total: invoice.total },
+    });
+    return { kind: 'issued', invoiceId: invoice.id, number };
+  }
+
+  /**
+   * The due date at issue: issue date + the order's credit days when the invoice has a sales order; otherwise the
+   * drafted due date (409 when it is already past), or the issue date when none was drafted (due on receipt).
+   */
+  private async dueDateOf(
+    tx: DbTransaction,
+    scope: TxScope,
+    invoice: InvoiceRow,
+    issueDate: string,
+  ): Promise<string> {
+    if (invoice.salesOrderId !== null) {
+      const [order] = await tx
+        .select({ creditDays: salesOrders.creditDays })
+        .from(salesOrders)
+        .where(scoped(scope).where(salesOrders, eq(salesOrders.id, invoice.salesOrderId)))
+        .limit(1);
+      if (order === undefined) throw new Error('the invoice names a sales order that is missing');
+      return addDays(issueDate, order.creditDays);
+    }
+    if (invoice.dueDate === null) return issueDate;
+    if (invoice.dueDate < issueDate) {
+      throw conflict('The due date is before the issue date; correct the due date and issue again');
+    }
+    return invoice.dueDate;
   }
 
   private async issueProforma(
