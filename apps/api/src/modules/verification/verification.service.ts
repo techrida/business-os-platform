@@ -1,4 +1,4 @@
-// VerificationService: the KYB (know your business) case of a customer. Serves the NFRs:
+// VerificationService: the KYB (know your business) case of a customer or a vendor. Serves the NFRs:
 // - "no approval without evidence": an approval needs every required checklist item backed by a document
 //   that the virus scan passed (DocumentsService.allClean plus a per-item check);
 // - "separation of duties": whoever submitted the case cannot decide it;
@@ -6,8 +6,10 @@
 //   updateVersioned with the version the caller saw; a decision also honours the Idempotency-Key;
 // - "every change is audited": each write runs in withTx (the audit trigger records the row change) and adds a
 //   domain event through AuditService.
-// Cases are tenant-level (ADR 0027): one per customer party, visible from every legal entity of the tenant, so
-// the lookups filter on the tenant alone. Another tenant's case is not found, never forbidden.
+// Cases are tenant-level (ADR 0027): one per party, visible from every legal entity of the tenant, so the
+// lookups filter on the tenant alone. Another tenant's case is not found, never forbidden.
+// The party is reached through a PartyOwnerPort chosen by the case's party kind (party-owner.port.ts), and the
+// checklist is chosen by the kind too (verification.rules.ts).
 // The submit writes submitted_by_user_id and submitted_at; only a decision writes reviewer_user_id and decided_at.
 import {
   ChecklistItemSchema,
@@ -15,8 +17,9 @@ import {
   type ChecklistItem,
   type Permission,
   type VerificationCaseDto,
+  type VerificationPartyKind,
 } from '@bos/contracts';
-import { customers, verificationCases } from '@bos/db';
+import { parties, verificationCases } from '@bos/db';
 import {
   ConflictException,
   ForbiddenException,
@@ -26,7 +29,7 @@ import {
   UnprocessableEntityException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, isNull, type SQL } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -36,15 +39,19 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
+import { CustomerPartyOwner } from './customer-party-owner';
+import { PartyOwnerRegistry, type PartyOwnerPort, type PartyQuery } from './party-owner.port';
 import { VerificationCaller } from './verification.caller';
 import {
-  DEFAULT_CHECKLIST,
   acceptProvided,
   attachDocument,
+  checklistKeysFor,
+  defaultChecklistFor,
   documentProblems,
   isEditable,
   missingRequired,
   reopenChecklist,
+  requiresExpiry,
 } from './verification.rules';
 import {
   VERIFICATION_OWNER_TYPE,
@@ -54,16 +61,19 @@ import {
 } from './verification.types';
 
 type CaseRow = typeof verificationCases.$inferSelect;
-type Q = Db | DbTransaction;
+type Q = PartyQuery;
 
-/** A case with the owner of its customer, which is what the `own` scope of verification.read means. */
+/** A case with the owner of its party (what the `own` scope of verification.read means) and the party's port. */
 interface Loaded {
   row: CaseRow;
-  customerOwnerUserId: string | null;
+  partyOwnerUserId: string | null;
+  port: PartyOwnerPort;
 }
 
 /** A bound so a list can never grow without limit. */
 const LIST_LIMIT = 500;
+
+const CUSTOMER_LABEL = 'Customer';
 
 const notFound = (what: string) =>
   new NotFoundException({ code: 'not_found', message: `${what} not found` });
@@ -96,8 +106,8 @@ function caseRef(scope: TxScope, l: Loaded): ResourceRef {
   return {
     tenantId: l.row.tenantId,
     organizationId: scope.organizationId,
-    ownerUserId: l.customerOwnerUserId,
-    customerPartyId: l.row.partyId,
+    ownerUserId: l.partyOwnerUserId,
+    ...l.port.counterparty(l.row.partyId),
     sodUserIds: [],
   };
 }
@@ -114,6 +124,9 @@ function hideOutOfScope(error: unknown, what: string): never {
 
 @Injectable()
 export class VerificationService implements OnModuleInit {
+  /** The customer adapter is built in; the vendor adapter is registered by P4 V1 (`registerPartyOwner`). */
+  private readonly partyOwners = new PartyOwnerRegistry([new CustomerPartyOwner()]);
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly documents: DocumentsService,
@@ -125,6 +138,14 @@ export class VerificationService implements OnModuleInit {
   /** Overridable in tests. */
   protected now(): Date {
     return new Date();
+  }
+
+  /**
+   * The registration point of a party kind (P4 V1 registers the vendor adapter here). Until a kind is registered,
+   * its parties are "not found" for the verification routes. Call it once per kind, before requests are served.
+   */
+  registerPartyOwner(port: PartyOwnerPort): void {
+    this.partyOwners.register(port);
   }
 
   /** Registers how the documents of a case are authorized. Runs once, when the module starts. */
@@ -149,16 +170,9 @@ export class VerificationService implements OnModuleInit {
 
   async list(query: ListVerificationCasesQuery): Promise<VerificationCaseDto[]> {
     const { scope } = this.caller.current();
-    const rows = await this.db
-      .select({ row: verificationCases, customerOwnerUserId: customers.ownerUserId })
+    const cases = await this.db
+      .select()
       .from(verificationCases)
-      .innerJoin(
-        customers,
-        and(
-          eq(customers.tenantId, verificationCases.tenantId),
-          eq(customers.id, verificationCases.partyId),
-        ),
-      )
       .where(
         and(
           eq(verificationCases.tenantId, scope.tenantId),
@@ -168,6 +182,7 @@ export class VerificationService implements OnModuleInit {
       )
       .orderBy(desc(verificationCases.createdAt), desc(verificationCases.id))
       .limit(LIST_LIMIT);
+    const rows = await this.withOwners(this.db, scope.tenantId, cases);
     // The same decision as GET /:id for each row, so a list never shows what an open would refuse.
     return rows.filter((l) => this.mayRead(scope, l)).map((l) => toVerificationCaseDto(l.row));
   }
@@ -183,7 +198,7 @@ export class VerificationService implements OnModuleInit {
   // ------------------------------------------------------------------------------------------------ create
 
   /**
-   * One case per customer. A new case is created (created: true). An existing case is returned as it is,
+   * One case per party. A new case is created (created: true). An existing case is returned as it is,
    * except an expired one, which is reopened in place: back to draft, items whose document lapsed emptied.
    */
   async create(
@@ -192,28 +207,29 @@ export class VerificationService implements OnModuleInit {
     const { scope, actor } = this.caller.current();
     const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
-      const [customer] = await tx
-        .select({ id: customers.id, ownerUserId: customers.ownerUserId })
-        .from(customers)
-        .where(
-          and(
-            eq(customers.tenantId, scope.tenantId),
-            eq(customers.id, body.partyId),
-            isNull(customers.mergedIntoId),
-          ),
-        );
-      // A party of another tenant, a vendor and a merged-away customer are all "not a customer here".
-      if (customer === undefined) throw notFound('Customer');
+      // The party's kind picks the adapter. A party of another tenant, a kind without an adapter (a vendor, until
+      // V1 registers one) and a merged-away customer are all "not a customer here".
+      const [party] = await tx
+        .select({ kind: parties.kind })
+        .from(parties)
+        .where(and(eq(parties.tenantId, scope.tenantId), eq(parties.id, body.partyId)));
+      const port = party === undefined ? undefined : this.partyOwners.find(party.kind);
+      const found =
+        port === undefined ? undefined : await port.findLive(tx, scope.tenantId, body.partyId);
+      if (port === undefined || found === undefined) {
+        throw notFound(port?.label ?? CUSTOMER_LABEL);
+      }
+      const kind = port.kind;
       try {
-        this.authz.assert('customer.write', {
+        this.authz.assert(port.writePermission, {
           tenantId: scope.tenantId,
           organizationId: scope.organizationId,
-          ownerUserId: customer.ownerUserId,
-          customerPartyId: customer.id,
+          ownerUserId: found.ownerUserId,
+          ...port.counterparty(found.id),
           sodUserIds: [],
         });
       } catch (error) {
-        hideOutOfScope(error, 'Customer');
+        hideOutOfScope(error, port.label);
       }
 
       const inserted = await tx
@@ -221,8 +237,9 @@ export class VerificationService implements OnModuleInit {
         .values({
           tenantId: scope.tenantId,
           partyId: body.partyId,
+          partyKind: kind,
           status: 'draft',
-          checklist: [...DEFAULT_CHECKLIST],
+          checklist: [...defaultChecklistFor(kind)],
           createdAt: now,
           updatedAt: now,
         })
@@ -287,11 +304,24 @@ export class VerificationService implements OnModuleInit {
     const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
-      this.assertVisible('customer.write', scope, l);
+      this.assertVisible(l.port.writePermission, scope, l);
       if (!isEditable(l.row.status)) {
         throw conflict(`A case in status ${l.row.status} cannot be changed`);
       }
       if (l.row.version !== body.expectedVersion) throw this.stale();
+      // The key must be on this kind's checklist, and a key with a validity period needs its expiry.
+      if (!checklistKeysFor(l.row.partyKind).includes(body.key)) {
+        throw new UnprocessableEntityException({
+          code: 'unprocessable',
+          message: `${body.key} is not on the checklist of a ${l.row.partyKind} case`,
+        });
+      }
+      if (requiresExpiry(body.key) && body.expiresOn === undefined) {
+        throw new UnprocessableEntityException({
+          code: 'unprocessable',
+          message: `${body.key} needs expiresOn`,
+        });
+      }
       const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
       if (!versions.some((v) => v.documentId === body.documentId)) {
         throw new UnprocessableEntityException({
@@ -332,7 +362,7 @@ export class VerificationService implements OnModuleInit {
     const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
-      this.assertVisible('customer.write', scope, l);
+      this.assertVisible(l.port.writePermission, scope, l);
       if (l.row.status !== 'draft') {
         throw conflict(`A case in status ${l.row.status} cannot be submitted`);
       }
@@ -458,7 +488,7 @@ export class VerificationService implements OnModuleInit {
     }
   }
 
-  /** The case of this tenant, with its customer's owner. `lock` keeps the row until the transaction ends. */
+  /** The case of this tenant, with its party's owner. `lock` keeps the row until the transaction ends. */
   private async load(
     q: Q,
     tenantId: string,
@@ -466,33 +496,33 @@ export class VerificationService implements OnModuleInit {
     lock?: 'update' | 'share',
   ): Promise<Loaded | undefined> {
     const key = and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.id, id));
-    // Lock the case row on its own: drizzle writes `FOR UPDATE OF "app"."verification_cases"` when asked to lock
-    // one table of a join, and Postgres rejects the schema-qualified name. The joined read below then sees the
-    // row as the lock left it.
-    if (lock !== undefined) {
-      const [locked] = await q
-        .select({ id: verificationCases.id })
-        .from(verificationCases)
-        .where(key)
-        .for(lock);
-      if (locked === undefined) return undefined;
-    }
-    return this.read(q, key);
+    // The case row is read (and locked) on its own table, then its party's owner is read through the port.
+    const read = q.select().from(verificationCases).where(key);
+    const [row] = await (lock === undefined ? read : read.for(lock));
+    if (row === undefined) return undefined;
+    return (await this.withOwners(q, tenantId, [row]))[0];
   }
 
-  private async read(q: Q, key: SQL | undefined): Promise<Loaded | undefined> {
-    const [found] = await q
-      .select({ row: verificationCases, customerOwnerUserId: customers.ownerUserId })
-      .from(verificationCases)
-      .innerJoin(
-        customers,
-        and(
-          eq(customers.tenantId, verificationCases.tenantId),
-          eq(customers.id, verificationCases.partyId),
-        ),
-      )
-      .where(key);
-    return found;
+  /**
+   * The cases with their party's owner, one query per party kind. A case whose kind has no adapter, or whose party
+   * the adapter does not find, is left out: the same answer the customers inner join gave for a missing customer.
+   */
+  private async withOwners(q: Q, tenantId: string, rows: readonly CaseRow[]): Promise<Loaded[]> {
+    const owners = new Map<VerificationPartyKind, ReadonlyMap<string, string | null>>();
+    for (const kind of new Set(rows.map((r) => r.partyKind))) {
+      const port = this.partyOwners.find(kind);
+      if (port === undefined) continue;
+      const ids = rows.filter((r) => r.partyKind === kind).map((r) => r.partyId);
+      owners.set(kind, await port.ownersOf(q, tenantId, ids));
+    }
+    const loaded: Loaded[] = [];
+    for (const row of rows) {
+      const port = this.partyOwners.find(row.partyKind);
+      const found = owners.get(row.partyKind);
+      if (port === undefined || found === undefined || !found.has(row.partyId)) continue;
+      loaded.push({ row, partyOwnerUserId: found.get(row.partyId) ?? null, port });
+    }
+    return loaded;
   }
 
   private async lock(tx: DbTransaction, tenantId: string, id: string): Promise<Loaded> {
