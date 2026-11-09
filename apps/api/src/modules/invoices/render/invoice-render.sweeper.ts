@@ -14,9 +14,10 @@
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per invoice by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
 // stores a file; the other answers `skipped`. Failure backoff has no durable home (no column, and the log is for
-// prints), so a failed invoice is remembered in this process for FAILED_RETRY_MS and left out of the candidate query;
-// a restart forgets it and retries at once. A document that never got its bytes (a crash between the two steps) is
-// soft-removed after ORPHAN_AFTER_MS, which makes its invoice a candidate again.
+// prints), so a failed invoice is remembered in this process for FAILED_RETRY_MS and left out of the candidate query.
+// A rotating cursor keeps expired failures from filling every batch; a restart forgets both backoff and cursor. A
+// document that never got its bytes (a crash between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes
+// its invoice a candidate again.
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
@@ -92,8 +93,8 @@ export interface OrphanDocument {
 
 /** The sweeper's database access, as a port. `tx` is the transaction `INVOICE_RENDER_TX` opened for the invoice's scope. */
 export interface RenderStore {
-  /** Issued invoices of a renderable kind with no live document, oldest first, except `exclude`. */
-  candidates(limit: number, exclude: readonly string[]): Promise<RenderCandidate[]>;
+  /** Issued invoices with no live document, oldest first after `after`, wrapping when exhausted, except `exclude`. */
+  candidates(limit: number, exclude: readonly string[], after?: string): Promise<RenderCandidate[]>;
   load(tx: DbTransaction, c: RenderCandidate): Promise<RenderSource | undefined>;
   /**
    * Takes this invoice's render lock for the rest of `tx` and answers whether it already has a live document. The lock
@@ -146,6 +147,8 @@ export class InvoiceRenderSweeper {
   private readonly logger = new Logger(InvoiceRenderSweeper.name);
   /** invoice id -> when it last failed. In memory on purpose: see the file header. */
   private readonly failedAt = new Map<string, number>();
+  /** The last attempted row's immutable position; one cursor rather than an unbounded attempt history. */
+  private after: string | undefined;
 
   constructor(
     @Inject(INVOICE_RENDER_STORE) private readonly store: RenderStore,
@@ -164,10 +167,11 @@ export class InvoiceRenderSweeper {
       orphansRemoved: 0,
       failures: [],
     };
-    const candidates = await this.store.candidates(BATCH, this.backedOff());
+    const candidates = await this.store.candidates(BATCH, this.backedOff(), this.after);
     // One at a time: Chromium is the scarce resource, and an invoice's failure must not touch the next one.
     for (const c of candidates) {
       const { outcome, kind } = await this.attempt(c);
+      this.after = c.invoiceId;
       result[outcome] += 1;
       if (kind !== undefined) result.failures.push({ invoiceId: c.invoiceId, kind });
     }
@@ -258,7 +262,7 @@ export class InvoiceRenderSweeper {
 /** The store on the real tables. Every query names the tenant and the acting entity. */
 export function drizzleInvoiceRenderStore(db: Db): RenderStore {
   return {
-    async candidates(limit, exclude) {
+    async candidates(limit, exclude, after) {
       const hasLiveDocument = db
         .select({ one: sql`1` })
         .from(documents)
@@ -271,23 +275,32 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
             isNull(documents.removedAt),
           ),
         );
-      return db
-        .select({
-          tenantId: invoices.tenantId,
-          organizationId: invoices.organizationId,
-          invoiceId: invoices.id,
-        })
-        .from(invoices)
-        .where(
-          and(
-            eq(invoices.status, 'issued'),
-            inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
-            notExists(hasLiveDocument),
-            exclude.length === 0 ? undefined : notInArray(invoices.id, [...exclude]),
-          ),
-        )
-        .orderBy(asc(invoices.issuedAt))
-        .limit(limit);
+      const page = (cursor?: string) =>
+        db
+          .select({
+            tenantId: invoices.tenantId,
+            organizationId: invoices.organizationId,
+            invoiceId: invoices.id,
+          })
+          .from(invoices)
+          .where(
+            and(
+              eq(invoices.status, 'issued'),
+              inArray(invoices.kind, [...RENDERABLE_INVOICE_KINDS]),
+              notExists(hasLiveDocument),
+              cursor === undefined
+                ? undefined
+                : sql`(${invoices.issuedAt}, ${invoices.id}) >
+                    (SELECT issued_at, id FROM ${invoices} WHERE id = ${cursor})`,
+              exclude.length === 0 ? undefined : notInArray(invoices.id, [...exclude]),
+            ),
+          )
+          .orderBy(asc(invoices.issuedAt), asc(invoices.id))
+          .limit(limit);
+      // Read the cursor row independently of document eligibility. A rendered or removed cursor still advances;
+      // a missing cursor yields an empty page and safely restarts from the beginning.
+      const next = await page(after);
+      return next.length > 0 || after === undefined ? next : page();
     },
 
     async load(tx, c) {
