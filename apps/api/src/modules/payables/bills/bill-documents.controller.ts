@@ -24,6 +24,15 @@ export class BillDocumentsController {
     return this.documents.create(body);
   }
 
+  @Post(':docId/versions')
+  @Can('payables.bill.enter')
+  createVersion(
+    @Param('docId') docId: string,
+    @Body() body: unknown,
+  ): Promise<CreatedBillDocument> {
+    return this.documents.createVersion(docId, body);
+  }
+
   /** Send raw bytes with the file's own Content-Type so body parsers leave the stream intact. */
   @Put(':docId/versions/:verId/content')
   @Can('payables.bill.enter')
