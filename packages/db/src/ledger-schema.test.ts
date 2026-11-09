@@ -225,14 +225,17 @@ describe('0019_open_items and src/schema/ledger.ts', () => {
     );
   });
 
-  it.each(APPEND_ONLY)('%s: append-only (raise trigger, no UPDATE or DELETE for bos_app)', (name) => {
-    expect(SQL_TEXT).toContain(
-      `CREATE TRIGGER "${name}_append_only" BEFORE UPDATE OR DELETE ON "app"."${name}"`,
-    );
-    expect(SQL_TEXT).toContain(`REVOKE UPDATE, DELETE ON "app"."${name}" FROM "bos_app";`);
-    const columns = getTableConfig(DRIZZLE[name] as PgTable).columns.map((c) => c.name);
-    expect(columns.filter((c) => c === 'updated_at' || c === 'version')).toEqual([]);
-  });
+  it.each(APPEND_ONLY)(
+    '%s: append-only (raise trigger, no UPDATE or DELETE for bos_app)',
+    (name) => {
+      expect(SQL_TEXT).toContain(
+        `CREATE TRIGGER "${name}_append_only" BEFORE UPDATE OR DELETE ON "app"."${name}"`,
+      );
+      expect(SQL_TEXT).toContain(`REVOKE UPDATE, DELETE ON "app"."${name}" FROM "bos_app";`);
+      const columns = getTableConfig(DRIZZLE[name] as PgTable).columns.map((c) => c.name);
+      expect(columns.filter((c) => c === 'updated_at' || c === 'version')).toEqual([]);
+    },
+  );
 
   it('checks the allocation cap at commit, not per statement', () => {
     expect(SQL_TEXT).toMatch(
