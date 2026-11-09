@@ -2,7 +2,7 @@
 // issued invoice), provides InvoiceDraftingService and InvoiceIssueService and serves `v1/invoices`. Imports
 // DocumentsModule (the owner registry), SettingsModule (MoneyService, NumberingService, SettingsService), AuditModule
 // LedgerModule (lockForMoneyCommand) and ApprovalsModule (U6: submit, and the approval subjects registered here); the
-// database is global. U12 adds the notes.
+// database is global. U12 part B adds credit- and debit-note drafting (NotesController on `v1`).
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 
 import { AuditModule } from '../../platform/audit/audit.module';
@@ -23,11 +23,19 @@ import { InvoiceIssueService } from './invoice-issue.service';
 import { drizzleInvoiceHeadLoader, InvoiceOwnerPolicy } from './invoice-owner.policy';
 import { InvoiceCaller } from './invoice-support';
 import { InvoicesController } from './invoices.controller';
+import { NoteDraftingService } from './notes/note-drafting.service';
+import { NotesController } from './notes/notes.controller';
 
 @Module({
   imports: [ApprovalsModule, AuditModule, DocumentsModule, LedgerModule, SettingsModule],
-  controllers: [InvoicesController],
-  providers: [InvoiceCaller, InvoiceDraftingService, InvoiceIssueService, InvoiceApprovalService],
+  controllers: [InvoicesController, NotesController],
+  providers: [
+    InvoiceCaller,
+    InvoiceDraftingService,
+    InvoiceIssueService,
+    InvoiceApprovalService,
+    NoteDraftingService,
+  ],
   exports: [InvoiceDraftingService, InvoiceIssueService, InvoiceApprovalService],
 })
 export class InvoicesModule implements OnModuleInit {
