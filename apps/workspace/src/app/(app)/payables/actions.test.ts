@@ -1,0 +1,228 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+const session = vi.hoisted(() => ({ roles: ['accountant'] as string[] }));
+vi.mock('@/lib/bff', () => ({
+  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+}));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+}));
+
+const api = vi.hoisted(() => ({
+  matchBill: vi.fn(),
+  submitBill: vi.fn(),
+  voidBill: vi.fn(),
+  convertBillSubmission: vi.fn(),
+  rejectBillSubmission: vi.fn(),
+}));
+vi.mock('@/lib/api-payables', () => api);
+
+const {
+  convertSubmissionAction,
+  matchBillAction,
+  rejectSubmissionAction,
+  submitBillAction,
+  voidBillAction,
+} = await import('./actions');
+
+const BILL = '11111111-1111-4111-8111-111111111111';
+const SUB = '22222222-2222-4222-8222-222222222222';
+const ACCOUNT = '33333333-3333-4333-8333-333333333333';
+const TAX = '44444444-4444-4444-8444-444444444444';
+const POLINE = '55555555-5555-4555-8555-555555555555';
+const KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const prev = { key: KEY };
+
+const apiError = (status: number, code: string) =>
+  new ApiError(status, 'x', {
+    error: { code, message: 'internal wording', correlationId: 'corr-12345678' },
+  });
+
+function form(fields: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+}
+
+beforeEach(() => {
+  session.roles = ['accountant'];
+  for (const fn of Object.values(api)) fn.mockReset();
+});
+
+describe.each([
+  ['match', matchBillAction, api.matchBill],
+  ['submit', submitBillAction, api.submitBill],
+] as const)('%s a bill', (_name, action, call) => {
+  it('sends the form key and says what happened, with a fresh key for the next decision', async () => {
+    call.mockResolvedValue({ id: BILL, matchStatus: 'matched' });
+    const out = await action(prev, form({ billId: BILL, idempotencyKey: KEY }));
+    expect(call).toHaveBeenCalledWith(expect.anything(), BILL, KEY);
+    expect(out.done).toBeTruthy();
+    expect(out.key).not.toBe(KEY);
+  });
+
+  it('refuses a person without payables.bill.enter before any call', async () => {
+    session.roles = ['finance'];
+    const out = await action(prev, form({ billId: BILL, idempotencyKey: KEY }));
+    expect(out.error).toMatch(/roles/i);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('refuses an id that is not a GUID without calling the API', async () => {
+    const out = await action(prev, form({ billId: '../x', idempotencyKey: KEY }));
+    expect(out.reload).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('keeps the key after a timeout or a 5xx, and rotates it after a 4xx', async () => {
+    call.mockRejectedValueOnce(new ApiError(503, 'x'));
+    expect((await action(prev, form({ billId: BILL, idempotencyKey: KEY }))).key).toBe(KEY);
+    call.mockRejectedValueOnce(apiError(409, 'BILL_NOT_MATCHED'));
+    const out = await action(prev, form({ billId: BILL, idempotencyKey: KEY }));
+    expect(out.key).not.toBe(KEY);
+    expect(out.error).toMatch(/match/i);
+  });
+
+  it('keeps the key for the in-progress 409', async () => {
+    call.mockRejectedValueOnce(
+      new ApiError(409, 'x', {
+        error: {
+          code: 'conflict',
+          message: 'A request with this Idempotency-Key is still in progress',
+        },
+      }),
+    );
+    const out = await action(prev, form({ billId: BILL, idempotencyKey: KEY }));
+    expect(out.key).toBe(KEY);
+  });
+});
+
+describe('void a bill', () => {
+  it('needs a reason and does not call the API without one', async () => {
+    const out = await voidBillAction(
+      prev,
+      form({ billId: BILL, idempotencyKey: KEY, reason: '  ' }),
+    );
+    expect(out.errors?.['reason']).toBeTruthy();
+    expect(out.key).toBe(KEY);
+    expect(api.voidBill).not.toHaveBeenCalled();
+  });
+
+  it('sends the trimmed reason', async () => {
+    api.voidBill.mockResolvedValue({ id: BILL });
+    const out = await voidBillAction(
+      prev,
+      form({ billId: BILL, idempotencyKey: KEY, reason: ' Wrong vendor ' }),
+    );
+    expect(api.voidBill).toHaveBeenCalledWith(expect.anything(), BILL, 'Wrong vendor', KEY);
+    expect(out.done).toMatch(/voided/i);
+  });
+
+  it('words a bill that already has a payment', async () => {
+    api.voidBill.mockRejectedValue(apiError(409, 'BILL_HAS_ALLOCATIONS'));
+    const out = await voidBillAction(
+      prev,
+      form({ billId: BILL, idempotencyKey: KEY, reason: 'x' }),
+    );
+    expect(out.error).toMatch(/payment/i);
+  });
+});
+
+describe('convert a submission', () => {
+  const lineFields = (over: Record<string, string> = {}) => ({
+    submissionId: SUB,
+    idempotencyKey: KEY,
+    lineCount: '2',
+    'line:0:poLineId': POLINE,
+    'line:0:accountId': ACCOUNT,
+    'line:0:quantity': '2',
+    'line:0:unitPrice': '1000.50',
+    'line:0:taxCodeId': TAX,
+    // a second row nobody filled in
+    'line:1:poLineId': '',
+    ...over,
+  });
+
+  it('sends only the lines, as typed, and goes to the new bill', async () => {
+    api.convertBillSubmission.mockResolvedValue({ id: BILL });
+    await expect(convertSubmissionAction(prev, form(lineFields()))).rejects.toThrow(
+      `REDIRECT /payables/bills/${BILL}?created=1`,
+    );
+    expect(api.convertBillSubmission).toHaveBeenCalledWith(
+      expect.anything(),
+      SUB,
+      [
+        {
+          poLineId: POLINE,
+          accountId: ACCOUNT,
+          quantity: '2',
+          unitPrice: '1000.50',
+          taxCodeId: TAX,
+        },
+      ],
+      KEY,
+    );
+  });
+
+  it('keeps the key and the typing when a field is wrong, and never calls the API', async () => {
+    const out = await convertSubmissionAction(prev, form(lineFields({ 'line:0:quantity': '0' })));
+    expect(out.key).toBe(KEY);
+    expect(out.errors?.['0.quantity']).toBeTruthy();
+    expect(api.convertBillSubmission).not.toHaveBeenCalled();
+  });
+
+  it('refuses a form with no usable line count', async () => {
+    const out = await convertSubmissionAction(prev, form(lineFields({ lineCount: 'many' })));
+    expect(out.reload).toBe(true);
+    expect(api.convertBillSubmission).not.toHaveBeenCalled();
+  });
+
+  it('words a duplicate invoice number and rotates the key', async () => {
+    api.convertBillSubmission.mockRejectedValue(apiError(409, 'DUPLICATE_BILL'));
+    const out = await convertSubmissionAction(prev, form(lineFields()));
+    expect(out.error).toMatch(/already has a bill/i);
+    expect(out.key).not.toBe(KEY);
+  });
+});
+
+describe('reject a submission', () => {
+  it('needs a reason', async () => {
+    const out = await rejectSubmissionAction(
+      prev,
+      form({ submissionId: SUB, idempotencyKey: KEY }),
+    );
+    expect(out.errors?.['reason']).toBeTruthy();
+    expect(api.rejectBillSubmission).not.toHaveBeenCalled();
+  });
+
+  it('sends the reason and says it was rejected', async () => {
+    api.rejectBillSubmission.mockResolvedValue({
+      id: SUB,
+      status: 'rejected',
+      rejectionReason: 'x',
+    });
+    const out = await rejectSubmissionAction(
+      prev,
+      form({ submissionId: SUB, idempotencyKey: KEY, reason: 'Not ours' }),
+    );
+    expect(api.rejectBillSubmission).toHaveBeenCalledWith(expect.anything(), SUB, 'Not ours', KEY);
+    expect(out.done).toMatch(/rejected/i);
+  });
+
+  it('says a submission someone already handled is handled', async () => {
+    api.rejectBillSubmission.mockRejectedValue(apiError(409, 'SUBMISSION_NOT_RECEIVED'));
+    const out = await rejectSubmissionAction(
+      prev,
+      form({ submissionId: SUB, idempotencyKey: KEY, reason: 'x' }),
+    );
+    expect(out.error).toMatch(/already handled/i);
+    expect(out.reload).toBe(true);
+  });
+});
