@@ -70,7 +70,12 @@ export type ErrorCode =
   | 'BILL_HAS_ALLOCATIONS'
   | 'BILL_KIND_NOT_SUPPORTED'
   | 'CURRENCY_NOT_SUPPORTED'
-  | 'SUBMISSION_NOT_SUPPORTED'
+  | 'BILL_HAS_PAYMENT_REQUEST'
+  | 'SUBMISSION_NOT_RECEIVED'
+  | 'SUBMISSION_FILE_NOT_CLEAN'
+  | 'SUBMISSION_HAS_NO_VENDOR'
+  | 'SUBMISSION_INCOMPLETE'
+  | 'SUBMISSION_MISMATCH'
   | 'DOCUMENT_NOT_FOUND'
   | 'PO_REQUIRED'
   | 'PO_LINE_REQUIRED'
@@ -163,7 +168,13 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   BILL_HAS_ALLOCATIONS: 'Part of this bill is already paid or settled, so it cannot be voided',
   BILL_KIND_NOT_SUPPORTED: 'Only bills can be keyed in for now',
   CURRENCY_NOT_SUPPORTED: 'Only NPR bills can be keyed in for now',
-  SUBMISSION_NOT_SUPPORTED: 'Converting a portal submission is not available yet',
+  BILL_HAS_PAYMENT_REQUEST:
+    'A payment request waiting for approval or already approved is on this bill, so it cannot be voided',
+  SUBMISSION_NOT_RECEIVED: 'This portal submission is no longer waiting for review',
+  SUBMISSION_FILE_NOT_CLEAN: 'The submitted file has not scanned clean',
+  SUBMISSION_HAS_NO_VENDOR: 'This portal submission names no vendor',
+  SUBMISSION_INCOMPLETE: 'This portal submission has no invoice number or invoice date',
+  SUBMISSION_MISMATCH: 'The bill does not match the portal submission it is keyed from',
   DOCUMENT_NOT_FOUND: 'The invoice file was not found',
   PO_REQUIRED: 'A line linked to a purchase order line needs the purchase order',
   PO_LINE_REQUIRED: 'A bill line needs its purchase order line',
@@ -268,6 +279,11 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'MATCH_NOT_REQUIRED',
   'BILL_NOT_POSTED',
   'BILL_HAS_ALLOCATIONS',
+  'BILL_HAS_PAYMENT_REQUEST',
+  // P4 portal bill submissions (payables): converting or rejecting one that is no longer received, or whose file
+  // has not scanned clean.
+  'SUBMISSION_NOT_RECEIVED',
+  'SUBMISSION_FILE_NOT_CLEAN',
   // P4 payment requests: a line asks for more than the open balance of its payable item, net of the other live
   // requests' claims (the ledger's OVER_ALLOCATION, with the item and the amounts in `details`).
   'OVER_ALLOCATION',
@@ -302,10 +318,13 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   // P4 purchase orders: an amendment names a line of another order, changes nothing, or cuts below what arrived.
   'PO_AMENDMENT_INVALID',
   // P4 vendor bills (payables): what the bill entry and the match refuse (a request the server will not take
-  // as it stands: an unsupported kind, currency or submission, or a file, PO, line or code it cannot find).
+  // as it stands: an unsupported kind or currency, a portal submission that cannot become the bill, or a file,
+  // PO, line or code it cannot find).
   'BILL_KIND_NOT_SUPPORTED',
   'CURRENCY_NOT_SUPPORTED',
-  'SUBMISSION_NOT_SUPPORTED',
+  'SUBMISSION_HAS_NO_VENDOR',
+  'SUBMISSION_INCOMPLETE',
+  'SUBMISSION_MISMATCH',
   'DOCUMENT_NOT_FOUND',
   'PO_REQUIRED',
   'PO_LINE_REQUIRED',

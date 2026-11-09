@@ -339,6 +339,9 @@ describe('ErrorBodyFilter', () => {
     'MATCH_NOT_REQUIRED',
     'BILL_NOT_POSTED',
     'BILL_HAS_ALLOCATIONS',
+    'BILL_HAS_PAYMENT_REQUEST',
+    'SUBMISSION_NOT_RECEIVED',
+    'SUBMISSION_FILE_NOT_CLEAN',
     'OVER_ALLOCATION',
   ])('keeps the payables conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'm' }));
@@ -353,7 +356,9 @@ describe('ErrorBodyFilter', () => {
   it.each([
     'BILL_KIND_NOT_SUPPORTED',
     'CURRENCY_NOT_SUPPORTED',
-    'SUBMISSION_NOT_SUPPORTED',
+    'SUBMISSION_HAS_NO_VENDOR',
+    'SUBMISSION_INCOMPLETE',
+    'SUBMISSION_MISMATCH',
     'DOCUMENT_NOT_FOUND',
     'PO_REQUIRED',
     'PO_LINE_REQUIRED',
