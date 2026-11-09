@@ -18,6 +18,7 @@ import {
 import { PgTenancyStore, SEED_PARTIES, tenancySeed } from './index.js';
 import {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
+  PAYMENT_REQUEST_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
@@ -110,9 +111,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 7 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 8 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 7 * 3 + 1 + 3 + 2 + 2);
+    expect(changed).toBe(grantCount + 1 + 8 * 3 + 1 + 3 + 2 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -281,7 +282,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(7);
+    expect(versions).toHaveLength(8);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -354,10 +355,10 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 7 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 8 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(7);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(8);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -444,7 +445,23 @@ describe('seedKernelRows: P4 purchasing', () => {
     );
   });
 
-  it('seeds the workflow definitions in a stable order, with match_exception last', async () => {
+  it('seeds payment_request for the entity, keyed by its document type', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    expect(definitionOf(calls, 'payment_request')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'payment_request',
+      'Payment request approval',
+      'payment_request',
+    ]);
+    expect(specOf(calls, 'payment_request')).toEqual(
+      WorkflowSpecSchema.parse(PAYMENT_REQUEST_WORKFLOW_SPEC),
+    );
+  });
+
+  it('seeds the workflow definitions in a stable order, with payment_request last', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
     const keys = calls
@@ -458,6 +475,7 @@ describe('seedKernelRows: P4 purchasing', () => {
       'po_amendment',
       'vendor_bill',
       'match_exception',
+      'payment_request',
     ]);
   });
 
@@ -928,6 +946,7 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       ['tenant-uuid', 'org-uuid', 'po_amendment', 'Purchase order amendment', 'po_amendment'],
       ['tenant-uuid', 'org-uuid', 'vendor_bill', 'Vendor bill approval', 'vendor_bill'],
       ['tenant-uuid', 'org-uuid', 'match_exception', 'Match exception approval', 'match_exception'],
+      ['tenant-uuid', 'org-uuid', 'payment_request', 'Payment request approval', 'payment_request'],
     ]);
     expect(first.closed()).toBe(1);
 
