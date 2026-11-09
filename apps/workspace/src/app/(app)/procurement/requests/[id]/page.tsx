@@ -18,6 +18,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey, shortId } from '@/lib/kernel-ui';
 
+import { canStartRfq, rfqGrants } from '../../rfqs/_lib/model';
 import { CancelForm, SubmitForm } from '../_components/command-forms';
 import { prFailure } from '../_lib/failure';
 import {
@@ -230,11 +231,22 @@ export default async function PurchaseRequestPage({
         }
         description={PR_STATUS_NOTE[pr.status]}
         actions={
-          editable ? (
-            <LinkButton href={`${self}/edit`} variant="secondary">
-              Edit request
-            </LinkButton>
-          ) : null
+          <>
+            {editable ? (
+              <LinkButton href={`${self}/edit`} variant="secondary">
+                Edit request
+              </LinkButton>
+            ) : null}
+            {pr.rfqId && rfqGrants(session.roles).sourcing ? (
+              <LinkButton href={`/procurement/rfqs/${encodeURIComponent(pr.rfqId)}`}>
+                Open RFQ
+              </LinkButton>
+            ) : canStartRfq(pr.status, pr.rfqId, session.roles) ? (
+              <LinkButton href={`/procurement/rfqs/new?pr=${encodeURIComponent(pr.id)}`}>
+                Start RFQ
+              </LinkButton>
+            ) : null}
+          </>
         }
       />
 
