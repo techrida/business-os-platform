@@ -14,6 +14,10 @@
 // Generated files (a quotation PDF a job rendered) take the same road under the system actor:
 //   createGenerated() -> receiveGenerated() -> the same receiveContent, scan and `clean` gate as an upload.
 // The only difference is who is asked: the owner's `allowsSystemActor`, not the request principal's authz.
+//
+// A portal caller (a customer) holds no `documents.upload`. `create` and `receiveContent` still let one upload
+// when the owner's `allowsCounterparty` says yes (P3: payment proof on the customer's own payment). Every other
+// refusal is the unchanged grant check, and `createVersion` and `remove` never ask the hook.
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -46,14 +50,18 @@ import { z } from 'zod';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
 import { withTx, requestTx, type Actor, type TxScope } from '../db/tx';
-import type { ResourceRef } from '../authz/can';
+import type { Principal, ResourceRef } from '../authz/can';
+import { currentPrincipal } from '../tenancy/request-context';
 import {
   AUDIT_PORT,
   AUTHZ_PORT,
+  COUNTERPARTY_KINDS,
   DOCS_SCAN_JOB,
   DOCS_SCAN_QUEUE,
   type AuditPort,
   type AuthzPort,
+  type CounterpartyKind,
+  type CounterpartyPrincipal,
   type DocumentOwnerPolicy,
   type ScanJobData,
 } from './documents.ports';
@@ -154,7 +162,13 @@ export class DocumentsService {
       throw new BadRequestException(`Unknown owner type: ${b.ownerType}`);
     }
     // Permission first: someone who may not upload learns nothing about types or limits.
-    await this.assertOwner(who.scope, b.ownerType, b.ownerId, 'documents.upload');
+    await this.assertUploader(
+      who.scope,
+      b.ownerType,
+      b.ownerId,
+      { kind: who.actorKind, id: who.actorId },
+      tx,
+    );
     // Before anything is written: a record that stopped taking attachments gets no row and no file.
     await this.assertCanAttach(who.scope, b.ownerType, b.ownerId, tx);
     assertUploadAllowed(b);
@@ -406,7 +420,7 @@ export class DocumentsService {
         // A generated file: the owner's system policy decides, never the request principal (there is none).
         await this.assertSystemOwner(who.scope, found.ownerType, found.ownerId, who.actor, tx);
       } else {
-        await this.assertOwner(who.scope, found.ownerType, found.ownerId, 'documents.upload');
+        await this.assertUploader(who.scope, found.ownerType, found.ownerId, who.actor, tx);
         // The memo may have been submitted since the document was created: no bytes are written then.
         await this.assertCanAttach(who.scope, found.ownerType, found.ownerId, tx);
       }
@@ -705,6 +719,35 @@ export class DocumentsService {
   }
 
   /**
+   * assertOwner for `documents.upload` in create and receive, plus the one way around the grant: a portal
+   * caller (see `counterpartyOf`) whom the owner's `allowsCounterparty` accepts. Staff, an unknown owner type
+   * and a policy without the hook take the assertOwner path unchanged. A counterparty the hook refuses gets the
+   * real grant check, which it fails, so every refusal is the same 403 body as before the hook existed.
+   */
+  private async assertUploader(
+    scope: TxScope,
+    ownerType: string,
+    ownerId: string,
+    actor: { kind: string; id: string },
+    tx: DbTransaction,
+  ): Promise<void> {
+    const policy = this.owners.get(ownerType);
+    const counterparty =
+      policy?.allowsCounterparty === undefined
+        ? null
+        : counterpartyOf(currentPrincipal(), scope, actor);
+    if (counterparty === null || policy?.allowsCounterparty === undefined) {
+      await this.assertOwner(scope, ownerType, ownerId, 'documents.upload');
+      return;
+    }
+    const ref: ResourceRef | null = await policy.resource(scope, ownerId);
+    if (ref === null) throw new NotFoundException('Owner record not found');
+    // Called as a method, not detached: a policy class may use `this`.
+    if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
+    this.authz.assert('documents.upload', ref);
+  }
+
+  /**
    * The system path's twin of assertOwner: the owner must exist in this scope (404) and its policy must
    * allow the system actor (403). No policy, or a policy without `allowsSystemActor`, refuses.
    */
@@ -844,6 +887,33 @@ export class DocumentsService {
         .where(s.where(documentVersions, eq(documentVersions.id, version.id)));
     });
   }
+}
+
+const isCounterpartyKind = (kind: string): kind is CounterpartyKind =>
+  (COUNTERPARTY_KINDS as readonly string[]).includes(kind);
+
+/**
+ * The request's caller as a counterparty an owner policy may let upload, or null. Null for no bound principal
+ * (a worker, a call outside a request), staff, an org kind outside COUNTERPARTY_KINDS, any status but `active`
+ * (the grant check would answer inactive_user), no party, a principal of another tenant or entity than the
+ * transaction, and a transaction actor that is not this user.
+ */
+function counterpartyOf(
+  p: Principal | undefined,
+  scope: TxScope,
+  actor: { kind: string; id: string },
+): CounterpartyPrincipal | null {
+  if (p === undefined || !isCounterpartyKind(p.orgKind)) return null;
+  if (p.status !== 'active' || p.partyId === null || p.partyId === '') return null;
+  if (p.tenantId !== scope.tenantId || p.organizationId !== scope.organizationId) return null;
+  if (actor.kind !== 'user' || actor.id !== p.userId) return null;
+  return {
+    kind: p.orgKind,
+    userId: p.userId,
+    partyId: p.partyId,
+    tenantId: p.tenantId,
+    organizationId: p.organizationId,
+  };
 }
 
 /** The type and size rules for a declared upload, the same for a new document and a new version. */
