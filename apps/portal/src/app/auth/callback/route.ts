@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
 import { completeLogin, LOGIN_COOKIE } from '@/lib/oidc';
-import { createSession, setSessionCookie } from '@/lib/session';
+import { createSession, safeReturnTo, setSessionCookie } from '@/lib/session';
 
 // Copied from apps/workspace (dedupe later).
 export const runtime = 'nodejs';
@@ -19,6 +19,19 @@ function redirectTo(path: string): Response {
       'cache-control': 'no-store',
     },
   });
+}
+
+/** The vendor screens' root. A vendor never lands on the customer pages. */
+const VENDOR_HOME = '/vendor';
+
+/**
+ * Where a vendor lands: the stored returnTo when it stays under /vendor, else /vendor. The value
+ * went through safeReturnTo at login; it goes through again here so the prefix test below runs on
+ * a normalised same-origin path. `/vendorx` and `/vendor-x` are not under /vendor.
+ */
+function vendorReturnTo(returnTo: string): string {
+  const safe = safeReturnTo(returnTo);
+  return safe === VENDOR_HOME || /^\/vendor[/?#]/.test(safe) ? safe : VENDOR_HOME;
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -54,23 +67,23 @@ export async function GET(req: Request): Promise<Response> {
     const { tokens, sub, returnTo } = await completeLogin(callbackUrl, binding);
     // The API is the authority on org and roles, not the token claims.
     const me = await getMe({ accessToken: tokens.accessToken });
-    // Deny by default: only a customer user whose IdP org maps to a party (ADR 0027) gets a
-    // portal session. Everyone else did sign in at ZITADEL, so they get a page that says where
-    // to go, and its Sign out ends the ZITADEL session as /no-access does below.
+    // Deny by default: only a customer or vendor user whose IdP org maps to a party (ADR 0027)
+    // gets a portal session. Everyone else did sign in at ZITADEL, so they get a page that says
+    // where to go, and its Sign out ends the ZITADEL session as /no-access does below.
     if (me.orgKind === 'staff') return redirectTo('/use-workspace');
-    if (me.orgKind !== 'customer') return redirectTo('/not-available');
+    if (me.orgKind !== 'customer' && me.orgKind !== 'vendor') return redirectTo('/not-available');
     if (!me.partyId) return redirectTo('/no-access');
     const id = await createSession({
       sub,
       orgId: me.organizationId,
-      orgKind: 'customer',
+      orgKind: me.orgKind,
       partyId: me.partyId,
       roles: me.roles,
       ...tokens,
     });
     await setSessionCookie(id);
     // returnTo went through safeReturnTo in /auth/login and was stored server-side with the state.
-    return redirectTo(returnTo);
+    return redirectTo(me.orgKind === 'vendor' ? vendorReturnTo(returnTo) : returnTo);
   } catch (err) {
     // CR-02: the API answers 403 for a principal it will not serve (staff without a role, an
     // unknown org). That is a valid login with no access, not a failure: no session is created,
