@@ -18,6 +18,7 @@ export type FieldErrors = Record<string, string>;
 export interface LineValues {
   description: string;
   specification: string;
+  requiresSerials?: boolean;
   uom: string;
   quantity: string;
   estimatedUnitPrice: string;
@@ -98,6 +99,7 @@ export function valuesFromForm(form: FormData): PrValues {
     .map((i) => {
       const line = emptyLine();
       for (const f of LINE_FIELDS) line[f] = str(form, `lines.${i}.${f}`);
+      if (str(form, `lines.${i}.requiresSerials`) === 'on') line.requiresSerials = true;
       return line;
     });
   const values: PrValues = {
@@ -125,6 +127,7 @@ export function valuesFromDto(dto: {
   lines: readonly {
     description: string;
     specification: string | null;
+    requiresSerials?: boolean;
     uom: string;
     quantity: string;
     estimatedUnitPrice: string;
@@ -147,6 +150,7 @@ export function valuesFromDto(dto: {
         ? dto.lines.map((l) => ({
             description: l.description,
             specification: l.specification ?? '',
+            ...(l.requiresSerials ? { requiresSerials: true } : {}),
             uom: l.uom,
             quantity: l.quantity,
             estimatedUnitPrice: l.estimatedUnitPrice,
@@ -200,6 +204,7 @@ export function parsePrValues(input: PrValues): ParsedPr {
     lines: input.lines.map((l) => ({
       description: trim(l.description),
       ...(trim(l.specification) !== '' ? { specification: trim(l.specification) } : {}),
+      ...(l.requiresSerials ? { requiresSerials: true } : {}),
       uom: trim(l.uom),
       quantity: trim(l.quantity),
       estimatedUnitPrice: trim(l.estimatedUnitPrice),

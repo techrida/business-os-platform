@@ -189,6 +189,7 @@ export const purchaseRequestLines = appSchema.table(
     lineNo: integer('line_no').notNull(),
     description: text('description').notNull(),
     specification: text('specification'),
+    requiresSerials: boolean('requires_serials').notNull().default(false),
     uom: text('uom').notNull(),
     quantity: quantity('quantity').notNull(),
     estimatedUnitPrice: money('estimated_unit_price').notNull(),

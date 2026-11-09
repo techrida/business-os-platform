@@ -218,6 +218,13 @@
       "when": 1783000000035,
       "tag": "0035_payables",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1783000000036,
+      "tag": "0036_purchase_request_serials",
+      "breakpoints": true
     }
   ]
 }
