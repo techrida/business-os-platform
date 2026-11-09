@@ -25,6 +25,8 @@ describe('labels', () => {
   it('words a file scan status, and says so when there is none', () => {
     expect(fileStatusLabel('clean').tone).toBe('success');
     expect(fileStatusLabel('infected').tone).toBe('error');
+    expect(fileStatusLabel('scan_failed').text).toBe('Scan failed');
+    expect(fileStatusLabel('rejected').text).toBe('File rejected');
     expect(fileStatusLabel('scanning').tone).toBe('info');
     expect(fileStatusLabel(null).text).toBe('Not scanned yet');
   });
