@@ -339,7 +339,8 @@ describe('ErrorBodyFilter', () => {
     'MATCH_NOT_REQUIRED',
     'BILL_NOT_POSTED',
     'BILL_HAS_ALLOCATIONS',
-  ])('keeps the vendor bill conflict code %s on a 409, and only on a 409', (code) => {
+    'OVER_ALLOCATION',
+  ])('keeps the payables conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);
     expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
@@ -361,7 +362,13 @@ describe('ErrorBodyFilter', () => {
     'PO_VENDOR_MISMATCH',
     'TAX_CODE_NOT_FOUND',
     'WITHHOLDING_CODE_NOT_FOUND',
-  ])('keeps the vendor bill refusal code %s on a 422, and only on a 422', (code) => {
+    'ADVANCE_NOT_SUPPORTED',
+    'DUPLICATE_OPEN_ITEM',
+    'NOT_A_VENDOR_BILL_ITEM',
+    'BILL_NOT_PAYABLE',
+    'CURRENCY_MISMATCH',
+    'PURCHASE_ORDER_NOT_FOUND',
+  ])('keeps the payables refusal code %s on a 422, and only on a 422', (code) => {
     const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
     expect(out.status).toBe(422);
     const parsed = ErrorBodySchema.parse(out.body);

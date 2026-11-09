@@ -79,6 +79,13 @@ export type ErrorCode =
   | 'PO_VENDOR_MISMATCH'
   | 'TAX_CODE_NOT_FOUND'
   | 'WITHHOLDING_CODE_NOT_FOUND'
+  | 'OVER_ALLOCATION'
+  | 'ADVANCE_NOT_SUPPORTED'
+  | 'DUPLICATE_OPEN_ITEM'
+  | 'NOT_A_VENDOR_BILL_ITEM'
+  | 'BILL_NOT_PAYABLE'
+  | 'CURRENCY_MISMATCH'
+  | 'PURCHASE_ORDER_NOT_FOUND'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -165,6 +172,13 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   PO_VENDOR_MISMATCH: 'The purchase order is for another vendor',
   TAX_CODE_NOT_FOUND: 'A tax code was not found',
   WITHHOLDING_CODE_NOT_FOUND: 'A withholding code was not found',
+  OVER_ALLOCATION: 'The amount is more than what is still open on a payable item',
+  ADVANCE_NOT_SUPPORTED: 'Only settlements of approved bills can be requested for now',
+  DUPLICATE_OPEN_ITEM: 'The same payable item appears twice in this payment request',
+  NOT_A_VENDOR_BILL_ITEM: 'A line is not a payable item of a bill of this vendor',
+  BILL_NOT_PAYABLE: 'A line names a bill that is not approved for payment',
+  CURRENCY_MISMATCH: 'The payable items of a payment request must all be in one currency',
+  PURCHASE_ORDER_NOT_FOUND: 'This vendor has no such purchase order',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -254,6 +268,9 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'MATCH_NOT_REQUIRED',
   'BILL_NOT_POSTED',
   'BILL_HAS_ALLOCATIONS',
+  // P4 payment requests: a line asks for more than the open balance of its payable item, net of the other live
+  // requests' claims (the ledger's OVER_ALLOCATION, with the item and the amounts in `details`).
+  'OVER_ALLOCATION',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -297,6 +314,15 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'PO_VENDOR_MISMATCH',
   'TAX_CODE_NOT_FOUND',
   'WITHHOLDING_CODE_NOT_FOUND',
+  // P4 payment requests: what the request entry refuses (an advance, an item named twice, an item that is not a
+  // payable of this vendor's approved bill, a currency mix, a PO of another vendor). Submit also throws
+  // NO_ELIGIBLE_APPROVER.
+  'ADVANCE_NOT_SUPPORTED',
+  'DUPLICATE_OPEN_ITEM',
+  'NOT_A_VENDOR_BILL_ITEM',
+  'BILL_NOT_PAYABLE',
+  'CURRENCY_MISMATCH',
+  'PURCHASE_ORDER_NOT_FOUND',
 ];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
