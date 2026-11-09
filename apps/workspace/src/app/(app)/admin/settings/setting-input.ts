@@ -14,6 +14,7 @@ export function parseSettingInput(key: SettingKey, raw: readonly string[]): Sett
       value = [...raw];
       break;
     case 'approvals.sla_defaults':
+    case 'sales.default_schedule':
       try {
         value = JSON.parse(raw[0] ?? '') as unknown;
       } catch {
