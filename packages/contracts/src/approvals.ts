@@ -38,10 +38,21 @@ export const ConditionSchema: z.ZodType<Condition> = z.lazy(() =>
   ]),
 );
 
-export const StepKindSchema = z.enum(['role', 'group', 'user']);
+/**
+ * `department_head` (P4 K1, M8): the head of the department in the request's `departmentId` fact
+ * approves. When there is no head, or the head is in the request's sodUserIds (the requester), the
+ * step goes to `fallbackRole` instead (AD11). The router resolves this when it plans the step.
+ */
+export const StepKindSchema = z.enum(['role', 'group', 'user', 'department_head']);
 export type StepKind = z.infer<typeof StepKindSchema>;
 
-/** One approval step. The field named by `kind` (role, group or user) must be present. */
+/** The role a department-head step falls back to when it is not set (AD11). */
+export const DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE = 'operations_head' as const;
+
+/**
+ * One approval step. The field named by `kind` (role, group or user) must be present; a
+ * department_head step names no target, only its `fallbackRole`.
+ */
 export const StepSpecSchema = z
   .object({
     id: z.string().min(1).max(64),
@@ -49,13 +60,24 @@ export const StepSpecSchema = z
     role: RoleKeySchema.optional(),
     group: z.string().min(1).optional(),
     user: z.string().min(1).optional(),
+    /** department_head only: who approves when the head cannot. Defaulted to operations_head below. */
+    fallbackRole: RoleKeySchema.optional(),
     /** Shown to the approver and kept in the audit trail: why this step exists. */
     reason: z.string().min(1).max(500),
   })
-  .refine((s) => s[s.kind] !== undefined, {
+  .refine((s) => s.kind === 'department_head' || s[s.kind] !== undefined, {
     path: ['kind'],
     message: 'the field named by kind (role, group or user) is required',
-  });
+  })
+  .refine((s) => s.kind === 'department_head' || s.fallbackRole === undefined, {
+    path: ['fallbackRole'],
+    message: 'fallbackRole applies to department_head steps only',
+  })
+  .transform((s) =>
+    s.kind === 'department_head' && s.fallbackRole === undefined
+      ? { ...s, fallbackRole: DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE }
+      : s,
+  );
 export type StepSpec = z.infer<typeof StepSpecSchema>;
 
 /** Reminder and escalation timing. Defaults sit on each field because a Zod 4 object default skips them. */

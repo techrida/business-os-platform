@@ -3,7 +3,12 @@
 // inputs always give the same plan (preview and submit agree) and every rule is cheap to table-test.
 // Serves the NFRs "approvals are auditable" (a reason per step) and "separation of duties" (the people
 // in sodUserIds, such as the requester, can never be an approver of their own document).
-import type { RoutePlan, StepSpec, WorkflowSpec } from '@bos/contracts';
+import {
+  DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
+  type RoutePlan,
+  type StepSpec,
+  type WorkflowSpec,
+} from '@bos/contracts';
 import Decimal from 'decimal.js';
 
 import { evaluate } from './conditions';
@@ -17,6 +22,8 @@ export interface ApproverDirectory {
   eligible(step: StepSpec, exclude?: ReadonlySet<string>): string[];
   /** The approval_groups id for a group key; the plan carries ids, the spec carries keys. */
   groupIdOf?(key: string): string | undefined;
+  /** The active head of a department of this entity, if it has one (department_head steps). */
+  departmentHead?(departmentId: string): string | undefined;
 }
 
 /** Who decided the step at `seq`: the decider and, for a delegate, the approver they acted for. */
@@ -84,16 +91,19 @@ export function route(
         ? decisions.filter((d) => d.seq < i + 1).flatMap((d) => [...d.deciders])
         : [],
     );
-    const eligibleUserIds = [...new Set(dir.eligible(p.spec, earlier))].filter(
+    // A department_head step is planned as the user or role step it resolves to; the plan keeps the
+    // kind and carries the resolved head (userId) or fallback role (roleKey).
+    const target = resolveTarget(p.spec, facts, dir, sod);
+    const eligibleUserIds = [...new Set(dir.eligible(target, earlier))].filter(
       (id) => !sod.has(id) && !earlier.has(id),
     );
-    const groupId = p.spec.group === undefined ? undefined : dir.groupIdOf?.(p.spec.group);
+    const groupId = target.group === undefined ? undefined : dir.groupIdOf?.(target.group);
     return {
       seq: i + 1,
       kind: p.spec.kind,
-      ...(p.spec.kind === 'role' && p.spec.role !== undefined ? { roleKey: p.spec.role } : {}),
-      ...(p.spec.kind === 'group' && groupId !== undefined ? { groupId } : {}),
-      ...(p.spec.kind === 'user' && p.spec.user !== undefined ? { userId: p.spec.user } : {}),
+      ...(target.kind === 'role' && target.role !== undefined ? { roleKey: target.role } : {}),
+      ...(target.kind === 'group' && groupId !== undefined ? { groupId } : {}),
+      ...(target.kind === 'user' && target.user !== undefined ? { userId: target.user } : {}),
       reason: p.reason,
       eligibleUserIds,
       blocked: eligibleUserIds.length === 0,
@@ -148,7 +158,39 @@ function fillReason(template: string, facts: Record<string, unknown>): string {
   });
 }
 
+/**
+ * The user or role step a department_head step stands for (AD11): the active head of the department in
+ * the `departmentId` fact, unless the head is an SoD person (the requester) or there is none; then its
+ * `fallbackRole`. Other kinds are returned unchanged. A fallback role with nobody in it leaves the step
+ * without an approver, which blocks the plan like any other empty step.
+ */
+export function resolveTarget(
+  step: StepSpec,
+  facts: Record<string, unknown>,
+  dir: Pick<ApproverDirectory, 'departmentHead'>,
+  sod: ReadonlySet<string>,
+): StepSpec {
+  if (step.kind !== 'department_head') return step;
+  const departmentId = Object.prototype.hasOwnProperty.call(facts, 'departmentId')
+    ? facts['departmentId']
+    : undefined;
+  const head =
+    typeof departmentId === 'string' && departmentId !== ''
+      ? dir.departmentHead?.(departmentId)
+      : undefined;
+  const base = { id: step.id, reason: step.reason };
+  if (head !== undefined && !sod.has(head)) return { ...base, kind: 'user', user: head };
+  return {
+    ...base,
+    kind: 'role',
+    role: step.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
+  };
+}
+
 function describe(step: StepSpec): string {
+  if (step.kind === 'department_head') {
+    return `department head, fallback role ${step.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE}`;
+  }
   if (step.kind === 'role') return `role ${step.role ?? '?'}`;
   if (step.kind === 'group') return `group ${step.group ?? '?'}`;
   return `user ${step.user ?? '?'}`;
@@ -178,6 +220,11 @@ export interface DirectoryData {
    * Optional so pure routing tests can leave it out; the service always loads it.
    */
   activeUserIds?: ReadonlySet<string>;
+  /**
+   * Department id → its head (app.departments.head_user_id), for department_head steps. A head outside
+   * `activeUserIds` (when given) counts as no head. Optional; without it every such step falls back.
+   */
+  departmentHeads?: ReadonlyMap<string, string>;
 }
 
 export interface BuiltDirectory extends ApproverDirectory {
@@ -237,6 +284,11 @@ export function buildDirectory(
       return [...new Set([...base, ...delegates])].filter((id) => !out(id));
     },
     groupIdOf: (key) => data.groups.get(key)?.id,
+    departmentHead(departmentId) {
+      const head = data.departmentHeads?.get(departmentId);
+      if (head === undefined) return undefined;
+      return data.activeUserIds === undefined || data.activeUserIds.has(head) ? head : undefined;
+    },
     resolveActor(step, userId, preferNot) {
       if (sod.has(userId)) return { eligible: false, onBehalfOf: null };
       const base = direct(step);

@@ -65,7 +65,9 @@ export const APPROVAL_STEP_STATUSES = [
   'rejected',
   'skipped',
 ] as const;
-export const APPROVAL_STEP_KINDS = ['role', 'group', 'user'] as const;
+// 0030: department_head (P4 K1). Its row carries the head it resolved to (user_id) or its fallback
+// role (role_key), exactly one of them.
+export const APPROVAL_STEP_KINDS = ['role', 'group', 'user', 'department_head'] as const;
 export const APPROVAL_ACTIONS = [
   'submit',
   'approve',
