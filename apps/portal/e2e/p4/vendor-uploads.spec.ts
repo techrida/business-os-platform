@@ -8,7 +8,8 @@ import { expect, test } from '@playwright/test';
  *
  *   PORTAL_E2E_BASE_URL         e.g. http://localhost:3002
  *   PORTAL_E2E_VENDOR_STATE     storage state of a signed-in, approved vendor user
- *   PORTAL_E2E_PENDING_STATE    storage state of a vendor still in onboarding (optional)
+ *   PORTAL_E2E_PENDING_STATE    storage state of a pending_kyc vendor with an editable KYB case
+ *                             and a pan_certificate checklist item (optional; KYC writes need it)
  */
 const base = process.env.PORTAL_E2E_BASE_URL;
 const storageState = process.env.PORTAL_E2E_VENDOR_STATE;
@@ -24,19 +25,6 @@ const PDF = {
 };
 const stamp = () => Date.now().toString(36).toUpperCase();
 
-test('sends a KYC document and sees the confirmation', async ({ page }) => {
-  await page.goto('/vendor/onboarding/upload');
-  await expect(page.getByRole('heading', { level: 1, name: 'Send a document' })).toBeVisible();
-  await page.getByLabel('File').setInputFiles(PDF);
-  await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('scan.pdf');
-  const expiry = page.getByLabel('Valid until');
-  if (await expiry.isVisible()) await expiry.fill('2999-07-15');
-  await page.getByRole('button', { name: 'Send document' }).click();
-  await expect(
-    page.getByRole('status').filter({ hasText: 'We received your document' }),
-  ).toBeVisible();
-});
-
 test('refuses a KYC submit without a file, naming the field', async ({ page }) => {
   await page.goto('/vendor/onboarding/upload');
   await page.getByRole('button', { name: 'Send document' }).click();
@@ -47,6 +35,12 @@ test('a file that is not a PDF or a picture is refused in the browser, before an
   page,
 }) => {
   await page.goto('/vendor/bills/new');
+  await page.waitForLoadState('networkidle');
+  let uploaded = false;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/vendor/bills/new/file')
+      uploaded = true;
+  });
   await page
     .getByLabel('Your bill')
     .setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') });
@@ -54,12 +48,14 @@ test('a file that is not a PDF or a picture is refused in the browser, before an
     page.getByRole('alert').filter({ hasText: 'is not a PDF or a picture' }),
   ).toBeVisible();
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toHaveCount(0);
+  expect(uploaded, 'an unsupported file never reaches the upload route').toBe(false);
 });
 
 test('submits a bill: the total is the vendor’s own text, and the answer says what happens next', async ({
   page,
 }) => {
   await page.goto('/vendor/bills/new');
+  await page.waitForLoadState('networkidle');
   await expect(page.getByRole('heading', { level: 1, name: 'Submit a bill' })).toBeVisible();
   await page.getByLabel('Your bill').setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('scan.pdf');
@@ -74,6 +70,7 @@ test('submits a bill: the total is the vendor’s own text, and the answer says 
 
 test('a bill with a bad total names the field and keeps what was typed', async ({ page }) => {
   await page.goto('/vendor/bills/new');
+  await page.waitForLoadState('networkidle');
   await page.getByLabel('Your bill').setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toBeVisible();
   await page.getByLabel('Your invoice number').fill('E2E-BAD');
@@ -127,8 +124,24 @@ test('the upload routes refuse a foreign Origin without touching the API', async
 });
 
 test.describe('a vendor still in onboarding', () => {
-  test.skip(!pendingState, 'PORTAL_E2E_PENDING_STATE is not set');
+  test.skip(
+    !pendingState,
+    'set PORTAL_E2E_PENDING_STATE for a pending_kyc vendor with an editable KYB case and pan_certificate checklist item',
+  );
   if (pendingState) test.use({ storageState: pendingState, baseURL: base });
+
+  test('sends a KYC document from an editable case and sees the confirmation', async ({ page }) => {
+    await page.goto('/vendor/onboarding/upload');
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { level: 1, name: 'Send a document' })).toBeVisible();
+    await page.getByLabel('Document', { exact: true }).selectOption('pan_certificate');
+    await page.getByLabel('File', { exact: true }).setInputFiles(PDF);
+    await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('scan.pdf');
+    await page.getByRole('button', { name: 'Send document' }).click();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'We received your document' }),
+    ).toBeVisible();
+  });
 
   test('can send KYC documents, but bills and bank changes show the no-access notice', async ({
     page,
