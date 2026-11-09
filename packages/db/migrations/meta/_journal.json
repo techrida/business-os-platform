@@ -169,6 +169,13 @@
       "when": 1783000000023,
       "tag": "0023_invoice_credit_release",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783000000024,
+      "tag": "0024_credit_note_line_link",
+      "breakpoints": true
     }
   ]
 }
