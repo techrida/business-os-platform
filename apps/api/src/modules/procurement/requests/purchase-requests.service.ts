@@ -19,7 +19,7 @@ import {
   type CreatePurchaseRequestBody,
   type Permission,
 } from '@bos/contracts';
-import { departments, purchaseRequestLines, purchaseRequests, scoped } from '@bos/db';
+import { departments, purchaseRequestLines, purchaseRequests, rfqs, scoped } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -30,7 +30,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService } from '../../../platform/authz/authz.service';
@@ -154,7 +154,7 @@ export class PurchaseRequestsService {
 
   /** The requests the caller may read in the acting entity, newest first. */
   async list(query: ListPurchaseRequestsQuery): Promise<PurchaseRequestListItem[]> {
-    const { principal } = this.caller.current();
+    const { principal, scope } = this.caller.current();
     const filters: SQL[] = [purchaseRequestScopeWhere(principal, READ_ACTION)];
     if (query.status !== undefined) filters.push(eq(purchaseRequests.status, query.status));
     const rows = await this.db
@@ -163,19 +163,25 @@ export class PurchaseRequestsService {
       .where(and(...filters))
       .orderBy(desc(purchaseRequests.createdAt), desc(purchaseRequests.id))
       .limit(query.limit);
-    return rows.map(toListItem);
+    const rfqIds = await this.liveRfqIds(
+      this.db,
+      scope,
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => toListItem(r, rfqIds.get(r.id) ?? null));
   }
 
   /** One request with its lines; 404 outside the caller's entity or scope. */
   async get(id: string): Promise<PurchaseRequestDto> {
-    const { principal } = this.caller.current();
+    const { principal, scope } = this.caller.current();
     const [row] = await this.db
       .select()
       .from(purchaseRequests)
       .where(and(purchaseRequestScopeWhere(principal, READ_ACTION), eq(purchaseRequests.id, id)))
       .limit(1);
     if (row === undefined) throw notFound();
-    return toDto(row, await this.linesOf(this.db, row.tenantId, row.id));
+    const rfqId = (await this.liveRfqIds(this.db, scope, [row.id])).get(row.id) ?? null;
+    return toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId);
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -234,7 +240,8 @@ export class PurchaseRequestsService {
       entityId: row!.id,
       after: { status: 'draft', departmentId: row!.departmentId, estimatedTotal: total },
     });
-    return toDto(row!, lines);
+    // A request that was just created has no RFQ.
+    return toDto(row!, lines, null);
   }
 
   // ------------------------------------------------------------------------------------------------- update
@@ -314,7 +321,7 @@ export class PurchaseRequestsService {
       before: { status: pr.status, estimatedTotal: pr.estimatedTotal },
       after: { status: row.status, estimatedTotal: total },
     });
-    return toDto(row, lines);
+    return toDto(row, lines, await this.liveRfqIdOf(tx, scope, id));
   }
 
   // ------------------------------------------------------------------------------------------------- cancel
@@ -347,7 +354,14 @@ export class PurchaseRequestsService {
             before: { status: 'draft' },
             after: { status: 'cancelled' },
           });
-          return { status: 200, response: toDto(row, await this.linesOf(tx, scope.tenantId, id)) };
+          return {
+            status: 200,
+            response: toDto(
+              row,
+              await this.linesOf(tx, scope.tenantId, id),
+              await this.liveRfqIdOf(tx, scope, id),
+            ),
+          };
         },
       );
       return done.response;
@@ -491,7 +505,7 @@ export class PurchaseRequestsService {
         isEmergency: pr.isEmergency,
       },
     });
-    return toDto(row, lines);
+    return toDto(row, lines, await this.liveRfqIdOf(tx, scope, id));
   }
 
   // ------------------------------------------------------------------------------------------------- helpers
@@ -531,6 +545,36 @@ export class PurchaseRequestsService {
       );
     }
     return pr;
+  }
+
+  /**
+   * The live RFQ (status other than cancelled; the partial unique index allows one per request) of each request
+   * id, in the acting entity. Requests with none are absent from the map.
+   */
+  private async liveRfqIds(
+    q: Pick<Db, 'select'>,
+    scope: TxScope,
+    requestIds: readonly string[],
+  ): Promise<Map<string, string>> {
+    if (requestIds.length === 0) return new Map();
+    const rows = await q
+      .select({ id: rfqs.id, purchaseRequestId: rfqs.purchaseRequestId })
+      .from(rfqs)
+      .where(
+        scoped(scope).where(
+          rfqs,
+          and(inArray(rfqs.purchaseRequestId, [...requestIds]), ne(rfqs.status, 'cancelled')),
+        ),
+      );
+    return new Map(rows.map((r) => [r.purchaseRequestId, r.id]));
+  }
+
+  private async liveRfqIdOf(
+    q: Pick<Db, 'select'>,
+    scope: TxScope,
+    requestId: string,
+  ): Promise<string | null> {
+    return (await this.liveRfqIds(q, scope, [requestId])).get(requestId) ?? null;
   }
 
   private async linesOf(
