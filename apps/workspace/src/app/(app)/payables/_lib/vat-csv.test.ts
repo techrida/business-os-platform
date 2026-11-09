@@ -55,4 +55,30 @@ describe('purchase VAT register CSV', () => {
     expect(result).toContain('"-1.00","-0.13"');
     expect(result.endsWith('\r\n')).toBe(true);
   });
+
+  it.each(['\tInvoice', '\rInvoice', '\t123', '\r123'])(
+    'prefixes a cell starting with a bare tab or carriage return: %j',
+    (vendorInvoiceNo) => {
+      const result = vatCsv({
+        from: '2026-11-01',
+        to: '2026-11-30',
+        rows: [
+          {
+            vendorBillId: 'bill',
+            billNumber: null,
+            vendorPartyId: 'vendor',
+            vendorName: 'Himal Traders',
+            vendorPan: null,
+            vendorInvoiceNo,
+            invoiceDate: '2026-11-09',
+            invoiceDateBs: '2083-07-23',
+            taxableAmount: '100.00',
+            vatAmount: '13.00',
+          },
+        ],
+        total: { taxableAmount: '100.00', vatAmount: '13.00' },
+      });
+      expect(result).toContain(`"'${vendorInvoiceNo}"`);
+    },
+  );
 });
