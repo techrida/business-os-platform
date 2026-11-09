@@ -7,17 +7,20 @@ import { AuditModule } from '../../platform/audit/audit.module';
 import { UsersCoreModule } from '../../platform/users/users.core.module';
 import { PortalAccessCaller } from './portal-access.caller';
 import { PortalAccessController } from './portal-access.controller';
-import { PortalAccessService } from './portal-access.service';
+import { PortalAccessService, VendorPortalAccessService } from './portal-access.service';
 import { SqlPortalAccessStore } from './portal-access.store';
-import { PortalAccessStore } from './portal-access.types';
+import { PortalAccessStore, VendorPortalAccessStore } from './portal-access.types';
+import { VendorPortalAccessController } from './vendor-portal-access.controller';
 
 @Module({
   imports: [UsersCoreModule, AuditModule],
-  controllers: [PortalAccessController],
+  controllers: [PortalAccessController, VendorPortalAccessController],
   providers: [
     PortalAccessService,
+    VendorPortalAccessService,
     PortalAccessCaller,
     { provide: PortalAccessStore, useClass: SqlPortalAccessStore },
+    { provide: VendorPortalAccessStore, useExisting: PortalAccessStore },
   ],
 })
 export class PortalAccessModule {}
