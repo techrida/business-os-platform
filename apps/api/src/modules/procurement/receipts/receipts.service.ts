@@ -72,6 +72,12 @@ export const RECEIPTS_CLOCK = Symbol('RECEIPTS_CLOCK');
 
 const CONFIRM_ACTION: Permission = 'procurement.receipt.confirm';
 const READ_ACTION: Permission = 'procurement.pr.read';
+/** The grants this module works with: holding none of them is a 403 before any read. */
+const MODULE_ACTIONS: readonly Permission[] = [
+  CONFIRM_ACTION,
+  READ_ACTION,
+  'procurement.pr.create',
+];
 
 const notFound = (what: string) =>
   new NotFoundException({ code: 'not_found', message: `${what} not found` });
@@ -148,6 +154,7 @@ export class ReceiptsService {
 
   /** The receipts of one PO, newest first. 404 for another entity's PO. */
   async list(purchaseOrderId: string): Promise<ReceiptDto[]> {
+    this.assertStaffWithAccess();
     const { scope } = this.caller.current();
     const po = await this.readPo(this.db, scope, purchaseOrderId);
     this.assertMayRead(await this.requestOf(this.db, scope, po));
@@ -172,6 +179,7 @@ export class ReceiptsService {
 
   /** One receipt with its lines and serials; 404 outside the caller's entity or reach. */
   async get(id: string): Promise<ReceiptDto> {
+    this.assertStaffWithAccess();
     const { scope } = this.caller.current();
     const row = await this.readReceipt(this.db, scope, id);
     const po = await this.readPo(this.db, scope, row.purchaseOrderId);
@@ -181,6 +189,7 @@ export class ReceiptsService {
 
   /** Ordered, received (confirmed, net of reversals), still open and billed per PO line. */
   async progress(purchaseOrderId: string): Promise<PoProgress> {
+    this.assertStaffWithAccess();
     const { scope } = this.caller.current();
     const po = await this.readPo(this.db, scope, purchaseOrderId);
     this.assertMayRead(await this.requestOf(this.db, scope, po));
@@ -202,6 +211,7 @@ export class ReceiptsService {
 
   /** A draft receipt with its GRN number. See the controller for the answers. */
   async create(body: CreateReceiptBody, idempotencyKey: string): Promise<ReceiptDto> {
+    this.assertStaffWithAccess();
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     try {
@@ -309,6 +319,7 @@ export class ReceiptsService {
 
   /** Confirms a draft. See the controller for the answers. */
   async confirm(id: string, idempotencyKey: string): Promise<ReceiptDto> {
+    this.assertStaffWithAccess();
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     try {
@@ -397,6 +408,7 @@ export class ReceiptsService {
 
   /** Reverses a confirmed receipt with a new negative one. See the controller for the answers. */
   async reverse(id: string, body: ReverseReceiptBody, idempotencyKey: string): Promise<ReceiptDto> {
+    this.assertStaffWithAccess();
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     try {
@@ -739,6 +751,23 @@ export class ReceiptsService {
   }
 
   // ------------------------------------------------------------------------------------------------- authz
+
+  /**
+   * First check of every public method, before any read: an active staff caller who holds at least one of the
+   * grants this module works with. A portal user, an inactive user or a role with none of them (an accountant)
+   * is 403 whatever id they guess, so the answer never tells an existing id from a missing one.
+   */
+  private assertStaffWithAccess(): void {
+    const { principal } = this.caller.current();
+    const holds = MODULE_ACTIONS.some((a) => principal.grants.has(a));
+    if (principal.status !== 'active' || principal.orgKind !== 'staff' || !holds) {
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: principal.status === 'active' ? 'no_permission' : 'inactive_user',
+      });
+    }
+  }
 
   /**
    * Who may receive or confirm a receipt of `kind` (a draft, a confirmation or a reversal): goods need
