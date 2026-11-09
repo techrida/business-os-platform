@@ -44,31 +44,35 @@ describe('rfqFailure', () => {
   });
 
   it('shows the API reason for a domain 409 and offers a reload', () => {
-    const f = rfqFailure(
-      err(409, 'VENDOR_NOT_APPROVED', 'Vendor 2222 is not approved'),
-      'create',
-    );
+    const f = rfqFailure(err(409, 'VENDOR_NOT_APPROVED', 'Vendor 2222 is not approved'), 'create');
     expect(f.message).toContain('Vendor 2222 is not approved');
     expect(f.reload).toBe(true);
   });
 
   it('words a scan refusal and an already-quoted vendor from the API text', () => {
-    expect(rfqFailure(err(409, 'conflict', 'The submitted file has not scanned clean'), 'convert').message).toContain(
-      'has not scanned clean',
-    );
-    expect(rfqFailure(err(409, 'conflict', 'This vendor already quoted on this RFQ'), 'record').message).toContain(
-      'already quoted',
-    );
+    expect(
+      rfqFailure(err(409, 'conflict', 'The submitted file has not scanned clean'), 'convert')
+        .message,
+    ).toContain('has not scanned clean');
+    expect(
+      rfqFailure(err(409, 'conflict', 'This vendor already quoted on this RFQ'), 'record').message,
+    ).toContain('already quoted');
   });
 
   it('explains FEWER_THAN_MIN_QUOTES without the field name', () => {
-    const f = rfqFailure(err(409, 'FEWER_THAN_MIN_QUOTES', 'Only 2 of 3 quotations: fewerThanThreeReason is required'), 'recommend');
+    const f = rfqFailure(
+      err(409, 'FEWER_THAN_MIN_QUOTES', 'Only 2 of 3 quotations: fewerThanThreeReason is required'),
+      'recommend',
+    );
     expect(f.message).not.toMatch(/fewerThanThreeReason/);
     expect(f.message).toMatch(/fewer quotations than the minimum/i);
   });
 
   it('says nothing was submitted on NO_ELIGIBLE_APPROVER', () => {
-    const f = rfqFailure(err(422, 'NO_ELIGIBLE_APPROVER', 'No Finance user can approve.'), 'commit');
+    const f = rfqFailure(
+      err(422, 'NO_ELIGIBLE_APPROVER', 'No Finance user can approve.'),
+      'commit',
+    );
     expect(f.message).toContain('No Finance user can approve.');
     expect(f.message).toMatch(/Nothing was submitted/);
   });

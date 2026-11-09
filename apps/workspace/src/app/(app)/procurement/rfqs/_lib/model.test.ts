@@ -43,7 +43,7 @@ describe('submissionConvertibility', () => {
   });
   it('says why every other scan state cannot, including no version yet', () => {
     for (const s of ['quarantined', 'awaiting_content', 'infected', 'rejected', 'failed', null]) {
-      const c = submissionConvertibility(s as never);
+      const c = submissionConvertibility(s);
       expect(c.convertible).toBe(false);
       expect(c.reason).not.toBe('');
       expect(c.label).not.toBe('');

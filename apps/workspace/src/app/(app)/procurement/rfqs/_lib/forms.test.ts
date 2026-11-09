@@ -124,11 +124,7 @@ describe('parseQuoteValues', () => {
   });
 
   it('convert mode sends the submission and never a vendor or a document', () => {
-    const v = quoteValuesFromForm(
-      quoteForm([
-        ['submissionId', SUB],
-      ]),
-    );
+    const v = quoteValuesFromForm(quoteForm([['submissionId', SUB]]));
     const out = parseQuoteValues({ ...v, mode: 'convert' });
     expect(out.ok).toBe(true);
     if (out.ok) {

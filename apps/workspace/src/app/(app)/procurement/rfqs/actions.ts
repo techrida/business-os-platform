@@ -40,10 +40,7 @@ function text(form: FormData, name: string): string {
   return typeof v === 'string' ? v : '';
 }
 
-export async function createRfqAction(
-  _prev: RfqFormState,
-  form: FormData,
-): Promise<RfqFormState> {
+export async function createRfqAction(_prev: RfqFormState, form: FormData): Promise<RfqFormState> {
   const session = await requireStaffSession('/procurement/rfqs/new');
   const key = keyOf(form);
   if (!rfqGrants(session.roles).sourcing) return { key, errors: {}, error: NO_SOURCING };
