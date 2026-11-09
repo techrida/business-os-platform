@@ -1,0 +1,161 @@
+/* Layout and small pieces that belong to the invoice list and detail only. Everything else comes from
+   components/ui. Colours are Figma tokens. */
+
+/* ---- List ---- */
+
+.count {
+  white-space: nowrap;
+}
+
+/* The filters are a plain GET form: it works without script, and the URL carries the choice. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.filterField {
+  flex: 0 1 220px;
+  min-width: min(100%, 180px);
+}
+
+.toolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.number {
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* A long customer name wraps inside its column instead of widening the table. */
+.customer {
+  display: inline-block;
+  min-width: 12ch;
+  max-width: 36ch;
+  overflow-wrap: anywhere;
+}
+
+.amount {
+  font-weight: var(--font-weight-medium);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+/* ---- Detail ---- */
+
+/* The invoice actions, and the slot where the credit and debit note buttons mount. An empty slot takes no room. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions:empty,
+.noteSlot:empty {
+  display: none;
+}
+
+.noteSlot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Customer names and reasons are free text: they wrap instead of widening the page. */
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.columns {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.side {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+@media (min-width: 1200px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr) 373px;
+  }
+}
+
+.totals {
+  display: grid;
+  margin: 0;
+}
+
+.totalRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 16px;
+  padding-block: 10px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.totalRow:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.totalTerm {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.totalValue {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The grand total is the one heavy line; weight and size carry it, no extra box. */
+.grandTotal {
+  padding-bottom: 0;
+}
+
+.grandTotal .totalTerm {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.grandTotal .totalValue {
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+/* Cells in the lines table: descriptions wrap, figures keep their digits aligned. */
+.lineText {
+  min-width: 18ch;
+  max-width: 48ch;
+  overflow-wrap: anywhere;
+}
+
+.figure {
+  font-variant-numeric: tabular-nums;
+}
