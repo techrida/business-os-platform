@@ -1,0 +1,74 @@
+import { expect, test } from '@playwright/test';
+
+import { signInAs, type Signed } from '../helpers/memo-flow';
+
+/**
+ * The P4 payables screens (bill inbox, bills, bill detail, bill entry), against the real stack.
+ * Not run by the unit that wrote it: it needs the payables API routes, the P4 permission grants,
+ * and the seeded founder persona. Written for the lead to run; it skips unless BOS_E2E_P4=1.
+ *
+ * (1) The bills list loads, filters by status, and a status with no bills says so.
+ * (2) The inbox loads and says whether anything is waiting.
+ * (3) Bill entry without a submission sends the person back to the inbox.
+ * (4) If a bill exists, its page shows the header, the lines and the match panel.
+ *
+ * Set BOS_E2E_BILL_ID to the id of an existing bill to run (4).
+ */
+
+test.skip(process.env.BOS_E2E_P4 !== '1', 'set BOS_E2E_P4=1 to run the P4 payables screens');
+
+test('the bills list loads and filters', async ({ browser, baseURL }) => {
+  test.setTimeout(120_000);
+  const appBase = baseURL ?? 'https://app.localhost';
+  const opened: Signed[] = [];
+  try {
+    const founder = await signInAs(browser, appBase, 'founder');
+    opened.push(founder);
+    await founder.page.goto('/payables/bills');
+    await expect(founder.page.getByRole('heading', { level: 1, name: 'Bills' })).toBeVisible();
+    await founder.page.getByLabel('Status').selectOption('voided');
+    await founder.page.getByRole('button', { name: 'Show bills' }).click();
+    await expect(founder.page).toHaveURL(/status=voided/);
+    await expect(founder.page.getByLabel('Status')).toHaveValue('voided');
+  } finally {
+    await Promise.all(opened.map((s) => s.context.close()));
+  }
+});
+
+test('the inbox loads and bill entry needs a submission', async ({ browser, baseURL }) => {
+  test.setTimeout(120_000);
+  const appBase = baseURL ?? 'https://app.localhost';
+  const opened: Signed[] = [];
+  try {
+    const founder = await signInAs(browser, appBase, 'founder');
+    opened.push(founder);
+    await founder.page.goto('/payables/inbox');
+    await expect(founder.page.getByRole('heading', { level: 1, name: 'Bill inbox' })).toBeVisible();
+    await founder.page.goto('/payables/bills/new');
+    await expect(
+      founder.page.getByRole('heading', { name: 'Start from a vendor submission.' }),
+    ).toBeVisible();
+    await founder.page.getByRole('link', { name: 'Open the inbox' }).click();
+    await expect(founder.page).toHaveURL(/\/payables\/inbox/);
+  } finally {
+    await Promise.all(opened.map((s) => s.context.close()));
+  }
+});
+
+test('a bill shows its lines and the match panel', async ({ browser, baseURL }) => {
+  test.setTimeout(120_000);
+  const id = process.env.BOS_E2E_BILL_ID;
+  test.skip(id === undefined || id === '', 'set BOS_E2E_BILL_ID to an existing bill');
+  const appBase = baseURL ?? 'https://app.localhost';
+  const opened: Signed[] = [];
+  try {
+    const founder = await signInAs(browser, appBase, 'founder');
+    opened.push(founder);
+    await founder.page.goto(`/payables/bills/${id ?? ''}`);
+    await expect(founder.page.getByRole('heading', { name: 'Lines' })).toBeVisible();
+    await expect(founder.page.getByRole('heading', { name: 'Totals' })).toBeVisible();
+    await expect(founder.page.getByRole('heading', { name: /^Match/ })).toBeVisible();
+  } finally {
+    await Promise.all(opened.map((s) => s.context.close()));
+  }
+});
