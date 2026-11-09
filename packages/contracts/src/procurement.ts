@@ -217,6 +217,71 @@ export const RecommendQuotationBodySchema = z.strictObject({
 });
 export type RecommendQuotationBody = z.infer<typeof RecommendQuotationBodySchema>;
 
+const decimalText = (scale: number) =>
+  z
+    .string()
+    .regex(new RegExp(`^\\d{1,14}(\\.\\d{1,${scale}})?$`), `a decimal with up to ${scale} places`);
+
+/** Open an RFQ on an approved purchase request to a distinct set of vendors. */
+export const CreateRfqBodySchema = z.strictObject({
+  purchaseRequestId: z.guid(),
+  deadline: z.iso.datetime({ offset: true }),
+  vendorIds: z
+    .array(z.guid())
+    .min(1)
+    .max(50)
+    .refine((ids) => new Set(ids).size === ids.length, 'vendorIds must be distinct'),
+});
+export type CreateRfqBody = z.infer<typeof CreateRfqBodySchema>;
+
+/** One quotation line against a purchase request line. Quantity has up to 4 places and price up to 2. */
+export const QuotationLineBodySchema = z.strictObject({
+  prLineId: z.guid(),
+  quantity: decimalText(4),
+  unitPrice: decimalText(2),
+  taxCodeId: z.guid(),
+});
+
+const quotationFields = {
+  vendorRef: text(100).optional(),
+  validUntil: isoDate.optional(),
+  currency: CurrencySchema,
+  deliveryDays: z.number().int().min(0).max(3650).optional(),
+  warranty: text(500).optional(),
+  terms: text(2000).optional(),
+  lines: z.array(QuotationLineBodySchema).min(1).max(200),
+};
+
+/** A quotation Procurement types in from the vendor's document (already uploaded through DocumentsService). */
+export const RecordQuotationBodySchema = z.strictObject({
+  vendorId: z.guid(),
+  documentId: z.guid(),
+  ...quotationFields,
+});
+export type RecordQuotationBody = z.infer<typeof RecordQuotationBodySchema>;
+
+/** A clean inbox submission turned into a quotation: vendor and document come from the submission row. */
+export const ConvertSubmissionBodySchema = z.strictObject({
+  submissionId: z.guid(),
+  ...quotationFields,
+});
+export type ConvertSubmissionBody = z.infer<typeof ConvertSubmissionBodySchema>;
+
+/** Scores for one quotation, one per criterion. */
+export const ScoreQuotationBodySchema = z.strictObject({
+  scores: z
+    .array(
+      z.strictObject({
+        criterion: text(64),
+        score: z.number().min(0).max(100),
+        comment: text(500).optional(),
+      }),
+    )
+    .min(1)
+    .max(20),
+});
+export type ScoreQuotationBody = z.infer<typeof ScoreQuotationBodySchema>;
+
 export const ReceiptLineBodySchema = z.strictObject({
   poLineId: z.guid(),
   /** Above zero. A return is a reversal of a confirmed receipt, not a negative line typed by hand. */
