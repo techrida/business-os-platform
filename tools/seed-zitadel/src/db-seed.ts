@@ -1,6 +1,7 @@
 // Seed rows that the API kernel needs on day one: the default role grants, the `test_memo`,
 // `quotation_version`, `purchase_request` and `pr_commitment` approval workflows, the INR peg and the
-// P2 quotation reference data (tax codes and payment terms). Serves the NFR "authorization is deny-by-default" (an empty
+// P2 quotation reference data (tax codes and payment terms), and, when the dev personas are passed, the dev
+// department and the VEND-DEV vendor (P4). Serves the NFR "authorization is deny-by-default" (an empty
 // role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
 // `bos.actor_id` is unset, so every write here first declares a `seed` actor inside its transaction.
 //
@@ -9,6 +10,7 @@
 import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema, type WorkflowSpec } from '@bos/contracts';
 import type pg from 'pg';
 
+import { PERSONAS } from './personas.js';
 import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
 
 // The P4 specs live in `workflow-specs.ts` (word-for-word copies; a test in apps/api pins them to the API's).
@@ -327,20 +329,183 @@ async function seedInrPeg(client: pg.ClientBase, scope: SeedScope): Promise<numb
   return result.rowCount ?? 0;
 }
 
+/**
+ * A dev persona as the seed knows it after the ZITADEL step: its stable key, the ZITADEL user id (the token
+ * `sub`, which is `app.users.zitadel_user_id`), its login name and its display name.
+ */
+export interface DevPersona {
+  personaKey: string;
+  zitadelUserId: string;
+  email: string;
+  displayName: string;
+}
+
+/** The dev procurement flows need these three people to exist as rows before anyone has logged in. */
+const VENDOR_CREATOR_KEY = 'procurement';
+const VENDOR_APPROVER_KEY = 'management';
+const DEPARTMENT_HEAD_KEY = 'depthead';
+const DEV_DEPARTMENT_NAME = 'Operations';
+/** A nine-digit Nepal PAN (vendors_pan_check). Fictional: the dev vendor is not a real company. */
+const DEV_VENDOR_PAN = '123456789';
+/** The vendor party the tenancy step creates (SEED_PARTIES.vendor in index.ts; a test pins the two together). */
+export const DEV_VENDOR_PARTY_CODE = 'VEND-DEV';
+const DEV_VENDOR_TERM = 'NET30';
+
+/** The personas the dev people step needs, in a fixed order; a missing one is an error, not a skip. */
+function devPeople(personas: readonly DevPersona[]): (DevPersona & { role: string })[] {
+  return [VENDOR_CREATOR_KEY, VENDOR_APPROVER_KEY, DEPARTMENT_HEAD_KEY].map((key) => {
+    const persona = personas.find((p) => p.personaKey === key);
+    if (!persona) throw new Error(`dev seed needs persona "${key}" but it was not passed`);
+    const role = PERSONAS.find((p) => p.key === key)?.role;
+    if (!role) throw new Error(`dev seed: persona "${key}" is not in PERSONAS`);
+    return { ...persona, role };
+  });
+}
+
+/**
+ * Dev data that the procurement flows need: the procurement, management and department-head users with a TR
+ * membership each, a department headed by the department head (procurement belongs to it), and VEND-DEV as an
+ * approved vendor with a TR account. The API's user mirror would create the users later (JIT or webhook); the
+ * vendor's maker-checker columns need real user ids now. Same rules as the mirror: a user is inserted when
+ * absent, a membership only when the user has none. Idempotent: a second run changes 0 rows.
+ */
+async function seedDevPeopleAndVendor(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  personas: readonly DevPersona[],
+): Promise<number> {
+  const people = devPeople(personas);
+  let changed = 0;
+
+  const staffOrg = await client.query<{ id: string }>(
+    `SELECT id FROM app.idp_orgs WHERE tenant_id = $1 AND kind = 'staff'`,
+    [scope.tenantId],
+  );
+  const idpOrgId = staffOrg.rows[0]?.id;
+  if (!idpOrgId) throw new Error('dev seed: the tenant has no staff app.idp_orgs row');
+
+  for (const person of people) {
+    const result = await client.query(
+      `INSERT INTO app.users (tenant_id, idp_org_id, zitadel_user_id, email, display_name, status, last_synced_at)
+       VALUES ($1, $2, $3, $4, $5, 'active', now())
+       ON CONFLICT (zitadel_user_id) DO NOTHING`,
+      [scope.tenantId, idpOrgId, person.zitadelUserId, person.email, person.displayName],
+    );
+    changed += result.rowCount ?? 0;
+  }
+  const found = await client.query<{ id: string; zitadel_user_id: string }>(
+    `SELECT id, zitadel_user_id FROM app.users WHERE tenant_id = $1 AND zitadel_user_id = ANY($2::text[])`,
+    [scope.tenantId, people.map((p) => p.zitadelUserId)],
+  );
+  const userIdOf = (key: string): string => {
+    const zitadelUserId = people.find((p) => p.personaKey === key)?.zitadelUserId;
+    const id = found.rows.find((r) => r.zitadel_user_id === zitadelUserId)?.id;
+    if (!id) throw new Error(`dev seed: no app.users row for persona "${key}" after the insert`);
+    return id;
+  };
+
+  for (const person of people) {
+    const result = await client.query(
+      `INSERT INTO app.user_entities (tenant_id, organization_id, user_id, is_default, role_keys)
+       SELECT $1::uuid, $2::uuid, $3::uuid, true, $4::text[]
+       WHERE NOT EXISTS (
+         SELECT 1 FROM app.user_entities WHERE tenant_id = $1::uuid AND user_id = $3::uuid
+       )
+       ON CONFLICT (tenant_id, organization_id, user_id) DO NOTHING`,
+      [scope.tenantId, scope.organizationId, userIdOf(person.personaKey), [person.role]],
+    );
+    changed += result.rowCount ?? 0;
+  }
+
+  // The department: created once by name, then its head is kept equal to the department-head persona.
+  const headId = userIdOf(DEPARTMENT_HEAD_KEY);
+  const department = await client.query(
+    `INSERT INTO app.departments (tenant_id, organization_id, name, head_user_id)
+     SELECT $1::uuid, $2::uuid, $3, $4::uuid
+     WHERE NOT EXISTS (
+       SELECT 1 FROM app.departments WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND name = $3
+     )`,
+    [scope.tenantId, scope.organizationId, DEV_DEPARTMENT_NAME, headId],
+  );
+  changed += department.rowCount ?? 0;
+  const head = await client.query(
+    `UPDATE app.departments SET head_user_id = $4::uuid, updated_at = now()
+     WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND name = $3
+       AND head_user_id IS DISTINCT FROM $4::uuid`,
+    [scope.tenantId, scope.organizationId, DEV_DEPARTMENT_NAME, headId],
+  );
+  changed += head.rowCount ?? 0;
+  const departmentRow = await client.query<{ id: string }>(
+    `SELECT id FROM app.departments
+     WHERE tenant_id = $1 AND organization_id = $2 AND name = $3
+     ORDER BY created_at, id LIMIT 1`,
+    [scope.tenantId, scope.organizationId, DEV_DEPARTMENT_NAME],
+  );
+  const departmentId = departmentRow.rows[0]?.id;
+  if (!departmentId) throw new Error(`dev seed: department "${DEV_DEPARTMENT_NAME}" not found`);
+  const filed = await client.query(
+    `UPDATE app.user_entities SET department_id = $4::uuid
+     WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND user_id = $3::uuid
+       AND department_id IS DISTINCT FROM $4::uuid`,
+    [scope.tenantId, scope.organizationId, userIdOf(VENDOR_CREATOR_KEY), departmentId],
+  );
+  changed += filed.rowCount ?? 0;
+
+  // VEND-DEV: the party exists already (the tenancy step upserts it). The vendor row takes its id and legal name.
+  const party = await client.query<{ id: string }>(
+    `SELECT id FROM app.parties WHERE tenant_id = $1 AND code = $2 AND kind = 'vendor'`,
+    [scope.tenantId, DEV_VENDOR_PARTY_CODE],
+  );
+  const partyId = party.rows[0]?.id;
+  if (!partyId) throw new Error(`dev seed: vendor party ${DEV_VENDOR_PARTY_CODE} not found`);
+  const vendor = await client.query(
+    `INSERT INTO app.vendors (id, tenant_id, legal_name, kind, pan, vat_registered, country, status, created_by, approved_by)
+     SELECT p.id, p.tenant_id, p.name, 'company', $3, false, 'NP', 'approved', $4::uuid, $5::uuid
+     FROM app.parties p
+     WHERE p.tenant_id = $1::uuid AND p.id = $2::uuid
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      scope.tenantId,
+      partyId,
+      DEV_VENDOR_PAN,
+      userIdOf(VENDOR_CREATOR_KEY),
+      userIdOf(VENDOR_APPROVER_KEY),
+    ],
+  );
+  changed += vendor.rowCount ?? 0;
+  const account = await client.query(
+    `INSERT INTO app.vendor_accounts (tenant_id, organization_id, vendor_id, default_currency, payment_term_id)
+     SELECT $1::uuid, $2::uuid, $3::uuid, 'NPR', pt.id
+     FROM app.payment_terms pt
+     WHERE pt.tenant_id = $1::uuid AND pt.code = $4
+     ON CONFLICT (tenant_id, organization_id, vendor_id) DO NOTHING`,
+    [scope.tenantId, scope.organizationId, partyId, DEV_VENDOR_TERM],
+  );
+  changed += account.rowCount ?? 0;
+  return changed;
+}
+
 // `app.number_series` is not seeded: this package does not depend on @bos/locale (so no
 // fiscalYearOf), and the API's NumberingService creates each row lazily on first use (MEMO, the
 // P2 series QT, LD, DEAL and CUS, and the P4 series PR, RFQ, PO, GRN, BILL and PAY).
 
 /**
  * Seeds the kernel rows in ONE transaction and returns how many rows were inserted or changed.
- * A second run changes nothing and returns 0.
+ * A second run changes nothing and returns 0. With `personas` (the dev personas, from index.ts) it also seeds
+ * the dev department and VEND-DEV, which need real user ids; without them that part is skipped.
  */
-export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): Promise<number> {
+export async function seedKernelRows(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  personas?: readonly DevPersona[],
+): Promise<number> {
   // Parse first so a bad spec fails before any SQL, and so we store the schema's defaulted form.
   const memoSpec = WorkflowSpecSchema.parse(TEST_MEMO_WORKFLOW_SPEC);
   const quotationSpec = WorkflowSpecSchema.parse(QUOTATION_VERSION_WORKFLOW_SPEC);
   const purchaseRequestSpec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
   const prCommitmentSpec = WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC);
+  // A missing persona fails here, before BEGIN, like a bad spec.
+  if (personas && personas.length > 0) devPeople(personas);
   await client.query('BEGIN');
   try {
     await setSeedActor(client, scope);
@@ -374,6 +539,10 @@ export async function seedKernelRows(client: pg.ClientBase, scope: SeedScope): P
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
     changed += await seedWithholdingCodes(client, scope);
+    // After the payment terms (the vendor account points at NET30).
+    if (personas && personas.length > 0) {
+      changed += await seedDevPeopleAndVendor(client, scope, personas);
+    }
     await client.query('COMMIT');
     return changed;
   } catch (error) {
