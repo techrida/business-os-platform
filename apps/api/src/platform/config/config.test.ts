@@ -404,6 +404,16 @@ describe('FIELD_ENC_KEYS (the field-encryption keyring)', () => {
     expect(keyring.key('k2')).toBeUndefined();
   });
 
+  it('treats blank FIELD_ENC_ACTIVE_KID and FIELD_ENC_FP_KID as unset (compose writes `${VAR:-}`)', () => {
+    const keyring = ring({
+      FIELD_ENC_KEYS: `k1:${key1}`,
+      FIELD_ENC_ACTIVE_KID: '',
+      FIELD_ENC_FP_KID: ' ',
+    });
+    expect(keyring.activeKid).toBe('k1');
+    expect(keyring.fingerprintKid).toBe('k1');
+  });
+
   it('parses several keys, trimming blanks, with the active and fingerprint ids named', () => {
     const keyring = ring({
       FIELD_ENC_KEYS: ` k1:${key1} , k2:${key2},`,
