@@ -10,10 +10,12 @@ import {
   TAX_INVOICE_WORKFLOW_SPEC,
   QUOTATION_VERSION_WORKFLOW_SPEC,
   TEST_MEMO_WORKFLOW_SPEC,
+  DEV_VENDOR_PARTY_CODE,
+  type DevPersona,
   seedKernelRows,
   setSeedActor,
 } from './db-seed.js';
-import { PgTenancyStore, tenancySeed } from './index.js';
+import { PgTenancyStore, SEED_PARTIES, tenancySeed } from './index.js';
 import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1', correlationId: 'corr-1' };
@@ -436,6 +438,191 @@ describe('seedKernelRows: P4 purchasing', () => {
   });
 });
 
+describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
+  const personas: DevPersona[] = [
+    {
+      personaKey: 'procurement',
+      zitadelUserId: 'z-proc',
+      email: 'procurement@dev.bos.test',
+      displayName: 'Dev Procurement',
+    },
+    {
+      personaKey: 'management',
+      zitadelUserId: 'z-mgmt',
+      email: 'management@dev.bos.test',
+      displayName: 'Dev Management',
+    },
+    {
+      personaKey: 'depthead',
+      zitadelUserId: 'z-head',
+      email: 'depthead@dev.bos.test',
+      displayName: 'Dev Department Head',
+    },
+    {
+      personaKey: 'founder',
+      zitadelUserId: 'z-founder',
+      email: 'founder@dev.bos.test',
+      displayName: 'Dev Founder',
+    },
+  ];
+  const userIds = { 'z-proc': 'u-proc', 'z-mgmt': 'u-mgmt', 'z-head': 'u-head' };
+
+  /** The lookups the dev step reads back; every write is scripted by `writes`. */
+  const withLookups =
+    (writes: Script): Script =>
+    (call) => {
+      const { text } = call;
+      if (text.startsWith('SELECT id FROM app.idp_orgs')) return { rows: [{ id: 'idp-staff' }] };
+      if (text.startsWith('SELECT id, zitadel_user_id FROM app.users')) {
+        return {
+          rows: Object.entries(userIds).map(([zitadel, id]) => ({ id, zitadel_user_id: zitadel })),
+        };
+      }
+      if (text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-vend' }] };
+      if (text.startsWith('SELECT id FROM app.departments')) return { rows: [{ id: 'dept-1' }] };
+      return writes(call);
+    };
+  const writesTo = (calls: Call[], table: string) =>
+    calls.filter(
+      (c) => c.text.includes(`INTO app.${table} `) || c.text.startsWith(`UPDATE app.${table} `),
+    );
+
+  it('looks the vendor up by the party code the tenancy step creates', () => {
+    expect(DEV_VENDOR_PARTY_CODE).toBe(SEED_PARTIES.vendor.code);
+  });
+
+  it('writes nothing for people, departments or vendors when no personas are passed', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope);
+    for (const table of ['users', 'user_entities', 'departments', 'vendors', 'vendor_accounts']) {
+      expect(writesTo(calls, table)).toEqual([]);
+    }
+  });
+
+  it('upserts the three needed users in the staff IdP org, ignoring the other personas', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const users = writesTo(calls, 'users');
+    expect(users.map((c) => c.values)).toEqual([
+      ['tenant-1', 'idp-staff', 'z-proc', 'procurement@dev.bos.test', 'Dev Procurement'],
+      ['tenant-1', 'idp-staff', 'z-mgmt', 'management@dev.bos.test', 'Dev Management'],
+      ['tenant-1', 'idp-staff', 'z-head', 'depthead@dev.bos.test', 'Dev Department Head'],
+    ]);
+    for (const c of users) expect(c.text).toContain('ON CONFLICT (zitadel_user_id) DO NOTHING');
+  });
+
+  it('gives each of them a TR membership with their own role, only when they have none', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const memberships = calls.filter((c) => c.text.includes('INTO app.user_entities'));
+    expect(memberships.map((c) => c.values)).toEqual([
+      ['tenant-1', 'org-1', 'u-proc', ['procurement']],
+      ['tenant-1', 'org-1', 'u-mgmt', ['management']],
+      ['tenant-1', 'org-1', 'u-head', ['operations_officer']],
+    ]);
+    for (const c of memberships) {
+      expect(c.text).toContain('WHERE NOT EXISTS');
+      expect(c.text).toContain('ON CONFLICT (tenant_id, organization_id, user_id) DO NOTHING');
+    }
+  });
+
+  it('creates the Operations department headed by the department head and files procurement in it', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const insert = calls.find((c) => c.text.includes('INTO app.departments'));
+    expect(insert?.values).toEqual(['tenant-1', 'org-1', 'Operations', 'u-head']);
+    expect(insert?.text).toContain('WHERE NOT EXISTS');
+    const head = calls.find((c) => c.text.startsWith('UPDATE app.departments'));
+    expect(head?.values).toEqual(['tenant-1', 'org-1', 'Operations', 'u-head']);
+    expect(head?.text).toContain('head_user_id IS DISTINCT FROM');
+    const filed = calls.filter((c) => c.text.startsWith('UPDATE app.user_entities'));
+    expect(filed.map((c) => c.values)).toEqual([['tenant-1', 'org-1', 'u-proc', 'dept-1']]);
+    expect(filed[0]?.text).toContain('department_id IS DISTINCT FROM');
+  });
+
+  it('seeds VEND-DEV as an approved NP company vendor made by procurement and approved by management', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const vendor = calls.find((c) => c.text.includes('INTO app.vendors'));
+    expect(vendor?.values).toEqual(['tenant-1', 'party-vend', '123456789', 'u-proc', 'u-mgmt']);
+    expect(vendor?.values[2]).toMatch(/^[0-9]{9}$/);
+    expect(vendor?.text).toContain("'company'");
+    expect(vendor?.text).toContain("'NP'");
+    expect(vendor?.text).toContain("'approved'");
+    expect(vendor?.text).toContain('ON CONFLICT (id) DO NOTHING');
+    // The party it hangs on is the VEND-DEV vendor party, found by code and kind.
+    const party = calls.find((c) => c.text.startsWith('SELECT id FROM app.parties'));
+    expect(party?.values).toEqual(['tenant-1', 'VEND-DEV']);
+    expect(party?.text).toContain("kind = 'vendor'");
+  });
+
+  it('gives VEND-DEV an NPR account in TR on the NET30 term, after the payment terms exist', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await seedKernelRows(client, scope, personas);
+    const account = calls.find((c) => c.text.includes('INTO app.vendor_accounts'));
+    expect(account?.values).toEqual(['tenant-1', 'org-1', 'party-vend', 'NET30']);
+    expect(account?.text).toContain("'NPR'");
+    expect(account?.text).toContain(
+      'ON CONFLICT (tenant_id, organization_id, vendor_id) DO NOTHING',
+    );
+    const at = (needle: string) => calls.findIndex((c) => c.text.includes(needle));
+    expect(at('INTO app.vendor_accounts')).toBeGreaterThan(at('INTO app.payment_terms'));
+    expect(at('INTO app.vendors')).toBeGreaterThan(at('INTO app.user_entities'));
+    expect(at('INTO app.user_entities')).toBeGreaterThan(at('INTO app.users'));
+    expect(at('INTO app.departments')).toBeGreaterThan(at('INTO app.users'));
+    expect(calls.at(-1)?.text).toBe('COMMIT');
+  });
+
+  it('counts the new rows on a first run and changes nothing on a second', async () => {
+    const without = await seedKernelRows(fakeClient(withLookups(firstRun)).client, scope);
+    const first = await seedKernelRows(fakeClient(withLookups(firstRun)).client, scope, personas);
+    expect(first).toBeGreaterThan(without);
+    const second = await seedKernelRows(
+      fakeClient(withLookups(nothingChanged)).client,
+      scope,
+      personas,
+    );
+    expect(second).toBe(0);
+  });
+
+  it('refuses before BEGIN when a persona it needs was not passed', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await expect(
+      seedKernelRows(
+        client,
+        scope,
+        personas.filter((p) => p.personaKey !== 'depthead'),
+      ),
+    ).rejects.toThrow(/depthead/);
+    expect(calls).toEqual([]);
+  });
+
+  it('rolls back when the vendor insert fails', async () => {
+    const { client, calls } = fakeClient(
+      withLookups((call) =>
+        call.text.includes('INTO app.vendors ')
+          ? (new Error('vendors_party_fk') as unknown as Reply)
+          : firstRun(call),
+      ),
+    );
+    await expect(seedKernelRows(client, scope, personas)).rejects.toThrow('vendors_party_fk');
+    expect(calls.at(-1)?.text).toBe('ROLLBACK');
+  });
+
+  it('fails clearly, and rolls back, when the VEND-DEV party or the staff IdP org is missing', async () => {
+    const missing =
+      (needle: string): Script =>
+      (call) =>
+        call.text.startsWith(needle) ? { rows: [] } : withLookups(firstRun)(call);
+    const noParty = fakeClient(missing('SELECT id FROM app.parties'));
+    await expect(seedKernelRows(noParty.client, scope, personas)).rejects.toThrow(/VEND-DEV/);
+    expect(noParty.calls.at(-1)?.text).toBe('ROLLBACK');
+    const noOrg = fakeClient(missing('SELECT id FROM app.idp_orgs'));
+    await expect(seedKernelRows(noOrg.client, scope, personas)).rejects.toThrow(/staff/);
+    expect(noOrg.calls.at(-1)?.text).toBe('ROLLBACK');
+  });
+});
+
 describe('seedKernelRows: stale role grants (R25)', () => {
   /** First run against a table that still holds one grant the defaults no longer list. */
   const staleRow: Script = (call) =>
@@ -693,6 +880,40 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
 
     const second = storeOver((call) => lookup(call) ?? nothingChanged(call));
     expect(await second.store.seedKernel('z-staff', 'corr-9')).toBe(0);
+  });
+
+  it('hands the dev personas on to the kernel seed, so VEND-DEV and the department get written', async () => {
+    const lookup = (call: Call): Reply | undefined => {
+      if (call.text.startsWith('SELECT o.id, o.tenant_id FROM app.idp_orgs i JOIN'))
+        return { rows: [{ id: 'org-uuid', tenant_id: 'tenant-uuid' }] };
+      if (call.text.startsWith('SELECT id FROM app.idp_orgs')) return { rows: [{ id: 'idp-1' }] };
+      if (call.text.startsWith('SELECT id, zitadel_user_id FROM app.users'))
+        return {
+          rows: [
+            { id: 'u-1', zitadel_user_id: 'z-1' },
+            { id: 'u-2', zitadel_user_id: 'z-2' },
+            { id: 'u-3', zitadel_user_id: 'z-3' },
+          ],
+        };
+      if (call.text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-1' }] };
+      if (call.text.startsWith('SELECT id FROM app.departments')) return { rows: [{ id: 'd-1' }] };
+      return undefined;
+    };
+    const person = (personaKey: string, zitadelUserId: string): DevPersona => ({
+      personaKey,
+      zitadelUserId,
+      email: `${personaKey}@dev.bos.test`,
+      displayName: personaKey,
+    });
+    const { store, calls } = storeOver((call) => lookup(call) ?? firstRun(call));
+    await store.seedKernel('z-staff', 'corr-9', [
+      person('procurement', 'z-1'),
+      person('management', 'z-2'),
+      person('depthead', 'z-3'),
+    ]);
+    const vendor = calls.find((c) => c.text.includes('INTO app.vendors'));
+    expect(vendor?.values[0]).toBe('tenant-uuid');
+    expect(calls.some((c) => c.text.includes('INTO app.vendor_accounts'))).toBe(true);
   });
 
   it('fails clearly when the staff org has no idp_org or default entity yet', async () => {
