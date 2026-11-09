@@ -1,0 +1,61 @@
+/* Payment form extras. The shared form look (grid, buttons) comes from quotation.module.css. */
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.select {
+  appearance: auto;
+}
+
+.context {
+  display: grid;
+  gap: 2px;
+  padding: 12px 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  overflow-wrap: anywhere;
+}
+
+.proofs {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proofs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-body-small);
+  overflow-wrap: anywhere;
+}
+
+.problems {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  list-style: none;
+}
+
+.tds summary {
+  cursor: pointer;
+  font-size: var(--font-size-body-small);
+}
+
+.tds .grid {
+  margin-top: 12px;
+}
