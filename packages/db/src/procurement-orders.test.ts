@@ -851,6 +851,26 @@ describe('a reversal is a negative line that names the line it reverses', () => 
     ).rejects.toMatchObject({ code: '23514', constraint: 'receipts_reversal_check' });
   });
 
+  it('refuses to delete a reversal line, which would reopen the reversed quantity (23514)', async () => {
+    const scope = await newScope();
+    const { poId, poLineId } = await orderOfFive(scope);
+    const receiptId = await insertReceipt(scope, poId);
+    const original = await insertReceiptLine(scope, receiptId, poId, poLineId, '5');
+    const reversal = await insertReceipt(scope, poId, { reverses: receiptId });
+    const reversalLine = await insertReceiptLine(scope, reversal, poId, poLineId, '-5', {
+      reverses: original,
+    });
+    const again = await insertReceipt(scope, poId);
+    await insertReceiptLine(scope, again, poId, poLineId, '5');
+    await expect(
+      run(scope.organizationId, `DELETE FROM app.receipt_lines WHERE tenant_id = $1 AND id = $2`, [
+        scope.tenantId,
+        reversalLine,
+      ]),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'receipt_lines_reversal_delete_check' });
+    expect(await netReceived(poLineId)).toBe('5.0000');
+  });
+
   it('refuses a reversal of a line of another PO line or another PO (23503)', async () => {
     const scope = await newScope();
     const { chain, poId, poLineId } = await orderOfFive(scope);
