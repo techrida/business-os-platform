@@ -423,7 +423,8 @@ async function ledgerTerms(): Promise<PartyLedger[]> {
 /**
  * Documents whose open items are wrong: an issued tax invoice / debit / credit note or a verified or reversed payment
  * without exactly one item of its amount, direction and customer; anything else (drafts, proformas, discarded,
- * submitted, rejected) with any item; or an item open outside [0, amount]. Empty when the ledger is right.
+ * submitted, rejected) with any item; a reversed payment whose credit is still open (the reversal must offset
+ * it); or an item open outside [0, amount]. Empty when the ledger is right.
  */
 async function openItemViolations(): Promise<unknown[]> {
   const { rows } = await world.pool.query(
@@ -455,6 +456,14 @@ async function openItemViolations(): Promise<unknown[]> {
                  AND bool_and(oi.amount = p.settles AND oi.direction = 'credit'
                               AND oi.customer_party_id = p.customer_party_id)
             ELSE count(oi.id) = 0 END)
+     UNION ALL
+     SELECT 'reversed payment still open', p.id, NULL, b.open_amount::text, NULL
+       FROM app.payments p
+       JOIN app.open_item_balances b
+         ON b.tenant_id = p.tenant_id AND b.organization_id = p.organization_id
+        AND b.source_type = 'payment' AND b.source_id = p.id AND b.direction = 'credit'
+      WHERE p.tenant_id = $1 AND p.organization_id = $2 AND p.status = 'reversed'
+        AND b.open_amount <> 0
      UNION ALL
      SELECT 'balance', b.open_item_id, b.source_type, b.open_amount::text, NULL
        FROM app.open_item_balances b
@@ -888,7 +897,7 @@ describe('P3 model: a seeded walk of money commands keeps the receivables invari
     const codes = await t
       .http()
       .get('/v1/tax-codes')
-      .set('authorization', await auth('preparer'));
+      .set('authorization', await auth('sales'));
     expect(codes.status, show(codes)).toBe(200);
     const codeList = (
       Array.isArray(codes.body) ? codes.body : (codes.body as { items: unknown[] }).items
