@@ -445,6 +445,227 @@ describe('purchase request: the department route (AD10, AD11, AD12)', () => {
 });
 
 describe('purchase request: the decision', () => {
+  it('lets the designated officer read, see and decide only their active PR head step, with an exact replay', async () => {
+    const { id, request } = await submitted();
+    as(U.head, 'operations_officer');
+    expect(can(principalNow(), 'approvals.requests.act').allowed).toBe(false);
+    expect((await approvals.inbox()).map((i) => i.requestId)).toContain(request.id);
+    expect((await approvals.get(request.id)).requestId).toBe(request.id);
+    const action = { action: 'approve' as const, expectedVersion: request.version };
+    const key = randomUUID();
+    await approvals.getForAction(request.id, action, key);
+    const first = await approvals.act(request.id, action, key);
+    expect((await prRow(id)).status).toBe('dept_approved');
+    expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
+    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    await approvals.getForAction(request.id, action, key);
+    expect(await approvals.act(request.id, action, key)).toEqual(first);
+    as(U.other, 'operations_officer');
+    expect((await httpErrorOf(approvals.getForAction(request.id, action, key))).getStatus()).toBe(
+      404,
+    );
+    expect((await httpErrorOf(approvals.act(request.id, action, key))).getStatus()).toBe(403);
+    as(U.head, 'operations_officer');
+    expect(
+      (await httpErrorOf(approvals.getForAction(request.id, action, randomUUID()))).getStatus(),
+    ).toBe(404);
+    expect(
+      (
+        await httpErrorOf(
+          approvals.getForAction(request.id, { ...action, expectedVersion: 99 }, key),
+        )
+      ).getStatus(),
+    ).toBe(404);
+  });
+
+  it('exposes no head request to an unrelated officer, and preserves the entity and tenant walls', async () => {
+    const { request } = await submitted();
+    as(U.other, 'operations_officer');
+    expect((await httpErrorOf(approvals.inbox())).getStatus()).toBe(403);
+    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    expect(
+      (
+        await httpErrorOf(
+          approvals.act(request.id, { action: 'approve', expectedVersion: 99 }, randomUUID()),
+        )
+      ).getStatus(),
+    ).toBe(403);
+    as(U.head, 'operations_officer');
+    for (const foreign of [scopeB, { ...scopeA, tenantId: randomUUID() }]) {
+      current.scope = foreign;
+      expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+      expect(
+        (
+          await httpErrorOf(
+            approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+          )
+        ).getStatus(),
+      ).toBe(404);
+    }
+  });
+
+  it('removes access when the named head loses that department designation', async () => {
+    const { request } = await submitted();
+    await read((tx) =>
+      tx.execute(
+        sql`UPDATE app.departments SET head_user_id = ${U.other} WHERE id = ${dept.headed}`,
+      ),
+    );
+    // Remaining head of another department does not keep the old request assignment valid.
+    await read((tx) =>
+      tx.execute(
+        sql`UPDATE app.departments SET head_user_id = ${U.head} WHERE id = ${dept.selfHeaded}`,
+      ),
+    );
+    try {
+      as(U.head, 'operations_officer');
+      expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+      expect(
+        (
+          await httpErrorOf(
+            approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+          )
+        ).getStatus(),
+      ).toBe(403);
+    } finally {
+      await read((tx) =>
+        tx.execute(
+          sql`UPDATE app.departments SET head_user_id = ${U.head} WHERE id = ${dept.headed}`,
+        ),
+      );
+      await read((tx) =>
+        tx.execute(
+          sql`UPDATE app.departments SET head_user_id = ${U.req} WHERE id = ${dept.selfHeaded}`,
+        ),
+      );
+    }
+  });
+
+  it('ends the head exception when an emergency PR moves to its Management role step', async () => {
+    const { request } = await submitted({ isEmergency: true, emergencyReason: 'Urgent repair' });
+    await act(U.head, 'operations_officer', request.id, 'approve');
+    as(U.head, 'operations_officer');
+    expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
+    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    expect(
+      (
+        await httpErrorOf(
+          approvals.act(request.id, { action: 'approve', expectedVersion: 2 }, randomUUID()),
+        )
+      ).getStatus(),
+    ).toBe(403);
+  });
+
+  it('keeps a head delegate eligible but never lets the requester act through a delegation', async () => {
+    as(U.admin, 'founder');
+    const admin = new ApprovalsAdminService(db, new AuditService(db), caller, () => now);
+    const delegated = [];
+    for (const toUserId of [U.other, U.req]) {
+      delegated.push(
+        await admin.createDelegation({
+          fromUserId: U.head,
+          toUserId,
+          startsAt: new Date(now.getTime() - 60_000),
+          endsAt: new Date(now.getTime() + 60_000),
+          documentType: 'purchase_request',
+        }),
+      );
+    }
+    try {
+      as(U.req, 'operations_officer');
+      const { request } = await submitted();
+      expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
+      expect(
+        (
+          await httpErrorOf(
+            approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+          )
+        ).getStatus(),
+      ).toBe(403);
+      as(U.other, 'operations_officer');
+      expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(true);
+      expect((await approvals.get(request.id)).requestId).toBe(request.id);
+      const decided = await approvals.act(
+        request.id,
+        { action: 'approve', expectedVersion: 1 },
+        randomUUID(),
+      );
+      expect(decided.steps[0]).toMatchObject({
+        decidedBy: U.other,
+        decidedOnBehalfOf: U.head,
+      });
+    } finally {
+      as(U.admin, 'founder');
+      for (const d of delegated) await admin.revokeDelegation(d.id);
+    }
+  });
+
+  it('admits the operations_head fallback only while the effective token retains that role', async () => {
+    const { request } = await submitted({ departmentId: dept.headless });
+    as(U.ops, 'operations_head');
+    expect(can(principalNow(), 'approvals.requests.act').allowed).toBe(false);
+    expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(true);
+    expect((await approvals.get(request.id)).requestId).toBe(request.id);
+    // The directory mirror still lists this user; the effective token no longer carries the role.
+    as(U.ops, 'operations_officer');
+    expect((await httpErrorOf(approvals.inbox())).getStatus()).toBe(403);
+    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    expect(
+      (
+        await httpErrorOf(
+          approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+        )
+      ).getStatus(),
+    ).toBe(403);
+    as(U.ops, 'operations_head');
+    expect(
+      (await approvals.act(request.id, { action: 'approve', expectedVersion: 1 }, randomUUID()))
+        .status,
+    ).toBe('approved');
+  });
+
+  it.each(['user', 'department_head'] as const)(
+    'does not grant a named officer rights on a non-PR %s workflow',
+    async (kind) => {
+      as(U.admin, 'founder');
+      const documentType = `head_control_${kind}`;
+      const admin = new ApprovalsAdminService(db, new AuditService(db), caller, () => now);
+      await admin.createWorkflow({
+        key: documentType,
+        name: documentType,
+        spec: {
+          documentType,
+          steps: [
+            { id: 'head', kind, ...(kind === 'user' ? { user: U.head } : {}), reason: 'Control' },
+          ],
+        },
+      });
+      await admin.publish(documentType, 1);
+      approvals.registerSubject({ documentType, onDecided: async () => {} });
+      const { requestId } = await read((tx) =>
+        approvals.submit(tx, {
+          documentType,
+          documentId: randomUUID(),
+          title: 'Control request',
+          snapshot: {},
+          facts: { departmentId: dept.headed },
+          requesterUserId: U.req,
+          sodUserIds: [U.req],
+        }),
+      );
+      as(U.head, 'operations_officer');
+      expect((await approvals.inbox()).some((i) => i.requestId === requestId)).toBe(false);
+      expect((await httpErrorOf(approvals.get(requestId))).getStatus()).toBe(404);
+      expect(
+        (
+          await httpErrorOf(
+            approvals.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+          )
+        ).getStatus(),
+      ).toBe(403);
+    },
+  );
+
   it('approve moves it to dept_approved', async () => {
     const { id, request } = await submitted();
     await act(U.head, 'operations_officer', request.id, 'approve');
