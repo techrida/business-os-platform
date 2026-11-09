@@ -22,6 +22,7 @@ const api = vi.hoisted(() => ({
   convertBillSubmission: vi.fn(),
   rejectBillSubmission: vi.fn(),
   requestBillException: vi.fn(),
+  createBill: vi.fn(),
 }));
 vi.mock('@/lib/api-payables', () => api);
 
@@ -32,6 +33,7 @@ const {
   submitBillAction,
   voidBillAction,
   requestExceptionAction,
+  createBillAction,
 } = await import('./actions');
 
 const BILL = '11111111-1111-4111-8111-111111111111';
@@ -93,6 +95,53 @@ describe('request a match exception', () => {
         )
       ).key,
     ).toBe(KEY);
+  });
+});
+
+describe('create a standalone bill', () => {
+  const fields = {
+    vendorPartyId: SUB,
+    vendorInvoiceNo: ' INV-101 ',
+    invoiceDate: '2026-11-09',
+    documentId: ACCOUNT,
+    purchaseOrderId: '',
+    idempotencyKey: KEY,
+    lineCount: '1',
+    'line:0:accountId': ACCOUNT,
+    'line:0:taxCodeId': TAX,
+    'line:0:quantity': '2',
+    'line:0:unitPrice': '1000.00',
+  };
+  it('sends validated header and lines and redirects to the new bill', async () => {
+    api.createBill.mockResolvedValue({ id: BILL });
+    await expect(createBillAction(prev, form(fields))).rejects.toThrow(
+      `REDIRECT /payables/bills/${BILL}?created=1`,
+    );
+    expect(api.createBill).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        vendorPartyId: SUB,
+        vendorInvoiceNo: 'INV-101',
+        invoiceDate: '2026-11-09',
+        documentId: ACCOUNT,
+        currency: 'NPR',
+        kind: 'bill',
+        lines: [{ accountId: ACCOUNT, taxCodeId: TAX, quantity: '2', unitPrice: '1000.00' }],
+      },
+      KEY,
+    );
+  });
+  it('requires the invoice file, valid date and bill-entry permission before writes', async () => {
+    const out = await createBillAction(
+      prev,
+      form({ ...fields, documentId: '', invoiceDate: '2026-02-30' }),
+    );
+    expect(out.errors?.['documentId']).toBeTruthy();
+    expect(out.errors?.['invoiceDate']).toBeTruthy();
+    expect(api.createBill).not.toHaveBeenCalled();
+    session.roles = ['finance'];
+    expect((await createBillAction(prev, form(fields))).error).toMatch(/roles/i);
+    expect(api.createBill).not.toHaveBeenCalled();
   });
 });
 
