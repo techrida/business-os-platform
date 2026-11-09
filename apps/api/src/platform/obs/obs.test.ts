@@ -257,8 +257,9 @@ describe('HTTP latency middleware (real Nest app)', () => {
       .expect(200);
     const text = await started.metrics.render();
     expect(text).toContain('route="/items/:id"');
-    expect(text).not.toContain('12345');
-    expect(text).not.toContain('98765');
+    // The raw path must never become a label. (A bare-digit check is flaky: timing sums can contain them.)
+    expect(text).not.toContain('/items/12345');
+    expect(text).not.toContain('/items/98765');
     expect(text).toContain(
       'http_server_request_duration_seconds_count{method="GET",route="/items/:id",status_class="2xx"} 2',
     );
