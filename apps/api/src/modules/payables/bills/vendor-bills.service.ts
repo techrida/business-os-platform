@@ -218,7 +218,9 @@ export class VendorBillsService {
     @Optional()
     @Inject(VENDOR_BILLS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
-    // Last and defaulted so callers that build the service by hand keep working; LedgerService holds no state.
+    // Last, optional and defaulted so callers that build the service by hand keep working and the module boots
+    // before it imports LedgerModule; LedgerService holds no state, so the fallback is the same service.
+    @Optional()
     private readonly ledger: LedgerService = new LedgerService(),
   ) {}
 
