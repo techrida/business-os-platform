@@ -5,7 +5,10 @@ import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import {
+  CREDIT_NOTE_WORKFLOW_SPEC,
+  DEBIT_NOTE_WORKFLOW_SPEC,
   QUOTATION_VERSION_WORKFLOW_SPEC,
+  TAX_INVOICE_WORKFLOW_SPEC,
   TEST_MEMO_WORKFLOW_SPEC,
   seedKernelRows,
   setSeedActor,
@@ -98,9 +101,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 2 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 5 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 2 * 3 + 1 + 3 + 2 + 2);
+    expect(changed).toBe(grantCount + 1 + 5 * 3 + 1 + 3 + 2 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -269,7 +272,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(2);
+    expect(versions).toHaveLength(5);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -340,16 +343,115 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 2 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 5 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(2);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(5);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
     for (const c of second.calls.filter((q) =>
       /INTO app\.(tax_codes|payment_terms)/.test(q.text),
     )) {
+      expect(c.text).not.toContain('DO UPDATE');
+    }
+  });
+});
+
+describe('seedKernelRows: P3 invoice approval workflows and grants', () => {
+  const P3_WORKFLOWS = [
+    ['tax_invoice', 'Tax invoice approval', TAX_INVOICE_WORKFLOW_SPEC],
+    ['credit_note', 'Credit note approval', CREDIT_NOTE_WORKFLOW_SPEC],
+    ['debit_note', 'Debit note approval', DEBIT_NOTE_WORKFLOW_SPEC],
+  ] as const;
+
+  it.each(P3_WORKFLOWS)(
+    'keeps the %s spec valid: accountant, then finance, distinct approvers, no amount rules',
+    (documentType, _name, rawSpec) => {
+      const spec = WorkflowSpecSchema.parse(rawSpec);
+      expect(spec.documentType).toBe(documentType);
+      expect(spec.distinctApprovers).toBe(true);
+      expect(spec.steps.map((s) => [s.id, s.kind, s.role])).toEqual([
+        ['accountant', 'role', 'accountant'],
+        ['finance', 'role', 'finance'],
+      ]);
+      expect(spec.rules).toEqual([]);
+    },
+  );
+
+  it.each(P3_WORKFLOWS)(
+    'seeds the %s workflow for the entity as published v1',
+    async (documentType, name) => {
+      const { client, calls } = fakeClient(firstRun);
+      await seedKernelRows(client, scope);
+
+      const definition = calls.find(
+        (c) => c.text.includes('INTO app.workflow_definitions') && c.values[2] === documentType,
+      );
+      expect(definition?.values).toEqual(['tenant-1', 'org-1', documentType, name, documentType]);
+      expect(definition?.text).toContain(
+        'ON CONFLICT (tenant_id, organization_id, key) DO NOTHING',
+      );
+      const version = calls.find((c) => {
+        if (!c.text.includes('INTO app.workflow_versions')) return false;
+        return (
+          (JSON.parse(String(c.values[3])) as { documentType: string }).documentType ===
+          documentType
+        );
+      });
+      expect(version?.text).toContain("1, 'published', $4::jsonb, now(), NULL");
+      expect(version?.text).toContain('ON CONFLICT (tenant_id, definition_id, version) DO NOTHING');
+    },
+  );
+
+  it('writes the invoice, payment and portal grants of the plan to role_permissions', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    const written = new Set(
+      calls
+        .filter((c) => c.text.includes('INTO app.role_permissions'))
+        .map((c) => `${String(c.values[1])}|${String(c.values[2])}|${String(c.values[3])}`),
+    );
+    expect(written.has('finance|invoice.issue|all')).toBe(true);
+    expect(written.has('finance|payment.verify|all')).toBe(true);
+    expect(written.has('finance|invoice.credit_note|all')).toBe(true);
+    expect(written.has('accountant|invoice.draft|all')).toBe(true);
+    expect(written.has('accountant|payment.record|all')).toBe(true);
+    expect(written.has('customer_user|portal.invoice.read|customer_org')).toBe(true);
+    expect(written.has('customer_user|portal.payment.submit|customer_org')).toBe(true);
+    expect(written.has('founder|invoice.issue|all')).toBe(true);
+    // The maker never holds the checker's power.
+    expect(written.has('accountant|payment.verify|all')).toBe(false);
+    expect(written.has('accountant|invoice.issue|all')).toBe(false);
+    expect(written.has('sales|invoice.read|own')).toBe(false);
+  });
+
+  it('is idempotent: a second run over the same keys inserts nothing and rewrites no version', async () => {
+    const keys = new Set<string>();
+    const keyOf = ({ text, values }: Call): string | undefined => {
+      if (text.includes('INTO app.workflow_definitions')) return `def|${String(values[2])}`;
+      if (text.includes('INTO app.workflow_versions')) return `ver|${String(values[2])}`;
+      return undefined;
+    };
+    const stateful: Script = (call) => {
+      if (call.text.startsWith('SELECT id FROM app.workflow_definitions')) {
+        return { rows: [{ id: 'def-1' }] };
+      }
+      const key = keyOf(call);
+      if (key === undefined) return nothingChanged(call);
+      if (keys.has(key)) return { rowCount: 0 };
+      keys.add(key);
+      return call.text.includes('INTO app.workflow_versions')
+        ? { rowCount: 1, rows: [{ id: 'ver-1' }] }
+        : { rowCount: 1 };
+    };
+    await seedKernelRows(fakeClient(stateful).client, scope);
+    for (const [documentType] of P3_WORKFLOWS) expect(keys.has(`def|${documentType}`)).toBe(true);
+
+    const second = fakeClient(stateful);
+    expect(await seedKernelRows(second.client, scope)).toBe(0);
+    for (const c of second.calls.filter((q) => q.text.includes('INTO app.workflow_'))) {
       expect(c.text).not.toContain('DO UPDATE');
     }
   });
@@ -599,6 +701,9 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
         'Quotation version approval',
         'quotation_version',
       ],
+      ['tenant-uuid', 'org-uuid', 'tax_invoice', 'Tax invoice approval', 'tax_invoice'],
+      ['tenant-uuid', 'org-uuid', 'credit_note', 'Credit note approval', 'credit_note'],
+      ['tenant-uuid', 'org-uuid', 'debit_note', 'Debit note approval', 'debit_note'],
     ]);
     expect(first.closed()).toBe(1);
 
