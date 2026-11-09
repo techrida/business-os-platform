@@ -7,12 +7,15 @@ import {
   getVendorOnboarding,
   getVendorPurchaseOrder,
   getVendorPurchaseOrderLink,
+  getVendorRfq,
   listVendorBills,
   listVendorPurchaseOrders,
+  listVendorRfqs,
   openVendorFile,
 } from './api.vendor';
 import { __resetEnvForTests } from './env';
 import type { Session } from './session';
+import { sampleRfq, sampleRfqListItem } from '../components/vendor/rfq-fixtures';
 import {
   sampleBill,
   sampleOnboarding,
@@ -149,5 +152,32 @@ describe('vendor reads', () => {
 
     fetchMock.mockResolvedValueOnce(json({ ...sampleBill(), matchVariance: '1.00' }));
     expect(await statusOf(getVendorBill(session, ID))).toBe(502);
+  });
+
+  it('lists RFQs and reads one, with the id encoded as one path segment', async () => {
+    fetchMock.mockResolvedValueOnce(json([sampleRfqListItem()]));
+    expect(await listVendorRfqs(session)).toHaveLength(1);
+    expect(lastCall().url).toBe('http://api:3001/v1/portal/vendor/rfqs');
+    expect(lastCall().headers.get('authorization')).toBe('Bearer eyJ.secret-access-token.sig');
+
+    fetchMock.mockResolvedValueOnce(json(sampleRfq()));
+    const rfq = await getVendorRfq(session, ID);
+    expect(forbiddenPortalKeys(rfq)).toEqual([]);
+    expect(lastCall().url).toBe(`http://api:3001/v1/portal/vendor/rfqs/${ID}`);
+
+    fetchMock.mockResolvedValueOnce(json(sampleRfq()));
+    await getVendorRfq(session, '../bills');
+    expect(lastCall().url).toContain('/rfqs/..%2Fbills');
+  });
+
+  it('refuses an RFQ with an extra key (an estimate) as a 502, and passes 403 and 404 through', async () => {
+    fetchMock.mockResolvedValueOnce(json([{ ...sampleRfqListItem(), estimate: '100.00' }]));
+    expect(await statusOf(listVendorRfqs(session))).toBe(502);
+    fetchMock.mockResolvedValueOnce(json({ ...sampleRfq(), invitedVendors: ['x'] }));
+    expect(await statusOf(getVendorRfq(session, ID))).toBe(502);
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 'forbidden' } }, 403));
+    expect(await statusOf(listVendorRfqs(session))).toBe(403);
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 'not_found' } }, 404));
+    expect(await statusOf(getVendorRfq(session, ID))).toBe(404);
   });
 });
