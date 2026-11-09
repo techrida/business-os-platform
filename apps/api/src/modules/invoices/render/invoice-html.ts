@@ -41,6 +41,8 @@ function dateCell(isoDate: string, bsFrozen: string | null): string {
 const TITLES: Record<InvoiceRenderView['kind'], string> = {
   tax_invoice: 'Tax Invoice',
   proforma: 'Proforma Invoice',
+  credit_note: 'Credit Note',
+  debit_note: 'Debit Note',
 };
 
 const CSS = `
