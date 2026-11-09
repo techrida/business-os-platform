@@ -70,6 +70,10 @@ export const TENANT_SCOPED: readonly string[] = [
   'app.payment_terms',
   // P3 (U0-A, migration 0019): withholding (TDS) codes, effective-dated like tax_codes.
   'app.withholding_codes',
+  // P4 (migration 0032): the vendor master and its tenant-level children.
+  'app.vendors',
+  'app.vendor_contacts',
+  'app.vendor_bank_accounts',
 ];
 
 /**
