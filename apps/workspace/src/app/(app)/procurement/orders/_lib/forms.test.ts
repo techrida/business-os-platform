@@ -1,0 +1,113 @@
+import { describe, expect, it } from 'vitest';
+
+import { parseAmend, parseReason, toScaled } from './forms';
+
+const A = '22222222-2222-4222-8222-222222222222';
+const B = '33333333-3333-4333-8333-333333333333';
+const current = [
+  { id: A, orderedQuantity: '10.0000', unitPrice: '1000.00' },
+  { id: B, orderedQuantity: '5.0000', unitPrice: '250.50' },
+];
+const same = {
+  reason: 'Vendor raised the price',
+  paymentTermsDays: '30',
+  lines: {
+    [A]: { quantity: '10', unitPrice: '1000' },
+    [B]: { quantity: '5.0000', unitPrice: '250.5' },
+  },
+};
+
+describe('toScaled', () => {
+  it('compares decimals exactly, whatever the trailing zeros', () => {
+    expect(toScaled('10', 4)).toBe(toScaled('10.0000', 4));
+    expect(toScaled('0.1', 4)).toBe(1000n);
+    expect(toScaled('1.23456', 4)).toBeNull();
+    expect(toScaled('-1', 4)).toBeNull();
+    expect(toScaled('', 4)).toBeNull();
+    expect(toScaled('1e3', 4)).toBeNull();
+  });
+});
+
+describe('parseAmend', () => {
+  it('sends only the lines that changed, and no terms when they did not', () => {
+    const r = parseAmend(
+      { ...same, lines: { ...same.lines, [B]: { quantity: '6', unitPrice: '250.50' } } },
+      current,
+      30,
+    );
+    expect(r).toEqual({
+      ok: true,
+      body: { reason: 'Vendor raised the price', lines: [{ poLineId: B, quantity: '6' }] },
+    });
+  });
+
+  it('sends a price change as its own field, and changed terms', () => {
+    const r = parseAmend(
+      {
+        ...same,
+        paymentTermsDays: '45',
+        lines: { ...same.lines, [A]: { quantity: '10', unitPrice: '1100.00' } },
+      },
+      current,
+      30,
+    );
+    expect(r).toEqual({
+      ok: true,
+      body: {
+        reason: 'Vendor raised the price',
+        paymentTermsDays: 45,
+        lines: [{ poLineId: A, unitPrice: '1100.00' }],
+      },
+    });
+  });
+
+  it('refuses when nothing changed, before any API call', () => {
+    const r = parseAmend(same, current, 30);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors['lines']).toMatch(/change at least one line/i);
+  });
+
+  it('needs a reason, and refuses a quantity or price that is not a number', () => {
+    const r = parseAmend(
+      {
+        reason: '  ',
+        paymentTermsDays: '30',
+        lines: {
+          [A]: { quantity: '0', unitPrice: '1000' },
+          [B]: { quantity: '5', unitPrice: '-1' },
+        },
+      },
+      current,
+      30,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors['reason']).toBeDefined();
+      expect(r.errors[`${A}.quantity`]).toMatch(/above zero/i);
+      expect(r.errors[`${B}.unitPrice`]).toBeDefined();
+    }
+  });
+
+  it('refuses terms outside 0 to 365 days', () => {
+    const r = parseAmend(
+      {
+        ...same,
+        paymentTermsDays: '400',
+        lines: { ...same.lines, [A]: { quantity: '11', unitPrice: '1000' } },
+      },
+      current,
+      30,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors['paymentTermsDays']).toBeDefined();
+  });
+});
+
+describe('parseReason', () => {
+  it('trims, requires and caps at 500', () => {
+    expect(parseReason('  Ordered twice ')).toEqual({ ok: true, data: 'Ordered twice' });
+    expect(parseReason('   ').ok).toBe(false);
+    expect(parseReason('x'.repeat(501)).ok).toBe(false);
+    expect(parseReason('x'.repeat(500)).ok).toBe(true);
+  });
+});
