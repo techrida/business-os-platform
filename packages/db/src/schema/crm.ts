@@ -28,7 +28,7 @@ import {
 
 import { documents } from './documents.js';
 import { users } from './identity.js';
-import { appSchema, organizations, parties, tenants } from './platform.js';
+import { appSchema, organizations, PARTY_KINDS, parties, tenants } from './platform.js';
 
 // These mirror the catalogues in @bos/contracts crm.ts (the db package does not depend on contracts).
 export const CUSTOMER_RELATIONSHIPS = ['prospect', 'active', 'inactive'] as const;
@@ -197,7 +197,10 @@ export const customerContacts = appSchema.table(
   ],
 );
 
-/** The KYB case of a customer: one per customer. `checklist` is the ChecklistItem array of @bos/contracts. */
+/**
+ * The KYB case of a customer or a vendor: one per party. `partyKind` says which (0031); the FK to parties includes
+ * it. `checklist` is the ChecklistItem array of @bos/contracts, chosen by the kind.
+ */
 export const verificationCases = appSchema.table(
   'verification_cases',
   {
@@ -205,8 +208,9 @@ export const verificationCases = appSchema.table(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id),
-    /** The customer (= party) id. */
+    /** The party id (a customer's id is its party id). */
     partyId: uuid('party_id').notNull(),
+    partyKind: text('party_kind', { enum: PARTY_KINDS }).notNull().default('customer'),
     status: text('status', { enum: VERIFICATION_STATUSES }).notNull().default('draft'),
     checklist: jsonb('checklist')
       .notNull()
@@ -226,9 +230,9 @@ export const verificationCases = appSchema.table(
     unique('verification_cases_tenant_id_unique').on(t.tenantId, t.id),
     unique('verification_cases_tenant_party_unique').on(t.tenantId, t.partyId),
     foreignKey({
-      name: 'verification_cases_customer_fk',
-      columns: [t.tenantId, t.partyId],
-      foreignColumns: [customers.tenantId, customers.id],
+      name: 'verification_cases_party_fk',
+      columns: [t.tenantId, t.partyId, t.partyKind],
+      foreignColumns: [parties.tenantId, parties.id, parties.kind],
     }),
     foreignKey({
       name: 'verification_cases_submitter_user_fk',
@@ -240,6 +244,7 @@ export const verificationCases = appSchema.table(
       columns: [t.tenantId, t.reviewerUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    check('verification_cases_party_kind_check', sql`${t.partyKind} in ('customer', 'vendor')`),
     check(
       'verification_cases_status_check',
       sql`${t.status} in ('draft', 'submitted', 'approved', 'rejected', 'expired')`,
