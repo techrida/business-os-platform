@@ -505,8 +505,12 @@ describe('P3 exit: quote to cash over HTTP', () => {
   it('5. the render sweeper renders the advance PDF (fake Gotenberg) and the scan marks it clean (fake clamd)', async () => {
     const finance = await auth('finance');
     // Before the scan the document route answers 404: no unscanned file is ever linked.
-    const swept = await worker.app.get(InvoiceRenderSweeper).sweep();
-    expect(swept.failures, JSON.stringify(swept)).toEqual([]);
+    // Other files leave issued invoices in this shared test DB; the global sweep takes only 10.
+    const rendered = await worker.app.get(InvoiceRenderSweeper).renderOne({
+      ...world.scope,
+      invoiceId: s.advanceId,
+    });
+    expect(['rendered', 'skipped']).toContain(rendered);
     const link = await pollUntil(
       'the advance invoice PDF to scan clean',
       async () => {
