@@ -535,6 +535,41 @@ describe('ZitadelClient P1 additions: login policy and second factors', () => {
   });
 });
 
+describe('proto3-omitted policy defaults', () => {
+  it.each([
+    ['passwordlessType', 0],
+    ['defaultRedirectUri', ''],
+    ['passwordlessType', 'PASSWORDLESS_TYPE_NOT_ALLOWED'],
+    ['forceMfa', false],
+    ['mfaInitSkipLifetime', '0s'],
+  ])('does not rewrite an omitted default %s=%s', async (field, value) => {
+    const { transport, calls } = recording({ [ENDPOINTS.loginPolicy]: { policy: {} } });
+    expect(await client(transport).updateLoginPolicy({ [field]: value })).toBe(false);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+
+  it.each([
+    ['passwordlessType', 1],
+    ['defaultRedirectUri', 'https://app.localhost/'],
+    ['passwordlessType', 'PASSWORDLESS_TYPE_ALLOWED'],
+    ['forceMfa', true],
+    ['mfaInitSkipLifetime', '60s'],
+    ['defaultRedirectUri', 'PASSWORDLESS_TYPE_NOT_ALLOWED'],
+  ])('updates an omitted field for a non-default %s=%s', async (field, value) => {
+    const { transport, calls } = recording({ [ENDPOINTS.loginPolicy]: { policy: {} } });
+    expect(await client(transport).updateLoginPolicy({ [field]: value })).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+  });
+
+  it('updates an explicitly non-default value back to the default', async () => {
+    const { transport, calls } = recording({
+      [ENDPOINTS.loginPolicy]: { policy: { defaultRedirectUri: 'https://app.localhost/' } },
+    });
+    expect(await client(transport).updateLoginPolicy({ defaultRedirectUri: '' })).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT']);
+  });
+});
+
 describe('ZitadelClient P1 additions: OIDC settings', () => {
   const settings = {
     accessTokenLifetime: '43200s',
