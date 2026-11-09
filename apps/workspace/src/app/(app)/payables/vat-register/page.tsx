@@ -10,11 +10,11 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getVatRegister, VatPeriodSchema, type VatRegister } from '@/lib/api-payables';
+import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
 import styles from '../payables.module.css';
-import { paymentRequestFailure } from '../payment-requests/failure';
 
 export const metadata: Metadata = { title: 'Purchase VAT register · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -50,7 +50,7 @@ export default async function VatRegisterPage({
     try {
       register = await getVatRegister(session, period.data.from, period.data.to);
     } catch (err) {
-      error = paymentRequestFailure(err).message;
+      error = failureOf(err).message;
     }
   }
   return (
