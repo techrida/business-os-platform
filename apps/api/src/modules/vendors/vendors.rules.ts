@@ -3,6 +3,8 @@
 // so each rule has a unit test that needs no Postgres.
 import { canTransitionVendor, type VendorKind, type VendorStatus } from '@bos/contracts';
 
+import { kathmanduDay } from '../quotations/reference/reference.types';
+
 /** The table's `kind` values (0032 CHECK). They differ from the API's only for the sole proprietor. */
 export type VendorRowKind = 'company' | 'proprietor' | 'individual' | 'foreign';
 
@@ -61,5 +63,5 @@ export function lapsedTaxClearance(items: readonly KycItem[], today: string): bo
   );
 }
 
-/** `YYYY-MM-DD` of an instant, in UTC. */
-export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
+/** The calendar day (`YYYY-MM-DD`) in Asia/Kathmandu at `instant`: the business date a tax clearance is read against. */
+export const isoDay = kathmanduDay;
