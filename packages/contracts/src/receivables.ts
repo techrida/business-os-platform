@@ -138,6 +138,23 @@ export const PaymentListItemSchema = z.object({
 export type PaymentListItem = z.infer<typeof PaymentListItemSchema>;
 
 /**
+ * One of the customer's own payments as the portal shows it (`GET /v1/portal/payments`; plan U13). A strict whitelist
+ * of eight fields: the staff DTOs carry the submitter, verifier, NPR value, withholding, rejection reason and version,
+ * and none of them may reach a customer. `number` is the receipt number, set once Finance has verified the payment.
+ */
+export const PortalPaymentListItemSchema = z.strictObject({
+  id: z.guid(),
+  status: PaymentStatusSchema,
+  number: z.string().min(1).nullable(),
+  method: PaymentMethodSchema,
+  currency: CurrencySchema,
+  amount: DecimalString,
+  receivedOn: isoDate,
+  bankReference: z.string().nullable(),
+});
+export type PortalPaymentListItem = z.infer<typeof PortalPaymentListItemSchema>;
+
+/**
  * One allocation row. Rows are append-only: a reversal is a new row with a negative amount that points
  * at the original. Exactly one of `paymentId` and `creditNoteId` is set.
  */
