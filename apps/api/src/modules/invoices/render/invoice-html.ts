@@ -149,7 +149,7 @@ export function renderInvoiceHtml(view: InvoiceRenderView): string {
       ${copy ? `<div class="badge">${copy}</div>` : ''}
     </div>
   </div>
-  ${view.kind === 'proforma' ? '<div class="notice">Proforma Invoice - not a tax invoice. No payment is due on this document alone.</div>' : ''}
+  ${view.kind === 'proforma' ? '<div class="notice">Proforma Invoice - not a tax invoice.</div>' : ''}
 
   <div class="parties">
     <div>${partyBlock('Billed to', view.buyer, text)}</div>
