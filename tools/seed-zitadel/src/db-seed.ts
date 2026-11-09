@@ -7,10 +7,14 @@ import { DEFAULT_ROLE_PERMISSIONS, WorkflowSpecSchema, type WorkflowSpec } from 
 import type pg from 'pg';
 
 import { PERSONAS } from './personas.js';
-import { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC } from './workflow-specs.js';
+import {
+  PO_AMENDMENT_WORKFLOW_SPEC,
+  PR_COMMITMENT_WORKFLOW_SPEC,
+  PURCHASE_REQUEST_WORKFLOW_SPEC,
+} from './workflow-specs.js';
 
 // The P4 specs live in `workflow-specs.ts` (word-for-word copies; a test in apps/api pins them to the API's).
-export { PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC };
+export { PO_AMENDMENT_WORKFLOW_SPEC, PR_COMMITMENT_WORKFLOW_SPEC, PURCHASE_REQUEST_WORKFLOW_SPEC };
 
 export interface SeedScope {
   tenantId: string;
@@ -528,6 +532,7 @@ export async function seedKernelRows(
   const debitNoteSpec = WorkflowSpecSchema.parse(DEBIT_NOTE_WORKFLOW_SPEC);
   const purchaseRequestSpec = WorkflowSpecSchema.parse(PURCHASE_REQUEST_WORKFLOW_SPEC);
   const prCommitmentSpec = WorkflowSpecSchema.parse(PR_COMMITMENT_WORKFLOW_SPEC);
+  const poAmendmentSpec = WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC);
   // A missing persona fails here, before BEGIN, like a bad spec.
   if (personas && personas.length > 0) devPeople(personas);
   await client.query('BEGIN');
@@ -559,6 +564,13 @@ export async function seedKernelRows(
       name: 'Purchase commitment approval',
       documentType: 'pr_commitment',
       spec: prCommitmentSpec,
+    });
+    // An amendment of an approved PO is re-approved on the amended total, on the commitment's route (AD7).
+    changed += await seedWorkflow(client, scope, {
+      key: 'po_amendment',
+      name: 'Purchase order amendment',
+      documentType: 'po_amendment',
+      spec: poAmendmentSpec,
     });
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
