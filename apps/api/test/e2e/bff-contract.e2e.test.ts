@@ -14,9 +14,20 @@
 //
 // Not covered by a workspace client (so only the API's contract DTO is checked, from the raw body): GET
 // version, submit (the client reads it as `unknown`), revise and the approvals action. Left out on purpose:
-// the KYB decision (needs a clean scan, so the worker) and portal routes (the portal is another app).
+// the KYB decision (needs a clean scan, so the worker).
+//
+// P3 (the second describe, "quote to cash"): the clients of lib/api-billing.ts, lib/api-receivables.ts, the
+// staff proof upload and the portal's api.billing.ts, over the same real API, with the data built the way
+// p3-exit builds it (support/p3-fixtures.ts `seedP3World`, the worker for scans and PDF rendering, a fake
+// Gotenberg). Reads: sales orders, invoices, payments, allocations, aging, statement, advance, and the
+// portal's invoice list, detail, settlement, document link and payment list. Writes, each with its
+// Idempotency-Key: confirm a sales order, mark a line billable, draft from schedule, draft a manual invoice,
+// submit, discard, issue, credit note, debit note, staff proof upload and payment, verify, allocate, and the
+// portal proof upload and payment submit. Not covered: reject, reverse and deallocate a payment.
+// Shortcut, as in p3-exit: the portal login is seeded by SQL.
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,14 +35,24 @@ import { join } from 'node:path';
 import {
   ApprovalRequestDtoSchema,
   ErrorBodySchema,
+  InvoiceDetailSchema,
+  PortalPaymentListItemSchema,
+  QuotationDtoSchema,
   QuotationVersionDtoSchema,
+  SalesOrderDetailSchema,
+  SignedLinkDtoSchema,
   type ApprovalRequestDto,
+  type InvoiceDetail,
+  type InvoiceSettlement,
   type QuotationVersionDto,
 } from '@bos/contracts';
+import Decimal from 'decimal.js';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import { startFakeClamd, type FakeClamd } from '../../src/platform/documents/fake-clamd';
-import { startApp, type TestApp } from './support/app';
+import { InvoiceRenderSweeper } from '../../src/modules/invoices/render/invoice-render.sweeper';
+import { QuotationRenderSweeper } from '../../src/modules/quotations/render/quotation-render.sweeper';
+import { CLIENT_ID, startApp, type TestApp } from './support/app';
 import {
   droppedKeys,
   loadBffClients,
@@ -41,13 +62,9 @@ import {
   type BffSession,
   type FetchTee,
 } from './support/bff-clients';
-import {
-  createIsolatedStaffOrg,
-  minimalPdf,
-  seedApprovalsWorld,
-  type ApprovalsWorld,
-  type PersonaKey,
-} from './support/fixtures';
+import { minimalPdf, pollUntil, seedPortalLogin, type PortalLogin } from './support/fixtures';
+import { seedP3World, type P3PersonaKey, type P3World } from './support/p3-fixtures';
+import { startWorker, type TestWorker } from './support/worker';
 
 const e2e = inject('e2e');
 
@@ -55,21 +72,32 @@ const ADDRESS = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
 const BUYER_EMAIL = 'buyer@contract-traders.test';
 
 let t: TestApp;
+let worker: TestWorker;
 let clamd: FakeClamd;
-let world: ApprovalsWorld;
-let isolated: Awaited<ReturnType<typeof createIsolatedStaffOrg>>;
+let gotenberg: Server;
+let world: P3World;
 let filesRoot: string;
 let bff: BffClients;
 let tee: FetchTee;
 let apiUrl = '';
+const pdf = minimalPdf();
 
 beforeAll(async () => {
   clamd = await startFakeClamd();
+  // The invoice and quotation PDFs are rendered for real by the sweepers; Gotenberg answers a fixed PDF.
+  gotenberg = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': pdf.length });
+      res.end(pdf);
+    });
+  });
+  await new Promise<void>((resolve) => gotenberg.listen(0, '127.0.0.1', resolve));
   filesRoot = await mkdtemp(join(tmpdir(), 'bos-e2e-bff-contract-'));
-  isolated = await createIsolatedStaffOrg(e2e);
-  world = await seedApprovalsWorld({ ...e2e, ...isolated }, 'e2e-bffc');
+  // The P2 steps and the P3 story share one tenant: the P3 world holds every P2 persona too.
+  world = await seedP3World(e2e, 'e2e-bffc');
 
-  // Read by AppModule when it is imported, so set before it boots (same set as the P2 exit e2e).
+  // Read by AppModule when it is imported, so set before it boots (same set as the P3 exit e2e).
   Object.assign(process.env, {
     CLAMD_HOST: clamd.host,
     CLAMD_PORT: String(clamd.port),
@@ -79,22 +107,30 @@ beforeAll(async () => {
     DOCS_LINK_SECRET: 'e2e-bff-contract-docs-link-secret-0123456789abcdef',
     WORKSPACE_PUBLIC_URL: 'http://app.e2e.test',
     PORTAL_PUBLIC_URL: 'http://portal.e2e.test',
-    // Nothing here renders a PDF; the URL only has to be well formed.
-    GOTENBERG_URL: 'http://127.0.0.1:9',
+    GOTENBERG_URL: `http://127.0.0.1:${(gotenberg.address() as AddressInfo).port}`,
   });
   t = await startApp();
+  // The scans (staff and portal proofs) and the render sweepers run in the worker, as in production.
+  worker = await startWorker();
   // The workspace clients use `fetch`, so the API needs a real port (the other e2e files use supertest).
   await t.app.listen(0, '127.0.0.1');
   apiUrl = `http://127.0.0.1:${(t.app.getHttpServer().address() as AddressInfo).port}`;
 
-  tee = teeFetch();
+  tee = teeFetch(() => apiUrl);
   bff = await loadBffClients(() => apiUrl);
 });
 
 afterAll(async () => {
   tee?.restore();
+  await worker?.close();
   await t?.close();
   await clamd?.close();
+  if (gotenberg) {
+    await new Promise<void>((resolve) => {
+      gotenberg.close(() => resolve());
+      gotenberg.closeAllConnections();
+    });
+  }
   await world?.close();
   if (filesRoot) await rm(filesRoot, { recursive: true, force: true });
 });
@@ -102,10 +138,13 @@ afterAll(async () => {
 // ------------------------------------------------------------------------------------------------ helpers
 
 /** The session the workspace holds for a persona: only the access token matters to `apiFetch`. */
-async function session(key: PersonaKey): Promise<BffSession> {
+async function session(key: P3PersonaKey): Promise<BffSession> {
   const persona = world.personas[key];
   return {
-    accessToken: await t.token(isolated.staff, { userId: persona.sub, roles: persona.tokenRoles }),
+    accessToken: await t.token(world.isolated.staff, {
+      userId: persona.sub,
+      roles: persona.tokenRoles,
+    }),
   };
 }
 
@@ -149,7 +188,7 @@ const kathmanduDay = (shiftDays = 0): string => {
 };
 
 /** Authorization header of a persona, for the calls no workspace client makes. */
-const bearer = async (key: PersonaKey): Promise<string> =>
+const bearer = async (key: P3PersonaKey): Promise<string> =>
   `Bearer ${(await session(key)).accessToken}`;
 
 // Shared across the ordered steps below (one story, told step by step).
@@ -540,3 +579,748 @@ async function getVersion(): Promise<QuotationVersionDto> {
   expect(res.status, show(res)).toBe(200);
   return QuotationVersionDtoSchema.parse(res.body);
 }
+
+// ============================================================================================== P3
+// The same producer (the booted API), the P3 consumers: lib/api-billing.ts, lib/api-receivables.ts, the staff
+// proof upload and the portal's api.billing.ts. The cast follows p3-exit (separation of duties): `preparer`
+// (accountant role) confirms, drafts, submits and records the staff payment; `accountant` and `finance`
+// approve; `finance` issues; `finance2` drafts the credit note, verifies both payments and allocates them.
+
+// Done check 1's golden order, as in p3-exit: 4,465,000.00 + VAT 13% = 5,045,450.00, advance 60% = 3,027,270.00.
+const LINE_PRICE = '4465000.00';
+const ADVANCE_TOTAL = '3027270.00';
+const STAFF_PAID = '3100000.00';
+const STAFF_EXCESS = '72730.00';
+// A manual invoice of one line: 10,000.00 + VAT 13% = 11,300.00. The customer pays 5,000.00 of it.
+const MANUAL_PRICE = '10000.00';
+const MANUAL_TOTAL = '11300.00';
+const PORTAL_PAID = '5000.00';
+
+const key = (): string => randomUUID();
+
+const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+
+const p3 = {
+  login: undefined as PortalLogin | undefined,
+  customerId: '',
+  contactId: '',
+  opportunityId: '',
+  quotationId: '',
+  versionId: '',
+  vat13Id: '',
+  orderId: '',
+  scheduleLineIds: [] as string[],
+  advanceId: '',
+  manualId: '',
+  discardedId: '',
+  creditNoteId: '',
+  debitNoteId: '',
+  staffPaymentId: '',
+  portalPaymentId: '',
+};
+
+/** The portal user's session: the customer's token, minted against the customer's own IdP org. */
+async function portalSession(): Promise<BffSession> {
+  const login = p3.login!;
+  return {
+    accessToken: await t.token(
+      { zitadelOrgId: login.zitadelOrgId },
+      { userId: login.sub, roles: ['customer_user'] },
+    ),
+  };
+}
+
+const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
+/** The approver persona of each role a route can name. The preparer is never one: they drafted. */
+const APPROVER_OF: Partial<Record<string, P3PersonaKey>> = {
+  accountant: 'accountant',
+  finance: 'finance',
+  management: 'management',
+  founder: 'founder',
+};
+
+/**
+ * Walks an approval request to `approved`, one step at a time, each by the persona of the step's role. The founder
+ * step needs a fresh ID token (step-up); it is attached only there. Copied from p3-exit.
+ */
+async function approveAll(requestId: string): Promise<string[]> {
+  const reader = await bearer('founder');
+  const decided: string[] = [];
+  for (let guard = 0; guard < 8; guard += 1) {
+    const got = await t
+      .http()
+      .get(`/v1/approvals/requests/${requestId}`)
+      .set('authorization', reader);
+    expect(got.status, show(got)).toBe(200);
+    const request = ApprovalRequestDtoSchema.parse(got.body);
+    if (request.status === 'approved') return decided;
+    expect(request.status, show(got)).toBe('pending');
+    const step = request.steps.find((st) => st.seq === request.currentSeq);
+    const approver = step?.roleKey == null ? undefined : APPROVER_OF[step.roleKey];
+    expect(approver, `no approver persona for step ${JSON.stringify(step)}`).toBeDefined();
+    const headers: Record<string, string> = {};
+    if (approver === 'founder') {
+      headers['x-bos-id-token'] = await t.issuer.mintIdToken({
+        sub: world.personas.founder.sub,
+        authTime: nowSeconds() - 10,
+        audience: CLIENT_ID,
+      });
+    }
+    const res = await t
+      .http()
+      .post(`/v1/approvals/requests/${requestId}/actions`)
+      .set('authorization', await bearer(approver!))
+      .set('idempotency-key', randomUUID())
+      .set(headers)
+      .send({ action: 'approve', expectedVersion: request.version });
+    expect(res.status, `${approver} approving: ${show(res)}`).toBe(200);
+    decided.push(step!.roleKey!);
+  }
+  throw new Error(`approval request ${requestId} did not reach approved`);
+}
+
+/**
+ * Submit, approve and issue a draft invoice, every staff call through the workspace client with its own
+ * Idempotency-Key. `submitInvoice` answers `unknown` to the client, so its raw body is parsed with the contract.
+ */
+async function submitApproveIssue(
+  invoiceId: string,
+  submitter: P3PersonaKey = 'preparer',
+): Promise<string> {
+  const author = await session(submitter);
+  const draft = await seen(() => bff.billing.getInvoice(author, invoiceId));
+  const { raw } = await tee.through(() =>
+    bff.billing.submitInvoice(author, invoiceId, { expectedVersion: draft.invoice.version }, key()),
+  );
+  const submitted = InvoiceDetailSchema.parse(raw).invoice;
+  expect(submitted.status).toBe('submitted');
+  expect(submitted.approvalRequestId).not.toBeNull();
+
+  await approveAll(submitted.approvalRequestId!);
+  const finance = await session('finance');
+  const approved = await seen(() => bff.billing.getInvoice(finance, invoiceId));
+  expect(approved.invoice.status).toBe('approved');
+
+  const issued = await seen(() =>
+    bff.billing.issueInvoice(
+      finance,
+      invoiceId,
+      { expectedVersion: approved.invoice.version },
+      key(),
+    ),
+  );
+  expect(issued).toMatchObject({ kind: 'issued', invoiceId });
+  return issued.number;
+}
+
+/** Waits for the worker's scan to mark every version of a document clean (a payment names only clean proofs). */
+async function untilClean(what: string, documentId: string): Promise<void> {
+  await pollUntil(
+    what,
+    async () => {
+      const { rows } = await world.pool.query<{ status: string }>(
+        'SELECT status FROM app.document_versions WHERE document_id = $1',
+        [documentId],
+      );
+      const statuses = rows.map((r) => r.status);
+      if (statuses.some((x) => x === 'infected' || x === 'scan_failed')) {
+        throw new Error(`the ${what} scan ended ${statuses.join(',')}`);
+      }
+      const clean = statuses.length > 0 && statuses.every((x) => x === 'clean');
+      return { done: clean ? true : undefined, last: statuses };
+    },
+    60_000,
+    300,
+  );
+}
+
+async function openInvoice(id: string, as: P3PersonaKey = 'finance'): Promise<InvoiceDetail> {
+  return seen(async () => bff.billing.getInvoice(await session(as), id));
+}
+
+describe('BFF contract P3: billing, receivables and portal clients against the real API', () => {
+  it('10. setup: a customer, a quotation accepted in the portal (built as p3-exit builds it)', async () => {
+    const salesAuth = await bearer('sales');
+    const created = await t.http().post('/v1/leads').set('authorization', salesAuth).send({
+      title: 'Store platform for Contract Retail',
+      source: 'referral',
+      companyName: 'Contract Retail Pvt. Ltd.',
+      contactName: 'Hari Gurung',
+      email: 'hari@contract-retail.test',
+    });
+    expect(created.status, show(created)).toBe(201);
+    const lead = created.body as { id: string; version: number };
+    let version = lead.version;
+    for (const stage of ['contacted', 'qualified'] as const) {
+      const moved = await t
+        .http()
+        .patch(`/v1/leads/${lead.id}/stage`)
+        .set('authorization', salesAuth)
+        .send({ stage, expectedVersion: version });
+      expect(moved.status, show(moved)).toBe(200);
+      version = (moved.body as { version: number }).version;
+    }
+    const converted = await t
+      .http()
+      .post(`/v1/leads/${lead.id}/convert`)
+      .set('authorization', salesAuth)
+      .set('idempotency-key', randomUUID())
+      .send({
+        customer: {
+          mode: 'create',
+          customer: { legalName: 'Contract Retail Pvt. Ltd.', address: ADDRESS },
+        },
+        contact: {
+          mode: 'create',
+          contact: { fullName: 'Hari Gurung', email: 'hari@contract-retail.test' },
+        },
+        opportunityName: 'Contract Retail store platform',
+        expectedVersion: version,
+      });
+    expect(converted.status, show(converted)).toBe(201);
+    const ids = converted.body as { opportunityId: string; customerId: string };
+    p3.opportunityId = ids.opportunityId;
+    p3.customerId = ids.customerId;
+    const contacts = await t
+      .http()
+      .get(`/v1/customers/${p3.customerId}/contacts`)
+      .set('authorization', salesAuth);
+    expect(contacts.status, show(contacts)).toBe(200);
+    p3.contactId = (contacts.body as { id: string }[])[0]!.id;
+
+    const codes = await bff.builder.listTaxCodes(await session('sales'));
+    const vat13 = codes.find((c) => c.code === 'VAT13');
+    expect(vat13, 'the production seed gives the tenant VAT13').toBeDefined();
+    p3.vat13Id = vat13!.id;
+
+    // No paymentSchedule: plan A7's default 60/20/20 (advance, milestone, UAT) applies.
+    const quote = await t
+      .http()
+      .post('/v1/quotations')
+      .set('authorization', salesAuth)
+      .set('idempotency-key', randomUUID())
+      .send({
+        opportunityId: p3.opportunityId,
+        contactId: p3.contactId,
+        currency: 'NPR',
+        issueDate: kathmanduDay(),
+        validUntil: kathmanduDay(30),
+        lines: [
+          {
+            description: 'Store platform build',
+            uom: 'lot',
+            quantity: '1',
+            unitPrice: LINE_PRICE,
+            taxCodeId: p3.vat13Id,
+          },
+        ],
+      });
+    expect(quote.status, show(quote)).toBe(201);
+    const q = QuotationDtoSchema.parse(quote.body);
+    p3.quotationId = q.id;
+    p3.versionId = q.currentVersionId;
+
+    const versionPath = `/v1/quotations/${p3.quotationId}/versions/${p3.versionId}`;
+    const readVersion = async (): Promise<QuotationVersionDto> => {
+      const res = await t.http().get(versionPath).set('authorization', salesAuth);
+      expect(res.status, show(res)).toBe(200);
+      return QuotationVersionDtoSchema.parse(res.body);
+    };
+    const submitted = await t
+      .http()
+      .post(`${versionPath}/submit`)
+      .set('authorization', salesAuth)
+      .set('idempotency-key', randomUUID())
+      .send({ expectedVersion: (await readVersion()).version });
+    expect(submitted.status, show(submitted)).toBe(200);
+    await approveAll(QuotationVersionDtoSchema.parse(submitted.body).approvalRequestId!);
+    expect((await readVersion()).status).toBe('approved');
+
+    const swept = await worker.app.get(QuotationRenderSweeper).sweep();
+    expect(swept.failures, JSON.stringify(swept)).toEqual([]);
+    await pollUntil(
+      'the quotation PDF to scan clean',
+      async () => {
+        const v = await readVersion();
+        if (v.renderedScanStatus === 'infected' || v.renderedScanStatus === 'scan_failed') {
+          throw new Error(`the quotation PDF scan ended ${v.renderedScanStatus}`);
+        }
+        return { done: v.renderedScanStatus === 'clean' ? v : undefined, last: v };
+      },
+      60_000,
+      500,
+    );
+    const sent = await t
+      .http()
+      .post(`${versionPath}/send`)
+      .set('authorization', salesAuth)
+      .set('idempotency-key', randomUUID())
+      .send({ recipientContactId: p3.contactId, expectedVersion: (await readVersion()).version });
+    expect(sent.status, show(sent)).toBe(200);
+
+    // SHORTCUT (as p2-exit and p3-exit): the portal login is seeded by SQL.
+    p3.login = await seedPortalLogin(e2e, world.scope, p3.customerId);
+    const accepted = await t
+      .http()
+      .post(`/v1/portal/quotations/${p3.versionId}/accept`)
+      .set('authorization', `Bearer ${(await portalSession()).accessToken}`)
+      .set('idempotency-key', randomUUID())
+      .send({ acceptedByName: 'Hari Gurung', confirm: true });
+    expect(accepted.status, show(accepted)).toBe(201);
+    expect((await readVersion()).status).toBe('accepted');
+  }, 150_000);
+
+  it('11. sales orders: confirm through the client, then list (with filters) and detail', async () => {
+    const preparer = await session('preparer');
+    const confirmed = await seen(() =>
+      bff.billing.confirmSalesOrder(
+        preparer,
+        { quotationVersionId: p3.versionId, evidenceDocumentIds: [] },
+        key(),
+      ),
+    );
+    expect(confirmed.order).toMatchObject({ status: 'confirmed', customerId: p3.customerId });
+    p3.orderId = confirmed.order.id;
+    const schedule = [...confirmed.schedule].sort((a, b) => a.seq - b.seq);
+    expect(schedule.map((l) => l.trigger)).toEqual(['advance', 'milestone', 'uat']);
+    p3.scheduleLineIds = schedule.map((l) => l.id);
+
+    const all = await seen(() => bff.billing.listSalesOrders(preparer), { list: true });
+    expect(all.map((o) => o.id)).toContain(p3.orderId);
+    const filtered = await seen(
+      () =>
+        bff.billing.listSalesOrders(preparer, { status: 'confirmed', customerId: p3.customerId }),
+      { list: true },
+    );
+    expect(filtered.map((o) => o.id)).toEqual([p3.orderId]);
+
+    const detail = await seen(() => bff.billing.getSalesOrder(preparer, p3.orderId));
+    expect(detail.order.id).toBe(p3.orderId);
+    expect(detail.schedule).toHaveLength(3);
+  });
+
+  it('12. the advance: mark billable and draft from the schedule through the client, then submit, approve, issue', async () => {
+    const preparer = await session('preparer');
+    const order = await seen(() => bff.billing.getSalesOrder(preparer, p3.orderId));
+    const advance = order.schedule.find((l) => l.id === p3.scheduleLineIds[0])!;
+    if (advance.status === 'planned') {
+      // `markScheduleLineBillable` answers `unknown` to the client: the raw body is the order detail.
+      const { raw } = await tee.through(() =>
+        bff.billing.markScheduleLineBillable(
+          preparer,
+          p3.orderId,
+          advance.id,
+          { expectedVersion: order.order.version },
+          key(),
+        ),
+      );
+      expect(SalesOrderDetailSchema.parse(raw).order.id).toBe(p3.orderId);
+    }
+
+    const draft = await seen(() =>
+      bff.billing.draftInvoiceFromSchedule(preparer, { scheduleLineId: advance.id }, key()),
+    );
+    expect(draft.invoice).toMatchObject({ kind: 'tax_invoice', status: 'draft', number: null });
+    expect(draft.invoice.totals.total).toBe(ADVANCE_TOTAL);
+    p3.advanceId = draft.invoice.id;
+
+    const number = await submitApproveIssue(p3.advanceId);
+    expect(number).toMatch(/^INV-/);
+  });
+
+  it('13. the advance invoice reads: list (with filters), detail, and the document link once the PDF is clean', async () => {
+    const finance = await session('finance');
+    const all = await seen(() => bff.billing.listInvoices(finance), { list: true });
+    expect(all.map((i) => i.id)).toContain(p3.advanceId);
+    const filtered = await seen(
+      () =>
+        bff.billing.listInvoices(finance, {
+          kind: 'tax_invoice',
+          status: 'issued',
+          customerId: p3.customerId,
+        }),
+      { list: true },
+    );
+    expect(filtered.map((i) => i.id)).toEqual([p3.advanceId]);
+    expect((await openInvoice(p3.advanceId)).invoice).toMatchObject({ status: 'issued' });
+
+    // Before the scan the document route answers 404 (no unscanned file is ever linked): wait for it.
+    const swept = await worker.app.get(InvoiceRenderSweeper).sweep();
+    expect(swept.failures, JSON.stringify(swept)).toEqual([]);
+    const path = bff.billing.invoiceDocumentPath(p3.advanceId);
+    const link = await pollUntil(
+      'the advance invoice PDF to scan clean',
+      async () => {
+        const res = await t
+          .http()
+          .get(path)
+          .set('authorization', await bearer('finance'));
+        if (res.status !== 200 && res.status !== 404) throw new Error(show(res));
+        return {
+          done: res.status === 200 ? SignedLinkDtoSchema.parse(res.body) : undefined,
+          last: show(res),
+        };
+      },
+      60_000,
+      500,
+    );
+    expect(link.url).toBeTruthy();
+  }, 90_000);
+
+  it('14. the portal reads the issued advance: list, detail, settlement and document link', async () => {
+    const customer = await portalSession();
+    const list = await seen(() => bff.portalBilling.listPortalInvoices(customer), { list: true });
+    expect(list.map((i) => i.id)).toEqual([p3.advanceId]);
+
+    const view = await seen(() => bff.portalBilling.getPortalInvoice(customer, p3.advanceId));
+    expect(view.totals.total).toBe(ADVANCE_TOTAL);
+
+    // The portal reads only some settlement fields on purpose (`PortalSettlementSchema` is a `.pick()`).
+    const settlement = await seen(
+      () => bff.portalBilling.getPortalInvoiceSettlement(customer, p3.advanceId),
+      { allowDropped: ['number', 'kind', 'customerId', 'issueDate', 'allocatedAmount'] },
+    );
+    expect(settlement).toMatchObject({ invoiceId: p3.advanceId, openAmount: ADVANCE_TOTAL });
+
+    const link = await seen(() => bff.portalBilling.getPortalInvoiceLink(customer, p3.advanceId));
+    expect(link.url).toBeTruthy();
+
+    // No payment yet: the list may be empty, and each row is still audited when it is not.
+    await seen(() => bff.portalBilling.listPortalPayments(customer), {
+      list: true,
+      maybeEmpty: true,
+    });
+  });
+
+  it('15. a manual invoice: draft through the client, a second draft discarded, the first submitted and issued', async () => {
+    const preparer = await session('preparer');
+    const manual = await seen(() =>
+      bff.billing.createManualInvoice(
+        preparer,
+        {
+          customerId: p3.customerId,
+          currency: 'NPR',
+          manualReason: 'Contract test: a hosting add-on outside the order',
+          lines: [
+            {
+              description: 'Hosting add-on',
+              uom: 'lot',
+              quantity: '1',
+              unitPrice: MANUAL_PRICE,
+              taxCodeId: p3.vat13Id,
+            },
+          ],
+        },
+        key(),
+      ),
+    );
+    expect(manual.invoice).toMatchObject({ kind: 'tax_invoice', status: 'draft' });
+    expect(manual.invoice.totals.total).toBe(MANUAL_TOTAL);
+    p3.manualId = manual.invoice.id;
+
+    const second = await seen(() =>
+      bff.billing.createManualInvoice(
+        preparer,
+        {
+          customerId: p3.customerId,
+          currency: 'NPR',
+          manualReason: 'Contract test: a draft that is thrown away',
+          lines: [
+            {
+              description: 'Entered twice',
+              uom: 'lot',
+              quantity: '1',
+              unitPrice: '1.00',
+              taxCodeId: p3.vat13Id,
+            },
+          ],
+        },
+        key(),
+      ),
+    );
+    p3.discardedId = second.invoice.id;
+    // `discardInvoice` answers `unknown`: success is a 2xx, and the invoice then reads back as discarded.
+    const { exchange } = await tee.through(() =>
+      bff.billing.discardInvoice(
+        preparer,
+        p3.discardedId,
+        { expectedVersion: second.invoice.version, reason: 'Contract test: entered twice' },
+        key(),
+      ),
+    );
+    expect(exchange.status).toBeGreaterThanOrEqual(200);
+    expect(exchange.status).toBeLessThan(300);
+    expect((await openInvoice(p3.discardedId, 'preparer')).invoice.status).toBe('discarded');
+    const discarded = await seen(
+      () => bff.billing.listInvoices(preparer, { status: 'discarded', customerId: p3.customerId }),
+      { list: true },
+    );
+    expect(discarded.map((i) => i.id)).toEqual([p3.discardedId]);
+
+    expect(await submitApproveIssue(p3.manualId)).toMatch(/^INV-/);
+  });
+
+  it('16. a staff payment: upload the bank slip, record it, verify (a different user) and allocate with an excess', async () => {
+    const preparer = await session('preparer');
+    const documentId = await bff.staffProofs.uploadStaffPaymentProof(preparer, {
+      customerId: p3.customerId,
+      filename: 'bank-slip.pdf',
+      mime: 'application/pdf',
+      size: pdf.length,
+      body: streamOf(pdf),
+    });
+    await untilClean('the staff bank slip', documentId);
+
+    const payment = await seen(() =>
+      bff.receivables.submitPayment(
+        preparer,
+        {
+          customerId: p3.customerId,
+          currency: 'NPR',
+          amount: STAFF_PAID,
+          tdsWithheld: '0.00',
+          method: 'bank_transfer',
+          receivedOn: kathmanduDay(),
+          bankReference: 'NABIL-CONTRACT-1',
+          proofDocumentIds: [documentId],
+        },
+        key(),
+      ),
+    );
+    expect(payment).toMatchObject({ status: 'submitted', amount: STAFF_PAID });
+    p3.staffPaymentId = payment.id;
+
+    const listed = await seen(() => bff.receivables.listPayments(preparer), { list: true });
+    expect(listed.map((x) => x.id)).toContain(p3.staffPaymentId);
+    const submittedOnly = await seen(() => bff.receivables.listPayments(preparer, 'submitted'), {
+      list: true,
+    });
+    expect(submittedOnly.map((x) => x.id)).toContain(p3.staffPaymentId);
+    const got = await seen(() => bff.receivables.getPayment(preparer, p3.staffPaymentId));
+    expect(got.id).toBe(p3.staffPaymentId);
+
+    // The recorder cannot verify their own payment: `finance2` is a different Finance user.
+    const finance2 = await session('finance2');
+    const verified = await seen(() =>
+      bff.receivables.verifyPayment(
+        finance2,
+        p3.staffPaymentId,
+        { expectedVersion: got.version },
+        key(),
+      ),
+    );
+    expect(verified.status).toBe('verified');
+    expect(verified.number).toMatch(/^RCPT-/);
+
+    const allocated = await seen(
+      () =>
+        bff.receivables.allocatePayment(
+          finance2,
+          p3.staffPaymentId,
+          { lines: [{ invoiceId: p3.advanceId, amount: ADVANCE_TOTAL }] },
+          key(),
+        ),
+      { list: true },
+    );
+    expect(allocated.map((r) => [r.invoiceId, r.paymentId, r.amount])).toEqual([
+      [p3.advanceId, p3.staffPaymentId, ADVANCE_TOTAL],
+    ]);
+    const rows = await seen(
+      () => bff.receivables.listPaymentAllocations(finance2, p3.staffPaymentId),
+      { list: true },
+    );
+    expect(rows.map((r) => r.id)).toEqual(allocated.map((r) => r.id));
+  }, 90_000);
+
+  it('17. a portal payment: upload the proof and submit through the portal client, then Finance verifies and allocates it', async () => {
+    const customer = await portalSession();
+    const documentId = await bff.portalBilling.uploadPaymentProof(customer, {
+      filename: 'portal-slip.pdf',
+      mime: 'application/pdf',
+      size: pdf.length,
+      body: streamOf(pdf),
+    });
+    await untilClean('the portal bank slip', documentId);
+
+    // `submitPortalPayment` reads no body (it answers void): the raw answer is the list row of the payment.
+    const { raw } = await tee.through(() =>
+      bff.portalBilling.submitPortalPayment(
+        customer,
+        {
+          currency: 'NPR',
+          amount: PORTAL_PAID,
+          tdsWithheld: '0.00',
+          method: 'bank_transfer',
+          receivedOn: kathmanduDay(),
+          bankReference: 'NABIL-CONTRACT-2',
+          proofDocumentIds: [documentId],
+        },
+        key(),
+      ),
+    );
+    const item = PortalPaymentListItemSchema.parse(raw);
+    expect(item).toMatchObject({ status: 'submitted', amount: PORTAL_PAID, number: null });
+    p3.portalPaymentId = item.id;
+
+    const mine = await seen(() => bff.portalBilling.listPortalPayments(customer), { list: true });
+    // The list is the customer's payments (by party), so the staff-recorded one may be in it too.
+    expect(mine.map((x) => x.id)).toContain(p3.portalPaymentId);
+
+    const finance2 = await session('finance2');
+    const before = await seen(() => bff.receivables.getPayment(finance2, p3.portalPaymentId));
+    const verified = await seen(() =>
+      bff.receivables.verifyPayment(
+        finance2,
+        p3.portalPaymentId,
+        { expectedVersion: before.version },
+        key(),
+      ),
+    );
+    expect(verified.status).toBe('verified');
+    await seen(
+      () =>
+        bff.receivables.allocatePayment(
+          finance2,
+          p3.portalPaymentId,
+          { lines: [{ invoiceId: p3.manualId, amount: PORTAL_PAID }] },
+          key(),
+        ),
+      { list: true },
+    );
+
+    // The customer sees the receipt number and the smaller open amount, both derived by the server.
+    const after = await seen(() => bff.portalBilling.listPortalPayments(customer), { list: true });
+    expect(after.find((x) => x.id === p3.portalPaymentId)).toMatchObject({ status: 'verified' });
+    const settlement = await seen(
+      () => bff.portalBilling.getPortalInvoiceSettlement(customer, p3.manualId),
+      { allowDropped: ['number', 'kind', 'customerId', 'issueDate', 'allocatedAmount'] },
+    );
+    expect(settlement.openAmount).toBe(
+      new Decimal(MANUAL_TOTAL).minus(PORTAL_PAID).toFixed(2, Decimal.ROUND_HALF_UP),
+    );
+  }, 90_000);
+
+  it('18. a credit note and a debit note through the client; the draft debit note stays hidden from the portal', async () => {
+    const finance2 = await session('finance2');
+    const manual = await openInvoice(p3.manualId);
+    const line = manual.lines[0]!;
+    const quarter = new Decimal(line.quantity).div(4).toFixed(4, Decimal.ROUND_HALF_UP);
+
+    const credit = await seen(() =>
+      bff.billing.createCreditNote(
+        finance2,
+        {
+          originalInvoiceId: p3.manualId,
+          reason: 'Contract test: a quarter of the add-on was not delivered',
+          lines: [{ originalLineNo: line.lineNo, quantity: quarter }],
+        },
+        key(),
+      ),
+    );
+    expect(credit.invoice).toMatchObject({
+      kind: 'credit_note',
+      status: 'draft',
+      originalInvoiceId: p3.manualId,
+    });
+    p3.creditNoteId = credit.invoice.id;
+    expect(await submitApproveIssue(p3.creditNoteId, 'finance2')).toMatch(/^CN-/);
+
+    const debit = await seen(() =>
+      bff.billing.createDebitNote(
+        finance2,
+        {
+          originalInvoiceId: p3.manualId,
+          reason: 'Contract test: an extra domain renewal',
+          lines: [
+            {
+              description: 'Domain renewal',
+              uom: 'lot',
+              quantity: '1',
+              unitPrice: '500.00',
+              taxCodeId: p3.vat13Id,
+            },
+          ],
+        },
+        key(),
+      ),
+    );
+    expect(debit.invoice).toMatchObject({ kind: 'debit_note', status: 'draft' });
+    p3.debitNoteId = debit.invoice.id;
+
+    const notes = await seen(
+      () => bff.billing.listInvoices(finance2, { kind: 'credit_note', customerId: p3.customerId }),
+      { list: true },
+    );
+    expect(notes.map((i) => i.id)).toEqual([p3.creditNoteId]);
+
+    // A draft is not the customer's: the API answers 404, and the portal client passes that on as an ApiError.
+    const customer = await portalSession();
+    const refused = await bff.portalBilling.getPortalInvoice(customer, p3.debitNoteId).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(bff.PortalApiError);
+    expect((refused as InstanceType<typeof bff.PortalApiError>).status).toBe(404);
+    const listed = await bff.portalBilling.listPortalInvoices(customer);
+    expect(listed.map((i) => i.id)).not.toContain(p3.debitNoteId);
+    expect(listed.map((i) => i.id)).toContain(p3.creditNoteId);
+  }, 90_000);
+
+  it('19. receivables: aging, statement (all, then open only in NPR) and the customer advance', async () => {
+    const finance = await session('finance');
+    const creditTotal = new Decimal((await openInvoice(p3.creditNoteId)).invoice.totals.total);
+    // From the documents, not read back from the ledger: the advance is paid, the add-on less payment and credit.
+    const expectedOpen = new Decimal(MANUAL_TOTAL)
+      .minus(PORTAL_PAID)
+      .minus(creditTotal)
+      .toFixed(2, Decimal.ROUND_HALF_UP);
+
+    const everything = await seen(
+      () => bff.receivables.getCustomerStatement(finance, p3.customerId),
+      { list: true },
+    );
+    expect(everything.map((r) => r.invoiceId)).toEqual(
+      expect.arrayContaining([p3.advanceId, p3.manualId]),
+    );
+    const open: InvoiceSettlement[] = await seen(
+      () =>
+        bff.receivables.getCustomerStatement(finance, p3.customerId, {
+          openOnly: true,
+          currency: 'NPR',
+        }),
+      { list: true },
+    );
+    expect(open.map((r) => r.invoiceId)).toEqual([p3.manualId]);
+    expect(open[0]!.openAmount).toBe(expectedOpen);
+
+    const aging = await seen(() => bff.receivables.getAging(finance));
+    const row = aging.rows.find((r) => r.customerId === p3.customerId && r.currency === 'NPR');
+    expect(row, JSON.stringify(aging)).toBeDefined();
+    expect(row!.totalOpen).toBe(expectedOpen);
+
+    const advance = await seen(() => bff.receivables.getCustomerAdvance(finance, p3.customerId), {
+      list: true,
+    });
+    expect(advance).toEqual([{ customerId: p3.customerId, currency: 'NPR', amount: STAFF_EXCESS }]);
+  });
+
+  it('20. a refusal on a P3 route reaches the workspace as an ApiError with the contract error envelope', async () => {
+    const error = await bff.billing.getInvoice(await session('finance'), randomUUID()).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(bff.ApiError);
+    const failure = error as InstanceType<typeof bff.ApiError>;
+    expect(failure.status).toBe(404);
+    expect(ErrorBodySchema.safeParse(failure.body).success, JSON.stringify(failure.body)).toBe(
+      true,
+    );
+  });
+});
