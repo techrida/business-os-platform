@@ -98,4 +98,8 @@ describe('PaymentIntakeOwnerPolicy', () => {
     expect(await policy.allowsCounterparty(customer('cust-1'), 'cust-2')).toBe(false);
     expect(await policy.allowsSystemActor()).toBe(false);
   });
+
+  it('authorises staff uploads with payment.record instead of documents.upload', () => {
+    expect(policy.uploadPermission).toBe('payment.record');
+  });
 });
