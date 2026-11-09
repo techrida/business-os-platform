@@ -20,10 +20,11 @@ import { join } from 'node:path';
 
 import {
   CustomerInvoiceViewSchema,
+  ErrorBodySchema,
   PortalInvoiceListItemSchema,
   SignedLinkDtoSchema,
 } from '@bos/contracts';
-import { createParty, createTenantWithEntity, runMigrations } from '@bos/db';
+import { createParty, createPortalUser, createTenantWithEntity, runMigrations } from '@bos/db';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -362,6 +363,36 @@ async function listIds(): Promise<string[]> {
 // ---------------------------------------------------------------------------------------- tests
 
 describe('portal invoice reads over HTTP on a real database', () => {
+  it('refuses a real vendor portal principal on every customer invoice route', async () => {
+    const w = await seedWorld();
+    const invoiceId = await seedInvoice(w, w.entityA, w.partyP, 'issued');
+    const vendor = await createParty(pool, { tenantId: w.tenantId, kind: 'vendor' });
+    const user = await createPortalUser(pool, { tenantId: w.tenantId, idpOrgId: vendor.idpOrgId });
+    current = {
+      ...customerOf(w, vendor.partyId),
+      userId: user.userId,
+      idpOrgId: vendor.idpOrgId,
+      orgKind: 'vendor',
+      roles: ['vendor_user'],
+    };
+    // Even a principal carrying the customer grant must fail the counterparty-kind boundary.
+    const bodies = new Set<string>();
+    for (const suffix of [
+      '',
+      `/${invoiceId}`,
+      `/${invoiceId}/settlement`,
+      `/${invoiceId}/document`,
+    ]) {
+      const res = await get(`/v1/portal/invoices${suffix}`);
+      expect(res.status, res.text).toBe(403);
+      expect(ErrorBodySchema.parse(res.body).error.code).toBe('forbidden');
+      bodies.add(res.text);
+    }
+    expect(bodies.size).toBe(1);
+    current = customerOf(w, w.partyP);
+    expect(await listIds()).toEqual([invoiceId]);
+  });
+
   it('answers one byte-identical 404 for every hidden id on every route, and lists none of them', async () => {
     const w = await seedWorld();
     const ownIssued = await seedInvoice(w, w.entityA, w.partyP, 'issued');
