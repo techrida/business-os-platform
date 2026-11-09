@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BUILT_PHASE, NAV_GROUPS, isBuilt, phaseDescription, phaseTag, titleForPath } from './nav';
+import { BUILT_PHASE, NAV_GROUPS, isBuilt, titleForPath } from './nav';
 
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
@@ -58,15 +58,6 @@ describe('NAV_GROUPS', () => {
   it('uses only known phases', () => {
     const phases = new Set(['P0', 'P1', 'P2', 'P3', 'P4', 'later']);
     for (const item of items) expect(phases.has(item.phase), item.label).toBe(true);
-  });
-});
-
-describe('phase text', () => {
-  it('shows P-phases as they are and "later" as a word', () => {
-    expect(phaseTag('P2')).toBe('P2');
-    expect(phaseTag('later')).toBe('Later');
-    expect(phaseDescription('P3')).toBe('planned for phase P3');
-    expect(phaseDescription('later')).toBe('planned for a later phase');
   });
 });
 
