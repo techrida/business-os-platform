@@ -9,6 +9,7 @@ import { LeadsModule } from './modules/leads/leads.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
+import { PaymentProofsModule } from './modules/payment-proofs/payment-proofs.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
@@ -66,6 +67,7 @@ import { UsersModule } from './platform/users/users.module';
     LedgerModule,
     SalesOrdersModule,
     PaymentsModule,
+    PaymentProofsModule,
     ReceivablesModule,
     PortalBillingModule,
     InvoicesModule,
