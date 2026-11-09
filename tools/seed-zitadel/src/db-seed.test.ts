@@ -99,8 +99,8 @@ describe('seedKernelRows', () => {
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
     // grants + authz bump + 2 x (definition + version + current_version_id) + fx peg
-    // + 3 tax codes + 2 payment terms
-    expect(changed).toBe(grantCount + 1 + 2 * 3 + 1 + 3 + 2);
+    // + 3 tax codes + 2 payment terms + 2 withholding codes
+    expect(changed).toBe(grantCount + 1 + 2 * 3 + 1 + 3 + 2 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
