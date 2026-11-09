@@ -42,7 +42,7 @@ const TOTP_PERIOD_S = 30;
 /** If fewer seconds than this remain in the window, wait for the next one before generating. */
 const TOTP_MIN_REMAINING_S = 3;
 
-/** The TOTP window each secret last produced a code in (one worker runs all specs in order). */
+/** The TOTP window each secret last produced a code in during this worker's lifetime. */
 const lastWindowBySecret = new Map<string, number>();
 const currentTotpWindow = (nowMs: number = Date.now()): number =>
   Math.floor(nowMs / 1000 / TOTP_PERIOD_S);
@@ -55,20 +55,23 @@ export function secondsLeftInTotpWindow(nowMs: number = Date.now()): number {
 /**
  * A code ZITADEL will still accept after the browser has submitted it. A code generated in the
  * last couple of seconds of a window can expire in flight, so this waits for the next window then.
+ * On a worker's first use, also wait: Playwright restarts workers after failures, while ZITADEL
+ * still remembers the previous worker's consumed code. Starting a fresh window avoids that replay.
  * SHA-1, 6 digits and 30 s are ZITADEL's fixed TOTP parameters, spelled out so a future change in
  * the library's defaults cannot silently break the logins.
  */
 export async function freshTotpCode(secret: string, page: Page): Promise<string> {
+  const normalized = secret.replace(/\s+/g, '').toUpperCase();
   const left = secondsLeftInTotpWindow();
-  if (left < TOTP_MIN_REMAINING_S) await page.waitForTimeout(Math.ceil(left * 1000) + 250);
+  const previous = lastWindowBySecret.get(normalized);
   // ZITADEL accepts each code once: a persona that signs in twice inside one 30 s window (the exit
   // spec, then the inbox spec) would send a used code and stall on the OTP page. Wait it out.
-  if (lastWindowBySecret.get(secret) === currentTotpWindow()) {
-    await page.waitForTimeout(Math.ceil(secondsLeftInTotpWindow() * 1000) + 250);
+  if (previous === undefined || previous === currentTotpWindow() || left < TOTP_MIN_REMAINING_S) {
+    await page.waitForTimeout(Math.ceil(left * 1000) + 250);
   }
-  lastWindowBySecret.set(secret, currentTotpWindow());
+  lastWindowBySecret.set(normalized, currentTotpWindow());
   return generate({
-    secret: secret.replace(/\s+/g, '').toUpperCase(),
+    secret: normalized,
     strategy: 'totp',
     algorithm: 'sha1',
     digits: 6,
@@ -150,7 +153,7 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
   // "set up 2FA" page (the seed did not register TOTP), or straight back to the app (MFA off).
   // Poll until one shows; the redirect chain can take a few seconds.
   let otpDone = false;
-  const deadline = Date.now() + 30_000;
+  let deadline = Date.now() + 30_000;
   for (;;) {
     const state = await classify(page, appOrigin);
     if (state === 'app') break;
@@ -162,7 +165,11 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
       const input = await findOtpInput(page);
       // null: the page re-rendered between classify and now; the next loop turn looks again.
       if (input !== null) {
-        await input.fill(await freshTotpCode(who.totpSecret, page));
+        // The bounded wait for a fresh code is deliberate, not time spent waiting on the UI.
+        const waitingSince = Date.now();
+        const code = await freshTotpCode(who.totpSecret, page);
+        deadline += Date.now() - waitingSince;
+        await input.fill(code);
         const submit = continueButton(page)
           .or(page.getByRole('button', { name: /^\s*(verify|submit|next|authenticate)\s*$/i }))
           .first();
@@ -173,14 +180,14 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
     }
     if (Date.now() > deadline) {
       throw new Error(
-        `Sign-in for "${who.key}" did not reach the app within 30 s after the password step ` +
-          `(last URL ${page.url()}, code ${otpDone ? 'submitted' : 'not requested'})`,
+        `Sign-in for "${who.key}" did not reach the app within 30 s, excluding the fresh-code wait ` +
+          `(last path ${new URL(page.url()).pathname}, code ${otpDone ? 'submitted' : 'not requested'})`,
       );
     }
     await page.waitForTimeout(250);
   }
 
   if (new URL(page.url()).pathname === '/auth/error') {
-    throw new Error(`Sign-in for "${who.key}" ended on /auth/error: ${page.url()}`);
+    throw new Error(`Sign-in for "${who.key}" ended on /auth/error`);
   }
 }
