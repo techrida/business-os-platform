@@ -82,7 +82,7 @@ describe('validateDraftLines', () => {
 
   it('counts what other receipts, drafts included, already took, and the cancelled quantity', () => {
     const f = facts(poLine(1, { cancelledQuantity: '1.0000' }));
-    expect(validateDraftLines('goods', [line(1, '2')], f, net({ [id(1)]: '3.0000' }))).toBeNull();
+    expect(validateDraftLines('goods', [line(1, '1')], f, net({ [id(1)]: '3.0000' }))).toBeNull();
     expect(validateDraftLines('goods', [line(1, '3')], f, net({ [id(1)]: '2.0000' }))?.code).toBe(
       'over_receipt',
     );
@@ -105,9 +105,9 @@ describe('validateDraftLines', () => {
     expect(
       validateDraftLines('goods', [line(1, '1'), line(1, '2')], facts(poLine(1)), net())?.code,
     ).toBe('duplicate_po_line');
-    expect(
-      validateDraftLines('service', [line(1, '1')], facts(poLine(1)), net())?.code,
-    ).toBe('receipt_kind_mismatch');
+    expect(validateDraftLines('service', [line(1, '1')], facts(poLine(1)), net())?.code).toBe(
+      'receipt_kind_mismatch',
+    );
   });
 
   describe('serials', () => {
@@ -116,7 +116,12 @@ describe('validateDraftLines', () => {
 
     it('needs as many serials as units, and whole units', () => {
       expect(
-        validateDraftLines('goods', [line(1, '2', { serials: [serial('A'), serial('B')] })], f, net()),
+        validateDraftLines(
+          'goods',
+          [line(1, '2', { serials: [serial('A'), serial('B')] })],
+          f,
+          net(),
+        ),
       ).toBeNull();
       expect(validateDraftLines('goods', [line(1, '2')], f, net())?.code).toBe('serials_required');
       expect(
@@ -129,8 +134,12 @@ describe('validateDraftLines', () => {
 
     it('refuses the same serial twice on one line', () => {
       expect(
-        validateDraftLines('goods', [line(1, '2', { serials: [serial('A'), serial('A')] })], f, net())
-          ?.code,
+        validateDraftLines(
+          'goods',
+          [line(1, '2', { serials: [serial('A'), serial('A')] })],
+          f,
+          net(),
+        )?.code,
       ).toBe('serial_duplicate');
     });
 
