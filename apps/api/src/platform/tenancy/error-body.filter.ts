@@ -59,6 +59,9 @@ export type ErrorCode =
   | 'VENDOR_NOT_APPROVED'
   | 'VENDOR_NOT_IN_ENTITY'
   | 'FEWER_THAN_MIN_QUOTES'
+  | 'PO_HAS_RECEIPTS'
+  | 'PO_HAS_NO_LINES'
+  | 'PO_AMENDMENT_INVALID'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -122,9 +125,12 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   serials_required: 'This line needs one serial number for each unit received',
   serials_not_allowed: 'This line does not take serial numbers',
   serial_duplicate: 'A serial number was already received on this purchase order line',
-  VENDOR_NOT_APPROVED: 'Only approved vendors can be invited to quote',
+  VENDOR_NOT_APPROVED: 'The vendor is not approved for this action',
   VENDOR_NOT_IN_ENTITY: 'A vendor has no account in this entity',
   FEWER_THAN_MIN_QUOTES: 'There are fewer quotations than the minimum; give a reason to go on',
+  PO_HAS_RECEIPTS: 'Goods or services were received on this purchase order',
+  PO_HAS_NO_LINES: 'The purchase order has no lines',
+  PO_AMENDMENT_INVALID: 'This amendment cannot be applied to the purchase order',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -202,6 +208,10 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'VENDOR_NOT_APPROVED',
   'VENDOR_NOT_IN_ENTITY',
   'FEWER_THAN_MIN_QUOTES',
+  // P4 purchase orders: issue with no lines, cancel or close after something was received. Issuing also
+  // throws VENDOR_NOT_APPROVED and VENDOR_NOT_IN_ENTITY.
+  'PO_HAS_RECEIPTS',
+  'PO_HAS_NO_LINES',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -230,6 +240,8 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'serials_required',
   'serials_not_allowed',
   'serial_duplicate',
+  // P4 purchase orders: an amendment names a line of another order, changes nothing, or cuts below what arrived.
+  'PO_AMENDMENT_INVALID',
 ];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {

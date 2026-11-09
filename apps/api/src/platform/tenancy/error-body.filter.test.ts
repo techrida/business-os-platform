@@ -292,6 +292,8 @@ describe('ErrorBodyFilter', () => {
     'VENDOR_NOT_APPROVED',
     'VENDOR_NOT_IN_ENTITY',
     'FEWER_THAN_MIN_QUOTES',
+    'PO_HAS_RECEIPTS',
+    'PO_HAS_NO_LINES',
   ])('keeps the vendor conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);
@@ -313,6 +315,7 @@ describe('ErrorBodyFilter', () => {
     'serials_required',
     'serials_not_allowed',
     'serial_duplicate',
+    'PO_AMENDMENT_INVALID',
   ])(
     'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4), and only on a 422',
     (code) => {
