@@ -298,10 +298,9 @@ describe('ErrorBodyFilter', () => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);
     expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
-    expect(
-      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
-        .error.code,
-    ).toBe('bad_request');
+    const wrongStatus = filter(new UnprocessableEntityException({ code, message: 'm' }));
+    expect(wrongStatus.status).toBe(422);
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
   });
 
   it.each([
@@ -325,10 +324,9 @@ describe('ErrorBodyFilter', () => {
       const parsed = ErrorBodySchema.parse(out.body);
       expect(parsed.error.code).toBe(code);
       expect(parsed.error.message).toBe('Not accepted');
-      expect(
-        ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error
-          .code,
-      ).toBe('conflict');
+      const wrongStatus = filter(new ConflictException({ code, message: 'm' }));
+      expect(wrongStatus.status).toBe(409);
+      expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('conflict');
     },
   );
 
@@ -347,10 +345,9 @@ describe('ErrorBodyFilter', () => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);
     expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
-    expect(
-      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
-        .error.code,
-    ).toBe('bad_request');
+    const wrongStatus = filter(new UnprocessableEntityException({ code, message: 'm' }));
+    expect(wrongStatus.status).toBe(422);
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
   });
 
   it.each([
@@ -379,9 +376,9 @@ describe('ErrorBodyFilter', () => {
     const parsed = ErrorBodySchema.parse(out.body);
     expect(parsed.error.code).toBe(code);
     expect(parsed.error.message).toBe('Not accepted');
-    expect(
-      ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
-    ).toBe('conflict');
+    const wrongStatus = filter(new ConflictException({ code, message: 'm' }));
+    expect(wrongStatus.status).toBe(409);
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('conflict');
   });
 
   it('exposes the message of a client error', () => {
@@ -543,10 +540,9 @@ describe('ErrorBodyFilter', () => {
     const parsed = ErrorBodySchema.parse(out.body);
     expect(parsed.error.code).toBe(code);
     expect(parsed.error.message).toBe('Not now');
-    expect(
-      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
-        .error.code,
-    ).toBe('bad_request');
+    const wrongStatus = filter(new UnprocessableEntityException({ code, message: 'm' }));
+    expect(wrongStatus.status).toBe(422);
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('bad_request');
   });
 
   it.each([
@@ -564,8 +560,8 @@ describe('ErrorBodyFilter', () => {
     const parsed = ErrorBodySchema.parse(out.body);
     expect(parsed.error.code).toBe(code);
     expect(parsed.error.message).toBe('Cannot do that');
-    expect(
-      ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
-    ).toBe('conflict');
+    const wrongStatus = filter(new ConflictException({ code, message: 'm' }));
+    expect(wrongStatus.status).toBe(409);
+    expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('conflict');
   });
 });
