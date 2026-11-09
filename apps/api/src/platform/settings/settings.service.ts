@@ -6,6 +6,7 @@
 // default kept here, because most SETTINGS schemas have no default of their own (they only validate).
 import {
   P2_SETTING_DEFAULTS,
+  P3_SETTING_DEFAULTS,
   SETTINGS,
   type SettingKey,
   type SettingValue,
@@ -28,6 +29,7 @@ export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } =
   'approvals.sla_defaults': SlaSpecSchema.parse({}),
   // fx.max_rate_age_days, quotation.validity_days and sales.evidence_policy: one source in contracts.
   ...P2_SETTING_DEFAULTS,
+  ...P3_SETTING_DEFAULTS,
 };
 
 export interface SettingVersion {
