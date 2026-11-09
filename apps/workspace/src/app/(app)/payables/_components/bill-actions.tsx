@@ -12,12 +12,13 @@ import {
 import actions from '@/components/p2/quotations/actions.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Field, Textarea } from '@/components/ui/field';
+import { Field, Input, Textarea } from '@/components/ui/field';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import {
   matchBillAction,
   rejectSubmissionAction,
+  requestExceptionAction,
   submitBillAction,
   voidBillAction,
 } from '../actions';
@@ -199,6 +200,61 @@ export function RejectDialog(props: Common) {
         pendingWords="Rejecting the submission"
         tone="secondary"
         fields={(errors) => <ReasonField errors={errors} hint="The audit trail keeps this." />}
+      />
+    </ActionDialog>
+  );
+}
+
+function ExceptionFields({ errors }: { errors: Record<string, string> }) {
+  const [reason, setReason] = useState('');
+  const [evidence, setEvidence] = useState('');
+  return (
+    <>
+      <Field label="Reason for the exception" error={errors['reason']}>
+        {(control) => (
+          <Textarea
+            name="reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={1000}
+            rows={4}
+            required
+            {...control}
+          />
+        )}
+      </Field>
+      <Field
+        label="Evidence document ID (optional)"
+        hint="An existing document supporting the exception."
+        error={errors['evidenceDocumentId']}
+      >
+        {(control) => (
+          <Input
+            name="evidenceDocumentId"
+            value={evidence}
+            onChange={(e) => setEvidence(e.target.value)}
+            {...control}
+          />
+        )}
+      </Field>
+    </>
+  );
+}
+
+export function ExceptionDialog(props: Common) {
+  return (
+    <ActionDialog
+      triggerLabel="Request match exception"
+      title={`Match exception for ${props.label}`}
+      intro="Explain why Finance should accept the variance. The bill remains blocked until Finance approves the exception."
+    >
+      <Form
+        action={requestExceptionAction}
+        idField="billId"
+        common={props}
+        submitLabel="Send to Finance"
+        pendingWords="Requesting the exception"
+        fields={(errors) => <ExceptionFields errors={errors} />}
       />
     </ActionDialog>
   );
