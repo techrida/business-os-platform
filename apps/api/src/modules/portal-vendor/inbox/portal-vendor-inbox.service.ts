@@ -139,7 +139,11 @@ export class VendorPortalInboxService {
     const caseId = await this.ownCaseId(this.db, who.scope.tenantId, partyId);
     if (caseId === undefined) throw notFound();
     const created = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.documents.create(tx, { ownerType: VERIFICATION_OWNER_TYPE, ownerId: caseId, ...file.data }),
+      this.documents.create(tx, {
+        ownerType: VERIFICATION_OWNER_TYPE,
+        ownerId: caseId,
+        ...file.data,
+      }),
     );
     return { ...created, uploadPath: kycUploadPath(created.documentId, created.versionId) };
   }
@@ -252,7 +256,11 @@ export class VendorPortalInboxService {
     const file = PortalFileSchema.safeParse(body);
     if (!file.success) throw invalid('file', file.error);
     const created = await withTx(this.db, who.scope, who.actor, (tx) =>
-      this.documents.create(tx, { ownerType: VENDOR_INTAKE_OWNER_TYPE, ownerId: partyId, ...file.data }),
+      this.documents.create(tx, {
+        ownerType: VENDOR_INTAKE_OWNER_TYPE,
+        ownerId: partyId,
+        ...file.data,
+      }),
     );
     return { ...created, uploadPath: quotationUploadPath(created.documentId, created.versionId) };
   }
@@ -308,7 +316,7 @@ export class VendorPortalInboxService {
                 eq(rfqs.status, 'open'),
               ),
             )
-            .for('share', { of: rfqs });
+            .for('share');
           if (invited === undefined) throw notFound();
           await this.assertDocument(tx, who.scope, VENDOR_INTAKE_OWNER_TYPE, partyId, b.documentId);
           const [row] = await tx
@@ -331,7 +339,12 @@ export class VendorPortalInboxService {
             action: 'portal.vendor.quotation_submitted',
             entityType: 'vendor_quotation_submission',
             entityId: row.id,
-            after: { rfqId: b.rfqId, documentId: b.documentId, currency: b.currency, total: b.total },
+            after: {
+              rfqId: b.rfqId,
+              documentId: b.documentId,
+              currency: b.currency,
+              total: b.total,
+            },
           });
           const response: InboxReceipt = {
             id: row.id,
