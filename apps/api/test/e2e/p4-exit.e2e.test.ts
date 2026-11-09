@@ -190,6 +190,23 @@ async function refuseSelfApproval(id: string, key: P4PersonaKey) {
   });
 }
 
+/** Staff officers get no general approval powers from another person's Department Head duty. */
+async function refuseOfficerAccess(id: string, key: P4PersonaKey, expectedVersion: number) {
+  const authorization = await auth(key);
+  const detail = await t
+    .http()
+    .get(`/v1/approvals/requests/${id}`)
+    .set('authorization', authorization);
+  expect(detail.status, show(detail)).toBe(404);
+  const action = await t
+    .http()
+    .post(`/v1/approvals/requests/${id}/actions`)
+    .set('authorization', authorization)
+    .set('idempotency-key', randomUUID())
+    .send({ action: 'approve', expectedVersion });
+  expect(action.status, show(action)).toBe(404);
+}
+
 async function cleanDocument(documentId: string) {
   return pollUntil(
     `document ${documentId} to scan clean`,
@@ -301,12 +318,58 @@ describe('P4 exit Journey 11: department request to approved payment request ove
     expect(route.steps).toHaveLength(1);
     expect(route.steps[0]).toMatchObject({
       kind: 'department_head',
-      userId: world.personas.management.userId,
+      userId: world.personas.departmentHead.userId,
       roleKey: null,
     });
     expect(route.steps.map((step) => step.roleKey)).not.toContain('accountant');
     expect(route.steps.map((step) => step.roleKey)).not.toContain('finance');
-    expect((await approve(route.requestId, 'management')).status).toBe('approved');
+    expect(world.personas.departmentHead.tokenRoles).toEqual(['operations_officer']);
+    const head = await auth('departmentHead');
+    const inbox = await get<{ requestId: string }[]>('/v1/approvals/inbox', head);
+    expect(inbox.map((item) => item.requestId)).toEqual([route.requestId]);
+    const headDetail = ApprovalRequestDtoSchema.parse(
+      await get(`/v1/approvals/requests/${route.requestId}`, head),
+    );
+    expect(headDetail.requestId).toBe(route.requestId);
+    // The requester still has their ordinary own-record read, without gaining the right to approve it.
+    expect(
+      ApprovalRequestDtoSchema.parse(
+        await get(`/v1/approvals/requests/${route.requestId}`, requester),
+      ).requestId,
+    ).toBe(route.requestId);
+    const unrelatedInbox = await t
+      .http()
+      .get('/v1/approvals/inbox')
+      .set('authorization', await auth('unrelatedOfficer'));
+    expect(unrelatedInbox.status, show(unrelatedInbox)).toBe(403);
+    await refuseOfficerAccess(route.requestId, 'unrelatedOfficer', headDetail.version);
+    const selfAction = await t
+      .http()
+      .post(`/v1/approvals/requests/${route.requestId}/actions`)
+      .set('authorization', requester)
+      .set('idempotency-key', randomUUID())
+      .send({ action: 'approve', expectedVersion: headDetail.version });
+    expect(selfAction.status, show(selfAction)).toBe(403);
+
+    const decisionKey = randomUUID();
+    const decisionBody = { action: 'approve', expectedVersion: headDetail.version };
+    let decided: ApprovalRequestDto | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const decision = await t
+        .http()
+        .post(`/v1/approvals/requests/${route.requestId}/actions`)
+        .set('authorization', head)
+        .set('idempotency-key', decisionKey)
+        .send(decisionBody);
+      expect(decision.status, show(decision)).toBe(200);
+      const result = ApprovalRequestDtoSchema.parse(decision.body);
+      expect(result.status).toBe('approved');
+      expect(result.steps[0]!.decidedBy).toBe(world.personas.departmentHead.userId);
+      if (decided) expect(result).toEqual(decided);
+      decided = result;
+    }
+    expect(await get('/v1/approvals/inbox', head)).toEqual([]);
+    await refuseOfficerAccess(route.requestId, 'departmentHead', decided!.version);
     s.pr = await get<PurchaseRequestDto>(`${PR}/${s.pr.id}`, requester);
     expect(s.pr.status).toBe('dept_approved');
   });
@@ -406,6 +469,8 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       'finance',
       'management',
     ]);
+    // A PR head's exception does not extend to the commitment's Accountant/Finance/Management route.
+    await refuseOfficerAccess(id, 'departmentHead', route.version);
     await refuseSelfApproval(id, 'procurement');
     for (const key of ['accountant', 'finance', 'management'] as const) await approve(id, key);
     expect((await request(id)).status).toBe('approved');
