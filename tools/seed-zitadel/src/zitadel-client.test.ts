@@ -323,11 +323,7 @@ describe('ensureOrgLoginPolicy (pins the customer org policy)', () => {
         [ENDPOINTS.orgLoginPolicy]: (call: Call) =>
           call.method === 'GET'
             ? { policy }
-            : new ZitadelError(
-                call.path,
-                400,
-                '9 Errors.Org.LoginPolicy.NotChanged (Org-5M9vdd)',
-              ),
+            : new ZitadelError(call.path, 400, '9 Errors.Org.LoginPolicy.NotChanged (Org-5M9vdd)'),
       });
 
       expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
