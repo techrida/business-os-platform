@@ -22,6 +22,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { CAN_KEY } from '../../../platform/authz/decorators';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db } from '../../../platform/db/db.module';
@@ -29,7 +30,9 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { SignedLinks } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../../platform/documents/storage.adapter';
+import { vendorIntakeOwnerPolicy } from '../../portal-vendor/inbox/vendor-intake.policy';
 import { billDocumentOwnerPolicy, BillDocumentsService } from './bill-documents.service';
+import { BillDocumentsController } from './bill-documents.controller';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 let container: import('@testcontainers/postgresql').StartedPostgreSqlContainer;
@@ -41,6 +44,7 @@ let scopeB: TxScope;
 let userId = '';
 let vendorId = '';
 let service: BillDocumentsService;
+let documentsService: DocumentsService;
 const scan = { add: vi.fn().mockResolvedValue({}) };
 const current = {
   role: 'accountant' as RoleKey,
@@ -131,6 +135,8 @@ beforeAll(async () => {
     new AuditService(db),
   );
   documents.registerOwner(billDocumentOwnerPolicy(db));
+  documents.registerOwner(vendorIntakeOwnerPolicy(db));
+  documentsService = documents;
   service = new BillDocumentsService(db, caller, documents);
 });
 
@@ -275,4 +281,108 @@ it('preserves kernel type and size limits and queues one scan when two uploads r
     reason: { status: 409 },
   });
   expect(scan.add).toHaveBeenCalledTimes(1);
+});
+
+const write = (query: ReturnType<typeof sql>) =>
+  withTx(db, scopeA, systemActor('test'), (tx) => tx.execute(query));
+
+async function referenceBill(documentId: string, status = 'draft') {
+  const result = await write(sql`INSERT INTO app.vendor_bills
+    (tenant_id,organization_id,vendor_id,vendor_invoice_no,invoice_date,fiscal_year,currency,document_id,status,fx_rate,payable_total_npr,entered_by)
+    VALUES (${scopeA.tenantId},${scopeA.organizationId},${vendorId},${randomUUID()},'2026-11-09','2083/84','NPR',${documentId},${status},1,0,${userId}) RETURNING id`);
+  return (result.rows[0] as { id: string }).id;
+}
+
+it('lets an accountant replace a bad draft invoice through the scan pipeline', async () => {
+  const created = await service.create({ ...file, vendorPartyId: vendorId });
+  await referenceBill(created.documentId);
+  await write(
+    sql`UPDATE app.document_versions SET status = 'quarantined' WHERE id = ${created.versionId}`,
+  );
+  await write(
+    sql`UPDATE app.document_versions SET status = 'infected' WHERE id = ${created.versionId}`,
+  );
+  const bytes = Buffer.from('%PDF-1.7\nreplacement\n');
+  const replacement = await service.createVersion(created.documentId, {
+    ...file,
+    sizeBytes: bytes.length,
+  });
+  expect(replacement.documentId).toBe(created.documentId);
+  expect(replacement.uploadPath).toBe(
+    `/v1/payables/bill-documents/${created.documentId}/versions/${replacement.versionId}/content`,
+  );
+  expect(
+    (
+      await service.receive(
+        created.documentId,
+        replacement.versionId,
+        Readable.from(bytes),
+        bytes.length,
+      )
+    ).status,
+  ).toBe('quarantined');
+  expect(scan.add).toHaveBeenCalledTimes(1);
+});
+
+it.each(['pending_approval', 'approved', 'paid'])(
+  'refuses generic removal and versions for a %s bill while leaving unrelated vendor documents editable',
+  async (status) => {
+    current.role = 'founder';
+    for (const ownerType of ['vendor_bill_intake', 'vendor_portal_intake']) {
+      const created = await service.create({ ...file, vendorPartyId: vendorId });
+      await write(
+        sql`UPDATE app.documents SET owner_type = ${ownerType} WHERE id = ${created.documentId}`,
+      );
+      await referenceBill(created.documentId, status);
+      await expect(
+        withTx(db, scopeA, caller.current().actor, (tx) =>
+          documentsService.createVersion(tx, created.documentId, file),
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        documentsService.remove(created.documentId, { who: caller.current() }),
+      ).rejects.toMatchObject({ status: 409 });
+      if (ownerType === 'vendor_bill_intake')
+        await expect(service.createVersion(created.documentId, file)).rejects.toMatchObject({
+          status: 409,
+        });
+    }
+    const unrelated = await service.create({ ...file, vendorPartyId: vendorId });
+    await referenceBill(unrelated.documentId);
+    await expect(service.createVersion(unrelated.documentId, file)).resolves.toMatchObject({
+      documentId: unrelated.documentId,
+    });
+  },
+);
+
+it('requires the bill-entry grant for replacement creation and raw upload routes', () => {
+  expect(Reflect.getMetadata(CAN_KEY, BillDocumentsController.prototype.createVersion)).toBe(
+    'payables.bill.enter',
+  );
+  expect(Reflect.getMetadata('path', BillDocumentsController.prototype.createVersion)).toBe(
+    ':docId/versions',
+  );
+  expect(Reflect.getMetadata(CAN_KEY, BillDocumentsController.prototype.upload)).toBe(
+    'payables.bill.enter',
+  );
+});
+
+it('freezes a converted portal submission even while its bill is draft', async () => {
+  current.role = 'founder';
+  const created = await service.create({ ...file, vendorPartyId: vendorId });
+  await write(
+    sql`UPDATE app.documents SET owner_type = 'vendor_portal_intake' WHERE id = ${created.documentId}`,
+  );
+  const billId = await referenceBill(created.documentId);
+  await write(sql`INSERT INTO app.vendor_bill_submissions
+    (tenant_id,organization_id,vendor_party_id,submitted_by,document_id,status,converted_bill_id,reviewed_by,reviewed_at)
+    VALUES (${scopeA.tenantId},${scopeA.organizationId},${vendorId},${userId},${created.documentId},'converted',${billId},${userId},now())`);
+  await expect(
+    withTx(db, scopeA, caller.current().actor, (tx) =>
+      documentsService.createVersion(tx, created.documentId, file),
+    ),
+  ).rejects.toMatchObject({ status: 409 });
+  await expect(
+    documentsService.remove(created.documentId, { who: caller.current() }),
+  ).rejects.toMatchObject({ status: 409 });
 });
