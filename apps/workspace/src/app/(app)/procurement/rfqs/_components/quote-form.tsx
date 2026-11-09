@@ -52,6 +52,7 @@ export function QuoteForm({
   submission,
   prLines,
   taxCodes,
+  taxCodeProblem,
   cancelHref,
   reloadHref,
 }: {
@@ -66,6 +67,7 @@ export function QuoteForm({
   prLines: PrLineOption[];
   /** Null when the list could not be read. Entry waits for an available tax-code list. */
   taxCodes: TaxCode[] | null;
+  taxCodeProblem?: { status: number; message: string };
   cancelHref: string;
   reloadHref: string;
 }) {
@@ -99,6 +101,12 @@ export function QuoteForm({
 
   const err = state.errors;
   const hasTaxCodes = taxCodes !== null && taxCodes.length > 0;
+  const taxCodesForbidden = taxCodeProblem?.status === 403;
+  const unavailableTax = (id: string) =>
+    id !== '' && !(taxCodes ?? []).some((tax) => tax.id === id);
+  const hasUnavailableTax = values.lines.some(
+    (line) => line.include && unavailableTax(line.taxCodeId),
+  );
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
@@ -111,14 +119,22 @@ export function QuoteForm({
 
       {!hasTaxCodes ? (
         <Alert
-          tone={taxCodes === null ? 'error' : 'info'}
+          tone={taxCodes === null && !taxCodesForbidden ? 'error' : 'info'}
           role={taxCodes === null ? 'alert' : 'status'}
-          title={taxCodes === null ? 'Tax codes did not load' : 'No tax codes are available'}
-          actions={<a href={reloadHref}>Try loading tax codes again</a>}
+          title={
+            taxCodesForbidden
+              ? 'Your roles do not include tax codes'
+              : taxCodes === null
+                ? 'Tax codes did not load'
+                : 'No tax codes are available'
+          }
+          actions={taxCodesForbidden ? null : <a href={reloadHref}>Try loading tax codes again</a>}
         >
-          {taxCodes === null
-            ? 'Load the tax codes before recording this quotation.'
-            : 'Ask an administrator to configure tax codes before recording this quotation.'}
+          {taxCodesForbidden
+            ? taxCodeProblem.message
+            : taxCodes === null
+              ? 'Load the tax codes before recording this quotation.'
+              : 'Ask an administrator to configure tax codes before recording this quotation.'}
         </Alert>
       ) : null}
 
@@ -326,7 +342,15 @@ export function QuoteForm({
                       />
                     )}
                   </Field>
-                  <Field label="Tax code" error={err[`lines.${i}.taxCodeId`]}>
+                  <Field
+                    label="Tax code"
+                    hint={
+                      unavailableTax(line.taxCodeId)
+                        ? 'Choose an available tax code for this line.'
+                        : undefined
+                    }
+                    error={err[`lines.${i}.taxCodeId`]}
+                  >
                     {(control) => (
                       <Select
                         name={`lines.${i}.taxCodeId`}
@@ -337,6 +361,11 @@ export function QuoteForm({
                         {...control}
                       >
                         <option value="">Choose a tax code</option>
+                        {unavailableTax(line.taxCodeId) ? (
+                          <option value={line.taxCodeId} disabled>
+                            Unavailable tax code ({line.taxCodeId})
+                          </option>
+                        ) : null}
                         {(taxCodes ?? []).map((t) => (
                           <option key={t.id} value={t.id}>
                             {t.label}
@@ -358,7 +387,7 @@ export function QuoteForm({
       </Panel>
 
       <div className={styles.actions}>
-        <Button type="submit" disabled={pending || !hasTaxCodes}>
+        <Button type="submit" disabled={pending || !hasTaxCodes || hasUnavailableTax}>
           {pending ? 'Saving' : mode === 'convert' ? 'Convert to quotation' : 'Record quotation'}
         </Button>
         <LinkButton href={cancelHref} variant="ghost">
