@@ -67,6 +67,14 @@ describe('PaymentOwnerPolicy', () => {
     expect(load).toHaveBeenCalledWith(scope, 'p1', tx);
   });
 
+  it('refuses a vendor even when its party matches the payment customer, without loading the payment', async () => {
+    const load = vi.fn(() => Promise.resolve(head()));
+    const vendor: CounterpartyPrincipal = { ...customer('cust-1'), kind: 'vendor' };
+
+    expect(await new PaymentOwnerPolicy(load).allowsCounterparty(vendor, 'p1', tx)).toBe(false);
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it('allows only the receipt job on a numbered payment', async () => {
     const verified = new PaymentOwnerPolicy(() => Promise.resolve(head({ status: 'verified' })));
     const job = { kind: 'system' as const, id: 'system:payment-receipt' };
@@ -97,6 +105,12 @@ describe('PaymentIntakeOwnerPolicy', () => {
     expect(await policy.allowsCounterparty(customer('cust-1'), 'cust-1')).toBe(true);
     expect(await policy.allowsCounterparty(customer('cust-1'), 'cust-2')).toBe(false);
     expect(await policy.allowsSystemActor()).toBe(false);
+  });
+
+  it('refuses a vendor even when its party matches the intake owner', async () => {
+    const vendor: CounterpartyPrincipal = { ...customer('cust-1'), kind: 'vendor' };
+
+    expect(await policy.allowsCounterparty(vendor, 'cust-1')).toBe(false);
   });
 
   it('authorises staff uploads with payment.record instead of documents.upload', () => {
