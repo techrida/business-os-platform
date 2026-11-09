@@ -20,7 +20,11 @@ import { Can } from '../../../platform/authz/decorators';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import { CancelPaymentRequestBodySchema } from './payment-request.rules';
-import { PaymentRequestsService, type PaymentRequestDto } from './payment-requests.service';
+import {
+  PaymentRequestsService,
+  type PaymentRequestDto,
+  type PaymentRequestItemDto,
+} from './payment-requests.service';
 
 const ListPaymentRequestsQuerySchema = z.strictObject({
   status: PaymentRequestStatusSchema.optional(),
@@ -35,6 +39,13 @@ export class PaymentRequestsController {
   @Can('payables.payment.request')
   list(@Query() query: unknown): Promise<Omit<PaymentRequestDto, 'lines'>[]> {
     return this.requests.list(parseOr400(ListPaymentRequestsQuerySchema, query).status);
+  }
+
+  /** Available approved-bill balances for the payment request entry screen. */
+  @Get('items')
+  @Can('payables.payment.request')
+  items(): Promise<PaymentRequestItemDto[]> {
+    return this.requests.listItems();
   }
 
   /** 404 outside the acting entity. */
