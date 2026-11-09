@@ -1,5 +1,5 @@
 // BFF contract test: the workspace's REAL API clients (crm-api, verification-api, customers/api,
-// quote-builder/api, quotations/api) called against the REAL API over real HTTP.
+// quote-builder/api, quotations/api, lib/api-tax-codes) called against the REAL API over real HTTP.
 //
 // Why it exists: a UI-vs-API review found a builder that parsed the wrong response shape and dropped
 // fields, and unit tests with hand-written mocks passed because the mocks matched the UI's assumption,
@@ -352,14 +352,14 @@ describe('BFF contract: workspace clients against the real API', () => {
   });
 
   it('4. quotation lookups: tax codes (with the seeded VAT13) and payment terms', async () => {
-    const codes = await seen(() => bff.builder.listTaxCodes(sales()), { list: true });
+    const codes = await seen(() => bff.taxCodes.listTaxCodes(sales()), { list: true });
     expect(codes.map((c) => c.code)).toContain('VAT13');
     // The production seed may not fill payment terms; the shape is still audited when it does.
     await seen(() => bff.builder.listPaymentTerms(sales()), { list: true, maybeEmpty: true });
   });
 
   it('5. quotation: create, list, detail, preview, save a draft, submit', async () => {
-    const codes = await bff.builder.listTaxCodes(sales());
+    const codes = await bff.taxCodes.listTaxCodes(sales());
     const vat13 = codes.find((c) => c.code === 'VAT13');
     expect(vat13, 'the production seed gives the tenant VAT13').toBeDefined();
     const lines = [
