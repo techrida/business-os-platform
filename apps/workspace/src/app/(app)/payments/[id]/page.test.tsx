@@ -110,6 +110,8 @@ describe('payment detail', () => {
     expect(html).toContain('Value in NPR');
     expect(html).toContain('NPR 2,50,000.00');
     expect(html).toContain('NPR 7,50,000.00');
+    expect(html).toContain('Left to allocate');
+    expect(html).not.toContain('Customer advance (not yet allocated)');
   });
 
   it('offers no action on a rejected payment and shows the reason', async () => {
