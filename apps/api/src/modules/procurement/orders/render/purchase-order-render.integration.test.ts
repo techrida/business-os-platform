@@ -75,6 +75,7 @@ import { PurchaseOrdersService } from '../purchase-orders.service';
 import { PurchaseOrderDocumentService } from './purchase-order-document.service';
 import {
   drizzlePurchaseOrderRenderStore,
+  FAILED_RETRY_MS,
   ORPHAN_AFTER_MS,
   PurchaseOrderRenderSweeper,
   type RenderCandidate,
@@ -361,6 +362,7 @@ interface PoOptions {
   quantity?: string;
   unitPrice?: string;
   deliveryLocation?: string;
+  issuedAt?: Date;
 }
 
 interface IssuedPo {
@@ -423,7 +425,17 @@ async function issuedPo(opts: PoOptions = {}): Promise<IssuedPo> {
                 'set', ${quantity}, ${unitPrice}, ${vatCode}, ${a.gross}, ${a.taxAmount}, ${a.lineTotal})`,
   );
   current.scope = scope;
-  await orders.issue(id, randomUUID());
+  const issuer =
+    opts.issuedAt === undefined
+      ? orders
+      : new PurchaseOrdersService(
+          db,
+          {} as ApprovalsService,
+          new AuditService(db),
+          caller,
+          () => opts.issuedAt!,
+        );
+  await issuer.issue(id, randomUUID());
   return { id, number, lineId, vendor: v, scope };
 }
 
@@ -504,6 +516,55 @@ async function renderAndScan(c: RenderCandidate): Promise<void> {
 // ------------------------------------------------------------------------------------------- tests
 
 describe('purchase order render', () => {
+  it('reaches newer pending versions past multiple failing batches and wraps after a rendered cursor', async () => {
+    const failed: RenderCandidate[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      failed.push(await candidateOf(await issuedPo(), 1));
+    }
+    const healthyPo = await issuedPo({ issuedAt: new Date(now.getTime() + 1_000) });
+    const healthy = await candidateOf(healthyPo, 1);
+    const fairStore = drizzlePurchaseOrderRenderStore(db);
+    const load = vi.spyOn(fairStore, 'load');
+    let clock = now;
+    const pdf = {
+      htmlToPdf: vi.fn(async (html: string) => {
+        if (html.includes(healthyPo.number)) return PDF;
+        throw new Error('permanent render failure');
+      }),
+    };
+    const worker = new PurchaseOrderRenderSweeper(
+      fairStore,
+      runTx,
+      documents,
+      settings,
+      pdf,
+      () => clock,
+    );
+
+    // Every retry has expired before the next tick. The oldest-first query used to pick the same ten forever.
+    for (let tick = 0; tick < 3; tick += 1) {
+      await worker.sweep();
+      clock = new Date(clock.getTime() + FAILED_RETRY_MS + 1);
+    }
+    expect(await documentRows(healthy.versionId)).toHaveLength(1);
+    expect(new Set(load.mock.calls.map(([, c]) => c.versionId))).toEqual(
+      new Set([...failed, healthy].map((c) => c.versionId)),
+    );
+
+    // The cursor's row still defines its position after its PDF makes it ineligible. Equal timestamps use id order.
+    load.mockClear();
+    await worker.sweep();
+    const { rows: oldest } = await pool.query<{ id: string }>(
+      'SELECT id FROM app.purchase_order_versions WHERE id = ANY($1::uuid[]) ORDER BY created_at, id LIMIT 10',
+      [failed.map((c) => c.versionId)],
+    );
+    expect(load.mock.calls.map(([, c]) => c.versionId)).toEqual(oldest.map((r) => r.id));
+    // A removed cursor cannot poison future candidate queries: restart at the oldest available position.
+    expect((await fairStore.candidates(10, [], randomUUID())).map((c) => c.versionId)).toEqual(
+      oldest.map((r) => r.id),
+    );
+  });
+
   it('prints NPR 21,24,400.00 and stores a clean PDF owned by the version', async () => {
     const po = await issuedPo();
     const c = await candidateOf(po, 1);
