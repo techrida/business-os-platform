@@ -1417,6 +1417,9 @@ describe('request eligibility before disclosure or locking', () => {
       await expect(service.act(randomUUID(), action, 'portal-key')).rejects.toMatchObject({
         status: 404,
       });
+      await expect(service.act(randomUUID(), {} as never, 'portal-key')).rejects.toMatchObject({
+        status: 404,
+      });
       await expect(service.inbox()).rejects.toMatchObject({ status: 404 });
       expect(select).not.toHaveBeenCalled();
       expect(transaction).not.toHaveBeenCalled();
