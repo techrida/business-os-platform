@@ -996,6 +996,7 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
             { id: 'u-1', zitadel_user_id: 'z-1' },
             { id: 'u-2', zitadel_user_id: 'z-2' },
             { id: 'u-3', zitadel_user_id: 'z-3' },
+            { id: 'u-4', zitadel_user_id: 'z-4' },
           ],
         };
       if (call.text.startsWith('SELECT id FROM app.parties')) return { rows: [{ id: 'party-1' }] };
@@ -1013,10 +1014,14 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       person('procurement', 'z-1'),
       person('management', 'z-2'),
       person('depthead', 'z-3'),
+      person('warehouse', 'z-4'),
     ]);
     const vendor = calls.find((c) => c.text.includes('INTO app.vendors'));
     expect(vendor?.values[0]).toBe('tenant-uuid');
     expect(calls.some((c) => c.text.includes('INTO app.vendor_accounts'))).toBe(true);
+    expect(
+      calls.find((c) => c.text.includes('INTO app.user_entities') && c.values[2] === 'u-4')?.values,
+    ).toEqual(['tenant-uuid', 'org-uuid', 'u-4', ['warehouse']]);
   });
 
   it('fails clearly when the staff org has no idp_org or default entity yet', async () => {
