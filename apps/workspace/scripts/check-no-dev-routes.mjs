@@ -1,14 +1,19 @@
 #!/usr/bin/env node
-// Wall 3 against the dev persona switcher leaking into a production build (risk R12).
+// Wall 3 against the dev-only layer (persona switcher, DEV MENU) leaking into a production build
+// (risk R12).
 //
 // Run it after `next build`:   node apps/workspace/scripts/check-no-dev-routes.mjs [nextDir]
 //
-// It fails (exit 1) when the build output contains either
-//   1. a route with a `dev` path segment in `server/app-paths-manifest.json`, or
-//   2. the persona switcher's marker string in any emitted file.
-// The two checks overlap on purpose. Wall 1 (`pageExtensions` in next.config.ts) should keep
-// `page.dev.tsx` out of the route table. If it ever stops doing that, the route check catches the
-// route. If someone renames the route but keeps the component, the marker check still catches it.
+// It fails (exit 1) when the build output contains any of
+//   1. a route under the `/dev` prefix (`/dev/personas`, `/dev/api/whoami`) in
+//      `server/app-paths-manifest.json`,
+//   2. the persona switcher's marker, BOS_DEV_PERSONA_SWITCHER, in any emitted file, or
+//   3. the DEV MENU widget's marker, BOS_DEV_MENU, in any emitted file (the widget is client code,
+//      so it shows up in `static/` chunks, not in the route table).
+// The checks overlap on purpose. Wall 1 (`pageExtensions` in next.config.ts) should keep
+// `page.dev.tsx` and `route.dev.ts` out of the route table. If it ever stops doing that, the route
+// check catches the route. If someone renames the route but keeps the component, the marker
+// checks still catch it.
 //
 // Exit codes: 0 clean, 1 dev content found, 2 the build output could not be inspected. Exit 2 is
 // "fail closed": a checker that cannot find a build must not read as a pass.
@@ -21,6 +26,11 @@ import { fileURLToPath } from 'node:url';
 
 /** Rendered by apps/workspace/src/app/dev/personas/page.dev.tsx as data-marker. */
 export const MARKER = 'BOS_DEV_PERSONA_SWITCHER';
+
+/** Carried by the DEV MENU widget, which lives only in the dev layer. */
+export const DEV_MENU_MARKER = 'BOS_DEV_MENU';
+
+const MARKERS = [MARKER, DEV_MENU_MARKER];
 
 /**
  * Directories directly under `.next/` that are not part of the shipped build:
@@ -80,10 +90,13 @@ export function findProblems(nextDir) {
     if (isDevRoute(route)) problems.push(`dev route in ${APP_PATHS_MANIFEST}: ${route}`);
   }
 
-  const needle = Buffer.from(MARKER);
+  const needles = MARKERS.map((marker) => [marker, Buffer.from(marker)]);
   for (const file of walk(nextDir, true)) {
-    if (readFileSync(file).includes(needle)) {
-      problems.push(`marker ${MARKER} found in ${path.relative(nextDir, file)}`);
+    const content = readFileSync(file);
+    for (const [marker, needle] of needles) {
+      if (content.includes(needle)) {
+        problems.push(`marker ${marker} found in ${path.relative(nextDir, file)}`);
+      }
     }
   }
   return problems;
@@ -108,7 +121,7 @@ function main() {
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  console.log(`check-no-dev-routes: OK, no dev routes or switcher marker in ${nextDir}`);
+  console.log(`check-no-dev-routes: OK, no dev routes or dev markers in ${nextDir}`);
 }
 
 // Only run when executed directly, so the helpers can be imported without side effects.
