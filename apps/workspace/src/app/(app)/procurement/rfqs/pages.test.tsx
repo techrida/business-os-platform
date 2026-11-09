@@ -18,7 +18,13 @@ vi.mock('next/navigation', () => ({
   },
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-vi.mock('./actions', () => ({ createRfqAction: vi.fn(), recordQuotationAction: vi.fn() }));
+vi.mock('./actions', () => ({
+  createRfqAction: vi.fn(),
+  recordQuotationAction: vi.fn(),
+  scoreQuotationAction: vi.fn(),
+  recommendQuotationAction: vi.fn(),
+  commitRfqAction: vi.fn(),
+}));
 const rfqApi = vi.hoisted(() => ({
   listRfqs: vi.fn(),
   getRfq: vi.fn(),
@@ -352,5 +358,150 @@ describe('the quotation entry page', () => {
     const out = await quotePage();
     expect(out).toContain('Your roles do not include sourcing');
     expect(out).not.toContain('Record quotation');
+  });
+});
+
+describe('scoring, recommending and committing on the detail', () => {
+  const Q2 = '88888888-8888-4888-8888-888888888888';
+  const scored = {
+    ...quotation,
+    averageScore: '76.25',
+    scores: [{ criterion: 'Price', score: '80.00', comment: null }],
+  };
+  const second = {
+    ...quotation,
+    id: Q2,
+    vendorId: V2,
+    total: '6000000.00',
+    totalNpr: '6000000.00',
+  };
+
+  it('an open RFQ with quotations offers a score form for each and one recommendation form', async () => {
+    rfqApi.getComparison.mockResolvedValue([scored, second]);
+    const out = await detail();
+    expect(out).toContain('Score the quotations');
+    expect(out).toContain('Score Everest');
+    expect(out).toContain('Score Himal Traders Pvt Ltd');
+    expect(out.match(/Save scores/g)).toHaveLength(2);
+    expect(out).toContain('Why this quotation');
+    expect(out).toContain('Recommend this quotation');
+    // What the API already holds, as it sent it.
+    expect(out).toContain('76.25');
+    expect(out).toContain('80.00');
+  });
+
+  it('the fewer-quotations reason is always on the form and never names a fixed number', async () => {
+    const out = await detail();
+    expect(out).toContain('If fewer quotations than required');
+    expect(out).not.toMatch(/\bthree\b/i);
+    expect(out).toContain('name="fewerThanThreeReason"');
+    expect(out).toContain('maxLength="1000"');
+  });
+
+  it('the recommendation lists the quotations by vendor and server total', async () => {
+    rfqApi.getComparison.mockResolvedValue([scored, second]);
+    const out = await detail();
+    expect(out).toMatch(/Everest, [^<]*50,85,000\.00/);
+    expect(out).toContain(`value="${Q2}"`);
+  });
+
+  it('a closed RFQ still takes scores and a recommendation', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'closed' }));
+    const out = await detail();
+    expect(out).toContain('Score the quotations');
+    expect(out).toContain('Why this quotation');
+  });
+
+  it('no quotations, no grant, a recommended or cancelled RFQ: no forms', async () => {
+    rfqApi.getComparison.mockResolvedValue([]);
+    expect(await detail()).not.toContain('Why this quotation');
+    rfqApi.getComparison.mockResolvedValue([quotation]);
+    session.roles = ['viewer'];
+    const viewer = await detail();
+    expect(viewer).not.toContain('Score the quotations');
+    expect(viewer).not.toContain('Why this quotation');
+    session.roles = ['procurement'];
+    for (const status of ['recommended', 'cancelled']) {
+      rfqApi.getRfq.mockResolvedValue(rfq({ status, recommendedQuotationId: Q1 }));
+      const out = await detail();
+      expect(out).not.toContain('Score the quotations');
+      expect(out).not.toContain('Why this quotation');
+    }
+  });
+
+  it('a failed comparison offers no forms', async () => {
+    rfqApi.getComparison.mockRejectedValue(new ApiError(502, 'x'));
+    const out = await detail();
+    expect(out).toContain('Quotations did not load');
+    expect(out).not.toContain('Why this quotation');
+  });
+
+  it('a recommended RFQ on a sourcing request offers the commitment submit', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
+    const out = await detail();
+    expect(out).toContain('Submit for commitment approval');
+    expect(out).toContain('name="rfqId"');
+  });
+
+  it('shows no submit once the request waits on the approvers, and the approval panel appears', async () => {
+    rfqApi.getRfq.mockResolvedValue(
+      rfq({ status: 'recommended', recommendedQuotationId: Q1, commitmentApprovalRequestId: PR }),
+    );
+    prApi.getPurchaseRequest.mockResolvedValue({ ...prDetail, status: 'commitment_pending' });
+    kernel.getApprovalRequest.mockResolvedValue({
+      status: 'in_progress',
+      decidedAt: null,
+      steps: [{ seq: 1, reason: 'An Accountant checks the quotation', status: 'active' }],
+    });
+    const out = await detail();
+    expect(out).not.toContain('Submit for commitment approval');
+    expect(out).toContain('Commitment approval');
+    expect(out).toContain('An Accountant checks the quotation');
+  });
+
+  it('a request sent back to sourcing can be submitted again', async () => {
+    rfqApi.getRfq.mockResolvedValue(
+      rfq({ status: 'recommended', recommendedQuotationId: Q1, commitmentApprovalRequestId: PR }),
+    );
+    kernel.getApprovalRequest.mockResolvedValue({ status: 'rejected', decidedAt: null, steps: [] });
+    expect(await detail()).toContain('Submit for commitment approval');
+  });
+
+  it('when the purchase request did not load, hides the submit and says why', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
+    prApi.getPurchaseRequest.mockRejectedValue(new ApiError(502, 'x'));
+    const out = await detail();
+    expect(out).not.toContain('Submit for commitment approval');
+    expect(out).toMatch(/purchase request did not load/i);
+  });
+
+  it('a person without the grant gets no submit', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
+    session.roles = ['viewer'];
+    expect(await detail()).not.toContain('Submit for commitment approval');
+  });
+
+  it('confirms a recommendation after the redirect', async () => {
+    const out = await detail({ recommended: '1' });
+    expect(out).toContain('The quotation was recommended.');
+  });
+});
+
+describe('the new RFQ vendor panel wording', () => {
+  it('does not imply a fixed number of quotations', async () => {
+    prApi.listPurchaseRequests.mockResolvedValue([
+      {
+        id: PR,
+        number: 'PR-2082/83-00007',
+        estimatedTotal: '4500000.00',
+        currency: 'NPR',
+        requiredBy: '2026-12-01',
+        justification: 'Chairs',
+      },
+    ]);
+    const out = await newPage();
+    expect(out).not.toContain('needs three');
+    expect(out).toContain('Only approved vendors with an account in this entity can be invited.');
+    expect(out).toContain('minimum number of quotations');
   });
 });
