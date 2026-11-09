@@ -691,6 +691,31 @@ describe('progress view', () => {
   });
 });
 
+describe('before any read', () => {
+  it('answers 403, not 404, to a caller with no grant over receipts, whatever id they guess', async () => {
+    as(U.accountant, 'accountant');
+    const missing = randomUUID();
+    const calls = [
+      () => service.progress(missing),
+      () => service.get(missing),
+      () => service.list(missing),
+      () => confirm(missing),
+      () => reverse(missing),
+      () =>
+        service.create(
+          draftBody({ id: missing, goods: missing, serialGoods: missing, service: missing }, [
+            { poLineId: missing, quantity: '1' },
+          ]),
+          randomUUID(),
+        ),
+    ];
+    for (const call of calls) expect((await httpErrorOf(call())).getStatus()).toBe(403);
+    // A caller who holds one grant is let through and gets the honest 404 for an id that does not exist.
+    as(U.warehouse, 'warehouse');
+    expect((await httpErrorOf(service.progress(missing))).getStatus()).toBe(404);
+  });
+});
+
 describe('idempotency', () => {
   it('replays the same key to the same receipt', async () => {
     const po = await newPo();
