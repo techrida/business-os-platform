@@ -254,18 +254,35 @@ describe('getSession', () => {
     expect(await stored(id)).toBeNull();
   });
 
-  // Portal only: a record for anyone but a customer with a party is no session, even when it
-  // decrypts (a staff or vendor record could only get here through a bug elsewhere).
+  // Portal only: a record for anyone but a customer or vendor with a party is no session, even
+  // when it decrypts (a staff record could only get here through a bug elsewhere).
   it.each([
     ['a staff record', { orgKind: 'staff' }],
-    ['a vendor record', { orgKind: 'vendor' }],
+    ['an unknown kind', { orgKind: 'admin' }],
     ['a customer record without a party', { partyId: undefined }],
+    ['a vendor record without a party', { orgKind: 'vendor', partyId: undefined }],
   ])('destroys %s that decrypts', async (_label, change) => {
     const id = await signedIn();
     const record = { ...BASE, ...change, createdAt: T0_SECONDS, lastSeenAt: T0_SECONDS };
     await redis.set(keyFor(id), sealSessionValue(JSON.stringify(record), keyFor(id), RING));
     expect(await getSession()).toBeNull();
     expect(await stored(id)).toBeNull();
+  });
+
+  // P4: a vendor user whose IdP org maps to a party holds a session too, with its own kind.
+  it('returns a vendor session created through createSession', async () => {
+    const id = await createSession({ ...BASE, orgKind: 'vendor' });
+    jar.values.set(SESSION_COOKIE, id);
+    const session = await getSession();
+    expect(session).toMatchObject({ id, orgKind: 'vendor', partyId: BASE.partyId });
+    expect(await stored(id)).toHaveProperty('orgKind', 'vendor');
+  });
+
+  it('returns a vendor record with a party that decrypts', async () => {
+    const id = await signedIn();
+    const record = { ...BASE, orgKind: 'vendor', createdAt: T0_SECONDS, lastSeenAt: T0_SECONDS };
+    await redis.set(keyFor(id), sealSessionValue(JSON.stringify(record), keyFor(id), RING));
+    expect(await getSession()).toMatchObject({ id, orgKind: 'vendor', partyId: BASE.partyId });
   });
 
   it('does not resurrect a session deleted while it was being read', async () => {
