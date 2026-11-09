@@ -8,3 +8,13 @@ export * from './fx.js';
 export * from './pricing.js';
 export { invoiceSlice, splitSchedule, type SliceAmounts } from './schedule.js';
 export { creditNoteSlice, type CreditNoteInput } from './notes.js';
+export {
+  AGING_BUCKETS,
+  agingBucket,
+  allocationFx,
+  settlementOf,
+  type AgingBucket,
+  type AllocationFx,
+  type FxOpenSide,
+  type Settlement,
+} from './settlement.js';
