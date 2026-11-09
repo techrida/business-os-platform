@@ -22,7 +22,7 @@ async function render(status?: string): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't' });
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
 });
 
 describe('payments list', () => {
@@ -44,6 +44,25 @@ describe('payments list', () => {
     expect(html).toContain('Himalayan Traders Pvt. Ltd.');
     expect(html).toContain('href="/payments/11111111-1111-4111-8111-111111111111"');
     expect(html).toContain('2 payments');
+  });
+
+  it('links to Record payment for a role with payment.record, with rows and when empty', async () => {
+    mocks.listPayments.mockResolvedValue([listItem()]);
+    const html = await render();
+    expect(html).toContain('href="/payments/new"');
+    expect(html).toContain('Record payment');
+    mocks.listPayments.mockResolvedValue([]);
+    expect(await render()).toContain('href="/payments/new"');
+  });
+
+  it('hides the Record payment link from roles without payment.record', async () => {
+    mocks.listPayments.mockResolvedValue([listItem()]);
+    for (const roles of [[], ['management'], ['sales']]) {
+      mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles });
+      const html = await render();
+      expect(html).not.toContain('/payments/new');
+      expect(html).not.toContain('Record payment');
+    }
   });
 
   it('passes a valid status filter to the API and ignores an invalid one', async () => {
