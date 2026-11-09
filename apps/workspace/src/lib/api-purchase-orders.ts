@@ -115,6 +115,8 @@ export type PoProgressLine = z.infer<typeof PoProgressLineSchema>;
 
 export const PoProgressSchema = z.object({
   purchaseOrderId: z.guid(),
+  vendorId: z.guid(),
+  vendorName: Text,
   number: Text,
   status: PoStatusSchema,
   lines: z.array(PoProgressLineSchema),
