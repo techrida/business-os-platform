@@ -62,6 +62,15 @@ describe('invoice list', () => {
     expect(html).not.toContain('null');
   });
 
+  it('offers New invoice to the people who may draft one, and to nobody else', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    expect(await render()).toMatch(/<a[^>]*href="\/invoices\/new"[^>]*>New invoice<\/a>/);
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    expect(await render()).not.toContain('New invoice');
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    expect(await render()).not.toContain('New invoice');
+  });
+
   it('passes only a valid kind and status to the API', async () => {
     await render({ kind: 'credit_note', status: 'issued' });
     expect(mocks.listInvoices).toHaveBeenCalledWith(expect.anything(), {
