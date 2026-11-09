@@ -46,6 +46,30 @@ const SETTING_COPY: Record<SettingKey, { label: string; help: string }> = {
     label: 'Evidence before an opportunity is won',
     help: 'What must be on file for an accepted quotation: a signed quote, a contract, a purchase order, or both a contract and a purchase order.',
   },
+  'procurement.min_quotes': {
+    label: 'Quotes needed before a recommendation',
+    help: 'How many supplier quotes a request for quotation needs before one can be recommended. Fewer needs a written reason. A whole number from 1 to 10.',
+  },
+  'procurement.match.qty_pct': {
+    label: 'Bill quantity tolerance (%)',
+    help: 'How far above the purchase order quantity a bill line may go. A percentage: 0 means no tolerance. From 0 to 100.',
+  },
+  'procurement.match.price_pct': {
+    label: 'Bill price tolerance (%)',
+    help: 'How far a bill line price may differ from the purchase order price, as a percentage of that price. The lower of this and the NPR figure applies. From 0 to 100.',
+  },
+  'procurement.match.price_npr': {
+    label: 'Bill price tolerance (NPR)',
+    help: 'How far a bill line price may differ from the purchase order price, in rupees. The lower of this and the percentage applies. Zero or more.',
+  },
+  'procurement.band.management_npr': {
+    label: 'Management approval above (NPR)',
+    help: 'A purchase commitment or payment above this total, in rupees, needs a Management approval step. Zero or more.',
+  },
+  'procurement.band.founder_npr': {
+    label: 'Founder approval above (NPR)',
+    help: 'A purchase commitment or payment above this total, in rupees, also needs a Founder approval step. Zero or more.',
+  },
   'entity.pan_vat_no': {
     label: 'Our PAN or VAT number',
     help: 'Printed on this legal entity’s quotations. Letters, digits and hyphens, 5 to 20 characters. Leave empty for none.',
