@@ -4,8 +4,9 @@
 // vendor's status live (pending_kyc: KYC routes only, 403 on the rest) and answers one 404 for anything not the
 // caller's. A file is two steps, like /v1/documents: POST `.../files` declares it and returns `uploadPath`, then a
 // raw PUT of the bytes with their own Content-Type (the JSON and form parsers leave that stream untouched). The
-// row-creating POSTs need an Idempotency-Key.
-import type { DocumentVersionDto } from '@bos/contracts';
+// row-creating POSTs need an Idempotency-Key. Bill submissions follow the quotation pattern; a bank change request
+// is one POST (no file) that proposes an account for staff to verify.
+import type { DocumentVersionDto, VendorBankAccountDto } from '@bos/contracts';
 import {
   Body,
   Controller,
@@ -100,5 +101,45 @@ export class VendorPortalInboxController {
   ): Promise<InboxReceipt> {
     const key = requireIdempotencyKey(idempotencyKey);
     return this.inbox.submitQuotation(requestTx(), body, key);
+  }
+
+  /** `{filename, declaredMime, sizeBytes}` → `{documentId, versionId, uploadPath}` owned by the caller's party. */
+  @Post('bill-submissions/files')
+  @Can('portal.vendor.submit')
+  createBillFile(@Body() body: unknown): Promise<CreatedPortalFile> {
+    return this.inbox.createBillFile(requestTx(), body);
+  }
+
+  @Put('bill-submissions/files/:docId/versions/:verId/content')
+  @Can('portal.vendor.submit')
+  uploadBillFile(
+    @Param('docId') docId: string,
+    @Param('verId') verId: string,
+    @Req() req: Request,
+  ): Promise<DocumentVersionDto> {
+    const { src, length } = rawBody(req);
+    return this.inbox.receiveBillFile(requestTx(), docId, verId, src, length);
+  }
+
+  /** VendorBillSubmissionBody → a `received` inbox row; 404 for a purchase order or file that is not the caller's. */
+  @Post('bill-submissions')
+  @Can('portal.vendor.submit')
+  submitBill(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+  ): Promise<InboxReceipt> {
+    const key = requireIdempotencyKey(idempotencyKey);
+    return this.inbox.submitBill(requestTx(), body, key);
+  }
+
+  /** VendorBankChangeRequestBody → a `proposed` account for staff to verify; the answer has the last four digits only. */
+  @Post('bank-change-requests')
+  @Can('portal.vendor.submit')
+  requestBankChange(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+  ): Promise<VendorBankAccountDto> {
+    const key = requireIdempotencyKey(idempotencyKey);
+    return this.inbox.requestBankChange(requestTx(), body, key);
   }
 }

@@ -10,25 +10,35 @@
 //   not the caller's (a bad id, a missing one, another vendor's) is the same 404, checked before DocumentsService is
 //   asked, so a stranger never sees the 403 the grant check would give;
 // - a submission writes only an inbox row: the KYC file goes on the vendor's own KYB case checklist (staff review
-//   it), a quotation becomes a `vendor_quotation_submissions` row `received`. No vendor_quotations row is written;
-//   staff convert the inbox row later. Each row-creating POST honours the Idempotency-Key.
+//   it), a quotation becomes a `vendor_quotation_submissions` row `received`, a bill a `vendor_bill_submissions` row
+//   `received`. No vendor_quotations or vendor_bills row is written; staff convert the inbox row later. Each
+//   row-creating POST honours the Idempotency-Key;
+// - a bank change request is only a proposal: VendorBankService.proposeFromPortal writes a `proposed` account that
+//   staff verify with call-back evidence, and the answer shows the last four digits only. The contract's
+//   `supportingDocumentId` has no column, so a value is refused with 422 `supporting_document_unsupported`.
 import type { Readable } from 'node:stream';
 
 import {
   ChecklistItemSchema,
   CreateDocumentBodySchema,
+  isVendorVisiblePoStatus,
   vendorPortalCapability,
+  VendorBankChangeRequestBodySchema,
+  VendorBillSubmissionBodySchema,
   VendorKycDocumentSubmissionBodySchema,
   VendorQuotationSubmissionBodySchema,
   type DocumentVersionDto,
+  type VendorBankAccountDto,
   type VendorKycDocType,
 } from '@bos/contracts';
 import {
   documents,
   documentVersions,
+  purchaseOrders,
   rfqs,
   rfqVendors,
   scoped,
+  vendorBillSubmissions,
   vendorQuotationSubmissions,
   vendors,
   verificationCases,
@@ -63,6 +73,8 @@ import {
   requiresExpiry,
 } from '../../verification/verification.rules';
 import { VERIFICATION_OWNER_TYPE } from '../../verification/verification.types';
+import { stripAccountSpaces } from '../../vendors/bank/bank.rules';
+import { VendorBankService } from '../../vendors/bank/bank.service';
 import { VENDOR_INTAKE_OWNER_TYPE } from './vendor-intake.policy';
 
 const Id = z.guid();
@@ -110,6 +122,8 @@ export const kycUploadPath = (documentId: string, versionId: string): string =>
   `/v1/portal/vendor/kyc-documents/files/${documentId}/versions/${versionId}/content`;
 export const quotationUploadPath = (documentId: string, versionId: string): string =>
   `/v1/portal/vendor/quotation-submissions/files/${documentId}/versions/${versionId}/content`;
+export const billUploadPath = (documentId: string, versionId: string): string =>
+  `/v1/portal/vendor/bill-submissions/files/${documentId}/versions/${versionId}/content`;
 
 /** Field names only: echoing values back would reflect attacker-controlled text. */
 function invalid(what: string, error: z.ZodError): BadRequestException {
@@ -127,6 +141,7 @@ export class VendorPortalInboxService {
     private readonly documents: DocumentsService,
     private readonly audit: AuditService,
     private readonly caller: VendorPortalCaller,
+    private readonly bank: VendorBankService,
   ) {}
 
   // ---------------------------------------------------------------------------------------------- KYC documents
@@ -357,6 +372,137 @@ export class VendorPortalInboxService {
       ),
     );
     return done.response;
+  }
+
+  // ------------------------------------------------------------------------------------------ bill submissions
+
+  /** Creates a bill file (version 1, awaiting_content) owned by the caller's own party, like a quotation file. */
+  async createBillFile(who: InboxCaller, body: unknown): Promise<CreatedPortalFile> {
+    const { partyId } = await this.access('submit');
+    const file = PortalFileSchema.safeParse(body);
+    if (!file.success) throw invalid('file', file.error);
+    const created = await withTx(this.db, who.scope, who.actor, (tx) =>
+      this.documents.create(tx, {
+        ownerType: VENDOR_INTAKE_OWNER_TYPE,
+        ownerId: partyId,
+        ...file.data,
+      }),
+    );
+    return { ...created, uploadPath: billUploadPath(created.documentId, created.versionId) };
+  }
+
+  /** Streams the bytes of a bill file of the caller's own party into the documents pipeline. */
+  async receiveBillFile(
+    who: InboxCaller,
+    documentId: string,
+    versionId: string,
+    src: Readable,
+    contentLength: number,
+  ): Promise<DocumentVersionDto> {
+    const { partyId } = await this.access('submit');
+    await this.assertVersion(who.scope, VENDOR_INTAKE_OWNER_TYPE, partyId, documentId, versionId);
+    return this.documents.receiveContent(versionId, src, contentLength, { documentId, who });
+  }
+
+  /**
+   * Records the vendor's claimed bill as a `received` inbox row; staff key the real bill later. The optional purchase
+   * order must be the caller's own and in a status a vendor may see (isVendorVisiblePoStatus, as on the PO views);
+   * any other order, and a file that is not the caller's, is the same 404. The contract's `currency` and
+   * `claimedTotal` have no column on the row: they are kept in the audit event's `after` only.
+   */
+  async submitBill(who: InboxCaller, body: unknown, idempotencyKey: string): Promise<InboxReceipt> {
+    const { p, partyId } = await this.access('submit');
+    const parsed = VendorBillSubmissionBodySchema.safeParse(body);
+    if (!parsed.success) throw invalid('bill submission', parsed.error);
+    const b = parsed.data;
+    const done = await withTx(this.db, who.scope, who.actor, (tx) =>
+      withIdempotency(
+        tx,
+        { command: 'portal.vendor.bill_submission', key: idempotencyKey, body: b },
+        async () => {
+          if (b.purchaseOrderId !== undefined) {
+            const [po] = await tx
+              .select({ status: purchaseOrders.status })
+              .from(purchaseOrders)
+              .where(
+                and(
+                  eq(purchaseOrders.tenantId, who.scope.tenantId),
+                  eq(purchaseOrders.organizationId, who.scope.organizationId),
+                  eq(purchaseOrders.id, b.purchaseOrderId),
+                  eq(purchaseOrders.vendorId, partyId),
+                ),
+              )
+              .for('share');
+            if (po === undefined || !isVendorVisiblePoStatus(po.status)) throw notFound();
+          }
+          await this.assertDocument(tx, who.scope, VENDOR_INTAKE_OWNER_TYPE, partyId, b.documentId);
+          const [row] = await tx
+            .insert(vendorBillSubmissions)
+            .values(
+              scoped(who.scope).values({
+                vendorPartyId: partyId,
+                purchaseOrderId: b.purchaseOrderId ?? null,
+                submittedBy: p.userId,
+                documentId: b.documentId,
+                vendorInvoiceNo: b.vendorInvoiceNo,
+                invoiceDate: b.invoiceDate,
+              }),
+            )
+            .returning({
+              id: vendorBillSubmissions.id,
+              receivedAt: vendorBillSubmissions.receivedAt,
+            });
+          if (row === undefined) throw new Error('bill submission insert returned no row');
+          await this.audit.record(tx, {
+            action: 'portal.vendor.bill_submitted',
+            entityType: 'vendor_bill_submission',
+            entityId: row.id,
+            after: {
+              purchaseOrderId: b.purchaseOrderId ?? null,
+              documentId: b.documentId,
+              vendorInvoiceNo: b.vendorInvoiceNo,
+              invoiceDate: b.invoiceDate,
+              currency: b.currency,
+              claimedTotal: b.claimedTotal,
+            },
+          });
+          const response: InboxReceipt = {
+            id: row.id,
+            documentId: b.documentId,
+            status: 'received',
+            receivedAt: row.receivedAt.toISOString(),
+          };
+          return { status: 201, response };
+        },
+      ),
+    );
+    return done.response;
+  }
+
+  // ----------------------------------------------------------------------------------- bank change requests
+
+  /**
+   * A bank change request is a proposal for the caller's own vendor (the party comes from the principal, never the
+   * body), written by VendorBankService.proposeFromPortal as a `proposed` account that staff verify. Spaces in the
+   * account number are stripped before the contract parses it. The answer is the bank DTO: last four digits only.
+   * `supportingDocumentId` has no column, so a value is refused with 422 rather than dropped.
+   */
+  async requestBankChange(
+    who: InboxCaller,
+    body: unknown,
+    idempotencyKey: string,
+  ): Promise<VendorBankAccountDto> {
+    const { partyId } = await this.access('submit');
+    const parsed = VendorBankChangeRequestBodySchema.safeParse(stripAccountSpaces(body));
+    if (!parsed.success) throw invalid('bank change request', parsed.error);
+    const { supportingDocumentId, ...fields } = parsed.data;
+    if (supportingDocumentId !== undefined) {
+      throw new UnprocessableEntityException({
+        code: 'supporting_document_unsupported',
+        message: 'A supporting document cannot be attached to a bank change request yet',
+      });
+    }
+    return this.bank.proposeFromPortal(who.scope, partyId, fields, idempotencyKey);
   }
 
   // ------------------------------------------------------------------------------------------------- helpers

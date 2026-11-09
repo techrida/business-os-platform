@@ -1,5 +1,6 @@
-// Vendor portal inbox writes module (P4 unit PV2): KYC documents and quotation submissions under /v1/portal/vendor.
-// Imports DocumentsModule (uploads, scan) and AuditModule; the database and AuthzModule are global. It registers the
+// Vendor portal inbox writes module (P4 units PV2, PV2b): KYC documents, quotation and bill submissions and bank
+// change requests under /v1/portal/vendor. Imports DocumentsModule (uploads, scan), AuditModule and VendorBankModule
+// (VendorBankService.proposeFromPortal); the database and AuthzModule are global. It registers the
 // `vendor_portal_intake` owner policy when it starts. KYC files use the `verification_case` owner type, whose policy
 // (with its vendor `allowsCounterparty`) VerificationModule registers, so AppModule must import VerificationModule too.
 import { Inject, Injectable, Module, type OnModuleInit } from '@nestjs/common';
@@ -9,6 +10,7 @@ import { DB, type Db } from '../../../platform/db/db.module';
 import { DocumentsModule } from '../../../platform/documents/documents.module';
 import { DocumentsService } from '../../../platform/documents/documents.service';
 import { VendorPortalCaller } from '../../portal/vendor-portal.caller';
+import { VendorBankModule } from '../../vendors/bank/bank.module';
 import { VendorPortalInboxController } from './portal-vendor-inbox.controller';
 import { VendorPortalInboxService } from './portal-vendor-inbox.service';
 import { vendorIntakeOwnerPolicy } from './vendor-intake.policy';
@@ -26,7 +28,7 @@ export class VendorIntakeOwnerRegistrar implements OnModuleInit {
 }
 
 @Module({
-  imports: [DocumentsModule, AuditModule],
+  imports: [DocumentsModule, AuditModule, VendorBankModule],
   controllers: [VendorPortalInboxController],
   providers: [VendorPortalInboxService, VendorPortalCaller, VendorIntakeOwnerRegistrar],
 })
