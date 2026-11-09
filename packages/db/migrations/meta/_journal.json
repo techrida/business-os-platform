@@ -162,6 +162,13 @@
       "when": 1783000000032,
       "tag": "0032_vendors",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1783000000033,
+      "tag": "0033_procurement_sourcing",
+      "breakpoints": true
     }
   ]
 }
