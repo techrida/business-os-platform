@@ -62,6 +62,8 @@ export const PurchaseRequestListItemSchema = z.object({
   emergencyReason: z.string().nullable(),
   status: PrStatusSchema,
   approvalRequestId: z.guid().nullable(),
+  /** The live RFQ opened on this request, if any. Defaults to null so an older answer still parses. */
+  rfqId: z.guid().nullable().default(null),
   submittedAt: z.string().nullable(),
   version: z.number().int().min(1),
   createdAt: z.string(),
