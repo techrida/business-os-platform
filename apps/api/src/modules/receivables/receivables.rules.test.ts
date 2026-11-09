@@ -76,16 +76,20 @@ describe('settlementRow', () => {
 
   it('separates credit-note settlement from payments', () => {
     const row = settlementRow({ ...invoice, allocated: '400', credited: '400' }, '2026-11-09');
-    expect(row).toMatchObject({ allocatedAmount: '0.00', openAmount: '600.00', settlement: 'unpaid' });
+    expect(row).toMatchObject({
+      allocatedAmount: '0.00',
+      openAmount: '600.00',
+      settlement: 'unpaid',
+    });
     expect(
       settlementRow({ ...invoice, allocated: '1000', credited: '1000' }, '2026-11-09').settlement,
     ).toBe('credited');
   });
 
   it('is overdue after the due date and falls back to the issue date without one', () => {
-    expect(settlementRow({ ...invoice, allocated: '0', credited: '0' }, '2026-12-05')).toMatchObject(
-      { settlement: 'overdue', daysOverdue: 4 },
-    );
+    expect(
+      settlementRow({ ...invoice, allocated: '0', credited: '0' }, '2026-12-05'),
+    ).toMatchObject({ settlement: 'overdue', daysOverdue: 4 });
     expect(
       settlementRow({ ...invoice, dueDate: null, allocated: '0', credited: '0' }, '2026-11-03'),
     ).toMatchObject({ dueDate: null, settlement: 'overdue', daysOverdue: 2 });
@@ -99,10 +103,34 @@ describe('agingReport', () => {
   it('buckets per customer and currency and totals per currency, never across currencies', () => {
     const report = agingReport(
       [
-        { customerId: b, customerName: 'Beta', currency: 'NPR', openAmount: '100.00', dueDate: '2026-11-20' },
-        { customerId: a, customerName: 'Acme', currency: 'NPR', openAmount: '250.50', dueDate: '2026-11-01' },
-        { customerId: a, customerName: 'Acme', currency: 'NPR', openAmount: '49.50', dueDate: '2026-07-01' },
-        { customerId: a, customerName: 'Acme', currency: 'USD', openAmount: '10.00', dueDate: '2026-09-30' },
+        {
+          customerId: b,
+          customerName: 'Beta',
+          currency: 'NPR',
+          openAmount: '100.00',
+          dueDate: '2026-11-20',
+        },
+        {
+          customerId: a,
+          customerName: 'Acme',
+          currency: 'NPR',
+          openAmount: '250.50',
+          dueDate: '2026-11-01',
+        },
+        {
+          customerId: a,
+          customerName: 'Acme',
+          currency: 'NPR',
+          openAmount: '49.50',
+          dueDate: '2026-07-01',
+        },
+        {
+          customerId: a,
+          customerName: 'Acme',
+          currency: 'USD',
+          openAmount: '10.00',
+          dueDate: '2026-09-30',
+        },
       ],
       '2026-11-09',
     );
@@ -113,33 +141,63 @@ describe('agingReport', () => {
           customerId: a,
           customerName: 'Acme',
           currency: 'NPR',
-          buckets: { current: '0.00', d1_30: '250.50', d31_60: '0.00', d61_90: '0.00', d91_plus: '49.50' },
+          buckets: {
+            current: '0.00',
+            d1_30: '250.50',
+            d31_60: '0.00',
+            d61_90: '0.00',
+            d91_plus: '49.50',
+          },
           totalOpen: '300.00',
         },
         {
           customerId: a,
           customerName: 'Acme',
           currency: 'USD',
-          buckets: { current: '0.00', d1_30: '0.00', d31_60: '10.00', d61_90: '0.00', d91_plus: '0.00' },
+          buckets: {
+            current: '0.00',
+            d1_30: '0.00',
+            d31_60: '10.00',
+            d61_90: '0.00',
+            d91_plus: '0.00',
+          },
           totalOpen: '10.00',
         },
         {
           customerId: b,
           customerName: 'Beta',
           currency: 'NPR',
-          buckets: { current: '100.00', d1_30: '0.00', d31_60: '0.00', d61_90: '0.00', d91_plus: '0.00' },
+          buckets: {
+            current: '100.00',
+            d1_30: '0.00',
+            d31_60: '0.00',
+            d61_90: '0.00',
+            d91_plus: '0.00',
+          },
           totalOpen: '100.00',
         },
       ],
       totals: [
         {
           currency: 'NPR',
-          buckets: { current: '100.00', d1_30: '250.50', d31_60: '0.00', d61_90: '0.00', d91_plus: '49.50' },
+          buckets: {
+            current: '100.00',
+            d1_30: '250.50',
+            d31_60: '0.00',
+            d61_90: '0.00',
+            d91_plus: '49.50',
+          },
           totalOpen: '400.00',
         },
         {
           currency: 'USD',
-          buckets: { current: '0.00', d1_30: '0.00', d31_60: '10.00', d61_90: '0.00', d91_plus: '0.00' },
+          buckets: {
+            current: '0.00',
+            d1_30: '0.00',
+            d31_60: '10.00',
+            d61_90: '0.00',
+            d91_plus: '0.00',
+          },
           totalOpen: '10.00',
         },
       ],
