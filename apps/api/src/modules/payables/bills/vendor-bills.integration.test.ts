@@ -11,6 +11,10 @@
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
@@ -35,6 +39,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import type { Queue } from 'bullmq';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -43,6 +48,11 @@ import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
+import type { ClamdClient } from '../../../platform/documents/clamd.client';
+import { DocumentsService } from '../../../platform/documents/documents.service';
+import { ScanProcessor } from '../../../platform/documents/scan.processor';
+import { SignedLinks } from '../../../platform/documents/signed-link';
+import { DiskStorageAdapter } from '../../../platform/documents/storage.adapter';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
@@ -58,6 +68,7 @@ import {
 } from './vendor-bill.rules';
 import { MatchExceptionSubject, VendorBillSubject } from './vendor-bill.subject';
 import { VendorBillsService } from './vendor-bills.service';
+import { billDocumentOwnerPolicy, BillDocumentsService } from './bill-documents.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -339,13 +350,19 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
   return { id, lineId, vendorId };
 }
 
-async function doc(versions: readonly DocumentVersionStatus[] = ['clean']): Promise<string> {
+const documentVendors = new Map<string, string>();
+async function doc(
+  versions: readonly DocumentVersionStatus[] = ['clean'],
+  vendorId = '',
+): Promise<string> {
+  vendorId ||= await vendor();
   const { rows } = await exec(
     scopeA,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill', ${randomUUID()}) RETURNING id`,
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill_intake', ${vendorId}) RETURNING id`,
   );
   const documentId = (rows[0] as { id: string }).id;
+  documentVendors.set(documentId, vendorId);
   for (const [i, status] of versions.entries()) {
     await exec(
       scopeA,
@@ -361,7 +378,7 @@ async function doc(versions: readonly DocumentVersionStatus[] = ['clean']): Prom
 async function billWithoutPo(documentId: string, vendorPartyId?: string) {
   return service.create(
     {
-      vendorPartyId: vendorPartyId ?? (await vendor()),
+      vendorPartyId: vendorPartyId ?? documentVendors.get(documentId)!,
       kind: 'bill',
       vendorInvoiceNo: `INV-${randomUUID().slice(0, 8)}`,
       invoiceDate: '2026-11-09',
@@ -388,7 +405,7 @@ async function billFor(
       invoiceDate: '2026-11-09',
       currency: 'NPR',
       purchaseOrderId: po.id,
-      documentId: await doc(),
+      documentId: await doc(['clean'], po.vendorId),
       lines: [
         { poLineId: po.lineId, accountId: randomUUID(), quantity, unitPrice, taxCodeId: vatCode },
       ],
@@ -534,13 +551,81 @@ describe('match (check 6, AD6 defaults from settings)', () => {
 });
 
 describe('invoice documents', () => {
-  it.each<DocumentVersionStatus>([
-    'awaiting_content',
-    'quarantined',
-    'infected',
-    'rejected',
-    'scan_failed',
-  ])(
+  it('recovers an infected draft invoice by replacing it, scanning clean, and submitting the same bill', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'bos-invoice-recovery-'));
+    try {
+      const audit = new AuditService(db);
+      const storage = new DiskStorageAdapter(root);
+      const documentsService = new DocumentsService(
+        db,
+        storage,
+        new SignedLinks('bill-recovery-test-signing-key-0000000', {
+          claim: () => Promise.resolve(true),
+        }),
+        { add: vi.fn().mockResolvedValue({}) } as unknown as Queue,
+        authz,
+        audit,
+      );
+      documentsService.registerOwner(billDocumentOwnerPolicy(db));
+      const uploads = new BillDocumentsService(db, caller, documentsService);
+      let verdict: 'infected' | 'clean' = 'infected';
+      const scanner = new ScanProcessor(
+        db,
+        storage,
+        {
+          scan: async (stream: Readable) => {
+            for await (const _chunk of stream) {
+              /* consume the file */
+            }
+            return { verdict, ms: 1 };
+          },
+          version: () => Promise.resolve('test scanner'),
+        } as unknown as ClamdClient,
+        audit,
+        notify,
+      );
+      const vendorId = await vendor();
+      const bytes = Buffer.from('%PDF-1.7\ninvoice\n');
+      const file = {
+        filename: 'invoice.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: bytes.length,
+      };
+      const initial = await uploads.create({ ...file, vendorPartyId: vendorId });
+      await uploads.receive(
+        initial.documentId,
+        initial.versionId,
+        Readable.from(bytes),
+        bytes.length,
+      );
+      expect(await scanner.scanVersion({ ...scopeA, versionId: initial.versionId }, true)).toBe(
+        'infected',
+      );
+      const bill = await billWithoutPo(initial.documentId, vendorId);
+      expect(codeOf(await httpErrorOf(service.submit(bill.id, randomUUID())))).toBe(
+        'BILL_DOCUMENT_NOT_CLEAN',
+      );
+      const replacement = await uploads.createVersion(initial.documentId, file);
+      await uploads.receive(
+        replacement.documentId,
+        replacement.versionId,
+        Readable.from(bytes),
+        bytes.length,
+      );
+      verdict = 'clean';
+      expect(await scanner.scanVersion({ ...scopeA, versionId: replacement.versionId }, true)).toBe(
+        'clean',
+      );
+      expect((await service.get(bill.id)).fileStatus).toBe('clean');
+      expect((await service.submit(bill.id, randomUUID())).status).toBe('pending_approval');
+      await expect(uploads.createVersion(initial.documentId, file)).rejects.toMatchObject({
+        status: 409,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it.each<DocumentVersionStatus>(['awaiting_content', 'quarantined', 'infected', 'scan_failed'])(
     'refuses submit when the newest invoice version is %s even after an older clean version',
     async (status) => {
       const bill = await billWithoutPo(await doc(['clean', status]));
@@ -567,6 +652,34 @@ describe('invoice documents', () => {
     expect(codeOf(refused)).toBe('BILL_DOCUMENT_NOT_CLEAN');
     expect((await service.get(bill.id)).approvalRequestId).toBeNull();
   });
+
+  it('uses the newest non-rejected invoice version for submit', async () => {
+    const bill = await billWithoutPo(await doc(['clean', 'rejected']));
+    expect((await service.submit(bill.id, randomUUID())).status).toBe('pending_approval');
+  });
+
+  it('refuses submit when every invoice version was rejected', async () => {
+    const bill = await billWithoutPo(await doc(['rejected']));
+    expect(codeOf(await httpErrorOf(service.submit(bill.id, randomUUID())))).toBe(
+      'BILL_DOCUMENT_NOT_CLEAN',
+    );
+  });
+
+  it.each(['vendor_portal_intake', 'vendor_kyb', 'payment_proof', 'purchase_order'])(
+    'refuses an unrelated %s invoice document',
+    async (ownerType) => {
+      const documentId = await doc();
+      const ownerId =
+        ownerType === 'vendor_portal_intake' ? await vendor() : documentVendors.get(documentId)!;
+      await exec(
+        scopeA,
+        sql`UPDATE app.documents SET owner_type = ${ownerType}, owner_id = ${ownerId} WHERE id = ${documentId}`,
+      );
+      const refused = await httpErrorOf(billWithoutPo(documentId));
+      expect(refused.getStatus()).toBe(422);
+      expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+    },
+  );
 
   it('refuses submit after the invoice document is removed', async () => {
     const bill = await billWithoutPo(await doc());
@@ -639,7 +752,7 @@ describe('duplicates (check 8) and replays', () => {
       invoiceDate: '2026-11-09',
       currency: 'NPR' as const,
       purchaseOrderId: po.id,
-      documentId: await doc(),
+      documentId: await doc(['clean'], po.vendorId),
       lines: [
         {
           poLineId: po.lineId,
@@ -687,7 +800,7 @@ describe('entity wall', () => {
           invoiceDate: '2026-11-09',
           currency: 'NPR',
           purchaseOrderId: po.id,
-          documentId: await doc(),
+          documentId: await doc(['clean'], po.vendorId),
           lines: [
             {
               poLineId: other.lineId,
