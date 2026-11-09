@@ -2,7 +2,7 @@
 import type { Readable } from 'node:stream';
 
 import { CreateDocumentBodySchema, type DocumentVersionDto } from '@bos/contracts';
-import { documents, documentVersions, vendorAccounts, vendors } from '@bos/db';
+import { documents, documentVersions, scoped, vendorAccounts, vendorBills, vendors } from '@bos/db';
 import {
   BadRequestException,
   ForbiddenException,
@@ -67,7 +67,16 @@ export function billDocumentOwnerPolicy(db: Db): DocumentOwnerPolicy {
       if (row === undefined) return null;
       return { ...scope, ownerUserId: row.ownerUserId, vendorPartyId: row.vendorId };
     },
-    canAttach: async (scope, vendorId, tx) => (await load(scope, vendorId, tx)) !== undefined,
+    canAttach: async (scope, vendorId, tx, documentId) => {
+      if ((await load(scope, vendorId, tx)) === undefined) return false;
+      if (documentId === undefined) return true;
+      const query = (tx ?? db)
+        .select({ status: vendorBills.status })
+        .from(vendorBills)
+        .where(scoped(scope).where(vendorBills, eq(vendorBills.documentId, documentId)));
+      const bills = tx === undefined ? await query : await query.for('share');
+      return bills.every((bill) => bill.status === 'draft');
+    },
   };
 }
 
@@ -144,5 +153,34 @@ export class BillDocumentsService {
       documentId,
       who: { scope, actor },
     });
+  }
+
+  async createVersion(documentId: string, body: unknown): Promise<CreatedBillDocument> {
+    const { scope, actor, principal } = this.caller.current();
+    if (principal.orgKind !== 'staff') throw forbidden();
+    if (!Id.safeParse(documentId).success) throw notFound();
+    const parsed = FileSchema.omit({ vendorPartyId: true }).safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Invalid invoice file');
+    const created = await withTx(this.db, scope, actor, async (tx) => {
+      const [doc] = await tx
+        .select({ id: documents.id })
+        .from(documents)
+        .where(
+          scoped(scope).where(
+            documents,
+            and(
+              eq(documents.id, documentId),
+              eq(documents.ownerType, OWNER_TYPE),
+              isNull(documents.removedAt),
+            ),
+          ),
+        );
+      if (doc === undefined) throw notFound();
+      return this.documents.createVersion(tx, documentId, parsed.data);
+    });
+    return {
+      ...created,
+      uploadPath: `/v1/payables/bill-documents/${documentId}/versions/${created.versionId}/content`,
+    };
   }
 }
