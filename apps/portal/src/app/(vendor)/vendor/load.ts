@@ -6,8 +6,8 @@ import { ApiError } from '@/lib/api';
 
 /**
  * What a vendor page does with an API refusal, in one place so every page answers the same way:
- * 403 is "this account cannot use the page" (rendered in place: /no-access sends anyone with a
- * session back to `/`, which would loop), 404 is the one not-found answer, 401 signs in again
+ * 403 is "this account cannot use the page" (rendered in place with a sign-out button, so the
+ * vendor stays on the page they asked for), 404 is the one not-found answer, 401 signs in again
  * and returns to the same page. Anything else is thrown for error.tsx.
  */
 export type Loaded<T> = { kind: 'ok'; data: T } | { kind: 'forbidden' } | { kind: 'missing' };
