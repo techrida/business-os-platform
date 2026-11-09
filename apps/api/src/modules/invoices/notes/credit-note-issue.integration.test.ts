@@ -648,7 +648,7 @@ describe('credit-note issue: credited in full means every line (U12D)', () => {
       .select({ id: invoiceLines.id })
       .from(invoiceLines)
       .where(and(eq(invoiceLines.invoiceId, original), eq(invoiceLines.lineNo, 1)));
-    const first = await approvedCredit(original, [{ originalLineNo: 1, quantity: '2' }]);
+    await issueAs(await approvedCredit(original, [{ originalLineNo: 1, quantity: '2' }]));
 
     // A second note drafted on line 2, then (while still a draft, as a writer that skipped the service would) pointed
     // at line 1. Its total equals what is left of the original's total, so only the per-line recheck at issue sees it.
@@ -669,7 +669,6 @@ describe('credit-note issue: credited in full means every line (U12D)', () => {
     );
     await forceApproved(rogue);
 
-    await issueAs(first);
     const err = await issueAs(rogue).catch((e: unknown) => e);
     expect((err as HttpException).getStatus()).toBe(409);
     expect((err as HttpException).getResponse()).toMatchObject({
