@@ -7,6 +7,7 @@
 import {
   P2_SETTING_DEFAULTS,
   P3_SETTING_DEFAULTS,
+  P4_SETTING_DEFAULTS,
   SETTINGS,
   type SettingKey,
   type SettingValue,
@@ -28,8 +29,10 @@ export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } =
   // The schema fills in its own defaults (24 h, 72 h, founder), so the two never drift apart.
   'approvals.sla_defaults': SlaSpecSchema.parse({}),
   // fx.max_rate_age_days, quotation.validity_days and sales.evidence_policy: one source in contracts.
+  // procurement.*: the P4 block, also one source in contracts.
   ...P2_SETTING_DEFAULTS,
   ...P3_SETTING_DEFAULTS,
+  ...P4_SETTING_DEFAULTS,
 };
 
 export interface SettingVersion {
