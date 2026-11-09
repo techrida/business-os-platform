@@ -1,16 +1,25 @@
 // Unit tests of the pure KYB rules (no database): the default checklist, attaching a document, what a
 // submit needs, what an approval needs, and what reopening an expired case clears.
-import { type ChecklistItem, ChecklistItemSchema, type DocumentVersionDto } from '@bos/contracts';
+import {
+  CHECKLIST_ITEM_KEYS,
+  VENDOR_CHECKLIST_ITEM_KEYS,
+  type ChecklistItem,
+  ChecklistItemSchema,
+  type DocumentVersionDto,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CHECKLIST,
   acceptProvided,
   attachDocument,
+  checklistKeysFor,
+  defaultChecklistFor,
   documentProblems,
   isEditable,
   missingRequired,
   reopenChecklist,
+  requiresExpiry,
 } from './verification.rules';
 
 const DOC_A = '11111111-1111-4111-8111-111111111111';
@@ -166,5 +175,50 @@ describe('reopenChecklist', () => {
     expect(by('pan_vat_certificate')).toMatchObject({ status: 'accepted', documentId: DOC_B });
     expect(by('address_proof')).toMatchObject({ status: 'accepted', documentId: DOC_B });
     expect(reopened.every((i) => ChecklistItemSchema.safeParse(i).success)).toBe(true);
+  });
+});
+
+describe('the checklist by party kind', () => {
+  it('gives a customer the unchanged default checklist', () => {
+    expect(defaultChecklistFor('customer')).toEqual(DEFAULT_CHECKLIST);
+    expect(checklistKeysFor('customer')).toEqual(CHECKLIST_ITEM_KEYS);
+  });
+
+  it('gives a vendor one empty valid item per vendor key, with at least one required', () => {
+    const vendor = defaultChecklistFor('vendor');
+    expect(vendor.map((i) => i.key)).toEqual([...VENDOR_CHECKLIST_ITEM_KEYS]);
+    expect(checklistKeysFor('vendor')).toEqual(VENDOR_CHECKLIST_ITEM_KEYS);
+    expect(vendor.every((i) => ChecklistItemSchema.safeParse(i).success)).toBe(true);
+    expect(vendor.every((i) => i.status === 'missing')).toBe(true);
+    expect(vendor.some((i) => i.required)).toBe(true);
+    expect(vendor.some((i) => i.key === 'tax_clearance' && i.required)).toBe(true);
+  });
+
+  it('keeps the two key sets apart', () => {
+    for (const key of VENDOR_CHECKLIST_ITEM_KEYS) {
+      expect((CHECKLIST_ITEM_KEYS as readonly string[]).includes(key)).toBe(false);
+    }
+  });
+});
+
+describe('expiry-required items', () => {
+  it('requires an expiry for the tax clearance and for nothing else', () => {
+    expect(requiresExpiry('tax_clearance')).toBe(true);
+    expect(requiresExpiry('pan_certificate')).toBe(false);
+    expect(requiresExpiry('registration_certificate')).toBe(false);
+  });
+
+  it('counts a tax clearance without an expiry as missing, and with one as provided', () => {
+    const vendor = defaultChecklistFor('vendor');
+    let items: readonly ChecklistItem[] = vendor;
+    for (const i of vendor.filter((x) => x.required && x.key !== 'tax_clearance')) {
+      items = attachDocument(items, i.key, DOC_A, null);
+    }
+    expect(missingRequired(attachDocument(items, 'tax_clearance', DOC_B, null))).toEqual([
+      'tax_clearance',
+    ]);
+    expect(missingRequired(attachDocument(items, 'tax_clearance', DOC_B, '2027-07-15'))).toEqual(
+      [],
+    );
   });
 });
