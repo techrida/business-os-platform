@@ -952,8 +952,12 @@ describe('BFF contract P3: billing, receivables and portal clients against the r
     expect((await openInvoice(p3.advanceId)).invoice).toMatchObject({ status: 'issued' });
 
     // Before the scan the document route answers 404 (no unscanned file is ever linked): wait for it.
-    const swept = await worker.app.get(InvoiceRenderSweeper).sweep();
-    expect(swept.failures, JSON.stringify(swept)).toEqual([]);
+    // Other files leave issued invoices in this shared test DB; the global sweep takes only 10.
+    const rendered = await worker.app.get(InvoiceRenderSweeper).renderOne({
+      ...world.scope,
+      invoiceId: p3.advanceId,
+    });
+    expect(['rendered', 'skipped']).toContain(rendered);
     const path = bff.billing.invoiceDocumentPath(p3.advanceId);
     const link = await pollUntil(
       'the advance invoice PDF to scan clean',
