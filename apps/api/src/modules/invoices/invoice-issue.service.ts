@@ -5,7 +5,9 @@
 //   order -> schedule line -> invoice, then FX snapshot (409 fx_rate_stale), BS date, snapshots, hash, the INV / DN
 //   number as the LAST lock, the receivable debit and its posting event through LedgerService, and schedule line ->
 //   invoiced. Anything not approved answers NOT_APPROVED;
-// - `credit_note`: 409 not_implemented; its issue (a receivable credit) belongs to unit U12.
+// - `credit_note` (U12 part C): approved -> issued by CreditNoteIssueService, which takes its own locks (sales order ->
+//   the original's schedule line -> the original and the note -> open items), releases payment allocations the credit
+//   needs, opens and allocates the receivable credit and, on a full credit, gives the schedule line back.
 // Serves the NFRs "an issued invoice never changes" (one UPDATE sets every issue field at once: invoices_guard freezes
 // the row afterwards) and "no gaps in a numbered series" (NumberingService.issue is the last row lock).
 import { AddressSchema, type IssueInvoiceBody, type IssueInvoiceResult } from '@bos/contracts';
@@ -20,13 +22,7 @@ import {
   scoped,
 } from '@bos/db';
 import { formatBs } from '@bos/locale';
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  Optional,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { Inject, Injectable, Optional, UnprocessableEntityException } from '@nestjs/common';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
@@ -40,6 +36,8 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { buildIssuer, IssuerIncompleteError } from '../quotations/render/issuer';
+import { CreditNoteIssueService } from './notes/credit-note-issue.service';
+import { creditExceedsInvoice } from './notes/note-drafting.service';
 import {
   assertStaff,
   conflict,
@@ -89,7 +87,13 @@ export class InvoiceIssueService {
     private readonly money: MoneyService,
     private readonly settings: SettingsService,
     @Optional() @Inject(INVOICE_CLOCK) private readonly clock: () => Date = () => new Date(),
-  ) {}
+    // Optional so callers that build this service by hand (tests) keep their argument list.
+    @Optional() creditNotes?: CreditNoteIssueService,
+  ) {
+    this.creditNotes = creditNotes ?? new CreditNoteIssueService(audit, ledger, numbering);
+  }
+
+  private readonly creditNotes: CreditNoteIssueService;
 
   /**
    * `issued` the first time, `already_issued` (with the same number) for a replay or a second click. 404 outside the
@@ -120,6 +124,10 @@ export class InvoiceIssueService {
     } catch (error) {
       // invoices_due_date_check: a draft whose due date has passed since it was drafted.
       const pg = pgError(error);
+      // invoices_notes (deferred, at commit): the credit notes of an invoice would total more than it.
+      if (pg?.code === '23514' && pg.constraint === 'invoices_credit_cap_check') {
+        throw creditExceedsInvoice();
+      }
       if (pg?.code === '23514' && pg.constraint === 'invoices_due_date_check') {
         throw conflict(
           'The due date is before the issue date; correct the due date and issue again',
@@ -141,11 +149,39 @@ export class InvoiceIssueService {
     // in the plan's order (sales order -> schedule line -> invoice), the same order as discard, so the two never
     // deadlock. A proforma has neither and locks the invoice alone.
     const [head] = await tx
-      .select({ salesOrderId: invoices.salesOrderId, scheduleLineId: invoices.scheduleLineId })
+      .select({
+        kind: invoices.kind,
+        originalInvoiceId: invoices.originalInvoiceId,
+        salesOrderId: invoices.salesOrderId,
+        scheduleLineId: invoices.scheduleLineId,
+      })
       .from(invoices)
       .where(scoped(scope).where(invoices, eq(invoices.id, id)))
       .limit(1);
     if (head === undefined) throw invoiceNotFound();
+    // A credit note also locks its original (and the original's schedule line, which ranks before invoices), so it
+    // takes all its locks in its own service. The kind never changes (invoices_identity_check), so this unlocked read
+    // is safe.
+    if (head.kind === 'credit_note') {
+      if (head.originalInvoiceId === null) throw new Error('a credit note has no original invoice');
+      return this.creditNotes.issueInTx(
+        tx,
+        scope,
+        actor,
+        id,
+        head.originalInvoiceId,
+        body,
+        now,
+        (t, s, invoice, issued, parties) =>
+          this.contentHashOf(
+            t,
+            s,
+            invoice,
+            issued,
+            parties as Pick<IssueSnapshot, 'sellerSnapshot' | 'buyerSnapshot'>,
+          ),
+      );
+    }
     await this.ledger.lockForMoneyCommand(tx, scope, [
       ...(head.salesOrderId === null
         ? []
@@ -174,11 +210,8 @@ export class InvoiceIssueService {
       case 'debit_note':
         return this.issueApproved(tx, scope, actor, invoice, body, now);
       case 'credit_note':
-        // A credit note reverses part of an invoice: its issue (a receivable credit) belongs to unit U12.
-        throw new ConflictException({
-          code: 'not_implemented',
-          message: 'Issuing a credit note is not available yet',
-        });
+        // Handed to CreditNoteIssueService above, before any lock.
+        throw new Error('a credit note is issued by CreditNoteIssueService');
     }
   }
 
