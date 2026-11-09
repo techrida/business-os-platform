@@ -1,6 +1,12 @@
 'use client';
 
-import { ROLE_KEYS, WorkflowSpecSchema, type RoleKey, type StepKind } from '@bos/contracts';
+import {
+  DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
+  ROLE_KEYS,
+  WorkflowSpecSchema,
+  type RoleKey,
+  type StepKind,
+} from '@bos/contracts';
 import {
   useActionState,
   useEffect,
@@ -113,7 +119,7 @@ function Section({
 }
 
 /**
- * Edits a workflow spec as a form (steps with a role, group or user, plus amountNpr threshold rules)
+ * Edits a workflow spec as a form (steps with a role, group, user or department head, plus amountNpr threshold rules)
  * or as raw JSON for anything the form cannot show. A spec the form cannot represent opens in JSON
  * mode, so nothing is dropped silently. The page decides what saving means: creating a workflow, or
  * adding the next draft version.
@@ -258,16 +264,30 @@ export function WorkflowEditor({
 
   const changeKind = (current: StepForm, kind: StepKind): Partial<StepForm> => ({
     kind,
-    target: kind === 'role' ? (current.kind === 'role' ? current.target : ROLE_KEYS[0]) : '',
+    target:
+      kind === 'department_head'
+        ? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE
+        : kind === 'role'
+          ? current.kind === 'role'
+            ? current.target
+            : ROLE_KEYS[0]
+          : '',
   });
 
   /** The control for a step's role, group or person, depending on its kind. */
   const stepTarget = (step: StepForm, change: (n: Partial<StepForm>) => void) => {
-    const label = step.kind === 'role' ? 'Role' : step.kind === 'group' ? 'Group' : 'Person';
+    const label =
+      step.kind === 'role'
+        ? 'Role'
+        : step.kind === 'department_head'
+          ? 'If there is no head, use role'
+          : step.kind === 'group'
+            ? 'Group'
+            : 'Person';
     return (
       <Field label={label}>
         {(control) =>
-          step.kind === 'role' ? (
+          step.kind === 'role' || step.kind === 'department_head' ? (
             <Select
               {...control}
               value={step.target}
@@ -333,6 +353,7 @@ export function WorkflowEditor({
             <option value="role">A role</option>
             <option value="group">A group</option>
             <option value="user">One person</option>
+            <option value="department_head">Department head</option>
           </Select>
         )}
       </Field>
