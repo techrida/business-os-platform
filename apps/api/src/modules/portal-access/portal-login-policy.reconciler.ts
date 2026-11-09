@@ -1,5 +1,6 @@
 // Portal login policy reconcile (worker only): once, when the worker boots, it pins PORTAL_LOGIN_POLICY (registration
-// off, MFA forced and never skippable) on the ZITADEL org of every existing customer. Serves D23 = C. The grant path
+// off, MFA forced and never skippable) on the ZITADEL org of every existing customer and vendor (K4). Serves D23 = C
+// and D11 (closed registration). The grant path
 // (PortalAccessService) pins the policy on every grant, so orgs granted after that change are fine, but an org created
 // before it only gets fixed on its next grant, which may never come. This closes that gap without waiting for a grant.
 //
@@ -23,7 +24,7 @@
 // tests drive the reconciler through a store fake; the drizzle store below is for an integration test.
 import { idpOrgs, organizations } from '@bos/db';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
-import { and, asc, eq, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 
 import type { AuditService } from '../../platform/audit/audit.service';
 import type { Db, DbTransaction } from '../../platform/db/db.module';
@@ -42,17 +43,22 @@ export const LOGIN_POLICY_TX = Symbol('PORTAL_LOGIN_POLICY_TX');
 export const LOGIN_POLICY_AUDIT = Symbol('PORTAL_LOGIN_POLICY_AUDIT');
 export const LOGIN_POLICY_ZITADEL = Symbol('PORTAL_LOGIN_POLICY_ZITADEL');
 
-/** A customer's ZITADEL org as app.idp_orgs maps it. */
+/**
+ * A portal party's ZITADEL org as app.idp_orgs maps it. The name predates vendor orgs (K4) and is kept so the
+ * existing fakes still fit; `kind` absent means customer.
+ */
 export interface CustomerIdpOrg {
   tenantId: string;
   zitadelOrgId: string;
-  /** The customer party the org belongs to (the audit entity id). */
+  /** The customer or vendor party the org belongs to (the audit entity id). */
   partyId: string;
+  /** The party kind, which is also the audit entity type. Absent means customer. */
+  kind?: 'customer' | 'vendor';
 }
 
 /** The job's database access, as a port. Both reads run on the plain pool, across tenants. */
 export interface LoginPolicyStore {
-  /** Every customer org of every tenant, oldest first. */
+  /** Every portal org (customer and vendor, K4) of every tenant, oldest first. */
   customerOrgs(): Promise<CustomerIdpOrg[]>;
   /** The tenant's default legal entity, or null when it has none. */
   defaultEntityOf(tenantId: string): Promise<string | null>;
@@ -97,7 +103,7 @@ export class PortalLoginPolicyReconciler implements OnApplicationBootstrap {
     });
   }
 
-  /** One run over every customer org. An org that fails is logged and left for the next boot; the rest go on. */
+  /** One run over every portal org. An org that fails is logged and left for the next boot; the rest go on. */
   async reconcile(): Promise<ReconcileResult> {
     const result: ReconcileResult = { changed: 0, unchanged: 0, skipped: 0, failed: 0 };
     const defaults = new Map<string, string | null>();
@@ -128,7 +134,7 @@ export class PortalLoginPolicyReconciler implements OnApplicationBootstrap {
         await this.runTx(scope, systemActor(PORTAL_LOGIN_POLICY_JOB), (tx) =>
           this.audit.record(tx, {
             action: 'portal_access.login_policy_pinned',
-            entityType: 'customer',
+            entityType: org.kind ?? 'customer',
             entityId: org.partyId,
             meta: { zitadelOrgId: org.zitadelOrgId, result: policy, source: 'reconcile' },
           }),
@@ -164,12 +170,24 @@ export function drizzleLoginPolicyStore(db: Db): LoginPolicyStore {
           tenantId: idpOrgs.tenantId,
           zitadelOrgId: idpOrgs.zitadelOrgId,
           partyId: idpOrgs.partyId,
+          kind: idpOrgs.kind,
         })
         .from(idpOrgs)
-        // idp_orgs_party_check makes party_id non-null for a customer; the filter only narrows the type.
-        .where(and(eq(idpOrgs.kind, 'customer'), isNotNull(idpOrgs.partyId)))
+        // idp_orgs_party_check makes party_id non-null for a customer or vendor; the filter only narrows the type.
+        .where(and(inArray(idpOrgs.kind, ['customer', 'vendor']), isNotNull(idpOrgs.partyId)))
         .orderBy(asc(idpOrgs.createdAt), asc(idpOrgs.id));
-      return rows.flatMap((r) => (r.partyId === null ? [] : [{ ...r, partyId: r.partyId }]));
+      return rows.flatMap((r) =>
+        r.partyId === null || r.kind === 'staff'
+          ? []
+          : [
+              {
+                tenantId: r.tenantId,
+                zitadelOrgId: r.zitadelOrgId,
+                partyId: r.partyId,
+                kind: r.kind,
+              },
+            ],
+      );
     },
 
     async defaultEntityOf(tenantId) {
