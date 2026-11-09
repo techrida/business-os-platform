@@ -280,6 +280,25 @@ describe('ErrorBodyFilter', () => {
     ).toBe('bad_request');
   });
 
+  it.each([
+    'invalid_transition',
+    'kyb_not_submitted',
+    'kyc_expired',
+    'vendor_not_editable',
+    'vendor_identity_locked',
+    'account_exists',
+    'no_verified_bank_account',
+    'callback_evidence_not_clean',
+  ])('keeps the vendor conflict code %s on a 409, and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'm' }));
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
+    expect(
+      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+        .error.code,
+    ).toBe('bad_request');
+  });
+
   it.each(['evidence_policy_unmet', 'decided_on_in_future'])(
     'keeps %s on a 422 (quotation outcome, Q3b/PA-3), and only on a 422',
     (code) => {
