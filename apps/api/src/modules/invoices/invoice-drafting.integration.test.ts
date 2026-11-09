@@ -129,8 +129,8 @@ const urlFor = (user: string, password: string, database: string) => {
   return url.toString();
 };
 
+const key = () => `key-${randomUUID()}`;
 const codeOf = (e: unknown): unknown => (e as HttpException).getResponse();
-const codeOf = (e: unknown): unknown => (e as HttpException).getResponse?.() as { code?: string };
 
 let soSeq = 0;
 /** A confirmed 5,045,450.00 order split 40/60: the 40% advance line is billable, the 60% line planned. */
