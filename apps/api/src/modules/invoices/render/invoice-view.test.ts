@@ -161,11 +161,13 @@ describe('toInvoiceRenderView', () => {
     expect(view.kind).toBe('proforma');
   });
 
+  it.each(['credit_note', 'debit_note'] as const)('draws a %s with its own kind', (kind) => {
+    expect(toInvoiceRenderView(input({ invoice: { ...head, kind } })).kind).toBe(kind);
+  });
+
   it.each([
     ['a draft', { ...head, status: 'draft' as const, number: null }],
     ['a discarded invoice', { ...head, status: 'discarded' as const, number: null }],
-    ['a credit note', { ...head, kind: 'credit_note' as const }],
-    ['a debit note', { ...head, kind: 'debit_note' as const }],
   ])('refuses %s', (_name, invoice) => {
     expect(() => toInvoiceRenderView(input({ invoice }))).toThrow(InvoiceNotRenderableError);
   });
