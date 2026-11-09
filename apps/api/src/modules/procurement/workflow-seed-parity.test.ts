@@ -1,14 +1,23 @@
-// The dev seed (tools/seed-zitadel) cannot import apps/api, so it holds word-for-word copies of the three P4
-// workflow specs the API publishes through ApprovalsAdminService. This test is the drift alarm: if either
-// side changes alone, it fails. The copies live in a small import-free module of the tool.
+// The dev seed (tools/seed-zitadel) cannot import apps/api, so it holds word-for-word copies of the five
+// workflow specs the API publishes (three procurement ones through ApprovalsAdminService, and the two vendor
+// bill ones). This test is the drift alarm: if either side changes alone, it fails. The copies live in a small
+// import-free module of the tool.
 import { WorkflowSpecSchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  MATCH_EXCEPTION_WORKFLOW_SPEC as SEEDED_MATCH_EXCEPTION_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC as SEEDED_PO_AMENDMENT_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC as SEEDED_PR_COMMITMENT_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC as SEEDED_PURCHASE_REQUEST_SPEC,
+  VENDOR_BILL_WORKFLOW_SPEC as SEEDED_VENDOR_BILL_SPEC,
 } from '../../../../../tools/seed-zitadel/src/workflow-specs';
+import {
+  MATCH_EXCEPTION_DOCUMENT_TYPE,
+  MATCH_EXCEPTION_WORKFLOW_SPEC,
+  VENDOR_BILL_DOCUMENT_TYPE,
+  VENDOR_BILL_WORKFLOW_SPEC,
+} from '../payables/bills/vendor-bill.rules';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
@@ -51,6 +60,26 @@ describe('seed workflow parity', () => {
     );
     expect(WorkflowSpecSchema.parse(SEEDED_PO_AMENDMENT_SPEC).documentType).toBe(
       PO_AMENDMENT_DOCUMENT_TYPE,
+    );
+  });
+
+  it('seeds vendor_bill with exactly the spec the API publishes', () => {
+    expect(SEEDED_VENDOR_BILL_SPEC).toStrictEqual(VENDOR_BILL_WORKFLOW_SPEC);
+    expect(WorkflowSpecSchema.parse(SEEDED_VENDOR_BILL_SPEC)).toStrictEqual(
+      WorkflowSpecSchema.parse(VENDOR_BILL_WORKFLOW_SPEC),
+    );
+    expect(WorkflowSpecSchema.parse(SEEDED_VENDOR_BILL_SPEC).documentType).toBe(
+      VENDOR_BILL_DOCUMENT_TYPE,
+    );
+  });
+
+  it('seeds match_exception with exactly the spec the API publishes', () => {
+    expect(SEEDED_MATCH_EXCEPTION_SPEC).toStrictEqual(MATCH_EXCEPTION_WORKFLOW_SPEC);
+    expect(WorkflowSpecSchema.parse(SEEDED_MATCH_EXCEPTION_SPEC)).toStrictEqual(
+      WorkflowSpecSchema.parse(MATCH_EXCEPTION_WORKFLOW_SPEC),
+    );
+    expect(WorkflowSpecSchema.parse(SEEDED_MATCH_EXCEPTION_SPEC).documentType).toBe(
+      MATCH_EXCEPTION_DOCUMENT_TYPE,
     );
   });
 });
