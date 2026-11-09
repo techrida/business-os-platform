@@ -6,12 +6,12 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
-import { listTaxCodes } from '@/components/p2/quote-builder/api';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procurement';
 import { getRfq, listSubmissions, type RfqDto } from '@/lib/api-rfqs';
+import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { shortId } from '@/lib/kernel-ui';
