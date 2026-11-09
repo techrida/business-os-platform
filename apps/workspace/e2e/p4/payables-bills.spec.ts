@@ -9,7 +9,7 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
  *
  * (1) The bills list loads, filters by status, and a status with no bills says so.
  * (2) The inbox loads and says whether anything is waiting.
- * (3) Bill entry without a submission sends the person back to the inbox.
+ * (3) Bill entry without a submission offers vendor selection and an invoice upload.
  * (4) If a bill exists, its page shows the header, the lines and the match panel.
  *
  * Set BOS_E2E_BILL_ID to the id of an existing bill to run (4).
@@ -35,7 +35,7 @@ test('the bills list loads and filters', async ({ browser, baseURL }) => {
   }
 });
 
-test('the inbox loads and bill entry needs a submission', async ({ browser, baseURL }) => {
+test('the inbox loads and bill entry works without a submission', async ({ browser, baseURL }) => {
   test.setTimeout(120_000);
   const appBase = baseURL ?? 'https://app.localhost';
   const opened: Signed[] = [];
@@ -45,11 +45,18 @@ test('the inbox loads and bill entry needs a submission', async ({ browser, base
     await founder.page.goto('/payables/inbox');
     await expect(founder.page.getByRole('heading', { level: 1, name: 'Bill inbox' })).toBeVisible();
     await founder.page.goto('/payables/bills/new');
+    await expect(founder.page.getByRole('heading', { level: 1, name: 'New bill' })).toBeVisible();
+    await expect(founder.page.getByLabel('Find a vendor', { exact: true })).toBeVisible();
+    const vendor = founder.page.getByLabel('Vendor', { exact: true });
     await expect(
-      founder.page.getByRole('heading', { name: 'Start from a vendor submission.' }),
+      vendor.or(founder.page.getByText('No vendors match this search.', { exact: false })),
     ).toBeVisible();
-    await founder.page.getByRole('link', { name: 'Open the inbox' }).click();
-    await expect(founder.page).toHaveURL(/\/payables\/inbox/);
+    if (await vendor.isVisible()) {
+      await expect(founder.page.getByLabel('Vendor invoice number', { exact: true })).toBeVisible();
+      await expect(
+        founder.page.getByRole('button', { name: 'Upload invoice', exact: true }),
+      ).toBeDisabled();
+    }
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }
