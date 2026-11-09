@@ -12,6 +12,7 @@ import { OpportunitiesModule } from './modules/opportunities/opportunities.modul
 import { PaymentProofsModule } from './modules/payment-proofs/payment-proofs.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { VendorBillsModule } from './modules/payables/bills/vendor-bills.module';
+import { PaymentRequestsModule } from './modules/payables/payment-requests/payment-requests.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { PortalBillingModule } from './modules/portal-billing/portal-billing.module';
@@ -101,6 +102,7 @@ import { UsersModule } from './platform/users/users.module';
     PurchaseOrdersModule,
     PurchaseOrderRenderModule,
     VendorBillsModule,
+    PaymentRequestsModule,
   ],
 })
 export class AppModule {}
