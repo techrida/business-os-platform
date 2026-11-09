@@ -65,6 +65,7 @@ const P4_RELATIONS = [
   'receipts',
   'receipt_lines',
   'receipt_serials',
+  'vendor_comparison_scores',
   ...PAYABLES_TABLES,
   'v_po_line_progress',
 ] as const;
@@ -706,6 +707,55 @@ describe('v_po_line_progress', () => {
         billed_quantity: '4.0000',
       },
     ]);
+  });
+
+  it('nets a reversed receipt against its reversal', async () => {
+    const scope = await newScope();
+    const vendorId = await insertVendor(scope, [scope.organizationId]);
+    const { poId, poLineId } = await orderOf(scope, vendorId, scope);
+    await receive(scope, poId, poLineId, '3');
+    const originalLine = await receive(scope, poId, poLineId, '2');
+    const { rows: found } = await owner.query<{ receipt_id: string }>(
+      `SELECT receipt_id FROM app.receipt_lines WHERE id = $1`,
+      [originalLine],
+    );
+    const originalReceipt = found[0]?.receipt_id ?? '';
+    await run(
+      scope.organizationId,
+      `UPDATE app.receipts SET status = 'reversed' WHERE tenant_id = $1 AND id = $2`,
+      [scope.tenantId, originalReceipt],
+    );
+    const seq = nextSeq();
+    const reversal = await insertReturningId(
+      scope.organizationId,
+      `INSERT INTO app.receipts
+         (tenant_id, organization_id, number, number_seq, fiscal_year, purchase_order_id, kind, received_at,
+          status, created_by, confirmed_by, confirmed_at, reverses_receipt_id, reversal_reason)
+       VALUES ($1, $2, $3, $4, '2083/84', $5, 'goods', '2026-11-06', 'confirmed', $6, $6, now(), $7,
+               'Wrong delivery note') RETURNING id`,
+      [
+        scope.tenantId,
+        scope.organizationId,
+        `GRN-${seq}`,
+        seq,
+        poId,
+        scope.userId,
+        originalReceipt,
+      ],
+    );
+    await run(
+      scope.organizationId,
+      `INSERT INTO app.receipt_lines
+         (tenant_id, organization_id, receipt_id, purchase_order_id, po_line_id, line_no, quantity,
+          reverses_receipt_line_id)
+       VALUES ($1, $2, $3, $4, $5, 1, -2, $6)`,
+      [scope.tenantId, scope.organizationId, reversal, poId, poLineId, originalLine],
+    );
+    const { rows } = await owner.query(
+      `SELECT received_quantity::text FROM app.v_po_line_progress WHERE po_line_id = $1`,
+      [poLineId],
+    );
+    expect(rows).toEqual([{ received_quantity: '3.0000' }]);
   });
 
   it('shows zero received and billed for a line with neither', async () => {
