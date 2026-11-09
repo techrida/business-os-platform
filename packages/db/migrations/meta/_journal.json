@@ -162,6 +162,13 @@
       "when": 1783000000022,
       "tag": "0022_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783000000023,
+      "tag": "0023_invoice_credit_release",
+      "breakpoints": true
     }
   ]
 }

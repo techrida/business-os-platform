@@ -1,8 +1,9 @@
 // Drizzle tables for migration 0021_invoices: tax invoices, proformas, credit and debit notes, their lines, tax
 // summary and print log (P3 unit U1). Money is numeric(18,2), quantities numeric(18,4) and FX rates numeric(18,6),
 // all read as strings; wrap them in decimal.js, never Number().
-// The SQL in migrations/0021_invoices.sql is the source of truth; this file only types the queries, so keep the two
-// in step. invoicing-schema.test.ts compares them. Every table is entity-owned (ADR 0027).
+// The SQL in migrations/0021_invoices.sql and 0023_invoice_credit_release.sql is the source of truth; this file only
+// types the queries, so keep them in step. invoicing-schema.test.ts compares them. Every table is entity-owned
+// (ADR 0027).
 // Not modelled here: the guard triggers (G3: an issued invoice is immutable; lines change only in draft or returned),
 // the deferred credit/debit-note trigger, the print log's append-only trigger and privileges, and
 // billing_schedule_lines_invoice_fk (SQL only, so sales.ts does not import this file).
@@ -108,6 +109,11 @@ export const invoices = appSchema.table(
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     issuedBy: uuid('issued_by'),
     discardedAt: timestamp('discarded_at', { withTimezone: true }),
+    /**
+     * Credit-release marker (0023): set once, on an issued invoice, when credit notes cancel it in full. It is the one
+     * change the issued-row freeze allows, and it frees the invoice's schedule line for a new tax invoice (G4).
+     */
+    creditedInFullAt: timestamp('credited_in_full_at', { withTimezone: true }),
     createdBy: uuid('created_by'),
     version: integer('version').notNull().default(1),
     createdAt: createdAt(),
@@ -187,7 +193,7 @@ export const invoices = appSchema.table(
     uniqueIndex('invoices_one_live_tax_invoice_per_schedule_line')
       .on(t.tenantId, t.organizationId, t.scheduleLineId)
       .where(
-        sql`${t.kind} = 'tax_invoice' AND ${t.status} <> 'discarded' AND ${t.scheduleLineId} IS NOT NULL`,
+        sql`${t.kind} = 'tax_invoice' AND ${t.status} <> 'discarded' AND ${t.scheduleLineId} IS NOT NULL AND ${t.creditedInFullAt} IS NULL`,
       ),
     index('invoices_tenant_customer_party_idx').on(t.tenantId, t.customerPartyId),
     index('invoices_tenant_org_status_idx').on(t.tenantId, t.organizationId, t.status),
