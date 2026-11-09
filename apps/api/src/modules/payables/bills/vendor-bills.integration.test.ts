@@ -665,21 +665,23 @@ describe('invoice documents', () => {
     );
   });
 
-  it.each(['vendor_portal_intake', 'verification_case', 'payment_intake', 'purchase_order_version'])(
-    'refuses an unrelated %s invoice document',
-    async (ownerType) => {
-      const documentId = await doc();
-      const ownerId =
-        ownerType === 'vendor_portal_intake' ? await vendor() : documentVendors.get(documentId)!;
-      await exec(
-        scopeA,
-        sql`UPDATE app.documents SET owner_type = ${ownerType}, owner_id = ${ownerId} WHERE id = ${documentId}`,
-      );
-      const refused = await httpErrorOf(billWithoutPo(documentId));
-      expect(refused.getStatus()).toBe(422);
-      expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
-    },
-  );
+  it.each([
+    'vendor_portal_intake',
+    'verification_case',
+    'payment_intake',
+    'purchase_order_version',
+  ])('refuses an unrelated %s invoice document', async (ownerType) => {
+    const documentId = await doc();
+    const ownerId =
+      ownerType === 'vendor_portal_intake' ? await vendor() : documentVendors.get(documentId)!;
+    await exec(
+      scopeA,
+      sql`UPDATE app.documents SET owner_type = ${ownerType}, owner_id = ${ownerId} WHERE id = ${documentId}`,
+    );
+    const refused = await httpErrorOf(billWithoutPo(documentId));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+  });
 
   it('refuses submit after the invoice document is removed', async () => {
     const bill = await billWithoutPo(await doc());
