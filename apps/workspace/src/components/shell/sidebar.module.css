@@ -181,19 +181,6 @@
   line-height: 18px;
 }
 
-/* Phase tag on a row that is not built yet: small, outlined, no fill, so the roadmap stays
-   readable without competing with the live items. */
-.tag {
-  flex: none;
-  padding: 0 6px;
-  border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-full);
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: var(--font-weight-medium);
-  line-height: 14px;
-}
-
 /* Pinned below the scrolling nav. The rule marks where the scroll region ends. */
 .footer {
   flex: none;
@@ -280,8 +267,7 @@
   }
 
   .searchWrap,
-  .groupLabel,
-  .tag {
+  .groupLabel {
     display: none;
   }
 
