@@ -3,7 +3,8 @@ import type { VatRegister } from '@/lib/api-payables';
 /** Quote every cell and keep vendor-supplied text from becoming a spreadsheet formula. */
 function cell(value: string | null): string {
   let text = value ?? '';
-  if (!/^-?\d+(?:\.\d+)?$/.test(text) && /^\s*[=+@-]/.test(text)) text = `'${text}`;
+  if (/^[\t\r]/.test(text) || (!/^-?\d+(?:\.\d+)?$/.test(text) && /^\s*[=+@-]/.test(text)))
+    text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 }
 
