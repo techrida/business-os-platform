@@ -3,10 +3,12 @@ import { Module } from '@nestjs/common';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { InvoicesModule } from './modules/invoices/invoices.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { QuotationsModule } from './modules/quotations/quotations.module';
@@ -60,6 +62,8 @@ import { UsersModule } from './platform/users/users.module';
     // P3: the AR/AP subledger writer.
     LedgerModule,
     SalesOrdersModule,
+    PaymentsModule,
+    InvoicesModule,
     CustomersModule,
     OpportunitiesModule,
     LeadsModule,
