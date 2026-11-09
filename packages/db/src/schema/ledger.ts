@@ -37,7 +37,10 @@ export const RECEIVABLE_SOURCE_TYPES = [
 ] as const;
 /** Source documents of a payable item (P4). */
 export const PAYABLE_SOURCE_TYPES = ['vendor_bill', 'vendor_payment', 'vendor_debit_note'] as const;
-export const OPEN_ITEM_SOURCE_TYPES = [...RECEIVABLE_SOURCE_TYPES, ...PAYABLE_SOURCE_TYPES] as const;
+export const OPEN_ITEM_SOURCE_TYPES = [
+  ...RECEIVABLE_SOURCE_TYPES,
+  ...PAYABLE_SOURCE_TYPES,
+] as const;
 /** posting_events also keys allocation events by the allocation row. */
 export const POSTING_EVENT_SOURCE_TYPES = [...OPEN_ITEM_SOURCE_TYPES, 'allocation'] as const;
 /** The PostingEvent union of LedgerService: P3's seven and P4's three. */
@@ -86,7 +89,10 @@ export const withholdingCodes = appSchema.table(
   },
   (t) => [
     unique('withholding_codes_tenant_id_unique').on(t.tenantId, t.id),
-    check('withholding_codes_applies_to_check', sql`${t.appliesTo} in ('receivable', 'payable', 'both')`),
+    check(
+      'withholding_codes_applies_to_check',
+      sql`${t.appliesTo} in ('receivable', 'payable', 'both')`,
+    ),
     check('withholding_codes_rate_bp_check', sql`${t.rateBp} BETWEEN 0 AND 10000`),
     check(
       'withholding_codes_period_check',
