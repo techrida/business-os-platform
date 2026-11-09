@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { RequestMatchExceptionBodySchema } from '@bos/contracts';
+import { CreateVendorBillBodySchema, RequestMatchExceptionBodySchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -10,6 +10,7 @@ import { keyOf } from '@/components/p2/crm/idempotency';
 import { isGuid } from '@/components/p2/customers/format';
 import {
   convertBillSubmission,
+  createBill,
   matchBill,
   rejectBillSubmission,
   requestBillException,
@@ -208,6 +209,51 @@ export async function convertSubmissionAction(
   revalidatePath('/payables/inbox');
   revalidatePath('/payables/bills');
   // `redirect` throws, so it stays outside the try block.
+  redirect(`${billPath(encodeURIComponent(bill.id))}?created=1`);
+}
+
+export async function createBillAction(_prev: ActionState, form: FormData): Promise<ActionState> {
+  const key = keyOf(form);
+  const session = await requireStaffSession('/payables/bills/new');
+  if (!billGrants(session.roles).enter) return { key, error: NO_ENTER };
+  const rows = rowsOf(form);
+  if (rows === null) return { key, error: INCOMPLETE, reload: true };
+  const lines = parseBillLines(rows);
+  const purchaseOrderId = text(form, 'purchaseOrderId').trim();
+  const parsed = CreateVendorBillBodySchema.safeParse({
+    vendorPartyId: text(form, 'vendorPartyId').trim(),
+    vendorInvoiceNo: text(form, 'vendorInvoiceNo'),
+    invoiceDate: text(form, 'invoiceDate').trim(),
+    documentId: text(form, 'documentId').trim(),
+    kind: 'bill',
+    currency: 'NPR',
+    ...(purchaseOrderId === '' ? {} : { purchaseOrderId }),
+    lines: lines.ok ? lines.lines : [],
+  });
+  const errors: Record<string, string> = lines.ok ? {} : { ...lines.errors };
+  if (!parsed.success)
+    for (const issue of parsed.error.issues) {
+      const field = String(issue.path[0] ?? 'lines');
+      if (field === 'lines' && !lines.ok) continue;
+      errors[field] =
+        field === 'documentId'
+          ? 'Upload the invoice file before creating the bill.'
+          : field === 'invoiceDate'
+            ? 'Choose a valid invoice date.'
+            : field === 'vendorInvoiceNo'
+              ? 'Enter an invoice number of 1 to 64 characters.'
+              : field === 'vendorPartyId'
+                ? 'Choose a vendor.'
+                : 'Check this field and try again.';
+    }
+  if (!parsed.success || Object.keys(errors).length > 0) return { key, errors };
+  let bill: VendorBill;
+  try {
+    bill = await createBill(session, parsed.data, key);
+  } catch (err) {
+    return refused(key, err, 'create');
+  }
+  revalidatePath('/payables/bills');
   redirect(`${billPath(encodeURIComponent(bill.id))}?created=1`);
 }
 
