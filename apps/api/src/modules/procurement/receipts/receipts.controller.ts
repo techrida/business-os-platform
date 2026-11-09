@@ -19,7 +19,7 @@ import {
   Query,
 } from '@nestjs/common';
 
-import { AnyAuthenticated } from '../../../platform/authz/decorators';
+import { AnyAuthenticated, Can } from '../../../platform/authz/decorators';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
@@ -28,6 +28,11 @@ import {
   type PoProgress,
   type ReceiptDto,
 } from './receipt.rules';
+import {
+  ListReceivableOrdersQuerySchema,
+  ReceivableOrdersService,
+  type ReceivableOrderDto,
+} from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
 
 @Controller('v1/procurement/receipts')
@@ -97,5 +102,24 @@ export class PurchaseOrderProgressController {
   @Get(':id/progress')
   progress(@Param('id', ParseUUIDPipe) id: string): Promise<PoProgress> {
     return this.receipts.progress(id);
+  }
+}
+
+/**
+ * The POs a warehouse can receive against. Its own class, not a route of ReceiptsController: that class carries
+ * @AnyAuthenticated, which would let any signed-in staff user read the list; here the grant alone decides.
+ */
+@Controller('v1/procurement/receivable-orders')
+export class ReceivableOrdersController {
+  constructor(private readonly orders: ReceivableOrdersService) {}
+
+  /**
+   * The acting entity's issued and partially received POs, newest issued first, each with its vendor name, kind
+   * and open quantity. Query: `limit` (default 50, at most 200).
+   */
+  @Get()
+  @Can('procurement.receipt.confirm')
+  list(@Query() query: unknown): Promise<ReceivableOrderDto[]> {
+    return this.orders.list(parseOr400(ListReceivableOrdersQuerySchema, query));
   }
 }
