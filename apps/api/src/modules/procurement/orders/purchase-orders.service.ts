@@ -91,6 +91,8 @@ export interface PurchaseOrderDto {
   rfqId: string | null;
   vendorQuotationId: string | null;
   vendorId: string;
+  /** `vendors.legalName`. Set by the list and get routes; the write routes leave it out. */
+  vendorName?: string;
   currency: string;
   paymentTermsDays: number;
   advancePercent: string;
@@ -104,6 +106,11 @@ export interface PurchaseOrderDto {
   version: number;
   lines: PurchaseOrderLineDto[];
 }
+
+/** A row of the list: the detail without its lines, and always with the vendor's name. */
+export type PurchaseOrderListItemDto = Omit<PurchaseOrderDto, 'lines' | 'vendorName'> & {
+  vendorName: string;
+};
 
 export interface PurchaseOrderVersionDto {
   id: string;
@@ -164,6 +171,10 @@ const toDto = (po: PoRow, lines: readonly PoLineRow[]): PurchaseOrderDto => ({
   lines: lines.map(toLineDto),
 });
 
+/** Joins a PO to its vendor; vendors are tenant level, so the join is on (tenantId, id) only. */
+const vendorOf = (po: typeof purchaseOrders) =>
+  and(eq(vendors.tenantId, po.tenantId), eq(vendors.id, po.vendorId));
+
 @Injectable()
 export class PurchaseOrdersService {
   constructor(
@@ -179,12 +190,13 @@ export class PurchaseOrdersService {
   // ------------------------------------------------------------------------------------------------- reads
 
   /** The entity's purchase orders, newest first, optionally of one status. Lines are left to the detail. */
-  async list(status?: PoStatus): Promise<Omit<PurchaseOrderDto, 'lines'>[]> {
+  async list(status?: PoStatus): Promise<PurchaseOrderListItemDto[]> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const rows = await tx
-        .select()
+        .select({ po: purchaseOrders, vendorName: vendors.legalName })
         .from(purchaseOrders)
+        .innerJoin(vendors, vendorOf(purchaseOrders))
         .where(
           scoped(scope).where(
             purchaseOrders,
@@ -194,8 +206,8 @@ export class PurchaseOrdersService {
         .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.number))
         .limit(500);
       return rows.map((r) => {
-        const { lines: _lines, ...dto } = toDto(r, []);
-        return dto;
+        const { lines: _lines, ...dto } = toDto(r.po, []);
+        return { ...dto, vendorName: r.vendorName };
       });
     });
   }
@@ -204,12 +216,16 @@ export class PurchaseOrdersService {
   async get(id: string): Promise<PurchaseOrderDto> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const [po] = await tx
-        .select()
+      const [row] = await tx
+        .select({ po: purchaseOrders, vendorName: vendors.legalName })
         .from(purchaseOrders)
+        .innerJoin(vendors, vendorOf(purchaseOrders))
         .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
-      if (po === undefined) throw notFound();
-      return toDto(po, await linesOf(tx, scope, id, false));
+      if (row === undefined) throw notFound();
+      return {
+        ...toDto(row.po, await linesOf(tx, scope, id, false)),
+        vendorName: row.vendorName,
+      };
     });
   }
 
