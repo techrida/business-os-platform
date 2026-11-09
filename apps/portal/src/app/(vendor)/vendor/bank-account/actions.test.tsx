@@ -96,7 +96,9 @@ describe('requestBankChangeAction', () => {
       branch: 'Kamaladi',
       swift: 'NARBNPKA',
     });
-    expect(revalidatePath).toHaveBeenCalledWith('/vendor/bank-account');
+    // The page reads no bank data and the form shows the answer from this state: a revalidate
+    // would remount it and lose the confirmation.
+    expect(revalidatePath).not.toHaveBeenCalled();
     // Success shows the bank and the last four, and rotates the key for the next request.
     expect(state.received).toEqual({ bankName: 'Nabil Bank', last4: '9012' });
     expect(state.key).toMatch(UUID);
