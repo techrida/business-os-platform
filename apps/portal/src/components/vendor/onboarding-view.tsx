@@ -1,4 +1,5 @@
 import type { VendorPortalOnboardingView } from '@bos/contracts';
+import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -14,6 +15,8 @@ import { KYC_DOC_LABEL, KYC_STATE_LOOK, VENDOR_STATUS_LOOK } from './vendor-stat
  */
 export function OnboardingView({ view }: { view: VendorPortalOnboardingView }) {
   const look = VENDOR_STATUS_LOOK[view.status];
+  // A blocked vendor cannot send anything; every other capability can send a KYC document.
+  const canSend = view.capability !== 'none';
   return (
     <div className={styles.document}>
       <Card as="section" aria-labelledby="vendor-status-heading" className={styles.statusCard}>
@@ -41,20 +44,37 @@ export function OnboardingView({ view }: { view: VendorPortalOnboardingView }) {
                   <th scope="col">Document</th>
                   <th scope="col">Status</th>
                   <th scope="col">Valid until</th>
+                  {canSend ? (
+                    <th scope="col">
+                      <span className={styles.visuallyHidden}>Send</span>
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
                 {view.documents.map((doc) => {
                   const state = KYC_STATE_LOOK[doc.state];
+                  const label = KYC_DOC_LABEL[doc.docType];
                   return (
                     <tr key={doc.docType}>
-                      <th scope="row">{KYC_DOC_LABEL[doc.docType]}</th>
+                      <th scope="row">{label}</th>
                       <td>
                         <Badge tone={state.tone}>{state.label}</Badge>
                       </td>
                       <td className={styles.nowrap}>
                         {doc.validUntil ? formatDay(doc.validUntil) : '—'}
                       </td>
+                      {canSend ? (
+                        <td className={styles.nowrap}>
+                          <Link
+                            href={`/vendor/onboarding/upload?doc=${encodeURIComponent(doc.docType)}`}
+                            className={styles.rowLink}
+                          >
+                            Send a document
+                            <span className={styles.visuallyHidden}> for {label}</span>
+                          </Link>
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}
