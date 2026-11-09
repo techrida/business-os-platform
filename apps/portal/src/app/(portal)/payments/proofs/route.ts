@@ -29,6 +29,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const session = await getSession();
   if (!session) return reply({ error: 'Sign in to upload proof of payment.' }, 401);
+  if (session.orgKind !== 'customer') return reply({ error: 'Not found.' }, 404);
 
   let filename = '';
   try {

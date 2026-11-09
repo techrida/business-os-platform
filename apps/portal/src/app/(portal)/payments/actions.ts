@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { PortalSubmitPaymentBodySchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
 import { todayInKathmandu } from '@/components/portal/quotation-status';
 import { ApiError } from '@/lib/api';
@@ -108,6 +108,7 @@ export async function submitPaymentAction(
 
   const session = await getSession();
   if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+  if (session.orgKind !== 'customer') notFound();
 
   const submitted = text(form, 'idempotencyKey');
   const key = KEY.test(submitted) ? submitted : prev.key;
