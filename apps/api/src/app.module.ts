@@ -7,6 +7,7 @@ import { LeadsModule } from './modules/leads/leads.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
+import { VendorBillsModule } from './modules/payables/bills/vendor-bills.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { VendorPortalModule } from './modules/portal-vendor/portal-vendor.module';
@@ -83,6 +84,7 @@ import { UsersModule } from './platform/users/users.module';
     ReceiptsModule,
     PurchaseOrdersModule,
     PurchaseOrderRenderModule,
+    VendorBillsModule,
   ],
 })
 export class AppModule {}
