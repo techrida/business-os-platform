@@ -2,11 +2,13 @@ import { RFQ_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  canCommit,
   canStartRfq,
   RFQ_STATUS_LABEL,
   RFQ_STATUS_NOTE,
   rfqGrants,
   submissionConvertibility,
+  takesDecisions,
 } from './model';
 
 describe('labels', () => {
@@ -48,5 +50,36 @@ describe('submissionConvertibility', () => {
       expect(c.reason).not.toBe('');
       expect(c.label).not.toBe('');
     }
+  });
+});
+
+describe('decisions', () => {
+  it('scores and recommendations are taken while the RFQ is open or closed', () => {
+    expect(takesDecisions('open')).toBe(true);
+    expect(takesDecisions('closed')).toBe(true);
+    expect(takesDecisions('recommended')).toBe(false);
+    expect(takesDecisions('cancelled')).toBe(false);
+  });
+});
+
+describe('canCommit', () => {
+  const ok = { status: 'recommended' as const, recommendedQuotationId: 'q', prStatus: 'sourcing' };
+  it('needs a recommendation, a sourcing request and the sourcing grant', () => {
+    expect(canCommit(ok, ['procurement'])).toEqual({ show: true });
+    expect(canCommit({ ...ok, status: 'open' }, ['procurement'])).toEqual({ show: false });
+    expect(canCommit({ ...ok, recommendedQuotationId: null }, ['procurement'])).toEqual({
+      show: false,
+    });
+    expect(canCommit(ok, ['viewer'])).toEqual({ show: false });
+  });
+  it('a request already waiting on the approvers is not offered again', () => {
+    expect(canCommit({ ...ok, prStatus: 'commitment_pending' }, ['procurement'])).toEqual({
+      show: false,
+    });
+  });
+  it('when the request did not load, hides the button and says why', () => {
+    const r = canCommit({ ...ok, prStatus: null }, ['procurement']);
+    expect(r.show).toBe(false);
+    expect(r.why).toMatch(/purchase request/i);
   });
 });
