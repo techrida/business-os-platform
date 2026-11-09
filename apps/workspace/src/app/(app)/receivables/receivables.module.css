@@ -1,0 +1,85 @@
+/* Layout and small pieces that belong to the receivables screens only. Everything else comes from
+   components/ui. Colours are Figma tokens from styles/tokens.css. */
+
+/* A long customer name wraps inside its column instead of widening the table. */
+.customer {
+  min-width: 16ch;
+  max-width: 36ch;
+  overflow-wrap: anywhere;
+}
+
+.amount {
+  font-weight: var(--font-weight-medium);
+}
+
+/* A zero stays exact but steps back, so the buckets that hold money are what the eye finds. */
+.zero {
+  color: var(--text-secondary);
+}
+
+.total {
+  font-weight: var(--font-weight-semibold, var(--font-weight-medium));
+}
+
+/* The per-currency totals sit in the table's foot, under a heavier rule. Declared on the wrapper so
+   the selectors out-rank the shared table's own cell rules. */
+.withTotals tfoot th,
+.withTotals tfoot td {
+  border-top: 2px solid var(--border-default);
+  border-bottom: 0;
+  background: var(--table-header-bg);
+  color: var(--table-header-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.withTotals tfoot td {
+  color: var(--table-text);
+}
+
+.withTotals tfoot tr + tr > * {
+  border-top: var(--border-width-thin) solid var(--table-border);
+}
+
+/* Free text (an invoice number, a customer name) wraps instead of widening the page. */
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.number {
+  font-weight: var(--font-weight-medium);
+}
+
+.note {
+  display: block;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.late {
+  color: var(--status-error);
+}
+
+.stack {
+  display: grid;
+  gap: 24px;
+}
+
+.advance {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.advanceItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
