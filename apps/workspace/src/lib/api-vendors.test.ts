@@ -5,6 +5,7 @@ import { __resetEnvForTests } from '@/lib/env';
 import type { Session } from '@/lib/session';
 
 import {
+  createBankEvidence,
   createVendor,
   grantVendorPortalAccess,
   listBankAccounts,
@@ -14,6 +15,7 @@ import {
   rejectBankAccount,
   submitVendorKyc,
   updateVendor,
+  uploadBankEvidenceContent,
   vendorLifecycle,
   verifyBankAccount,
 } from './api-vendors';
@@ -59,6 +61,26 @@ const bank = {
   status: 'proposed',
   proposedVia: 'staff',
   verifiedAt: null,
+};
+
+const ID_C = '33333333-3333-4333-8333-333333333333';
+const ID_D = '44444444-4444-4444-8444-444444444444';
+const EVIDENCE_PATH = `/v1/vendors/${ID_A}/bank-accounts/${ID_B}/evidence/${ID_C}/versions/${ID_D}/content`;
+const evidence = { documentId: ID_C, versionId: ID_D, uploadPath: EVIDENCE_PATH };
+const evidenceVersion = {
+  id: ID_D,
+  documentId: ID_C,
+  version: 1,
+  filename: 'callback.pdf',
+  declaredMime: 'application/pdf',
+  detectedMime: null,
+  sizeBytes: 2048,
+  sha256: null,
+  status: 'quarantined',
+  scanSignature: null,
+  scannedAt: null,
+  uploadedBy: ID_A,
+  createdAt: '2026-11-08T05:45:00.000Z',
 };
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -250,5 +272,78 @@ describe('bank accounts', () => {
     await rejectBankAccount(session, ID_A, ID_B, { reason: 'wrong name' }, 'key-rej-1234');
     expect(lastCall().url).toBe(`http://api:3001/v1/vendors/${ID_A}/bank-accounts/${ID_B}/reject`);
     expect(lastCall().headers.get('idempotency-key')).toBe('key-rej-1234');
+  });
+
+  describe('call-back evidence upload', () => {
+    const upload = () => ({
+      body: new ReadableStream<Uint8Array>(),
+      contentLength: 2048,
+      contentType: 'application/pdf',
+    });
+
+    it('declares the file on the vendor route, with no owner and no key', async () => {
+      answer(reply(evidence, 201));
+      const created = await createBankEvidence(session, ID_A, ID_B, {
+        filename: 'callback.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 2048,
+      });
+      expect(created).toEqual(evidence);
+      const { url, init, headers } = lastCall();
+      expect(url).toBe(`http://api:3001/v1/vendors/${ID_A}/bank-accounts/${ID_B}/evidence`);
+      expect(init.method).toBe('POST');
+      expect(headers.get('idempotency-key')).toBeNull();
+      expect(JSON.parse(init.body as string)).toEqual({
+        filename: 'callback.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 2048,
+      });
+    });
+
+    it('answers 502 when the declared document comes back malformed', async () => {
+      answer(reply({ documentId: 'nope', versionId: ID_D, uploadPath: EVIDENCE_PATH }, 201));
+      const e = await createBankEvidence(session, ID_A, ID_B, {
+        filename: 'a.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 1,
+      }).catch((x: unknown) => x);
+      expect((e as ApiError).status).toBe(502);
+    });
+
+    it('streams the bytes with a raw PUT to the vendor evidence upload path', async () => {
+      answer(reply(evidenceVersion));
+      const input = upload();
+      const out = await uploadBankEvidenceContent(session, ID_A, ID_B, evidence, input);
+      expect(out.status).toBe('quarantined');
+      const { url, init, headers } = lastCall();
+      expect(url).toBe(`http://api:3001${EVIDENCE_PATH}`);
+      expect(init.method).toBe('PUT');
+      expect(init.body).toBe(input.body);
+      expect((init as { duplex?: string }).duplex).toBe('half');
+      expect(headers.get('content-type')).toBe('application/pdf');
+      expect(headers.get('content-length')).toBe('2048');
+    });
+
+    it.each([
+      ['the generic documents route', `/v1/documents/${ID_C}/versions/${ID_D}/content`],
+      ['an unrelated route', '/v1/admin/users'],
+      ['another origin', `https://evil.test${EVIDENCE_PATH}`],
+      ['a protocol-relative url', `//evil.test${EVIDENCE_PATH}`],
+      ['a query string', `${EVIDENCE_PATH}?x=1`],
+      ['a trailing segment', `${EVIDENCE_PATH}/extra`],
+      [
+        'a path climb',
+        `/v1/vendors/${ID_A}/bank-accounts/${ID_B}/evidence/../../x/${ID_C}/versions/${ID_D}/content`,
+      ],
+      ['another vendor', EVIDENCE_PATH.replace(ID_A, ID_D)],
+      ['another account', EVIDENCE_PATH.replace(ID_B, ID_D)],
+      ['another document', EVIDENCE_PATH.replace(ID_C, ID_A)],
+      ['another version', EVIDENCE_PATH.replace(ID_D, ID_A)],
+    ])('refuses %s as the upload path and sends nothing', async (_label, uploadPath) => {
+      await expect(
+        uploadBankEvidenceContent(session, ID_A, ID_B, { ...evidence, uploadPath }, upload()),
+      ).rejects.toMatchObject({ status: 502 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 });
