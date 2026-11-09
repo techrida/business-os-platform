@@ -321,24 +321,26 @@ export function PrForm({
                     />
                   )}
                 </Field>
-                <label>
-                  <input
-                    type="checkbox"
-                    name={`lines.${i}.requiresSerials`}
-                    checked={row.line.requiresSerials ?? false}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setRows((rs) =>
-                        rs.map((r) =>
-                          r.uid === row.uid
-                            ? { ...r, line: { ...r.line, requiresSerials: checked } }
-                            : r,
-                        ),
-                      );
-                    }}
-                  />{' '}
-                  Record serial numbers at receipt
-                </label>
+                {values.requestType === 'goods' ? (
+                  <label>
+                    <input
+                      type="checkbox"
+                      name={`lines.${i}.requiresSerials`}
+                      checked={row.line.requiresSerials ?? false}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setRows((rs) =>
+                          rs.map((r) =>
+                            r.uid === row.uid
+                              ? { ...r, line: { ...r.line, requiresSerials: checked } }
+                              : r,
+                          ),
+                        );
+                      }}
+                    />{' '}
+                    Record serial numbers at receipt
+                  </label>
+                ) : null}
                 <Field label="Unit" error={err[`lines.${i}.uom`]}>
                   {(control) => (
                     <Input
