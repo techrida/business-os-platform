@@ -67,6 +67,7 @@ import {
 import { InvoiceDocumentService } from './invoice-document.service';
 import {
   drizzleInvoiceRenderStore,
+  FAILED_RETRY_MS,
   InvoiceRenderSweeper,
   ORPHAN_AFTER_MS,
   type RenderCandidate,
@@ -278,6 +279,7 @@ interface SeedOptions {
   kind?: 'tax_invoice' | 'proforma';
   /** `draft` leaves the invoice unissued: no number, no snapshots. */
   status?: 'draft' | 'issued';
+  issuedAt?: Date;
 }
 
 interface Seeded extends RenderCandidate {
@@ -324,7 +326,8 @@ async function seedInvoice(scope: TestScope, options: SeedOptions = {}): Promise
       await tx.execute(sql`
         UPDATE app.invoices
            SET status = 'issued', number = ${number}, seq = ${n}, fiscal_year = '2083/84',
-               issue_date = '2026-11-09', issue_date_bs = '2083-07-24', issued_at = now(),
+               issue_date = '2026-11-09', issue_date_bs = '2083-07-24',
+               issued_at = coalesce(${options.issuedAt?.toISOString() ?? null}::timestamptz, now()),
                fx_rate = 1, amount_npr = total,
                seller_snapshot = ${JSON.stringify(seller)}::jsonb,
                buyer_snapshot = ${JSON.stringify(buyer)}::jsonb,
@@ -403,6 +406,52 @@ async function renderAndScan(scope: TestScope, inv: Seeded): Promise<void> {
 // ------------------------------------------------------------------------------------------- tests
 
 describe('invoice render', () => {
+  it('reaches newer pending invoices past multiple failing batches and wraps after a rendered cursor', async () => {
+    const scope = await newScope();
+    const issuedAt = new Date('2026-11-09T06:00:00Z');
+    const failed: RenderCandidate[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      failed.push(await seedInvoice(scope, { issuedAt }));
+    }
+    const healthy = await seedInvoice(scope, { issuedAt: new Date(issuedAt.getTime() + 1_000) });
+    const fairStore = drizzleInvoiceRenderStore(db);
+    const load = vi.spyOn(fairStore, 'load');
+    let clock = issuedAt;
+    const pdf = {
+      htmlToPdf: vi.fn((html: string) => {
+        if (html.includes(healthy.number ?? 'missing invoice')) return Promise.resolve(PDF);
+        return Promise.reject(new Error('permanent render failure'));
+      }),
+    };
+    const worker = new InvoiceRenderSweeper(fairStore, runTx, documents, pdf, () => clock);
+
+    // Every retry has expired before the next tick. The oldest-first query used to pick the same ten forever.
+    for (let tick = 0; tick < 3; tick += 1) {
+      await worker.sweep();
+      clock = new Date(clock.getTime() + FAILED_RETRY_MS + 1);
+    }
+    expect(await documentRows(healthy.invoiceId)).toHaveLength(1);
+    expect(await printRows(healthy.invoiceId)).toEqual([{ print_no: 1, printed_by: null }]);
+    expect(new Set(load.mock.calls.map(([, c]) => c.invoiceId))).toEqual(
+      new Set([...failed, healthy].map((c) => c.invoiceId)),
+    );
+    expect(await Promise.all(failed.map((c) => printRows(c.invoiceId)))).toEqual(
+      failed.map(() => []),
+    );
+
+    // Rendering the cursor's document must not invalidate its position. Equal issue timestamps use id order.
+    load.mockClear();
+    await worker.sweep();
+    const { rows: oldest } = await pool.query<{ id: string }>(
+      'SELECT id FROM app.invoices WHERE id = ANY($1::uuid[]) ORDER BY issued_at, id LIMIT 10',
+      [failed.map((c) => c.invoiceId)],
+    );
+    expect(load.mock.calls.map(([, c]) => c.invoiceId)).toEqual(oldest.map((r) => r.id));
+    expect((await fairStore.candidates(10, [], randomUUID())).map((c) => c.invoiceId)).toEqual(
+      oldest.map((r) => r.id),
+    );
+  });
+
   it('renders its invoice without depending on the global sweep batch', async () => {
     const older = await newScope();
     for (let i = 0; i < 10; i += 1) await seedInvoice(older);
