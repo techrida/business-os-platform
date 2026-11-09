@@ -4,6 +4,7 @@ import { ApprovalsWorkerModule } from './modules/approvals/approvals.worker.modu
 import { PortalLoginPolicyWorkerModule } from './modules/portal-access/portal-login-policy.worker.module';
 import { QuotationExpiryWorkerModule } from './modules/quotations/expiry/quotation-expiry.worker.module';
 import { QuotationRenderWorkerModule } from './modules/quotations/render/quotation-render.worker.module';
+import { VendorKycExpiryJobsModule } from './modules/vendors/vendor-kyc-expiry.worker.module';
 import { AuditWorkerModule } from './platform/audit/audit.worker.module';
 import { ConfigModule } from './platform/config/config.module';
 import { DbModule } from './platform/db/db.module';
@@ -37,6 +38,7 @@ import { WorkerHealth } from './platform/queue/worker-health';
     QuotationRenderWorkerModule,
     QuotationExpiryWorkerModule,
     PortalLoginPolicyWorkerModule,
+    VendorKycExpiryJobsModule,
   ],
   providers: [SystemProcessor, HeartbeatScheduler, WorkerHealth],
 })
