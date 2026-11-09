@@ -1,0 +1,356 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
+vi.mock('@/lib/bff', () => ({
+  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+}));
+vi.mock('next/navigation', () => ({
+  notFound: () => {
+    throw new Error('NOT_FOUND');
+  },
+  redirect: (to: string) => {
+    throw new Error(`redirect ${to}`);
+  },
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+vi.mock('./actions', () => ({ createRfqAction: vi.fn(), recordQuotationAction: vi.fn() }));
+const rfqApi = vi.hoisted(() => ({
+  listRfqs: vi.fn(),
+  getRfq: vi.fn(),
+  getComparison: vi.fn(),
+  listSubmissions: vi.fn(),
+}));
+vi.mock('@/lib/api-rfqs', () => rfqApi);
+const prApi = vi.hoisted(() => ({ listPurchaseRequests: vi.fn(), getPurchaseRequest: vi.fn() }));
+vi.mock('@/lib/api-procurement', () => prApi);
+const vendorApi = vi.hoisted(() => ({ listVendors: vi.fn() }));
+vi.mock('@/lib/api-vendors', () => vendorApi);
+const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
+vi.mock('@/lib/api-kernel', () => kernel);
+const quoteApi = vi.hoisted(() => ({ listTaxCodes: vi.fn() }));
+vi.mock('@/components/p2/quote-builder/api', () => quoteApi);
+
+const { default: ListPage } = await import('./page');
+const { default: DetailPage } = await import('./[id]/page');
+const { default: NewPage } = await import('./new/page');
+const { default: QuotePage } = await import('./[id]/quotations/new/page');
+
+const RFQ = '11111111-1111-4111-8111-111111111111';
+const PR = '22222222-2222-4222-8222-222222222222';
+const V1 = '33333333-3333-4333-8333-333333333333';
+const V2 = '44444444-4444-4444-8444-444444444444';
+const Q1 = '55555555-5555-4555-8555-555555555555';
+const SUB = '66666666-6666-4666-8666-666666666666';
+const LINE = '77777777-7777-4777-8777-777777777777';
+
+const apiError = (status: number) =>
+  new ApiError(status, 'x', {
+    error: { code: 'x', message: 'internal wording', correlationId: 'corr-12345678' },
+  });
+
+const row = (over: Record<string, unknown> = {}) => ({
+  id: RFQ,
+  number: 'RFQ-2082/83-00001',
+  purchaseRequestId: PR,
+  purchaseRequestNumber: 'PR-2082/83-00007',
+  status: 'open',
+  deadline: '2026-12-01T10:00:00.000Z',
+  invitedVendorCount: 3,
+  quotationCount: 1,
+  ...over,
+});
+const rfq = (over: Record<string, unknown> = {}) => ({
+  id: RFQ,
+  number: 'RFQ-2082/83-00001',
+  purchaseRequestId: PR,
+  deadline: '2026-12-01T10:00:00.000Z',
+  status: 'open',
+  vendorIds: [V1, V2],
+  recommendedQuotationId: null,
+  fewerThanThreeReason: null,
+  recommendationRationale: null,
+  commitmentApprovalRequestId: null,
+  version: 1,
+  ...over,
+});
+const quotation = {
+  id: Q1,
+  rfqId: RFQ,
+  vendorId: V1,
+  currency: 'NPR',
+  subtotal: '4500000.00',
+  taxAmount: '585000.00',
+  total: '5085000.00',
+  fxRate: '1.000000',
+  totalNpr: '5085000.00',
+  deliveryDays: 14,
+  documentId: PR,
+  averageScore: null,
+  scores: [],
+};
+const submission = (over: Record<string, unknown> = {}) => ({
+  id: SUB,
+  vendorId: V2,
+  vendorName: 'Himal Traders',
+  vendorRef: 'Q-77',
+  submittedAt: '2026-11-08T05:45:00.000Z',
+  documentId: PR,
+  scanStatus: 'clean',
+  ...over,
+});
+const vendors = {
+  items: [
+    { id: V1, legalName: 'Everest Supplies Pvt Ltd', tradeName: 'Everest', status: 'approved' },
+    { id: V2, legalName: 'Himal Traders Pvt Ltd', tradeName: null, status: 'approved' },
+  ],
+  total: 2,
+};
+const prDetail = {
+  id: PR,
+  number: 'PR-2082/83-00007',
+  status: 'sourcing',
+  currency: 'NPR',
+  lines: [
+    {
+      id: LINE,
+      lineNo: 1,
+      description: 'Office chair',
+      uom: 'pcs',
+      quantity: '10.0000',
+    },
+  ],
+};
+
+const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
+const list = async (sp: Record<string, string> = {}) =>
+  html(await ListPage({ searchParams: Promise.resolve(sp) }));
+const detail = async (sp: Record<string, string> = {}) =>
+  html(
+    await DetailPage({ params: Promise.resolve({ id: RFQ }), searchParams: Promise.resolve(sp) }),
+  );
+const newPage = async (sp: Record<string, string> = {}) =>
+  html(await NewPage({ searchParams: Promise.resolve(sp) }));
+const quotePage = async (sp: Record<string, string> = {}) =>
+  html(
+    await QuotePage({ params: Promise.resolve({ id: RFQ }), searchParams: Promise.resolve(sp) }),
+  );
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  session.roles = ['procurement'];
+  rfqApi.getRfq.mockResolvedValue(rfq());
+  rfqApi.getComparison.mockResolvedValue([quotation]);
+  rfqApi.listSubmissions.mockResolvedValue([]);
+  prApi.getPurchaseRequest.mockResolvedValue(prDetail);
+  prApi.listPurchaseRequests.mockResolvedValue([]);
+  vendorApi.listVendors.mockResolvedValue(vendors);
+  quoteApi.listTaxCodes.mockResolvedValue([]);
+});
+
+describe('the list', () => {
+  it('shows the rows with the request number, Kathmandu deadline and counts', async () => {
+    rfqApi.listRfqs.mockResolvedValue([row()]);
+    const out = await list();
+    expect(out).toContain('RFQ-2082/83-00001');
+    expect(out).toContain('PR-2082/83-00007');
+    expect(out).toContain('1 of 3');
+    expect(out).toContain('Open for quotations');
+    expect(out).toContain('New RFQ');
+    expect(out).toContain('15:45');
+  });
+
+  it('passes only the status and limit', async () => {
+    rfqApi.listRfqs.mockResolvedValue([]);
+    await list({ status: 'recommended' });
+    expect(rfqApi.listRfqs).toHaveBeenCalledWith(expect.anything(), {
+      status: 'recommended',
+      limit: 100,
+    });
+    await list({ status: 'bogus' });
+    expect(rfqApi.listRfqs).toHaveBeenLastCalledWith(expect.anything(), { limit: 100 });
+  });
+
+  it('says so when there are none, and when a filter matches none', async () => {
+    rfqApi.listRfqs.mockResolvedValue([]);
+    expect(await list()).toContain('No RFQs yet.');
+    expect(await list({ status: 'closed' })).toContain('No RFQs are closed.');
+  });
+
+  it('a person without the sourcing grant gets no New RFQ button', async () => {
+    session.roles = ['sales'];
+    rfqApi.listRfqs.mockResolvedValue([]);
+    expect(await list()).not.toContain('New RFQ');
+  });
+
+  it('403 is an info alert and a failure is an error with a reload link', async () => {
+    rfqApi.listRfqs.mockRejectedValue(apiError(403));
+    expect(await list()).toContain('Your roles do not include sourcing');
+    rfqApi.listRfqs.mockRejectedValue(new ApiError(502, 'x'));
+    const out = await list();
+    expect(out).toContain('did not load');
+    expect(out).toContain('Reload the list');
+  });
+});
+
+describe('the detail', () => {
+  it('shows vendor names, the PR number and server money in lakh grouping', async () => {
+    const out = await detail();
+    expect(out).toContain('Everest');
+    expect(out).toContain('Himal Traders Pvt Ltd');
+    expect(out).toContain('PR-2082/83-00007');
+    expect(out).toContain('50,85,000.00');
+    expect(out).toContain('14 days');
+    expect(out).toContain('Not scored');
+    expect(out).toContain('Enter a quotation');
+  });
+
+  it('falls back to short ids when vendor names do not load', async () => {
+    vendorApi.listVendors.mockRejectedValue(new ApiError(502, 'x'));
+    const out = await detail();
+    expect(out).toContain('Quotations');
+    expect(out).not.toContain('Everest');
+  });
+
+  it('only a clean scan gets a Convert button; the others say why', async () => {
+    rfqApi.listSubmissions.mockResolvedValue([
+      submission(),
+      submission({ id: Q1, vendorName: 'Slow Scanner', scanStatus: 'quarantined' }),
+      submission({ id: PR, vendorName: 'No File', scanStatus: null }),
+    ]);
+    const out = await detail();
+    expect(out).toContain('Convert the submission from Himal Traders');
+    expect(out).not.toContain('Convert the submission from Slow Scanner');
+    expect(out).not.toContain('Convert the submission from No File');
+    expect(out).toContain('still being scanned');
+    expect(out).toContain('no file version yet');
+    expect(out).toContain(`/quotations/new?submission=${SUB}`);
+  });
+
+  it('a closed RFQ offers neither entry nor convert and does not fetch submissions', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'closed' }));
+    const out = await detail();
+    expect(out).not.toContain('Enter a quotation');
+    expect(rfqApi.listSubmissions).not.toHaveBeenCalled();
+  });
+
+  it('a comparison that fails is a message, not a blank page', async () => {
+    rfqApi.getComparison.mockRejectedValue(new ApiError(502, 'x'));
+    const out = await detail();
+    expect(out).toContain('Quotations did not load');
+  });
+
+  it('shows the commitment approval steps when one exists', async () => {
+    rfqApi.getRfq.mockResolvedValue(
+      rfq({ status: 'recommended', recommendedQuotationId: Q1, commitmentApprovalRequestId: PR }),
+    );
+    kernel.getApprovalRequest.mockResolvedValue({
+      status: 'in_progress',
+      decidedAt: null,
+      steps: [{ seq: 1, reason: 'An Accountant checks the quotation', status: 'active' }],
+    });
+    const out = await detail();
+    expect(out).toContain('An Accountant checks the quotation');
+    expect(out).toContain('Recommended');
+  });
+
+  it('a missing RFQ is a 404 and a failed load is an alert', async () => {
+    rfqApi.getRfq.mockRejectedValue(apiError(404));
+    await expect(detail()).rejects.toThrow('NOT_FOUND');
+    rfqApi.getRfq.mockRejectedValue(new ApiError(502, 'x'));
+    expect(await detail()).toContain('The RFQ did not load');
+  });
+});
+
+describe('the new RFQ page', () => {
+  it('refuses a person without the sourcing grant', async () => {
+    session.roles = ['sales'];
+    expect(await newPage()).toContain('Your roles do not include sourcing');
+  });
+
+  it('says when no purchase request is ready, and when no vendor is approved', async () => {
+    expect(await newPage()).toContain('No purchase request is ready for an RFQ');
+    prApi.listPurchaseRequests.mockResolvedValue([
+      {
+        id: PR,
+        number: 'PR-2082/83-00007',
+        estimatedTotal: '4500000.00',
+        currency: 'NPR',
+        requiredBy: '2026-12-01',
+        justification: 'Chairs',
+      },
+    ]);
+    vendorApi.listVendors.mockResolvedValue({ items: [], total: 0 });
+    expect(await newPage()).toContain('No approved vendors to invite');
+  });
+
+  it('asks only for dept_approved requests and approved vendors, and preselects ?pr=', async () => {
+    prApi.listPurchaseRequests.mockResolvedValue([
+      {
+        id: PR,
+        number: 'PR-2082/83-00007',
+        estimatedTotal: '4500000.00',
+        currency: 'NPR',
+        requiredBy: '2026-12-01',
+        justification: 'Chairs',
+      },
+    ]);
+    const out = await newPage({ pr: PR });
+    expect(prApi.listPurchaseRequests).toHaveBeenCalledWith(expect.anything(), {
+      status: 'dept_approved',
+      limit: 100,
+    });
+    expect(vendorApi.listVendors).toHaveBeenCalledWith(expect.anything(), {
+      status: 'approved',
+      limit: 100,
+    });
+    expect(out).toContain('45,00,000.00');
+    expect(out).toContain('Quotation deadline');
+    expect(out).toContain('Everest');
+    expect(out).toContain('Open RFQ');
+    expect(out).toMatch(new RegExp(`value="${PR}"[^>]*selected|selected[^>]*value="${PR}"`));
+  });
+});
+
+describe('the quotation entry page', () => {
+  it('lists the purchase request lines and the invited vendors', async () => {
+    const out = await quotePage();
+    expect(out).toContain('Record quotation');
+    expect(out).toContain('Office chair');
+    expect(out).toContain('Everest');
+    expect(out).toContain('Quotation document');
+  });
+
+  it('falls back to an id field for the tax code when the list is not available', async () => {
+    quoteApi.listTaxCodes.mockRejectedValue(apiError(403));
+    expect(await quotePage()).toContain('The tax code list is not available to you');
+  });
+
+  it('a closed RFQ takes no quotation', async () => {
+    rfqApi.getRfq.mockResolvedValue(rfq({ status: 'closed' }));
+    expect(await quotePage()).toContain('This RFQ takes no more quotations');
+  });
+
+  it('converting needs a clean scan and hides the vendor and document fields', async () => {
+    rfqApi.listSubmissions.mockResolvedValue([submission()]);
+    const out = await quotePage({ submission: SUB });
+    expect(out).toContain('Convert to quotation');
+    expect(out).toContain('Himal Traders');
+    expect(out).not.toContain('Quotation document');
+    rfqApi.listSubmissions.mockResolvedValue([submission({ scanStatus: 'infected' })]);
+    expect(await quotePage({ submission: SUB })).toContain('cannot be converted yet');
+    rfqApi.listSubmissions.mockResolvedValue([]);
+    expect(await quotePage({ submission: SUB })).toContain('That submission is not waiting');
+  });
+
+  it('a person without the grant is turned away before the form', async () => {
+    session.roles = ['sales'];
+    const out = await quotePage();
+    expect(out).toContain('Your roles do not include sourcing');
+    expect(out).not.toContain('Record quotation');
+  });
+});
