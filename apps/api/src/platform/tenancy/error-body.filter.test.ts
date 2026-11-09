@@ -289,6 +289,9 @@ describe('ErrorBodyFilter', () => {
     'account_exists',
     'no_verified_bank_account',
     'callback_evidence_not_clean',
+    'VENDOR_NOT_APPROVED',
+    'VENDOR_NOT_IN_ENTITY',
+    'FEWER_THAN_MIN_QUOTES',
   ])('keeps the vendor conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'm' }));
     expect(out.status).toBe(409);
@@ -299,8 +302,19 @@ describe('ErrorBodyFilter', () => {
     ).toBe('bad_request');
   });
 
-  it.each(['evidence_policy_unmet', 'decided_on_in_future'])(
-    'keeps %s on a 422 (quotation outcome, Q3b/PA-3), and only on a 422',
+  it.each([
+    'evidence_policy_unmet',
+    'decided_on_in_future',
+    'over_receipt',
+    'over_receipt_exception_unknown',
+    'po_line_unknown',
+    'duplicate_po_line',
+    'receipt_kind_mismatch',
+    'serials_required',
+    'serials_not_allowed',
+    'serial_duplicate',
+  ])(
+    'keeps %s on a 422 (quotation outcome Q3b/PA-3, goods receipts P4), and only on a 422',
     (code) => {
       const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
 
