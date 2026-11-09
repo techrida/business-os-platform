@@ -65,6 +65,38 @@ export const PERSONAS: readonly PersonaSpec[] = [
     orgKind: 'staff',
     role: 'accountant',
   },
+  // P4 (Kuu D03, AD8). Appended after the frozen P1 personas, so earlier orders and logins do not change.
+  {
+    key: 'procurement',
+    givenName: 'Dev',
+    familyName: 'Procurement',
+    orgKind: 'staff',
+    role: 'procurement',
+  },
+  // Confirms goods receipts (`procurement.receipt.confirm`).
+  {
+    key: 'warehouse',
+    givenName: 'Dev',
+    familyName: 'Warehouse',
+    orgKind: 'staff',
+    role: 'warehouse',
+  },
+  // The head of a department: they are named in departments.head_user_id, which is not a role.
+  {
+    key: 'depthead',
+    givenName: 'Dev',
+    familyName: 'Department Head',
+    orgKind: 'staff',
+    role: 'operations_officer',
+  },
+  // The second Management user: AD8 needs two distinct Management approvers on a Founder's own purchase.
+  {
+    key: 'management2',
+    givenName: 'Dev',
+    familyName: 'Management Two',
+    orgKind: 'staff',
+    role: 'management',
+  },
 ];
 
 /** `.test` is reserved (RFC 2606), so these addresses can never reach a real mailbox. */
