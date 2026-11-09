@@ -252,6 +252,125 @@ describe('route: groups, users, delegation and separation of duties', () => {
   });
 });
 
+describe('route: department-head steps (M8, AD11)', () => {
+  const headSpec = (step: Record<string, unknown> = {}) =>
+    WorkflowSpecSchema.parse({
+      documentType: 'purchase_request',
+      steps: [
+        { id: 'head', kind: 'department_head', reason: 'Department head approval', ...step },
+        { id: 'finance', kind: 'role', role: 'finance', reason: 'Finance approves' },
+      ],
+    });
+  const heads: DirectoryData = {
+    ...people,
+    roleMembers: new Map([...people.roleMembers, ['operations_head', ['ops-1']]]),
+    departmentHeads: new Map([
+      ['dept-1', 'head-1'],
+      ['dept-2', 'head-2'],
+    ]),
+    activeUserIds: new Set(['head-1']),
+  };
+  const headDir = (data: DirectoryData = heads, sodUserIds: string[] = []) =>
+    buildDirectory(data, { now: NOW, documentType: 'purchase_request', sodUserIds });
+
+  it('defaults fallbackRole to operations_head and needs no target field', () => {
+    expect(headSpec().steps[0]).toMatchObject({
+      kind: 'department_head',
+      fallbackRole: 'operations_head',
+    });
+    expect(headSpec({ fallbackRole: 'finance' }).steps[0]).toMatchObject({
+      fallbackRole: 'finance',
+    });
+  });
+
+  it("plans the head of the request's department as the approver", () => {
+    const plan = route(headSpec(), { departmentId: 'dept-1' }, headDir(), ['req-1']);
+    expect(plan.blocked).toBe(false);
+    expect(plan.steps[0]).toEqual({
+      seq: 1,
+      kind: 'department_head',
+      userId: 'head-1',
+      reason: 'Department head approval',
+      eligibleUserIds: ['head-1'],
+      blocked: false,
+    });
+  });
+
+  it("adds the head's active delegate, like a user step", () => {
+    const d = headDir({
+      ...heads,
+      delegations: [
+        {
+          fromUserId: 'head-1',
+          toUserId: 'deputy-9',
+          startsAt: new Date('2026-11-01T00:00:00Z'),
+          endsAt: new Date('2026-11-10T00:00:00Z'),
+          documentType: null,
+          revokedAt: null,
+        },
+      ],
+    });
+    expect(route(headSpec(), { departmentId: 'dept-1' }, d, []).steps[0]).toMatchObject({
+      userId: 'head-1',
+      eligibleUserIds: ['head-1', 'deputy-9'],
+    });
+  });
+
+  it.each([
+    ['the head is the requester (in sodUserIds)', { departmentId: 'dept-1' }, ['head-1']],
+    ['the department has no head', { departmentId: 'dept-none' }, []],
+    ['the head is not an active member of the entity', { departmentId: 'dept-2' }, []],
+    ['the request names no department', {}, []],
+    ['the departmentId fact is not a string', { departmentId: 42 }, []],
+  ])('falls back to operations_head when %s', (_label, facts, sod) => {
+    const plan = route(headSpec(), facts, headDir(heads, sod), sod);
+    expect(plan.blocked).toBe(false);
+    expect(plan.steps[0]).toEqual({
+      seq: 1,
+      kind: 'department_head',
+      roleKey: 'operations_head',
+      reason: 'Department head approval',
+      eligibleUserIds: ['ops-1'],
+      blocked: false,
+    });
+  });
+
+  it('falls back to the configured fallbackRole', () => {
+    const plan = route(headSpec({ fallbackRole: 'management' }), {}, headDir(), []);
+    expect(plan.steps[0]).toMatchObject({ roleKey: 'management', eligibleUserIds: ['mgmt-1'] });
+  });
+
+  it('never lets the requester approve as the fallback either', () => {
+    const plan = route(headSpec(), { departmentId: 'dept-1' }, headDir(heads, ['head-1']), [
+      'head-1',
+    ]);
+    expect(plan.steps[0]?.eligibleUserIds).not.toContain('head-1');
+  });
+
+  it('blocks the plan when the head falls back and the fallback role is empty', () => {
+    const data = { ...heads, roleMembers: people.roleMembers };
+    const plan = route(headSpec(), { departmentId: 'dept-1' }, headDir(data, ['head-1']), [
+      'head-1',
+    ]);
+    expect(plan.steps[0]).toMatchObject({
+      kind: 'department_head',
+      roleKey: 'operations_head',
+      eligibleUserIds: [],
+      blocked: true,
+    });
+    expect(plan.blocked).toBe(true);
+    expect(plan.blockReason).toBe(
+      'Step 1 (department head, fallback role operations_head) has no eligible approver after separation of duties',
+    );
+  });
+
+  it('leaves the other step kinds untouched by a department-head directory', () => {
+    expect(route(seedSpec, { amountNpr: '10' }, headDir(), []).steps).toEqual(
+      route(seedSpec, { amountNpr: '10' }, dir, []).steps,
+    );
+  });
+});
+
 describe('route: distinct approvers across a request (R12)', () => {
   // u-1 holds both roles and is finance's only member, so after u-1 decides step 1, step 2 has nobody.
   const spec = (distinctApprovers: boolean) =>
