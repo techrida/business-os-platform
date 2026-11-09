@@ -1,0 +1,190 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
+vi.mock('@/lib/bff', () => ({
+  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+}));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+
+const api = vi.hoisted(() => ({
+  getPurchaseOrder: vi.fn(),
+  issuePurchaseOrder: vi.fn(),
+  amendPurchaseOrder: vi.fn(),
+  shortClosePurchaseOrder: vi.fn(),
+  cancelPurchaseOrder: vi.fn(),
+}));
+vi.mock('@/lib/api-purchase-orders', () => api);
+
+const { amendAction, cancelAction, issueAction, shortCloseAction } = await import('./actions');
+
+const PO = '11111111-1111-4111-8111-111111111111';
+const LINE = '22222222-2222-4222-8222-222222222222';
+const KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const prev = { key: KEY };
+
+const apiError = (status: number, code: string, extra: Record<string, unknown> = {}) =>
+  new ApiError(status, 'x', {
+    error: { code, message: 'internal wording', correlationId: 'corr-12345678', ...extra },
+  });
+
+function form(fields: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+}
+const base = { purchaseOrderId: PO, idempotencyKey: KEY };
+
+const currentOrder = {
+  id: PO,
+  paymentTermsDays: 30,
+  currentVersion: 1,
+  lines: [{ id: LINE, orderedQuantity: '10.0000', unitPrice: '1000.00' }],
+};
+
+beforeEach(() => {
+  session.roles = ['procurement'];
+  for (const fn of Object.values(api)) fn.mockReset();
+  api.getPurchaseOrder.mockResolvedValue(currentOrder);
+});
+
+describe('issueAction', () => {
+  it('sends the form key to the API and says it is done', async () => {
+    api.issuePurchaseOrder.mockResolvedValue({ ...currentOrder, number: 'PO-1' });
+    const out = await issueAction(prev, form(base));
+    expect(api.issuePurchaseOrder).toHaveBeenCalledWith(expect.anything(), PO, KEY);
+    expect(out.done).toMatch(/issued/i);
+    expect(out.error).toBeUndefined();
+  });
+
+  it('shows VENDOR_NOT_APPROVED plainly and rotates the key (a definite answer)', async () => {
+    api.issuePurchaseOrder.mockRejectedValue(apiError(409, 'VENDOR_NOT_APPROVED'));
+    const out = await issueAction(prev, form(base));
+    expect(out.error).toMatch(/vendor is not approved/i);
+    expect(out.key).not.toBe(KEY);
+    expect(out.done).toBeUndefined();
+  });
+
+  it('shows PO_HAS_NO_LINES and VENDOR_NOT_IN_ENTITY plainly', async () => {
+    api.issuePurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_NO_LINES'));
+    expect((await issueAction(prev, form(base))).error).toMatch(/no lines/i);
+    api.issuePurchaseOrder.mockRejectedValue(apiError(409, 'VENDOR_NOT_IN_ENTITY'));
+    expect((await issueAction(prev, form(base))).error).toMatch(/legal entity/i);
+  });
+
+  it('keeps the same key after a timeout, a 5xx or the in-progress 409', async () => {
+    for (const e of [
+      apiError(503, 'x'),
+      apiError(408, 'x'),
+      apiError(409, 'conflict', { message: 'A request with this Idempotency-Key is in progress' }),
+      new Error('socket hang up'),
+    ]) {
+      api.issuePurchaseOrder.mockRejectedValue(e);
+      expect((await issueAction(prev, form(base))).key).toBe(KEY);
+    }
+  });
+
+  it('refuses a person without procurement.po.issue before any API call', async () => {
+    session.roles = ['warehouse'];
+    const out = await issueAction(prev, form(base));
+    expect(out.error).toMatch(/roles do not include/i);
+    expect(api.issuePurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it('replaces a key that is not ours, and refuses an id that is not a UUID', async () => {
+    api.issuePurchaseOrder.mockResolvedValue({});
+    await issueAction(prev, form({ ...base, idempotencyKey: 'x; drop table' }));
+    expect(api.issuePurchaseOrder.mock.calls[0]?.[2]).not.toBe('x; drop table');
+    api.issuePurchaseOrder.mockClear();
+    const out = await issueAction(prev, form({ ...base, purchaseOrderId: '../admin' }));
+    expect(out.reload).toBe(true);
+    expect(api.issuePurchaseOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe('amendAction', () => {
+  const fields = {
+    ...base,
+    reason: 'Vendor raised the price',
+    paymentTerms: '30',
+    [`qty:${LINE}`]: '10',
+    [`price:${LINE}`]: '1100',
+  };
+
+  it('sends only what changed and tells the person the order is waiting for approval', async () => {
+    api.amendPurchaseOrder.mockResolvedValue({
+      outcome: 'pending_approval',
+      approvalRequestId: LINE,
+      purchaseOrder: { ...currentOrder, status: 'amendment_pending' },
+    });
+    const out = await amendAction(prev, form(fields));
+    expect(api.amendPurchaseOrder).toHaveBeenCalledWith(
+      expect.anything(),
+      PO,
+      { reason: 'Vendor raised the price', lines: [{ poLineId: LINE, unitPrice: '1100' }] },
+      KEY,
+    );
+    expect(out.done).toMatch(/approval/i);
+  });
+
+  it('says a new version was issued when the change was applied', async () => {
+    api.amendPurchaseOrder.mockResolvedValue({
+      outcome: 'applied',
+      approvalRequestId: null,
+      purchaseOrder: { ...currentOrder, currentVersion: 2 },
+    });
+    expect((await amendAction(prev, form(fields))).done).toMatch(/version 2/i);
+  });
+
+  it('refuses a form that changes nothing without calling the API', async () => {
+    const out = await amendAction(prev, form({ ...fields, [`price:${LINE}`]: '1000' }));
+    expect(out.errors?.['lines']).toBeDefined();
+    expect(api.amendPurchaseOrder).not.toHaveBeenCalled();
+    expect(out.key).toBe(KEY);
+  });
+
+  it('words a 422 amendment refusal', async () => {
+    api.amendPurchaseOrder.mockRejectedValue(apiError(422, 'PO_AMENDMENT_INVALID'));
+    expect((await amendAction(prev, form(fields))).error).toMatch(/received plus cancelled/i);
+  });
+
+  it('refuses without the grant before reading the order', async () => {
+    session.roles = ['sales'];
+    const out = await amendAction(prev, form(fields));
+    expect(out.error).toMatch(/roles do not include/i);
+    expect(api.getPurchaseOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe('shortCloseAction and cancelAction', () => {
+  it('need a reason, then send it with the key', async () => {
+    const none = await cancelAction(prev, form({ ...base, reason: '  ' }));
+    expect(none.errors?.['reason']).toBeDefined();
+    expect(api.cancelPurchaseOrder).not.toHaveBeenCalled();
+
+    api.cancelPurchaseOrder.mockResolvedValue({});
+    const out = await cancelAction(prev, form({ ...base, reason: 'Ordered twice' }));
+    expect(api.cancelPurchaseOrder).toHaveBeenCalledWith(
+      expect.anything(),
+      PO,
+      'Ordered twice',
+      KEY,
+    );
+    expect(out.done).toMatch(/cancelled/i);
+
+    api.shortClosePurchaseOrder.mockResolvedValue({});
+    expect(
+      (await shortCloseAction(prev, form({ ...base, reason: 'Rest not needed' }))).done,
+    ).toMatch(/short-closed/i);
+  });
+
+  it('shows PO_HAS_RECEIPTS in plain words on cancel', async () => {
+    api.cancelPurchaseOrder.mockRejectedValue(apiError(409, 'PO_HAS_RECEIPTS'));
+    const out = await cancelAction(prev, form({ ...base, reason: 'x' }));
+    expect(out.error).toMatch(/already been received/i);
+    expect(out.key).not.toBe(KEY);
+  });
+});
