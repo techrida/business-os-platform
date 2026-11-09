@@ -17,9 +17,11 @@ import {
 } from './db-seed.js';
 import { PgTenancyStore, SEED_PARTIES, tenancySeed } from './index.js';
 import {
+  MATCH_EXCEPTION_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
+  VENDOR_BILL_WORKFLOW_SPEC,
 } from './workflow-specs.js';
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1', correlationId: 'corr-1' };
@@ -108,9 +110,9 @@ describe('seedKernelRows', () => {
       index('INTO app.authz_versions'),
     );
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
-    // grants + authz bump + 5 x (definition + version + current_version_id) + fx peg
+    // grants + authz bump + 7 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 5 * 3 + 1 + 3 + 2 + 2);
+    expect(changed).toBe(grantCount + 1 + 7 * 3 + 1 + 3 + 2 + 2);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -279,7 +281,7 @@ describe('seedKernelRows: P2 quotation reference data', () => {
       'quotation_version',
     ]);
     const versions = calls.filter((c) => c.text.includes('INTO app.workflow_versions'));
-    expect(versions).toHaveLength(5);
+    expect(versions).toHaveLength(7);
     const quotation = versions.find((c) => {
       const spec = JSON.parse(String(c.values[3])) as { documentType: string };
       return spec.documentType === 'quotation_version';
@@ -352,10 +354,10 @@ describe('seedKernelRows: P2 quotation reference data', () => {
     };
     const first = fakeClient(stateful);
     await seedKernelRows(first.client, scope);
-    // 3 tax codes + 2 payment terms + 5 definitions (version rows share def-1 here, so 1 key)
+    // 3 tax codes + 2 payment terms + 7 definitions (version rows share def-1 here, so 1 key)
     expect([...keys].filter((k) => k.startsWith('tax|'))).toHaveLength(3);
     expect([...keys].filter((k) => k.startsWith('term|'))).toHaveLength(2);
-    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(5);
+    expect([...keys].filter((k) => k.startsWith('def|'))).toHaveLength(7);
 
     const second = fakeClient(stateful);
     expect(await seedKernelRows(second.client, scope)).toBe(0);
@@ -416,7 +418,33 @@ describe('seedKernelRows: P4 purchasing', () => {
     );
   });
 
-  it('seeds the workflow definitions in a stable order, with po_amendment last', async () => {
+  it('seeds vendor_bill and match_exception for the entity, keyed by their document type', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+
+    expect(definitionOf(calls, 'vendor_bill')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'vendor_bill',
+      'Vendor bill approval',
+      'vendor_bill',
+    ]);
+    expect(definitionOf(calls, 'match_exception')?.values).toEqual([
+      'tenant-1',
+      'org-1',
+      'match_exception',
+      'Match exception approval',
+      'match_exception',
+    ]);
+    expect(specOf(calls, 'vendor_bill')).toEqual(
+      WorkflowSpecSchema.parse(VENDOR_BILL_WORKFLOW_SPEC),
+    );
+    expect(specOf(calls, 'match_exception')).toEqual(
+      WorkflowSpecSchema.parse(MATCH_EXCEPTION_WORKFLOW_SPEC),
+    );
+  });
+
+  it('seeds the workflow definitions in a stable order, with match_exception last', async () => {
     const { client, calls } = fakeClient(firstRun);
     await seedKernelRows(client, scope);
     const keys = calls
@@ -428,6 +456,8 @@ describe('seedKernelRows: P4 purchasing', () => {
       'purchase_request',
       'pr_commitment',
       'po_amendment',
+      'vendor_bill',
+      'match_exception',
     ]);
   });
 
@@ -896,6 +926,8 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       ],
       ['tenant-uuid', 'org-uuid', 'pr_commitment', 'Purchase commitment approval', 'pr_commitment'],
       ['tenant-uuid', 'org-uuid', 'po_amendment', 'Purchase order amendment', 'po_amendment'],
+      ['tenant-uuid', 'org-uuid', 'vendor_bill', 'Vendor bill approval', 'vendor_bill'],
+      ['tenant-uuid', 'org-uuid', 'match_exception', 'Match exception approval', 'match_exception'],
     ]);
     expect(first.closed()).toBe(1);
 
