@@ -292,6 +292,8 @@ export class ApprovalsService {
     const action = parsed.data;
     const { scope, actor, principal } = this.caller.current();
     const userId = principal.userId;
+    // Refuse unassigned callers before acquiring the row lock; repeat eligibility under the lock.
+    await this.eligibleRequest(requestId, { action, idempotencyKey });
 
     return withTx(this.db, scope, actor, async (tx) => {
       const now = this.clock();
