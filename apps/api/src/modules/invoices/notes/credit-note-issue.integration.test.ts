@@ -202,6 +202,30 @@ async function issuedInvoice(): Promise<string> {
   return draft.invoice.id;
 }
 
+/** An issued NPR manual tax invoice of two equal lines: 2 x 500.00 + 2 x 500.00 at VAT 13% = 2,260.00. */
+async function issuedTwoLineInvoice(): Promise<string> {
+  as(U.acc, 'accountant');
+  const line = (description: string) => ({
+    description,
+    uom: 'day',
+    quantity: '2',
+    unitPrice: '500.00',
+    taxCodeId: f.taxCodeVat13Id,
+  });
+  const draft = await drafting.draftManual(
+    {
+      customerId: f.customerPartyId,
+      currency: 'NPR',
+      manualReason: 'Two equal lines',
+      lines: [line('Design'), line('Build')],
+    },
+    key(),
+  );
+  await forceApproved(draft.invoice.id);
+  await issueAs(draft.invoice.id);
+  return draft.invoice.id;
+}
+
 /** An approved credit note on `original` for `quantity` of each listed original line (default: line 1). */
 async function approvedCredit(
   original: string,
@@ -598,6 +622,63 @@ describe('credit-note issue: settlement and release (done checks 7 and 8)', () =
     expect(again.id).not.toBe(original);
     expect((await invoiceRow(again.id)).status).toBe('draft');
     await expectNoNegativeOpenAmount();
+  });
+});
+
+describe('credit-note issue: credited in full means every line (U12D)', () => {
+  it('a full credit split over one note per line marks the original only when the second, completing note issues', async () => {
+    const original = await issuedTwoLineInvoice();
+    const first = await approvedCredit(original, [{ originalLineNo: 1, quantity: '2' }]);
+    await issueAs(first);
+    expect((await invoiceRow(original)).creditedInFullAt).toBeNull();
+
+    const second = await approvedCredit(original, [{ originalLineNo: 2, quantity: '2' }]);
+    await issueAs(second);
+    expect((await invoiceRow(original)).creditedInFullAt).not.toBeNull();
+    expect(await settlementOf(original)).toMatchObject({
+      openAmount: '0.00',
+      settlement: 'credited',
+    });
+    await expectNoNegativeOpenAmount();
+  });
+
+  it('issue rechecks the line cap: a note that reached line 1 past the draft check is refused, and the original is not marked though the totals match', async () => {
+    const original = await issuedTwoLineInvoice();
+    const [line1] = await db
+      .select({ id: invoiceLines.id })
+      .from(invoiceLines)
+      .where(and(eq(invoiceLines.invoiceId, original), eq(invoiceLines.lineNo, 1)));
+    const first = await approvedCredit(original, [{ originalLineNo: 1, quantity: '2' }]);
+
+    // A second note drafted on line 2, then (while still a draft, as a writer that skipped the service would) pointed
+    // at line 1. Its total equals what is left of the original's total, so only the per-line recheck at issue sees it.
+    as(U.fin, 'finance');
+    const drafted = await notes.draftCreditNote(
+      {
+        originalInvoiceId: original,
+        reason: 'Not delivered',
+        lines: [{ originalLineNo: 2, quantity: '2' }],
+      },
+      key(),
+    );
+    const rogue = drafted.invoice.id;
+    await withTx(db, scopeA, systemActor('cn-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.invoice_lines SET original_line_id = ${line1!.id} WHERE invoice_id = ${rogue}`,
+      ),
+    );
+    await forceApproved(rogue);
+
+    await issueAs(first);
+    const err = await issueAs(rogue).catch((e: unknown) => e);
+    expect((err as HttpException).getStatus()).toBe(409);
+    expect((err as HttpException).getResponse()).toMatchObject({
+      code: 'CREDIT_EXCEEDS_INVOICE',
+      details: { originalLineNo: 1 },
+    });
+    expect((await invoiceRow(rogue)).status).toBe('approved');
+    expect((await invoiceRow(original)).creditedInFullAt).toBeNull();
+    expect(await itemOf(rogue)).toHaveLength(0);
   });
 });
 
