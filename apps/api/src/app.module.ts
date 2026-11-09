@@ -10,6 +10,7 @@ import { OpportunitiesModule } from './modules/opportunities/opportunities.modul
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { QuotationsModule } from './modules/quotations/quotations.module';
+import { SalesOrdersModule } from './modules/sales-orders/sales-orders.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
 import { VerificationModule } from './modules/verification/verification.module';
@@ -58,6 +59,7 @@ import { UsersModule } from './platform/users/users.module';
     TestMemoModule,
     // P3: the AR/AP subledger writer.
     LedgerModule,
+    SalesOrdersModule,
     CustomersModule,
     OpportunitiesModule,
     LeadsModule,
