@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { Session } from '@/lib/session';
+import { listTaxCodes } from '@/lib/api-tax-codes';
 
 import * as api from './api';
 import type { ContactOption } from './quote-builder';
@@ -16,7 +17,7 @@ export interface Lookups {
 /** The three lists the form's selects need. A failed list degrades that select; it never fails the page. */
 export async function loadLookups(session: Session, customerId: string): Promise<Lookups> {
   const [tax, terms, contacts] = await Promise.allSettled([
-    api.listTaxCodes(session),
+    listTaxCodes(session),
     api.listPaymentTerms(session),
     api.listContacts(session, customerId),
   ]);
