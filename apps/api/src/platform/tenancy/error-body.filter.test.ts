@@ -516,4 +516,44 @@ describe('ErrorBodyFilter', () => {
       'internal',
     ]);
   });
+
+  it.each([
+    'DUPLICATE_BILL',
+    'BILL_NOT_MATCHED',
+    'PO_NOT_BILLABLE',
+    'MATCH_NOT_REQUIRED',
+    'BILL_NOT_POSTED',
+    'BILL_HAS_ALLOCATIONS',
+  ])('keeps the vendor bill conflict code %s on a 409, and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'm' }));
+    expect(out.status).toBe(409);
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe(code);
+    expect(
+      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+        .error.code,
+    ).toBe('bad_request');
+  });
+
+  it.each([
+    'BILL_KIND_NOT_SUPPORTED',
+    'CURRENCY_NOT_SUPPORTED',
+    'SUBMISSION_NOT_SUPPORTED',
+    'DOCUMENT_NOT_FOUND',
+    'PO_REQUIRED',
+    'PO_LINE_REQUIRED',
+    'PO_LINE_NOT_FOUND',
+    'RECEIPT_LINE_NOT_FOUND',
+    'PO_VENDOR_MISMATCH',
+    'TAX_CODE_NOT_FOUND',
+    'WITHHOLDING_CODE_NOT_FOUND',
+  ])('keeps the vendor bill refusal code %s on a 422, and only on a 422', (code) => {
+    const out = filter(new UnprocessableEntityException({ code, message: 'Not accepted' }));
+    expect(out.status).toBe(422);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('Not accepted');
+    expect(
+      ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
+    ).toBe('conflict');
+  });
 });

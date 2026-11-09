@@ -79,6 +79,23 @@ export type ErrorCode =
   | 'PO_HAS_RECEIPTS'
   | 'PO_HAS_NO_LINES'
   | 'PO_AMENDMENT_INVALID'
+  | 'DUPLICATE_BILL'
+  | 'BILL_NOT_MATCHED'
+  | 'PO_NOT_BILLABLE'
+  | 'MATCH_NOT_REQUIRED'
+  | 'BILL_NOT_POSTED'
+  | 'BILL_HAS_ALLOCATIONS'
+  | 'BILL_KIND_NOT_SUPPORTED'
+  | 'CURRENCY_NOT_SUPPORTED'
+  | 'SUBMISSION_NOT_SUPPORTED'
+  | 'DOCUMENT_NOT_FOUND'
+  | 'PO_REQUIRED'
+  | 'PO_LINE_REQUIRED'
+  | 'PO_LINE_NOT_FOUND'
+  | 'RECEIPT_LINE_NOT_FOUND'
+  | 'PO_VENDOR_MISMATCH'
+  | 'TAX_CODE_NOT_FOUND'
+  | 'WITHHOLDING_CODE_NOT_FOUND'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -164,6 +181,23 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   PO_HAS_RECEIPTS: 'Goods or services were received on this purchase order',
   PO_HAS_NO_LINES: 'The purchase order has no lines',
   PO_AMENDMENT_INVALID: 'This amendment cannot be applied to the purchase order',
+  DUPLICATE_BILL: 'This vendor already has a bill with this invoice number in the fiscal year',
+  BILL_NOT_MATCHED: 'Every line must match, or a match exception be approved, to submit this bill',
+  PO_NOT_BILLABLE: 'A purchase order in this status cannot be billed',
+  MATCH_NOT_REQUIRED: 'A bill without a purchase order is not matched',
+  BILL_NOT_POSTED: 'This bill has no payable item to void yet',
+  BILL_HAS_ALLOCATIONS: 'Part of this bill is already paid or settled, so it cannot be voided',
+  BILL_KIND_NOT_SUPPORTED: 'Only bills can be keyed in for now',
+  CURRENCY_NOT_SUPPORTED: 'Only NPR bills can be keyed in for now',
+  SUBMISSION_NOT_SUPPORTED: 'Converting a portal submission is not available yet',
+  DOCUMENT_NOT_FOUND: 'The invoice file was not found',
+  PO_REQUIRED: 'A line linked to a purchase order line needs the purchase order',
+  PO_LINE_REQUIRED: 'A bill line needs its purchase order line',
+  PO_LINE_NOT_FOUND: 'A bill line names a purchase order line that is not on this order',
+  RECEIPT_LINE_NOT_FOUND: 'A receipt line is not a receipt of its purchase order line',
+  PO_VENDOR_MISMATCH: 'The purchase order is for another vendor',
+  TAX_CODE_NOT_FOUND: 'A tax code was not found',
+  WITHHOLDING_CODE_NOT_FOUND: 'A withholding code was not found',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -259,6 +293,14 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // throws VENDOR_NOT_APPROVED and VENDOR_NOT_IN_ENTITY.
   'PO_HAS_RECEIPTS',
   'PO_HAS_NO_LINES',
+  // P4 vendor bills (payables): a duplicate invoice number, a PO that cannot be billed, a bill not matched or
+  // not required to match, and a void of a bill with no payable item or with payments already allocated.
+  'DUPLICATE_BILL',
+  'BILL_NOT_MATCHED',
+  'PO_NOT_BILLABLE',
+  'MATCH_NOT_REQUIRED',
+  'BILL_NOT_POSTED',
+  'BILL_HAS_ALLOCATIONS',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -299,6 +341,19 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'serial_duplicate',
   // P4 purchase orders: an amendment names a line of another order, changes nothing, or cuts below what arrived.
   'PO_AMENDMENT_INVALID',
+  // P4 vendor bills (payables): what the bill entry and the match refuse (a request the server will not take
+  // as it stands: an unsupported kind, currency or submission, or a file, PO, line or code it cannot find).
+  'BILL_KIND_NOT_SUPPORTED',
+  'CURRENCY_NOT_SUPPORTED',
+  'SUBMISSION_NOT_SUPPORTED',
+  'DOCUMENT_NOT_FOUND',
+  'PO_REQUIRED',
+  'PO_LINE_REQUIRED',
+  'PO_LINE_NOT_FOUND',
+  'RECEIPT_LINE_NOT_FOUND',
+  'PO_VENDOR_MISMATCH',
+  'TAX_CODE_NOT_FOUND',
+  'WITHHOLDING_CODE_NOT_FOUND',
 ];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
