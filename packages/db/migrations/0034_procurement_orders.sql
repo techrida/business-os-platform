@@ -34,6 +34,8 @@
 --     (receipt_lines_reversal_check, receipt_lines_guard). A reversal is always a full reversal of a positive line
 --     (AD16: no vendor returns beyond that) and each receipt and each line is reversed at most once. A receipt line
 --     repeats purchase_order_id, so it can only receive against a line of its own PO.
+--   * A reversal line is never deleted, because that would reopen the reversed quantity: receipt_lines_guard
+--     refuses the DELETE of a negative line (a reversal is a new negative receipt, never an edit).
 --   * Over-receipt: receipt_lines_guard refuses a positive line when the net quantity received on the PO line
 --     (every receipt line of it, whatever the receipt status, so a reversed receipt nets to zero against its
 --     reversal and two drafts cannot both claim the same units) would exceed ordered - cancelled, unless the line
@@ -342,7 +344,9 @@ CREATE TRIGGER "purchase_order_versions_immutable" BEFORE UPDATE OR DELETE ON "a
 FOR EACH ROW EXECUTE FUNCTION "app"."purchase_order_versions_immutable"();
 --> statement-breakpoint
 
--- receipt_lines: the two rules a CHECK cannot hold.
+-- receipt_lines: the rules a CHECK cannot hold.
+--   * Delete: a reversal line (negative quantity) cannot be deleted; the quantity it took off would come back and
+--     the line could be received again. Positive lines (a draft's, say) may still be deleted.
 --   * Reversal: a line that reverses another must reverse the whole of it (NEW.quantity = -the original), and sit in
 --     the receipt that reverses the original's receipt; a line of a reversal receipt must be a reversal line.
 --   * Over-receipt: a positive line may not take the net quantity received on its PO line above ordered - cancelled
@@ -361,6 +365,13 @@ DECLARE
 	v_open numeric;
 	v_received numeric;
 BEGIN
+	IF TG_OP = 'DELETE' THEN
+		IF OLD."quantity" < 0 THEN
+			RAISE EXCEPTION '%: reversal line % cannot be deleted', TG_TABLE_NAME, OLD."id"
+				USING ERRCODE = 'check_violation', CONSTRAINT = TG_TABLE_NAME || '_reversal_delete_check';
+		END IF;
+		RETURN OLD;
+	END IF;
 	SELECT r."reverses_receipt_id" INTO v_reverses_receipt FROM "app"."receipts" r
 	 WHERE r."tenant_id" = NEW."tenant_id" AND r."id" = NEW."receipt_id";
 	IF NEW."reverses_receipt_line_id" IS NOT NULL THEN
@@ -390,7 +401,7 @@ $$;
 --> statement-breakpoint
 REVOKE EXECUTE ON FUNCTION "app"."receipt_lines_guard"() FROM PUBLIC;
 --> statement-breakpoint
-CREATE TRIGGER "receipt_lines_guard" BEFORE INSERT OR UPDATE ON "app"."receipt_lines"
+CREATE TRIGGER "receipt_lines_guard" BEFORE INSERT OR UPDATE OR DELETE ON "app"."receipt_lines"
 FOR EACH ROW EXECUTE FUNCTION "app"."receipt_lines_guard"();
 --> statement-breakpoint
 
