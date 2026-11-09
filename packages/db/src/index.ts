@@ -53,3 +53,4 @@ export * from './schema/ledger.js';
 export * from './schema/sales.js';
 export * from './schema/invoicing.js';
 export * from './schema/payments.js';
+export * from './schema/vendors.js';
