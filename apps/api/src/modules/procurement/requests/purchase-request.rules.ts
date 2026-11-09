@@ -122,6 +122,7 @@ export interface PurchaseRequestLineInsert {
   lineNo: number;
   description: string;
   specification: string | null;
+  requiresSerials: boolean;
   uom: string;
   quantity: string;
   estimatedUnitPrice: string;
@@ -134,6 +135,7 @@ export function lineRowsOf(lines: readonly PurchaseRequestLineBody[]): PurchaseR
     lineNo: i + 1,
     description: l.description,
     specification: l.specification ?? null,
+    requiresSerials: l.requiresSerials ?? false,
     uom: l.uom,
     quantity: l.quantity,
     estimatedUnitPrice: l.estimatedUnitPrice,
@@ -171,6 +173,7 @@ export interface PurchaseRequestLineRow {
   lineNo: number;
   description: string;
   specification: string | null;
+  requiresSerials?: boolean;
   uom: string;
   quantity: string;
   estimatedUnitPrice: string;
@@ -213,6 +216,7 @@ export function buildApprovalSnapshot(i: {
       lines: i.lines.map((l) => ({
         lineNo: l.lineNo,
         description: l.description,
+        requiresSerials: l.requiresSerials ?? false,
         uom: l.uom,
         quantity: l.quantity,
         estimatedUnitPrice: l.estimatedUnitPrice,
@@ -231,6 +235,7 @@ export interface PurchaseRequestLineDto {
   lineNo: number;
   description: string;
   specification: string | null;
+  requiresSerials: boolean;
   uom: string;
   /** numeric(18,4) as stored, e.g. "2.0000". */
   quantity: string;
@@ -319,6 +324,7 @@ export function toDto(
         lineNo: l.lineNo,
         description: l.description,
         specification: l.specification,
+        requiresSerials: l.requiresSerials ?? false,
         uom: l.uom,
         quantity: l.quantity,
         estimatedUnitPrice: l.estimatedUnitPrice,

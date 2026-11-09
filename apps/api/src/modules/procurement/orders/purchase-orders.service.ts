@@ -664,6 +664,7 @@ export class PurchaseOrdersService {
           lineNo: i + 1,
           prLineId: r.pr.id,
           kind,
+          requiresSerials: kind === 'goods' && r.pr.requiresSerials,
           description: r.pr.description,
           uom: r.pr.uom,
           orderedQuantity: r.q.quantity,
