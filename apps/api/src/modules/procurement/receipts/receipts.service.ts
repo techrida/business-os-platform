@@ -23,6 +23,7 @@ import {
   receiptSerials,
   receipts,
   scoped,
+  vendors,
 } from '@bos/db';
 import { kathmanduDate } from '@bos/locale';
 import {
@@ -72,6 +73,7 @@ export const RECEIPTS_CLOCK = Symbol('RECEIPTS_CLOCK');
 
 const CONFIRM_ACTION: Permission = 'procurement.receipt.confirm';
 const READ_ACTION: Permission = 'procurement.pr.read';
+const BILL_ENTER_ACTION: Permission = 'payables.bill.enter';
 /** The grants this module works with: holding none of them is a 403 before any read. */
 const MODULE_ACTIONS: readonly Permission[] = [
   CONFIRM_ACTION,
@@ -189,10 +191,20 @@ export class ReceiptsService {
 
   /** Ordered, received (confirmed, net of reversals), still open and billed per PO line. */
   async progress(purchaseOrderId: string): Promise<PoProgress> {
-    this.assertStaffWithAccess();
+    this.assertStaffWithAccess(true);
     const { scope } = this.caller.current();
-    const po = await this.readPo(this.db, scope, purchaseOrderId);
-    this.assertMayRead(await this.requestOf(this.db, scope, po));
+    const [row] = await this.db
+      .select({ po: purchaseOrders, vendorName: vendors.legalName })
+      .from(purchaseOrders)
+      .innerJoin(
+        vendors,
+        and(eq(vendors.tenantId, purchaseOrders.tenantId), eq(vendors.id, purchaseOrders.vendorId)),
+      )
+      .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, purchaseOrderId)))
+      .limit(1);
+    if (row === undefined) throw notFound('Purchase order');
+    const { po, vendorName } = row;
+    this.assertMayRead(await this.requestOf(this.db, scope, po), true);
     const lines = await this.db
       .select()
       .from(purchaseOrderLines)
@@ -201,6 +213,8 @@ export class ReceiptsService {
     const quantities = await this.quantitiesOf(this.db, scope, po.id);
     return {
       purchaseOrderId: po.id,
+      vendorId: po.vendorId,
+      vendorName,
       number: po.number,
       status: po.status,
       lines: progressRowsOf(lines.map(poFacts), quantities),
@@ -754,12 +768,14 @@ export class ReceiptsService {
 
   /**
    * First check of every public method, before any read: an active staff caller who holds at least one of the
-   * grants this module works with. A portal user, an inactive user or a role with none of them (an accountant)
-   * is 403 whatever id they guess, so the answer never tells an existing id from a missing one.
+   * grants this module works with. Only the progress read also accepts payables.bill.enter. A portal user, an
+   * inactive user or a role with none of the applicable grants is 403 whatever id they guess.
    */
-  private assertStaffWithAccess(): void {
+  private assertStaffWithAccess(allowBillEnter = false): void {
     const { principal } = this.caller.current();
-    const holds = MODULE_ACTIONS.some((a) => principal.grants.has(a));
+    const holds =
+      MODULE_ACTIONS.some((a) => principal.grants.has(a)) ||
+      (allowBillEnter && principal.grants.has(BILL_ENTER_ACTION));
     if (principal.status !== 'active' || principal.orgKind !== 'staff' || !holds) {
       throw new ForbiddenException({
         code: 'forbidden',
@@ -790,10 +806,21 @@ export class ReceiptsService {
 
   /**
    * Who may read a PO's receipts and progress: whoever may confirm receipts, or may read the purchase request
-   * (procurement, or the requester under `own` scope). A caller outside both is 403 without any grant and 404
-   * when a grant does not reach this record, so a guessed id is not confirmed.
+   * (procurement, or the requester under `own` scope). The progress read also accepts payables.bill.enter on this
+   * record. A caller outside the applicable grants is 403 without any grant and 404 when a grant does not reach it.
    */
-  private assertMayRead(pr: RequestFacts): void {
+  private assertMayRead(pr: RequestFacts, allowBillEnter = false): void {
+    let billEnterOutOfScope = false;
+    if (allowBillEnter) {
+      try {
+        this.authz.assert(BILL_ENTER_ACTION, refOf(pr));
+        return;
+      } catch (error) {
+        if (!(error instanceof ForbiddenException)) throw error;
+        billEnterOutOfScope =
+          (error.getResponse() as { reason?: unknown }).reason === 'out_of_scope';
+      }
+    }
     try {
       this.authz.assert(CONFIRM_ACTION, refOf(pr));
       return;
@@ -807,7 +834,7 @@ export class ReceiptsService {
         error instanceof ForbiddenException
           ? (error.getResponse() as { reason?: unknown }).reason
           : undefined;
-      if (reason === 'out_of_scope') throw notFound('Purchase order');
+      if (reason === 'out_of_scope' || billEnterOutOfScope) throw notFound('Purchase order');
       throw error;
     }
   }

@@ -244,6 +244,8 @@ export interface PoProgressLine {
 
 export interface PoProgress {
   purchaseOrderId: string;
+  vendorId: string;
+  vendorName: string;
   number: string;
   status: PoStatus;
   lines: PoProgressLine[];
