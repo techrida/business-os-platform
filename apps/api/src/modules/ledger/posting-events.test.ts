@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { POSTING_EVENTS as SCHEMA_POSTING_EVENTS } from '@bos/db';
 import { describe, expect, it } from 'vitest';
 
-import { P3_POSTING_EVENTS, P4_POSTING_EVENTS, POSTING_EVENTS, isPostingEvent } from './posting-events';
+import {
+  P3_POSTING_EVENTS,
+  P4_POSTING_EVENTS,
+  POSTING_EVENTS,
+  isPostingEvent,
+} from './posting-events';
 
 // The PostingEvent union must name exactly the events the database accepts: a missing value is a type that
 // cannot be written, an extra one an INSERT that fails on posting_events_event_check at run time.
