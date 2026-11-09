@@ -3,8 +3,12 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 const session = vi.hoisted(() => ({ roles: ['finance'] as string[] }));
-const api = vi.hoisted(() => ({ listPaymentRequests: vi.fn(), getPaymentRequest: vi.fn() }));
-vi.mock('@/lib/bff', () => ({ requireStaffSession: async () => session }));
+const api = vi.hoisted(() => ({
+  listPaymentRequests: vi.fn(),
+  getPaymentRequest: vi.fn(),
+  listPaymentRequestItems: vi.fn(),
+}));
+vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve(session) }));
 vi.mock('@/lib/api-payables', () => api);
 vi.mock('next/navigation', () => ({
   notFound: () => {
@@ -46,6 +50,20 @@ beforeEach(() => {
   session.roles = ['finance'];
   api.listPaymentRequests.mockResolvedValue([record]);
   api.getPaymentRequest.mockResolvedValue(record);
+  api.listPaymentRequestItems.mockResolvedValue([
+    {
+      openItemId: id,
+      vendorPartyId: id,
+      vendorName: 'Himal Supplies',
+      vendorBillId: id,
+      billNumber: 'BILL-1',
+      vendorInvoiceNo: 'INV-1',
+      currency: 'NPR',
+      openAmount: '100.00',
+      claimedAmount: '10.00',
+      availableAmount: '90.00',
+    },
+  ]);
 });
 
 it('lists the server total and links to new and detail screens', async () => {
@@ -77,6 +95,24 @@ it('shows controlled entry fields for the vendor, source account and bill items'
   expect(html).toContain('name="fromBankAccountId"');
   expect(html).toContain('name="allocation:0:openItemId"');
   expect(html).toContain('name="allocation:0:amount"');
+  expect(html).toContain('Himal Supplies');
+  expect(html).not.toContain('Vendor ID');
+});
+
+it('shows an empty state when all approved bill balances are claimed', async () => {
+  api.listPaymentRequestItems.mockResolvedValue([]);
+  const html = renderToStaticMarkup(await NewPage());
+  expect(html).toContain('No approved bill balances');
+  expect(html).not.toContain('Create draft request');
+});
+
+it('denies entry before loading eligible items and handles lookup failure', async () => {
+  session.roles = ['accountant'];
+  expect(renderToStaticMarkup(await NewPage())).toContain('Your roles');
+  expect(api.listPaymentRequestItems).not.toHaveBeenCalled();
+  session.roles = ['finance'];
+  api.listPaymentRequestItems.mockRejectedValue(new Error('offline'));
+  expect(renderToStaticMarkup(await NewPage())).toContain('Reload this page');
 });
 
 it('denies other roles without loading payment data', async () => {
