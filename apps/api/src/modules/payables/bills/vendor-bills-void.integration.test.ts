@@ -6,7 +6,8 @@
 // context and authz.assert (the real pure can()).
 // Posting an approved bill is another unit's: these tests set a bill approved by hand and open its payable credit
 // item through LedgerService.openItem, the same call the posting unit makes.
-// Covers: void (debit note allocated, open amount 0, event recorded, second void 409, entity wall 404), done check 17
+// Covers: void (debit note allocated, open amount 0, event recorded, second void 409, a pending or approved payment
+// request on the bill 409, entity wall 404), done check 17
 // (the register total equals the creditable VAT on approved bills) and two bills entered at once against one receipt
 // (one matches, the other shows the quantity variance).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/payables/bills/vendor-bills-void.integration.test.ts
@@ -460,6 +461,40 @@ const debitNotesOf = (billId: string) =>
       .where(and(eq(openItems.sourceType, 'vendor_debit_note'), eq(openItems.sourceId, billId))),
   );
 
+/** A payment request of the bill's vendor in `status` with one line on the bill's open item (raw SQL fixture). */
+async function requestOn(
+  bill: VendorBillDto,
+  openItemId: string,
+  status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'cancelled',
+): Promise<string> {
+  const bankId = randomUUID();
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.vendor_bank_accounts (id, tenant_id, vendor_id, bank_name, account_name,
+          account_number_enc, account_fingerprint, last4, status, proposed_by, proposed_via)
+        VALUES (${bankId}, ${scopeA.tenantId}, ${bill.vendorPartyId}, 'Nabil Bank', 'Vendor Pvt Ltd',
+                decode('00', 'hex'), ${`fp-${randomUUID()}`}, '1234', 'proposed', ${U.proc}, 'staff')`,
+  );
+  const requestId = randomUUID();
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.payment_requests (id, tenant_id, organization_id, vendor_id, payment_type, currency,
+          total_amount, from_bank_account_id, vendor_bank_account_id, bank_last4, status, requested_by,
+          cancel_reason)
+        VALUES (${requestId}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${bill.vendorPartyId}, 'settlement',
+                'NPR', ${bill.payableTotal}, ${randomUUID()}, ${bankId}, '1234', ${status}, ${U.acct},
+                ${status === 'cancelled' ? 'Changed our mind' : null})`,
+  );
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.payment_request_lines (tenant_id, organization_id, payment_request_id, line_no,
+          open_item_id, amount)
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${requestId}, 1, ${openItemId},
+                ${bill.payableTotal})`,
+  );
+  return requestId;
+}
+
 // ---------------------------------------------------------------------------------------- void
 
 describe('void (P3 vendor_debit_note, allocated against the bill)', () => {
@@ -566,6 +601,47 @@ describe('void (P3 vendor_debit_note, allocated against the bill)', () => {
     expect(codeOf(e)).toBe('BILL_HAS_ALLOCATIONS');
     expect((await billRow(bill.id)).status).toBe('approved');
     expect(await debitNotesOf(bill.id)).toHaveLength(0);
+  });
+
+  it.each(['pending_approval', 'approved'] as const)(
+    'refuses a bill whose payment request is %s (409 BILL_HAS_PAYMENT_REQUEST) and leaves it approved',
+    async (status) => {
+      const bill = await plainBill([{ quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }]);
+      const creditId = await postBill(bill);
+      await requestOn(bill, creditId, status);
+
+      const e = await httpErrorOf(service.void(bill.id, { reason: 'Wrong' }, randomUUID()));
+
+      expect(e.getStatus()).toBe(409);
+      expect(codeOf(e)).toBe('BILL_HAS_PAYMENT_REQUEST');
+      expect((await billRow(bill.id)).status).toBe('approved');
+      expect(await debitNotesOf(bill.id)).toHaveLength(0);
+    },
+  );
+
+  it.each(['draft', 'rejected', 'cancelled'] as const)(
+    'voids a bill whose only payment request is %s (it holds no claim)',
+    async (status) => {
+      const bill = await plainBill([{ quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }]);
+      const creditId = await postBill(bill);
+      await requestOn(bill, creditId, status);
+
+      const voided = await service.void(bill.id, { reason: 'Entered twice' }, randomUUID());
+
+      expect(voided.status).toBe('voided');
+      expect(await debitNotesOf(bill.id)).toHaveLength(1);
+    },
+  );
+
+  it('does not let a payment request on another bill block the void', async () => {
+    const bill = await plainBill([{ quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }]);
+    await postBill(bill);
+    const other = await plainBill([{ quantity: '1', unitPrice: '500.00', taxCodeId: vatCode }]);
+    await requestOn(other, await postBill(other), 'approved');
+
+    const voided = await service.void(bill.id, { reason: 'Entered twice' }, randomUUID());
+
+    expect(voided.status).toBe('voided');
   });
 
   it('answers 404 for a bill of another entity', async () => {
