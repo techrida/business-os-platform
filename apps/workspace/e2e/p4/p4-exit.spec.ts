@@ -173,10 +173,7 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       const response = await page.request.get(href ?? '');
       expect(response.status()).toBe(200);
       expect(response.headers()['content-type']).toContain('application/pdf');
-      await page
-        .locator('main')
-        .getByRole('link', { name: 'Receipts', exact: true })
-        .click();
+      await page.locator('main').getByRole('link', { name: 'Receipts', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/procurement/receipts\\?po=${poId}$`));
       await page.locator(`main a[href="/procurement/receipts/${receiptId}"]`).click();
       await expect(
