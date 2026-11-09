@@ -1,0 +1,382 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiError } from '@/lib/api';
+
+// `server-only` throws outside the react-server condition, which Vitest does not use.
+vi.mock('server-only', () => ({}));
+const session = vi.hoisted(() => ({ roles: ['warehouse'] as string[] }));
+vi.mock('@/lib/bff', () => ({
+  requireStaffSession: () => Promise.resolve({ roles: session.roles }),
+}));
+vi.mock('next/navigation', () => ({
+  notFound: () => {
+    throw new Error('NOT_FOUND');
+  },
+  redirect: (to: string) => {
+    throw new Error(`redirect ${to}`);
+  },
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+vi.mock('./actions', () => ({
+  createReceiptAction: vi.fn(),
+  confirmReceiptAction: vi.fn(),
+  reverseReceiptAction: vi.fn(),
+}));
+const api = vi.hoisted(() => ({
+  listReceipts: vi.fn(),
+  getReceipt: vi.fn(),
+  getPoProgress: vi.fn(),
+}));
+vi.mock('@/lib/api-purchase-orders', () => api);
+
+const { default: ReceiptsPage } = await import('./page');
+const { default: NewReceiptPage } = await import('./new/page');
+const { default: ReceiptPage } = await import('./[id]/page');
+
+const PO = '11111111-1111-4111-8111-111111111111';
+const SERIAL = '22222222-2222-4222-8222-222222222221';
+const SERVICE = '22222222-2222-4222-8222-222222222223';
+const RECEIPT = '33333333-3333-4333-8333-333333333333';
+const REVERSAL = '44444444-4444-4444-8444-444444444444';
+const USER = '55555555-5555-4555-8555-555555555555';
+
+const apiError = (status: number, code = 'x', extra: Record<string, unknown> = {}) =>
+  new ApiError(status, 'x', {
+    error: { code, message: 'internal wording', correlationId: 'corr-12345678', ...extra },
+  });
+
+const progressLine = (over: Record<string, unknown>) => ({
+  poLineId: SERIAL,
+  lineNo: 1,
+  kind: 'goods',
+  description: 'Laptop',
+  uom: 'pcs',
+  requiresSerials: true,
+  orderedQuantity: '10.0000',
+  cancelledQuantity: '0.0000',
+  receivedQuantity: '3.0000',
+  pendingQuantity: '1.0000',
+  openQuantity: '6.0000', // cap 5
+  billedQuantity: '0.0000',
+  ...over,
+});
+const progress = (over: Record<string, unknown> = {}, lines = [progressLine({})]) => ({
+  purchaseOrderId: PO,
+  number: 'PO-2082-0001',
+  status: 'partially_received',
+  lines,
+  ...over,
+});
+
+const receipt = (over: Record<string, unknown> = {}) => ({
+  id: RECEIPT,
+  number: 'GRN-2082/83-00001',
+  purchaseOrderId: PO,
+  kind: 'goods',
+  receivedAt: '2026-11-08',
+  location: 'Main store',
+  status: 'draft',
+  createdBy: USER,
+  confirmedBy: null,
+  confirmedAt: null,
+  reversesReceiptId: null,
+  reversalReason: null,
+  version: 1,
+  createdAt: '2026-11-08T05:45:00.000Z',
+  lines: [
+    {
+      id: '66666666-6666-4666-8666-666666666666',
+      lineNo: 1,
+      poLineId: SERIAL,
+      quantity: '2.0000',
+      reversesReceiptLineId: null,
+      inspection: 'Boxes sealed',
+      discrepancyNote: null,
+      overReceiptExceptionId: null,
+      serials: [
+        { serialNo: 'SN-0001', batchNo: null, warrantyUntil: null },
+        { serialNo: 'SN-0002', batchNo: null, warrantyUntil: null },
+      ],
+    },
+  ],
+  ...over,
+});
+
+const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
+const list = async (sp: Record<string, string> = { po: PO }) =>
+  html(await ReceiptsPage({ searchParams: Promise.resolve(sp) }));
+const newPage = async (sp: Record<string, string> = { po: PO }) =>
+  html(await NewReceiptPage({ searchParams: Promise.resolve(sp) }));
+const detail = async (id = RECEIPT, sp: Record<string, string> = {}) =>
+  html(await ReceiptPage({ params: Promise.resolve({ id }), searchParams: Promise.resolve(sp) }));
+
+beforeEach(() => {
+  session.roles = ['warehouse'];
+  for (const fn of Object.values(api)) fn.mockReset();
+  api.getPoProgress.mockResolvedValue(progress());
+  api.listReceipts.mockResolvedValue([receipt()]);
+  api.getReceipt.mockResolvedValue(receipt());
+});
+
+describe('the receipts of one purchase order', () => {
+  it('asks for a purchase order when none is given, and never calls the API', async () => {
+    const out = await list({});
+    expect(out).toContain('Purchase order ID');
+    expect(out).toContain('action="/procurement/receipts"');
+    expect(out).not.toContain('/procurement/orders');
+    expect(api.listReceipts).not.toHaveBeenCalled();
+  });
+
+  it('says an ID that is not one is not one, and offers the order list to procurement only', async () => {
+    const out = await list({ po: '../admin' });
+    expect(out).toContain('That is not a purchase order ID');
+    expect(api.listReceipts).not.toHaveBeenCalled();
+    session.roles = ['procurement'];
+    expect(await list({})).toContain('href="/procurement/orders"');
+  });
+
+  it('shows each receipt with its kind, status, date and a link, and the order progress', async () => {
+    api.listReceipts.mockResolvedValue([
+      receipt({ id: REVERSAL, number: 'GRN-2', status: 'confirmed', reversesReceiptId: RECEIPT }),
+      receipt({ status: 'reversed' }),
+    ]);
+    const out = await list();
+    expect(api.listReceipts).toHaveBeenCalledWith(expect.anything(), PO);
+    expect(out).toContain('GRN-2082/83-00001');
+    expect(out).toContain(`/procurement/receipts/${RECEIPT}`);
+    expect(out).toContain('Goods receipt');
+    expect(out).toContain('Reversed');
+    expect(out).toContain('Reversal of GRN-2082/83-00001');
+    expect(out).toContain('Where the order stands');
+    expect(out).toContain('Waiting in drafts');
+    expect(out).toContain(`/procurement/receipts/new?po=${PO}`);
+  });
+
+  it('says nothing has been received yet, with a way to start', async () => {
+    api.listReceipts.mockResolvedValue([]);
+    const out = await list();
+    expect(out).toContain('Nothing has been received yet.');
+    expect(out).toContain('New receipt');
+  });
+
+  it('hides New receipt where the order takes none or nothing is left, but still lists receipts', async () => {
+    api.getPoProgress.mockResolvedValue(progress({ status: 'closed' }));
+    expect(await list()).not.toContain('New receipt');
+    api.getPoProgress.mockResolvedValue(
+      progress({}, [progressLine({ pendingQuantity: '6.0000' })]),
+    );
+    expect(await list()).not.toContain('New receipt');
+    expect(await list()).toContain('GRN-2082/83-00001');
+  });
+
+  it('keeps the list when only the progress fails', async () => {
+    api.getPoProgress.mockRejectedValue(apiError(500));
+    const out = await list();
+    expect(out).toContain('GRN-2082/83-00001');
+    expect(out).toContain('The order&#x27;s progress did not load');
+    api.getPoProgress.mockRejectedValue(apiError(403));
+    expect(await list()).toContain('Your roles do not include the order');
+  });
+
+  it('words a 403 and a 500 of the list, and shows not-found for another entity', async () => {
+    api.listReceipts.mockRejectedValue(apiError(403, 'forbidden'));
+    const forbidden = await list();
+    expect(forbidden).toContain('You cannot open these receipts');
+    expect(forbidden).not.toContain('internal wording');
+    api.listReceipts.mockRejectedValue(apiError(500));
+    const broken = await list();
+    expect(broken).toContain('The receipts did not load');
+    expect(broken).toContain('Try again');
+    api.listReceipts.mockRejectedValue(apiError(404, 'not_found'));
+    await expect(list()).rejects.toThrow('NOT_FOUND');
+  });
+});
+
+describe('the new receipt form', () => {
+  it('sends a missing or bad purchase order back to the choice', async () => {
+    await expect(newPage({})).rejects.toThrow('redirect /procurement/receipts');
+    await expect(newPage({ po: 'nope' })).rejects.toThrow('redirect /procurement/receipts');
+    expect(api.getPoProgress).not.toHaveBeenCalled();
+  });
+
+  it('is built from the progress: the cap is open minus pending, and today is the default date', async () => {
+    const out = await newPage();
+    expect(api.getPoProgress).toHaveBeenCalledWith(expect.anything(), PO);
+    expect(out).toContain('Up to 5 pcs can be received now.');
+    expect(out).toContain('1 waiting in draft receipts');
+    expect(out).toMatch(/type="date"[^>]*value="\d{4}-\d{2}-\d{2}"/);
+    expect(out).toContain('Serial numbers');
+    expect(out).toContain('Save draft receipt');
+    expect(out).toContain(`name="purchaseOrderId" value="${PO}"`);
+    expect(out).toMatch(/name="idempotencyKey" value="[0-9a-f-]{36}"/);
+    expect(api.getReceipt).not.toHaveBeenCalled();
+  });
+
+  it('offers a choice of kind when the person may receive both', async () => {
+    api.getPoProgress.mockResolvedValue(
+      progress({}, [
+        progressLine({}),
+        progressLine({
+          poLineId: SERVICE,
+          lineNo: 2,
+          kind: 'service',
+          description: 'Installation',
+          uom: 'visit',
+          requiresSerials: false,
+          receivedQuantity: '0.0000',
+          pendingQuantity: '0.0000',
+          openQuantity: '2.0000',
+        }),
+      ]),
+    );
+    const out = await newPage();
+    expect(out).toContain('What is being received');
+    expect(out).toContain('type="radio"');
+    session.roles = ['procurement'];
+    const serviceOnly = await newPage();
+    expect(serviceOnly).not.toContain('type="radio"');
+    expect(serviceOnly).toContain('name="kind" value="service"');
+    expect(serviceOnly).not.toContain('Laptop');
+  });
+
+  it('refuses goods to a person without the warehouse grant, without showing a form', async () => {
+    session.roles = ['procurement'];
+    const out = await newPage();
+    expect(out).toContain('Your roles do not include receiving goods');
+    expect(out).not.toContain('Save draft receipt');
+  });
+
+  it('says so when the order takes no receipts or nothing is left', async () => {
+    api.getPoProgress.mockResolvedValue(progress({ status: 'amendment_pending' }));
+    expect(await newPage()).toContain('takes no new receipts');
+    api.getPoProgress.mockResolvedValue(progress({}, [progressLine({ openQuantity: '1.0000' })]));
+    const none = await newPage();
+    expect(none).toContain('Nothing is left to receive.');
+    expect(none).not.toContain('Save draft receipt');
+  });
+
+  it('words a missing order, a 403 and a failed load', async () => {
+    api.getPoProgress.mockRejectedValue(apiError(404, 'not_found'));
+    await expect(newPage()).rejects.toThrow('NOT_FOUND');
+    api.getPoProgress.mockRejectedValue(apiError(403, 'forbidden'));
+    expect(await newPage()).toContain('You cannot receive on this order');
+    api.getPoProgress.mockRejectedValue(apiError(503));
+    expect(await newPage()).toContain('The order did not load');
+  });
+});
+
+describe('one receipt', () => {
+  it('shows a goods draft to the warehouse with Confirm and no Reverse, and its serials', async () => {
+    const out = await detail();
+    expect(out).toContain('GRN-2082/83-00001');
+    expect(out).toContain('Confirm receipt');
+    expect(out).not.toContain('Reverse receipt');
+    expect(out).toContain('2 serial numbers');
+    expect(out).toContain('SN-0001');
+    expect(out).toContain('Laptop');
+    expect(out).toContain('PO-2082-0001');
+    expect(out).toContain('Boxes sealed');
+  });
+
+  it('keeps Confirm from a person who cannot receive goods, and says who can', async () => {
+    session.roles = ['procurement'];
+    const out = await detail();
+    expect(out).not.toContain('Confirm receipt');
+    expect(out).toContain('Confirming goods is for the warehouse');
+  });
+
+  it('shows Confirm to anyone for a service draft', async () => {
+    session.roles = ['sales'];
+    api.getReceipt.mockResolvedValue(receipt({ kind: 'service' }));
+    const out = await detail();
+    expect(out).toContain('Confirm receipt');
+    expect(out).toContain('Service confirmation');
+    expect(out).not.toContain('Confirming goods is for the warehouse');
+  });
+
+  it('shows Reverse, with a reason dialog, on a confirmed receipt and no Confirm', async () => {
+    api.getReceipt.mockResolvedValue(
+      receipt({ status: 'confirmed', confirmedAt: '2026-11-08T06:00:00.000Z', confirmedBy: USER }),
+    );
+    const out = await detail();
+    expect(out).toContain('Reverse receipt');
+    expect(out).toContain('name="reason"');
+    expect(out).not.toContain('Confirm receipt');
+  });
+
+  it('hides Reverse on a reversal, shows negative quantities and links the original', async () => {
+    api.getReceipt.mockResolvedValue(
+      receipt({
+        id: REVERSAL,
+        number: 'GRN-2',
+        status: 'confirmed',
+        reversesReceiptId: RECEIPT,
+        reversalReason: 'Wrong delivery',
+        lines: [{ ...receipt().lines[0], quantity: '-2.0000', serials: [] }],
+      }),
+    );
+    api.listReceipts.mockResolvedValue([receipt({ status: 'reversed' })]);
+    const out = await detail(REVERSAL);
+    expect(out).not.toContain('Reverse receipt');
+    expect(out).toContain('-2 pcs');
+    expect(out).toContain('Wrong delivery');
+    expect(out).toContain(`/procurement/receipts/${RECEIPT}`);
+    expect(out).toContain('GRN-2082/83-00001');
+  });
+
+  it('says a reversed receipt was reversed, and by which receipt, with no buttons', async () => {
+    api.getReceipt.mockResolvedValue(receipt({ status: 'reversed' }));
+    api.listReceipts.mockResolvedValue([
+      receipt({
+        id: REVERSAL,
+        number: 'GRN-2',
+        status: 'confirmed',
+        reversesReceiptId: RECEIPT,
+        reversalReason: 'Wrong delivery',
+      }),
+    ]);
+    const out = await detail();
+    expect(out).toContain('This receipt was reversed');
+    expect(out).toContain(`/procurement/receipts/${REVERSAL}`);
+    expect(out).toContain('Wrong delivery');
+    expect(out).not.toContain('Reverse receipt');
+    expect(out).not.toContain('Confirm receipt');
+  });
+
+  it('warns that a draft on a closed order cannot be confirmed, and hides Confirm', async () => {
+    api.getPoProgress.mockResolvedValue(progress({ status: 'short_closed' }));
+    const out = await detail();
+    expect(out).toContain('This draft cannot be confirmed now');
+    expect(out).not.toContain('Confirm receipt');
+  });
+
+  it('says the draft was saved after creating it', async () => {
+    expect(await detail(RECEIPT, { created: '1' })).toContain('The draft receipt was saved');
+    expect(await detail()).not.toContain('The draft receipt was saved');
+  });
+
+  it('still shows the receipt when the order details fail, and links the PO by role', async () => {
+    api.getPoProgress.mockRejectedValue(apiError(500));
+    const out = await detail();
+    expect(out).toContain('GRN-2082/83-00001');
+    expect(out).toContain('Purchase order line');
+    expect(out).toContain('The order&#x27;s details did not load');
+    expect(out).toContain(`href="/procurement/receipts?po=${PO}"`);
+    session.roles = ['procurement'];
+    expect(await detail()).toContain(`href="/procurement/orders/${PO}"`);
+  });
+
+  it('shows not-found for a bad id or another entity, and words a 403 and a 500', async () => {
+    await expect(detail('../x')).rejects.toThrow('NOT_FOUND');
+    expect(api.getReceipt).not.toHaveBeenCalled();
+    api.getReceipt.mockRejectedValue(apiError(404, 'not_found'));
+    await expect(detail()).rejects.toThrow('NOT_FOUND');
+    api.getReceipt.mockRejectedValue(apiError(403, 'forbidden'));
+    expect(await detail()).toContain('You cannot open this receipt');
+    api.getReceipt.mockRejectedValue(apiError(500));
+    const broken = await detail();
+    expect(broken).toContain('This receipt did not load');
+    expect(broken).toContain('Try again');
+  });
+});
