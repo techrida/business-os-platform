@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { RequestMatchExceptionBodySchema } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -11,6 +12,7 @@ import {
   convertBillSubmission,
   matchBill,
   rejectBillSubmission,
+  requestBillException,
   submitBill,
   voidBill,
   type VendorBill,
@@ -127,6 +129,39 @@ export async function voidBillAction(prev: ActionState, form: FormData): Promise
   return settledBill(
     r.o.id,
     'The bill was voided. A vendor debit note now cancels it in the payables ledger, and the reason is on the audit trail.',
+  );
+}
+
+export async function requestExceptionAction(
+  prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const r = await open(prev, form, 'billId', billPath);
+  if (!r.ok) return r.state;
+  const evidence = text(form, 'evidenceDocumentId').trim();
+  const parsed = RequestMatchExceptionBodySchema.safeParse({
+    reason: text(form, 'reason'),
+    ...(evidence === '' ? {} : { evidenceDocumentId: evidence }),
+  });
+  if (!parsed.success) {
+    const errors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const field = String(issue.path[0] ?? 'reason');
+      errors[field] =
+        field === 'reason'
+          ? 'Give a reason of 1 to 1,000 characters.'
+          : 'Paste the evidence document ID, or leave it empty.';
+    }
+    return { key: r.o.key, errors };
+  }
+  try {
+    await requestBillException(r.o.session, r.o.id, parsed.data, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'exception');
+  }
+  return settledBill(
+    r.o.id,
+    'The match exception was sent to Finance. Finance decides it in the approvals inbox.',
   );
 }
 
