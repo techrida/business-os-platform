@@ -1,0 +1,197 @@
+'use server';
+
+import { randomUUID } from 'node:crypto';
+
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+
+import { keyOf } from '@/components/p2/crm/idempotency';
+import { isGuid } from '@/components/p2/customers/format';
+import {
+  convertBillSubmission,
+  matchBill,
+  rejectBillSubmission,
+  submitBill,
+  voidBill,
+  type VendorBill,
+} from '@/lib/api-payables';
+import { requireStaffSession } from '@/lib/bff';
+import type { Session } from '@/lib/session';
+
+import { parseReason } from '../procurement/orders/_lib/forms';
+import type { ActionState } from '../procurement/orders/_lib/state';
+import { billFailure, type BillOp } from './_lib/failure';
+import { EMPTY_ROW, MAX_LINES, parseBillLines, type LineRow } from './_lib/forms';
+import { MATCH_STATUS_LABEL, billGrants } from './_lib/model';
+
+/**
+ * Server actions of the payables screens: match, submit and void a bill, convert an inbox
+ * submission into a bill, and reject one. Each one checks the id, asks `requireStaffSession`,
+ * checks the person's grant (`payables.bill.enter`) before any write, validates, and words any
+ * refusal. Totals are never computed here: what the API returns is what is shown.
+ *
+ * Idempotency: every POST carries the key the form submitted (a key that is not ours is replaced).
+ * A definite answer (a 4xx) rotates it; a timeout, a 5xx or the "still in progress" 409 keeps it,
+ * so the first request is replayed instead of repeated. A form the checks refuse never reached the
+ * API, so it keeps its key too.
+ */
+
+const INCOMPLETE = 'This form is incomplete. Reload the page and try again.';
+const NO_ENTER =
+  'Your roles do not allow this. Bills are keyed in, matched and voided by the accountants. Ask an administrator if you need that role.';
+
+function text(form: FormData, name: string): string {
+  const v = form.get(name);
+  return typeof v === 'string' ? v : '';
+}
+
+function refused(key: string, err: unknown, op: BillOp): ActionState {
+  const f = billFailure(err, op);
+  return {
+    // A definite answer closes this decision; anything else may have landed, so the key stays.
+    key: f.definite ? randomUUID() : key,
+    error: f.message,
+    ...(f.reload ? { reload: true } : {}),
+  };
+}
+
+interface Opened {
+  id: string;
+  session: Session;
+  key: string;
+}
+
+/** The id, the session and the key for a bill or submission action; refuses a person without the grant. */
+async function open(
+  prev: ActionState,
+  form: FormData,
+  field: 'billId' | 'submissionId',
+  back: (id: string) => string,
+): Promise<{ ok: true; o: Opened } | { ok: false; state: ActionState }> {
+  const id = text(form, field);
+  const key = keyOf(form);
+  if (!isGuid(id)) return { ok: false, state: { key: prev.key, error: INCOMPLETE, reload: true } };
+  const session = await requireStaffSession(back(id));
+  if (!billGrants(session.roles).enter) return { ok: false, state: { key, error: NO_ENTER } };
+  return { ok: true, o: { id, session, key } };
+}
+
+const billPath = (id: string) => `/payables/bills/${id}`;
+
+function settledBill(id: string, done: string): ActionState {
+  revalidatePath('/payables/bills');
+  revalidatePath(billPath(id));
+  return { key: randomUUID(), done };
+}
+
+// ------------------------------------------------------------------------------------------ bills
+
+export async function matchBillAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const r = await open(prev, form, 'billId', billPath);
+  if (!r.ok) return r.state;
+  try {
+    const bill = await matchBill(r.o.session, r.o.id, r.o.key);
+    return settledBill(
+      r.o.id,
+      `The bill was matched against its purchase order and receipts again. Result: ${MATCH_STATUS_LABEL[bill.matchStatus].text.toLowerCase()}.`,
+    );
+  } catch (err) {
+    return refused(r.o.key, err, 'match');
+  }
+}
+
+export async function submitBillAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const r = await open(prev, form, 'billId', billPath);
+  if (!r.ok) return r.state;
+  try {
+    await submitBill(r.o.session, r.o.id, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'submit');
+  }
+  return settledBill(
+    r.o.id,
+    'The bill was sent for approval. It is approved in the approvals inbox, by someone other than the person who keyed it in.',
+  );
+}
+
+export async function voidBillAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const r = await open(prev, form, 'billId', billPath);
+  if (!r.ok) return r.state;
+  const reason = parseReason(text(form, 'reason'));
+  if (!reason.ok) return { key: r.o.key, errors: { reason: reason.error } };
+  try {
+    await voidBill(r.o.session, r.o.id, reason.data, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'void');
+  }
+  return settledBill(
+    r.o.id,
+    'The bill was voided. A vendor debit note now cancels it in the payables ledger, and the reason is on the audit trail.',
+  );
+}
+
+// ------------------------------------------------------------------------------------ submissions
+
+/** The rows the entry form posts: `lineCount`, then `line:<i>:<field>` for each. */
+function rowsOf(form: FormData): LineRow[] | null {
+  const count = Number(text(form, 'lineCount'));
+  if (!Number.isInteger(count) || count < 0 || count > MAX_LINES + 50) return null;
+  const rows: LineRow[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const field = (name: keyof LineRow): string => text(form, `line:${i}:${name}`);
+    rows.push({
+      ...EMPTY_ROW,
+      poLineId: field('poLineId'),
+      receiptLineId: field('receiptLineId'),
+      accountId: field('accountId'),
+      quantity: field('quantity'),
+      unitPrice: field('unitPrice'),
+      taxCodeId: field('taxCodeId'),
+      tdsCodeId: field('tdsCodeId'),
+    });
+  }
+  return rows;
+}
+
+export async function convertSubmissionAction(
+  prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const r = await open(prev, form, 'submissionId', (id) => `/payables/bills/new?submission=${id}`);
+  if (!r.ok) return r.state;
+  const rows = rowsOf(form);
+  if (rows === null) return { key: r.o.key, error: INCOMPLETE, reload: true };
+  const parsed = parseBillLines(rows);
+  if (!parsed.ok) return { key: r.o.key, errors: parsed.errors };
+
+  let bill: VendorBill;
+  try {
+    bill = await convertBillSubmission(r.o.session, r.o.id, parsed.lines, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'convert');
+  }
+  revalidatePath('/payables/inbox');
+  revalidatePath('/payables/bills');
+  // `redirect` throws, so it stays outside the try block.
+  redirect(`${billPath(encodeURIComponent(bill.id))}?created=1`);
+}
+
+export async function rejectSubmissionAction(
+  prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const r = await open(prev, form, 'submissionId', () => '/payables/inbox');
+  if (!r.ok) return r.state;
+  const reason = parseReason(text(form, 'reason'));
+  if (!reason.ok) return { key: r.o.key, errors: { reason: reason.error } };
+  try {
+    await rejectBillSubmission(r.o.session, r.o.id, reason.data, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'reject');
+  }
+  revalidatePath('/payables/inbox');
+  return {
+    key: randomUUID(),
+    done: 'The submission was rejected. The reason is kept with it.',
+  };
+}
