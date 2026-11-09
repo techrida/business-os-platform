@@ -117,17 +117,21 @@ describe('priceCreditNote', () => {
     expect(note.lines).toHaveLength(1);
     expect(note.lines[0]).toMatchObject({ lineNo: 1, description: 'B', taxCodeId: EXEMPT });
     expect(note.taxSummary.map((t) => t.taxCodeId)).toEqual([EXEMPT]);
-    expect(note.columns).toMatchObject({ exemptAmount: '50.00', taxAmount: '0.00', total: '50.00' });
+    expect(note.columns).toMatchObject({
+      exemptAmount: '50.00',
+      taxAmount: '0.00',
+      total: '50.00',
+    });
   });
 
   it('refuses a quantity above the original line and a line the original does not have', () => {
     const original = asOriginal(golden());
-    expect(() => priceCreditNote(original, periods, [{ originalLineNo: 1, quantity: '5' }])).toThrow(
-      RangeError,
-    );
-    expect(() => priceCreditNote(original, periods, [{ originalLineNo: 2, quantity: '1' }])).toThrow(
-      RangeError,
-    );
+    expect(() =>
+      priceCreditNote(original, periods, [{ originalLineNo: 1, quantity: '5' }]),
+    ).toThrow(RangeError);
+    expect(() =>
+      priceCreditNote(original, periods, [{ originalLineNo: 2, quantity: '1' }]),
+    ).toThrow(RangeError);
   });
 });
 

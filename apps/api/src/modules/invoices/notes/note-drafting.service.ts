@@ -112,7 +112,8 @@ export function priceCreditNote(
     }
     const qty = new Dec(req.quantity);
     const srcQty = new Dec(src.quantity);
-    if (qty.lte(0)) throw new RangeError(`Line ${req.originalLineNo}: the quantity must be above 0.`);
+    if (qty.lte(0))
+      throw new RangeError(`Line ${req.originalLineNo}: the quantity must be above 0.`);
     if (qty.gt(srcQty)) {
       throw new RangeError(
         `Line ${req.originalLineNo}: credits ${qty.toFixed(4)} of the ${srcQty.toFixed(4)} invoiced.`,
@@ -286,7 +287,15 @@ export class NoteDraftingService {
     const remaining = remainingToCredit(original.total, credited?.total ?? '0');
     if (new Dec(priced.columns.total).gt(remaining)) throw creditExceedsInvoice(money(remaining));
 
-    const id = await this.insertNote(tx, scope, actor, priced, original, 'credit_note', body.reason);
+    const id = await this.insertNote(
+      tx,
+      scope,
+      actor,
+      priced,
+      original,
+      'credit_note',
+      body.reason,
+    );
     return this.drafting.loadDetail(tx, scope, id);
   }
 
@@ -353,7 +362,8 @@ export class NoteDraftingService {
     kind: NoteKind,
     reason: string,
   ): Promise<string> {
-    if (original.customerPartyId === null) throw new Error(`invoice ${original.id} has no customer`);
+    if (original.customerPartyId === null)
+      throw new Error(`invoice ${original.id} has no customer`);
     const owned = { tenantId: scope.tenantId, organizationId: scope.organizationId };
     const [row] = await tx
       .insert(invoices)
