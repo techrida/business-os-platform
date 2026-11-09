@@ -18,3 +18,6 @@ export {
   type FxOpenSide,
   type Settlement,
 } from './settlement.js';
+export * from './match.js';
+export * from './withholding.js';
+export * from './bands.js';
