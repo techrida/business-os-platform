@@ -7,14 +7,17 @@ import { getSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
-/** Vendor users who signed in. Their portal comes later (P4); they get no session here. */
+/**
+ * Reached only when sign-in finds an organisation kind the portal does not serve (it is neither
+ * a customer nor a vendor). No session is created for it, so the user can only sign out.
+ */
 export default async function NotAvailablePage() {
   if (await getSession()) redirect('/');
 
   return (
     <CenteredPage>
       <NoticeCard
-        title="Not available yet"
+        title="This portal is not available for your account"
         actions={
           <form method="post" action="/auth/logout">
             <Button type="submit">Sign out</Button>
@@ -22,8 +25,8 @@ export default async function NotAvailablePage() {
         }
       >
         <p>
-          This portal is for customers. A portal for suppliers is not available yet. Your contact
-          with us will tell you when it opens.
+          This portal is for our customers and vendors, and your account is not one of those. If you
+          think this is a mistake, please ask your contact with us to check your account.
         </p>
       </NoticeCard>
     </CenteredPage>
