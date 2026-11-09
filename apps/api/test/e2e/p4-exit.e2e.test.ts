@@ -1,7 +1,7 @@
 // P4 Journey 11 over real HTTP, JWT verification, seeded production workflows, bos_app Postgres and BullMQ.
 // Fake boundaries: Gotenberg returns a valid fixed PDF and clamd returns clean. Prerequisites seeded by
 // p4-fixtures: approved vendor masters and ZITADEL identities. Every journey document is made through HTTP.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -13,12 +13,22 @@ import {
   ChainVerifyDtoSchema,
   ErrorBodySchema,
   SignedLinkDtoSchema,
+  VendorBankAccountDtoSchema,
   VendorPortalBillViewSchema,
   VendorPortalPurchaseOrderListItemSchema,
   VendorPortalPurchaseOrderViewSchema,
   type ApprovalRequestDto,
 } from '@bos/contracts';
-import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  inject,
+  it,
+  onTestFailed,
+} from 'vitest';
 
 import type { PaymentRequestDto } from '../../src/modules/payables/payment-requests/payment-requests.service';
 import type { VendorBillDto } from '../../src/modules/payables/bills/vendor-bills.service';
@@ -184,7 +194,7 @@ async function cleanDocument(documentId: string) {
   return pollUntil(
     `document ${documentId} to scan clean`,
     async () => {
-      const { rows } = await world.pool.query<{ status: string; sha256: string | null }>(
+      const { rows } = await world.pool.query<{ status: string; sha256: Buffer | null }>(
         `SELECT status, sha256 FROM app.document_versions
           WHERE tenant_id = $1 AND document_id = $2 ORDER BY version DESC LIMIT 1`,
         [world.tenantId, documentId],
@@ -193,7 +203,17 @@ async function cleanDocument(documentId: string) {
       if (latest && ['infected', 'scan_failed', 'rejected'].includes(latest.status)) {
         throw new Error(`Journey document ended ${latest.status}`);
       }
-      return { done: latest?.status === 'clean' ? latest : undefined, last: latest };
+      if (latest?.status === 'clean') {
+        expect(Buffer.isBuffer(latest.sha256), 'Postgres SHA-256 bytea must be a Buffer').toBe(
+          true,
+        );
+        expect(latest.sha256).toHaveLength(32);
+        expect(latest.sha256!.equals(Buffer.alloc(32)), 'SHA-256 must not be an empty digest').toBe(
+          false,
+        );
+        return { done: { ...latest, sha256: latest.sha256! }, last: latest };
+      }
+      return { done: undefined, last: latest };
     },
     60_000,
     250,
@@ -218,7 +238,7 @@ async function upload(path: string, authorization: string, filename: string) {
     .send(pdf);
   expect(sent.status, show(sent)).toBe(200);
   const clean = await cleanDocument(created.documentId);
-  expect(clean.sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(clean.sha256).toEqual(createHash('sha256').update(pdf).digest());
   return created.documentId;
 }
 
@@ -232,6 +252,14 @@ function quoteLines(prices = PRICES) {
 }
 
 describe('P4 exit Journey 11: department request to approved payment request over HTTP', () => {
+  let failedStep: string | undefined;
+  beforeEach((context) => {
+    if (failedStep) context.skip(`Journey prerequisite failed: ${failedStep}`);
+    onTestFailed(() => {
+      failedStep = context.task.name;
+    });
+  });
+
   it('1. submits a PR whose sole approval step is its Department Head', async () => {
     await t
       .http()
@@ -411,7 +439,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       250,
     );
     const scan = await cleanDocument(file.documentId);
-    expect(scan.sha256).toBe(file.sha256);
+    expect(scan.sha256.toString('hex')).toBe(file.sha256);
     const list = (await get<unknown[]>(`${VP}/purchase-orders`, s.vendorAuth)).map((row) =>
       VendorPortalPurchaseOrderListItemSchema.parse(row),
     );
@@ -560,27 +588,29 @@ describe('P4 exit Journey 11: department request to approved payment request ove
   it('8. verifies the vendor bank account through maker-checker with scanned call-back evidence', async () => {
     const procurement = await auth('procurement');
     const bankPath = `/v1/vendors/${world.vendors[0]!.id}/bank-accounts`;
-    const account = await post<{ id: string; last4: string }>(
-      bankPath,
-      procurement,
-      {
-        bankName: 'Journey Bank',
-        accountName: 'Journey 11 vendor 1',
-        accountNumber: '001234567890',
-      },
-      201,
+    const account = VendorBankAccountDtoSchema.parse(
+      await post(
+        bankPath,
+        procurement,
+        {
+          bankName: 'Journey Bank',
+          accountName: 'Journey 11 vendor 1',
+          accountNumber: '001234567890',
+        },
+        201,
+      ),
     );
     const evidence = await upload(
       `${bankPath}/${account.id}/evidence`,
       procurement,
       'callback-evidence.pdf',
     );
-    const verified = await post<{ status: string; last4: string }>(
-      `${bankPath}/${account.id}/verify`,
-      await auth('finance'),
-      { callbackEvidenceDocumentId: evidence },
+    const verified = VendorBankAccountDtoSchema.parse(
+      await post(`${bankPath}/${account.id}/verify`, await auth('finance'), {
+        callbackEvidenceDocumentId: evidence,
+      }),
     );
-    expect(verified).toMatchObject({ status: 'active', last4: '7890' });
+    expect(verified).toMatchObject({ status: 'active', accountLast4: '7890' });
   }, 90_000);
 
   it('9. routes the payment to Finance only and excludes the requester, bill enterer and both bill approvers', async () => {
