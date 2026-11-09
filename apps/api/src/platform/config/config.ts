@@ -1,3 +1,5 @@
+import { inspect } from 'node:util';
+
 import { MAX_UPLOAD_BYTES } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -105,6 +107,8 @@ const WORKER_REQUIRED_IN_PRODUCTION = [...CORE_REQUIRED_IN_PRODUCTION, 'GOTENBER
 const API_REQUIRED_IN_PRODUCTION = [
   ...CORE_REQUIRED_IN_PRODUCTION,
   'DOCS_LINK_SECRET',
+  // Without the keyring, encrypted fields (vendor bank account numbers) can be neither written nor read.
+  'FIELD_ENC_KEYS',
   // ZITADEL_ACTIONS_SIGNING_KEY is deliberately NOT required: the webhook is an optional nudge
   // (ADR 0019, the 10-minute reconcile keeps users correct), and without a key the hook answers 401.
 ] as const;
@@ -197,7 +201,174 @@ const apiShape = {
   // Shared secret for the Postal bounce webhook (HMAC-SHA256 of the raw body). Optional on purpose,
   // like the ZITADEL key: with no secret the hook answers 401 to everyone (deny by default).
   POSTAL_WEBHOOK_SECRET: z.string().min(32).optional(),
+  // Field-level encryption keyring (M20), see parseFieldKeyring for the format. Required in production;
+  // blank counts as unset. Parsed into a FieldKeyring, so the raw string never stays on the config.
+  FIELD_ENC_KEYS: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v.trim() === '' ? undefined : v)),
+  FIELD_ENC_ACTIVE_KID: z.string().trim().min(1).optional(),
+  FIELD_ENC_FP_KID: z.string().trim().min(1).optional(),
 };
+
+/**
+ * The field-encryption keyring (M20): every key that may still open a stored value, by key id, plus
+ * the id new values are sealed with and the id the fingerprint key is derived from.
+ *
+ * The keys sit in a private field and the class redacts itself for JSON.stringify, util.inspect and
+ * String(), so logging the config (or this object) never prints key material.
+ */
+export class FieldKeyring {
+  readonly #keys: ReadonlyMap<string, Buffer>;
+
+  constructor(
+    /** The id new values are sealed with. */
+    readonly activeKid: string,
+    /**
+     * The id the fingerprint key is derived from. Separate from the active id on purpose: rotating the
+     * active key must not change fingerprints, or equal plaintexts stored before and after stop matching.
+     */
+    readonly fingerprintKid: string,
+    keys: ReadonlyMap<string, Buffer>,
+  ) {
+    if (!keys.has(activeKid) || !keys.has(fingerprintKid)) {
+      throw new Error('FieldKeyring: the active and fingerprint ids must name keys in the ring');
+    }
+    this.#keys = keys;
+    Object.freeze(this);
+  }
+
+  /** The key ids in the ring (not secret). */
+  get kids(): string[] {
+    return [...this.#keys.keys()];
+  }
+
+  /** The 32-byte key for `kid`, or undefined when the ring has no such id. */
+  key(kid: string): Buffer | undefined {
+    return this.#keys.get(kid);
+  }
+
+  toJSON(): { activeKid: string; fingerprintKid: string; kids: string[] } {
+    return { activeKid: this.activeKid, fingerprintKid: this.fingerprintKid, kids: this.kids };
+  }
+
+  toString(): string {
+    return `FieldKeyring(active=${this.activeKid}, fingerprint=${this.fingerprintKid}, kids=${this.kids.join(',')})`;
+  }
+
+  [inspect.custom](): string {
+    return this.toString();
+  }
+}
+
+const FIELD_KID = /^[A-Za-z0-9_-]{1,32}$/;
+// Standard base64 of exactly 32 bytes: 43 characters and one `=` (what `openssl rand -base64 32` prints).
+const FIELD_KEY_B64 = /^[A-Za-z0-9+/]{43}=$/;
+const FIELD_KEY_BYTES = 32;
+const MORE_THAN_ONE_KEY = 'is required when FIELD_ENC_KEYS holds more than one key';
+
+interface KeyringIssue {
+  path: string;
+  message: string;
+}
+
+/**
+ * Parse the field-encryption keyring from the environment.
+ *
+ *   FIELD_ENC_KEYS="k1:<base64 key>,k2:<base64 key>"   comma-separated `<kid>:<key>` entries
+ *   FIELD_ENC_ACTIVE_KID="k2"                         the id new values are sealed with
+ *   FIELD_ENC_FP_KID="k1"                             the id the fingerprint key is derived from
+ *
+ * A kid is 1-32 of [A-Za-z0-9_-]; a key is standard base64 of exactly 32 random bytes
+ * (`openssl rand -base64 32`). With one key, both ids default to it; with more than one, both must be
+ * named, so a rotation is an explicit choice and never silently moves the fingerprint key.
+ * Messages name the entry by position only and never quote any part of the value.
+ */
+function parseFieldKeyring(
+  raw: string,
+  activeKid: string | undefined,
+  fpKid: string | undefined,
+): { keyring: FieldKeyring | undefined; issues: KeyringIssue[] } {
+  const issues: KeyringIssue[] = [];
+  const keys = new Map<string, Buffer>();
+  const entries = raw
+    .split(',')
+    .map((e) => e.trim())
+    .filter((e) => e !== '');
+  if (entries.length === 0) {
+    issues.push({ path: 'FIELD_ENC_KEYS', message: 'must list at least one key' });
+  }
+  entries.forEach((entry, index) => {
+    const at = `entry ${index + 1}`;
+    const sep = entry.indexOf(':');
+    if (sep < 0) {
+      issues.push({ path: 'FIELD_ENC_KEYS', message: `${at} must be <kid>:<base64 of 32 bytes>` });
+      return;
+    }
+    const kid = entry.slice(0, sep);
+    const encoded = entry.slice(sep + 1);
+    if (!FIELD_KID.test(kid)) {
+      issues.push({ path: 'FIELD_ENC_KEYS', message: `${at} has an invalid key id` });
+      return;
+    }
+    const key = Buffer.from(encoded, 'base64');
+    // Buffer.from is lenient (it skips bad characters), so the shape, the length and a round trip all count.
+    if (
+      !FIELD_KEY_B64.test(encoded) ||
+      key.length !== FIELD_KEY_BYTES ||
+      key.toString('base64') !== encoded
+    ) {
+      issues.push({
+        path: 'FIELD_ENC_KEYS',
+        message: `${at} key must be standard base64 of exactly ${FIELD_KEY_BYTES} bytes`,
+      });
+      return;
+    }
+    if (keys.has(kid)) {
+      issues.push({ path: 'FIELD_ENC_KEYS', message: `${at} repeats a key id` });
+      return;
+    }
+    keys.set(kid, key);
+  });
+  if (issues.length > 0) return { keyring: undefined, issues };
+
+  const pick = (path: string, named: string | undefined): string | undefined => {
+    if (named === undefined) {
+      if (keys.size === 1) return [...keys.keys()][0];
+      issues.push({ path, message: MORE_THAN_ONE_KEY });
+      return undefined;
+    }
+    if (!keys.has(named)) {
+      issues.push({ path, message: 'names no key in FIELD_ENC_KEYS' });
+      return undefined;
+    }
+    return named;
+  };
+  const active = pick('FIELD_ENC_ACTIVE_KID', activeKid);
+  const fingerprint = pick('FIELD_ENC_FP_KID', fpKid);
+  if (active === undefined || fingerprint === undefined) return { keyring: undefined, issues };
+  return { keyring: new FieldKeyring(active, fingerprint, keys), issues: [] };
+}
+
+/** A malformed keyring fails in every environment; a missing one fails in production (kernelProblems). */
+function keyringProblems(
+  cfg: {
+    FIELD_ENC_KEYS?: string | undefined;
+    FIELD_ENC_ACTIVE_KID?: string | undefined;
+    FIELD_ENC_FP_KID?: string | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (cfg.FIELD_ENC_KEYS === undefined) return;
+  const { issues } = parseFieldKeyring(
+    cfg.FIELD_ENC_KEYS,
+    cfg.FIELD_ENC_ACTIVE_KID,
+    cfg.FIELD_ENC_FP_KID,
+  );
+  for (const issue of issues) {
+    ctx.addIssue({ code: 'custom', path: [issue.path], message: issue.message });
+  }
+}
 
 const AZP_REQUIRED = 'must list at least one client id (or set OIDC_CLIENT_ID)';
 
@@ -227,13 +398,24 @@ const apiSchema = z
       ctx.addIssue({ code: 'custom', path: ['OIDC_ISSUER'], message: problem });
   })
   .superRefine(kernelProblems(API_REQUIRED_IN_PRODUCTION))
+  .superRefine(keyringProblems)
   .transform((cfg, ctx) => {
     const azp = allowedAzp(cfg.OIDC_ALLOWED_AZP, cfg.OIDC_CLIENT_ID);
     if (azp.length === 0) {
       ctx.addIssue({ code: 'custom', path: ['OIDC_ALLOWED_AZP'], message: AZP_REQUIRED });
       return z.NEVER;
     }
-    return withKernelDefaults({ ...cfg, OIDC_ALLOWED_AZP: Object.freeze(azp) });
+    const { FIELD_ENC_KEYS: rawKeys, FIELD_ENC_ACTIVE_KID, FIELD_ENC_FP_KID, ...rest } = cfg;
+    // keyringProblems has already refused a malformed ring (the transform runs only on a clean parse).
+    const keyring =
+      rawKeys === undefined
+        ? undefined
+        : parseFieldKeyring(rawKeys, FIELD_ENC_ACTIVE_KID, FIELD_ENC_FP_KID).keyring;
+    return withKernelDefaults({
+      ...rest,
+      OIDC_ALLOWED_AZP: Object.freeze(azp),
+      FIELD_ENC_KEYS: keyring,
+    });
   });
 
 /**
@@ -283,6 +465,12 @@ export abstract class AppConfig extends CoreConfig {
   abstract readonly ZITADEL_ACTIONS_SIGNING_KEY?: string | undefined;
   /** Postal bounce webhook secret; undefined means the webhook refuses every call. */
   abstract readonly POSTAL_WEBHOOK_SECRET?: string | undefined;
+  /**
+   * The field-encryption keyring (FIELD_ENC_KEYS, FIELD_ENC_ACTIVE_KID and FIELD_ENC_FP_KID, parsed).
+   * Always set in production; undefined outside production when unset, and CryptoModule then refuses
+   * to build its cipher.
+   */
+  abstract readonly FIELD_ENC_KEYS?: FieldKeyring | undefined;
 }
 
 export class ConfigError extends Error {
