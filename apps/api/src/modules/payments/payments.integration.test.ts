@@ -7,7 +7,13 @@
 // @Can) and the fx.max_rate_age_days setting (7, its default).
 import { randomUUID } from 'node:crypto';
 
-import { RejectPaymentBodySchema, type SubmitPaymentBody, PaymentDtoSchema } from '@bos/contracts';
+import {
+  AllocationDtoSchema,
+  PaymentDtoSchema,
+  PaymentListItemSchema,
+  RejectPaymentBodySchema,
+  type SubmitPaymentBody,
+} from '@bos/contracts';
 import {
   createParty,
   createStaffUser,
@@ -23,6 +29,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../platform/audit/audit.service';
@@ -263,16 +270,21 @@ describe('verify', () => {
     expect(await itemsOf(w, p.id)).toHaveLength(0);
   });
 
-  it('the database refuses a verifier equal to the submitter too', async () => {
+  it('the database refuses a verifier equal to the submitter too (payments_verifier_check)', async () => {
     const w = await newWorld();
     const p = await submit(w);
     await expect(
       withTx(db, w.scope, system, (tx) =>
         tx.execute(
-          sql`UPDATE app.payments SET verified_by = submitted_by, verified_at = now() WHERE id = ${p.id}`,
+          sql`UPDATE app.payments
+              SET status = 'verified', verified_by = submitted_by, verified_at = now(),
+                  fx_rate = 1, fx_source = 'NPR', fx_date = '2026-11-09',
+                  amount_npr = amount, tds_npr = tds_withheld,
+                  number = 'RCPT-2083/84-99999', seq = 99999, fiscal_year = '2083/84'
+            WHERE id = ${p.id}`,
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ cause: { constraint: 'payments_verifier_check' } });
   });
 
   it('opens exactly one credit item for amount + tds and one event; a replay returns the same answer', async () => {
@@ -434,8 +446,8 @@ describe('reverseVerified', () => {
     const [credit] = await itemsOf(w, p.id);
     if (credit === undefined) throw new Error('no credit item');
     // U8 allocates; seeded through LedgerService here.
-    await withTx(db, w.scope, system, (tx) =>
-      ledger.allocate(tx, w.scope, system, {
+    await withTx(db, w.scope, w.verifier, (tx) =>
+      ledger.allocate(tx, w.scope, w.verifier, {
         debitItemId: invoice,
         creditItemId: credit.id,
         amount: '600.00',
@@ -460,7 +472,7 @@ describe('reverseVerified', () => {
     expect(await openAmount(w, debit?.id ?? '')).toBe('0.00');
     expect(await eventsOf(w, p.id, 'payment_reversed')).toHaveLength(1);
 
-    const rows = await service.allocations(w.scope, p.id);
+    const rows = z.array(AllocationDtoSchema).parse(await service.allocations(w.scope, p.id));
     expect(rows.map((r) => r.amount)).toEqual(['600.00', '-600.00']);
     expect(rows[1]).toMatchObject({ reversesAllocationId: rows[0]?.id, reason: 'Cheque bounced' });
   });
@@ -498,6 +510,7 @@ describe('one legal entity at a time', () => {
       service.verify(other, w.verifier, p.id, { expectedVersion: 1 }, randomUUID()),
     ).rejects.toMatchObject({ status: 404 });
     expect(await service.list(other)).toEqual([]);
-    expect((await service.list(w.scope)).map((r) => r.id)).toEqual([p.id]);
+    const listed = z.array(PaymentListItemSchema).parse(await service.list(w.scope));
+    expect(listed.map((r) => r.id)).toEqual([p.id]);
   });
 });
