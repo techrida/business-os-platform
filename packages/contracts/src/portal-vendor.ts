@@ -137,6 +137,32 @@ export const VendorPortalBillViewSchema = z.strictObject({
 });
 export type VendorPortalBillView = z.infer<typeof VendorPortalBillViewSchema>;
 
+/**
+ * An RFQ a vendor is invited to, to quote on. Only what is needed to price it: the number, the deadline and the
+ * lines (description, quantity, unit). No estimate, budget, other invited vendor, score or internal note.
+ * Only an open RFQ is shown; a closed, recommended or cancelled one is a 404.
+ */
+export const VendorPortalRfqListItemSchema = z.strictObject({
+  id: z.guid(),
+  number: z.string().min(1).max(32),
+  /** The instant quotations close, as an ISO datetime (UTC). */
+  deadline: z.iso.datetime(),
+});
+export type VendorPortalRfqListItem = z.infer<typeof VendorPortalRfqListItemSchema>;
+
+export const VendorPortalRfqViewSchema = z.strictObject({
+  ...VendorPortalRfqListItemSchema.shape,
+  lines: z.array(
+    z.strictObject({
+      lineNo: z.number().int().min(1),
+      description: z.string(),
+      uom: z.string(),
+      quantity: z.string(),
+    }),
+  ),
+});
+export type VendorPortalRfqView = z.infer<typeof VendorPortalRfqViewSchema>;
+
 /** A bank account as the vendor sees it: bank, last four digits and status. Never the number. */
 export const VendorPortalBankViewSchema = z.strictObject({
   bankName: z.string(),
