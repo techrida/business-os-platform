@@ -22,6 +22,11 @@ import {
 } from './schema/crm.js';
 
 const SQL_TEXT = readFileSync(new URL('../migrations/0015_crm.sql', import.meta.url), 'utf8');
+/** 0031 alters verification_cases (party_kind column, party FK instead of the customer FK); read on top of 0015. */
+const ALTER_TEXT = readFileSync(
+  new URL('../migrations/0031_verification_party_kind.sql', import.meta.url),
+  'utf8',
+);
 
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
@@ -93,6 +98,26 @@ function parseSql(text: string): Map<string, Shape> {
   return tables;
 }
 
+/** Applies the ADD COLUMN, DROP CONSTRAINT and ADD CONSTRAINT lines of a later migration to the parsed tables. */
+function applyAlters(tables: Map<string, Shape>, text: string): void {
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
+    tables.get(m[1] ?? '')?.columns.push(m[2] ?? '');
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP CONSTRAINT "(\w+)";/g)) {
+    const shape = tables.get(m[1] ?? '');
+    if (!shape) throw new Error(`drop on unknown table ${m[1] ?? ''}`);
+    for (const kind of Object.keys(shape.names) as Kind[]) {
+      shape.names[kind] = shape.names[kind].filter((e) => e !== m[2] && !e.startsWith(`${m[2]} (`));
+    }
+  }
+  for (const [table, shape] of parseSql(text)) {
+    const target = tables.get(table);
+    if (!target) continue;
+    for (const kind of Object.keys(shape.names) as Kind[])
+      target.names[kind].push(...shape.names[kind]);
+  }
+}
+
 function drizzleShape(table: PgTable): Shape {
   const config = getTableConfig(table);
   return {
@@ -143,6 +168,7 @@ const DRIZZLE: Record<string, PgTable> = {
 
 describe('0015_crm and src/schema/crm.ts', () => {
   const parsed = parseSql(SQL_TEXT);
+  applyAlters(parsed, ALTER_TEXT);
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
