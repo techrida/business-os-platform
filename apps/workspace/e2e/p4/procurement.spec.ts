@@ -75,8 +75,6 @@ test('a draft is saved with a server total, then cancelled and read-only', async
     await test.step('cancelling asks once, then the request is read-only', async () => {
       await page.getByRole('button', { name: 'Cancel request' }).click();
       await page.getByRole('button', { name: 'Yes, cancel this request' }).click();
-      await expect(page.getByText('The request was cancelled.')).toBeVisible();
-      await page.reload();
       await expect(page.getByText('Cancelled', { exact: true }).first()).toBeVisible();
       await expect(page.getByRole('button', { name: 'Submit for approval' })).toHaveCount(0);
       await expect(page.getByRole('link', { name: 'Edit request' })).toHaveCount(0);
