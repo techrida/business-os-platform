@@ -195,6 +195,9 @@ const p4ProcurementGrants: RoleGrants = {
   'vendor.write': 'all',
   // Maker side of the bank-account maker-checker (AD9): procurement proposes, finance verifies.
   'vendor.bank.propose': 'all',
+  // K3b: procurement opens and submits a vendor's KYB case (vendor.write), so it must also see it. Reading only:
+  // no verification.review, so procurement never decides the case it prepared.
+  'verification.read': 'all',
 };
 const p4WarehouseGrants: RoleGrants = { 'procurement.receipt.confirm': 'all' };
 const p4AccountantGrants: RoleGrants = {
