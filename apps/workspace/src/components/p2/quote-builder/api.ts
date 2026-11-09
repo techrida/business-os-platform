@@ -24,8 +24,6 @@ import {
   PreviewResultSchema,
   type PreviewResult,
   SavedVersionSchema,
-  type TaxCode,
-  TaxCodeSchema,
 } from './schemas';
 
 /**
@@ -154,10 +152,6 @@ export function getCustomer(session: Session, id: string): Promise<CustomerDto> 
 
 export function listContacts(session: Session, customerId: string): Promise<ContactDto[]> {
   return call(session, `/v1/customers/${seg(customerId)}/contacts`, list(ContactDtoSchema));
-}
-
-export function listTaxCodes(session: Session): Promise<TaxCode[]> {
-  return call(session, '/v1/tax-codes', list(TaxCodeSchema));
 }
 
 export function listPaymentTerms(session: Session): Promise<PaymentTerm[]> {
