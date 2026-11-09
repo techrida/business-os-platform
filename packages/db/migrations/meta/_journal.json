@@ -169,6 +169,13 @@
       "when": 1783000000033,
       "tag": "0033_procurement_sourcing",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1783000000034,
+      "tag": "0034_procurement_orders",
+      "breakpoints": true
     }
   ]
 }

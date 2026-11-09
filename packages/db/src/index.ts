@@ -52,3 +52,4 @@ export * from './schema/quotations.js';
 export * from './schema/ledger.js';
 export * from './schema/vendors.js';
 export * from './schema/procurement.js';
+export * from './schema/procurement-orders.js';
