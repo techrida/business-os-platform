@@ -87,8 +87,7 @@ export const PR_COMMITMENT_WORKFLOW_SPEC: unknown = {
         id: 'management_second',
         kind: 'role',
         role: 'management',
-        reason:
-          'A second Management approval replaces the Founder, who raised this request (AD8)',
+        reason: 'A second Management approval replaces the Founder, who raised this request (AD8)',
       },
       position: 'end',
       reason: 'The Founder raised a commitment of NPR {amountNpr}, above NPR 1,000,000.00',
@@ -124,8 +123,7 @@ export function poBandOf(amountNpr: string): PoApprovedBand {
 }
 
 export type QuoteCountVerdict =
-  | { ok: true; fewerThanThreeReason: string | null }
-  | { ok: false; message: string };
+  { ok: true; fewerThanThreeReason: string | null } | { ok: false; message: string };
 
 /**
  * AD13 and AD12: at least `minQuotes` quotations, or a `fewerThanThreeReason`. An emergency request may go below
@@ -157,7 +155,9 @@ export function quoteCountVerdict(i: {
  * users; augmenting paths, Kuhn's algorithm). Under distinctApprovers one person may not decide two steps, so a
  * route whose steps share too few people would stay pending forever after the first decision.
  */
-export function hasDistinctApprovers(steps: readonly { eligibleUserIds: readonly string[] }[]): boolean {
+export function hasDistinctApprovers(
+  steps: readonly { eligibleUserIds: readonly string[] }[],
+): boolean {
   const owner = new Map<string, number>();
   const tryAssign = (step: number, seen: Set<string>): boolean => {
     for (const user of steps[step]!.eligibleUserIds) {
@@ -188,7 +188,11 @@ export function quotationLineAmounts(
 ): { gross: string; taxAmount: string; lineTotal: string } {
   const gross = new Decimal(money(new Decimal(quantity).times(unitPrice)));
   const tax = new Decimal(money(gross.times(rateBp).dividedBy(10000)));
-  return { gross: gross.toFixed(2), taxAmount: tax.toFixed(2), lineTotal: gross.plus(tax).toFixed(2) };
+  return {
+    gross: gross.toFixed(2),
+    taxAmount: tax.toFixed(2),
+    lineTotal: gross.plus(tax).toFixed(2),
+  };
 }
 
 export function sumMoney(values: readonly string[]): string {
@@ -201,7 +205,9 @@ export function sumMoney(values: readonly string[]): string {
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const decimalText = (scale: number) =>
-  z.string().regex(new RegExp(`^\\d{1,14}(\\.\\d{1,${scale}})?$`), `a decimal with up to ${scale} places`);
+  z
+    .string()
+    .regex(new RegExp(`^\\d{1,14}(\\.\\d{1,${scale}})?$`), `a decimal with up to ${scale} places`);
 
 export const CreateRfqBodySchema = z.strictObject({
   purchaseRequestId: z.guid(),
