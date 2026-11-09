@@ -69,7 +69,7 @@ export interface NavGroup {
 }
 
 /** Phases whose items may be built and linked. */
-export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2'];
+export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2', 'P3'];
 
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -169,7 +169,20 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'Sales',
     items: [
-      { label: 'Invoices', icon: 'receipt', phase: 'P3' },
+      {
+        label: 'Sales Orders',
+        href: '/sales-orders',
+        icon: 'file-text',
+        phase: 'P3',
+        permission: 'sales_order.read',
+      },
+      {
+        label: 'Invoices',
+        href: '/invoices',
+        icon: 'receipt',
+        phase: 'P3',
+        permission: 'invoice.read',
+      },
       // Not in the PRD yet (see the Figma notes), so parked at "later" until it is confirmed.
       { label: 'Recurring Invoices', icon: 'repeat', phase: 'later' },
     ],
@@ -177,8 +190,22 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'Payments',
     items: [
-      { label: 'Payment Methods', icon: 'credit-card', phase: 'P3' },
-      { label: 'Payment to Confirm', icon: 'banknote', phase: 'P3' },
+      {
+        label: 'Payments',
+        href: '/payments',
+        icon: 'banknote',
+        phase: 'P3',
+        permission: 'payment.read',
+      },
+      {
+        label: 'Receivables',
+        href: '/receivables/aging',
+        icon: 'trending-up',
+        phase: 'P3',
+        permission: 'ar.read',
+      },
+      // No screen yet: methods are fixed in the contract, so it waits for a later phase.
+      { label: 'Payment Methods', icon: 'credit-card', phase: 'later' },
     ],
   },
   {

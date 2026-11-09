@@ -59,7 +59,7 @@ describe('NAV_GROUPS', () => {
     }
   });
 
-  it('builds the P0 and P1 pages', () => {
+  it('builds the P0 to P3 pages', () => {
     const built = items.filter(isBuilt);
     expect(built.map((i) => [i.label, i.href])).toEqual([
       ['Overview', '/'],
@@ -74,8 +74,31 @@ describe('NAV_GROUPS', () => {
       ['Quotations', '/quotations'],
       ['Verification', '/verification'],
       ['Activities & Tasks', '/activities'],
+      ['Sales Orders', '/sales-orders'],
+      ['Invoices', '/invoices'],
+      ['Payments', '/payments'],
+      ['Receivables', '/receivables/aging'],
       ['Settings', '/admin/settings'],
     ]);
+  });
+
+  it('gates every P3 billing page by its read permission', () => {
+    const permissionByLabel = Object.fromEntries(
+      items.filter((i) => i.phase === 'P3' && isBuilt(i)).map((i) => [i.label, i.permission]),
+    );
+    expect(permissionByLabel).toEqual({
+      'Sales Orders': 'sales_order.read',
+      Invoices: 'invoice.read',
+      Payments: 'payment.read',
+      Receivables: 'ar.read',
+    });
+  });
+
+  it('parks Payment Methods at "later" because it has no screen', () => {
+    const methods = items.find((i) => i.label === 'Payment Methods');
+    expect(methods?.phase).toBe('later');
+    expect(methods?.href).toBeUndefined();
+    expect(items.some((i) => i.label === 'Payment to Confirm')).toBe(false);
   });
 
   it('gates every P2 CRM page by its read permission', () => {
@@ -172,6 +195,10 @@ describe('visibleGroups with permissions', () => {
       'Quotations',
       'Verification',
       'Activities & Tasks',
+      'Sales Orders',
+      'Invoices',
+      'Payments',
+      'Receivables',
     ]) {
       expect(labels).not.toContain(hidden);
     }
@@ -204,6 +231,10 @@ describe('visibleGroups with permissions', () => {
         'crm.opportunity.read',
         'quotation.read',
         'verification.read',
+        'sales_order.read',
+        'invoice.read',
+        'payment.read',
+        'ar.read',
       ]),
     );
   });
@@ -235,6 +266,13 @@ describe('titleForPath', () => {
     expect(titleForPath('/customers')).toBe('Customers');
     expect(titleForPath('/customers/0f3a/edit')).toBe('Customers');
     expect(titleForPath('/verification/0f3a')).toBe('Verification');
+  });
+
+  it('names the P3 billing pages and the pages under them', () => {
+    expect(titleForPath('/sales-orders')).toBe('Sales Orders');
+    expect(titleForPath('/invoices/0f3a')).toBe('Invoices');
+    expect(titleForPath('/payments/0f3a')).toBe('Payments');
+    expect(titleForPath('/receivables/aging')).toBe('Receivables');
   });
 
   it('falls back to the app name for any other path', () => {
