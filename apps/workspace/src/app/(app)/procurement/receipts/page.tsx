@@ -1,0 +1,302 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+
+import { isGuid } from '@/components/p2/customers/format';
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button, LinkButton } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Field, Input } from '@/components/ui/field';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { Panel } from '@/components/ui/panel';
+import { Table, Td, Th } from '@/components/ui/table';
+import {
+  getPoProgress,
+  listReceipts,
+  type PoProgress,
+  type Receipt,
+} from '@/lib/api-purchase-orders';
+import { requireStaffSession } from '@/lib/bff';
+import { when } from '@/lib/kernel-format';
+
+import { isReceivable, PO_STATUS_LABEL, qtyText } from '../orders/_lib/model';
+import { receiptFailure } from './_lib/failure';
+import { KIND_LABEL, kindsOffered, receiptGrants, RECEIPT_STATUS_LABEL } from './_lib/model';
+import styles from './receipts.module.css';
+
+export const metadata: Metadata = { title: 'Receipts · Business OS' };
+export const dynamic = 'force-dynamic';
+
+function Picker({ invalid, canOpenOrders }: { invalid: boolean; canOpenOrders: boolean }) {
+  return (
+    <Page width="narrow">
+      <PageHeader
+        title="Receipts"
+        description="Goods and services are received against one purchase order. Open an order's receipts from the order page, or paste the order's ID here."
+      />
+      {invalid ? (
+        <Alert tone="warning" role="alert" title="That is not a purchase order ID">
+          An ID looks like 3f2b8c1e-0d4a-4c1b-9e7a-5b6d2f1a8c90. Copy it from the link you were
+          sent.
+        </Alert>
+      ) : null}
+      <form method="get" action="/procurement/receipts" role="search" className={styles.picker}>
+        <Field label="Purchase order ID" hint="Paste the ID from the order's link.">
+          {(control) => (
+            <Input name="po" autoComplete="off" spellCheck={false} required {...control} />
+          )}
+        </Field>
+        <Button type="submit" variant="secondary">
+          Open receipts
+        </Button>
+      </form>
+      {canOpenOrders ? (
+        <p className={styles.note}>
+          Or <Link href="/procurement/orders">pick the order from the purchase order list</Link>.
+        </p>
+      ) : null}
+    </Page>
+  );
+}
+
+function PanelProblem({ err }: { err: unknown }) {
+  const f = receiptFailure(err, 'load');
+  return f.status === 403 ? (
+    <Alert tone="info" role="status" title="Your roles do not include the order's progress">
+      What is still open on an order is shown to the warehouse and the procurement team.
+    </Alert>
+  ) : (
+    <Alert tone="error" role="alert" title="The order's progress did not load">
+      {f.message}
+    </Alert>
+  );
+}
+
+function Progress({ progress }: { progress: PoProgress }) {
+  return (
+    <Panel
+      title="Where the order stands"
+      description="What was ordered, what has arrived, and what is still open. Draft receipts hold their quantity until they are confirmed."
+    >
+      <Table caption="Receipt progress by purchase order line" minWidth={820}>
+        <thead>
+          <tr>
+            <Th align="end">#</Th>
+            <Th>Item</Th>
+            <Th align="end">Ordered</Th>
+            <Th align="end">Received</Th>
+            <Th align="end">Waiting in drafts</Th>
+            <Th align="end">Still open</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {progress.lines.map((l) => (
+            <tr key={l.poLineId}>
+              <Td align="end" nowrap>
+                {l.lineNo}
+              </Td>
+              <Td>
+                <span className={styles.long}>{l.description}</span>
+                <span className={styles.note}>
+                  {' '}
+                  {l.kind === 'service' ? 'Service' : 'Goods'}
+                  {l.requiresSerials ? ', serial numbers tracked' : ''}
+                </span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>
+                  {qtyText(l.orderedQuantity)} {l.uom}
+                </span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{qtyText(l.receivedQuantity)}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{qtyText(l.pendingQuantity)}</span>
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{qtyText(l.openQuantity)}</span>
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Panel>
+  );
+}
+
+function ReceiptRows({ receipts }: { receipts: readonly Receipt[] }) {
+  const numberOf = new Map(receipts.map((r) => [r.id, r.number]));
+  return (
+    <Table caption="Receipts of this purchase order" minWidth={820}>
+      <thead>
+        <tr>
+          <Th>Receipt</Th>
+          <Th>Kind</Th>
+          <Th>Status</Th>
+          <Th>Received on</Th>
+          <Th>Location</Th>
+          <Th align="end">Lines</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {receipts.map((r) => {
+          const status = RECEIPT_STATUS_LABEL[r.status];
+          return (
+            <tr key={r.id}>
+              <Td>
+                <Link
+                  href={`/procurement/receipts/${encodeURIComponent(r.id)}`}
+                  className={styles.name}
+                >
+                  {r.number}
+                </Link>
+                {r.reversesReceiptId !== null ? (
+                  <span className={styles.note}>
+                    {' '}
+                    Reversal of {numberOf.get(r.reversesReceiptId) ?? 'an earlier receipt'}
+                  </span>
+                ) : null}
+              </Td>
+              <Td nowrap>{KIND_LABEL[r.kind]}</Td>
+              <Td nowrap>
+                <Badge tone={status.tone}>{status.text}</Badge>
+              </Td>
+              <Td nowrap>
+                <time dateTime={r.receivedAt}>{when(r.receivedAt, 'date')}</time>
+              </Td>
+              <Td>
+                {r.location !== null ? (
+                  <span className={styles.long}>{r.location}</span>
+                ) : (
+                  <span className={styles.quiet}>Not recorded</span>
+                )}
+              </Td>
+              <Td align="end" nowrap>
+                <span className={styles.numeric}>{r.lines.length}</span>
+              </Td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </Table>
+  );
+}
+
+export default async function ReceiptsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ po?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  const po = typeof params.po === 'string' ? params.po.trim() : '';
+
+  // Without a valid purchase order ID there is nothing to list, and nothing reaches the API.
+  if (!isGuid(po)) {
+    const session = await requireStaffSession('/procurement/receipts');
+    return <Picker invalid={po !== ''} canOpenOrders={receiptGrants(session.roles).issue} />;
+  }
+
+  const here = `/procurement/receipts?po=${po}`;
+  const session = await requireStaffSession(here);
+  const grants = receiptGrants(session.roles);
+  const [receipts, progress] = await Promise.allSettled([
+    listReceipts(session, po),
+    getPoProgress(session, po),
+  ]);
+
+  if (receipts.status === 'rejected') {
+    const f = receiptFailure(receipts.reason as unknown, 'load');
+    if (f.status === 404) notFound();
+    return (
+      <Page width="narrow">
+        <Breadcrumb items={[{ label: 'Receipts' }]} />
+        <Alert
+          tone={f.status === 403 ? 'info' : 'error'}
+          role="alert"
+          title={f.status === 403 ? 'You cannot open these receipts' : 'The receipts did not load'}
+          actions={f.status !== 403 ? <a href={here}>Try again</a> : null}
+        >
+          {f.message}
+        </Alert>
+      </Page>
+    );
+  }
+
+  const order = progress.status === 'fulfilled' ? progress.value : undefined;
+  const label = order?.number ?? 'this purchase order';
+  // With the progress known, offer a new receipt only where it can work; unknown leaves it to the form.
+  const mayStart =
+    order === undefined
+      ? true
+      : isReceivable(order.status) && kindsOffered(order.lines, grants).length > 0;
+  const newHref = `/procurement/receipts/new?po=${encodeURIComponent(po)}`;
+
+  return (
+    <Page>
+      <Breadcrumb
+        items={
+          grants.issue
+            ? [
+                { label: 'Purchase orders', href: '/procurement/orders' },
+                {
+                  label: order?.number ?? 'Purchase order',
+                  href: `/procurement/orders/${encodeURIComponent(po)}`,
+                },
+                { label: 'Receipts' },
+              ]
+            : [{ label: 'Receipts' }]
+        }
+      />
+      <PageHeader
+        title={
+          <>Receipts{order ? <span className={styles.long}> for {order.number}</span> : null}</>
+        }
+        status={
+          order ? (
+            <Badge tone={PO_STATUS_LABEL[order.status].tone}>
+              {PO_STATUS_LABEL[order.status].text}
+            </Badge>
+          ) : undefined
+        }
+        description="A receipt records what arrived. It starts as a draft and counts once it is confirmed. A mistake is undone by reversing the receipt, never by editing it."
+        actions={
+          mayStart ? (
+            <LinkButton href={newHref} variant="primary">
+              New receipt
+            </LinkButton>
+          ) : null
+        }
+      />
+
+      <div className={styles.stack}>
+        <Panel title="Receipts">
+          {receipts.value.length === 0 ? (
+            <EmptyState
+              title="Nothing has been received yet."
+              icon="file-text"
+              headingLevel={3}
+              action={
+                mayStart ? (
+                  <LinkButton href={newHref} variant="secondary">
+                    New receipt
+                  </LinkButton>
+                ) : undefined
+              }
+            >
+              Receipts of {label} appear here, newest first.
+            </EmptyState>
+          ) : (
+            <ReceiptRows receipts={receipts.value} />
+          )}
+        </Panel>
+        {progress.status === 'fulfilled' ? (
+          <Progress progress={progress.value} />
+        ) : (
+          <PanelProblem err={progress.reason as unknown} />
+        )}
+      </div>
+    </Page>
+  );
+}
