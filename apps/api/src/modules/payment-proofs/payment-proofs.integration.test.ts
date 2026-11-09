@@ -1,10 +1,12 @@
-// Portal payment-proof uploads (P3 U13 part 2) on a real postgres:16-alpine (Testcontainers, needs Docker in WSL).
+// Portal and staff payment-proof uploads (P3 U13 part 2) on a real postgres:16-alpine (Testcontainers, needs Docker
+// in WSL).
 // Run with: pnpm --filter @bos/api exec vitest run src/modules/payment-proofs/payment-proofs.integration.test.ts
 //
 // Real: every migration as bos_owner, every query as bos_app, the portal controller's handlers called inside a
 // request store bound to the customer's principal (as the tenancy interceptor binds it; the route's @Can is checked
 // by route-policy.check.test.ts once AppModule imports the module), DocumentsService with the real AuthzService and
-// the real `payment_intake` owner policy, the disk storage on a temp dir, the type check, the ScanProcessor talking
+// the real `payment_intake` owner policy (with its `payment.record` upload permission; staff principals carry the
+// seeded DEFAULT_ROLE_PERMISSIONS of their role), the disk storage on a temp dir, the type check, the ScanProcessor talking
 // the clamd protocol to fake-clamd, and PaymentsService.submit's proof check. Fakes: the BullMQ scan queue (the
 // test hands the captured job to the processor), notify, and PaymentsService's authz (its route @Can is not tested
 // here).
@@ -16,8 +18,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import type { Permission, Scope, SubmitPaymentBody } from '@bos/contracts';
-import { createParty, createPortalUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type Permission,
+  type RoleKey,
+  type Scope,
+  type SubmitPaymentBody,
+} from '@bos/contracts';
+import {
+  createParty,
+  createPortalUser,
+  createStaffUser,
+  createTenantWithEntity,
+  runMigrations,
+} from '@bos/db';
 import { HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
@@ -56,6 +70,7 @@ import {
 import { PaymentsService } from '../payments/payments.service';
 import { PaymentProofsService } from './payment-proofs.service';
 import { PortalPaymentProofsController } from './portal-payment-proofs.controller';
+import { StaffPaymentProofsController } from './staff-payment-proofs.controller';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -80,6 +95,7 @@ let fakeClamd: FakeClamd;
 let processor: ScanProcessor;
 let payments: PaymentsService;
 let controller: PortalPaymentProofsController;
+let staffController: StaffPaymentProofsController;
 
 const queue = { add: vi.fn().mockResolvedValue({}) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
@@ -100,6 +116,8 @@ interface World {
   /** Another customer of the same tenant, with its own portal user. */
   stranger: Principal;
   strangerParty: string;
+  /** The tenant's staff IdP org, for staff users. */
+  staffIdpOrgId: string;
 }
 
 function customerPrincipal(
@@ -124,7 +142,7 @@ function customerPrincipal(
 }
 
 async function newWorld(): Promise<World> {
-  const { tenantId, organizationId } = await createTenantWithEntity(pool);
+  const { tenantId, organizationId, idpOrgId } = await createTenantWithEntity(pool);
   const scope = { tenantId, organizationId };
   const mine = await createParty(pool, { tenantId, kind: 'customer' });
   const theirs = await createParty(pool, { tenantId, kind: 'customer' });
@@ -136,6 +154,7 @@ async function newWorld(): Promise<World> {
     party: mine.partyId,
     stranger: customerPrincipal(scope, strangerUser.userId, theirs.partyId, theirs.idpOrgId),
     strangerParty: theirs.partyId,
+    staffIdpOrgId: idpOrgId,
   };
 }
 
@@ -252,7 +271,9 @@ beforeAll(async () => {
     audit,
   );
   documents.registerOwner(new PaymentIntakeOwnerPolicy(drizzleCustomerPartyLoader(db)));
-  controller = new PortalPaymentProofsController(new PaymentProofsService(db, documents));
+  const proofs = new PaymentProofsService(db, documents);
+  controller = new PortalPaymentProofsController(proofs);
+  staffController = new StaffPaymentProofsController(proofs);
 
   fakeClamd = await startFakeClamd();
   processor = new ScanProcessor(
@@ -431,5 +452,166 @@ describe('the scan gate', () => {
       status: 'submitted',
       proofDocumentIds: [created.documentId],
     });
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ staff routes
+
+interface StaffWorld extends World {
+  /** An Accountant: holds payment.record, and no documents.upload at all. */
+  accountant: Principal;
+  /** A salesperson: documents.upload (own), no payment.record. */
+  sales: Principal;
+  vendorParty: string;
+}
+
+async function staffPrincipal(w: World, role: RoleKey): Promise<Principal> {
+  const { userId } = await createStaffUser(pool, {
+    ...w.scope,
+    idpOrgId: w.staffIdpOrgId,
+    roleKeys: [role],
+  });
+  return {
+    userId,
+    zitadelUserId: `zitadel-${userId}`,
+    tenantId: w.scope.tenantId,
+    organizationId: w.scope.organizationId,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: w.staffIdpOrgId,
+    roles: [role],
+    departmentId: null,
+    status: 'active',
+    grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>,
+  };
+}
+
+async function newStaffWorld(): Promise<StaffWorld> {
+  const w = await newWorld();
+  const vendor = await createParty(pool, { tenantId: w.scope.tenantId, kind: 'vendor' });
+  return {
+    ...w,
+    accountant: await staffPrincipal(w, 'accountant'),
+    sales: await staffPrincipal(w, 'sales'),
+    vendorParty: vendor.partyId,
+  };
+}
+
+const staffCreateAs = (p: Principal, body: unknown) =>
+  asCaller(p, () => staffController.create(body));
+
+const staffPutAs = (p: Principal, docId: string, verId: string, bytes: Buffer) =>
+  asCaller(p, () => staffController.upload(docId, verId, rawRequest(bytes)));
+
+async function documentCount(tenantId: string): Promise<number> {
+  const { rows } = await pool.query('SELECT 1 FROM app.documents WHERE tenant_id = $1', [tenantId]);
+  return rows.length;
+}
+
+describe('POST and PUT /v1/payment-proofs (staff)', () => {
+  it('lets an Accountant (payment.record, no documents.upload) upload for a customer, and submit with it once clean', async () => {
+    const w = await newStaffWorld();
+    expect(w.accountant.grants.has('documents.upload')).toBe(false);
+    expect(w.accountant.grants.get('payment.record')).toBe('all');
+    const bytes = PDF();
+
+    const created = await staffCreateAs(w.accountant, declare(bytes, { customerId: w.party }));
+    expect(created.uploadPath).toBe(
+      `/v1/payment-proofs/${created.documentId}/versions/${created.versionId}/content`,
+    );
+    const { rows } = await pool.query<{ owner_type: string; owner_id: string; created_by: string }>(
+      'SELECT owner_type, owner_id, created_by FROM app.documents WHERE id = $1',
+      [created.documentId],
+    );
+    expect(rows).toEqual([
+      { owner_type: PAYMENT_INTAKE_OWNER_TYPE, owner_id: w.party, created_by: w.accountant.userId },
+    ]);
+
+    const version = await staffPutAs(w.accountant, created.documentId, created.versionId, bytes);
+    expect(version.status).toBe('quarantined');
+    expect(await runQueuedScan(created.versionId)).toBe('clean');
+
+    const body: SubmitPaymentBody = {
+      customerId: w.party,
+      currency: 'NPR',
+      amount: '600.00',
+      tdsWithheld: '0.00',
+      method: 'bank_transfer',
+      receivedOn: '2026-11-08',
+      proofDocumentIds: [created.documentId],
+    };
+    const actor = {
+      kind: 'user' as const,
+      id: w.accountant.userId,
+      correlationId: `it-${randomUUID()}`,
+    };
+    const payment = await payments.submit(w.scope, actor, body, 'staff', randomUUID());
+    expect(payment).toMatchObject({ status: 'submitted', proofDocumentIds: [created.documentId] });
+  });
+
+  it('refuses a user without payment.record (sales) with 403 on POST and on PUT, and writes nothing', async () => {
+    const w = await newStaffWorld();
+    expect(w.sales.grants.has('payment.record')).toBe(false);
+    const bytes = PDF();
+    const created = await staffCreateAs(w.accountant, declare(bytes, { customerId: w.party }));
+    const before = await documentCount(w.scope.tenantId);
+
+    const post = await refusal(staffCreateAs(w.sales, declare(bytes, { customerId: w.party })));
+    const put = await refusal(staffPutAs(w.sales, created.documentId, created.versionId, bytes));
+
+    expect(post).toMatch(/^403 .*"code":"forbidden"/);
+    expect(put).toMatch(/^403 .*"code":"forbidden"/);
+    expect(await documentCount(w.scope.tenantId)).toBe(before);
+    expect(await statusOf(created.versionId)).toBe('awaiting_content');
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('refuses a portal customer on the staff route with 403, even for its own party', async () => {
+    const w = await newStaffWorld();
+
+    const body = await refusal(staffCreateAs(w.me, declare(PDF(), { customerId: w.party })));
+
+    expect(body).toMatch(/^403 .*"code":"forbidden"/);
+    expect(await documentCount(w.scope.tenantId)).toBe(0);
+  });
+
+  it('answers a customerId that is not a customer party of the tenant with one 404 and writes nothing', async () => {
+    const w = await newStaffWorld();
+    const other = await newWorld();
+    const as = (customerId: string) =>
+      refusal(staffCreateAs(w.accountant, declare(PDF(), { customerId })));
+
+    const vendor = await as(w.vendorParty);
+    const missing = await as(randomUUID());
+    const otherTenant = await as(other.party);
+    const malformed = await as('not-a-uuid');
+
+    expect(vendor).toMatch(/^404 /);
+    expect(missing).toBe(vendor);
+    expect(otherTenant).toBe(vendor);
+    expect(malformed).toBe(vendor);
+    expect(await documentCount(w.scope.tenantId)).toBe(0);
+  });
+
+  it('answers the same 404 to a PUT from another entity of the tenant, and to ids that are not proofs', async () => {
+    const w = await newStaffWorld();
+    const bytes = PDF();
+    const created = await staffCreateAs(w.accountant, declare(bytes, { customerId: w.party }));
+    const missing = await refusal(staffPutAs(w.accountant, randomUUID(), randomUUID(), bytes));
+    // No fixture adds a second entity to a tenant; any other organization id exercises the entity filter.
+    const elsewhere: Principal = { ...w.accountant, organizationId: randomUUID() };
+
+    const crossEntity = await refusal(
+      staffPutAs(elsewhere, created.documentId, created.versionId, bytes),
+    );
+    const malformed = await refusal(
+      staffPutAs(w.accountant, 'not-a-uuid', created.versionId, bytes),
+    );
+
+    expect(missing).toMatch(/^404 /);
+    expect(crossEntity).toBe(missing);
+    expect(malformed).toBe(missing);
+    expect(await statusOf(created.versionId)).toBe('awaiting_content');
+    expect(queue.add).not.toHaveBeenCalled();
   });
 });
