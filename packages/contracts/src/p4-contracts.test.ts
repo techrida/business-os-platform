@@ -263,6 +263,36 @@ describe('P4 state machines', () => {
     expect(canTransitionBill('paid', 'voided')).toBe(false);
   });
 
+  // Every move the bills service and the approval subjects write (vendor-bills.service.ts, vendor-bill.subject.ts).
+  it.each([
+    ['a non-PO bill goes to approval straight from draft', 'draft', 'pending_approval'],
+    ['a first match outside tolerance goes from draft to variance', 'draft', 'variance'],
+    [
+      'a rejected or returned match exception puts the bill back in variance',
+      'exception_pending',
+      'variance',
+    ],
+    ['a match run within tolerance after a variance goes back to matching', 'variance', 'matching'],
+    ['Finance is asked to accept a variance', 'variance', 'exception_pending'],
+    ['an approver returns a bill to draft', 'pending_approval', 'draft'],
+  ] as const)('allows the move the service writes: %s', (_label, from, to) => {
+    expect(canTransitionBill(from, to)).toBe(true);
+  });
+
+  it.each([
+    ['variance', 'pending_approval'],
+    ['variance', 'approved'],
+    ['exception_pending', 'approved'],
+    ['exception_pending', 'draft'],
+    ['draft', 'exception_pending'],
+    ['rejected', 'draft'],
+  ] as const)(
+    'still refuses %s to %s: a bill in variance never skips the exception',
+    (from, to) => {
+      expect(canTransitionBill(from, to)).toBe(false);
+    },
+  );
+
   it('follows the payment request flow', () => {
     expect(canTransitionPaymentRequest('draft', 'pending_approval')).toBe(true);
     expect(canTransitionPaymentRequest('pending_approval', 'approved')).toBe(true);
