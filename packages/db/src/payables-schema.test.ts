@@ -12,12 +12,12 @@ import { describe, expect, it } from 'vitest';
 import {
   BILL_KINDS,
   BILL_STATUSES,
+  BILL_SUBMISSION_STATUSES,
   MATCH_EXCEPTION_STATUSES,
   MATCH_RESULT_STATUSES,
   MATCH_STATUSES,
   PAYMENT_REQUEST_STATUSES,
   PAYMENT_TYPES,
-  SUBMISSION_STATUSES,
   matchExceptions,
   matchResults,
   paymentRequestLines,
@@ -213,7 +213,9 @@ describe('0035_payables and src/schema/payables.ts', () => {
     expect(checkValues('vendor_bills_status_check')).toEqual([...BILL_STATUSES]);
     expect(checkValues('vendor_bills_kind_check')).toEqual([...BILL_KINDS]);
     expect(checkValues('vendor_bills_match_status_check')).toEqual([...MATCH_STATUSES]);
-    expect(checkValues('vendor_bill_submissions_status_check')).toEqual([...SUBMISSION_STATUSES]);
+    expect(checkValues('vendor_bill_submissions_status_check')).toEqual([
+      ...BILL_SUBMISSION_STATUSES,
+    ]);
     expect(checkValues('match_results_status_check')).toEqual([...MATCH_RESULT_STATUSES]);
     expect(checkValues('match_exceptions_status_check')).toEqual([...MATCH_EXCEPTION_STATUSES]);
     expect(checkValues('payment_requests_status_check')).toEqual([...PAYMENT_REQUEST_STATUSES]);
