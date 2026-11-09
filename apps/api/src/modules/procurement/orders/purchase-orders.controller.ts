@@ -1,0 +1,111 @@
+// HTTP routes of purchase orders (P4 unit P3). Thin on purpose: parsing here (the bodies are the contracts of
+// procurement.ts), every rule in PurchaseOrdersService. Every write needs an Idempotency-Key. The route-level grant
+// is procurement.po.issue; another entity's PO is a 404. Shares the `v1/procurement/purchase-orders` prefix with
+// the receipts unit's PurchaseOrderProgressController (GET :id/progress), which this class does not touch.
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
+
+import { Can } from '../../../platform/authz/decorators';
+import { parseOr400 } from '../../approvals/approvals.controller';
+import { requireIdempotencyKey } from '../../customers/customers.types';
+import {
+  AmendPurchaseOrderBodySchema,
+  CancelPurchaseOrderBodySchema,
+  ListPurchaseOrdersQuerySchema,
+  ShortClosePurchaseOrderBodySchema,
+} from './purchase-order.rules';
+import {
+  PurchaseOrdersService,
+  type AmendResultDto,
+  type PurchaseOrderDto,
+  type PurchaseOrderVersionDto,
+} from './purchase-orders.service';
+
+@Controller('v1/procurement/purchase-orders')
+export class PurchaseOrdersController {
+  constructor(private readonly orders: PurchaseOrdersService) {}
+
+  /** The entity's purchase orders, newest first. Query: `status` (optional). */
+  @Get()
+  @Can('procurement.po.issue')
+  list(@Query() query: unknown): Promise<Omit<PurchaseOrderDto, 'lines'>[]> {
+    return this.orders.list(parseOr400(ListPurchaseOrdersQuerySchema, query).status);
+  }
+
+  /** 404 outside the acting entity. */
+  @Get(':id')
+  @Can('procurement.po.issue')
+  get(@Param('id', ParseUUIDPipe) id: string): Promise<PurchaseOrderDto> {
+    return this.orders.get(id);
+  }
+
+  /** Every issued version, oldest first (immutable). */
+  @Get(':id/versions')
+  @Can('procurement.po.issue')
+  versions(@Param('id', ParseUUIDPipe) id: string): Promise<PurchaseOrderVersionDto[]> {
+    return this.orders.versions(id);
+  }
+
+  /** 200 with the issued PO (version 1). 409 unless a draft, or for a vendor that is not approved or not active here. */
+  @Post(':id/issue')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  issue(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+  ): Promise<PurchaseOrderDto> {
+    return this.orders.issue(id, requireIdempotencyKey(key));
+  }
+
+  /** 200: `applied` (version N+1) or `pending_approval` (po_amendment route). 400 for a vendor field. */
+  @Post(':id/amend')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  amend(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<AmendResultDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.amend(id, parseOr400(AmendPurchaseOrderBodySchema, body), idempotencyKey);
+  }
+
+  /** 200 with the short-closed PO. 409 unless partially received. */
+  @Post(':id/short-close')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  shortClose(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<PurchaseOrderDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.shortClose(
+      id,
+      parseOr400(ShortClosePurchaseOrderBodySchema, body),
+      idempotencyKey,
+    );
+  }
+
+  /** 200 with the cancelled PO. 409 unless issued, 409 PO_HAS_RECEIPTS once anything was received. */
+  @Post(':id/cancel')
+  @HttpCode(200)
+  @Can('procurement.po.issue')
+  cancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ): Promise<PurchaseOrderDto> {
+    const idempotencyKey = requireIdempotencyKey(key);
+    return this.orders.cancel(id, parseOr400(CancelPurchaseOrderBodySchema, body), idempotencyKey);
+  }
+}
