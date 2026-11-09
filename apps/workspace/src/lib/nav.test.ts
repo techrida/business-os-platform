@@ -55,23 +55,30 @@ describe('NAV_GROUPS', () => {
     }
   });
 
-  it('keeps later work unbuilt and does not declare P4 fully shipped', () => {
-    expect(SHIPPED_PHASES).not.toContain('P4');
+  it('ships P4 only with every P4 navigation destination linked and keeps later work unbuilt', () => {
+    expect(SHIPPED_PHASES).toContain('P4');
+    const p4Items = items.filter((item) => item.phase === 'P4');
+    expect(p4Items).toHaveLength(9);
+    for (const item of p4Items) {
+      expect(item.href, item.label).toMatch(/^\//);
+      expect(isBuilt(item), item.label).toBe(true);
+    }
     for (const item of items.filter((i) => i.phase === 'later')) {
       expect(isBuilt(item), item.label).toBe(false);
     }
   });
 
-  it('only builds shipped phases or the explicitly early-linked P4 phase', () => {
+  it('only builds items with a destination in a shipped phase', () => {
     for (const item of items.filter(isBuilt)) {
-      expect([...SHIPPED_PHASES, 'P4'], item.label).toContain(item.phase);
+      expect(SHIPPED_PHASES, item.label).toContain(item.phase);
     }
     for (const phase of ['P3', 'later'] as const) {
       expect(isBuilt({ label: 'Future screen', href: '/future', icon: 'home', phase })).toBe(false);
     }
-    expect(isBuilt({ label: 'Early screen', href: '/early', icon: 'home', phase: 'P4' })).toBe(
+    expect(isBuilt({ label: 'Shipped screen', href: '/shipped', icon: 'home', phase: 'P4' })).toBe(
       true,
     );
+    expect(isBuilt({ label: 'No destination', icon: 'home', phase: 'P4' })).toBe(false);
   });
 
   it('links exactly the built pages', () => {
@@ -291,6 +298,18 @@ describe('NAV_GROUPS', () => {
     expect(
       requestOnly.find((group) => group.label === 'Payables')?.items.map((item) => item.label),
     ).toEqual(['Payment requests']);
+  });
+
+  it('shows each Payables link for its own grant and denies absent grants', () => {
+    const payables = NAV_GROUPS.find((group) => group.label === 'Payables')?.items ?? [];
+    for (const item of payables) {
+      expect(
+        visibleGroups(false, (permission) => permission === item.permission).find(
+          (group) => group.label === 'Payables',
+        )?.items,
+      ).toEqual([item]);
+    }
+    expect(visibleGroups(false).some((group) => group.label === 'Payables')).toBe(false);
   });
 
   it('uses only known phases', () => {
