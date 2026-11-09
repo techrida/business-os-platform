@@ -65,7 +65,8 @@ const ROLE_ORG_KIND: Readonly<Record<RoleKey, OrgKind>> = {
   pmo: 'staff',
   operations_head: 'staff',
   procurement: 'staff',
-  receiver: 'staff',
+  warehouse: 'staff',
+  operations_officer: 'staff',
 };
 
 /**
