@@ -5,14 +5,16 @@ import { TopBar } from '@/components/portal/top-bar';
 import { getSession } from '@/lib/session';
 
 /**
- * Signed-in customer pages. getSession() returns a session only for a customer user with a party
- * (session.ts enforces it on every read), so no further kind check is needed here. Without one,
- * the visitor signs in. A server layout cannot see the URL, so each page that needs to come back
- * to itself after sign-in redirects with its own returnTo (PT2).
+ * Signed-in customer pages. getSession() returns a session only for a customer or vendor user with
+ * a party (session.ts enforces it on every read). Anything but a customer session goes to the
+ * vendor screens, whose layout refuses anything but a vendor, so neither kind sees the other's
+ * pages. Without a session, the visitor signs in. A server layout cannot see the URL, so each page
+ * that needs to come back to itself after sign-in redirects with its own returnTo (PT2).
  */
 export default async function PortalLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
   if (!session) redirect('/auth/login?returnTo=%2F');
+  if (session.orgKind !== 'customer') redirect('/vendor');
 
   return (
     <>
