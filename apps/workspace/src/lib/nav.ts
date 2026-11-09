@@ -3,11 +3,11 @@
  * screen map. Pure data with no React import, so unit tests and the header title lookup can use
  * it anywhere.
  *
- * An item is "built" when it has an `href`: it renders as a link. Every other item renders
- * disabled with its phase tag, and so shows the roadmap. When an item ships, give it an `href`
- * as its screen becomes available. SHIPPED_PHASES tracks completion of whole phases; individual
- * screens in EARLY_LINKED_PHASES can become available earlier. nav.test.ts keeps the linked
- * screen list explicit and rejects links in every other future phase.
+ * An item is "built" when it has an `href` and belongs to SHIPPED_PHASES: it renders as a link.
+ * Every other item renders disabled with its phase tag, and so shows the roadmap. Give it an `href`
+ * as its screen becomes available. SHIPPED_PHASES lists phases with available navigation;
+ * nav.test.ts keeps the linked screen list explicit, checks every P4 item has a destination,
+ * and rejects links in future phases.
  *
  * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
  * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
@@ -70,11 +70,8 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
-/** Phases whose planned work is completely shipped. */
-export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2', 'P3'];
-
-/** Explicit exceptions for available screens in a phase whose full delivery is still pending. */
-export const EARLY_LINKED_PHASES: readonly Phase[] = ['P4'];
+/** Phases whose available screens may be linked in navigation. */
+export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2', 'P3', 'P4'];
 
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -309,10 +306,7 @@ export const APP_NAME = 'Business OS';
 
 /** True when the item is built and links somewhere. */
 export function isBuilt(item: NavItem): item is NavItem & { href: string } {
-  return (
-    item.href !== undefined &&
-    (SHIPPED_PHASES.includes(item.phase) || EARLY_LINKED_PHASES.includes(item.phase))
-  );
+  return item.href !== undefined && SHIPPED_PHASES.includes(item.phase);
 }
 
 /**
