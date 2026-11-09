@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES } from '@bos/contracts';
+import Link from 'next/link';
 import { useActionState, useRef, useState } from 'react';
 
 import {
@@ -13,6 +13,8 @@ import {
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import type { PaymentRequestItem } from '@/lib/api-payables';
+import { money } from '@/lib/kernel-format';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import styles from '../payables.module.css';
@@ -22,7 +24,13 @@ import {
   submitPaymentRequestAction,
 } from './actions';
 
-export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string }) {
+export function PaymentRequestEntry({
+  idempotencyKey,
+  items,
+}: {
+  idempotencyKey: string;
+  items: PaymentRequestItem[];
+}) {
   const [state, action, pending] = useActionState<ActionState, FormData>(
     createPaymentRequestAction,
     { key: idempotencyKey },
@@ -38,6 +46,19 @@ export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string
   const summary = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrap, summary);
   const errors = state.errors ?? {};
+  const vendors = [
+    ...new Map(items.map((item) => [item.vendorPartyId, item.vendorName])).entries(),
+  ];
+  const currencies = [
+    ...new Set(
+      items
+        .filter((item) => item.vendorPartyId === header.vendorPartyId)
+        .map((item) => item.currency),
+    ),
+  ];
+  const eligible = items.filter(
+    (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
+  );
   return (
     <div ref={wrap}>
       <form action={action} noValidate className={styles.form}>
@@ -50,16 +71,43 @@ export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string
             role="alert"
             tone="error"
             actions={
-              state.reload ? <a href="/payables/payment-requests/new">Reload this page</a> : null
+              state.reload ? (
+                <Link href="/payables/payment-requests/new">Reload this page</Link>
+              ) : null
             }
           >
             {state.error}
           </Alert>
         ) : null}
         <div className={styles.lineFields}>
+          <Field label="Vendor" error={errors['vendorPartyId']}>
+            {(control) => (
+              <Select
+                name="vendorPartyId"
+                value={header.vendorPartyId}
+                onChange={(e) => {
+                  const vendorPartyId = e.target.value;
+                  setHeader((current) => ({
+                    ...current,
+                    vendorPartyId,
+                    currency:
+                      items.find((item) => item.vendorPartyId === vendorPartyId)?.currency ?? 'NPR',
+                  }));
+                  setRows([{ openItemId: '', amount: '' }]);
+                }}
+                {...control}
+              >
+                <option value="">Choose a vendor</option>
+                {vendors.map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
           {(
             [
-              ['vendorPartyId', 'Vendor ID'],
               ['fromBankAccountId', 'Paying entity bank account ID'],
               ['purchaseOrderId', 'Purchase order ID (optional)'],
             ] as const
@@ -82,10 +130,14 @@ export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string
               <Select
                 name="currency"
                 value={header.currency}
-                onChange={(e) => setHeader((current) => ({ ...current, currency: e.target.value }))}
+                onChange={(e) => {
+                  setHeader((current) => ({ ...current, currency: e.target.value }));
+                  setRows([{ openItemId: '', amount: '' }]);
+                }}
+                disabled={header.vendorPartyId === ''}
                 {...control}
               >
-                {CURRENCIES.map((currency) => (
+                {currencies.map((currency) => (
                   <option key={currency} value={currency}>
                     {currency}
                   </option>
@@ -96,19 +148,16 @@ export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string
         </div>
         <p className={styles.note}>
           Request settlement of this vendor&apos;s approved bills. The platform checks each open
-          item and snapshots the vendor&apos;s active, verified bank account. Enter only the amount
-          still available after other requests.
+          item and snapshots the vendor&apos;s active, verified bank account. Available amounts
+          exclude claims by pending and approved requests and are checked again when you save.
         </p>
         {rows.map((row, i) => (
           <fieldset key={i} className={styles.lineGroup}>
             <legend>Payable item {i + 1}</legend>
             <div className={styles.lineFields}>
-              <Field
-                label={`Payable open item ID ${i + 1}`}
-                error={errors[`allocations.${i}.openItemId`]}
-              >
+              <Field label={`Bill ${i + 1}`} error={errors[`allocations.${i}.openItemId`]}>
                 {(control) => (
-                  <Input
+                  <Select
                     name={`allocation:${i}:openItemId`}
                     value={row.openItemId}
                     onChange={(e) =>
@@ -118,8 +167,17 @@ export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string
                         ),
                       )
                     }
+                    disabled={header.vendorPartyId === ''}
                     {...control}
-                  />
+                  >
+                    <option value="">Choose an approved bill</option>
+                    {eligible.map((item) => (
+                      <option key={item.openItemId} value={item.openItemId}>
+                        {item.billNumber ?? item.vendorInvoiceNo} · {item.vendorInvoiceNo} ·{' '}
+                        {money(item.availableAmount, item.currency)} available
+                      </option>
+                    ))}
+                  </Select>
                 )}
               </Field>
               <Field label={`Amount ${i + 1}`} error={errors[`allocations.${i}.amount`]}>
@@ -167,7 +225,7 @@ export function PaymentRequestEntry({ idempotencyKey }: { idempotencyKey: string
           </div>
         ) : null}
         <div className={styles.formButtons}>
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending || eligible.length === 0}>
             Create draft request
           </Button>
           <LinkButton href="/payables/payment-requests" variant="secondary">
