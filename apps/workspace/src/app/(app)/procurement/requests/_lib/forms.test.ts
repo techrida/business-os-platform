@@ -32,6 +32,23 @@ const valid = (over: Partial<PrValues> = {}): PrValues => ({
 });
 
 describe('valuesFromForm', () => {
+  it('keeps the goods serial requirement through form parsing', () => {
+    const input = valid();
+    const form = new FormData();
+    for (const [name, value] of Object.entries(input)) {
+      if (typeof value === 'string') form.set(name, value);
+    }
+    for (const [name, value] of Object.entries(input.lines[0]!)) {
+      if (typeof value === 'string') form.set(`lines.0.${name}`, value);
+    }
+    form.set('lines.0.requiresSerials', 'on');
+    const result = parsePrValues(valuesFromForm(form));
+    expect(result.ok && result.data.lines[0]).toMatchObject({ requiresSerials: true });
+    form.delete('lines.0.requiresSerials');
+    const unchecked = parsePrValues(valuesFromForm(form));
+    expect(unchecked.ok && unchecked.data.lines[0]).not.toHaveProperty('requiresSerials');
+  });
+
   it('reads indexed lines in order and the emergency checkbox', () => {
     const f = new FormData();
     f.set('requestType', 'service');
