@@ -287,7 +287,15 @@ async function doc(ownerType = 'vendor_bill'): Promise<string> {
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
         VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${ownerType}, ${randomUUID()}) RETURNING id`,
   );
-  return (rows[0] as { id: string }).id;
+  const documentId = (rows[0] as { id: string }).id;
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+          declared_mime, size_bytes, storage_key, status)
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, 1, 'invoice.pdf',
+                'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean')`,
+  );
+  return documentId;
 }
 
 let panSeq = 0;
@@ -681,5 +689,122 @@ describe('entity wall', () => {
     );
     expect(foreign.getStatus()).toBe(404);
     expect(await service.list()).toEqual([]);
+  });
+});
+
+describe('available bill items', () => {
+  it('returns vendor and invoice labels with ledger-derived balances less pending and approved claims', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const invoice = await bills.get(bill.billId);
+    await read(async (tx) => {
+      const { item } = await ledger.openItem(tx, scopeA, systemActor('test'), {
+        side: 'payable',
+        direction: 'debit',
+        partyId: v,
+        sourceType: 'vendor_debit_note',
+        sourceId: randomUUID(),
+        currency: 'NPR',
+        amount: '100.25',
+        amountNpr: '100.25',
+        fxRate: '1',
+        documentDate: '2026-11-09',
+      });
+      await ledger.allocate(tx, scopeA, systemActor('test'), {
+        debitItemId: item.id,
+        creditItemId: bill.openItemId,
+        amount: '100.25',
+      });
+    });
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_bills SET status = 'partially_paid' WHERE id = ${bill.billId}`,
+    );
+    const request = await draft(v, [{ openItemId: bill.openItemId, amount: '200.10' }]);
+    const itemForBill = async () =>
+      (await service.listItems()).find((item) => item.openItemId === bill.openItemId);
+    expect(await itemForBill()).toEqual({
+      openItemId: bill.openItemId,
+      vendorPartyId: v,
+      vendorName: `Vendor ${v.slice(0, 6)}`,
+      vendorBillId: bill.billId,
+      billNumber: invoice.number,
+      vendorInvoiceNo: invoice.vendorInvoiceNo,
+      currency: 'NPR',
+      openAmount: '56399.75',
+      claimedAmount: '0.00',
+      availableAmount: '56399.75',
+    });
+    roles.finance = [U.fin3];
+    const pending = await service.submit(request.id, randomUUID());
+    expect(await itemForBill()).toMatchObject({
+      openAmount: '56399.75',
+      claimedAmount: '200.10',
+      availableAmount: '56199.65',
+    });
+    await approve(U.fin3, 'finance', pending.approvalRequestId!);
+    expect(await itemForBill()).toMatchObject({
+      claimedAmount: '200.10',
+      availableAmount: '56199.65',
+    });
+  });
+
+  it('excludes unapproved, voided, paid and fully claimed items', async () => {
+    const v = await vendor();
+    const hidden: string[] = [];
+    for (const status of ['draft', 'voided', 'paid'] as const) {
+      const bill = await approvedBill(v);
+      hidden.push(bill.openItemId);
+      // Leave the posted credit open to make the status filter independently observable.
+      await exec(
+        scopeA,
+        sql`UPDATE app.vendor_bills SET status = ${status},
+        voided_by = ${status === 'voided' ? U.fin : null},
+        voided_at = ${status === 'voided' ? now : null},
+        void_reason = ${status === 'voided' ? 'Voided test fixture' : null}
+        WHERE id = ${bill.billId}`,
+      );
+    }
+    const claimed = await approvedBill(v);
+    hidden.push(claimed.openItemId);
+    const request = await draft(v, [{ openItemId: claimed.openItemId, amount: claimed.payable }]);
+    roles.finance = [U.fin3];
+    await service.submit(request.id, randomUUID());
+    roles.finance = [U.fin];
+    const settled = await approvedBill(v);
+    hidden.push(settled.openItemId);
+    await read(async (tx) => {
+      const { item } = await ledger.openItem(tx, scopeA, systemActor('test'), {
+        side: 'payable',
+        direction: 'debit',
+        partyId: v,
+        sourceType: 'vendor_debit_note',
+        sourceId: randomUUID(),
+        currency: 'NPR',
+        amount: settled.payable,
+        amountNpr: settled.payable,
+        fxRate: '1',
+        documentDate: '2026-11-09',
+      });
+      await ledger.allocate(tx, scopeA, systemActor('test'), {
+        debitItemId: item.id,
+        creditItemId: settled.openItemId,
+        amount: settled.payable,
+      });
+    });
+    as(U.fin2, 'finance');
+    const available = await service.listItems();
+    expect(available.filter((item) => hidden.includes(item.openItemId))).toEqual([]);
+  });
+
+  it("does not reveal another entity's approved items", async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    as(U.fin2, 'finance');
+    expect((await service.listItems()).some((item) => item.openItemId === bill.openItemId)).toBe(
+      true,
+    );
+    current.inB = true;
+    expect(await service.listItems()).toEqual([]);
   });
 });
