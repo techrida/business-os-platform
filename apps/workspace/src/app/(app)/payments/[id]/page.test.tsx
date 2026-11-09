@@ -12,6 +12,7 @@ import {
   verifiedPayment,
 } from '../_lib/fixtures';
 
+import { advance, INVOICE_2_ID, settlement } from './allocate-fixtures';
 import PaymentDetailPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -23,11 +24,15 @@ const mocks = vi.hoisted(() => ({
   listPaymentAllocations: vi.fn(),
   getCustomer: vi.fn(),
   getDocument: vi.fn(),
+  getCustomerStatement: vi.fn(),
+  getCustomerAdvance: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/lib/api-receivables', () => ({
   getPayment: mocks.getPayment,
   listPaymentAllocations: mocks.listPaymentAllocations,
+  getCustomerStatement: mocks.getCustomerStatement,
+  getCustomerAdvance: mocks.getCustomerAdvance,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/crm/verification-api', () => ({ getDocument: mocks.getDocument }));
@@ -65,7 +70,9 @@ async function render(id = PAYMENT_ID): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't' });
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: [] });
+  mocks.getCustomerStatement.mockResolvedValue([settlement()]);
+  mocks.getCustomerAdvance.mockResolvedValue([advance('123456.00')]);
   mocks.getPayment.mockResolvedValue(payment());
   mocks.listPaymentAllocations.mockResolvedValue([]);
   mocks.getCustomer.mockResolvedValue({
@@ -158,5 +165,137 @@ describe('payment detail', () => {
     mocks.getPayment.mockClear();
     expect(await render('not-an-id')).toContain('That is not a payment');
     expect(mocks.getPayment).not.toHaveBeenCalled();
+  });
+});
+
+const asAccountant = () =>
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+const reversalRow = allocationRow({
+  id: '88888888-8888-4888-8888-888888888880',
+  amount: '-750000.00',
+  reversesAllocationId: '77777777-7777-4777-8777-777777777777',
+  reason: 'Wrong invoice',
+});
+
+describe('allocate panel on the detail page', () => {
+  it('shows on a verified payment for a person with payment.allocate, fed by the open statement', async () => {
+    asAccountant();
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    const html = await render();
+    expect(html).toContain('Allocate this payment');
+    expect(html).toContain('INV-2083/84-00007');
+    expect(html).toContain('NPR 1,23,456.00');
+    expect(mocks.getCustomerStatement).toHaveBeenCalledWith(
+      { accessToken: 't', roles: ['accountant'] },
+      CUSTOMER_ID,
+      { openOnly: true, currency: 'NPR' },
+    );
+  });
+
+  it('is hidden without payment.allocate, and the API is not asked for the statement', async () => {
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    for (const roles of [[], ['sales'], ['management']]) {
+      mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles });
+      const html = await render();
+      expect(html).not.toContain('Allocate this payment');
+    }
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
+    expect(mocks.getCustomerAdvance).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['submitted', payment()],
+    ['rejected', payment({ status: 'rejected', rejectionReason: 'Slip unreadable' })],
+    ['withdrawn', payment({ status: 'withdrawn' })],
+    ['reversed', verifiedPayment({ status: 'reversed' })],
+  ] as const)('is hidden while the payment is %s', async (_status, shown) => {
+    asAccountant();
+    mocks.getPayment.mockResolvedValue(shown);
+    expect(await render()).not.toContain('Allocate this payment');
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
+  });
+
+  it('says so when the statement fails, and still shows the payment', async () => {
+    asAccountant();
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.getCustomerStatement.mockRejectedValue(new ApiError(500, 'x'));
+    mocks.getCustomerAdvance.mockRejectedValue(new ApiError(403, 'x'));
+    const html = await render();
+    expect(html).toContain('The open invoices could not be loaded');
+    expect(html).toContain('Could not be loaded');
+    expect(html).toContain('RCPT-2083/84-00001');
+  });
+
+  it('shows zero advance when the server has no row for this currency', async () => {
+    asAccountant();
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.getCustomerAdvance.mockResolvedValue([advance('50.00', 'USD')]);
+    const html = await render();
+    expect(html).toContain('Customer advance in NPR');
+    expect(html).toContain('NPR 0.00');
+  });
+});
+
+describe('allocations table labels and deallocate', () => {
+  const byFilter =
+    (full: Promise<unknown>) => (_s: unknown, _c: string, f: { openOnly?: boolean }) =>
+      f.openOnly === true ? Promise.resolve([settlement({ invoiceId: INVOICE_2_ID })]) : full;
+
+  it('labels an allocation by invoice number from the full statement, even when it is settled', async () => {
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.listPaymentAllocations.mockResolvedValue([allocationRow()]);
+    mocks.getCustomerStatement.mockImplementation(
+      byFilter(Promise.resolve([settlement({ number: 'INV-SETTLED-9', openAmount: '0.00' })])),
+    );
+    asAccountant();
+    const html = await render();
+    expect(html).toContain('INV-SETTLED-9');
+    expect(html).not.toContain('Invoice 66666666');
+    expect(mocks.getCustomerStatement).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID, {
+      currency: 'NPR',
+    });
+    expect(mocks.getCustomerStatement).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID, {
+      openOnly: true,
+      currency: 'NPR',
+    });
+  });
+
+  it('falls back to a short id when the statement cannot be read (no ar.read, or a failure)', async () => {
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.listPaymentAllocations.mockResolvedValue([allocationRow()]);
+    mocks.getCustomerStatement.mockRejectedValue(new ApiError(403, 'x'));
+    expect(await render()).toContain('Invoice 66666666');
+  });
+
+  it('does not ask for a statement just for labels when there are no allocations', async () => {
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.listPaymentAllocations.mockResolvedValue([]);
+    await render();
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
+  });
+
+  it('offers deallocate on live allocations only, not on reversals or already reversed rows', async () => {
+    asAccountant();
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    const live = allocationRow({
+      id: '77777777-7777-4777-8777-777777777771',
+      invoiceId: INVOICE_2_ID,
+    });
+    mocks.listPaymentAllocations.mockResolvedValue([allocationRow(), reversalRow, live]);
+    mocks.getCustomerStatement.mockResolvedValue([
+      settlement(),
+      settlement({ invoiceId: INVOICE_2_ID, number: 'INV-TWO' }),
+    ]);
+    const html = await render();
+    expect(html.match(/<button[^>]*>Deallocate INV/g)).toHaveLength(1);
+    expect(html).toContain('Deallocate INV-TWO');
+    expect(html).toContain('Reversed: Wrong invoice');
+  });
+
+  it('offers no deallocate without payment.allocate', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getPayment.mockResolvedValue(verifiedPayment());
+    mocks.listPaymentAllocations.mockResolvedValue([allocationRow()]);
+    expect(await render()).not.toContain('Deallocate');
   });
 });
