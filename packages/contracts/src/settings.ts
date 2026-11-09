@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { SlaSpecSchema } from './approvals.js';
 import { AddressSchema, PanVatNoSchema } from './crm.js';
 import { CurrencySchema, DecimalString } from './money.js';
-import { DEFAULT_SALES_SCHEDULE, ScheduleTemplateSchema } from './sales.js';
 import { EVIDENCE_KINDS, NonNegativeDecimalString } from './quotations.js';
+import { DEFAULT_SALES_SCHEDULE, ScheduleTemplateSchema } from './sales.js';
 
 /**
  * Evidence an accepted quotation needs before Won: one evidence kind, or `both`, which means a contract AND a
