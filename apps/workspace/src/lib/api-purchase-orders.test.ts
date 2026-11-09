@@ -16,6 +16,7 @@ import {
   listPoVersions,
   listPurchaseOrders,
   listReceipts,
+  listReceivableOrders,
   reverseReceipt,
   shortClosePurchaseOrder,
 } from './api-purchase-orders';
@@ -275,6 +276,53 @@ describe('purchase order PDF link', () => {
     expect(lastCall().url).toBe(
       `http://api:3001/v1/procurement/purchase-orders/${PO}/versions/2/document`,
     );
+  });
+});
+
+const receivable = {
+  id: PO,
+  number: 'PO-2082-0001',
+  vendorId: VENDOR,
+  vendorName: 'Himal Traders Pvt. Ltd.',
+  kind: 'mixed',
+  status: 'partially_received',
+  issuedAt: '2026-11-08T05:45:00.000Z',
+  openQuantity: '9.0000',
+};
+
+describe('receivable orders', () => {
+  it('lists with the default limit left to the API, and with an explicit one (strict query)', async () => {
+    answer(reply([receivable]));
+    const out = await listReceivableOrders(session);
+    expect(out[0]).toEqual(receivable);
+    expect(lastCall().url).toBe('http://api:3001/v1/procurement/receivable-orders');
+    await listReceivableOrders(session, 25);
+    expect(lastCall().url).toBe('http://api:3001/v1/procurement/receivable-orders?limit=25');
+  });
+
+  it('accepts an order without an issue date, and keeps the quantity as text', async () => {
+    const { issuedAt: _issuedAt, ...bare } = receivable;
+    answer(reply([bare]));
+    const out = await listReceivableOrders(session);
+    expect(out[0]?.issuedAt).toBeUndefined();
+    expect(out[0]?.openQuantity).toBe('9.0000');
+  });
+
+  it('turns a status or kind the DTO does not have, or an extra field, into a 502', async () => {
+    for (const bad of [
+      { ...receivable, status: 'closed' },
+      { ...receivable, kind: 'other' },
+      { ...receivable, openQuantity: 9 },
+      { ...receivable, surprise: true },
+    ]) {
+      answer(reply([bad]));
+      await expect(listReceivableOrders(session)).rejects.toMatchObject({ status: 502 });
+    }
+  });
+
+  it('carries a 403 with its status', async () => {
+    answer(reply({ error: { code: 'forbidden' } }, 403));
+    await expect(listReceivableOrders(session)).rejects.toMatchObject({ status: 403 });
   });
 });
 
