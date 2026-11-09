@@ -5,7 +5,8 @@
  *
  * An item is "built" when it has an `href`: it renders as a link. Every other item renders
  * disabled with its phase tag, and so shows the roadmap. When an item ships, give it an `href`
- * and a phase in SHIPPED_PHASES; nav.test.ts keeps the two in step.
+ * as its screen becomes available. SHIPPED_PHASES tracks completion of whole phases; individual
+ * screens can become available earlier. nav.test.ts keeps the linked screen list explicit.
  *
  * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
  * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
@@ -68,7 +69,7 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
-/** Phases whose items may be built and linked. */
+/** Phases whose planned work is completely shipped. */
 export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2'];
 
 export const NAV_GROUPS: readonly NavGroup[] = [
@@ -184,9 +185,41 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: 'Purchases',
     items: [
-      // P4 is not shipped yet, so Vendors has no href and shows as a roadmap item. When P4 ships, add
-      // `href: '/vendors'` and 'P4' to SHIPPED_PHASES together (nav.test.ts keeps the two in step).
-      { label: 'Vendors', icon: 'building', phase: 'P4', permission: 'vendor.read' },
+      {
+        label: 'Purchase requests',
+        href: '/procurement/requests',
+        icon: 'list-checks',
+        phase: 'P4',
+        permission: 'procurement.pr.read',
+      },
+      {
+        label: 'Requests for quotation',
+        href: '/procurement/rfqs',
+        icon: 'file-text',
+        phase: 'P4',
+        permission: 'procurement.sourcing',
+      },
+      {
+        label: 'Purchase orders',
+        href: '/procurement/orders',
+        icon: 'file-text',
+        phase: 'P4',
+        permission: 'procurement.po.issue',
+      },
+      {
+        label: 'Receipts',
+        href: '/procurement/receipts',
+        icon: 'receipt',
+        phase: 'P4',
+        permission: 'procurement.receipt.confirm',
+      },
+      {
+        label: 'Vendors',
+        href: '/vendors',
+        icon: 'building',
+        phase: 'P4',
+        permission: 'vendor.read',
+      },
     ],
   },
   {
