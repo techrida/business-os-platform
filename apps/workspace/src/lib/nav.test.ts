@@ -24,6 +24,7 @@ describe('NAV_GROUPS', () => {
       'Sales Management',
       'Sales',
       'Payments',
+      'Purchases',
       'System',
     ]);
   });
@@ -123,6 +124,14 @@ describe('NAV_GROUPS', () => {
     expect(labels.indexOf('Opportunities')).toBeLessThan(labels.indexOf('Quotations'));
     expect(labels.indexOf('Quotations')).toBeLessThan(labels.indexOf('Verification'));
     expect(labels).not.toContain('Organizations');
+  });
+
+  it('lists Purchases after Payments, with Vendors gated by vendor.read and unbuilt until P4 ships', () => {
+    const labels = NAV_GROUPS.map((g) => g.label);
+    expect(labels.indexOf('Purchases')).toBe(labels.indexOf('Payments') + 1);
+    const vendors = items.find((i) => i.label === 'Vendors');
+    expect(vendors).toMatchObject({ phase: 'P4', permission: 'vendor.read', icon: 'building' });
+    expect(vendors && isBuilt(vendors)).toBe(false);
   });
 
   it('marks every /admin page as admin-only, and nothing else', () => {
