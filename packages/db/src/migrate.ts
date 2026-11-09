@@ -4,9 +4,11 @@
 //
 // Safe to run any number of times: Drizzle records what it applied in drizzle.__drizzle_migrations and only
 // applies files that are newer than the last recorded one.
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { z } from 'zod';
 
@@ -20,8 +22,36 @@ export const MIGRATIONS_FOLDER = fileURLToPath(new URL('../migrations', import.m
 
 /** Connects as the given role (it must be able to create schemas: bos_owner) and applies pending migrations. */
 export async function runMigrations(connectionString: string): Promise<void> {
-  const { db, close } = createDb(connectionString, { max: 1 });
+  const { db, pool, close } = createDb(connectionString, { max: 1 });
   try {
+    const history = await pool.query<{ table_name: string | null }>(
+      "SELECT to_regclass('drizzle.__drizzle_migrations')::text AS table_name",
+    );
+    if (history.rows[0]?.table_name !== null) {
+      const { rows } = await pool.query<{ hash: string; created_at: string | null }>(
+        'SELECT hash, created_at FROM drizzle.__drizzle_migrations',
+      );
+      const newest = Math.max(...rows.map((row) => Number(row.created_at)));
+      const hashes = new Set(rows.map((row) => row.hash));
+      const timestamps = new Set(rows.map((row) => Number(row.created_at)));
+      const journal = JSON.parse(
+        readFileSync(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
+      ) as { entries: { when: number; tag: string }[] };
+      const tags = new Map(journal.entries.map((entry) => [entry.when, entry.tag]));
+      // Drizzle only applies files newer than the last recorded timestamp. Detect older gaps before it
+      // can silently skip them when the separately-pushed P3 and P4 histories converge.
+      const missing = readMigrationFiles({ migrationsFolder: MIGRATIONS_FOLDER }).filter(
+        (file) =>
+          file.folderMillis < newest &&
+          !hashes.has(file.hash) &&
+          !timestamps.has(file.folderMillis),
+      );
+      if (missing.length > 0) {
+        throw new Error(
+          `Migration history is missing earlier migrations: ${missing.map((file) => tags.get(file.folderMillis)).join(', ')}; apply them in order before running migrations again`,
+        );
+      }
+    }
     await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
   } finally {
     await close();
