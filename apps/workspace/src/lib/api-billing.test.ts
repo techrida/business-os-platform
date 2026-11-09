@@ -194,12 +194,8 @@ describe('commands', () => {
     expect(headers['idempotency-key']).toBe(KEY);
     expect(headers['content-type']).toBe('application/json');
     // The form sends no number, no date and no totals: the server owns them.
-    expect(Object.keys(JSON.parse(init.body as string)).sort()).toEqual([
-      'currency',
-      'customerId',
-      'lines',
-      'manualReason',
-    ]);
+    const sent = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(Object.keys(sent).sort()).toEqual(['currency', 'customerId', 'lines', 'manualReason']);
   });
 
   it('refuses a key that is not ours without calling the API', async () => {
@@ -221,7 +217,11 @@ describe('commands', () => {
     expect(lastCall()[1]).toBe('/v1/invoices/from-schedule');
     await createCreditNote(
       session,
-      { originalInvoiceId: ID, reason: 'returned goods', lines: [{ originalLineNo: 1, quantity: '1' }] },
+      {
+        originalInvoiceId: ID,
+        reason: 'returned goods',
+        lines: [{ originalLineNo: 1, quantity: '1' }],
+      },
       KEY,
     );
     expect(lastCall()[1]).toBe('/v1/credit-notes');
@@ -230,7 +230,9 @@ describe('commands', () => {
       {
         originalInvoiceId: ID,
         reason: 'extra work',
-        lines: [{ description: 'Extra', uom: 'h', quantity: '2', unitPrice: '10.00', taxCodeId: TAX }],
+        lines: [
+          { description: 'Extra', uom: 'h', quantity: '2', unitPrice: '10.00', taxCodeId: TAX },
+        ],
       },
       KEY,
     );
@@ -253,7 +255,9 @@ describe('commands', () => {
     );
     const again = await issueInvoice(session, ID, { expectedVersion: 4 }, KEY);
     expect(again).toEqual({ kind: 'already_issued', invoiceId: ID, number: 'INV-2083/84-00001' });
-    expect(issueOutcomeMessage(again)).toBe('Already issued as INV-2083/84-00001. Nothing changed.');
+    expect(issueOutcomeMessage(again)).toBe(
+      'Already issued as INV-2083/84-00001. Nothing changed.',
+    );
     expect(issueOutcomeMessage(first)).toBe('Issued as INV-2083/84-00001.');
   });
 
