@@ -31,17 +31,31 @@ describe('generatePassword', () => {
 });
 
 describe('personas', () => {
-  it('has seven personas: five staff, one customer, one vendor', () => {
+  it('has eleven personas: nine staff, one customer, one vendor', () => {
     expect(PERSONAS.map((p) => p.orgKind).sort()).toEqual([
       'customer',
-      'staff',
-      'staff',
-      'staff',
-      'staff',
-      'staff',
+      ...Array.from({ length: 9 }, () => 'staff'),
       'vendor',
     ]);
-    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(7);
+    expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(11);
+  });
+
+  it('adds the P4 personas: procurement, warehouse, a department head and a second management user', () => {
+    const byKey = new Map(PERSONAS.map((p) => [p.key, p]));
+    expect(byKey.get('procurement')?.role).toBe('procurement');
+    // Receipts are confirmed by warehouse (Kuu D03: there is no receiver role).
+    expect(byKey.get('warehouse')?.role).toBe('warehouse');
+    // A department head is an ordinary staff user named in departments.head_user_id; the role lets them raise PRs.
+    expect(byKey.get('depthead')?.role).toBe('operations_officer');
+    // AD8: a Founder's own purchase above 10,00,000 needs two distinct Management approvers.
+    expect(byKey.get('management2')?.role).toBe('management');
+    expect(PERSONAS.filter((p) => p.role === 'management')).toHaveLength(2);
+    for (const key of ['procurement', 'warehouse', 'depthead', 'management2']) {
+      expect(byKey.get(key)?.orgKind, key).toBe('staff');
+      expect(personaUsername(key)).toBe(`${key}@dev.bos.test`);
+    }
+    expect(PERSONAS.some((p) => (p.role as string) === 'receiver')).toBe(false);
+    for (const p of PERSONAS) expect(PROJECT_ROLES).toContain(p.role);
   });
 
   it('includes the frozen Accountant persona and its project role', () => {
