@@ -1,0 +1,85 @@
+/* Vendor write forms. The shared form look (form grid, buttons, live status) comes from
+   quotation.module.css; the control look comes from field.module.css. */
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.select {
+  appearance: auto;
+}
+
+.upload {
+  display: grid;
+  gap: 8px;
+}
+
+.status {
+  min-height: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.status:empty {
+  display: none;
+}
+
+.problem {
+  margin: 0;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.files {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.files li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-body-small);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  max-width: 65ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.back {
+  margin-top: 24px;
+  font-size: var(--font-size-body-small);
+}
+
+.back a {
+  color: var(--text-link);
+  text-underline-offset: 3px;
+}
+
+.confirmation {
+  margin-bottom: 24px;
+}
+
+.formFrame {
+  max-width: 640px;
+}
