@@ -1,0 +1,51 @@
+/* Layout for the allocate panel and the deallocate dialog. Everything else comes from components/ui
+   and the quotation dialog frame. Colours are Figma tokens from styles/tokens.css. */
+
+.allocate {
+  display: grid;
+  gap: 16px;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+/* A long invoice number or note wraps inside its cell instead of widening the table. */
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+.overdue {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
+.amountCol {
+  width: 220px;
+  min-width: 160px;
+}
+
+.rowError {
+  display: block;
+  margin-top: 4px;
+  color: var(--status-error);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.openAmount {
+  font-weight: var(--font-weight-medium);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
