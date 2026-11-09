@@ -64,6 +64,7 @@ export type ErrorCode =
   | 'PO_AMENDMENT_INVALID'
   | 'DUPLICATE_BILL'
   | 'BILL_NOT_MATCHED'
+  | 'BILL_DOCUMENT_NOT_CLEAN'
   | 'PO_NOT_BILLABLE'
   | 'MATCH_NOT_REQUIRED'
   | 'BILL_NOT_POSTED'
@@ -162,6 +163,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   PO_AMENDMENT_INVALID: 'This amendment cannot be applied to the purchase order',
   DUPLICATE_BILL: 'This vendor already has a bill with this invoice number in the fiscal year',
   BILL_NOT_MATCHED: 'Every line must match, or a match exception be approved, to submit this bill',
+  BILL_DOCUMENT_NOT_CLEAN: 'The invoice file must scan clean before this bill can be submitted',
   PO_NOT_BILLABLE: 'A purchase order in this status cannot be billed',
   MATCH_NOT_REQUIRED: 'A bill without a purchase order is not matched',
   BILL_NOT_POSTED: 'This bill has no payable item to void yet',
@@ -275,6 +277,7 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   // not required to match, and a void of a bill with no payable item or with payments already allocated.
   'DUPLICATE_BILL',
   'BILL_NOT_MATCHED',
+  'BILL_DOCUMENT_NOT_CLEAN',
   'PO_NOT_BILLABLE',
   'MATCH_NOT_REQUIRED',
   'BILL_NOT_POSTED',
