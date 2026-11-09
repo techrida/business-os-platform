@@ -8,6 +8,7 @@
 //   person never approves two steps of the same request.
 import {
   ApprovalActionBodySchema,
+  DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   DEFAULT_ROLE_PERMISSIONS,
   DecimalString,
   ROLE_KEYS,
@@ -27,6 +28,7 @@ import {
   approvalRequests,
   approvalSteps,
   delegations,
+  departments,
   idpOrgs,
   userEntities,
   users as appUsers,
@@ -41,7 +43,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import { can } from '../../platform/authz/can';
 import { UserDirectory } from '../../platform/authz/user-directory';
@@ -337,9 +339,10 @@ export class ApprovalsService {
       // The role mirror lags ZITADEL: a revoked role stays in app.user_roles until the sync runs. The
       // token's roles are the truth for a direct approver. A delegate acts on the delegator's mirror roles
       // (the delegator is not the caller, so there is no token to check): an accepted limit.
+      // A department_head step that fell back to its role carries role_key and is checked the same way.
       if (
         who.onBehalfOf === null &&
-        current.kind === 'role' &&
+        current.roleKey !== null &&
         !principal.roles.includes(current.roleKey as RoleKey)
       ) {
         throw forbidden('out_of_scope', 'You no longer hold the role this step needs');
@@ -407,13 +410,14 @@ export class ApprovalsService {
             ),
           ),
         );
-        nextEligible = plan.steps.find((s) => s.seq === next.seq)?.eligibleUserIds ?? [];
+        const nextPlanned = plan.steps.find((s) => s.seq === next.seq);
+        nextEligible = nextPlanned?.eligibleUserIds ?? [];
         if (nextEligible.length === 0) {
           blockReason = plan.blockReason ?? 'No eligible approver';
         } else {
           await tx
             .update(approvalSteps)
-            .set(activation(now, spec))
+            .set({ ...activation(now, spec), ...retarget(next, nextPlanned) })
             .where(eq(approvalSteps.id, next.id));
         }
       }
@@ -684,7 +688,7 @@ export class ApprovalsService {
       // The token's roles, not the lagging mirror, decide a direct approver of a role step.
       if (
         who.onBehalfOf === null &&
-        step.kind === 'role' &&
+        step.roleKey !== null &&
         !principal.roles.includes(step.roleKey as RoleKey)
       ) {
         continue;
@@ -765,6 +769,16 @@ export class ApprovalsService {
       const blocked = open.some((s) => s.blocked);
       const blockReason = blocked ? (plan.blockReason ?? 'No eligible approver') : null;
       const newVersion = request.version + 1;
+
+      // A department head named, changed or gone since submit moves an open department_head step to
+      // the new head or its fallback role, so act() and the inbox use what this plan resolved.
+      for (const s of steps.filter((row) => row.seq >= request.currentSeq)) {
+        const planned = plan.steps.find((p) => p.seq === s.seq);
+        const target = retarget(s, planned);
+        if (Object.keys(target).length > 0) {
+          await tx.update(approvalSteps).set(target).where(eq(approvalSteps.id, s.id));
+        }
+      }
 
       if (blocked) {
         await tx
@@ -856,7 +870,16 @@ export class ApprovalsService {
   async loadDirectory(q: Q, scope: TxScope, spec: WorkflowSpec): Promise<DirectoryData> {
     const all = [...spec.steps, ...spec.rules.map((r) => r.add)];
     const roles = [
-      ...new Set(all.flatMap((s) => (s.kind === 'role' && s.role !== undefined ? [s.role] : []))),
+      ...new Set(
+        all.flatMap((s) => {
+          if (s.kind === 'role' && s.role !== undefined) return [s.role];
+          // A department_head step may resolve to its fallback role (AD11).
+          if (s.kind === 'department_head') {
+            return [s.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE];
+          }
+          return [];
+        }),
+      ),
     ];
     const groupKeys = [
       ...new Set(
@@ -922,13 +945,32 @@ export class ApprovalsService {
           isNull(delegations.revokedAt),
         ),
       );
+    // The head map: every named head of this entity's departments, loaded only when a step needs it.
+    const departmentHeads = new Map<string, string>();
+    if (all.some((s) => s.kind === 'department_head')) {
+      const rows = await q
+        .select({ id: departments.id, headUserId: departments.headUserId })
+        .from(departments)
+        .where(
+          and(
+            eq(departments.tenantId, scope.tenantId),
+            eq(departments.organizationId, scope.organizationId),
+            isNotNull(departments.headUserId),
+          ),
+        );
+      for (const r of rows) if (r.headUserId !== null) departmentHeads.set(r.id, r.headUserId);
+    }
+    // Heads count only while they are active members of the entity, the same rule as named users.
     const named = [
-      ...new Set(all.flatMap((s) => (s.kind === 'user' && s.user !== undefined ? [s.user] : []))),
+      ...new Set([
+        ...all.flatMap((s) => (s.kind === 'user' && s.user !== undefined ? [s.user] : [])),
+        ...departmentHeads.values(),
+      ]),
     ];
     const activeUserIds = new Set(
       named.length === 0 ? [] : await this.activeUserIds(q, scope, named),
     );
-    return { roleMembers, groups, delegations: delegationRows, activeUserIds };
+    return { roleMembers, groups, delegations: delegationRows, activeUserIds, departmentHeads };
   }
 
   /** The ids among `ids` of active staff users of this tenant with a membership in the entity. */
@@ -1243,11 +1285,31 @@ function earlierDeciders(decisions: readonly StepDecision[], seq: number): Set<s
   return new Set(decisions.filter((d) => d.seq < seq).flatMap((d) => [...d.deciders]));
 }
 
+/**
+ * The columns that move a stored department_head step to the head or fallback role `planned` resolved
+ * to, or nothing when it already matches (and always nothing for the other kinds, whose target is fixed).
+ */
+function retarget(
+  row: StepRow,
+  planned: RoutePlan['steps'][number] | undefined,
+): { userId?: string | null; roleKey?: string | null } {
+  if (row.kind !== 'department_head' || planned === undefined) return {};
+  const userId = planned.userId ?? null;
+  const roleKey = planned.roleKey ?? null;
+  return row.userId === userId && row.roleKey === roleKey ? {} : { userId, roleKey };
+}
+
 /** Rebuilds the routing view of a stored step (group id back to its key) for the directory. */
 export function stepSpecOf(step: StepRow, data: DirectoryData): StepSpec {
   const base = { id: `seq-${step.seq}`, reason: step.reason };
   if (step.kind === 'role') return { ...base, kind: 'role', role: step.roleKey as RoleKey };
   if (step.kind === 'user') return { ...base, kind: 'user', user: step.userId ?? '' };
+  // A department_head row stores what the router resolved it to: the head (user_id) or the fallback
+  // role (role_key), so it is acted on exactly like that user or role step.
+  if (step.kind === 'department_head') {
+    if (step.userId !== null) return { ...base, kind: 'user', user: step.userId };
+    return { ...base, kind: 'role', role: (step.roleKey ?? '') as RoleKey };
+  }
   const key = [...data.groups.entries()].find(([, g]) => g.id === step.groupId)?.[0];
   return { ...base, kind: 'group', group: key ?? `missing:${step.groupId ?? ''}` };
 }
