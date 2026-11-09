@@ -1,0 +1,233 @@
+/* Vendor portal screens. Same tokens and table look as the customer quotation screens. Class
+   names avoid the words the contract guard lists as internal. */
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+/* ---- Tables ----------------------------------------------------------------------------- */
+
+.tableFrame {
+  overflow-x: auto;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.table th,
+.table td {
+  padding: 12px 16px;
+  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table thead th {
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.table th.num,
+.table td.num {
+  text-align: right;
+}
+
+.table tbody th {
+  font-weight: var(--font-weight-medium);
+}
+
+.rowLink {
+  color: var(--text-link);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.rowLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.rowLink:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.description {
+  min-width: 16ch;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Detail layout ---------------------------------------------------------------------- */
+
+.document {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.docHead {
+  display: grid;
+  gap: 20px;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.docTitle {
+  font-size: 24px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+
+.version {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 40px;
+}
+
+.facts dt {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.facts dd {
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.factTotal {
+  font-size: 18px;
+  line-height: 28px;
+}
+
+.download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.fileName {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.section {
+  display: grid;
+  gap: 16px;
+}
+
+.sectionTitle {
+  font-size: 18px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 28px;
+}
+
+/* ---- Onboarding ------------------------------------------------------------------------- */
+
+.statusCard {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.statusLabel {
+  font-weight: var(--font-weight-medium);
+}
+
+.summary {
+  max-width: 65ch;
+  color: var(--text-secondary);
+}
+
+/* ---- Navigation in the top bar ---------------------------------------------------------- */
+
+.nav {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-inline: 16px;
+}
+
+.link {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  text-decoration: none;
+}
+
+.link:hover {
+  background: var(--surface-default);
+  color: var(--text-primary);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.active {
+  background: var(--surface-default);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
