@@ -141,7 +141,7 @@ describe('invoice detail page', () => {
     expect(html).toContain('Download PDF');
   });
 
-  it.each(['draft', 'submitted', 'returned', 'approved', 'discarded'])(
+  it.each(['draft', 'submitted', 'returned', 'approved'])(
     'offers no PDF link while the invoice is %s',
     async (status) => {
       mocks.getInvoice.mockResolvedValue(invoiceDetail({ status }));
@@ -150,6 +150,13 @@ describe('invoice detail page', () => {
       expect(html).toMatch(/PDF is made when the invoice is issued/i);
     },
   );
+
+  it('says a discarded invoice has no PDF', async () => {
+    mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'discarded' }));
+    const html = await render();
+    expect(html).not.toContain('/document"');
+    expect(html).toMatch(/discarded invoice has no PDF/i);
+  });
 
   it('offers no PDF for a proforma', async () => {
     mocks.getInvoice.mockResolvedValue(issued({ kind: 'proforma', number: 'PI-2083/84-00001' }));
