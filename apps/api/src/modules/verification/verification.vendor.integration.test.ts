@@ -62,6 +62,11 @@ const APP_PW = 'app-test-pw';
 const SECRET = 'an-integration-test-secret-of-32-plus-chars';
 const VENDOR_REQUIRED = ['pan_certificate', 'tax_clearance', 'bank_proof'] as const;
 const TAX_CLEARANCE_EXPIRY = '2027-07-15';
+const CUSTOMER_ADDRESS = JSON.stringify({
+  line1: 'Durbar Marg 1',
+  city: 'Kathmandu',
+  country: 'NP',
+});
 
 let container: StartedPostgreSqlContainer;
 let ownerPool: Pool;
@@ -75,7 +80,14 @@ let service: VerificationService;
 let scope: { tenantId: string; organizationId: string };
 let staffIdpOrgId: string;
 
-const U: Record<'founder' | 'pmo', string> = { founder: randomUUID(), pmo: randomUUID() };
+type UserKey = 'founder' | 'pmo' | 'procurement' | 'sales' | 'warehouse';
+const U: Record<UserKey, string> = {
+  founder: randomUUID(),
+  pmo: randomUUID(),
+  procurement: randomUUID(),
+  sales: randomUUID(),
+  warehouse: randomUUID(),
+};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
@@ -117,11 +129,17 @@ const authz = {
 };
 const documentsAudit = { record: vi.fn(() => Promise.resolve(undefined)) };
 
-/** What V1's vendor adapter will do, on the party row alone (the vendors table comes with S-V). */
+/** The owner user of a vendor party, as the vendors row would hold it. */
+const vendorOwners = new Map<string, string>();
+
+/**
+ * What V1's vendor adapter does (VendorPartyOwner), on the party row alone: the write permission is vendor.write
+ * and the owner comes from `vendorOwners` in place of the vendors row.
+ */
 const vendorPort: PartyOwnerPort = {
   kind: 'vendor',
   label: 'Vendor',
-  writePermission: 'customer.write',
+  writePermission: 'vendor.write',
   findLive: async (q, tenantId, partyId) => {
     const [row] = await q
       .select({ id: parties.id })
@@ -129,7 +147,9 @@ const vendorPort: PartyOwnerPort = {
       .where(
         and(eq(parties.tenantId, tenantId), eq(parties.id, partyId), eq(parties.kind, 'vendor')),
       );
-    return row === undefined ? undefined : { id: row.id, ownerUserId: null };
+    return row === undefined
+      ? undefined
+      : { id: row.id, ownerUserId: vendorOwners.get(row.id) ?? null };
   },
   ownersOf: async (q, tenantId, partyIds) => {
     if (partyIds.length === 0) return new Map();
@@ -143,7 +163,7 @@ const vendorPort: PartyOwnerPort = {
           inArray(parties.id, [...partyIds]),
         ),
       );
-    return new Map(rows.map((r) => [r.id, null]));
+    return new Map(rows.map((r) => [r.id, vendorOwners.get(r.id) ?? null]));
   },
   counterparty: (partyId) => ({ vendorPartyId: partyId }),
 };
@@ -181,7 +201,7 @@ beforeAll(async () => {
   const tenant = await createTenantWithEntity(appPool);
   staffIdpOrgId = tenant.idpOrgId;
   scope = { tenantId: tenant.tenantId, organizationId: tenant.organizationId };
-  for (const key of ['founder', 'pmo'] as const) {
+  for (const key of Object.keys(U) as UserKey[]) {
     U[key] = (await createStaffUser(appPool, { ...scope, idpOrgId: tenant.idpOrgId })).userId;
   }
 
@@ -228,10 +248,25 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------------------------- helpers
 
 const api = () => request(baseUrl);
-const newVendor = async () =>
-  (await createParty(appPool, { tenantId: scope.tenantId, kind: 'vendor' })).partyId;
+const newVendor = async (ownerUserId?: string) => {
+  const { partyId } = await createParty(appPool, { tenantId: scope.tenantId, kind: 'vendor' });
+  if (ownerUserId !== undefined) vendorOwners.set(partyId, ownerUserId);
+  return partyId;
+};
 const newCustomerParty = async () =>
   (await createParty(appPool, { tenantId: scope.tenantId, kind: 'customer' })).partyId;
+/** A customer party with its customers row (what the customer adapter reads), owned by `ownerUserId`. */
+const newCustomer = async (ownerUserId: string | null) => {
+  const partyId = await newCustomerParty();
+  await withTx(db, scope, systemActor('test'), (tx) =>
+    tx.execute(
+      sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, owner_user_id, address)
+          VALUES (${partyId}, ${scope.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme',
+                  ${ownerUserId}, ${CUSTOMER_ADDRESS}::jsonb)`,
+    ),
+  );
+  return partyId;
+};
 
 async function openCase(partyId: string): Promise<VerificationCaseDto> {
   const res = await api().post('/v1/verification-cases').send({ partyId });
@@ -463,6 +498,95 @@ describe('a vendor case, once the vendor adapter is registered', () => {
     expect(VerificationCaseDtoSchema.parse(approved.body)).toMatchObject({
       status: 'approved',
       reviewedBy: U.pmo,
+    });
+  });
+  // K3b: the write routes carry no single route-level permission; the service asks for the write permission of
+  // the case's party kind (customer.write or vendor.write), and refuses a caller with neither before any read.
+  describe('who may write a KYB case', () => {
+    const write = {
+      create: (partyId: string) => api().post('/v1/verification-cases').send({ partyId }),
+      checklist: (caseId: string) => putDocument(caseId, 'pan_certificate', randomUUID(), 1),
+      submit: (caseId: string) => api().post(`/v1/verification-cases/${caseId}/submit`),
+    };
+
+    it('lets procurement (vendor.write) open, fill and submit a vendor case, and read it', async () => {
+      as(U.procurement, 'procurement');
+      const partyId = await newVendor(U.procurement);
+      const filled = await fillRequired(await openCase(partyId));
+      const submitted = await write.submit(filled.id);
+      expect(submitted.status, JSON.stringify(submitted.body)).toBe(200);
+      expect(VerificationCaseDtoSchema.parse(submitted.body).status).toBe('submitted');
+
+      const one = await api().get(`/v1/verification-cases/${filled.id}`);
+      expect(one.status, JSON.stringify(one.body)).toBe(200);
+      const list = await api().get('/v1/verification-cases').query({ partyId });
+      expect((list.body as VerificationCaseDto[]).map((c) => c.id)).toEqual([filled.id]);
+    });
+
+    it('refuses procurement on a customer case with 403, and writes nothing', async () => {
+      const partyId = await newCustomer(U.sales);
+      const c = await openCase(partyId);
+      as(U.procurement, 'procurement');
+      for (const res of [
+        await write.create(partyId),
+        await write.checklist(c.id),
+        await write.submit(c.id),
+      ]) {
+        expect(res.status, JSON.stringify(res.body)).toBe(403);
+      }
+      expect(await rawCase(c.id)).toMatchObject({ party_kind: 'customer', status: 'draft' });
+    });
+
+    it('lets sales (customer.write) work a customer case, and refuses sales on a vendor case', async () => {
+      as(U.sales, 'sales');
+      const mine = await openCase(await newCustomer(U.sales));
+      // Past the permission check: an unknown document is a 422, a missing required document a 409.
+      expect((await write.checklist(mine.id)).status).toBe(422);
+      expect((await write.submit(mine.id)).status).toBe(409);
+
+      as(U.founder, 'founder');
+      const vendorParty = await newVendor(U.sales);
+      const vendorCase = await openCase(vendorParty);
+      as(U.sales, 'sales');
+      for (const res of [
+        await write.create(vendorParty),
+        await write.checklist(vendorCase.id),
+        await write.submit(vendorCase.id),
+      ]) {
+        expect(res.status, JSON.stringify(res.body)).toBe(403);
+      }
+      expect(await rawCase(vendorCase.id)).toMatchObject({ party_kind: 'vendor', status: 'draft' });
+    });
+
+    it('gives a user with neither write permission the same 403 for a real and an unknown id', async () => {
+      const vendorParty = await newVendor();
+      const customerParty = await newCustomer(null);
+      const vendorCase = await openCase(vendorParty);
+      const customerCase = await openCase(customerParty);
+      as(U.warehouse, 'warehouse');
+      const answers = [
+        await write.create(vendorParty),
+        await write.create(customerParty),
+        await write.create(randomUUID()),
+        await write.checklist(vendorCase.id),
+        await write.checklist(customerCase.id),
+        await write.checklist(randomUUID()),
+        await write.submit(vendorCase.id),
+        await write.submit(customerCase.id),
+        await write.submit(randomUUID()),
+      ];
+      for (const res of answers) {
+        expect(res.status, JSON.stringify(res.body)).toBe(403);
+        const body = (res.body as { error?: { code?: unknown; reason?: unknown } }).error;
+        expect({ code: body?.code, reason: body?.reason }).toEqual({
+          code: 'forbidden',
+          reason: 'no_permission',
+        });
+        for (const id of [vendorParty, customerParty, vendorCase.id, customerCase.id]) {
+          expect(JSON.stringify(res.body)).not.toContain(id);
+        }
+      }
+      expect(await rawCase(vendorCase.id)).toMatchObject({ status: 'draft' });
     });
   });
 });
