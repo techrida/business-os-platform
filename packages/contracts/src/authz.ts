@@ -178,7 +178,8 @@ const staffBaseGrants: RoleGrants = {
 
 // P4 grants, kept apart from the P1 and P2 constants so a parallel edit merges cleanly. Procurement,
 // warehouse and operations_officer hold no `approvals.requests.act`, `payables.payment.request`,
-// `payables.bill.enter`, `vendor.bank.verify` or `vendor.activate` (D03, AD5, AD9).
+// `payables.bill.enter`, `vendor.bank.verify` or `vendor.activate` (D03, AD5, AD9). They do hold
+// `vendor.bank.propose` (procurement only): the proposer is never the verifier.
 
 /** Any internal user who raises requests: they create purchase requests and read their own. */
 const prRequesterGrants: RoleGrants = {
@@ -192,6 +193,8 @@ const p4ProcurementGrants: RoleGrants = {
   'procurement.po.issue': 'all',
   'vendor.read': 'all',
   'vendor.write': 'all',
+  // Maker side of the bank-account maker-checker (AD9): procurement proposes, finance verifies.
+  'vendor.bank.propose': 'all',
 };
 const p4WarehouseGrants: RoleGrants = { 'procurement.receipt.confirm': 'all' };
 const p4AccountantGrants: RoleGrants = {

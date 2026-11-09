@@ -92,6 +92,7 @@ describe('P4 permissions', () => {
     expect(r.procurement['procurement.sourcing']).toBe('all');
     expect(r.procurement['procurement.po.issue']).toBe('all');
     expect(r.procurement['vendor.write']).toBe('all');
+    expect(r.procurement['vendor.bank.propose']).toBe('all');
     expect(r.warehouse['procurement.receipt.confirm']).toBe('all');
     expect(r.accountant['payables.bill.enter']).toBe('all');
     expect(r.finance['vendor.bank.verify']).toBe('all');
@@ -128,6 +129,18 @@ describe('P4 permissions', () => {
     expect(accountant['vendor.bank.verify']).toBeUndefined();
     expect(finance['payables.bill.enter']).toBeUndefined();
     for (const p of SOD_PERMISSIONS) expect(PERMISSIONS).toContain(p);
+  });
+
+  it('splits the bank maker-checker: procurement proposes, finance verifies, and only founder holds both', () => {
+    const r = DEFAULT_ROLE_PERMISSIONS;
+    expect(r.procurement['vendor.bank.propose']).toBe('all');
+    expect(r.procurement['vendor.bank.verify']).toBeUndefined();
+    expect(r.finance['vendor.bank.verify']).toBe('all');
+    expect(r.finance['vendor.bank.propose']).toBeUndefined();
+    const holdsBoth = Object.entries(r)
+      .filter(([, grants]) => grants['vendor.bank.propose'] && grants['vendor.bank.verify'])
+      .map(([role]) => role);
+    expect(holdsBoth).toEqual(['founder']);
   });
 });
 
