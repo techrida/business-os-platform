@@ -64,7 +64,8 @@ const IdempotencyKeySchema = z.string().regex(/^[\x21-\x7e]{1,200}$/);
 
 /**
  * Whether deciding on `request` at `expectedVersion` needs a recent sign-in. True unless we know the
- * step the service will lock is not a Founder role step:
+ * step the service will lock is not resolved to the Founder role. That covers a Founder role step and
+ * a department-head step that fell back to Founder (a head in post has no role key):
  * - same version: the service only proceeds at this version, so the step at `currentSeq` is the one;
  * - client version newer than ours: no honest client sends it, and the step may move before the lock;
  * - client version older: the service answers 409 (or replays an earlier decision), deciding nothing.
@@ -75,7 +76,7 @@ export function needsStepUp(request: ApprovalRequestDto, expectedVersion: number
   if (expectedVersion < request.version) return false;
   const current = request.steps.find((s) => s.seq === request.currentSeq);
   if (current === undefined) return true;
-  return current.kind === 'role' && current.roleKey === 'founder';
+  return current.roleKey === 'founder';
 }
 
 @Controller('v1/approvals')
