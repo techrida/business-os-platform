@@ -302,6 +302,21 @@ describe('the detail', () => {
 });
 
 describe('edit and new', () => {
+  it.each(['goods', 'service'])(
+    'only offers serial tracking for goods when editing %s',
+    async (requestType) => {
+      api.getPurchaseRequest.mockResolvedValue(detail({ requestType }));
+      const out = await editHtml();
+      if (requestType === 'goods') {
+        expect(out).toContain('name="lines.0.requiresSerials"');
+        expect(out).toContain('Record serial numbers at receipt');
+      } else {
+        expect(out).not.toContain('name="lines.0.requiresSerials"');
+        expect(out).not.toContain('Record serial numbers at receipt');
+      }
+    },
+  );
+
   it('edits a draft with its values and the version seen', async () => {
     api.getPurchaseRequest.mockResolvedValue(detail());
     const out = await editHtml();
