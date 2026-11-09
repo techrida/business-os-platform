@@ -1,0 +1,386 @@
+// The customer portal's invoice reads (P3 unit U13, part 1; plan A16, done check 2). Serves the NFR "a customer sees
+// only what we meant to show":
+// - only a customer principal with a party gets in (assertCustomerCaller, 403 before any query);
+// - every query is `forCounterparty(invoices, 'customer', partyId)` in the acting entity, and only when that entity is
+//   the tenant's default one: a portal user may name another entity with X-Entity-Id, and sees nothing there;
+// - only issued tax invoices, credit notes and debit notes are read (the SQL filter is the authority). A draft,
+//   submitted, returned, approved or discarded invoice, a proforma, another party's invoice and an unknown id all
+//   answer the same 404, on every `:id` route, so existence never leaks;
+// - the views are built field by field and parsed with the strict contract schemas: no staff field (status, NPR
+//   value, FX rate, approval, editor, content hash) can ride along.
+// Money is derived on read (plan A8): the open amount comes from open_item_balances and allocations, never from a
+// stored field. "Today" is the Kathmandu calendar day of the server clock (A10), as in ReceivablesService.
+import {
+  CustomerInvoiceViewSchema,
+  PartySnapshotSchema,
+  PortalInvoiceListItemSchema,
+  type CustomerInvoiceView,
+  type DocumentVersionDto,
+  type InvoiceSettlement,
+  type PortalInvoiceListItem,
+  type SignedLinkDto,
+} from '@bos/contracts';
+import {
+  invoiceLines,
+  invoices,
+  invoiceTaxSummary,
+  openItemBalances,
+  organizations,
+  scoped,
+} from '@bos/db';
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { and, asc, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+
+import type { Principal } from '../../platform/authz/principal';
+import { DB, type Db } from '../../platform/db/db.module';
+import type { TxScope } from '../../platform/db/tx';
+import { DocumentsService } from '../../platform/documents/documents.service';
+import { INVOICE_OWNER_TYPE } from '../invoices/invoice-owner.policy';
+import { assertCustomerCaller, PortalCaller } from '../portal/portal.caller';
+import { kathmanduDay, settlementRow } from '../receivables/receivables.rules';
+
+/** Injection token for a test clock; production falls back to the system time. */
+export const PORTAL_BILLING_CLOCK = Symbol('PORTAL_BILLING_CLOCK');
+
+/** The kinds a customer sees. A proforma is not a tax document and is not in the contract views. */
+export const PORTAL_INVOICE_KINDS = ['tax_invoice', 'credit_note', 'debit_note'] as const;
+type PortalInvoiceKind = (typeof PORTAL_INVOICE_KINDS)[number];
+
+/** One fixed refusal for every hidden id on every route: the bodies are byte-identical. */
+const notFound = () => new NotFoundException('Invoice not found');
+
+/** What the portal shows of one invoice's money position: the settlement less the staff-side keys. */
+export type PortalSettlement = Pick<
+  InvoiceSettlement,
+  'invoiceId' | 'currency' | 'total' | 'openAmount' | 'dueDate' | 'daysOverdue' | 'settlement'
+>;
+
+/** One issued invoice of the caller with its derived balance, as read for the list and the settlement. */
+export interface PortalBalanceRow {
+  invoiceId: string;
+  kind: PortalInvoiceKind;
+  number: string;
+  customerId: string;
+  currency: InvoiceSettlement['currency'];
+  issueDate: string;
+  dueDate: string | null;
+  /** The invoice's own total. */
+  invoiceTotal: string;
+  /** The debit item's amount; null when the invoice has no open item. */
+  itemAmount: string | null;
+  /** Net of allocations on the item; null when it has no open item. */
+  allocated: string | null;
+  /** The part of `allocated` whose credit item is a credit note. */
+  credited: string;
+}
+
+/**
+ * The settlement a customer sees. A tax invoice or debit note is settled from its debit open item (the receivables
+ * rule `settlementRow`); one without an item counts as nothing allocated. A credit note owes the customer nothing, so
+ * it reads as fully settled (`credited`, open 0.00): the portal shows the settlement next to every document, and a
+ * 404 here would hide a credit note the detail route shows.
+ */
+export function toPortalSettlement(row: PortalBalanceRow, today: string): PortalSettlement {
+  if (row.kind === 'credit_note') {
+    return {
+      invoiceId: row.invoiceId,
+      currency: row.currency,
+      total: row.invoiceTotal,
+      openAmount: '0.00',
+      dueDate: row.dueDate,
+      daysOverdue: 0,
+      settlement: 'credited',
+    };
+  }
+  const s = settlementRow(
+    {
+      invoiceId: row.invoiceId,
+      number: row.number,
+      kind: row.kind,
+      customerId: row.customerId,
+      currency: row.currency,
+      issueDate: row.issueDate,
+      dueDate: row.dueDate,
+      total: row.itemAmount ?? row.invoiceTotal,
+      allocated: row.allocated ?? '0',
+      credited: row.credited,
+    },
+    today,
+  );
+  return {
+    invoiceId: s.invoiceId,
+    currency: s.currency,
+    total: s.total,
+    openAmount: s.openAmount,
+    dueDate: s.dueDate,
+    daysOverdue: s.daysOverdue,
+    settlement: s.settlement,
+  };
+}
+
+/**
+ * The invoice's PDF among the files of owner `invoice`/<id>: only the render job adds files there (InvoiceOwnerPolicy).
+ * Per document, the newest version that was not rejected counts; with several documents, the one whose counting
+ * version is newest wins. Undefined when there is none.
+ */
+export function pickInvoiceFile(
+  versions: readonly DocumentVersionDto[],
+): DocumentVersionDto | undefined {
+  const newestPerDocument = new Map<string, DocumentVersionDto>();
+  for (const v of versions) {
+    if (v.status === 'rejected') continue;
+    const seen = newestPerDocument.get(v.documentId);
+    if (seen === undefined || v.version > seen.version) newestPerDocument.set(v.documentId, v);
+  }
+  let picked: DocumentVersionDto | undefined;
+  for (const v of newestPerDocument.values()) {
+    if (picked === undefined || v.createdAt > picked.createdAt) picked = v;
+  }
+  return picked;
+}
+
+/** The `file` of the customer view: only a clean version with a hash, so a quarantined file's data never shows. */
+export function toCustomerFile(v: DocumentVersionDto | undefined): CustomerInvoiceView['file'] {
+  if (v === undefined || v.status !== 'clean' || v.sha256 === null) return null;
+  return { documentId: v.documentId, filename: v.filename, sha256: v.sha256 };
+}
+
+const trimZeros = (value: string): string =>
+  value.includes('.') ? value.replace(/\.?0+$/, '') : value;
+
+type InvoiceRow = typeof invoices.$inferSelect;
+type LineRow = typeof invoiceLines.$inferSelect;
+type TaxRow = typeof invoiceTaxSummary.$inferSelect;
+
+/** The strict customer view, field by field. Throws on a row that is not an issued portal kind (a bug, never data). */
+export function toCustomerInvoiceView(
+  invoice: InvoiceRow,
+  lines: readonly LineRow[],
+  taxSummary: readonly TaxRow[],
+  file: CustomerInvoiceView['file'],
+): CustomerInvoiceView {
+  return CustomerInvoiceViewSchema.parse({
+    id: invoice.id,
+    kind: invoice.kind,
+    number: invoice.number,
+    issueDate: invoice.issueDate,
+    issueDateBs: invoice.issueDateBs,
+    dueDate: invoice.dueDate,
+    currency: invoice.currency,
+    seller: PartySnapshotSchema.parse(invoice.sellerSnapshot),
+    buyer: PartySnapshotSchema.parse(invoice.buyerSnapshot),
+    lines: [...lines]
+      .sort((a, b) => a.lineNo - b.lineNo)
+      .map((l) => ({
+        lineNo: l.lineNo,
+        description: l.description,
+        uom: l.uom,
+        quantity: trimZeros(l.quantity),
+        unitPrice: l.unitPrice,
+        amount: l.gross,
+      })),
+    totals: {
+      subtotal: invoice.subtotal,
+      discountAmount: invoice.discountAmount,
+      taxableAmount: invoice.taxableVatAmount,
+      taxAmount: invoice.taxAmount,
+      total: invoice.total,
+    },
+    taxSummary: taxSummary.map((t) => ({
+      label: t.label,
+      percent: trimZeros(t.rate),
+      base: t.base,
+      tax: t.tax,
+    })),
+    file,
+  });
+}
+
+@Injectable()
+export class PortalBillingService {
+  constructor(
+    private readonly caller: PortalCaller,
+    @Inject(DB) private readonly db: Db,
+    private readonly documents: DocumentsService,
+    @Optional()
+    @Inject(PORTAL_BILLING_CLOCK)
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  /** The caller's issued invoices and notes, newest issue date first. */
+  async list(): Promise<PortalInvoiceListItem[]> {
+    const p = this.customer();
+    const today = kathmanduDay(this.clock());
+    const rows = await this.balances(p);
+    return rows.map((r) =>
+      PortalInvoiceListItemSchema.parse({
+        id: r.invoiceId,
+        kind: r.kind,
+        number: r.number,
+        issueDate: r.issueDate,
+        dueDate: r.dueDate,
+        currency: r.currency,
+        total: r.invoiceTotal,
+        openAmount: toPortalSettlement(r, today).openAmount,
+      }),
+    );
+  }
+
+  /** One issued invoice as the customer sees it. 404 unless it is the caller's and visible. */
+  async get(id: string): Promise<CustomerInvoiceView> {
+    const p = this.customer();
+    const [invoice] = await this.db
+      .select()
+      .from(invoices)
+      .where(visibleTo(p, eq(invoices.id, id)))
+      .limit(1);
+    if (invoice === undefined) throw notFound();
+    const s = scoped(scopeOf(p));
+    const lines = await this.db
+      .select()
+      .from(invoiceLines)
+      .where(s.where(invoiceLines, eq(invoiceLines.invoiceId, invoice.id)))
+      .orderBy(asc(invoiceLines.lineNo));
+    const taxSummary = await this.db
+      .select()
+      .from(invoiceTaxSummary)
+      .where(s.where(invoiceTaxSummary, eq(invoiceTaxSummary.invoiceId, invoice.id)))
+      .orderBy(asc(invoiceTaxSummary.label));
+    const file = toCustomerFile(await this.invoiceFile(p, invoice.id));
+    return toCustomerInvoiceView(invoice, lines, taxSummary, file);
+  }
+
+  /** The derived money position of one issued invoice. 404 unless it is the caller's and visible. */
+  async settlement(id: string): Promise<PortalSettlement> {
+    const p = this.customer();
+    const [row] = await this.balances(p, id);
+    if (row === undefined) throw notFound();
+    return toPortalSettlement(row, kathmanduDay(this.clock()));
+  }
+
+  /**
+   * A 60 s single-use link to the invoice PDF. 404 unless the invoice is the caller's and visible, it has a generated
+   * PDF, and that PDF's newest version scanned clean. DocumentsService.issueLinkForOwner asks no permission (customers
+   * hold no `documents.read`), so this method is the whole authorization; the documents module then re-checks the
+   * owner, the scope and the newest version's status itself.
+   */
+  async documentLink(id: string): Promise<SignedLinkDto> {
+    const p = this.customer();
+    const [invoice] = await this.db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(visibleTo(p, eq(invoices.id, id)))
+      .limit(1);
+    if (invoice === undefined) throw notFound();
+    const file = await this.invoiceFile(p, invoice.id);
+    if (file === undefined || file.status !== 'clean') throw notFound();
+    try {
+      return await this.documents.issueLinkForOwner(
+        scopeOf(p),
+        { ownerType: INVOICE_OWNER_TYPE, ownerId: invoice.id },
+        file.documentId,
+      );
+    } catch (error) {
+      // Its own 404 has another message; keep this route's refusal the one body.
+      if (error instanceof NotFoundException) throw notFound();
+      throw error;
+    }
+  }
+
+  // ------------------------------------------------------------------------------------------- internals
+
+  private customer(): Principal {
+    const p = this.caller.current();
+    assertCustomerCaller(p);
+    return p;
+  }
+
+  /** The files of the invoice, read without a permission check: this module authorized the caller already. */
+  private async invoiceFile(p: Principal, invoiceId: string) {
+    return pickInvoiceFile(
+      await this.documents.listForOwner(scopeOf(p), INVOICE_OWNER_TYPE, invoiceId),
+    );
+  }
+
+  /** The caller's visible invoices (or the one `id`) with their open item balance, newest first. */
+  private async balances(p: Principal, id?: string): Promise<PortalBalanceRow[]> {
+    // The net of allocations on the debit item whose credit item is a credit note (as ReceivablesService.statement).
+    const credited = sql<string>`(
+      SELECT COALESCE(sum(a."amount"), 0)::text
+        FROM "app"."open_item_allocations" a
+        JOIN "app"."open_items" c ON c."tenant_id" = a."tenant_id" AND c."id" = a."credit_item_id"
+       WHERE a."tenant_id" = ${openItemBalances.tenantId}
+         AND a."organization_id" = ${openItemBalances.organizationId}
+         AND a."debit_item_id" = ${openItemBalances.openItemId}
+         AND c."source_type" = 'credit_note')`;
+    const rows = await this.db
+      .select({
+        invoiceId: invoices.id,
+        kind: invoices.kind,
+        number: invoices.number,
+        customerId: invoices.customerPartyId,
+        currency: invoices.currency,
+        issueDate: invoices.issueDate,
+        dueDate: invoices.dueDate,
+        invoiceTotal: invoices.total,
+        itemAmount: openItemBalances.amount,
+        allocated: openItemBalances.allocatedAmount,
+        credited,
+      })
+      .from(invoices)
+      .leftJoin(
+        openItemBalances,
+        and(
+          eq(openItemBalances.tenantId, invoices.tenantId),
+          eq(openItemBalances.organizationId, invoices.organizationId),
+          eq(openItemBalances.sourceId, invoices.id),
+          sql`${openItemBalances.sourceType} = ${invoices.kind}`,
+        ),
+      )
+      .where(visibleTo(p, id === undefined ? undefined : eq(invoices.id, id)))
+      .orderBy(desc(invoices.issueDate), desc(invoices.number));
+    return rows.map((r) => ({
+      invoiceId: r.invoiceId,
+      kind: r.kind as PortalInvoiceKind,
+      number: r.number ?? '',
+      customerId: r.customerId ?? '',
+      currency: r.currency,
+      issueDate: r.issueDate ?? '',
+      dueDate: r.dueDate,
+      invoiceTotal: r.invoiceTotal,
+      itemAmount: r.itemAmount,
+      allocated: r.allocated,
+      credited: r.credited ?? '0',
+    }));
+  }
+}
+
+/** The acting entity: the only one any read touches. */
+const scopeOf = (p: Principal): TxScope => ({
+  tenantId: p.tenantId,
+  organizationId: p.organizationId,
+});
+
+/**
+ * The portal read filter: the caller's party in the acting entity (forCounterparty, ADR 0027 §5), only when that entity
+ * is the tenant's default, and only issued documents of a portal kind. `extra` narrows further.
+ */
+function visibleTo(p: Principal, extra?: SQL): SQL {
+  // assertCustomerCaller ran first, so partyId is a non-empty string here.
+  const partyId = p.partyId ?? '';
+  const defaultEntity = sql`EXISTS (SELECT 1 FROM ${organizations}
+      WHERE ${organizations.tenantId} = ${invoices.tenantId}
+        AND ${organizations.id} = ${invoices.organizationId}
+        AND ${organizations.isDefault})`;
+  return scoped(scopeOf(p)).forCounterparty(
+    invoices,
+    'customer',
+    partyId,
+    and(
+      eq(invoices.status, 'issued'),
+      inArray(invoices.kind, [...PORTAL_INVOICE_KINDS]),
+      defaultEntity,
+      ...(extra === undefined ? [] : [extra]),
+    ),
+  );
+}
