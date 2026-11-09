@@ -3,14 +3,16 @@
 // withIdempotency). Approved -> issued in one transaction (plan A5), and a second call answers `already_issued`.
 // Serves the NFRs:
 // - "a credit never exceeds the invoice" (done check 7): the original is locked with the note, the issued credit notes
-//   on it are summed again and anything over its total answers 409 CREDIT_EXCEEDS_INVOICE;
+//   on it are summed again and anything over its total answers 409 CREDIT_EXCEEDS_INVOICE; so does anything over one
+//   of its lines (quantity or taxable) or tax codes (base or VAT), summed over the live notes with this one (U12D);
 // - "open amounts never go below 0" and "paid is derived" (done check 8): the credit is an open item allocated against
 //   the original's debit item. When the original has too little open for it, payment allocations on the original are
 //   released newest first through LedgerService.reverseAllocation, and the part of the last one released that is not
 //   needed is allocated back, so a paid invoice stays paid and only the credited part becomes customer advance;
-// - "a full credit gives the schedule line back": once the issued credit notes reach the original's total, the
-//   original gets `credited_in_full_at` (the one change 0023 allows on an issued invoice, which also takes it out of
-//   G4) and its schedule line goes back to `billable` with no invoice, so a new tax invoice can be drafted on it;
+// - "a full credit gives the schedule line back": once the issued credit notes cover every line of the original in
+//   full (not merely its total), the original gets `credited_in_full_at` (the one change 0023 allows on an issued
+//   invoice, which also takes it out of G4) and its schedule line goes back to `billable` with no invoice, so a new
+//   tax invoice can be drafted on it;
 // - "no gaps in a numbered series": every lock is taken first, in the plan's order (sales order -> the original's
 //   schedule line -> the original and the note -> the open items, each ascending), and NumberingService.issue is the
 //   last row lock; everything after it inserts or changes rows this transaction already holds.
@@ -18,7 +20,9 @@
 import type { IssueInvoiceBody, IssueInvoiceResult } from '@bos/contracts';
 import {
   billingScheduleLines,
+  invoiceLines,
   invoices,
+  invoiceTaxSummary,
   openItemAllocations,
   openItems,
   salesOrders,
@@ -27,7 +31,7 @@ import {
 import { Dec, toNpr } from '@bos/money-rules';
 import { Injectable } from '@nestjs/common';
 import { formatBs } from '@bos/locale';
-import { and, desc, eq, isNull, ne, notExists, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, ne, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -37,7 +41,14 @@ import type { Actor, TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { LedgerService } from '../../ledger/ledger.service';
 import { conflict, invoiceNotFound, kathmanduDay, notApproved } from '../invoice-support';
-import { creditExceedsInvoice } from './note-drafting.service';
+import {
+  creditCapExcess,
+  creditExceedsInvoice,
+  creditsEveryLine,
+  loadCredited,
+  withNote,
+  type StoredParts,
+} from './note-drafting.service';
 
 /** The numbering series of a credit note: CN-2083/84-00001 (plan A15). */
 export const CREDIT_NOTE_SERIES = 'CN';
@@ -165,7 +176,23 @@ export class CreditNoteIssueService {
       const left = originalTotal.minus(creditedBefore);
       throw creditExceedsInvoice((left.isNegative() ? ZERO : left).toFixed(2));
     }
-    const fullyCredited = creditedBefore.plus(total).eq(originalTotal);
+    // The cap per original line and per tax code, again under the lock: the live credit notes besides this one, plus
+    // this one, stay within every line and every code of the original.
+    const originalParts = await this.partsOf(tx, scope, original.id);
+    const noteParts = await this.partsOf(tx, scope, note.id);
+    const live = await loadCredited(tx, scope, original.id, {
+      issuedOnly: false,
+      excludeNoteId: note.id,
+    });
+    const excess = creditCapExcess(originalParts, live, noteParts);
+    if (excess !== null) throw excess;
+    // Credited in full means every line of the original is credited in full by the issued notes, this one included. A
+    // total that happens to match while a line is uncredited is not.
+    const issued = await loadCredited(tx, scope, original.id, {
+      issuedOnly: true,
+      excludeNoteId: note.id,
+    });
+    const fullyCredited = creditsEveryLine(originalParts.lines, withNote(issued, noteParts));
 
     // FX: the note reverses part of the original, so it takes the original's rate (no new rate, no stale check). The
     // credit that completes the full credit takes what is left of the original's NPR value, so the NPR values net to 0.
@@ -357,6 +384,41 @@ export class CreditNoteIssueService {
       )
       .returning({ id: billingScheduleLines.id });
     if (freed.length === 0) throw conflict('The schedule line of this invoice is not invoiced');
+  }
+
+  /** The stored lines and tax summary rows of one invoice or note of the entity. */
+  private async partsOf(
+    tx: DbTransaction,
+    scope: TxScope,
+    invoiceId: string,
+  ): Promise<StoredParts> {
+    const owned = (t: typeof invoiceLines | typeof invoiceTaxSummary) =>
+      and(
+        eq(t.tenantId, scope.tenantId),
+        eq(t.organizationId, scope.organizationId),
+        eq(t.invoiceId, invoiceId),
+      );
+    const lines = await tx
+      .select({
+        id: invoiceLines.id,
+        lineNo: invoiceLines.lineNo,
+        quantity: invoiceLines.quantity,
+        taxable: invoiceLines.taxable,
+        originalLineId: invoiceLines.originalLineId,
+      })
+      .from(invoiceLines)
+      .where(owned(invoiceLines))
+      .orderBy(asc(invoiceLines.lineNo));
+    const taxSummary = await tx
+      .select({
+        taxCodeId: invoiceTaxSummary.taxCodeId,
+        label: invoiceTaxSummary.label,
+        base: invoiceTaxSummary.base,
+        tax: invoiceTaxSummary.tax,
+      })
+      .from(invoiceTaxSummary)
+      .where(owned(invoiceTaxSummary));
+    return { lines, taxSummary };
   }
 
   private async invoiceById(tx: DbTransaction, scope: TxScope, id: string): Promise<InvoiceRow> {
