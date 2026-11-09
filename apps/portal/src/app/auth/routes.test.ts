@@ -383,15 +383,64 @@ describe('GET /auth/callback', () => {
     });
   });
 
-  // Only customer users may hold a portal session. Everyone else signed in fine at ZITADEL, so
-  // they get a page that says where to go, never a session.
+  it('lands a customer on / when returnTo is /', async () => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'u', returnTo: '/' });
+    m.getMe.mockResolvedValue(CUSTOMER_ME);
+    m.createSession.mockResolvedValue('sid');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    const res = await call('?code=c&state=s');
+
+    expect(m.createSession).toHaveBeenCalledWith(expect.objectContaining({ orgKind: 'customer' }));
+    expect(res.headers.get('location')).toBe('https://portal.localhost/');
+  });
+
+  // P4: a vendor user whose IdP org maps to a party gets a vendor session and the vendor screens.
+  // A returnTo outside /vendor (the customer landing page, or a look-alike prefix) is dropped.
+  it.each([
+    ['/', '/vendor'],
+    ['/quotations', '/vendor'],
+    ['/vendorx', '/vendor'],
+    ['/vendor-evil/x', '/vendor'],
+    ['/vendor', '/vendor'],
+    ['/vendor/bills?x=1', '/vendor/bills?x=1'],
+    ['/vendor?tab=po', '/vendor?tab=po'],
+  ])('signs a vendor in with a vendor session; returnTo %s lands on %s', async (returnTo, page) => {
+    m.completeLogin.mockResolvedValue({ tokens, sub: 'vendor-user', returnTo });
+    m.getMe.mockResolvedValue({ ...CUSTOMER_ME, orgKind: 'vendor', roles: ['vendor_admin'] });
+    m.createSession.mockResolvedValue('sid-v');
+    requestCookies.set(LOGIN_COOKIE, BINDING);
+
+    const res = await call('?code=c&state=s');
+
+    expect(m.createSession).toHaveBeenCalledWith({
+      sub: 'vendor-user',
+      orgId: 'org-1',
+      orgKind: 'vendor',
+      partyId: PARTY_ID,
+      roles: ['vendor_admin'],
+      ...tokens,
+    });
+    expect(m.setSessionCookie).toHaveBeenCalledWith('sid-v');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(`https://portal.localhost${page}`);
+  });
+
+  // Only customer and vendor users with a party may hold a portal session. Everyone else signed
+  // in fine at ZITADEL, so they get a page that says where to go, never a session.
   it.each([
     [
       'a staff principal',
       { orgKind: 'staff', partyId: null, roles: ['founder'] },
       '/use-workspace',
     ],
-    ['a vendor principal', { orgKind: 'vendor', partyId: PARTY_ID }, '/not-available'],
+    ['a staff principal even with a party', { orgKind: 'staff' }, '/use-workspace'],
+    ['a vendor with no party', { orgKind: 'vendor', partyId: null }, '/no-access'],
+    [
+      'a vendor when /v1/me has no partyId',
+      { orgKind: 'vendor', partyId: undefined },
+      '/no-access',
+    ],
     ['a customer with no party', { partyId: null }, '/no-access'],
     ['a customer when /v1/me has no partyId', { partyId: undefined }, '/no-access'],
   ])('turns away %s: 303 to its page, no session, login cookie cleared', async (_l, me, page) => {
