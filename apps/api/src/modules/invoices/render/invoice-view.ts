@@ -5,14 +5,19 @@
 //
 // Everything on the page comes from the frozen issued row: seller and buyer from the snapshots taken at issue, the BS
 // date from `issue_date_bs`. Nothing is read from settings or the customer record, so a later change to either
-// cannot alter what a reprint says. Only an issued tax invoice or proforma is drawn; credit and debit notes are U12.
+// cannot alter what a reprint says. Only an issued invoice is drawn: a tax invoice, a proforma, a credit note or a debit note.
 import type { invoiceLines, invoices, invoiceTaxSummary } from '@bos/db';
 import { z } from 'zod';
 
 type Row<T extends { $inferSelect: object }> = T['$inferSelect'];
 
 /** The kinds this unit prints. */
-export const RENDERABLE_INVOICE_KINDS = ['tax_invoice', 'proforma'] as const;
+export const RENDERABLE_INVOICE_KINDS = [
+  'tax_invoice',
+  'proforma',
+  'credit_note',
+  'debit_note',
+] as const;
 export type RenderableInvoiceKind = (typeof RENDERABLE_INVOICE_KINDS)[number];
 
 const money = z.string().regex(/^-?\d+(\.\d+)?$/);
@@ -94,7 +99,7 @@ export interface InvoiceViewInput {
   printNo: number;
 }
 
-/** The invoice is not one this unit prints (not issued, or a credit or debit note). */
+/** The invoice is not one this unit prints (not issued). */
 export class InvoiceNotRenderableError extends Error {
   readonly kind = 'not_renderable';
   constructor(reason: string) {
@@ -123,7 +128,8 @@ export function invoicePdfFilename(number: string, copyNo: number | null): strin
 export function toInvoiceRenderView(input: InvoiceViewInput): InvoiceRenderView {
   const { invoice } = input;
   if (invoice.status !== 'issued') throw new InvoiceNotRenderableError(`it is ${invoice.status}`);
-  if (!isRenderable(invoice.kind)) throw new InvoiceNotRenderableError(`kind ${invoice.kind}`);
+  if (!isRenderable(invoice.kind))
+    throw new InvoiceNotRenderableError(`kind ${String(invoice.kind)}`);
   if (!Number.isInteger(input.printNo) || input.printNo < 1) {
     throw new InvoiceNotRenderableError('the print number is not a positive integer');
   }
