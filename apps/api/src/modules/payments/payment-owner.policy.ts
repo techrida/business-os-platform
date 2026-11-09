@@ -2,14 +2,16 @@
 // uploaded before the payment exists (SubmitPaymentBody and PortalSubmitPaymentBody both require
 // `proofDocumentIds`, min 1):
 // - `payment_intake` (owner id = the customer party id): a bank slip uploaded for a payment that is about to be
-//   submitted. Staff need the usual `documents.upload` grant on that customer; a portal customer may upload only to
-//   its own party (`allowsCounterparty`). Submit then links these documents to the new payment in `payment_proofs`.
+//   submitted. Staff need `payment.record` (`uploadPermission`, whoever records payments uploads their proof) on
+//   that customer, not `documents.upload`; a portal customer may upload only to its own party
+//   (`allowsCounterparty`). Submit then links these documents to the new payment in `payment_proofs`.
 // - `payment` (owner id = the payment id): a further proof added while the payment is still submitted. A portal
 //   customer may attach to its own payment only (`allowsCounterparty`).
 // Serves the NFR "deny by default": no background job may add files to either owner except the receipt job on a
 // verified or reversed payment (`allowsSystemActor`), and nothing attaches to a payment once it left submitted.
 // The policies decide on loaded heads, so the unit tests need no database; the drizzle loaders are what
 // PaymentsModule registers.
+import type { Permission } from '@bos/contracts';
 import { parties, payments } from '@bos/db';
 import { and, eq } from 'drizzle-orm';
 
@@ -107,6 +109,8 @@ export class PaymentOwnerPolicy implements DocumentOwnerPolicy {
 
 export class PaymentIntakeOwnerPolicy implements DocumentOwnerPolicy {
   readonly ownerType = PAYMENT_INTAKE_OWNER_TYPE;
+  /** Staff upload proof with the grant that records the payment it backs. */
+  readonly uploadPermission: Permission = 'payment.record';
 
   constructor(private readonly isCustomer: CustomerPartyLoader) {}
 
