@@ -281,11 +281,11 @@ async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
 }
 const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code;
 
-async function doc(ownerType = 'vendor_bill'): Promise<string> {
+async function doc(ownerType = 'vendor_bill_intake', ownerId = randomUUID()): Promise<string> {
   const { rows } = await exec(
     scopeA,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${ownerType}, ${randomUUID()}) RETURNING id`,
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${ownerType}, ${ownerId}) RETURNING id`,
   );
   const documentId = (rows[0] as { id: string }).id;
   await exec(
@@ -443,7 +443,7 @@ async function approvedBill(
       invoiceDate: '2026-11-09',
       currency: 'NPR',
       ...(po === undefined ? {} : { purchaseOrderId: po.id }),
-      documentId: await doc(),
+      documentId: await doc('vendor_bill_intake', vendorId),
       lines: [
         {
           ...(po === undefined ? {} : { poLineId: po.lineId }),
@@ -693,6 +693,34 @@ describe('entity wall', () => {
 });
 
 describe('available bill items', () => {
+  it('excludes vendors without an active entity account or an active verified bank account', async () => {
+    const inactiveVendor = await vendor();
+    const inactiveBill = await approvedBill(inactiveVendor);
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_accounts SET active = false
+          WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+            AND vendor_id = ${inactiveVendor}`,
+    );
+    const hidden = [inactiveBill.openItemId];
+    for (const bank of ['none', 'proposed'] as const) {
+      const vendorId = await vendor(bank);
+      hidden.push((await approvedBill(vendorId)).openItemId);
+    }
+    const retiredVendor = await vendor();
+    hidden.push((await approvedBill(retiredVendor)).openItemId);
+    await exec(
+      scopeA,
+      sql`UPDATE app.vendor_bank_accounts SET status = 'retired'
+          WHERE tenant_id = ${scopeA.tenantId} AND vendor_id = ${retiredVendor}`,
+    );
+    const eligibleVendor = await vendor();
+    const eligibleBill = await approvedBill(eligibleVendor);
+    const available = await service.listItems();
+    expect(available.filter((item) => hidden.includes(item.openItemId))).toEqual([]);
+    expect(available.some((item) => item.openItemId === eligibleBill.openItemId)).toBe(true);
+  });
+
   it('returns vendor and invoice labels with ledger-derived balances less pending and approved claims', async () => {
     const v = await vendor();
     const bill = await approvedBill(v);
