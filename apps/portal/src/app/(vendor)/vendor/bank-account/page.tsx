@@ -39,7 +39,7 @@ export default async function BankAccountPage() {
           use it.
         </p>
       </div>
-      <BankForm key={key} idempotencyKey={key} />
+      <BankForm idempotencyKey={key} />
     </main>
   );
 }

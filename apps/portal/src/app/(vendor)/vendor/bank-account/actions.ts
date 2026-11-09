@@ -3,7 +3,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { VendorBankChangeRequestBodySchema } from '@bos/contracts';
-import { revalidatePath } from 'next/cache';
 
 import { requestVendorBankChange } from '@/lib/api.vendor-writes';
 
@@ -85,7 +84,6 @@ export async function requestBankChangeAction(
 
   try {
     const receipt = await requestVendorBankChange(session, parsed.data, key);
-    revalidatePath(HERE);
     return {
       key: randomUUID(),
       received: { bankName: receipt?.bankName ?? null, last4: receipt?.last4 ?? null },
