@@ -1,6 +1,11 @@
 // HTTP routes of the KYB verification cases. Thin on purpose: validation here, every rule in
-// VerificationService. Each route names its permission with @Can (route level); the service then checks the
-// record itself (own, all, and 404 outside the caller's scope). Deny by default: a route without @Can is refused.
+// VerificationService. The read and decision routes name their permission with @Can (route level); the service
+// then checks the record itself (own, all, and 404 outside the caller's scope).
+//
+// The write routes (open, checklist, submit) carry @AnyAuthenticated, because no single permission fits: a
+// customer case is written with customer.write (sales) and a vendor case with vendor.write (procurement). The
+// service is the gate and denies by default: a caller holding neither gets 403 before any record is read, and
+// one holding the other kind's permission gets 403 on the case. Deny by default: a route with no marker is refused.
 import type { VerificationCaseDto } from '@bos/contracts';
 import {
   BadRequestException,
@@ -18,7 +23,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 
-import { Can } from '../../platform/authz/decorators';
+import { AnyAuthenticated, Can } from '../../platform/authz/decorators';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { VerificationService } from './verification.service';
 import {
@@ -47,9 +52,9 @@ export class VerificationController {
     return this.cases.get(id);
   }
 
-  /** 201 with a new draft case, 200 with the existing (or reopened) case of that customer. */
+  /** 201 with a new draft case, 200 with the existing (or reopened) case of that party. */
   @Post()
-  @Can('customer.write')
+  @AnyAuthenticated()
   async create(
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
@@ -61,7 +66,7 @@ export class VerificationController {
 
   /** 200 with the case. Puts one document of this case on one checklist item. 409 unless draft or rejected. */
   @Patch(':id/checklist')
-  @Can('customer.write')
+  @AnyAuthenticated()
   setChecklist(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
@@ -72,7 +77,7 @@ export class VerificationController {
   /** 200 (nothing is created at this URL). 409 unless draft, or while a required item has no document. */
   @Post(':id/submit')
   @HttpCode(200)
-  @Can('customer.write')
+  @AnyAuthenticated()
   submit(@Param('id', ParseUUIDPipe) id: string): Promise<VerificationCaseDto> {
     return this.cases.submit(id);
   }

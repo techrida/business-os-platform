@@ -11,8 +11,11 @@
 // The party is reached through a PartyOwnerPort chosen by the case's party kind (party-owner.port.ts), and the
 // checklist is chosen by the kind too (verification.rules.ts).
 // The submit writes submitted_by_user_id and submitted_at; only a decision writes reviewer_user_id and decided_at.
+// The write routes carry no single route-level permission (customer.write or vendor.write, by kind), so every write
+// starts with assertKybWriter: a caller holding no kind's write permission is refused before anything is read.
 import {
   ChecklistItemSchema,
+  VERIFICATION_PARTY_KINDS,
   type AttachVerificationDocumentBody,
   type ChecklistItem,
   type Permission,
@@ -205,6 +208,7 @@ export class VerificationService implements OnModuleInit {
     body: CreateVerificationCaseBody,
   ): Promise<{ case: VerificationCaseDto; created: boolean }> {
     const { scope, actor } = this.caller.current();
+    this.assertKybWriter();
     const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
       // The party's kind picks the adapter. A party of another tenant, a kind without an adapter (a vendor, until
@@ -301,6 +305,7 @@ export class VerificationService implements OnModuleInit {
     body: AttachVerificationDocumentBody,
   ): Promise<VerificationCaseDto> {
     const { scope, actor } = this.caller.current();
+    this.assertKybWriter();
     const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
@@ -359,6 +364,7 @@ export class VerificationService implements OnModuleInit {
   /** Draft to submitted. Every required item must have a document; whether the scan passed is the reviewer's gate. */
   async submit(id: string): Promise<VerificationCaseDto> {
     const { scope, actor, principal } = this.caller.current();
+    this.assertKybWriter();
     const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
@@ -468,6 +474,30 @@ export class VerificationService implements OnModuleInit {
 
   private stale(): ConflictException {
     return conflict('This record was changed by someone else; reload it and try again');
+  }
+
+  /**
+   * 403 unless the caller holds the write permission of at least one registered party kind. Runs before any read,
+   * so a caller with neither customer.write nor vendor.write gets the same answer for a real and an unknown id.
+   * The record check (assertVisible with the case's own kind) still follows.
+   */
+  private assertKybWriter(): void {
+    let refusal: unknown = new ForbiddenException({
+      code: 'forbidden',
+      message: 'Forbidden',
+      reason: 'no_permission',
+    });
+    for (const kind of VERIFICATION_PARTY_KINDS) {
+      const port = this.partyOwners.find(kind);
+      if (port === undefined) continue;
+      try {
+        this.authz.assert(port.writePermission);
+        return;
+      } catch (error) {
+        refusal = error;
+      }
+    }
+    throw refusal;
   }
 
   private assertVisible(action: Permission, scope: TxScope, l: Loaded): void {
