@@ -217,6 +217,39 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     ],
   },
   {
+    label: 'Payables',
+    items: [
+      {
+        label: 'Bill inbox',
+        href: '/payables/inbox',
+        icon: 'inbox',
+        phase: 'P4',
+        permission: 'payables.bill.enter',
+      },
+      {
+        label: 'Bills',
+        href: '/payables/bills',
+        icon: 'receipt',
+        phase: 'P4',
+        permission: 'payables.bill.read',
+      },
+      {
+        label: 'Payment requests',
+        href: '/payables/payment-requests',
+        icon: 'banknote',
+        phase: 'P4',
+        permission: 'payables.payment.request',
+      },
+      {
+        label: 'Purchase VAT register',
+        href: '/payables/vat-register',
+        icon: 'file-text',
+        phase: 'P4',
+        permission: 'payables.vat_register.read',
+      },
+    ],
+  },
+  {
     label: 'System',
     items: [
       {
