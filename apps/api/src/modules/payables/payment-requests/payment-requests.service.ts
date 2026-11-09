@@ -200,7 +200,19 @@ export class PaymentRequestsService {
    * what is still open); 422 for an advance (no payout in Stage 1), an item named twice, an item that is not this
    * vendor's approved bill, another currency or a PO that is not the vendor's.
    */
-  async create(body: RequestPaymentBody, idempotencyKey: string): Promise<PaymentRequestDto> {
+  async create(input: RequestPaymentBody, idempotencyKey: string): Promise<PaymentRequestDto> {
+    // Ids are compared with the stored (lowercase) uuids as text below, so an uppercase id is folded first.
+    const body: RequestPaymentBody = {
+      ...input,
+      vendorPartyId: input.vendorPartyId.toLowerCase(),
+      ...(input.purchaseOrderId === undefined
+        ? {}
+        : { purchaseOrderId: input.purchaseOrderId.toLowerCase() }),
+      allocations: input.allocations.map((a) => ({
+        openItemId: a.openItemId.toLowerCase(),
+        amount: a.amount,
+      })),
+    };
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
