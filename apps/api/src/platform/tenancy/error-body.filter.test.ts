@@ -305,6 +305,7 @@ describe('ErrorBodyFilter', () => {
     'payment_not_submitted',
     'payment_not_verified',
     'proof_not_clean',
+    'CREDIT_EXCEEDS_INVOICE',
   ])('keeps the P3 conflict code %s on a 409, and only on a 409', (code) => {
     const out = filter(new ConflictException({ code, message: 'Not now' }));
 
