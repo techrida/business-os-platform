@@ -452,7 +452,7 @@ describe('credit notes: the credit cap (done check 7)', () => {
       );
       return realLoad(tx, scope, id);
     });
-    const bypassed = new NoteDraftingService(
+    const noPrecheck = new NoteDraftingService(
       db,
       authz,
       audit,
@@ -461,7 +461,7 @@ describe('credit notes: the credit cap (done check 7)', () => {
       held,
       () => NOW,
     );
-    const err = await credit(original, '3', bypassed).catch((e: unknown) => e);
+    const err = await credit(original, '3', noPrecheck).catch((e: unknown) => e);
     expect(held.loadDetail).toHaveBeenCalledTimes(1);
     expect(statusOf(err)).toBe(409);
     expect(responseOf(err)).toMatchObject({ code: 'CREDIT_EXCEEDS_INVOICE' });
