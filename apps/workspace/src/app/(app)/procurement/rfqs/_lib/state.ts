@@ -11,3 +11,17 @@ export interface RfqFormState {
   /** The page is out of date: offer a reload instead of a retry. */
   reload?: boolean;
 }
+
+/**
+ * What the score action hands back. `count` rises on each success and the key is replaced, because
+ * the same quotation is scored again with a different body: a reused key would replay the old one.
+ */
+export interface RfqEditState {
+  key: string;
+  errors: Record<string, string>;
+  error?: string;
+  reload?: boolean;
+  /** A short confirmation. */
+  saved?: string;
+  count: number;
+}

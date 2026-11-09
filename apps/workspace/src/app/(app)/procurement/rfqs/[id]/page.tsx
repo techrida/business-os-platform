@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { ApprovalRequestDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -18,12 +20,16 @@ import { money, when } from '@/lib/kernel-format';
 import { humanizeKey, shortId } from '@/lib/kernel-ui';
 
 import styles from '../../requests/requests.module.css';
+import { CommitForm, RecommendForm, ScoreForm } from '../_components/decision-forms';
+import { commitRfqAction, recommendQuotationAction, scoreQuotationAction } from '../actions';
 import { rfqFailure } from '../_lib/failure';
 import {
+  canCommit,
   RFQ_STATUS_LABEL,
   RFQ_STATUS_NOTE,
   rfqGrants,
   submissionConvertibility,
+  takesDecisions,
   takesQuotations,
 } from '../_lib/model';
 import { loadVendors, nameIndex } from '../_lib/vendors';
@@ -106,7 +112,11 @@ export default async function RfqPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ created?: string | string[]; quoted?: string | string[] }>;
+  searchParams: Promise<{
+    created?: string | string[];
+    quoted?: string | string[];
+    recommended?: string | string[];
+  }>;
 }) {
   const { id } = await params;
   if (!isGuid(id)) notFound();
@@ -152,6 +162,16 @@ export default async function RfqPage({
   const vendorLabel = (vendorId: string): string => names.get(vendorId) ?? shortId(vendorId);
   const status = RFQ_STATUS_LABEL[rfq.status];
   const prNumber = pr.value?.number ?? null;
+  const decide = grants.sourcing && takesDecisions(rfq.status);
+  const quotations = comparison.value ?? [];
+  const commit = canCommit(
+    {
+      status: rfq.status,
+      recommendedQuotationId: rfq.recommendedQuotationId,
+      prStatus: pr.value?.status ?? null,
+    },
+    session.roles,
+  );
 
   const facts: Fact[] = [
     {
@@ -241,6 +261,10 @@ export default async function RfqPage({
         <Alert tone="success" role="status">
           The quotation was recorded.
         </Alert>
+      ) : sp.recommended !== undefined ? (
+        <Alert tone="success" role="status">
+          The quotation was recommended.
+        </Alert>
       ) : null}
 
       <div className={styles.columns}>
@@ -314,6 +338,45 @@ export default async function RfqPage({
             )}
           </Panel>
 
+          {decide && quotations.length > 0 ? (
+            <>
+              <Panel
+                title="Score the quotations"
+                description="Mark each quotation from 0 to 100 against the criteria you choose. The average above is the platform’s."
+              >
+                <div className={styles.panelForm}>
+                  {quotations.map((q) => (
+                    <ScoreForm
+                      key={q.id}
+                      action={scoreQuotationAction}
+                      idempotencyKey={randomUUID()}
+                      rfqId={rfq.id}
+                      quotationId={q.id}
+                      vendorName={vendorLabel(q.vendorId)}
+                      held={q.scores.map((s) => ({ criterion: s.criterion, score: s.score }))}
+                      reloadHref={self}
+                    />
+                  ))}
+                </div>
+              </Panel>
+              <Panel
+                title="Recommend a quotation"
+                description="Choose the quotation to take to the commitment approvers and say why."
+              >
+                <RecommendForm
+                  action={recommendQuotationAction}
+                  idempotencyKey={randomUUID()}
+                  rfqId={rfq.id}
+                  choices={quotations.map((q) => ({
+                    id: q.id,
+                    label: `${vendorLabel(q.vendorId)}, ${money(q.total, q.currency)}`,
+                  }))}
+                  reloadHref={self}
+                />
+              </Panel>
+            </>
+          ) : null}
+
           {submissions !== null ? (
             <Panel
               title="Vendor submissions"
@@ -376,6 +439,23 @@ export default async function RfqPage({
         </div>
 
         <div className={styles.sideStack}>
+          {commit.show ? (
+            <Panel
+              title="Commitment"
+              description="Send the recommended quotation to be approved before a purchase order."
+            >
+              <CommitForm
+                action={commitRfqAction}
+                idempotencyKey={randomUUID()}
+                rfqId={rfq.id}
+                reloadHref={self}
+              />
+            </Panel>
+          ) : commit.why !== undefined ? (
+            <Alert tone="warning" role="status" title="Commitment cannot be submitted yet">
+              {commit.why}
+            </Alert>
+          ) : null}
           {approval !== null ? <ApprovalPanel load={approval} retry={self} /> : null}
         </div>
       </div>
