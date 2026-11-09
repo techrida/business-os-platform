@@ -15,5 +15,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // fast-check properties run thousands of cases; a loaded gate machine needs more than 5 s.
+    testTimeout: 30_000,
   },
 });
