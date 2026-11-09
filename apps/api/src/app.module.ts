@@ -14,6 +14,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { PortalBillingModule } from './modules/portal-billing/portal-billing.module';
+import { PurchaseOrdersModule } from './modules/procurement/orders/purchase-orders.module';
 import { ReceiptsModule } from './modules/procurement/receipts/receipts.module';
 import { PurchaseRequestsModule } from './modules/procurement/requests/purchase-requests.module';
 import { SourcingModule } from './modules/procurement/sourcing/sourcing.module';
@@ -91,6 +92,7 @@ import { UsersModule } from './platform/users/users.module';
     PurchaseRequestsModule,
     SourcingModule,
     ReceiptsModule,
+    PurchaseOrdersModule,
   ],
 })
 export class AppModule {}
