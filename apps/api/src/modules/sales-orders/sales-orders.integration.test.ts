@@ -1,0 +1,658 @@
+// Integration tests of sales orders (SalesOrdersService) on a real Postgres (Testcontainers, needs Docker in WSL).
+// Real: migrations as bos_owner, queries as bos_app (so every CHECK and trigger of 0016 and 0020 runs, the
+// deferred schedule-sum trigger and the one-live-order index included), SettingsService, NumberingService,
+// AuditService, LedgerService, the idempotency table. Quotations are drafted by DraftingService, moved to Sent by
+// raw SQL that follows 0016's transition guard and accepted by the real RecordOutcomeService, so the order is
+// confirmed from what the quotation unit really writes. Faked: the request context, notify, and authz.assert
+// (which still runs the real pure can() on a fake principal).
+// The golden quotation here totals 5,045,450.00 (one VAT 13% line of 4,465,000.00, no discount): the sales order
+// the plan's 60/20/20 and 40/60 examples are cut from.
+// Every answer is parsed with the contract schema the workspace parses it with.
+// Run: pnpm --filter @bos/api exec vitest run src/modules/sales-orders/sales-orders.integration.test.ts
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  SalesOrderDetailSchema,
+  SalesOrderListItemSchema,
+  type EvidencePolicy,
+  type Permission,
+  type QuotationDto,
+  type RoleKey,
+  type SalesOrderDetail,
+  type Scope,
+} from '@bos/contracts';
+import {
+  billingScheduleLines,
+  documents,
+  opportunities,
+  quotationVersions,
+  runMigrations,
+  salesOrderEvidence,
+  salesOrderLines,
+  salesOrders,
+  salesOrderTaxSummary,
+} from '@bos/db';
+import { ForbiddenException, HttpException } from '@nestjs/common';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AuditService } from '../../platform/audit/audit.service';
+import type { AuthzService } from '../../platform/authz/authz.service';
+import { can } from '../../platform/authz/can';
+import type { Principal } from '../../platform/authz/principal';
+import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
+import type { NotifyService } from '../../platform/notify/notify.service';
+import type { MoneyService } from '../../platform/settings/money.service';
+import { NumberingService } from '../../platform/settings/numbering.service';
+import { SettingsService } from '../../platform/settings/settings.service';
+import { LedgerService } from '../ledger/ledger.service';
+import { OpportunitiesService } from '../opportunities/opportunities.service';
+import { DraftingService } from '../quotations/drafting/drafting.service';
+import {
+  GOLDEN_ISSUE_DATE,
+  seedQuotationFixture,
+  type QuotationFixture,
+  type QuotationFixtureDb,
+} from '../quotations/drafting/quotation.fixture';
+import { QuotationOutcomeService } from '../quotations/outcome/quotation-outcome.service';
+import { RecordOutcomeService } from '../quotations/outcome/record-outcome.service';
+import { PricingService } from '../quotations/pricing/pricing.service';
+import { SalesOrdersService } from './sales-orders.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+/** 20 Nov 2026 20:00 UTC is already 21 Nov in Kathmandu (BS fiscal year 2083/84). */
+const NOW = new Date('2026-11-20T20:00:00Z');
+const DECIDED_ON = '2026-11-21';
+/** 4,465,000.00 + 13% VAT (580,450.00) = 5,045,450.00. */
+const GOLDEN_TOTAL = '5045450.00';
+
+type EvidenceKindName = 'contract' | 'purchase_order' | 'signed_quote';
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: QuotationFixtureDb;
+let f: QuotationFixture;
+let scopeA: TxScope;
+let scopeB: TxScope;
+let drafting: DraftingService;
+let recorder: RecordOutcomeService;
+let settings: SettingsService;
+let opportunitiesService: OpportunitiesService;
+let service: SalesOrdersService;
+
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+const current: { scope: TxScope; grants: Map<Permission, Scope> } = {
+  scope: { tenantId: '', organizationId: '' },
+  grants: grantsOf('sales'),
+};
+
+const principalNow = (): Principal => ({
+  userId: f.ownerUserId,
+  zitadelUserId: `z-${f.ownerUserId}`,
+  ...current.scope,
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: 'unused',
+  roles: [],
+  departmentId: null,
+  status: 'active',
+  grants: current.grants,
+});
+const caller = {
+  current: () => ({
+    scope: current.scope,
+    actor: { kind: 'user' as const, id: f.ownerUserId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const authz = {
+  assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+    const d = can(principalNow(), action, ref);
+    if (!d.allowed) {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+    }
+  },
+};
+const money = {
+  toNprSnapshot: () => Promise.reject(new Error('MoneyService is not used for NPR quotations')),
+} as unknown as MoneyService;
+const notify = {
+  notifyUser: vi.fn(() => Promise.resolve()),
+  nudge: vi.fn(() => Promise.resolve()),
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 8 });
+  db = drizzle({ client: appPool });
+
+  f = await seedQuotationFixture(db);
+  scopeA = { tenantId: f.tenantId, organizationId: f.entityId };
+  scopeB = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+  current.scope = scopeA;
+  const audit = new AuditService(db);
+  settings = new SettingsService(db);
+  drafting = new DraftingService(
+    db,
+    new NumberingService(),
+    new PricingService(money),
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+  );
+  opportunitiesService = new OpportunitiesService(
+    db,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+  );
+  const outcomes = new QuotationOutcomeService(
+    settings,
+    opportunitiesService,
+    notify as unknown as NotifyService,
+    audit,
+    () => NOW,
+  );
+  recorder = new RecordOutcomeService(
+    db,
+    outcomes,
+    authz as unknown as AuthzService,
+    notify as unknown as NotifyService,
+    caller,
+  );
+  service = new SalesOrdersService(
+    db,
+    settings,
+    new NumberingService(),
+    audit,
+    new LedgerService(),
+    caller,
+    () => NOW,
+  );
+});
+
+afterAll(async () => {
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+beforeEach(() => {
+  current.scope = scopeA;
+  current.grants = grantsOf('sales');
+});
+
+afterEach(async () => {
+  // The policy is per entity and shared by every test: put the default back.
+  await setPolicy('signed_quote');
+});
+
+// ---------------------------------------------------------------------------------------- helpers
+
+const userActor = () => ({
+  kind: 'user' as const,
+  id: f.ownerUserId,
+  correlationId: 'test-setup',
+});
+
+async function setPolicy(policy: EvidencePolicy): Promise<void> {
+  await withTx(db, scopeA, userActor(), (tx) => settings.set(tx, 'sales.evidence_policy', policy));
+}
+
+async function statusOf(promise: Promise<unknown>): Promise<{ status: number; code: unknown }> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof HttpException) {
+      return {
+        status: error.getStatus(),
+        code: (error.getResponse() as { code?: unknown }).code,
+      };
+    }
+    throw error;
+  }
+  throw new Error('expected the call to fail');
+}
+
+/** A fresh opportunity of entity A (Won is terminal, so every accepted quotation needs its own). */
+async function seedOpportunity(): Promise<string> {
+  const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .insert(opportunities)
+      .values({
+        ...scopeA,
+        number: `DEAL-${randomUUID().slice(0, 8)}`,
+        name: 'Acme platform',
+        customerId: f.customerPartyId,
+        ownerUserId: f.ownerUserId,
+        stage: 'qualified',
+      })
+      .returning({ id: opportunities.id }),
+  );
+  return row!.id;
+}
+
+/** A kernel document of entity A (or B), as an upload leaves it: only its row matters to a sales order. */
+async function seedDocument(scope: TxScope = scopeA): Promise<string> {
+  const [row] = await withTx(db, scope, systemActor('test'), (tx) =>
+    tx
+      .insert(documents)
+      .values({ ...scope, ownerType: 'test_evidence', ownerId: randomUUID() })
+      .returning({ id: documents.id }),
+  );
+  return row!.id;
+}
+
+async function draftQuotation(
+  paymentSchedule?: { label: string; percent: string }[],
+): Promise<QuotationDto> {
+  const opportunityId = await seedOpportunity();
+  return drafting.create(
+    {
+      opportunityId,
+      currency: 'NPR',
+      issueDate: GOLDEN_ISSUE_DATE,
+      validUntil: '2026-12-09',
+      lines: [
+        {
+          description: 'Platform build',
+          uom: 'lot',
+          quantity: '1',
+          unitPrice: '4465000.00',
+          taxCodeId: f.taxCodeVat13Id,
+        },
+      ],
+      ...(paymentSchedule === undefined ? {} : { paymentSchedule }),
+    },
+    `create-${randomUUID()}`,
+  );
+}
+
+const versionRow = async (id: string) => {
+  const [row] = await db.select().from(quotationVersions).where(eq(quotationVersions.id, id));
+  return row!;
+};
+
+/** Moves a draft along 0016's transitions to Sent (and the opportunity to quotation_sent). */
+async function sendQuotation(q: QuotationDto): Promise<number> {
+  const versionId = q.currentVersionId;
+  await withTx(db, scopeA, systemActor('test'), async (tx) => {
+    await tx.execute(
+      sql`UPDATE app.quotation_versions
+             SET status = 'submitted', submitted_at = now(), version = version + 1,
+                 content_sha256 = sha256('content'::bytea), snapshot_sha256 = sha256('snapshot'::bytea)
+           WHERE id = ${versionId}`,
+    );
+    await tx.execute(
+      sql`UPDATE app.quotation_versions SET status = 'approved', approved_at = now(), version = version + 1
+           WHERE id = ${versionId}`,
+    );
+    await tx.execute(
+      sql`UPDATE app.quotation_versions SET status = 'sent', sent_at = now(), version = version + 1
+           WHERE id = ${versionId}`,
+    );
+    await opportunitiesService.markQuotationSent(tx, q.opportunityId);
+  });
+  return (await versionRow(versionId)).version;
+}
+
+/** A 5,045,450.00 quotation accepted by staff with `evidenceKinds` (default policy: a signed quote). */
+async function acceptedQuotation(
+  options: {
+    paymentSchedule?: { label: string; percent: string }[];
+    evidenceKinds?: EvidenceKindName[];
+  } = {},
+): Promise<QuotationDto> {
+  const q = await draftQuotation(options.paymentSchedule);
+  const expectedVersion = await sendQuotation(q);
+  await recorder.record(
+    q.id,
+    q.currentVersionId,
+    {
+      outcome: 'accepted',
+      decidedOn: DECIDED_ON,
+      evidenceKinds: options.evidenceKinds ?? ['signed_quote'],
+      expectedVersion,
+    },
+    `accept-${randomUUID()}`,
+  );
+  return q;
+}
+
+const confirm = (q: QuotationDto, evidenceDocumentIds: string[] = [], key = `so-${randomUUID()}`) =>
+  service.confirmFromQuotation(
+    { quotationVersionId: q.currentVersionId, evidenceDocumentIds },
+    key,
+  );
+
+/** The answer as the workspace parses it. */
+const parsed = (detail: SalesOrderDetail) => SalesOrderDetailSchema.parse(detail);
+
+const liveOrders = (quotationId: string) =>
+  db.select().from(salesOrders).where(eq(salesOrders.quotationId, quotationId));
+
+// ------------------------------------------------------------------------------------------ confirm
+
+describe('SalesOrdersService.confirmFromQuotation', () => {
+  it('cuts the golden 5,045,450.00 as 60/20/20 with the advance line billable at once', async () => {
+    const q = await acceptedQuotation();
+    const detail = parsed(await confirm(q));
+
+    expect(detail.order).toMatchObject({
+      status: 'confirmed',
+      customerId: f.customerPartyId,
+      quotationId: q.id,
+      quotationVersionId: q.currentVersionId,
+      currency: 'NPR',
+      totals: {
+        subtotal: '4465000.00',
+        discountAmount: '0.00',
+        taxableAmount: '4465000.00',
+        taxAmount: '580450.00',
+        total: GOLDEN_TOTAL,
+      },
+      npr: { amountNpr: GOLDEN_TOTAL, rate: '1' },
+      version: 1,
+    });
+    expect(detail.order.number).toMatch(/^SO-\d{4}\/\d{2}-\d{5}$/);
+    expect(detail.order.fiscalYear).toBe('2083/84');
+    expect(detail.order.confirmedAt).toBe(NOW.toISOString());
+
+    expect(detail.schedule.map((l) => l.amount)).toEqual([
+      '3027270.00',
+      '1009090.00',
+      '1009090.00',
+    ]);
+    expect(detail.schedule.map((l) => l.percent)).toEqual(['60', '20', '20']);
+    expect(detail.schedule.map((l) => [l.trigger, l.status])).toEqual([
+      ['advance', 'billable'],
+      ['milestone', 'planned'],
+      ['uat', 'planned'],
+    ]);
+    expect(detail.schedule[0]!.billableMarkedAt).toBe(NOW.toISOString());
+    expect(detail.deliveryReleased).toBe(false);
+
+    expect(detail.lines).toEqual([
+      expect.objectContaining({
+        lineNo: 1,
+        description: 'Platform build',
+        quantity: '1.0000',
+        unitPrice: '4465000.00',
+        gross: '4465000.00',
+        taxable: '4465000.00',
+      }),
+    ]);
+    const tax = await db
+      .select()
+      .from(salesOrderTaxSummary)
+      .where(eq(salesOrderTaxSummary.salesOrderId, detail.order.id));
+    expect(tax).toEqual([expect.objectContaining({ base: '4465000.00', tax: '580450.00' })]);
+    const lines = await db
+      .select()
+      .from(salesOrderLines)
+      .where(eq(salesOrderLines.salesOrderId, detail.order.id));
+    expect(lines).toHaveLength(1);
+  });
+
+  it('cuts a quotation payment schedule of 40/60 with the advance at 2,018,180.00', async () => {
+    const q = await acceptedQuotation({
+      paymentSchedule: [
+        { label: 'Advance 40%', percent: '40' },
+        { label: 'Balance 60%', percent: '60' },
+      ],
+    });
+    const detail = parsed(await confirm(q));
+    expect(detail.schedule.map((l) => [l.label, l.amount, l.trigger, l.status])).toEqual([
+      ['Advance 40%', '2018180.00', 'advance', 'billable'],
+      ['Balance 60%', '3027270.00', 'uat', 'planned'],
+    ]);
+  });
+
+  it('answers the same order to a retry with the same key', async () => {
+    const q = await acceptedQuotation();
+    const body = { quotationVersionId: q.currentVersionId, evidenceDocumentIds: [] };
+    const first = await service.confirmFromQuotation(body, 'same-key-1');
+    const again = await service.confirmFromQuotation(body, 'same-key-1');
+    expect(again).toEqual(first);
+    expect(await liveOrders(q.id)).toHaveLength(1);
+  });
+
+  it('makes one order when two callers confirm at once with different keys, and when asked again', async () => {
+    const q = await acceptedQuotation();
+    const [a, b] = await Promise.all([confirm(q), confirm(q)]);
+    expect(a.order.id).toBe(b.order.id);
+    const third = await confirm(q);
+    expect(third.order.id).toBe(a.order.id);
+
+    const rows = await liveOrders(q.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.number).toBe(a.order.number);
+    const lines = await db
+      .select()
+      .from(billingScheduleLines)
+      .where(eq(billingScheduleLines.salesOrderId, a.order.id));
+    expect(lines).toHaveLength(3);
+  });
+
+  it('refuses with 422 evidence_policy_unmet when a signed quote does not meet the contract policy', async () => {
+    const q = await acceptedQuotation({ evidenceKinds: ['signed_quote'] });
+    await setPolicy('contract');
+
+    const failure = await statusOf(confirm(q));
+    expect(failure).toEqual({ status: 422, code: 'evidence_policy_unmet' });
+    expect(await liveOrders(q.id)).toHaveLength(0);
+
+    // The same quotation confirms once the policy is one its evidence meets.
+    await setPolicy('signed_quote');
+    expect((await confirm(q)).order.status).toBe('confirmed');
+  });
+
+  it('accepts a contract under the contract policy', async () => {
+    const q = await acceptedQuotation({ evidenceKinds: ['signed_quote', 'contract'] });
+    await setPolicy('contract');
+    expect((await confirm(q)).order.status).toBe('confirmed');
+  });
+
+  it('refuses a version that is not accepted with 409 quotation_not_accepted', async () => {
+    const q = await draftQuotation();
+    await sendQuotation(q);
+    expect(await statusOf(confirm(q))).toEqual({ status: 409, code: 'quotation_not_accepted' });
+    expect(await liveOrders(q.id)).toHaveLength(0);
+  });
+
+  it('files the named evidence documents, and refuses one of another entity with 422', async () => {
+    const q = await acceptedQuotation();
+    const foreign = await seedDocument(scopeB);
+    expect(await statusOf(confirm(q, [foreign]))).toEqual({
+      status: 422,
+      code: 'invalid_evidence_document',
+    });
+    expect(await liveOrders(q.id)).toHaveLength(0);
+
+    const doc = await seedDocument();
+    const detail = parsed(await confirm(q, [doc]));
+    expect(detail.evidence).toEqual([{ documentId: doc, kind: 'signed_quote' }]);
+    const rows = await db
+      .select()
+      .from(salesOrderEvidence)
+      .where(eq(salesOrderEvidence.salesOrderId, detail.order.id));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('takes consecutive SO numbers for consecutive orders', async () => {
+    const first = await confirm(await acceptedQuotation());
+    const second = await confirm(await acceptedQuotation());
+    const seq = (n: string | null) => Number(n!.split('-').pop());
+    expect(seq(second.order.number)).toBe(seq(first.order.number) + 1);
+  });
+});
+
+// ------------------------------------------------------------------------------------ list and detail
+
+describe('SalesOrdersService.list and detail', () => {
+  it('lists the order with its customer name, filters by status and customer, and parses as the UI does', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const all = (await service.list({})).map((i) => SalesOrderListItemSchema.parse(i));
+    expect(all.find((i) => i.id === detail.order.id)).toEqual({
+      id: detail.order.id,
+      number: detail.order.number,
+      customerId: f.customerPartyId,
+      customerName: 'Acme Pvt. Ltd.',
+      status: 'confirmed',
+      currency: 'NPR',
+      total: GOLDEN_TOTAL,
+      confirmedAt: NOW.toISOString(),
+    });
+    expect(await service.list({ status: 'cancelled' })).toEqual([]);
+    const byCustomer = await service.list({ customerId: f.customerPartyId });
+    expect(byCustomer.map((i) => i.id)).toContain(detail.order.id);
+    expect(await service.list({ customerId: randomUUID() })).toEqual([]);
+  });
+
+  it('answers 404 to a read of another entity, and an empty list there', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    current.scope = scopeB;
+    expect(await statusOf(service.detail(detail.order.id))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+    expect(await service.list({})).toEqual([]);
+    current.scope = scopeA;
+    expect((await service.detail(detail.order.id)).order.id).toBe(detail.order.id);
+  });
+
+  it('answers 404 to confirming a version of another entity', async () => {
+    const q = await acceptedQuotation();
+    current.scope = scopeB;
+    expect(await statusOf(confirm(q))).toEqual({ status: 404, code: 'not_found' });
+    current.scope = scopeA;
+    expect(await liveOrders(q.id)).toHaveLength(0);
+  });
+});
+
+// ------------------------------------------------------------------------------------ mark billable
+
+describe('SalesOrdersService.markBillable', () => {
+  const mark = (
+    detail: SalesOrderDetail,
+    lineIndex: number,
+    body: { evidenceDocumentId?: string; expectedVersion?: number } = {},
+    key = `mark-${randomUUID()}`,
+  ) =>
+    service.markBillable(
+      detail.order.id,
+      detail.schedule[lineIndex]!.id,
+      { expectedVersion: detail.order.version, ...body },
+      key,
+    );
+
+  it('needs evidence on a milestone line: 422 without it, then billable with it', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    expect(await statusOf(mark(detail, 1))).toEqual({ status: 422, code: 'evidence_required' });
+    const unchanged = await service.detail(detail.order.id);
+    expect(unchanged.schedule[1]!.status).toBe('planned');
+    expect(unchanged.order.version).toBe(1);
+
+    const doc = await seedDocument();
+    const after = parsed(await mark(detail, 1, { evidenceDocumentId: doc }));
+    expect(after.schedule[1]).toMatchObject({
+      status: 'billable',
+      billableEvidenceDocumentId: doc,
+      billableMarkedAt: NOW.toISOString(),
+    });
+    expect(after.schedule[2]!.status).toBe('planned');
+    expect(after.order.version).toBe(2);
+  });
+
+  it('refuses a stale order version with 409, a foreign document with 422 and a line already billable with 409', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await seedDocument();
+    await mark(detail, 1, { evidenceDocumentId: doc });
+
+    // Version 1 was current when `detail` was read; the first mark moved the order to 2.
+    expect((await statusOf(mark(detail, 2, { evidenceDocumentId: doc }))).status).toBe(409);
+    const foreign = await seedDocument(scopeB);
+    expect(
+      await statusOf(mark(detail, 2, { evidenceDocumentId: foreign, expectedVersion: 2 })),
+    ).toEqual({ status: 422, code: 'invalid_evidence_document' });
+    expect(
+      await statusOf(mark(detail, 1, { evidenceDocumentId: doc, expectedVersion: 2 })),
+    ).toEqual({ status: 409, code: 'schedule_line_not_planned' });
+    // The advance line is billable since confirm.
+    expect(await statusOf(mark(detail, 0, { expectedVersion: 2 }))).toEqual({
+      status: 409,
+      code: 'schedule_line_not_planned',
+    });
+  });
+
+  it('replays an answered command with the same key and makes one change', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const doc = await seedDocument();
+    const body = { evidenceDocumentId: doc, expectedVersion: 1 };
+    const lineId = detail.schedule[1]!.id;
+    const first = await service.markBillable(detail.order.id, lineId, body, 'mark-same-key');
+    const again = await service.markBillable(detail.order.id, lineId, body, 'mark-same-key');
+    expect(again).toEqual(first);
+    expect((await service.detail(detail.order.id)).order.version).toBe(2);
+  });
+
+  it('answers 404 outside the entity and for a line of another order', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const other = await confirm(await acceptedQuotation());
+    const doc = await seedDocument();
+    expect(
+      await statusOf(
+        service.markBillable(
+          detail.order.id,
+          other.schedule[1]!.id,
+          { evidenceDocumentId: doc, expectedVersion: 1 },
+          `mark-${randomUUID()}`,
+        ),
+      ),
+    ).toEqual({ status: 404, code: 'not_found' });
+
+    current.scope = scopeB;
+    expect(await statusOf(mark(detail, 1, { evidenceDocumentId: doc }))).toEqual({
+      status: 404,
+      code: 'not_found',
+    });
+    current.scope = scopeA;
+    expect((await service.detail(detail.order.id)).schedule[1]!.status).toBe('planned');
+  });
+});
