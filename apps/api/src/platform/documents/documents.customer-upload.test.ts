@@ -293,9 +293,7 @@ describe('DocumentsService.create for a portal customer', () => {
       ),
     ).rejects.toMatchObject({ status: 415 });
     await expect(
-      asCaller(caller(), () =>
-        service.create(tx, body({ sizeBytes: MAX_UPLOAD_BYTES + 1 })),
-      ),
+      asCaller(caller(), () => service.create(tx, body({ sizeBytes: MAX_UPLOAD_BYTES + 1 }))),
     ).rejects.toMatchObject({ status: 413 });
     expect(inserted).toHaveLength(0);
   });
@@ -341,9 +339,7 @@ describe('DocumentsService.receiveContent for a portal customer', () => {
     const { tx } = fakeTx({ rows: [received] });
     const { service, allowsCounterparty } = setup('allow', { tx });
 
-    await expect(asCaller(caller(), () => send(service))).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(asCaller(caller(), () => send(service))).rejects.toBeInstanceOf(ConflictException);
     expect(allowsCounterparty).toHaveBeenCalledWith(
       { kind: 'customer', userId: USER, partyId: PARTY, tenantId: TENANT, organizationId: ORG },
       OWNER_ID,
