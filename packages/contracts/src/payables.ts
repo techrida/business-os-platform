@@ -37,11 +37,14 @@ export const BILL_STATUSES = [
 export const BillStatusSchema = z.enum(BILL_STATUSES);
 export type BillStatus = z.infer<typeof BillStatusSchema>;
 
+// Every move the bills service writes: a non-PO bill is submitted from draft (match not required), a first match
+// outside tolerance goes from draft to variance, and a rejected or returned match exception puts the bill back in
+// variance. A re-run that leaves the status as it is (matching, variance) is not a move.
 export const BILL_TRANSITIONS: Readonly<Record<BillStatus, readonly BillStatus[]>> = {
-  draft: ['matching'],
+  draft: ['matching', 'variance', 'pending_approval'],
   matching: ['variance', 'pending_approval'],
   variance: ['matching', 'exception_pending'],
-  exception_pending: ['pending_approval'],
+  exception_pending: ['pending_approval', 'variance'],
   pending_approval: ['approved', 'draft', 'rejected'],
   approved: ['partially_paid', 'paid', 'voided'],
   partially_paid: ['paid'],
