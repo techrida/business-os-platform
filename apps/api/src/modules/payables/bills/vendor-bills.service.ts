@@ -14,7 +14,7 @@
 //   is a 404 (or a 422 for a line), never a 403;
 // - "a void leaves a trail" (unit A1c): open items are append-only, so a void opens a vendor_debit_note payable
 //   debit for the full amount and allocates it against the bill's credit item through LedgerService; only a bill
-//   with nothing allocated yet may be voided;
+//   with nothing allocated yet and no live payment request on it may be voided;
 // - "a portal invoice becomes a bill once" (unit A1d): converting an inbox submission locks the row, checks its file
 //   scanned clean, creates the bill and marks the row converted in one transaction, so a second convert is a 409;
 // - the purchase VAT register (check 17): its total is the creditable VAT of the approved bills of the period.
@@ -33,6 +33,8 @@ import {
   matchExceptions,
   matchResults,
   openItems,
+  paymentRequestLines,
+  paymentRequests,
   poLineProgress,
   purchaseOrderLines,
   purchaseOrders,
@@ -66,6 +68,7 @@ import { withTx, type TxScope } from '../../../platform/db/tx';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
+import { CLAIMING_REQUEST_STATUSES } from '../payment-requests/payment-request.rules';
 import {
   BILLABLE_PO_STATUSES,
   BILL_AUDIT_ENTITY,
@@ -974,7 +977,8 @@ export class VendorBillsService {
    * for the full amount (source = the bill), allocates it against the bill's credit item, records
    * `vendor_debit_note_issued` and marks the bill voided. 200 with the bill. 404 outside the acting entity; 409
    * invalid_transition unless the bill is approved (a second void included), BILL_NOT_POSTED when the bill has no
-   * credit item, BILL_HAS_ALLOCATIONS when part of it is already paid or settled.
+   * credit item, BILL_HAS_ALLOCATIONS when part of it is already paid or settled, BILL_HAS_PAYMENT_REQUEST when a
+   * payment request waiting for approval or approved has a line on it.
    */
   async void(id: string, body: VoidVendorBillBody, idempotencyKey: string): Promise<VendorBillDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -1012,6 +1016,38 @@ export class VendorBillsService {
             throw conflict(
               'BILL_HAS_ALLOCATIONS',
               'Part of this bill is already paid or settled, so it cannot be voided',
+            );
+          }
+          // A request waiting for approval or approved holds a claim on the item; voiding would strand it. No row
+          // lock is taken here (so no new lock order against payment-requests submit: request, vendor, open items):
+          // submit moves a draft to pending_approval only while holding this item FOR UPDATE, which we hold now, so
+          // this READ COMMITTED read sees every request that submitted first, and one that submits later fails its
+          // own balance check on the voided item.
+          const [claim] = await tx
+            .select({ id: paymentRequests.id })
+            .from(paymentRequestLines)
+            .innerJoin(
+              paymentRequests,
+              and(
+                eq(paymentRequests.tenantId, paymentRequestLines.tenantId),
+                eq(paymentRequests.organizationId, paymentRequestLines.organizationId),
+                eq(paymentRequests.id, paymentRequestLines.paymentRequestId),
+              ),
+            )
+            .where(
+              scoped(scope).where(
+                paymentRequestLines,
+                and(
+                  eq(paymentRequestLines.openItemId, credit.id),
+                  inArray(paymentRequests.status, [...CLAIMING_REQUEST_STATUSES]),
+                ),
+              ),
+            )
+            .limit(1);
+          if (claim !== undefined) {
+            throw conflict(
+              'BILL_HAS_PAYMENT_REQUEST',
+              'A payment request waiting for approval or already approved is on this bill, so it cannot be voided',
             );
           }
           const { item: debit } = await this.ledger.openItem(tx, scope, actor, {
