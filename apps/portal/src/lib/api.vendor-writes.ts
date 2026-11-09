@@ -8,6 +8,8 @@ import {
   VendorBillSubmissionBodySchema,
   type VendorKycDocumentSubmissionBody,
   VendorKycDocumentSubmissionBodySchema,
+  type VendorQuotationSubmissionBody,
+  VendorQuotationSubmissionBodySchema,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -23,17 +25,19 @@ import type { Session } from './session';
  *
  *   POST /v1/portal/vendor/kyc-documents/files            -> { documentId, versionId, uploadPath }
  *   POST /v1/portal/vendor/bill-submissions/files         -> { documentId, versionId, uploadPath }
- *   PUT  <uploadPath>  (raw bytes, own Content-Type)      -> 2xx
+ *   POST /v1/portal/vendor/quotation-submissions/files    -> { documentId, versionId, uploadPath }
+ *   PUT <uploadPath>  (raw bytes, own Content-Type)      -> 2xx
  *   POST /v1/portal/vendor/kyc-documents                  (Idempotency-Key) -> 2xx
  *   POST /v1/portal/vendor/bill-submissions               (Idempotency-Key) -> 2xx
+ *   POST /v1/portal/vendor/quotation-submissions          (Idempotency-Key) -> 2xx
  *   POST /v1/portal/vendor/bank-change-requests           (Idempotency-Key) -> bank account, last four only
  *
  * The vendor's party comes from the token on the API side; nothing here sends a party or vendor id.
  * Every body is parsed with its strict contract first, so a field outside it cannot be sent.
  */
 
-/** The two uploads that carry a file. A bank change request has no document. */
-export const UPLOAD_KINDS = ['kyc-documents', 'bill-submissions'] as const;
+/** The uploads that carry a file. A bank change request has no document. */
+export const UPLOAD_KINDS = ['kyc-documents', 'bill-submissions', 'quotation-submissions'] as const;
 export type VendorUploadKind = (typeof UPLOAD_KINDS)[number];
 
 const UploadStartSchema = z.object({
@@ -151,6 +155,20 @@ export async function submitVendorBill(
 ): Promise<void> {
   const checked = VendorBillSubmissionBodySchema.parse(body);
   await submit(session, '/v1/portal/vendor/bill-submissions', checked, idempotencyKey);
+}
+
+/**
+ * `POST /v1/portal/vendor/quotation-submissions`: the vendor's priced answer to a request for
+ * quotation, with the quotation file. The total is the vendor's own figure as typed (text, never
+ * summed from lines); staff enter the real quotation from it.
+ */
+export async function submitVendorQuotation(
+  session: Session,
+  body: VendorQuotationSubmissionBody,
+  idempotencyKey: string,
+): Promise<void> {
+  const checked = VendorQuotationSubmissionBodySchema.parse(body);
+  await submit(session, '/v1/portal/vendor/quotation-submissions', checked, idempotencyKey);
 }
 
 /** The bank change request has no document: the API answers 422 to one, so the type leaves it out. */
