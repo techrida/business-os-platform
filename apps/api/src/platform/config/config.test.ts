@@ -420,11 +420,31 @@ describe('FIELD_ENC_KEYS (the field-encryption keyring)', () => {
     ['no separator', key1, 'FIELD_ENC_KEYS: entry 1 must be <kid>:<base64 of 32 bytes>'],
     ['an empty list', ' , ', 'FIELD_ENC_KEYS: must list at least one key'],
     ['a bad key id', `k 1:${key1}`, 'FIELD_ENC_KEYS: entry 1 has an invalid key id'],
-    ['a key id over 32 characters', `${'k'.repeat(33)}:${key1}`, 'FIELD_ENC_KEYS: entry 1 has an invalid key id'],
-    ['a short key', `k1:${randomBytes(16).toString('base64')}`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
-    ['a long key', `k1:${randomBytes(33).toString('base64')}`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
-    ['a non-base64 key', `k1:${key1.slice(0, -2)}!=`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
-    ['a base64url key', `k1:${randomBytes(32).toString('base64url')}`, 'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes'],
+    [
+      'a key id over 32 characters',
+      `${'k'.repeat(33)}:${key1}`,
+      'FIELD_ENC_KEYS: entry 1 has an invalid key id',
+    ],
+    [
+      'a short key',
+      `k1:${randomBytes(16).toString('base64')}`,
+      'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes',
+    ],
+    [
+      'a long key',
+      `k1:${randomBytes(33).toString('base64')}`,
+      'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes',
+    ],
+    [
+      'a non-base64 key',
+      `k1:${key1.slice(0, -2)}!=`,
+      'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes',
+    ],
+    [
+      'a base64url key',
+      `k1:${randomBytes(32).toString('base64url')}`,
+      'FIELD_ENC_KEYS: entry 1 key must be standard base64 of exactly 32 bytes',
+    ],
     ['a repeated key id', `k1:${key1},k1:${key2}`, 'FIELD_ENC_KEYS: entry 2 repeats a key id'],
   ])('refuses %s in every environment, without echoing the value', (_name, value, message) => {
     for (const env of [base, { ...base, NODE_ENV: 'test' }, prod]) {
@@ -436,7 +456,9 @@ describe('FIELD_ENC_KEYS (the field-encryption keyring)', () => {
   });
 
   it('needs FIELD_ENC_ACTIVE_KID and FIELD_ENC_FP_KID once there is more than one key', () => {
-    const list = problems(() => loadAppConfig({ ...base, FIELD_ENC_KEYS: `k1:${key1},k2:${key2}` }));
+    const list = problems(() =>
+      loadAppConfig({ ...base, FIELD_ENC_KEYS: `k1:${key1},k2:${key2}` }),
+    );
     expect(list).toEqual([
       'FIELD_ENC_ACTIVE_KID: is required when FIELD_ENC_KEYS holds more than one key',
       'FIELD_ENC_FP_KID: is required when FIELD_ENC_KEYS holds more than one key',
@@ -483,7 +505,11 @@ describe('FIELD_ENC_KEYS (the field-encryption keyring)', () => {
 
   it('is an API-only setting: the worker config never carries it', () => {
     const config = loadCoreConfig(
-      { DATABASE_URL: base.DATABASE_URL, VALKEY_URL: base.VALKEY_URL, FIELD_ENC_KEYS: `k1:${key1}` },
+      {
+        DATABASE_URL: base.DATABASE_URL,
+        VALKEY_URL: base.VALKEY_URL,
+        FIELD_ENC_KEYS: `k1:${key1}`,
+      },
       'worker',
     );
     expect('FIELD_ENC_KEYS' in config).toBe(false);

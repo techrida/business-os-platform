@@ -35,7 +35,12 @@ function errorText(fn: () => unknown): string {
   } catch (error) {
     expect(error).toBeInstanceOf(FieldCipherError);
     const e = error as Error;
-    return [e.message, e.stack ?? '', String(e.cause ?? ''), inspect(e, { depth: 5 })].join('\n');
+    return [
+      e.message,
+      e.stack ?? '',
+      inspect(e.cause, { depth: 5 }),
+      inspect(e, { depth: 5 }),
+    ].join('\n');
   }
   throw new Error('expected a throw');
 }
@@ -101,9 +106,7 @@ describe('FieldCipher', () => {
 
   it('refuses an unknown key id', () => {
     const other = new FieldCipher(ring('k9', 'k9', { k9: key2 }));
-    expect(() => cipher.decrypt(other.encrypt(PLAINTEXT))).toThrow(
-      'field-cipher: unknown key id',
-    );
+    expect(() => cipher.decrypt(other.encrypt(PLAINTEXT))).toThrow('field-cipher: unknown key id');
   });
 
   it('refuses a value sealed by a different key under the same id', () => {
