@@ -979,7 +979,7 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
     );
     const { policy } = current;
     const inherited = policy.isDefault || current.isDefault;
-    const matches = Object.entries(patch).every(([key, value]) => policy[key] === value);
+    const matches = Object.entries(patch).every(([key, value]) => sameValue(policy[key], value));
     if (!inherited && matches) return false;
 
     const body: Record<string, unknown> = {};
