@@ -86,8 +86,8 @@ function asCaller<T>(p: Principal, fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * A transaction that answers readTxContext with a user actor, records inserts, and answers every locked
- * select with `rows` (the document or version a create-version or receive step loads).
+ * A transaction that answers readTxContext with a user actor, records inserts, and answers both the
+ * initial lookup and the later locked lookup with `rows` (the document or version the step loads).
  */
 function fakeTx(opts: { actorId?: string; rows?: unknown[] } = {}) {
   const inserted: Record<string, unknown>[] = [];
@@ -96,6 +96,7 @@ function fakeTx(opts: { actorId?: string; rows?: unknown[] } = {}) {
     innerJoin: () => chain,
     where: () => chain,
     limit: () => chain,
+    then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve(opts.rows ?? []).then(resolve),
     for: () => Promise.resolve(opts.rows ?? []),
   };
   const tx = {
