@@ -166,7 +166,11 @@ describe('PurchaseOrderRenderSweeper.sweep', () => {
 
     f.advance(FAILED_RETRY_MS - 1_000);
     await f.sweeper.sweep();
-    expect(f.store.candidates).toHaveBeenLastCalledWith(10, [candidate(1).versionId], candidate(1).versionId);
+    expect(f.store.candidates).toHaveBeenLastCalledWith(
+      10,
+      [candidate(1).versionId],
+      candidate(1).versionId,
+    );
 
     f.advance(2_000);
     await f.sweeper.sweep();
