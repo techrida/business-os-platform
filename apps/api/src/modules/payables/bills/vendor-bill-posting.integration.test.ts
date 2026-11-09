@@ -346,7 +346,15 @@ async function doc(): Promise<string> {
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
         VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill', ${randomUUID()}) RETURNING id`,
   );
-  return (rows[0] as { id: string }).id;
+  const documentId = (rows[0] as { id: string }).id;
+  await exec(
+    scopeA,
+    sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+          declared_mime, size_bytes, storage_key, status)
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, 1, 'invoice.pdf',
+                'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, 'clean')`,
+  );
+  return documentId;
 }
 
 /** A matched bill of 1 x 100,000.00 + 13% VAT against `po`, submitted (Accountant -> Finance). */
