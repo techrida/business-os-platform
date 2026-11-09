@@ -30,6 +30,7 @@ import type {
 } from '@bos/contracts';
 import {
   documents,
+  documentVersions,
   matchExceptions,
   matchResults,
   openItems,
@@ -59,7 +60,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, between, desc, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, asc, between, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
@@ -127,6 +128,7 @@ export interface VendorBillDto {
   kind: BillRow['kind'];
   number: string | null;
   vendorPartyId: string;
+  vendorName: string;
   vendorInvoiceNo: string;
   invoiceDate: string;
   fiscalYear: string;
@@ -250,8 +252,12 @@ export class VendorBillsService {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const rows = await tx
-        .select()
+        .select({ bill: vendorBills, vendorName: vendors.legalName })
         .from(vendorBills)
+        .innerJoin(
+          vendors,
+          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+        )
         .where(
           scoped(scope).where(
             vendorBills,
@@ -260,7 +266,7 @@ export class VendorBillsService {
         )
         .orderBy(desc(vendorBills.createdAt));
       return rows.map((row) => {
-        const { lines: _lines, ...rest } = toDto(row, [], []);
+        const { lines: _lines, ...rest } = toDto(row.bill, row.vendorName, [], []);
         return rest;
       });
     });
@@ -483,11 +489,17 @@ export class VendorBillsService {
       );
     if (account === undefined) throw notFound('Vendor');
     const [doc] = await tx
-      .select({ id: documents.id })
+      .select({ id: documents.id, ownerType: documents.ownerType, ownerId: documents.ownerId })
       .from(documents)
-      .where(s.where(documents, eq(documents.id, body.documentId)));
-    if (doc === undefined)
+      .where(
+        s.where(documents, and(eq(documents.id, body.documentId), isNull(documents.removedAt))),
+      );
+    if (
+      doc === undefined ||
+      (doc.ownerType === 'vendor_bill_intake' && doc.ownerId !== body.vendorPartyId)
+    ) {
       throw unprocessable('DOCUMENT_NOT_FOUND', 'The invoice file was not found');
+    }
 
     const poLineIds = body.lines.flatMap((l) => (l.poLineId === undefined ? [] : [l.poLineId]));
     if (body.lines.some((l) => l.receiptLineId !== undefined && l.poLineId === undefined)) {
@@ -891,7 +903,8 @@ export class VendorBillsService {
 
   /**
    * Sends the bill to the `vendor_bill` route (AD5). 200 with the bill in pending_approval. 409 (BILL_NOT_MATCHED)
-   * unless every line matched or a match exception was approved; 422 when nobody may approve.
+   * unless every line matched or a match exception was approved, and BILL_DOCUMENT_NOT_CLEAN unless the newest
+   * invoice version is clean; 422 when the invoice file is missing or removed, or nobody may approve.
    */
   async submit(id: string, idempotencyKey: string): Promise<VendorBillDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -913,6 +926,7 @@ export class VendorBillsService {
                 `A ${bill.status} bill (match ${bill.matchStatus}) cannot be submitted: every line must match or a match exception must be approved`,
               );
             }
+            await this.assertInvoiceClean(tx, scope, bill.documentId);
             const facts = billFactsOf({
               poMatched: bill.purchaseOrderId !== null,
               gross: sum([bill.netTotal, bill.vatTotal]),
@@ -1220,6 +1234,35 @@ export class VendorBillsService {
 
   // ------------------------------------------------------------------------------------------------- helpers
 
+  private async assertInvoiceClean(
+    tx: DbTransaction,
+    scope: TxScope,
+    documentId: string,
+  ): Promise<void> {
+    const [document] = await tx
+      .select({ id: documents.id })
+      .from(documents)
+      .where(
+        scoped(scope).where(
+          documents,
+          and(eq(documents.id, documentId), isNull(documents.removedAt)),
+        ),
+      )
+      .for('update');
+    if (document === undefined) {
+      throw unprocessable('DOCUMENT_NOT_FOUND', 'The invoice file was not found');
+    }
+    const [latest] = await tx
+      .select({ status: documentVersions.status })
+      .from(documentVersions)
+      .where(scoped(scope).where(documentVersions, eq(documentVersions.documentId, documentId)))
+      .orderBy(desc(documentVersions.version))
+      .limit(1);
+    if (latest?.status !== 'clean') {
+      throw conflict('BILL_DOCUMENT_NOT_CLEAN', 'The invoice file has not scanned clean');
+    }
+  }
+
   private async tolerance(scope: TxScope): Promise<MatchTolerance> {
     return {
       qtyPct: await this.settings.get(scope, 'procurement.match.qty_pct'),
@@ -1278,11 +1321,20 @@ export class VendorBillsService {
 
   private async dto(tx: DbTransaction, scope: TxScope, id: string): Promise<VendorBillDto> {
     const [bill] = await tx
-      .select()
+      .select({ bill: vendorBills, vendorName: vendors.legalName })
       .from(vendorBills)
+      .innerJoin(
+        vendors,
+        and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+      )
       .where(scoped(scope).where(vendorBills, eq(vendorBills.id, id)));
     if (bill === undefined) throw notFound('Bill');
-    return toDto(bill, await this.linesOf(tx, scope, id), await this.latestResults(tx, scope, id));
+    return toDto(
+      bill.bill,
+      bill.vendorName,
+      await this.linesOf(tx, scope, id),
+      await this.latestResults(tx, scope, id),
+    );
   }
 }
 
@@ -1292,13 +1344,19 @@ function isoDateOf(instant: Date): string {
   return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-function toDto(bill: BillRow, lines: BillLineRow[], results: MatchResultRow[]): VendorBillDto {
+function toDto(
+  bill: BillRow,
+  vendorName: string,
+  lines: BillLineRow[],
+  results: MatchResultRow[],
+): VendorBillDto {
   const byLine = new Map(results.map((r) => [r.vendorBillLineId, r]));
   return {
     id: bill.id,
     kind: bill.kind,
     number: bill.number,
     vendorPartyId: bill.vendorId,
+    vendorName,
     vendorInvoiceNo: bill.vendorInvoiceNo,
     invoiceDate: bill.invoiceDate,
     fiscalYear: bill.fiscalYear,
