@@ -195,6 +195,32 @@ describe('bills list', () => {
 });
 
 describe('bill detail', () => {
+  it.each(['infected', 'scan_failed', 'rejected', null])(
+    'offers invoice replacement for a draft with a non-clean file (%s)',
+    async (fileStatus) => {
+      api.getBill.mockResolvedValue({ ...header, status: 'draft', fileStatus, lines: [line] });
+      const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+      expect(out).toContain('Upload a replacement file');
+      expect(out).toContain('Replacement invoice file');
+      expect(out).toContain('type="file"');
+      expect(out).not.toContain('Void bill');
+    },
+  );
+
+  it('hides replacement for clean or submitted bills and callers without bill entry', async () => {
+    for (const [status, fileStatus, roles] of [
+      ['draft', 'clean', ['accountant']],
+      ['pending_approval', 'infected', ['accountant']],
+      ['draft', 'infected', ['finance']],
+    ]) {
+      session.roles = roles as string[];
+      api.getBill.mockResolvedValue({ ...header, status, fileStatus, lines: [line] });
+      expect(await html(BillPage({ params: Promise.resolve({ id: BILL }) }))).not.toContain(
+        'Upload a replacement file',
+      );
+    }
+  });
+
   it('shows the match result, the variances, and what is blocked while outside tolerance', async () => {
     api.getBill.mockResolvedValue({ ...header, lines: [line] });
     const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
