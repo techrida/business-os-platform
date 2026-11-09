@@ -3,6 +3,7 @@
 // spec the form cannot show faithfully (nested all/any, a field other than amountNpr) is never
 // flattened: the editor falls back to raw JSON for it, so saving a draft never drops a rule.
 import {
+  DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   ROLE_KEYS,
   WorkflowSpecSchema,
   type Condition,
@@ -29,7 +30,7 @@ export const OP_LABEL: Record<ThresholdOp, string> = {
 export interface StepForm {
   id: string;
   kind: StepKind;
-  /** The role key, group key or user id, depending on `kind`. */
+  /** The role key, group key or user id, depending on `kind`; a department head's fallback role. */
   target: string;
   reason: string;
 }
@@ -59,7 +60,8 @@ export interface SpecForm {
 export type FormConversion = { ok: true; form: SpecForm } | { ok: false; reasons: string[] };
 export type SpecBuild = { ok: true; spec: WorkflowSpec } | { ok: false; issues: string[] };
 
-const KINDS = ['role', 'group', 'user'] as const;
+/** The kinds whose target is a field of the same name on the step. */
+const NAMED_KINDS = ['role', 'group', 'user'] as const;
 
 export function nextId(prefix: string, taken: readonly string[]): string {
   let n = taken.length + 1;
@@ -102,9 +104,16 @@ export function emptySpecForm(documentType = ''): SpecForm {
 
 function stepToForm(step: StepSpec): StepForm | string {
   // A step that carries a field for another kind would lose it in the form.
-  const stray = KINDS.filter((k) => k !== step.kind && step[k] !== undefined);
+  const stray: string[] = NAMED_KINDS.filter((k) => k !== step.kind && step[k] !== undefined);
+  if (step.kind !== 'department_head' && step.fallbackRole !== undefined) {
+    stray.push('fallbackRole');
+  }
   if (stray.length > 0) return `step "${step.id}" also sets ${stray.join(', ')}`;
-  return { id: step.id, kind: step.kind, target: step[step.kind] ?? '', reason: step.reason };
+  const target =
+    step.kind === 'department_head'
+      ? (step.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE)
+      : (step[step.kind] ?? '');
+  return { id: step.id, kind: step.kind, target, reason: step.reason };
 }
 
 /** Null when `when` is not a single amountNpr comparison the form can show. */
@@ -176,10 +185,11 @@ function formatIssues(issues: readonly { path: PropertyKey[]; message: string }[
   });
 }
 
+/** A department_head step names no person or group, only the role it falls back to. */
 const stepFromForm = (s: StepForm) => ({
   id: s.id.trim(),
   kind: s.kind,
-  [s.kind]: s.target.trim(),
+  [s.kind === 'department_head' ? 'fallbackRole' : s.kind]: s.target.trim(),
   reason: s.reason.trim(),
 });
 
@@ -253,5 +263,8 @@ export function describeCondition(c: Condition): string {
 }
 
 export function describeStepTarget(step: StepSpec): string {
+  if (step.kind === 'department_head') {
+    return `department head (falls back to ${step.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE})`;
+  }
   return `${step.kind}: ${step[step.kind] ?? '(missing)'}`;
 }
