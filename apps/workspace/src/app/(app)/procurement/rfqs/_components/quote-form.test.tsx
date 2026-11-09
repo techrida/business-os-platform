@@ -13,7 +13,7 @@ vi.mock('react', async (original) => {
     useState: <T,>(initial: T | (() => T)) => {
       const value = typeof initial === 'function' ? (initial as () => T)() : initial;
       if (typeof value === 'object' && value !== null && 'lines' in value && 'mode' in value) {
-        const quote = value as QuoteValues;
+        const quote = value as unknown as QuoteValues;
         return react.useState({
           ...quote,
           lines: quote.lines.map((line) => ({ ...line, taxCodeId: missingTax })),
