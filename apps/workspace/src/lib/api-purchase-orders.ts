@@ -154,6 +154,22 @@ export const ReceiptSchema = z.object({
 });
 export type Receipt = z.infer<typeof ReceiptSchema>;
 
+/**
+ * A row of the receiving picker (apps/api receivable-orders.service.ts). Strict: a field the DTO
+ * does not have fails the parse. `openQuantity` is the server's decimal text (four places).
+ */
+export const ReceivableOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: Text,
+  vendorId: z.guid(),
+  vendorName: Text,
+  kind: z.enum(['goods', 'service', 'mixed']),
+  status: z.enum(['issued', 'partially_received']),
+  issuedAt: Text.optional(),
+  openQuantity: Text,
+});
+export type ReceivableOrder = z.infer<typeof ReceivableOrderSchema>;
+
 async function readBody(res: Response): Promise<unknown> {
   const text = await res.text();
   if (text === '') return undefined;
@@ -294,6 +310,19 @@ export function listReceipts(session: Session, purchaseOrderId: string): Promise
     `${GRN}?purchaseOrderId=${encodeURIComponent(purchaseOrderId)}`,
     z.array(ReceiptSchema),
   );
+}
+
+/**
+ * `GET /v1/procurement/receivable-orders[?limit=]` (needs `procurement.receipt.confirm`): the
+ * purchase orders that still take receipts, newest issued first. The query is strict: only `limit`
+ * (1 to 200, 50 when left out).
+ */
+export function listReceivableOrders(session: Session, limit?: number): Promise<ReceivableOrder[]> {
+  const path =
+    limit === undefined
+      ? '/v1/procurement/receivable-orders'
+      : `/v1/procurement/receivable-orders?limit=${encodeURIComponent(String(limit))}`;
+  return call(session, path, z.array(ReceivableOrderSchema));
 }
 
 export function getReceipt(session: Session, id: string): Promise<Receipt> {
