@@ -1,0 +1,256 @@
+import {
+  ConvertSubmissionBodySchema,
+  CreateRfqBodySchema,
+  RecordQuotationBodySchema,
+  type ConvertSubmissionBody,
+  type CreateRfqBody,
+  type RecordQuotationBody,
+} from '@bos/contracts';
+
+/**
+ * Pure helpers for the RFQ forms: read what was typed, check it with the contracts' schemas and
+ * word every refusal for a person. The server action is the real gate; the browser's checks are a
+ * courtesy. Quantities and prices stay the text the person typed: nothing here does arithmetic,
+ * because every total is the server's. No server code, so a test or a Client Component can import it.
+ */
+
+export type FieldErrors = Record<string, string>;
+
+const str = (form: FormData, name: string): string => {
+  const v = form.get(name);
+  return typeof v === 'string' ? v : '';
+};
+const trim = (s: string): string => s.trim();
+
+// ------------------------------------------------------------------------------- new RFQ
+
+export interface RfqValues {
+  purchaseRequestId: string;
+  /** `datetime-local` text: `YYYY-MM-DDTHH:mm`, read as Kathmandu time. */
+  deadline: string;
+  vendorIds: string[];
+}
+
+export const EMPTY_RFQ_VALUES: RfqValues = { purchaseRequestId: '', deadline: '', vendorIds: [] };
+
+export function rfqValuesFromForm(form: FormData): RfqValues {
+  return {
+    purchaseRequestId: str(form, 'purchaseRequestId'),
+    deadline: str(form, 'deadline'),
+    vendorIds: form.getAll('vendorIds').filter((v): v is string => typeof v === 'string'),
+  };
+}
+
+const LOCAL_DEADLINE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
+
+/**
+ * The typed deadline as an ISO instant with Nepal's +05:45 offset. The server's own time zone is
+ * never consulted: the person typed Kathmandu time and that is what is sent. Null when the text is
+ * not a real date and time.
+ */
+export function deadlineToIso(local: string): string | null {
+  const m = LOCAL_DEADLINE.exec(local.trim());
+  if (m === null) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number) as [number, number, number, number, number];
+  const probe = new Date(Date.UTC(y, mo - 1, d, h, mi));
+  const real =
+    probe.getUTCFullYear() === y &&
+    probe.getUTCMonth() === mo - 1 &&
+    probe.getUTCDate() === d &&
+    probe.getUTCHours() === h &&
+    probe.getUTCMinutes() === mi;
+  return real ? `${local.trim()}:00+05:45` : null;
+}
+
+const RFQ_WORDS: Record<string, string> = {
+  purchaseRequestId: 'Choose the purchase request to source.',
+  deadline: 'Choose the quotation deadline: a date and time, in Kathmandu time.',
+  vendorIds: 'Invite at least one vendor, up to 50.',
+};
+
+export type ParsedRfq = { ok: true; data: CreateRfqBody } | { ok: false; errors: FieldErrors };
+
+export function parseRfqValues(input: RfqValues): ParsedRfq {
+  const distinct = [...new Set(input.vendorIds.map(trim).filter((v) => v !== ''))];
+  const parsed = CreateRfqBodySchema.safeParse({
+    purchaseRequestId: trim(input.purchaseRequestId),
+    deadline: deadlineToIso(input.deadline) ?? '',
+    vendorIds: distinct,
+  });
+  if (parsed.success) return { ok: true, data: parsed.data };
+  const errors: FieldErrors = {};
+  for (const issue of parsed.error.issues) {
+    const head = issue.path[0];
+    if (typeof head === 'string') errors[head] ??= RFQ_WORDS[head] ?? issue.message;
+  }
+  if (Object.keys(errors).length === 0) errors.form = 'Check the form and try again.';
+  return { ok: false, errors };
+}
+
+// ---------------------------------------------------------------------- quotation entry
+
+export type QuoteMode = 'record' | 'convert';
+
+export interface QuoteLineValues {
+  /** Unticked lines are left out of the quotation. */
+  include: boolean;
+  prLineId: string;
+  quantity: string;
+  unitPrice: string;
+  taxCodeId: string;
+}
+
+export interface QuoteValues {
+  mode: QuoteMode;
+  vendorId: string;
+  documentId: string;
+  submissionId: string;
+  vendorRef: string;
+  validUntil: string;
+  currency: string;
+  deliveryDays: string;
+  warranty: string;
+  terms: string;
+  lines: QuoteLineValues[];
+}
+
+/** A blank quotation form with one ticked row per purchase request line, quantity pre-filled with the request's. */
+export function emptyQuoteValues(
+  mode: QuoteMode,
+  prLines: readonly { id: string; quantity: string }[],
+): QuoteValues {
+  return {
+    mode,
+    vendorId: '',
+    documentId: '',
+    submissionId: '',
+    vendorRef: '',
+    validUntil: '',
+    currency: 'NPR',
+    deliveryDays: '',
+    warranty: '',
+    terms: '',
+    lines: prLines.map((l) => ({
+      include: true,
+      prLineId: l.id,
+      quantity: l.quantity,
+      unitPrice: '',
+      taxCodeId: '',
+    })),
+  };
+}
+
+/** Reads the form: header fields by name, lines as `lines.<n>.<field>` in index order. */
+export function quoteValuesFromForm(form: FormData): QuoteValues {
+  const indexes = new Set<number>();
+  for (const name of form.keys()) {
+    const m = /^lines\.(\d{1,3})\./.exec(name);
+    if (m?.[1] !== undefined) indexes.add(Number(m[1]));
+  }
+  const lines = [...indexes]
+    .sort((a, b) => a - b)
+    .map((i) => ({
+      include: str(form, `lines.${i}.include`) === 'on',
+      prLineId: str(form, `lines.${i}.prLineId`),
+      quantity: str(form, `lines.${i}.quantity`),
+      unitPrice: str(form, `lines.${i}.unitPrice`),
+      taxCodeId: str(form, `lines.${i}.taxCodeId`),
+    }));
+  return {
+    mode: str(form, 'mode') === 'convert' ? 'convert' : 'record',
+    vendorId: str(form, 'vendorId'),
+    documentId: str(form, 'documentId'),
+    submissionId: str(form, 'submissionId'),
+    vendorRef: str(form, 'vendorRef'),
+    validUntil: str(form, 'validUntil'),
+    currency: str(form, 'currency') || 'NPR',
+    deliveryDays: str(form, 'deliveryDays'),
+    warranty: str(form, 'warranty'),
+    terms: str(form, 'terms'),
+    lines,
+  };
+}
+
+const QUOTE_WORDS: Record<string, string> = {
+  vendorId: 'Choose the vendor that sent this quotation.',
+  documentId: 'Enter the id of the uploaded quotation document.',
+  submissionId: 'Choose the vendor submission to convert.',
+  vendorRef: "The vendor's reference can be up to 100 characters.",
+  validUntil: 'Choose the date the quotation is valid until.',
+  currency: 'Choose NPR, INR or USD.',
+  deliveryDays: 'Enter the delivery time as a whole number of days, 0 to 3650.',
+  warranty: 'The warranty can be up to 500 characters.',
+  terms: 'The terms can be up to 2000 characters.',
+  quantity: 'Enter a quantity with up to 4 decimal places.',
+  unitPrice: 'Enter a unit price of 0 or more, with up to 2 decimal places.',
+  taxCodeId: 'Choose the tax code for this line.',
+  prLineId: 'This line does not belong to the request. Reload the page.',
+};
+
+export type ParsedQuote =
+  | { ok: true; mode: 'record'; data: RecordQuotationBody }
+  | { ok: true; mode: 'convert'; data: ConvertSubmissionBody }
+  | { ok: false; errors: FieldErrors };
+
+export function parseQuoteValues(input: QuoteValues): ParsedQuote {
+  const errors: FieldErrors = {};
+  const days = trim(input.deliveryDays);
+  if (days !== '' && !/^\d{1,4}$/.test(days)) errors.deliveryDays = QUOTE_WORDS.deliveryDays!;
+
+  // Only ticked lines are sent; `onScreen[k]` is where the k-th sent line sits on the form.
+  const onScreen: number[] = [];
+  const lines = input.lines.flatMap((l, i) => {
+    if (!l.include) return [];
+    onScreen.push(i);
+    return [
+      {
+        prLineId: trim(l.prLineId),
+        quantity: trim(l.quantity),
+        unitPrice: trim(l.unitPrice),
+        taxCodeId: trim(l.taxCodeId),
+      },
+    ];
+  });
+
+  const shared = {
+    ...(trim(input.vendorRef) !== '' ? { vendorRef: trim(input.vendorRef) } : {}),
+    ...(trim(input.validUntil) !== '' ? { validUntil: trim(input.validUntil) } : {}),
+    currency: trim(input.currency),
+    ...(days !== '' && errors.deliveryDays === undefined ? { deliveryDays: Number(days) } : {}),
+    ...(trim(input.warranty) !== '' ? { warranty: trim(input.warranty) } : {}),
+    ...(trim(input.terms) !== '' ? { terms: trim(input.terms) } : {}),
+    lines,
+  };
+  const result =
+    input.mode === 'convert'
+      ? ConvertSubmissionBodySchema.safeParse({
+          submissionId: trim(input.submissionId),
+          ...shared,
+        })
+      : RecordQuotationBodySchema.safeParse({
+          vendorId: trim(input.vendorId),
+          documentId: trim(input.documentId),
+          ...shared,
+        });
+
+  if (result.success && Object.keys(errors).length === 0) {
+    return input.mode === 'convert'
+      ? { ok: true, mode: 'convert', data: result.data as ConvertSubmissionBody }
+      : { ok: true, mode: 'record', data: result.data as RecordQuotationBody };
+  }
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      const [head, index, field] = issue.path;
+      if (head === 'lines' && index === undefined) {
+        errors.lines ??= 'Choose at least one line to quote.';
+      } else if (head === 'lines' && typeof index === 'number' && typeof field === 'string') {
+        const row = onScreen[index] ?? index;
+        errors[`lines.${row}.${field}`] ??= QUOTE_WORDS[field] ?? issue.message;
+      } else if (typeof head === 'string') {
+        errors[head] ??= QUOTE_WORDS[head] ?? issue.message;
+      }
+    }
+  }
+  if (Object.keys(errors).length === 0) errors.form = 'Check the form and try again.';
+  return { ok: false, errors };
+}
