@@ -7,7 +7,7 @@
 // compares their names. All six tables are entity-owned: a FK into another entity-owned table is
 // (tenant_id, organization_id, x), a FK into a tenant-level table (users, tax_codes) is (tenant_id, x).
 // Not modelled here: the triggers purchase_order_versions_immutable (a version is never updated or deleted; bos_app
-// has no UPDATE or DELETE privilege either), receipt_lines_guard (the over-receipt and full-reversal rules) and
+// has no UPDATE or DELETE privilege either), receipt_lines_guard (the over-receipt and full-reversal rules, and no DELETE of a reversal line) and
 // purchase_order_lines_open_guard (ordered - cancelled may not shrink below what was received).
 // receipt_lines.over_receipt_exception_id has no FK (no exceptions table yet).
 import { sql } from 'drizzle-orm';
