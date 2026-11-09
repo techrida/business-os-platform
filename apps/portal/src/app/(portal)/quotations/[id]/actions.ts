@@ -60,7 +60,11 @@ async function prepare(
   if (!UUID.test(id))
     return { ok: false, state: { key: prev.key, error: INCOMPLETE, reload: true } };
   const session = await getSession();
-  if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(`/quotations/${id}`)}`);
+  // These actions run no layout, so they check the kind themselves: a vendor session is refused
+  // exactly like a signed-out visitor, before anything reaches the API.
+  if (!session || session.orgKind !== 'customer') {
+    redirect(`/auth/login?returnTo=${encodeURIComponent(`/quotations/${id}`)}`);
+  }
   const submitted = text(form, 'idempotencyKey');
   return { ok: true, id, key: KEY.test(submitted) ? submitted : randomUUID(), session };
 }
