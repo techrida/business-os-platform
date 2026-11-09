@@ -497,9 +497,16 @@ describe('allocation cap (deferred to commit)', () => {
       for (const c of [first, second]) {
         await c.query('BEGIN');
         await c.query(`SELECT set_config('bos.organization_id', $1, true)`, [scope.organizationId]);
-        await c.query(INSERT_ALLOCATION, allocationParams(scope, invoice, payment, '600.00'));
       }
+      await first.query(INSERT_ALLOCATION, allocationParams(scope, invoice, payment, '600.00'));
+      // The audit chain's per-tenant advisory lock makes this INSERT wait for the first transaction, so it is
+      // started, not awaited, before the first one commits.
+      const secondInsert = second.query(
+        INSERT_ALLOCATION,
+        allocationParams(scope, invoice, payment, '600.00'),
+      );
       await first.query('COMMIT');
+      await secondInsert;
       await expect(second.query('COMMIT')).rejects.toMatchObject(CAP);
     } finally {
       await second.query('ROLLBACK').catch(() => undefined);
