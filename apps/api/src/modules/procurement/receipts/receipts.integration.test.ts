@@ -63,10 +63,16 @@ const U = { warehouse: '', accountant: '', requester: '', other: '', procurement
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  grants: Map<Permission, Scope> | null;
+} = {
   userId: '',
   role: 'warehouse',
   scope: null,
+  grants: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
@@ -83,7 +89,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -229,6 +235,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   current.scope = null;
+  current.grants = null;
   as(U.warehouse, 'warehouse');
 });
 
@@ -655,6 +662,29 @@ describe('reversal', () => {
 });
 
 describe('progress view', () => {
+  it('gives bill enterers vendor facts and progress without granting receipt access', async () => {
+    const po = await newPo();
+    const receipt = await createDraft(po, [{ poLineId: po.goods, quantity: '1' }]);
+    as(U.accountant, 'accountant');
+    expect(await service.progress(po.id)).toMatchObject({
+      vendorId,
+      vendorName: 'Himal Supplies Pvt. Ltd.',
+    });
+    expect((await httpErrorOf(service.get(receipt.id))).getStatus()).toBe(403);
+    expect((await httpErrorOf(service.list(po.id))).getStatus()).toBe(403);
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.progress(po.id))).getStatus()).toBe(404);
+  });
+
+  it('checks the purchase request scope of the bill-entry grant on progress', async () => {
+    const po = await newPo();
+    current.grants = new Map([['payables.bill.enter', 'own']]);
+    as(U.accountant, 'accountant');
+    expect((await httpErrorOf(service.progress(po.id))).getStatus()).toBe(404);
+    as(U.requester, 'operations_officer');
+    expect((await service.progress(po.id)).purchaseOrderId).toBe(po.id);
+  });
+
   it('shows ordered, received, pending and billed per line', async () => {
     const po = await newPo();
     await receiveGoods(po, [{ poLineId: po.goods, quantity: '2' }]);
@@ -674,18 +704,17 @@ describe('progress view', () => {
     expect(progress.lines[2]).toMatchObject({ kind: 'service', receivedQuantity: '0.0000' });
   });
 
-  it('is readable by the warehouse, procurement and the requester, not by an accountant or another officer', async () => {
+  it('is readable by the warehouse, procurement, bill enterers and the requester, not another officer', async () => {
     const po = await newPo();
     for (const [user, role] of [
       [U.warehouse, 'warehouse'],
       [U.procurement, 'procurement'],
       [U.requester, 'operations_officer'],
+      [U.accountant, 'accountant'],
     ] as const) {
       as(user, role);
       expect((await service.progress(po.id)).purchaseOrderId).toBe(po.id);
     }
-    as(U.accountant, 'accountant');
-    expect((await httpErrorOf(service.progress(po.id))).getStatus()).toBe(403);
     as(U.other, 'operations_officer');
     expect((await httpErrorOf(service.progress(po.id))).getStatus()).toBe(404);
   });
@@ -696,7 +725,6 @@ describe('before any read', () => {
     as(U.accountant, 'accountant');
     const missing = randomUUID();
     const calls = [
-      () => service.progress(missing),
       () => service.get(missing),
       () => service.list(missing),
       () => confirm(missing),
