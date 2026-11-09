@@ -37,6 +37,14 @@ export type ErrorCode =
   | 'kyb_not_verified'
   | 'customer_merged'
   | 'idp_org_taken'
+  | 'invalid_transition'
+  | 'kyb_not_submitted'
+  | 'kyc_expired'
+  | 'vendor_not_editable'
+  | 'vendor_identity_locked'
+  | 'account_exists'
+  | 'no_verified_bank_account'
+  | 'callback_evidence_not_clean'
   | 'NO_ELIGIBLE_APPROVER'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
@@ -84,6 +92,14 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   kyb_not_verified: 'Portal access needs an approved KYB verification case',
   customer_merged: 'This customer was merged into another',
   idp_org_taken: 'The portal organization is already used by another party',
+  invalid_transition: 'This action is not allowed in the current status',
+  kyb_not_submitted: 'The KYB verification has not been submitted yet',
+  kyc_expired: 'The vendor tax clearance has expired',
+  vendor_not_editable: 'This vendor can no longer be edited',
+  vendor_identity_locked: 'The legal name and tax numbers of an approved vendor cannot be changed',
+  account_exists: 'This vendor already has this bank account',
+  no_verified_bank_account: 'The vendor has no verified bank account',
+  callback_evidence_not_clean: 'The call-back evidence has not passed the virus scan',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
@@ -150,6 +166,15 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'kyb_not_verified',
   'customer_merged',
   'idp_org_taken',
+  // P4 vendors (V1) and vendor bank accounts (V2): lifecycle and maker-checker refusals a client can switch on.
+  'invalid_transition',
+  'kyb_not_submitted',
+  'kyc_expired',
+  'vendor_not_editable',
+  'vendor_identity_locked',
+  'account_exists',
+  'no_verified_bank_account',
+  'callback_evidence_not_clean',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
