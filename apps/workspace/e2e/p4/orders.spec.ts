@@ -57,10 +57,7 @@ test('an issued purchase order shows its lines, versions and the right buttons',
     ).toBeVisible();
     await expect(founder.page.getByRole('button', { name: 'Issue purchase order' })).toHaveCount(0);
 
-    await founder.page
-      .locator('main')
-      .getByRole('link', { name: 'Receipts', exact: true })
-      .click();
+    await founder.page.locator('main').getByRole('link', { name: 'Receipts', exact: true }).click();
     await expect(founder.page).toHaveURL(/\/procurement\/receipts\?po=/);
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
