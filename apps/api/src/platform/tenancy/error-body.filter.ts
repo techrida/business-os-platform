@@ -350,7 +350,8 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'BILL_NOT_PAYABLE',
   'CURRENCY_MISMATCH',
   'PURCHASE_ORDER_NOT_FOUND',
-  // P4 vendor portal: a KYC document fails the checklist or expiry rules, or a bank change names a file.
+  // Global whitelist: staff and vendor-portal KYC 422s retain `unprocessable` for checklist or expiry
+  // refusals; vendor bank changes retain their supporting-file refusal.
   'unprocessable',
   'supporting_document_unsupported',
 ];
