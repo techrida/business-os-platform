@@ -48,6 +48,8 @@ export function settlementRow(over: Record<string, unknown> = {}): InvoiceSettle
   return InvoiceSettlementSchema.parse({
     invoiceId: INVOICE_ID,
     number: 'INV-2083/84-00007',
+    kind: 'tax_invoice',
+    issueDate: '2026-10-05',
     customerId: CUSTOMER_ID,
     currency: 'NPR',
     total: '500000.00',
