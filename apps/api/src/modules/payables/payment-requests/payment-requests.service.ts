@@ -31,6 +31,7 @@ import {
   purchaseOrders,
   scoped,
   vendorAccounts,
+  vendorBankAccounts,
   vendorBills,
   vendors,
 } from '@bos/db';
@@ -208,6 +209,23 @@ export class PaymentRequestsService {
         .innerJoin(
           vendors,
           and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+        )
+        .innerJoin(
+          vendorAccounts,
+          and(
+            eq(vendorAccounts.tenantId, vendorBills.tenantId),
+            eq(vendorAccounts.organizationId, vendorBills.organizationId),
+            eq(vendorAccounts.vendorId, vendorBills.vendorId),
+            eq(vendorAccounts.active, true),
+          ),
+        )
+        .innerJoin(
+          vendorBankAccounts,
+          and(
+            eq(vendorBankAccounts.tenantId, vendorBills.tenantId),
+            eq(vendorBankAccounts.vendorId, vendorBills.vendorId),
+            eq(vendorBankAccounts.status, 'active'),
+          ),
         )
         .where(
           scoped(scope).where(
