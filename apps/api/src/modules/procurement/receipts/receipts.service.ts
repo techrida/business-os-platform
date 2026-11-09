@@ -12,8 +12,8 @@
 // - "nothing is edited after the fact": a reversal is a new confirmed receipt of negative lines naming the lines it
 //   reverses; the original moves to `reversed` and the PO status is derived again from what stays received;
 // - "one legal entity at a time": a PO or receipt of another entity is a 404 on every route, never a 403.
-// The PO status follows the received quantities (issued, partially_received, fully_received) and so bypasses
-// PO_TRANSITIONS, which has no way back after a reversal; any other PO status is left alone and refuses receipts.
+// The PO status is derived from the received quantities (issued, partially_received, fully_received); PO_TRANSITIONS
+// allows each of those moves, reversals included. Any other PO status is left alone and refuses receipts.
 import { type Permission, type PoStatus, type ReverseReceiptBody } from '@bos/contracts';
 import {
   purchaseOrderLines,
