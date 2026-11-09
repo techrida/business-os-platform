@@ -59,8 +59,15 @@ export interface DocumentOwnerPolicy {
    * transaction, so an owner can lock its own row (FOR SHARE) and close the race with its submit. Absent
    * means "always" (the behaviour before this existed). Removal asks it too: a file on a submitted memo is
    * part of what was approved and cannot be taken away.
+   * `documentId` is supplied for receive, new-version and remove; it is absent when creating a new
+   * document. Intake owners shared by many records can therefore freeze only that document's references.
    */
-  canAttach?(scope: TxScope, ownerId: string, tx?: DbTransaction): Promise<boolean>;
+  canAttach?(
+    scope: TxScope,
+    ownerId: string,
+    tx?: DbTransaction,
+    documentId?: string,
+  ): Promise<boolean>;
   /**
    * Whether the system actor (`system:<job>`, a background job with no user) may add generated files to this
    * owner, for example a quotation PDF. `createGenerated` and the receive step of a generated file ask it
