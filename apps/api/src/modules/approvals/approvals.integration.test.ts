@@ -36,7 +36,7 @@ import { buildLink, renderEmail } from '../../platform/notify/templates';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { ApprovalsAdminService } from './admin.service';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
-import type { ApprovalEmailTemplate } from './ports';
+import type { ApprovalEmailTemplate, Caller } from './ports';
 import { ApprovalsService, type SubmitInput } from './requests.service';
 import { ApprovalsSlaService } from './sla.processor';
 
@@ -138,7 +138,7 @@ const users = {
   emailOf: vi.fn((id: string) => Promise.resolve(`${nameOfUser(id)}@bos.test`)),
 };
 const caller = {
-  current: () => ({
+  current: (): Caller => ({
     scope: callerScope,
     actor: { kind: 'user' as const, id: me, correlationId: 'test-corr' },
     principal: {
@@ -1411,8 +1411,12 @@ describe('request eligibility before disclosure or locking', () => {
     const transaction = vi.spyOn(db, 'transaction');
     try {
       await expect(service.get(randomUUID())).rejects.toMatchObject({ status: 404 });
-      await expect(service.getForAction(randomUUID(), action, 'portal-key')).rejects.toMatchObject({ status: 404 });
-      await expect(service.act(randomUUID(), action, 'portal-key')).rejects.toMatchObject({ status: 404 });
+      await expect(service.getForAction(randomUUID(), action, 'portal-key')).rejects.toMatchObject({
+        status: 404,
+      });
+      await expect(service.act(randomUUID(), action, 'portal-key')).rejects.toMatchObject({
+        status: 404,
+      });
       await expect(service.inbox()).rejects.toMatchObject({ status: 404 });
       expect(select).not.toHaveBeenCalled();
       expect(transaction).not.toHaveBeenCalled();
@@ -1429,7 +1433,9 @@ describe('request eligibility before disclosure or locking', () => {
     grants = new Map();
     const transaction = vi.spyOn(db, 'transaction');
     try {
-      await expect(service.act(requestId, action, 'staff-key')).rejects.toMatchObject({ status: 404 });
+      await expect(service.act(requestId, action, 'staff-key')).rejects.toMatchObject({
+        status: 404,
+      });
       expect(transaction).not.toHaveBeenCalled();
     } finally {
       transaction.mockRestore();
@@ -1446,7 +1452,9 @@ describe('request eligibility before disclosure or locking', () => {
     const select = vi.spyOn(db, 'select');
     const transaction = vi.spyOn(db, 'transaction');
     try {
-      await expect(service.act(randomUUID(), action, 'wrong-entity-key')).rejects.toMatchObject({ status: 404 });
+      await expect(service.act(randomUUID(), action, 'wrong-entity-key')).rejects.toMatchObject({
+        status: 404,
+      });
       expect(select).not.toHaveBeenCalled();
       expect(transaction).not.toHaveBeenCalled();
     } finally {
@@ -1460,14 +1468,23 @@ describe('request eligibility before disclosure or locking', () => {
     me = U.founder;
     const { departmentId } = await createDepartment(ownerPool, scope);
     await withTx(db, scope, systemActor('head-seed'), (tx) =>
-      tx.execute(sql`UPDATE app.departments SET head_user_id = ${U.deputy} WHERE id = ${departmentId}`),
+      tx.execute(
+        sql`UPDATE app.departments SET head_user_id = ${U.deputy} WHERE id = ${departmentId}`,
+      ),
     );
     await admin.createWorkflow({
       key: 'purchase_request',
       name: 'Head approval',
       spec: {
         documentType: 'purchase_request',
-        steps: [{ id: 'head', kind: 'department_head', fallbackRole: 'operations_head', reason: 'Head approves' }],
+        steps: [
+          {
+            id: 'head',
+            kind: 'department_head',
+            fallbackRole: 'operations_head',
+            reason: 'Head approves',
+          },
+        ],
         rules: [],
       },
     });
@@ -1489,4 +1506,3 @@ describe('request eligibility before disclosure or locking', () => {
     expect(await countActions(second.requestId, 'approve')).toBe(0);
   });
 });
-
