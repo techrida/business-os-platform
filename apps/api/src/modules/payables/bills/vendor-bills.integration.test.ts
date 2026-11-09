@@ -729,6 +729,88 @@ describe('invoice documents', () => {
 // ---------------------------------------------------------------------------------------- check 8, idempotency
 
 describe('duplicates (check 8) and replays', () => {
+  const billCounter = async () => {
+    const result = await read((tx) =>
+      tx.execute<{ next_value: string }>(sql`
+        SELECT next_value::text FROM app.number_series
+         WHERE tenant_id = ${scopeA.tenantId} AND organization_id = ${scopeA.organizationId}
+           AND key = 'BILL'`),
+    );
+    return Number(result.rows[0]?.next_value ?? '1');
+  };
+
+  it('numbers the first submit once and keeps the BILL number on replay and returned resubmit', async () => {
+    const bill = await billWithoutPo(await doc());
+    expect(bill.number).toBeNull();
+    const counterBefore = await billCounter();
+    const key = randomUUID();
+    const submitted = await service.submit(bill.id, key);
+    expect(submitted.number).toMatch(/^BILL-\d{4}\/\d{2}-\d{5}$/);
+    expect(await billCounter()).toBe(counterBefore + 1);
+    const approvalNumber = async (id: string) =>
+      (
+        await read((tx) =>
+          tx
+            .select({ number: approvalRequests.documentNumber })
+            .from(approvalRequests)
+            .where(eq(approvalRequests.id, id)),
+        )
+      )[0]?.number;
+    expect(await approvalNumber(submitted.approvalRequestId!)).toBe(submitted.number);
+    expect(await service.submit(bill.id, key)).toEqual(submitted);
+    expect(await billCounter()).toBe(counterBefore + 1);
+
+    const pending = await requestOf(submitted.approvalRequestId!);
+    as(U.acct2, 'accountant');
+    try {
+      await approvals.act(
+        submitted.approvalRequestId!,
+        {
+          action: 'return',
+          expectedVersion: pending.version,
+          comment: 'Please clarify the invoice',
+        },
+        randomUUID(),
+      );
+    } finally {
+      as(U.acct, 'accountant');
+    }
+    expect(await service.get(bill.id)).toMatchObject({ status: 'draft', number: submitted.number });
+    const resubmitted = await service.submit(bill.id, randomUUID());
+    expect(resubmitted.number).toBe(submitted.number);
+    expect(resubmitted.approvalRequestId).not.toBe(submitted.approvalRequestId);
+    expect(await approvalNumber(resubmitted.approvalRequestId!)).toBe(submitted.number);
+    expect(await billCounter()).toBe(counterBefore + 1);
+  });
+
+  it('rolls back BILL numbering when approval has no eligible accountant', async () => {
+    const bill = await billWithoutPo(await doc());
+    const counterBefore = await billCounter();
+    const accountants = roles.accountant!;
+    roles.accountant = [U.acct];
+    try {
+      const blocked = await httpErrorOf(service.submit(bill.id, randomUUID()));
+      expect(blocked.getStatus()).toBe(422);
+      expect(codeOf(blocked)).toBe('NO_ELIGIBLE_APPROVER');
+    } finally {
+      roles.accountant = accountants;
+    }
+    expect(await service.get(bill.id)).toMatchObject({
+      status: 'draft',
+      number: null,
+      approvalRequestId: null,
+    });
+    expect(await billCounter()).toBe(counterBefore);
+    expect(
+      await read((tx) =>
+        tx
+          .select({ id: approvalRequests.id })
+          .from(approvalRequests)
+          .where(eq(approvalRequests.documentId, bill.id)),
+      ),
+    ).toHaveLength(0);
+  });
+
   it('INV-001 and inv 001 of one vendor collide: 409 and one row', async () => {
     const po = await receivedPo('2', '1000.00', '2');
     await billFor(po, '1', '1000.00', 'INV-001');
