@@ -639,6 +639,39 @@ describe('short-close and cancel', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------- vendor name
+
+describe('vendor name on reads', () => {
+  it('carries the vendor legal name on every list row and on get, in the entity and out of it', async () => {
+    const vendorId = await vendor('approved', { accountIn: [scopeA, scopeB] });
+    const name = `Vendor ${vendorId.slice(0, 6)}`;
+    const inA = await draftPo({ vendorId });
+    const inB = await draftPo({ vendorId, scope: scopeB });
+
+    const rowsA = await service.list();
+    expect(rowsA.find((p) => p.id === inA.id)).toMatchObject({ vendorId, vendorName: name });
+    expect(await service.get(inA.id)).toMatchObject({ vendorId, vendorName: name });
+    expect(rowsA.every((p) => typeof p.vendorName === 'string' && p.vendorName !== '')).toBe(true);
+    // The status filter keeps the join.
+    expect((await service.list('draft')).find((p) => p.id === inA.id)?.vendorName).toBe(name);
+
+    // Vendors are tenant level: entity B sees the same name on its own PO, and never entity A's PO.
+    current.scope = scopeB;
+    const rowsB = await service.list();
+    expect(rowsB.find((p) => p.id === inB.id)?.vendorName).toBe(name);
+    expect(rowsB.map((p) => p.id)).not.toContain(inA.id);
+    expect((await service.get(inB.id)).vendorName).toBe(name);
+  });
+
+  it('keeps the list rows free of lines', async () => {
+    const po = await draftPo();
+    const row = (await service.list()).find((p) => p.id === po.id);
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty('lines');
+    expect(row).toHaveProperty('vendorName');
+  });
+});
+
 // ---------------------------------------------------------------------------------------- entity
 
 describe('one legal entity at a time', () => {
