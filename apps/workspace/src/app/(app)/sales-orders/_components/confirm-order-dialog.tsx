@@ -86,7 +86,7 @@ function ConfirmBody({ options, idempotencyKey, reloadHref }: ConfirmOrderDialog
       <div className={styles.form}>
         <p className={styles.intro}>
           No accepted quotations are waiting. A quotation appears here once the customer has
-          accepted it and it has not become an order yet.
+          accepted it.
         </p>
         <div className={styles.buttons}>
           <DialogCloseButton>Close</DialogCloseButton>
