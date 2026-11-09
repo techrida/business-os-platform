@@ -2,6 +2,7 @@
 // above all the `purchase_request` route, planned by the real router from the real spec (AD10, AD11, AD12).
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/requests/purchase-request.rules.test.ts
 import { PurchaseRequestLineBodySchema, WorkflowSpecSchema, type RoutePlan } from '@bos/contracts';
+import { UnprocessableEntityException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 
 import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
@@ -116,10 +117,43 @@ describe('line arithmetic', () => {
   it('preserves the serial requirement from the request body for issued goods', () => {
     const input = { description: 'Laptop', uom: 'pcs', quantity: '2', estimatedUnitPrice: '50000' };
     const required = PurchaseRequestLineBodySchema.parse({ ...input, requiresSerials: true });
-    expect(lineRowsOf([required])[0]).toMatchObject({ requiresSerials: true });
+    expect(lineRowsOf([required], 'goods')[0]).toMatchObject({ requiresSerials: true });
     const ordinary = PurchaseRequestLineBodySchema.parse(input);
-    expect(lineRowsOf([ordinary])[0]).toMatchObject({ requiresSerials: false });
+    expect(lineRowsOf([ordinary], 'goods')[0]).toMatchObject({ requiresSerials: false });
   });
+
+  it('refuses serial tracking on any service line with a 422 serials_not_allowed', () => {
+    const ordinary = {
+      description: 'Support',
+      uom: 'hours',
+      quantity: '2',
+      estimatedUnitPrice: '500',
+    };
+    try {
+      lineRowsOf([ordinary, { ...ordinary, requiresSerials: true }], 'service');
+      expect.fail('A service request must not require serial numbers');
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as UnprocessableEntityException).getStatus()).toBe(422);
+      expect((error as UnprocessableEntityException).getResponse()).toMatchObject({
+        code: 'serials_not_allowed',
+      });
+    }
+  });
+
+  it.each([undefined, false])(
+    'allows a service line with requiresSerials=%s',
+    (requiresSerials) => {
+      const line = PurchaseRequestLineBodySchema.parse({
+        description: 'Support',
+        uom: 'hours',
+        quantity: '2',
+        estimatedUnitPrice: '500',
+        requiresSerials,
+      });
+      expect(lineRowsOf([line], 'service')[0]).toMatchObject({ requiresSerials: false });
+    },
+  );
 
   it('rounds a line half up to 2 places and sums exactly', () => {
     expect(lineAmount('3', '0.10')).toBe('0.30');
@@ -131,16 +165,19 @@ describe('line arithmetic', () => {
   });
 
   it('numbers lines from 1 in body order and never trusts a client amount', () => {
-    const rows = lineRowsOf([
-      { description: 'Chairs', uom: 'pcs', quantity: '10', estimatedUnitPrice: '4500.00' },
-      {
-        description: 'Desk',
-        specification: 'Oak',
-        uom: 'pcs',
-        quantity: '2.5',
-        estimatedUnitPrice: '100.10',
-      },
-    ]);
+    const rows = lineRowsOf(
+      [
+        { description: 'Chairs', uom: 'pcs', quantity: '10', estimatedUnitPrice: '4500.00' },
+        {
+          description: 'Desk',
+          specification: 'Oak',
+          uom: 'pcs',
+          quantity: '2.5',
+          estimatedUnitPrice: '100.10',
+        },
+      ],
+      'goods',
+    );
     expect(rows.map((r) => [r.lineNo, r.specification, r.estimatedAmount])).toEqual([
       [1, null, '45000.00'],
       [2, 'Oak', '250.25'],
