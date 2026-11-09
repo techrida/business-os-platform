@@ -12,6 +12,10 @@ import {
   VendorPortalPurchaseOrderListItemSchema,
   type VendorPortalPurchaseOrderView,
   VendorPortalPurchaseOrderViewSchema,
+  type VendorPortalRfqListItem,
+  VendorPortalRfqListItemSchema,
+  type VendorPortalRfqView,
+  VendorPortalRfqViewSchema,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -106,4 +110,14 @@ export function listVendorBills(session: Session): Promise<VendorPortalBillView[
 /** `GET /v1/portal/vendor/bills/:id`. */
 export function getVendorBill(session: Session, id: string): Promise<VendorPortalBillView> {
   return get(session, `/v1/portal/vendor/bills/${seg(id)}`, VendorPortalBillViewSchema);
+}
+
+/** `GET /v1/portal/vendor/rfqs`: the open RFQs the vendor is invited to quote on. */
+export function listVendorRfqs(session: Session): Promise<VendorPortalRfqListItem[]> {
+  return get(session, '/v1/portal/vendor/rfqs', z.array(VendorPortalRfqListItemSchema));
+}
+
+/** `GET /v1/portal/vendor/rfqs/:id`. The API answers 404 for a foreign, closed or unknown id. */
+export function getVendorRfq(session: Session, id: string): Promise<VendorPortalRfqView> {
+  return get(session, `/v1/portal/vendor/rfqs/${seg(id)}`, VendorPortalRfqViewSchema);
 }
