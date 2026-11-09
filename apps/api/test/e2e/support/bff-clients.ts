@@ -1,4 +1,4 @@
-// Loads the workspace BFF's REAL API clients (apps/workspace/src/components/p2/**/ *api.ts) inside the
+// Loads the workspace BFF's REAL API clients (apps/workspace/src/components/p2/**/ *api.ts and lib) inside the
 // API's e2e run, so a contract test can call them against the real, listening API.
 //
 // What runs for real: the client functions, their request building (path, query, method, headers, body),
@@ -145,8 +145,12 @@ export interface BuilderClient {
   getOpportunity(s: S, id: string): Promise<OpportunityDto>;
   getCustomer(s: S, id: string): Promise<CustomerDto>;
   listContacts(s: S, customerId: string): Promise<ContactDto[]>;
-  listTaxCodes(s: S): Promise<TaxCode[]>;
   listPaymentTerms(s: S): Promise<PaymentTerm[]>;
+}
+
+/** lib/api-tax-codes.ts (shared by quotation, sourcing and bill entry). */
+export interface TaxCodesClient {
+  listTaxCodes(s: S): Promise<TaxCode[]>;
 }
 
 /** components/p2/quotations/api.ts */
@@ -160,6 +164,7 @@ export interface BffClients {
   verification: VerificationClient;
   customers: CustomersClient;
   builder: BuilderClient;
+  taxCodes: TaxCodesClient;
   quotations: QuotationsClient;
   /** The workspace's own error class, so a test can assert what the screens would see. */
   ApiError: new (
@@ -202,15 +207,16 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
 
   const load = async <T>(rel: string): Promise<T> =>
     (await import(/* @vite-ignore */ wsUrl(rel))) as T;
-  const [crm, verification, customers, builder, quotations, api] = await Promise.all([
+  const [crm, verification, customers, builder, taxCodes, quotations, api] = await Promise.all([
     load<CrmClient>('components/p2/crm/crm-api.ts'),
     load<VerificationClient>('components/p2/crm/verification-api.ts'),
     load<CustomersClient>('components/p2/customers/api.ts'),
     load<BuilderClient>('components/p2/quote-builder/api.ts'),
+    load<TaxCodesClient>('lib/api-tax-codes.ts'),
     load<QuotationsClient>('components/p2/quotations/api.ts'),
     load<Pick<BffClients, 'ApiError'>>('lib/api.ts'),
   ]);
-  return { crm, verification, customers, builder, quotations, ApiError: api.ApiError };
+  return { crm, verification, customers, builder, taxCodes, quotations, ApiError: api.ApiError };
 }
 
 // ------------------------------------------------------------------------------------------------ tee
