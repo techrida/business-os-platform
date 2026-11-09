@@ -86,6 +86,17 @@ async function newWorld(): Promise<World> {
   const otherCustomer = await createParty(appPool, { tenantId, kind: 'customer' });
   const recorder = await createStaffUser(appPool, { tenantId, organizationId, idpOrgId });
   const verifier = await createStaffUser(appPool, { tenantId, organizationId, idpOrgId });
+  // invoices.customer_party_id references app.customers (the CRM record behind the party).
+  const address = JSON.stringify({ line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' });
+  for (const partyId of [customer.partyId, otherCustomer.partyId]) {
+    await withTx(db, { tenantId, organizationId }, system, (tx) =>
+      tx.execute(
+        sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
+            VALUES (${partyId}, ${tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', ${`acme-${partyId}`},
+                    ${address}::jsonb)`,
+      ),
+    );
+  }
   return {
     scope: { tenantId, organizationId },
     customer: customer.partyId,
