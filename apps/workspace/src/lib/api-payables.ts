@@ -97,7 +97,12 @@ const billFields = {
 export const BillListItemSchema = z.object(billFields);
 export type BillListItem = z.infer<typeof BillListItemSchema>;
 
-export const VendorBillSchema = z.object({ ...billFields, lines: z.array(BillLineSchema) });
+export const VendorBillSchema = z.object({
+  ...billFields,
+  /** Scan status of the newest non-rejected invoice version; absent in older API responses. */
+  fileStatus: Text.nullable().optional(),
+  lines: z.array(BillLineSchema),
+});
 export type VendorBill = z.infer<typeof VendorBillSchema>;
 
 export const BillSubmissionSchema = z.object({
@@ -206,6 +211,23 @@ export function createBillDocument(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ vendorPartyId, ...file }),
   });
+}
+
+export function replaceBillDocument(
+  session: Session,
+  documentId: string,
+  file: Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>,
+): Promise<BillDocument> {
+  return call(
+    session,
+    `/v1/payables/bill-documents/${seg(documentId)}/versions`,
+    BillDocumentSchema,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(file),
+    },
+  );
 }
 
 export function uploadBillDocumentContent(

@@ -44,7 +44,9 @@ export function fileStatusLabel(status: string | null): { tone: BadgeTone; text:
   if (status === null) return { tone: 'neutral', text: 'Not scanned yet' };
   if (status === 'clean') return { tone: 'success', text: 'Scanned clean' };
   if (status === 'infected') return { tone: 'error', text: 'Infected' };
-  if (status === 'failed') return { tone: 'error', text: 'Scan failed' };
+  if (status === 'failed' || status === 'scan_failed')
+    return { tone: 'error', text: 'Scan failed' };
+  if (status === 'rejected') return { tone: 'error', text: 'File rejected' };
   return { tone: 'info', text: 'Scan in progress' };
 }
 
