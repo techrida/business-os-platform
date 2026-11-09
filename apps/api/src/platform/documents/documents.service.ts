@@ -18,6 +18,8 @@
 // A portal caller (a customer) holds no `documents.upload`. `create` and `receiveContent` still let one upload
 // when the owner's `allowsCounterparty` says yes (P3: payment proof on the customer's own payment). Every other
 // refusal is the unchanged grant check, and `createVersion` and `remove` never ask the hook.
+// The grant checked for an upload is `documents.upload` unless the owner policy names its own `uploadPermission`
+// (payment proof: `payment.record`).
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
@@ -27,6 +29,7 @@ import {
   MAX_UPLOAD_BYTES,
   type CreateDocumentBody,
   type DocumentVersionDto,
+  type Permission,
   type SignedLinkDto,
 } from '@bos/contracts';
 import { documents, documentVersions, scoped } from '@bos/db';
@@ -715,7 +718,7 @@ export class DocumentsService {
     }
     const ref: ResourceRef | null = await policy.resource(scope, ownerId);
     if (ref === null) throw new NotFoundException('Owner record not found');
-    this.authz.assert(action, ref);
+    this.authz.assert(action === 'documents.upload' ? uploadPermissionOf(policy) : action, ref);
   }
 
   /**
@@ -744,7 +747,7 @@ export class DocumentsService {
     if (ref === null) throw new NotFoundException('Owner record not found');
     // Called as a method, not detached: a policy class may use `this`.
     if (await policy.allowsCounterparty(counterparty, ownerId, tx)) return;
-    this.authz.assert('documents.upload', ref);
+    this.authz.assert(uploadPermissionOf(policy), ref);
   }
 
   /**
@@ -914,6 +917,11 @@ function counterpartyOf(
     tenantId: p.tenantId,
     organizationId: p.organizationId,
   };
+}
+
+/** The permission that authorises an upload to this owner: its own, or `documents.upload`. */
+function uploadPermissionOf(policy: DocumentOwnerPolicy): Permission {
+  return policy.uploadPermission ?? 'documents.upload';
 }
 
 /** The type and size rules for a declared upload, the same for a new document and a new version. */
