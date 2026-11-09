@@ -143,8 +143,18 @@ describe('P2 permissions', () => {
 
   it('gives procurement and warehouse nothing from CRM or quotations', () => {
     for (const role of [DEFAULT_ROLE_PERMISSIONS.procurement, DEFAULT_ROLE_PERMISSIONS.warehouse]) {
-      for (const p of NEW_PERMISSIONS) expect(role[p], p).toBeUndefined();
+      for (const p of NEW_PERMISSIONS) {
+        // P4 K3b: procurement reads KYB cases, because it opens and submits the vendor ones.
+        if (role === DEFAULT_ROLE_PERMISSIONS.procurement && p === 'verification.read') continue;
+        expect(role[p], p).toBeUndefined();
+      }
     }
+  });
+
+  it('lets procurement read KYB cases but never review them (P4 K3b)', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.procurement['verification.read']).toBe('all');
+    expect(DEFAULT_ROLE_PERMISSIONS.procurement['verification.review']).toBeUndefined();
+    expect(DEFAULT_ROLE_PERMISSIONS.procurement['customer.write']).toBeUndefined();
   });
 
   it('keeps vendor_user to the two vendor-portal grants', () => {
