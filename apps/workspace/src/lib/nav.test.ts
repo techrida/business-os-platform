@@ -61,7 +61,7 @@ describe('NAV_GROUPS', () => {
     }
   });
 
-  it('builds the P0 and P1 pages', () => {
+  it('links exactly the built pages', () => {
     const built = items.filter(isBuilt);
     expect(built.map((i) => [i.label, i.href])).toEqual([
       ['Overview', '/'],
@@ -76,6 +76,11 @@ describe('NAV_GROUPS', () => {
       ['Quotations', '/quotations'],
       ['Verification', '/verification'],
       ['Activities & Tasks', '/activities'],
+      ['Purchase requests', '/procurement/requests'],
+      ['Requests for quotation', '/procurement/rfqs'],
+      ['Purchase orders', '/procurement/orders'],
+      ['Receipts', '/procurement/receipts'],
+      ['Vendors', '/vendors'],
       ['Bill inbox', '/payables/inbox'],
       ['Bills', '/payables/bills'],
       ['Payment requests', '/payables/payment-requests'],
@@ -108,12 +113,53 @@ describe('NAV_GROUPS', () => {
     expect(labels).not.toContain('Organizations');
   });
 
-  it('lists Purchases after Payments, with Vendors gated by vendor.read and unbuilt until P4 ships', () => {
+  it('lists the procurement pages after Payments with their permissions', () => {
     const labels = NAV_GROUPS.map((g) => g.label);
     expect(labels.indexOf('Purchases')).toBe(labels.indexOf('Payments') + 1);
-    const vendors = items.find((i) => i.label === 'Vendors');
-    expect(vendors).toMatchObject({ phase: 'P4', permission: 'vendor.read', icon: 'building' });
-    expect(vendors && isBuilt(vendors)).toBe(false);
+    expect(NAV_GROUPS.find((g) => g.label === 'Purchases')?.items).toEqual([
+      expect.objectContaining({
+        label: 'Purchase requests',
+        href: '/procurement/requests',
+        phase: 'P4',
+        permission: 'procurement.pr.read',
+      }),
+      expect.objectContaining({
+        label: 'Requests for quotation',
+        href: '/procurement/rfqs',
+        phase: 'P4',
+        permission: 'procurement.sourcing',
+      }),
+      expect.objectContaining({
+        label: 'Purchase orders',
+        href: '/procurement/orders',
+        phase: 'P4',
+        permission: 'procurement.po.issue',
+      }),
+      expect.objectContaining({
+        label: 'Receipts',
+        href: '/procurement/receipts',
+        phase: 'P4',
+        permission: 'procurement.receipt.confirm',
+      }),
+      expect.objectContaining({
+        label: 'Vendors',
+        href: '/vendors',
+        phase: 'P4',
+        permission: 'vendor.read',
+      }),
+    ]);
+  });
+
+  it('shows each procurement link only for its own permission', () => {
+    const purchases = NAV_GROUPS.find((g) => g.label === 'Purchases')?.items ?? [];
+    for (const item of purchases) {
+      const shown = visibleGroups(false, (permission) => permission === item.permission).find(
+        (g) => g.label === 'Purchases',
+      )?.items;
+      expect(shown).toEqual([item]);
+    }
+    expect(visibleGroups(false).some((g) => g.label === 'Purchases')).toBe(false);
+    expect(visibleGroups(false, () => false).some((g) => g.label === 'Purchases')).toBe(false);
   });
 
   it('marks every /admin page as admin-only, and nothing else', () => {
@@ -287,6 +333,14 @@ describe('titleForPath', () => {
     expect(titleForPath('/customers')).toBe('Customers');
     expect(titleForPath('/customers/0f3a/edit')).toBe('Customers');
     expect(titleForPath('/verification/0f3a')).toBe('Verification');
+  });
+
+  it('names the procurement pages and their detail routes', () => {
+    expect(titleForPath('/procurement/requests/new')).toBe('Purchase requests');
+    expect(titleForPath('/procurement/rfqs/one/quotations/new')).toBe('Requests for quotation');
+    expect(titleForPath('/procurement/orders/one')).toBe('Purchase orders');
+    expect(titleForPath('/procurement/receipts/one')).toBe('Receipts');
+    expect(titleForPath('/vendors/one')).toBe('Vendors');
   });
 
   it('falls back to the app name for any other path', () => {
