@@ -642,6 +642,7 @@ export class ApprovalsService {
   /** Pending requests whose active step the caller may decide now. */
   async inbox(): Promise<InboxItemDto[]> {
     const { scope, principal } = this.caller.current();
+    this.requireStaff(scope, principal);
     const now = this.clock();
     const genericApprover = can(principal, 'approvals.requests.act').allowed;
     const rows = await this.db
@@ -759,72 +760,84 @@ export class ApprovalsService {
     requestId: string,
     replay?: { action: ApprovalActionBody; idempotencyKey: string },
   ): Promise<ApprovalRequestDto> {
+    await this.eligibleRequest(requestId, replay);
+    return this.loadDto(this.db, this.caller.current().scope, requestId);
+  }
+
+  private requireStaff(scope: TxScope, p: Principal): void {
+    if (
+      p.status !== 'active' ||
+      p.orgKind !== 'staff' ||
+      p.tenantId !== scope.tenantId ||
+      p.organizationId !== scope.organizationId
+    ) {
+      throw new NotFoundException('Approval request not found');
+    }
+  }
+
+  /** No DTO or lock until the caller's read, current assignment, or exact own retry is proven. */
+  private async eligibleRequest(
+    requestId: string,
+    replay?: { action: ApprovalActionBody; idempotencyKey: string },
+  ): Promise<void> {
     const { scope, principal } = this.caller.current();
-    const dto = await this.loadDto(this.db, scope, requestId);
-    const decision = can(principal, 'approvals.requests.read', {
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-      ownerUserId: dto.requesterUserId,
-    });
-    if (!decision.allowed && principal.status === 'active' && principal.orgKind === 'staff') {
-      const [request] = await this.db
-        .select()
-        .from(approvalRequests)
-        .where(requestInScope(scope, requestId));
-      if (request !== undefined && request.documentType === 'purchase_request') {
-        const steps = await this.stepsOf(this.db, requestId);
-        const current = steps.find((s) => s.seq === request.currentSeq);
-        const spec = await this.frozenSpec(this.db, request.workflowVersionId);
-        const data = await this.loadDirectory(this.db, scope, spec);
+    this.requireStaff(scope, principal);
+    const [request] = await this.db
+      .select()
+      .from(approvalRequests)
+      .where(requestInScope(scope, requestId));
+    if (request === undefined) throw new NotFoundException('Approval request not found');
+    const allowed =
+      replay === undefined
+        ? can(principal, 'approvals.requests.read', {
+            tenantId: scope.tenantId,
+            organizationId: scope.organizationId,
+            ownerUserId: request.requesterUserId,
+          }).allowed
+        : can(principal, 'approvals.requests.act').allowed;
+    if (allowed) return;
+    if (request.documentType === 'purchase_request') {
+      const steps = await this.stepsOf(this.db, requestId);
+      const current = steps.find((s) => s.seq === request.currentSeq);
+      const spec = await this.frozenSpec(this.db, request.workflowVersionId);
+      const data = await this.loadDirectory(this.db, scope, spec);
+      if (
+        request.status === 'pending' &&
+        current?.status === 'active' &&
+        this.prHeadAssignment(principal, request, current, spec, data, this.clock())
+      ) {
+        return;
+      }
+      if (replay !== undefined) {
+        const [previous] = await this.db
+          .select()
+          .from(approvalActions)
+          .where(
+            and(
+              eq(approvalActions.tenantId, scope.tenantId),
+              eq(approvalActions.organizationId, scope.organizationId),
+              eq(approvalActions.requestId, requestId),
+              eq(approvalActions.actorUserId, principal.userId),
+              eq(approvalActions.idempotencyKey, replay.idempotencyKey),
+            ),
+          );
         if (
-          request.status === 'pending' &&
-          current?.status === 'active' &&
-          this.prHeadAssignment(principal, request, current, spec, data, this.clock())
+          previous !== undefined &&
+          (await this.prHeadReplay(
+            this.db,
+            scope,
+            principal,
+            request,
+            previous,
+            canonicalSha256({ requestId, ...replay.action }),
+            this.clock(),
+          ))
         ) {
-          return dto;
-        }
-        if (replay !== undefined) {
-          const [previous] = await this.db
-            .select()
-            .from(approvalActions)
-            .where(
-              and(
-                eq(approvalActions.tenantId, scope.tenantId),
-                eq(approvalActions.organizationId, scope.organizationId),
-                eq(approvalActions.requestId, requestId),
-                eq(approvalActions.actorUserId, principal.userId),
-                eq(approvalActions.idempotencyKey, replay.idempotencyKey),
-              ),
-            );
-          if (
-            previous !== undefined &&
-            (await this.prHeadReplay(
-              this.db,
-              scope,
-              principal,
-              request,
-              previous,
-              canonicalSha256({ requestId, ...replay.action }),
-              this.clock(),
-            ))
-          ) {
-            return dto;
-          }
+          return;
         }
       }
     }
-    // Out of scope answers like an unknown id, so probing ids tells nobody which requests exist.
-    if (!decision.allowed && decision.reason === 'out_of_scope') {
-      throw new NotFoundException('Approval request not found');
-    }
-    if (!decision.allowed) {
-      throw new ForbiddenException({
-        code: 'forbidden',
-        reason: decision.reason,
-        message: 'You may not read this request',
-      });
-    }
-    return dto;
+    throw new NotFoundException('Approval request not found');
   }
 
   /** PR department-head duty grants no rights on another document type or a named-user step. */
