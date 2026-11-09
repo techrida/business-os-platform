@@ -1,0 +1,49 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { QuoteValues } from '../_lib/forms';
+import { QuoteForm } from './quote-form';
+
+const missingTax = '11111111-1111-4111-8111-111111111111';
+// Model a controlled conversion form retaining its selection after the registry changes.
+vi.mock('react', async (original) => {
+  const react = await original<typeof import('react')>();
+  return {
+    ...react,
+    useState: <T,>(initial: T | (() => T)) => {
+      const value = typeof initial === 'function' ? (initial as () => T)() : initial;
+      if (typeof value === 'object' && value !== null && 'lines' in value && 'mode' in value) {
+        const quote = value as QuoteValues;
+        return react.useState({
+          ...quote,
+          lines: quote.lines.map((line) => ({ ...line, taxCodeId: missingTax })),
+        });
+      }
+      return react.useState(value);
+    },
+  };
+});
+
+describe('conversion tax selection', () => {
+  it('shows a retained unavailable tax code and requires an available replacement', () => {
+    const out = renderToStaticMarkup(
+      <QuoteForm
+        action={vi.fn()}
+        idempotencyKey="key"
+        rfqId="rfq"
+        mode="convert"
+        vendors={[]}
+        submission={{ id: 'submission', vendorName: 'Vendor', vendorRef: null, sentAt: 'Today' }}
+        prLines={[{ id: 'line', lineNo: 1, description: 'Chair', uom: 'pcs', quantity: '1' }]}
+        taxCodes={[{ id: '22222222-2222-4222-8222-222222222222', label: 'VAT 13%' }]}
+        cancelHref="/procurement/rfqs/rfq"
+        reloadHref="/procurement/rfqs/rfq/quotations/new?submission=submission"
+      />,
+    );
+    expect(out).toMatch(new RegExp(`<option[^>]*value="${missingTax}"[^>]*selected`));
+    expect(out).toContain('Unavailable tax code');
+    expect(out).toContain('Choose an available tax code for this line.');
+    expect(out).toContain('VAT 13%');
+    expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+  });
+});
