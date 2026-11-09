@@ -281,7 +281,10 @@ async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
 }
 const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code;
 
-async function doc(ownerType = 'vendor_bill_intake', ownerId = randomUUID()): Promise<string> {
+async function doc(
+  ownerType = 'vendor_bill_intake',
+  ownerId: string = randomUUID(),
+): Promise<string> {
   const { rows } = await exec(
     scopeA,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
