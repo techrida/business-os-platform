@@ -45,6 +45,30 @@ describe('parseSettingInput', () => {
   });
 });
 
+describe('parseSettingInput: the P4 procurement keys', () => {
+  it('parses procurement.min_quotes as a strict whole number from 1 to 10', () => {
+    const key = 'procurement.min_quotes';
+    expect(parseSettingInput(key, [' 3 '])).toEqual({ ok: true, value: 3 });
+    expect(parseSettingInput(key, ['10'])).toEqual({ ok: true, value: 10 });
+    for (const bad of ['2.5', '1e1', '', '-1', '0', '11', '0x3']) {
+      expect(parseSettingInput(key, [bad]).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('keeps the decimal-string keys as plain text, checked by the shared schema', () => {
+    expect(parseSettingInput('procurement.match.price_pct', [' 2.5 '])).toEqual({
+      ok: true,
+      value: '2.5',
+    });
+    expect(parseSettingInput('procurement.match.price_pct', ['101']).ok).toBe(false);
+    expect(parseSettingInput('procurement.band.founder_npr', ['1000000'])).toEqual({
+      ok: true,
+      value: '1000000',
+    });
+    expect(parseSettingInput('procurement.band.founder_npr', ['-1']).ok).toBe(false);
+  });
+});
+
 describe('parseSettingInput: the P2 keys', () => {
   it.each(['fx.max_rate_age_days', 'quotation.validity_days'] as const)(
     'parses %s as a strict whole number',
