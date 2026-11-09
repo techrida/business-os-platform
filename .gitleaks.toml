@@ -25,4 +25,10 @@ regexes = [
   '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
   # `api:3001` is the compose service name and port of the API, not user:password credentials.
   '''api:3001/''',
+  # Idempotency-Key UUIDs in BFF action tests (`const KEY = '<uuid>'`): the variable name trips
+  # generic-api-key. They are made-up v4 UUIDs that authorise nothing; 7c9e6679-… is the RFC/Wikipedia
+  # example UUID. They stay listed because the old commits holding them remain in history.
+  '''44444444-4444-4444-8444-444444444444''',
+  '''7c9e6679-7425-40de-944b-e07fc1f90ae7''',
+  '''0b0e8c1e-4d7a-4f43-9d3c-1f8c8a6f2e10''',
 ]
