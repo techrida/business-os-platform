@@ -254,3 +254,75 @@ export const MATCH_EXCEPTION_WORKFLOW_SPEC: unknown = {
   ],
   rules: [],
 };
+
+/**
+ * Copy of PAYMENT_REQUEST_WORKFLOW_SPEC (apps/api/src/modules/payables/payment-requests/payment-request.rules.ts).
+ * `documentType` is the literal of PAYMENT_REQUEST_DOCUMENT_TYPE.
+ */
+export const PAYMENT_REQUEST_WORKFLOW_SPEC: unknown = {
+  documentType: 'payment_request',
+  steps: [
+    {
+      id: 'finance',
+      kind: 'role',
+      role: 'finance',
+      reason: 'Base route: Finance approves the payment',
+    },
+  ],
+  rules: [
+    {
+      id: 'management',
+      when: {
+        all: [
+          { field: 'allPoMatched', op: 'eq', value: false },
+          { field: 'amountNpr', op: 'gt', value: '100000.00' },
+        ],
+      },
+      add: {
+        id: 'management',
+        kind: 'role',
+        role: 'management',
+        reason: 'Management approval because a payment not fully PO-matched exceeds NPR 100,000.00',
+      },
+      position: 'end',
+      reason: 'Payment of NPR {amountNpr} is above NPR 100,000.00',
+    },
+    {
+      id: 'founder',
+      when: {
+        all: [
+          { field: 'allPoMatched', op: 'eq', value: false },
+          { field: 'amountNpr', op: 'gt', value: '1000000.00' },
+          { field: 'requesterIsFounder', op: 'eq', value: false },
+        ],
+      },
+      add: {
+        id: 'founder',
+        kind: 'role',
+        role: 'founder',
+        reason: 'Founder approval because a payment not fully PO-matched exceeds NPR 1,000,000.00',
+      },
+      position: 'end',
+      reason: 'Payment of NPR {amountNpr} is above NPR 1,000,000.00',
+    },
+    {
+      id: 'management_second',
+      when: {
+        all: [
+          { field: 'allPoMatched', op: 'eq', value: false },
+          { field: 'amountNpr', op: 'gt', value: '1000000.00' },
+          { field: 'requesterIsFounder', op: 'eq', value: true },
+        ],
+      },
+      add: {
+        id: 'management_second',
+        kind: 'role',
+        role: 'management',
+        reason: 'A second Management approval replaces the Founder, who raised this payment (AD8)',
+      },
+      position: 'end',
+      reason: 'The Founder raised a payment of NPR {amountNpr}, above NPR 1,000,000.00',
+    },
+  ],
+  distinctApprovers: true,
+};
