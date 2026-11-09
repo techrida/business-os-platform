@@ -48,6 +48,17 @@ export type ErrorCode =
   | 'NO_ELIGIBLE_APPROVER'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
+  | 'over_receipt'
+  | 'over_receipt_exception_unknown'
+  | 'po_line_unknown'
+  | 'duplicate_po_line'
+  | 'receipt_kind_mismatch'
+  | 'serials_required'
+  | 'serials_not_allowed'
+  | 'serial_duplicate'
+  | 'VENDOR_NOT_APPROVED'
+  | 'VENDOR_NOT_IN_ENTITY'
+  | 'FEWER_THAN_MIN_QUOTES'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -103,6 +114,17 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
+  over_receipt: 'This receipt takes more than the quantity still open on the purchase order line',
+  over_receipt_exception_unknown: 'The over-receipt exception is not known for this receipt line',
+  po_line_unknown: 'A receipt line names a purchase order line that is not on this order',
+  duplicate_po_line: 'The same purchase order line appears twice in this receipt',
+  receipt_kind_mismatch: 'This receipt line does not match the kind of the receipt',
+  serials_required: 'This line needs one serial number for each unit received',
+  serials_not_allowed: 'This line does not take serial numbers',
+  serial_duplicate: 'A serial number was already received on this purchase order line',
+  VENDOR_NOT_APPROVED: 'Only approved vendors can be invited to quote',
+  VENDOR_NOT_IN_ENTITY: 'A vendor has no account in this entity',
+  FEWER_THAN_MIN_QUOTES: 'There are fewer quotations than the minimum; give a reason to go on',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -175,6 +197,11 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'account_exists',
   'no_verified_bank_account',
   'callback_evidence_not_clean',
+  // P4 sourcing: an invited vendor is not approved or has no account in the entity, or a recommendation is
+  // short of the minimum number of quotations without a reason (AD13).
+  'VENDOR_NOT_APPROVED',
+  'VENDOR_NOT_IN_ENTITY',
+  'FEWER_THAN_MIN_QUOTES',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -194,6 +221,15 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'NO_ELIGIBLE_APPROVER',
   'evidence_policy_unmet',
   'decided_on_in_future',
+  // P4 goods receipts (RECEIPT_ERROR_CODES in receipt.rules.ts): over-receipt, bad PO lines and serial numbers.
+  'over_receipt',
+  'over_receipt_exception_unknown',
+  'po_line_unknown',
+  'duplicate_po_line',
+  'receipt_kind_mismatch',
+  'serials_required',
+  'serials_not_allowed',
+  'serial_duplicate',
 ];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
