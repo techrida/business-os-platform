@@ -1,5 +1,5 @@
 // Seed rows that the API kernel needs on day one: the default role grants, the `test_memo`,
-// `quotation_version`, `purchase_request`, `pr_commitment`, `po_amendment`, `vendor_bill` and `match_exception` approval workflows, the INR peg and the
+// `quotation_version`, `purchase_request`, `pr_commitment`, `po_amendment`, `vendor_bill`, `match_exception` and `payment_request` approval workflows, the INR peg and the
 // P2 quotation reference data (tax codes and payment terms), and, when the dev personas are passed, the dev
 // department and the VEND-DEV vendor (P4). Serves the NFR "authorization is deny-by-default" (an empty
 // role_permissions table would deny everyone) and R5 of the P1 plan: the audit trigger RAISEs when
@@ -13,6 +13,7 @@ import type pg from 'pg';
 import { PERSONAS } from './personas.js';
 import {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
+  PAYMENT_REQUEST_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
@@ -22,6 +23,7 @@ import {
 // The P4 specs live in `workflow-specs.ts` (word-for-word copies; a test in apps/api pins them to the API's).
 export {
   MATCH_EXCEPTION_WORKFLOW_SPEC,
+  PAYMENT_REQUEST_WORKFLOW_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC,
@@ -519,6 +521,7 @@ export async function seedKernelRows(
   const poAmendmentSpec = WorkflowSpecSchema.parse(PO_AMENDMENT_WORKFLOW_SPEC);
   const vendorBillSpec = WorkflowSpecSchema.parse(VENDOR_BILL_WORKFLOW_SPEC);
   const matchExceptionSpec = WorkflowSpecSchema.parse(MATCH_EXCEPTION_WORKFLOW_SPEC);
+  const paymentRequestSpec = WorkflowSpecSchema.parse(PAYMENT_REQUEST_WORKFLOW_SPEC);
   // A missing persona fails here, before BEGIN, like a bad spec.
   if (personas && personas.length > 0) devPeople(personas);
   await client.query('BEGIN');
@@ -570,6 +573,13 @@ export async function seedKernelRows(
       name: 'Match exception approval',
       documentType: 'match_exception',
       spec: matchExceptionSpec,
+    });
+    // A payment request goes to Finance, plus the AD4 bands unless every bill was matched against its PO (AD5, AD8).
+    changed += await seedWorkflow(client, scope, {
+      key: 'payment_request',
+      name: 'Payment request approval',
+      documentType: 'payment_request',
+      spec: paymentRequestSpec,
     });
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);

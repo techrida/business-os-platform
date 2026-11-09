@@ -1,12 +1,13 @@
-// The dev seed (tools/seed-zitadel) cannot import apps/api, so it holds word-for-word copies of the five
-// workflow specs the API publishes (three procurement ones through ApprovalsAdminService, and the two vendor
-// bill ones). This test is the drift alarm: if either side changes alone, it fails. The copies live in a small
+// The dev seed (tools/seed-zitadel) cannot import apps/api, so it holds word-for-word copies of the six
+// workflow specs the API publishes (three procurement ones through ApprovalsAdminService, the two vendor
+// bill ones and the payment request one). This test is the drift alarm: if either side changes alone, it fails. The copies live in a small
 // import-free module of the tool.
 import { WorkflowSpecSchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   MATCH_EXCEPTION_WORKFLOW_SPEC as SEEDED_MATCH_EXCEPTION_SPEC,
+  PAYMENT_REQUEST_WORKFLOW_SPEC as SEEDED_PAYMENT_REQUEST_SPEC,
   PO_AMENDMENT_WORKFLOW_SPEC as SEEDED_PO_AMENDMENT_SPEC,
   PR_COMMITMENT_WORKFLOW_SPEC as SEEDED_PR_COMMITMENT_SPEC,
   PURCHASE_REQUEST_WORKFLOW_SPEC as SEEDED_PURCHASE_REQUEST_SPEC,
@@ -18,6 +19,10 @@ import {
   VENDOR_BILL_DOCUMENT_TYPE,
   VENDOR_BILL_WORKFLOW_SPEC,
 } from '../payables/bills/vendor-bill.rules';
+import {
+  PAYMENT_REQUEST_DOCUMENT_TYPE,
+  PAYMENT_REQUEST_WORKFLOW_SPEC,
+} from '../payables/payment-requests/payment-request.rules';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
@@ -80,6 +85,16 @@ describe('seed workflow parity', () => {
     );
     expect(WorkflowSpecSchema.parse(SEEDED_MATCH_EXCEPTION_SPEC).documentType).toBe(
       MATCH_EXCEPTION_DOCUMENT_TYPE,
+    );
+  });
+
+  it('seeds payment_request with exactly the spec the API publishes', () => {
+    expect(SEEDED_PAYMENT_REQUEST_SPEC).toStrictEqual(PAYMENT_REQUEST_WORKFLOW_SPEC);
+    expect(WorkflowSpecSchema.parse(SEEDED_PAYMENT_REQUEST_SPEC)).toStrictEqual(
+      WorkflowSpecSchema.parse(PAYMENT_REQUEST_WORKFLOW_SPEC),
+    );
+    expect(WorkflowSpecSchema.parse(SEEDED_PAYMENT_REQUEST_SPEC).documentType).toBe(
+      PAYMENT_REQUEST_DOCUMENT_TYPE,
     );
   });
 });
