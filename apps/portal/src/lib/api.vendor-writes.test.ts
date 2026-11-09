@@ -10,6 +10,7 @@ const {
   requestVendorBankChange,
   submitVendorBill,
   submitVendorKycDocument,
+  submitVendorQuotation,
   uploadVendorFile,
   UPLOAD_KINDS,
 } = await import('./api.vendor-writes');
@@ -32,6 +33,7 @@ const VER = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const IDEM = '3b241101-e2bb-4255-8caf-4136c566a962';
 const PO = '9b2d7a1e-5c3f-4e8a-8f10-2a6b7c8d9e01';
 const NUMBER = '0123456789012';
+const RFQ = '3d594650-3436-4a8f-b3a8-1c6a2f9d7e01';
 
 const pathFor = (kind: string, doc = DOC, ver = VER) =>
   `/v1/portal/vendor/${kind}/files/${doc}/versions/${ver}/content`;
@@ -222,6 +224,64 @@ describe('submitVendorBill', () => {
       await expect(submitVendorBill(session, bad as never, IDEM)).rejects.toThrow();
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitVendorQuotation', () => {
+  const body = {
+    rfqId: RFQ,
+    documentId: DOC,
+    currency: 'NPR' as const,
+    total: '1250000.50',
+    vendorRef: 'Q-77',
+    validUntil: '2026-12-31',
+    deliveryDays: 14,
+  };
+
+  it('takes quotation files as an upload kind', () => {
+    expect(UPLOAD_KINDS).toContain('quotation-submissions');
+  });
+
+  it('posts the quotation with the Idempotency-Key and no party id', async () => {
+    fetchMock.mockResolvedValueOnce(json({ status: 'received' }, 201));
+    await submitVendorQuotation(session, body, IDEM);
+    const r = request(0);
+    expect(r.url).toBe('http://api:3001/v1/portal/vendor/quotation-submissions');
+    expect(r.init.method).toBe('POST');
+    expect(header(0, 'idempotency-key')).toBe(IDEM);
+    expect(JSON.parse(r.init.body as string)).toEqual(body);
+  });
+
+  it('sends the optional fields only when given', async () => {
+    fetchMock.mockResolvedValueOnce(json({}, 201));
+    const bare = { rfqId: RFQ, documentId: DOC, currency: 'NPR' as const, total: '10.00' };
+    await submitVendorQuotation(session, bare, IDEM);
+    expect(JSON.parse(request(0).init.body as string)).toEqual(bare);
+  });
+
+  it('rejects a bad total, a fractional delivery time, a missing file and an extra field before sending', async () => {
+    for (const bad of [
+      { ...body, total: '-5' },
+      { ...body, total: '12,50' },
+      { ...body, deliveryDays: 1.5 },
+      { ...body, documentId: 'nope' },
+      { ...body, rfqId: 'nope' },
+      { ...body, vendorPartyId: DOC },
+    ]) {
+      await expect(submitVendorQuotation(session, bad as never, IDEM)).rejects.toThrow();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('throws an ApiError carrying the status, including the in-progress 409 and a 404', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 'idempotency_in_progress' } }, 409));
+    await expect(submitVendorQuotation(session, body, IDEM)).rejects.toMatchObject({
+      status: 409,
+    });
+    fetchMock.mockResolvedValueOnce(json({ error: {} }, 404));
+    await expect(submitVendorQuotation(session, body, IDEM)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 });
 
