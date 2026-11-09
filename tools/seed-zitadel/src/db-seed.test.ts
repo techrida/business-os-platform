@@ -529,8 +529,19 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       email: 'founder@dev.bos.test',
       displayName: 'Dev Founder',
     },
+    {
+      personaKey: 'warehouse',
+      zitadelUserId: 'z-warehouse',
+      email: 'warehouse@dev.bos.test',
+      displayName: 'Dev Warehouse',
+    },
   ];
-  const userIds = { 'z-proc': 'u-proc', 'z-mgmt': 'u-mgmt', 'z-head': 'u-head' };
+  const userIds = {
+    'z-proc': 'u-proc',
+    'z-mgmt': 'u-mgmt',
+    'z-head': 'u-head',
+    'z-warehouse': 'u-warehouse',
+  };
 
   /** The lookups the dev step reads back; every write is scripted by `writes`. */
   const withLookups =
@@ -564,7 +575,7 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
     }
   });
 
-  it('upserts the three needed users in the staff IdP org, ignoring the other personas', async () => {
+  it('upserts procurement, management, the department head and warehouse in the staff IdP org', async () => {
     const { client, calls } = fakeClient(withLookups(firstRun));
     await seedKernelRows(client, scope, personas);
     const users = writesTo(calls, 'users');
@@ -572,6 +583,7 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       ['tenant-1', 'idp-staff', 'z-proc', 'procurement@dev.bos.test', 'Dev Procurement'],
       ['tenant-1', 'idp-staff', 'z-mgmt', 'management@dev.bos.test', 'Dev Management'],
       ['tenant-1', 'idp-staff', 'z-head', 'depthead@dev.bos.test', 'Dev Department Head'],
+      ['tenant-1', 'idp-staff', 'z-warehouse', 'warehouse@dev.bos.test', 'Dev Warehouse'],
     ]);
     for (const c of users) expect(c.text).toContain('ON CONFLICT (zitadel_user_id) DO NOTHING');
   });
@@ -584,6 +596,7 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
       ['tenant-1', 'org-1', 'u-proc', ['procurement']],
       ['tenant-1', 'org-1', 'u-mgmt', ['management']],
       ['tenant-1', 'org-1', 'u-head', ['operations_officer']],
+      ['tenant-1', 'org-1', 'u-warehouse', ['warehouse']],
     ]);
     for (const c of memberships) {
       expect(c.text).toContain('WHERE NOT EXISTS');
@@ -659,6 +672,18 @@ describe('seedKernelRows: dev vendor and department (SEED-2)', () => {
         personas.filter((p) => p.personaKey !== 'depthead'),
       ),
     ).rejects.toThrow(/depthead/);
+    expect(calls).toEqual([]);
+  });
+
+  it('requires the warehouse persona before BEGIN so receipts have an entity member', async () => {
+    const { client, calls } = fakeClient(withLookups(firstRun));
+    await expect(
+      seedKernelRows(
+        client,
+        scope,
+        personas.filter((p) => p.personaKey !== 'warehouse'),
+      ),
+    ).rejects.toThrow(/warehouse/);
     expect(calls).toEqual([]);
   });
 
