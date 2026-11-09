@@ -21,6 +21,7 @@ import {
   type TenancySeed,
   type TenancyStore,
 } from './index.js';
+import type { DevPersona } from './db-seed.js';
 import { type DevFiles, parseEnv } from './outputs.js';
 import {
   ORG_NAMES,
@@ -445,8 +446,15 @@ class FakeStore implements TenancyStore {
   rows = new Map<string, IdpOrgSeed>();
   /** Staff org id passed to each seedKernel call; the first call seeds 5 rows, later ones 0. */
   readonly kernelCalls: string[] = [];
-  seedKernel(staffZitadelOrgId: string): Promise<number> {
+  /** The dev personas passed to each seedKernel call. */
+  readonly kernelPersonas: (readonly DevPersona[] | undefined)[] = [];
+  seedKernel(
+    staffZitadelOrgId: string,
+    _correlationId: string,
+    personas?: readonly DevPersona[],
+  ): Promise<number> {
     this.kernelCalls.push(staffZitadelOrgId);
+    this.kernelPersonas.push(personas);
     return Promise.resolve(this.kernelCalls.length === 1 ? 5 : 0);
   }
   upsertTenancy(seed: TenancySeed): Promise<number> {
@@ -899,6 +907,22 @@ describe('@bos/seed-zitadel', () => {
     const second = await runSeed(deps);
     expect(store.kernelCalls).toEqual([api.staffOrgId, api.staffOrgId]);
     expect(second.changes).toEqual([]);
+  });
+
+  it('SEED-2: passes every staff persona to the kernel seed with its ZITADEL user id, login name and display name', async () => {
+    const { api, store, deps } = setup();
+    await runSeed(deps);
+    const passed = store.kernelPersonas[0];
+    const staff = PERSONAS.filter((p) => p.orgKind === 'staff');
+    expect(passed?.map((p) => p.personaKey)).toEqual(staff.map((p) => p.key));
+    for (const p of staff) {
+      expect(passed?.find((x) => x.personaKey === p.key)).toEqual({
+        personaKey: p.key,
+        zitadelUserId: api.userIdOf(personaUsername(p.key)),
+        email: personaUsername(p.key),
+        displayName: `${p.givenName} ${p.familyName}`,
+      });
+    }
   });
 
   describe('P1 step 9: retire the bootstrap human admin', () => {
