@@ -373,6 +373,39 @@ describe('PUT /v1/portal/payment-proofs/:docId/versions/:verId/content', () => {
     expect(await statusOf(created.versionId)).toBe('awaiting_content');
     expect(queue.add).not.toHaveBeenCalled();
   });
+
+  it('answers the same 404 to the owner acting in another entity of the tenant', async () => {
+    const w = await newWorld();
+    const bytes = PDF();
+    const created = await createAs(w.me, declare(bytes));
+    const foreign = await refusal(putAs(w.stranger, created.documentId, created.versionId, bytes));
+    // No fixture adds a second entity to a tenant; any other organization id exercises the entity filter.
+    const elsewhere: Principal = { ...w.me, organizationId: randomUUID() };
+
+    const crossEntity = await refusal(
+      putAs(elsewhere, created.documentId, created.versionId, bytes),
+    );
+
+    expect(crossEntity).toBe(foreign);
+    expect(await statusOf(created.versionId)).toBe('awaiting_content');
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('refuses a second PUT of the same version with 409 and queues one scan', async () => {
+    const w = await newWorld();
+    const bytes = PDF();
+    const created = await createAs(w.me, declare(bytes));
+
+    const results = await Promise.allSettled([
+      putAs(w.me, created.documentId, created.versionId, bytes),
+      putAs(w.me, created.documentId, created.versionId, bytes),
+    ]);
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const [lost] = results.filter((r) => r.status === 'rejected');
+    expect(lost?.reason).toMatchObject({ status: 409 });
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('the scan gate', () => {
