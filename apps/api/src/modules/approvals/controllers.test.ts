@@ -27,15 +27,18 @@ import {
 
 const ID = '3f1c2a52-9a7e-4c41-8f6e-2b1a1d0c9e11';
 
-/** A request at version 3 whose active step (seq 2) needs `roleKey`. */
-function requestAt(roleKey: string, kind: 'role' | 'group' | 'user' = 'role') {
+/**
+ * A request at version 3 whose active step (seq 2) is resolved to `roleKey` ('' for a step with no
+ * role: a group, a named user, or a department head who is in post).
+ */
+function requestAt(roleKey: string, kind: 'role' | 'group' | 'user' | 'department_head' = 'role') {
   return {
     requestId: ID,
     version: 3,
     currentSeq: 2,
     steps: [
       { seq: 1, kind: 'role', roleKey: 'finance', status: 'approved' },
-      { seq: 2, kind, roleKey: kind === 'role' ? roleKey : null, status: 'active' },
+      { seq: 2, kind, roleKey: roleKey === '' ? null : roleKey, status: 'active' },
     ],
   };
 }
@@ -186,6 +189,12 @@ describe('ApprovalsController', () => {
       expect(service.act).not.toHaveBeenCalled();
     });
 
+    it('needs step-up when a department-head step falls back to the founder role', async () => {
+      const { controller, service } = approvalsController(requestAt('founder', 'department_head'));
+      await refusal(controller.act(ID, 'key-1', approve, reqWith(nowS() - 10)));
+      expect(service.act).not.toHaveBeenCalled();
+    });
+
     it('needs step-up for return and reject on a Founder step too', async () => {
       const { controller, service } = approvalsController(requestAt('founder'));
       await refusal(
@@ -205,6 +214,11 @@ describe('ApprovalsController', () => {
       ['finance role', requestAt('finance')],
       ['group', requestAt('', 'group')],
       ['named user', requestAt('', 'user')],
+      ['department head in post', requestAt('', 'department_head')],
+      [
+        'department head falling back to operations_head',
+        requestAt('operations_head', 'department_head'),
+      ],
     ])('leaves a %s step alone, with no ID token header', async (_label, current) => {
       const { controller, service } = approvalsController(current);
       await controller.act(ID, 'key-1', approve, reqWith());
