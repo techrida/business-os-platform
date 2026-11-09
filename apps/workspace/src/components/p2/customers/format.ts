@@ -30,6 +30,14 @@ export const CHECKLIST_LABEL: Record<ChecklistItem['key'], string> = {
   authorised_signatory_id: 'Authorised signatory ID',
   address_proof: 'Proof of address',
   other: 'Other supporting document',
+  // Vendor cases (P4 K3); the customer screens never list these.
+  pan_certificate: 'PAN certificate',
+  vat_certificate: 'VAT certificate',
+  company_registration: 'Company registration',
+  tax_clearance: 'Tax clearance certificate',
+  bank_proof: 'Bank account proof',
+  proprietor_citizenship: 'Proprietor citizenship ID',
+  foreign_registration: 'Foreign registration document',
 };
 
 export const CHECKLIST_STATUS: Record<ChecklistItem['status'], { tone: BadgeTone; text: string }> =
