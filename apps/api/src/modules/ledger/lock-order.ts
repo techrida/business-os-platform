@@ -37,7 +37,9 @@ export class LockOrderError extends Error {
  * canonical text form is lowercase hex compared as a string.
  */
 export function sortedIds(ids: readonly string[]): string[] {
-  return [...new Set(ids.map((id) => id.toLowerCase()))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return [...new Set(ids.map((id) => id.toLowerCase()))].sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
 }
 
 /**
@@ -50,7 +52,9 @@ export function planLocks(steps: readonly LockStep[]): LockStep[] {
   const plan: LockStep[] = [];
   for (const step of steps) {
     if (step.rank === 'number_series') {
-      throw new LockOrderError('number_series is locked by NumberingService.issue, last; do not lock it here');
+      throw new LockOrderError(
+        'number_series is locked by NumberingService.issue, last; do not lock it here',
+      );
     }
     const rank = LOCK_RANKS.indexOf(step.rank);
     if (rank <= previous) {

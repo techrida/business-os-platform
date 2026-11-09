@@ -43,9 +43,12 @@ describe('planLocks', () => {
   });
 
   it('drops a step with no ids', () => {
-    expect(planLocks([{ rank: 'payment', ids: [] }, { rank: 'open_item', ids: ['o1'] }])).toEqual([
-      { rank: 'open_item', ids: ['o1'] },
-    ]);
+    expect(
+      planLocks([
+        { rank: 'payment', ids: [] },
+        { rank: 'open_item', ids: ['o1'] },
+      ]),
+    ).toEqual([{ rank: 'open_item', ids: ['o1'] }]);
   });
 
   it('refuses a step out of order (a deadlock waiting to happen)', () => {
