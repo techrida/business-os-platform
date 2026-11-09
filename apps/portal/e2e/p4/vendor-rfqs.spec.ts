@@ -39,12 +39,13 @@ test('lists the requests, opens one and goes on to the quotation form', async ({
   await page.getByRole('link', { name: 'Submit quotation' }).click();
   await expect(page).toHaveURL(new RegExp(`/vendor/rfqs/${rfqId}/quote$`));
   await expect(page.getByRole('heading', { level: 1, name: 'Submit a quotation' })).toBeVisible();
-  await expect(page.getByLabel('Your quotation')).toBeVisible();
+  await expect(page.getByLabel('Your quotation', { exact: true })).toBeVisible();
 });
 
 test('refuses a quotation without a file or a total, naming the fields', async ({ page }) => {
   test.skip(!rfqId, 'PORTAL_E2E_VENDOR_RFQ_ID is not set');
   await page.goto(`/vendor/rfqs/${rfqId}/quote`);
+  await page.waitForLoadState('networkidle');
   await page.getByLabel('Total of your quotation').fill('twelve');
   await page.getByRole('button', { name: 'Submit quotation' }).click();
   await expect(page.getByText('Add your quotation as a PDF or a picture.')).toBeVisible();
@@ -55,10 +56,14 @@ test('refuses a quotation without a file or a total, naming the fields', async (
 test('refuses a delivery time that is not whole days, keeping what was typed', async ({ page }) => {
   test.skip(!rfqId, 'PORTAL_E2E_VENDOR_RFQ_ID is not set');
   await page.goto(`/vendor/rfqs/${rfqId}/quote`);
-  await page.getByLabel('Your quotation').setInputFiles(PDF);
+  await page.waitForLoadState('networkidle');
+  await page.getByLabel('Your quotation', { exact: true }).setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('quotation.pdf');
   await page.getByLabel('Total of your quotation').fill('20,18,180.00');
-  await page.getByLabel('Delivery time in days (optional)').fill('2w');
+  const delivery = page.getByLabel('Delivery time in days (optional)');
+  // inputMode=numeric is a keyboard hint; this remains a text input for server validation.
+  await delivery.fill('2w');
+  await expect(delivery).toHaveValue('2w');
   await page.getByRole('button', { name: 'Submit quotation' }).click();
   await expect(page.getByText(/Enter the delivery time as a whole number of days/)).toBeVisible();
   await expect(page.getByLabel('Total of your quotation')).toHaveValue('20,18,180.00');
@@ -69,7 +74,8 @@ test('submits a quotation: the total is the vendor’s own text, and the answer 
 }) => {
   test.skip(!rfqId, 'PORTAL_E2E_VENDOR_RFQ_ID is not set');
   await page.goto(`/vendor/rfqs/${rfqId}/quote`);
-  await page.getByLabel('Your quotation').setInputFiles(PDF);
+  await page.waitForLoadState('networkidle');
+  await page.getByLabel('Your quotation', { exact: true }).setInputFiles(PDF);
   await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('quotation.pdf');
   await page.getByLabel('Total of your quotation').fill('20,18,180.00');
   await page.getByLabel('Your reference (optional)').fill(`E2E-${stamp()}`);
@@ -85,14 +91,17 @@ test('submits a quotation: the total is the vendor’s own text, and the answer 
 test('a request that is not this vendor’s is not found, on both pages', async ({ page }) => {
   test.skip(!foreignId, 'PORTAL_E2E_VENDOR_FOREIGN_ID is not set');
   for (const path of [`/vendor/rfqs/${foreignId}`, `/vendor/rfqs/${foreignId}/quote`]) {
-    const res = await page.goto(path);
-    expect(res?.status()).toBe(404);
+    await page.goto(path);
+    await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
+    await expect(page.getByLabel('Your quotation', { exact: true })).toHaveCount(0);
   }
 });
 
 test('a request id that is not an id is not found', async ({ page }) => {
-  const res = await page.goto('/vendor/rfqs/not-an-id/quote');
-  expect(res?.status()).toBe(404);
+  // Next can already have streamed HTTP 200 before notFound() renders its boundary.
+  await page.goto('/vendor/rfqs/not-an-id/quote');
+  await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
+  await expect(page.getByLabel('Your quotation', { exact: true })).toHaveCount(0);
 });
 
 test('the quotation file route refuses a foreign Origin without touching the API', async ({
