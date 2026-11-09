@@ -7,7 +7,7 @@ import { MenuButton } from './shell-state';
 
 /**
  * The top bar (the page's `banner`). Left: the menu button on phones and the signed-in roles,
- * which is what the Figma bar shows ("Super Admin"). Right: search (disabled in P0), the
+ * which is what the Figma bar shows ("Super Admin"). Right: search (disabled until search exists), the
  * organisation kind and Sign out.
  *
  * Left out on purpose: the bell (until P1 has notifications) and the Figma cloud, undo and redo
@@ -34,7 +34,7 @@ export function Header({ orgKind, roles }: { orgKind: string; roles: readonly st
             type="search"
             className={styles.searchInput}
             aria-label="Search"
-            placeholder="Search (coming soon)"
+            placeholder="Search"
             disabled
           />
         </div>
