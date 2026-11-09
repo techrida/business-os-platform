@@ -399,7 +399,7 @@ describe('TenancyInterceptor', () => {
   });
 
   it('accepts the P2 staff roles in a staff org and drops them in a customer org', async () => {
-    const p2Roles: RoleKey[] = ['pmo', 'operations_head', 'procurement', 'receiver'];
+    const p2Roles: RoleKey[] = ['pmo', 'operations_head', 'procurement', 'warehouse', 'operations_officer'];
     // Without an entry in ROLE_ORG_KIND these were filtered out, which left a staff token with no role.
     const staff = await run(interceptor, auth({ [ZIT_ORG]: p2Roles }), Routes, Routes.prototype.me);
     expect(staff.bound.roles).toEqual(p2Roles);
