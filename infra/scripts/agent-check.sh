@@ -7,6 +7,7 @@
 # Only for light checks (one test file / a folder of unit tests / eslint of named files). Builds, full suites,
 # docker and e2e are the lead's job.
 set -euo pipefail
+export NODE_DISABLE_COMPILE_CACHE=1
 UNIT="${1:?unit name}"; CMD="${2:?command}"
 # The worktree this script lives in (infra/scripts/ -> repo root), so any worktree checks its own tree.
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
