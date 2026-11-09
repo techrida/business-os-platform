@@ -2,7 +2,11 @@ import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
-import { createBillDocument, uploadBillDocumentContent } from '@/lib/api-payables';
+import {
+  createBillDocument,
+  replaceBillDocument,
+  uploadBillDocumentContent,
+} from '@/lib/api-payables';
 import {
   errorResponse,
   forbiddenOrigin,
@@ -29,7 +33,11 @@ export async function POST(req: Request): Promise<Response> {
   if (!hasPermission(session.roles, 'payables.bill.enter'))
     return bad('Your roles do not allow invoice uploads for vendor bills.', 403);
   const vendorId = req.headers.get('x-vendor-id') ?? '';
-  if (!isGuid(vendorId)) return bad('Choose a vendor before uploading the invoice.');
+  const documentId = req.headers.get('x-document-id');
+  if (documentId !== null && !isGuid(documentId))
+    return bad('That invoice document is not valid. Reload the bill.');
+  if (documentId === null && !isGuid(vendorId))
+    return bad('Choose a vendor before uploading the invoice.');
   const announced = req.headers.get('content-length');
   if (announced === null || !/^\d{1,12}$/.test(announced))
     return bad('The upload must announce its size.', 411);
@@ -45,7 +53,10 @@ export async function POST(req: Request): Promise<Response> {
   });
   if (!parsed.success) return bad('That invoice file name or type is not allowed.');
   try {
-    const created = await createBillDocument(session, vendorId, parsed.data);
+    const created =
+      documentId === null
+        ? await createBillDocument(session, vendorId, parsed.data)
+        : await replaceBillDocument(session, documentId, parsed.data);
     await uploadBillDocumentContent(session, created, {
       body: req.body,
       contentLength: length,

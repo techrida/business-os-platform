@@ -22,12 +22,14 @@ import {
   SubmitDialog,
   VoidDialog,
 } from '../../_components/bill-actions';
+import { InvoiceReplacement } from '../../_components/invoice-replacement';
 import { billFailure } from '../../_lib/failure';
 import {
   BILL_STATUS_LABEL,
   MATCH_STATUS_LABEL,
   billActions,
   billGrants,
+  fileStatusLabel,
   matchResultLabel,
 } from '../../_lib/model';
 import styles from '../../payables.module.css';
@@ -322,6 +324,17 @@ export default async function BillPage({
             again after goods arrive or the order changes, or request an exception for Finance to
             review.
           </Alert>
+        ) : null}
+        {bill.status === 'draft' && bill.fileStatus !== 'clean' ? (
+          <Panel title="Invoice file" description={fileStatusLabel(bill.fileStatus ?? null).text}>
+            <p className={styles.note}>
+              The invoice must scan clean before this bill can be submitted. If a scan is in
+              progress, wait and reload the bill to check it.
+            </p>
+            {grants.enter ? (
+              <InvoiceReplacement documentId={bill.documentId} reloadHref={here} />
+            ) : null}
+          </Panel>
         ) : null}
         <Panel title="Bill">
           <FactList facts={facts} />
