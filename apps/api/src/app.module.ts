@@ -9,7 +9,9 @@ import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
+import { ReceiptsModule } from './modules/procurement/receipts/receipts.module';
 import { PurchaseRequestsModule } from './modules/procurement/requests/purchase-requests.module';
+import { SourcingModule } from './modules/procurement/sourcing/sourcing.module';
 import { QuotationsModule } from './modules/quotations/quotations.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
 import { TestMemoModule } from './modules/test-memo/test-memo.module';
@@ -73,6 +75,8 @@ import { UsersModule } from './platform/users/users.module';
     VendorsModule,
     VendorBankModule,
     PurchaseRequestsModule,
+    SourcingModule,
+    ReceiptsModule,
   ],
 })
 export class AppModule {}
