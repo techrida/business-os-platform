@@ -4,6 +4,7 @@
 // (`SETTLEMENT_STATUSES`) and the open amount is computed from allocations on every read.
 import { z } from 'zod';
 
+import { InvoiceKindSchema } from './invoicing.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
 import { NonNegativeDecimalString } from './quotations.js';
 
@@ -177,8 +178,11 @@ export type AllocationDto = z.infer<typeof AllocationDtoSchema>;
 export const InvoiceSettlementSchema = z.object({
   invoiceId: z.guid(),
   number: z.string().min(1),
+  kind: InvoiceKindSchema,
   customerId: z.guid(),
   currency: CurrencySchema,
+  /** The server's issue date; an invoice has a settlement only once it is issued. */
+  issueDate: isoDate,
   total: DecimalString,
   allocatedAmount: DecimalString,
   openAmount: DecimalString,

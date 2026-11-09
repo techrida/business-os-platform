@@ -860,20 +860,28 @@ describe('receivables read models', () => {
   };
 
   it('parses an invoice settlement, an advance and an aging report', () => {
+    const settlement = {
+      invoiceId: id(20),
+      number: 'INV-2083/84-00001',
+      kind: 'tax_invoice',
+      customerId: id(2),
+      currency: 'NPR',
+      issueDate: '2026-11-09',
+      total: '1130.00',
+      allocatedAmount: '500.00',
+      openAmount: '630.00',
+      dueDate: '2026-12-09',
+      daysOverdue: 0,
+      settlement: 'partly_paid',
+    };
+    expect(receivables.InvoiceSettlementSchema.safeParse(settlement).success).toBe(true);
     expect(
-      receivables.InvoiceSettlementSchema.safeParse({
-        invoiceId: id(20),
-        number: 'INV-2083/84-00001',
-        customerId: id(2),
-        currency: 'NPR',
-        total: '1130.00',
-        allocatedAmount: '500.00',
-        openAmount: '630.00',
-        dueDate: '2026-12-09',
-        daysOverdue: 0,
-        settlement: 'partly_paid',
-      }).success,
-    ).toBe(true);
+      receivables.InvoiceSettlementSchema.safeParse({ ...settlement, kind: 'receipt' }).success,
+    ).toBe(false);
+    expect(
+      receivables.InvoiceSettlementSchema.safeParse({ ...settlement, issueDate: undefined })
+        .success,
+    ).toBe(false);
     expect(
       receivables.CustomerAdvanceSchema.safeParse({
         customerId: id(2),
