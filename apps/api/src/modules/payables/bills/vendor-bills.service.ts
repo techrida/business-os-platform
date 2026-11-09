@@ -1,0 +1,898 @@
+// VendorBillsService: vendor bills, their three-way match and the match exceptions (P4 unit A1; AD5, AD6, AD14).
+// Serves the NFRs:
+// - "amounts are exact": net = round(qty x price, 2) and VAT from the tax code's rate, decimal.js strings; the
+//   client never sends a total (CreateVendorBillBodySchema is strict);
+// - "no duplicates": the generated invoice_no_norm makes INV-001 and inv 001 one invoice of a vendor in a fiscal
+//   year; the unique key refuses the second and the API answers 409 (check 8);
+// - "money moves only after the right people agree": submit is refused (409) unless every line is within the AD6
+//   tolerance (from settings) or Finance approved a match exception; the bill route has the person who entered it
+//   in sod_user_ids, so its Accountant step is another accountant (AD5);
+// - "no double effects" and "no lost updates": every write runs in withIdempotency and locks the bill FOR UPDATE
+//   before it changes it;
+// - "one legal entity at a time": every read is scoped to the acting entity; a bill, PO or line of another entity
+//   is a 404 (or a 422 for a line), never a 403.
+// Approval of a bill (the payable open item and `vendor_bill_posted`), void and the VAT register are the next unit.
+import { randomUUID } from 'node:crypto';
+
+import type {
+  BillStatus,
+  CreateVendorBillBody,
+  MatchStatus,
+  RequestMatchExceptionBody,
+} from '@bos/contracts';
+import {
+  documents,
+  matchExceptions,
+  matchResults,
+  poLineProgress,
+  purchaseOrderLines,
+  purchaseOrders,
+  receiptLines,
+  scoped,
+  taxCodes,
+  vendorAccounts,
+  vendorBillLines,
+  vendorBills,
+  withholdingCodes,
+} from '@bos/db';
+import { fiscalYearOf } from '@bos/locale';
+import { parseDecimal, type MatchTolerance } from '@bos/money-rules';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import Decimal from 'decimal.js';
+import { and, asc, desc, eq, inArray, max, sql } from 'drizzle-orm';
+
+import { AuditService } from '../../../platform/audit/audit.service';
+import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
+import { withIdempotency } from '../../../platform/db/idempotency';
+import { withTx, type TxScope } from '../../../platform/db/tx';
+import { SettingsService } from '../../../platform/settings/settings.service';
+import { ApprovalsService } from '../../approvals/requests.service';
+import {
+  BILLABLE_PO_STATUSES,
+  BILL_AUDIT_ENTITY,
+  BILL_DEDUP_CONSTRAINT,
+  MATCH_EXCEPTION_AUDIT_ENTITY,
+  MATCH_EXCEPTION_DOCUMENT_TYPE,
+  VENDOR_BILL_DOCUMENT_TYPE,
+  afterMatch,
+  billFactsOf,
+  billTotals,
+  invoiceInstant,
+  lineAmounts,
+  matchLine,
+  submittable,
+} from './vendor-bill.rules';
+import { VendorBillsCaller } from './vendor-bills.caller';
+
+/** Injection token for a test clock; production falls back to the system time. */
+export const VENDOR_BILLS_CLOCK = Symbol('VENDOR_BILLS_CLOCK');
+
+type BillRow = typeof vendorBills.$inferSelect;
+type BillLineRow = typeof vendorBillLines.$inferSelect;
+type MatchResultRow = typeof matchResults.$inferSelect;
+type ExceptionRow = typeof matchExceptions.$inferSelect;
+
+export interface VendorBillLineDto {
+  id: string;
+  lineNo: number;
+  poLineId: string | null;
+  receiptLineId: string | null;
+  description: string;
+  accountId: string;
+  quantity: string;
+  unitPrice: string;
+  netAmount: string;
+  taxCodeId: string;
+  vatAmount: string;
+  tdsCodeId: string | null;
+  tdsAmount: string;
+  /** The latest match run of the line, when the bill is matched against a PO. */
+  match: {
+    runNo: number;
+    status: MatchResultRow['status'];
+    receivedQuantity: string | null;
+    billedQuantity: string;
+    quantityVariance: string;
+    priceVariance: string;
+    taxVariance: string;
+  } | null;
+}
+
+export interface VendorBillDto {
+  id: string;
+  kind: BillRow['kind'];
+  number: string | null;
+  vendorPartyId: string;
+  vendorInvoiceNo: string;
+  invoiceDate: string;
+  fiscalYear: string;
+  currency: BillRow['currency'];
+  purchaseOrderId: string | null;
+  documentId: string;
+  status: BillStatus;
+  matchStatus: MatchStatus;
+  netTotal: string;
+  vatTotal: string;
+  tdsTotal: string;
+  payableTotal: string;
+  enteredBy: string;
+  approvalRequestId: string | null;
+  version: number;
+  lines: VendorBillLineDto[];
+}
+
+export interface MatchExceptionDto {
+  id: string;
+  vendorBillId: string;
+  reason: string;
+  status: ExceptionRow['status'];
+  requestedBy: string;
+  decidedBy: string | null;
+  approvalRequestId: string | null;
+}
+
+const notFound = (what: string) =>
+  new NotFoundException({ code: 'not_found', message: `${what} not found` });
+const conflict = (code: string, message: string) => new ConflictException({ code, message });
+const unprocessable = (code: string, message: string) =>
+  new UnprocessableEntityException({ code, message });
+
+/** Thrown inside the transaction so it rolls back (idempotency claim included). */
+class NoEligibleApprover extends Error {
+  constructor(readonly reason: string) {
+    super('no eligible approver');
+  }
+}
+
+/** The Postgres error behind `error`, also when drizzle wraps it (`cause`). */
+function pgErrorOf(error: unknown): { code: string; constraint: string | undefined } | undefined {
+  let e: unknown = error;
+  for (let depth = 0; depth < 4 && typeof e === 'object' && e !== null; depth += 1) {
+    const { code, constraint, cause } = e as {
+      code?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
+      return { code, constraint: typeof constraint === 'string' ? constraint : undefined };
+    }
+    e = cause;
+  }
+  return undefined;
+}
+
+const sum = (values: readonly string[]) =>
+  values.reduce((acc, v) => acc.plus(v), new Decimal(0)).toFixed(2);
+
+@Injectable()
+export class VendorBillsService {
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly approvals: ApprovalsService,
+    private readonly audit: AuditService,
+    private readonly settings: SettingsService,
+    private readonly caller: VendorBillsCaller,
+    @Optional()
+    @Inject(VENDOR_BILLS_CLOCK)
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  // ------------------------------------------------------------------------------------------------- reads
+
+  async list(status?: BillStatus): Promise<Omit<VendorBillDto, 'lines'>[]> {
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const rows = await tx
+        .select()
+        .from(vendorBills)
+        .where(
+          scoped(scope).where(
+            vendorBills,
+            status === undefined ? undefined : eq(vendorBills.status, status),
+          ),
+        )
+        .orderBy(desc(vendorBills.createdAt));
+      return rows.map((row) => {
+        const { lines: _lines, ...rest } = toDto(row, [], []);
+        return rest;
+      });
+    });
+  }
+
+  /** 404 outside the acting entity. */
+  async get(id: string): Promise<VendorBillDto> {
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, (tx) => this.dto(tx, scope, id));
+  }
+
+  // ------------------------------------------------------------------------------------------------- create
+
+  /**
+   * Keys in a bill and, when it names a PO, runs the match. 201 with the bill. 404 for a vendor without an active
+   * account here or a PO of another entity; 422 for a line that is not the PO's, a receipt line of another PO line,
+   * an unknown tax or withholding code; 409 for a PO that is not issued or receiving, or a duplicate invoice number.
+   */
+  async create(body: CreateVendorBillBody, idempotencyKey: string): Promise<VendorBillDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    const tolerance = await this.tolerance(scope);
+    try {
+      return await withTx(this.db, scope, actor, async (tx) => {
+        const done = await withIdempotency(
+          tx,
+          { command: 'payables.bill.create', key: idempotencyKey, body },
+          async () => {
+            const bill = await this.insertBill(tx, scope, principal.userId, body, now);
+            if (bill.purchaseOrderId !== null) {
+              await this.runMatch(tx, scope, bill.id, principal.userId, tolerance, now);
+            }
+            return { status: 201, response: await this.dto(tx, scope, bill.id) };
+          },
+        );
+        return done.response;
+      });
+    } catch (error) {
+      const pg = pgErrorOf(error);
+      if (pg?.code === '23505' && pg.constraint === BILL_DEDUP_CONSTRAINT) {
+        throw conflict(
+          'DUPLICATE_BILL',
+          'This vendor already has a bill with this invoice number in the fiscal year',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async insertBill(
+    tx: DbTransaction,
+    scope: TxScope,
+    userId: string,
+    body: CreateVendorBillBody,
+    now: Date,
+  ): Promise<BillRow> {
+    if (body.kind !== 'bill') {
+      throw unprocessable('BILL_KIND_NOT_SUPPORTED', 'Only bills can be keyed in for now');
+    }
+    if (body.currency !== 'NPR') {
+      throw unprocessable('CURRENCY_NOT_SUPPORTED', 'Only NPR bills can be keyed in for now');
+    }
+    if (body.sourceSubmissionId !== undefined) {
+      throw unprocessable(
+        'SUBMISSION_NOT_SUPPORTED',
+        'Converting a portal submission is not available yet',
+      );
+    }
+    const s = scoped(scope);
+    const [account] = await tx
+      .select({ id: vendorAccounts.id })
+      .from(vendorAccounts)
+      .where(
+        s.where(
+          vendorAccounts,
+          and(eq(vendorAccounts.vendorId, body.vendorPartyId), eq(vendorAccounts.active, true)),
+        ),
+      );
+    if (account === undefined) throw notFound('Vendor');
+    const [doc] = await tx
+      .select({ id: documents.id })
+      .from(documents)
+      .where(s.where(documents, eq(documents.id, body.documentId)));
+    if (doc === undefined)
+      throw unprocessable('DOCUMENT_NOT_FOUND', 'The invoice file was not found');
+
+    const poLineIds = body.lines.flatMap((l) => (l.poLineId === undefined ? [] : [l.poLineId]));
+    if (body.lines.some((l) => l.receiptLineId !== undefined && l.poLineId === undefined)) {
+      throw unprocessable('PO_LINE_REQUIRED', 'A receipt line needs its purchase order line');
+    }
+    const poLines = new Map<string, typeof purchaseOrderLines.$inferSelect>();
+    if (body.purchaseOrderId === undefined) {
+      if (poLineIds.length > 0) {
+        throw unprocessable(
+          'PO_REQUIRED',
+          'A line linked to a purchase order line needs the purchase order',
+        );
+      }
+    } else {
+      const [po] = await tx
+        .select()
+        .from(purchaseOrders)
+        .where(s.where(purchaseOrders, eq(purchaseOrders.id, body.purchaseOrderId)));
+      if (po === undefined) throw notFound('Purchase order');
+      if (po.vendorId !== body.vendorPartyId) {
+        throw unprocessable('PO_VENDOR_MISMATCH', 'The purchase order is for another vendor');
+      }
+      if (!(BILLABLE_PO_STATUSES as readonly string[]).includes(po.status)) {
+        throw conflict('PO_NOT_BILLABLE', `A ${po.status} purchase order cannot be billed`);
+      }
+      if (poLineIds.length !== body.lines.length) {
+        throw unprocessable(
+          'PO_LINE_REQUIRED',
+          'Every line of a PO bill names its purchase order line',
+        );
+      }
+      const rows = await tx
+        .select()
+        .from(purchaseOrderLines)
+        .where(
+          s.where(
+            purchaseOrderLines,
+            and(
+              eq(purchaseOrderLines.purchaseOrderId, po.id),
+              inArray(purchaseOrderLines.id, poLineIds),
+            ),
+          ),
+        );
+      for (const row of rows) poLines.set(row.id, row);
+      if (poLineIds.some((id) => !poLines.has(id))) {
+        throw unprocessable(
+          'PO_LINE_NOT_FOUND',
+          'A line names a line that is not on the purchase order',
+        );
+      }
+    }
+    const receiptLineIds = body.lines.flatMap((l) =>
+      l.receiptLineId === undefined ? [] : [l.receiptLineId],
+    );
+    if (receiptLineIds.length > 0) {
+      const rows = await tx
+        .select({ id: receiptLines.id, poLineId: receiptLines.poLineId })
+        .from(receiptLines)
+        .where(s.where(receiptLines, inArray(receiptLines.id, receiptLineIds)));
+      const byId = new Map(rows.map((r) => [r.id, r.poLineId]));
+      if (
+        body.lines.some(
+          (l) => l.receiptLineId !== undefined && byId.get(l.receiptLineId) !== l.poLineId,
+        )
+      ) {
+        throw unprocessable(
+          'RECEIPT_LINE_NOT_FOUND',
+          'A receipt line is not a receipt of its PO line',
+        );
+      }
+    }
+    const rates = await this.taxRates(tx, scope, [...new Set(body.lines.map((l) => l.taxCodeId))]);
+    const tdsCodeIds = [...new Set(body.lines.flatMap((l) => (l.tdsCodeId ? [l.tdsCodeId] : [])))];
+    if (tdsCodeIds.length > 0) {
+      const rows = await tx
+        .select({ id: withholdingCodes.id })
+        .from(withholdingCodes)
+        .where(
+          and(
+            eq(withholdingCodes.tenantId, scope.tenantId),
+            inArray(withholdingCodes.id, tdsCodeIds),
+            inArray(withholdingCodes.appliesTo, ['payable', 'both']),
+          ),
+        );
+      if (rows.length !== tdsCodeIds.length) {
+        throw unprocessable(
+          'WITHHOLDING_CODE_NOT_FOUND',
+          'A withholding code is not a payable code',
+        );
+      }
+    }
+
+    const amounts = body.lines.map((l) =>
+      lineAmounts(l.quantity, l.unitPrice, rates.get(l.taxCodeId) ?? 0),
+    );
+    const totals = billTotals(amounts);
+    const [bill] = await tx
+      .insert(vendorBills)
+      .values({
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        kind: 'bill',
+        vendorId: body.vendorPartyId,
+        vendorInvoiceNo: body.vendorInvoiceNo,
+        invoiceDate: body.invoiceDate,
+        fiscalYear: fiscalYearOf(invoiceInstant(body.invoiceDate)),
+        currency: body.currency,
+        purchaseOrderId: body.purchaseOrderId ?? null,
+        documentId: body.documentId,
+        status: 'draft',
+        matchStatus: body.purchaseOrderId === undefined ? 'not_required' : 'pending',
+        netTotal: totals.net,
+        vatTotal: totals.vat,
+        tdsTotal: '0.00',
+        payableTotal: totals.gross,
+        fxRate: '1',
+        payableTotalNpr: totals.gross,
+        enteredBy: userId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (bill === undefined) throw new Error('bill insert returned no row');
+    await tx.insert(vendorBillLines).values(
+      body.lines.map((l, i) => ({
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        vendorBillId: bill.id,
+        purchaseOrderId: l.poLineId === undefined ? null : bill.purchaseOrderId,
+        poLineId: l.poLineId ?? null,
+        receiptLineId: l.receiptLineId ?? null,
+        lineNo: i + 1,
+        description:
+          (l.poLineId === undefined ? undefined : poLines.get(l.poLineId)?.description) ??
+          `Bill line ${i + 1}`,
+        accountId: l.accountId,
+        costCenterId: l.costCenterId ?? null,
+        projectId: l.projectId ?? null,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        netAmount: amounts[i]!.net,
+        taxCodeId: l.taxCodeId,
+        vatAmount: amounts[i]!.vat,
+        withholdingCodeId: l.tdsCodeId ?? null,
+        tdsAmount: '0.00',
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
+    await this.audit.record(tx, {
+      action: 'payables.bill.entered',
+      entityType: BILL_AUDIT_ENTITY,
+      entityId: bill.id,
+      after: {
+        vendorPartyId: bill.vendorId,
+        vendorInvoiceNo: bill.vendorInvoiceNo,
+        purchaseOrderId: bill.purchaseOrderId,
+        netTotal: bill.netTotal,
+        vatTotal: bill.vatTotal,
+      },
+    });
+    return bill;
+  }
+
+  // ------------------------------------------------------------------------------------------------- match
+
+  /** Runs the match again (after a receipt or a correction). 409 for a bill without a PO or past matching. */
+  async match(id: string, idempotencyKey: string): Promise<VendorBillDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    const tolerance = await this.tolerance(scope);
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        { command: 'payables.bill.match', key: idempotencyKey, body: { id } },
+        async () => {
+          await this.runMatch(tx, scope, id, principal.userId, tolerance, now);
+          return { status: 200, response: await this.dto(tx, scope, id) };
+        },
+      );
+      return done.response;
+    });
+  }
+
+  /**
+   * One match run: every line through evaluateLine (AD6) with the tolerances from settings, one match_results row
+   * per line under the next run number, then the bill moves to matching (all within) or variance.
+   */
+  private async runMatch(
+    tx: DbTransaction,
+    scope: TxScope,
+    billId: string,
+    userId: string,
+    tolerance: MatchTolerance,
+    now: Date,
+  ): Promise<void> {
+    const bill = await this.lockBill(tx, scope, billId);
+    if (bill.purchaseOrderId === null) {
+      throw conflict('MATCH_NOT_REQUIRED', 'A bill without a purchase order is not matched');
+    }
+    const lines = await this.linesOf(tx, scope, bill.id);
+    const poLineIds = [...new Set(lines.flatMap((l) => (l.poLineId ? [l.poLineId] : [])))];
+    const s = scoped(scope);
+    const poLines = new Map(
+      (
+        await tx
+          .select()
+          .from(purchaseOrderLines)
+          .where(s.where(purchaseOrderLines, inArray(purchaseOrderLines.id, poLineIds)))
+      ).map((r) => [r.id, r]),
+    );
+    const progress = new Map(
+      (
+        await tx
+          .select()
+          .from(poLineProgress)
+          .where(
+            and(
+              eq(poLineProgress.tenantId, scope.tenantId),
+              eq(poLineProgress.organizationId, scope.organizationId),
+              inArray(poLineProgress.poLineId, poLineIds),
+            ),
+          )
+      ).map((r) => [r.poLineId, r]),
+    );
+    const rates = await this.taxRates(tx, scope, [
+      ...new Set([...poLines.values()].map((l) => l.taxCodeId)),
+    ]);
+    const [last] = await tx
+      .select({ runNo: max(matchResults.runNo) })
+      .from(matchResults)
+      .where(s.where(matchResults, eq(matchResults.vendorBillId, bill.id)));
+    const runNo = (last?.runNo ?? 0) + 1;
+    const pricePct = parseDecimal(tolerance.pricePct);
+
+    let allWithin = true;
+    const rows = lines.map((line) => {
+      const poLine = line.poLineId ? poLines.get(line.poLineId) : undefined;
+      const prog = line.poLineId ? progress.get(line.poLineId) : undefined;
+      if (poLine === undefined || prog === undefined) {
+        throw new Error(`bill line ${line.id} has no PO line to match against`);
+      }
+      const result = matchLine(
+        {
+          billedQty: line.quantity,
+          billPrice: line.unitPrice,
+          billNet: line.netAmount,
+          billVat: line.vatAmount,
+          orderedQty: prog.orderedQuantity,
+          receivedQty: prog.receivedQuantity,
+          billedOnLine: prog.billedQuantity,
+          billedByThisBill: lines
+            .filter((l) => l.poLineId === line.poLineId)
+            .reduce((acc, l) => acc.plus(l.quantity), new Decimal(0))
+            .toFixed(),
+          poPrice: poLine.unitPrice,
+          poRateBp: rates.get(poLine.taxCodeId) ?? 0,
+        },
+        tolerance,
+      );
+      allWithin = allWithin && result.withinTolerance;
+      return {
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        vendorBillId: bill.id,
+        vendorBillLineId: line.id,
+        poLineId: line.poLineId,
+        runNo,
+        status: result.withinTolerance ? ('matched' as const) : ('variance' as const),
+        orderedQuantity: prog.orderedQuantity,
+        receivedQuantity: prog.receivedQuantity,
+        billedQuantity: line.quantity,
+        quantityVariance: result.qtyVariance.toFixed(4),
+        priceVariance: result.priceVariance.toFixed(2),
+        taxVariance: result.taxVariance.toFixed(2),
+        withinTolerance: result.withinTolerance,
+        priceToleranceBp: pricePct.times(100).round().toNumber(),
+        priceToleranceAmount: parseDecimal(tolerance.priceNpr).toFixed(2),
+        matchedBy: userId,
+        createdAt: now,
+      };
+    });
+    const next = afterMatch(bill.status, allWithin);
+    if (next === undefined) {
+      throw conflict('invalid_transition', `A ${bill.status} bill cannot be matched`);
+    }
+    await tx.insert(matchResults).values(rows);
+    await tx
+      .update(vendorBills)
+      .set({
+        status: next.status,
+        matchStatus: next.matchStatus,
+        version: sql`${vendorBills.version} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        s.where(vendorBills, and(eq(vendorBills.id, bill.id), eq(vendorBills.status, bill.status))),
+      );
+    await this.audit.record(tx, {
+      action: 'payables.bill.matched',
+      entityType: BILL_AUDIT_ENTITY,
+      entityId: bill.id,
+      before: { status: bill.status, matchStatus: bill.matchStatus },
+      after: { ...next, runNo },
+    });
+  }
+
+  // ------------------------------------------------------------------------------------------------- exceptions
+
+  /**
+   * Asks Finance to accept a bill outside tolerance (AD5: route `match_exception`, the requester in
+   * sod_user_ids). 201. 409 unless the bill is in variance; 422 when nobody may decide.
+   */
+  async requestException(
+    id: string,
+    body: RequestMatchExceptionBody,
+    idempotencyKey: string,
+  ): Promise<MatchExceptionDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    try {
+      return await withTx(this.db, scope, actor, async (tx) => {
+        const done = await withIdempotency(
+          tx,
+          { command: 'payables.bill.exception', key: idempotencyKey, body: { id, ...body } },
+          async () => {
+            const bill = await this.lockBill(tx, scope, id);
+            if (bill.status !== 'variance') {
+              throw conflict(
+                'invalid_transition',
+                `A match exception needs a bill in variance, not ${bill.status}`,
+              );
+            }
+            const exceptionId = randomUUID();
+            await tx.insert(matchExceptions).values({
+              id: exceptionId,
+              tenantId: scope.tenantId,
+              organizationId: scope.organizationId,
+              vendorBillId: bill.id,
+              reason: body.reason,
+              evidenceDocumentId: body.evidenceDocumentId ?? null,
+              requestedBy: principal.userId,
+              createdAt: now,
+              updatedAt: now,
+            });
+            const request = await this.approvals.submit(tx, {
+              documentType: MATCH_EXCEPTION_DOCUMENT_TYPE,
+              documentId: exceptionId,
+              title: `Match exception for invoice ${bill.vendorInvoiceNo}`,
+              snapshot: {
+                vendorBillId: bill.id,
+                vendorInvoiceNo: bill.vendorInvoiceNo,
+                reason: body.reason,
+                results: await this.latestResults(tx, scope, bill.id),
+              },
+              facts: { amountNpr: bill.payableTotalNpr },
+              requesterUserId: principal.userId,
+              sodUserIds: [principal.userId],
+            });
+            if (request.status === 'blocked') throw new NoEligibleApprover('No eligible approver');
+            const [exception] = await tx
+              .update(matchExceptions)
+              .set({ approvalRequestId: request.requestId })
+              .where(scoped(scope).where(matchExceptions, eq(matchExceptions.id, exceptionId)))
+              .returning();
+            await tx
+              .update(vendorBills)
+              .set({
+                status: 'exception_pending',
+                version: sql`${vendorBills.version} + 1`,
+                updatedAt: now,
+              })
+              .where(scoped(scope).where(vendorBills, eq(vendorBills.id, bill.id)));
+            await this.audit.record(tx, {
+              action: 'payables.match_exception.requested',
+              entityType: MATCH_EXCEPTION_AUDIT_ENTITY,
+              entityId: exceptionId,
+              after: { vendorBillId: bill.id, approvalRequestId: request.requestId },
+            });
+            return { status: 201, response: toExceptionDto(exception!) };
+          },
+        );
+        return done.response;
+      });
+    } catch (error) {
+      if (!(error instanceof NoEligibleApprover)) throw error;
+      throw unprocessable(
+        'NO_ELIGIBLE_APPROVER',
+        `This exception cannot be requested: ${error.reason}`,
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------------------------------------- submit
+
+  /**
+   * Sends the bill to the `vendor_bill` route (AD5). 200 with the bill in pending_approval. 409 (BILL_NOT_MATCHED)
+   * unless every line matched or a match exception was approved; 422 when nobody may approve.
+   */
+  async submit(id: string, idempotencyKey: string): Promise<VendorBillDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    const thresholds = {
+      managementNpr: await this.settings.get(scope, 'procurement.band.management_npr'),
+      founderNpr: await this.settings.get(scope, 'procurement.band.founder_npr'),
+    };
+    try {
+      return await withTx(this.db, scope, actor, async (tx) => {
+        const done = await withIdempotency(
+          tx,
+          { command: 'payables.bill.submit', key: idempotencyKey, body: { id } },
+          async () => {
+            const bill = await this.lockBill(tx, scope, id);
+            if (!submittable(bill.status, bill.matchStatus)) {
+              throw conflict(
+                'BILL_NOT_MATCHED',
+                `A ${bill.status} bill (match ${bill.matchStatus}) cannot be submitted: every line must match or a match exception must be approved`,
+              );
+            }
+            const facts = billFactsOf({
+              poMatched: bill.purchaseOrderId !== null,
+              gross: sum([bill.netTotal, bill.vatTotal]),
+              fxRate: bill.fxRate,
+              thresholds,
+            });
+            const request = await this.approvals.submit(tx, {
+              documentType: VENDOR_BILL_DOCUMENT_TYPE,
+              documentId: bill.id,
+              ...(bill.number === null ? {} : { documentNumber: bill.number }),
+              title: `Vendor bill ${bill.vendorInvoiceNo}`,
+              snapshot: {
+                vendorPartyId: bill.vendorId,
+                vendorInvoiceNo: bill.vendorInvoiceNo,
+                purchaseOrderId: bill.purchaseOrderId,
+                matchStatus: bill.matchStatus,
+                netTotal: bill.netTotal,
+                vatTotal: bill.vatTotal,
+              },
+              facts,
+              requesterUserId: bill.enteredBy,
+              submittedByUserId: principal.userId,
+              sodUserIds: [bill.enteredBy],
+            });
+            if (request.status === 'blocked') throw new NoEligibleApprover('No eligible approver');
+            await tx
+              .update(vendorBills)
+              .set({
+                status: 'pending_approval',
+                approvalRequestId: request.requestId,
+                version: sql`${vendorBills.version} + 1`,
+                updatedAt: now,
+              })
+              .where(
+                scoped(scope).where(
+                  vendorBills,
+                  and(eq(vendorBills.id, bill.id), eq(vendorBills.status, bill.status)),
+                ),
+              );
+            await this.audit.record(tx, {
+              action: 'payables.bill.submitted',
+              entityType: BILL_AUDIT_ENTITY,
+              entityId: bill.id,
+              before: { status: bill.status },
+              after: { status: 'pending_approval', approvalRequestId: request.requestId, ...facts },
+            });
+            return { status: 200, response: await this.dto(tx, scope, bill.id) };
+          },
+        );
+        return done.response;
+      });
+    } catch (error) {
+      if (!(error instanceof NoEligibleApprover)) throw error;
+      throw unprocessable('NO_ELIGIBLE_APPROVER', `This bill cannot be submitted: ${error.reason}`);
+    }
+  }
+
+  // ------------------------------------------------------------------------------------------------- helpers
+
+  private async tolerance(scope: TxScope): Promise<MatchTolerance> {
+    return {
+      qtyPct: await this.settings.get(scope, 'procurement.match.qty_pct'),
+      pricePct: await this.settings.get(scope, 'procurement.match.price_pct'),
+      priceNpr: await this.settings.get(scope, 'procurement.match.price_npr'),
+    };
+  }
+
+  private async taxRates(
+    tx: DbTransaction,
+    scope: TxScope,
+    ids: readonly string[],
+  ): Promise<Map<string, number>> {
+    if (ids.length === 0) return new Map();
+    const rows = await tx
+      .select({ id: taxCodes.id, rateBp: taxCodes.rateBp })
+      .from(taxCodes)
+      .where(and(eq(taxCodes.tenantId, scope.tenantId), inArray(taxCodes.id, [...ids])));
+    if (rows.length !== ids.length) {
+      throw unprocessable('TAX_CODE_NOT_FOUND', 'A tax code was not found');
+    }
+    return new Map(rows.map((r) => [r.id, r.rateBp]));
+  }
+
+  private async lockBill(tx: DbTransaction, scope: TxScope, id: string): Promise<BillRow> {
+    const [bill] = await tx
+      .select()
+      .from(vendorBills)
+      .where(scoped(scope).where(vendorBills, eq(vendorBills.id, id)))
+      .for('update');
+    if (bill === undefined) throw notFound('Bill');
+    return bill;
+  }
+
+  private linesOf(tx: DbTransaction, scope: TxScope, billId: string): Promise<BillLineRow[]> {
+    return tx
+      .select()
+      .from(vendorBillLines)
+      .where(scoped(scope).where(vendorBillLines, eq(vendorBillLines.vendorBillId, billId)))
+      .orderBy(asc(vendorBillLines.lineNo));
+  }
+
+  private async latestResults(
+    tx: DbTransaction,
+    scope: TxScope,
+    billId: string,
+  ): Promise<MatchResultRow[]> {
+    const rows = await tx
+      .select()
+      .from(matchResults)
+      .where(scoped(scope).where(matchResults, eq(matchResults.vendorBillId, billId)))
+      .orderBy(desc(matchResults.runNo));
+    const latest = rows[0]?.runNo;
+    return rows.filter((r) => r.runNo === latest);
+  }
+
+  private async dto(tx: DbTransaction, scope: TxScope, id: string): Promise<VendorBillDto> {
+    const [bill] = await tx
+      .select()
+      .from(vendorBills)
+      .where(scoped(scope).where(vendorBills, eq(vendorBills.id, id)));
+    if (bill === undefined) throw notFound('Bill');
+    return toDto(bill, await this.linesOf(tx, scope, id), await this.latestResults(tx, scope, id));
+  }
+}
+
+function toDto(bill: BillRow, lines: BillLineRow[], results: MatchResultRow[]): VendorBillDto {
+  const byLine = new Map(results.map((r) => [r.vendorBillLineId, r]));
+  return {
+    id: bill.id,
+    kind: bill.kind,
+    number: bill.number,
+    vendorPartyId: bill.vendorId,
+    vendorInvoiceNo: bill.vendorInvoiceNo,
+    invoiceDate: bill.invoiceDate,
+    fiscalYear: bill.fiscalYear,
+    currency: bill.currency,
+    purchaseOrderId: bill.purchaseOrderId,
+    documentId: bill.documentId,
+    status: bill.status,
+    matchStatus: bill.matchStatus,
+    netTotal: bill.netTotal,
+    vatTotal: bill.vatTotal,
+    tdsTotal: bill.tdsTotal,
+    payableTotal: bill.payableTotal,
+    enteredBy: bill.enteredBy,
+    approvalRequestId: bill.approvalRequestId,
+    version: bill.version,
+    lines: lines.map((l) => {
+      const r = byLine.get(l.id);
+      return {
+        id: l.id,
+        lineNo: l.lineNo,
+        poLineId: l.poLineId,
+        receiptLineId: l.receiptLineId,
+        description: l.description,
+        accountId: l.accountId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        netAmount: l.netAmount,
+        taxCodeId: l.taxCodeId,
+        vatAmount: l.vatAmount,
+        tdsCodeId: l.withholdingCodeId,
+        tdsAmount: l.tdsAmount,
+        match:
+          r === undefined
+            ? null
+            : {
+                runNo: r.runNo,
+                status: r.status,
+                receivedQuantity: r.receivedQuantity,
+                billedQuantity: r.billedQuantity,
+                quantityVariance: r.quantityVariance,
+                priceVariance: r.priceVariance,
+                taxVariance: r.taxVariance,
+              },
+      };
+    }),
+  };
+}
+
+function toExceptionDto(row: ExceptionRow): MatchExceptionDto {
+  return {
+    id: row.id,
+    vendorBillId: row.vendorBillId,
+    reason: row.reason,
+    status: row.status,
+    requestedBy: row.requestedBy,
+    decidedBy: row.decidedBy,
+    approvalRequestId: row.approvalRequestId,
+  };
+}
