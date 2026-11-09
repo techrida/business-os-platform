@@ -13,8 +13,9 @@ import { type Keyring, openSessionValue, sealSessionValue } from './session-cryp
 /**
  * Server-side sessions for the portal BFF. Copied from apps/workspace/src/lib/session.ts (dedupe
  * later). Differences: the `pt:` key prefix and cookie name, and a session exists only for a
- * customer user whose IdP org maps to a party (ADR 0027), so `orgKind` is always `customer` and
- * `partyId` is always set. A stored record that says otherwise is no session.
+ * customer or vendor user whose IdP org maps to a party (ADR 0027), so `orgKind` is `customer` or
+ * `vendor` and `partyId` is always set. A stored record that says otherwise (staff, any other
+ * kind, no party) is no session. The layouts send each kind to its own screens.
  *
  * The browser only ever holds an opaque 256-bit id in a `__Host-` cookie. Tokens live in
  * Valkey at `pt:sess:<SHA-256 of the id, hex>` and never reach the browser. The key is hashed so
@@ -41,8 +42,8 @@ export interface Session {
   id: string;
   sub: string;
   orgId: string;
-  orgKind: 'customer';
-  /** The customer party behind the user's IdP org (ADR 0027). */
+  orgKind: 'customer' | 'vendor';
+  /** The customer or vendor party behind the user's IdP org (ADR 0027). */
   partyId: string;
   roles: string[];
   accessToken: string;
@@ -62,7 +63,7 @@ type StoredSession = Omit<Session, 'id'> & { idToken?: string };
 const StoredSessionSchema = z.object({
   sub: z.string().min(1),
   orgId: z.string().min(1),
-  orgKind: z.literal('customer'),
+  orgKind: z.enum(['customer', 'vendor']),
   partyId: z.guid(),
   roles: z.array(z.string()),
   accessToken: z.string().min(1),
