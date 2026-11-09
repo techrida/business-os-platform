@@ -4,6 +4,7 @@ import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { LeadsModule } from './modules/leads/leads.module';
+import { LedgerModule } from './modules/ledger/ledger.module';
 import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
 import { PortalModule } from './modules/portal/portal.module';
@@ -55,6 +56,8 @@ import { UsersModule } from './platform/users/users.module';
     UsersModule,
     ApprovalsHttpModule,
     TestMemoModule,
+    // P3: the AR/AP subledger writer.
+    LedgerModule,
     CustomersModule,
     OpportunitiesModule,
     LeadsModule,
