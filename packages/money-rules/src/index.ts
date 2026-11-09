@@ -6,3 +6,4 @@ export * from './tax.js';
 export * from './discount.js';
 export * from './fx.js';
 export * from './pricing.js';
+export { invoiceSlice, splitSchedule, type SliceAmounts } from './schedule.js';
