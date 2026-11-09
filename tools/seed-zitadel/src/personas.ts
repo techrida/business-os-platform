@@ -21,7 +21,9 @@ export const PROJECT_ROLES = [
   'pmo',
   'operations_head',
   'procurement',
-  'receiver',
+  // P4 (Kuu D03): receipts go to warehouse, and receiver is gone.
+  'warehouse',
+  'operations_officer',
 ] as const;
 export type RoleKey = (typeof PROJECT_ROLES)[number];
 
