@@ -51,3 +51,4 @@ export * from './schema/crm.js';
 export * from './schema/quotations.js';
 export * from './schema/ledger.js';
 export * from './schema/sales.js';
+export * from './schema/invoicing.js';
