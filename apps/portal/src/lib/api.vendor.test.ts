@@ -26,7 +26,7 @@ const session: Session = {
   id: 'A'.repeat(43),
   sub: 'user-1',
   orgId: '00000000-0000-4000-8000-000000000002',
-  orgKind: 'customer',
+  orgKind: 'vendor',
   partyId: '00000000-0000-4000-8000-0000000000aa',
   roles: [],
   accessToken: 'eyJ.secret-access-token.sig',
