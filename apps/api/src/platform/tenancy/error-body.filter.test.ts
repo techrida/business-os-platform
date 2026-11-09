@@ -296,6 +296,48 @@ describe('ErrorBodyFilter', () => {
     },
   );
 
+  it.each([
+    'quotation_not_accepted',
+    'sales_order_not_open',
+    'schedule_line_not_planned',
+    'SCHEDULE_LINE_TAKEN',
+    'NOT_APPROVED',
+    'payment_not_submitted',
+    'payment_not_verified',
+    'proof_not_clean',
+  ])('keeps the P3 conflict code %s on a 409, and only on a 409', (code) => {
+    const out = filter(new ConflictException({ code, message: 'Not now' }));
+
+    expect(out.status).toBe(409);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('Not now');
+    expect(
+      ErrorBodySchema.parse(filter(new UnprocessableEntityException({ code, message: 'm' })).body)
+        .error.code,
+    ).toBe('bad_request');
+  });
+
+  it.each([
+    'invalid_proof',
+    'unknown_customer',
+    'unknown_withholding_code',
+    'reason_required',
+    'invalid_evidence_document',
+    'invalid_payment_schedule',
+    'evidence_required',
+  ])('keeps the P3 validation code %s on a 422, and only on a 422', (code) => {
+    const out = filter(new UnprocessableEntityException({ code, message: 'Cannot do that' }));
+
+    expect(out.status).toBe(422);
+    const parsed = ErrorBodySchema.parse(out.body);
+    expect(parsed.error.code).toBe(code);
+    expect(parsed.error.message).toBe('Cannot do that');
+    expect(
+      ErrorBodySchema.parse(filter(new ConflictException({ code, message: 'm' })).body).error.code,
+    ).toBe('conflict');
+  });
+
   it('exposes the message of a client error', () => {
     const out = filter(new ForbiddenException('Organization is not registered'));
 
