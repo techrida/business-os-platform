@@ -24,6 +24,7 @@ vi.mock('./actions', () => ({
   reverseReceiptAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
+  listReceivableOrders: vi.fn(),
   listReceipts: vi.fn(),
   getReceipt: vi.fn(),
   getPoProgress: vi.fn(),
@@ -103,6 +104,18 @@ const receipt = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+const waiting = (over: Record<string, unknown> = {}) => ({
+  id: PO,
+  number: 'PO-2082-0001',
+  vendorId: USER,
+  vendorName: 'Himal Traders Pvt. Ltd.',
+  kind: 'mixed',
+  status: 'partially_received',
+  issuedAt: '2026-11-08T20:30:00.000Z', // 9 Nov, 02:15 in Kathmandu
+  openQuantity: '9.0000',
+  ...over,
+});
+
 const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
 const list = async (sp: Record<string, string> = { po: PO }) =>
   html(await ReceiptsPage({ searchParams: Promise.resolve(sp) }));
@@ -114,26 +127,99 @@ const detail = async (id = RECEIPT, sp: Record<string, string> = {}) =>
 beforeEach(() => {
   session.roles = ['warehouse'];
   for (const fn of Object.values(api)) fn.mockReset();
+  api.listReceivableOrders.mockResolvedValue([waiting()]);
   api.getPoProgress.mockResolvedValue(progress());
   api.listReceipts.mockResolvedValue([receipt()]);
   api.getReceipt.mockResolvedValue(receipt());
 });
 
 describe('the receipts of one purchase order', () => {
-  it('asks for a purchase order when none is given, and never calls the API', async () => {
+  it('asks for a purchase order when none is given, and never calls the API, for a person who cannot receive', async () => {
+    session.roles = ['operations_officer'];
     const out = await list({});
     expect(out).toContain('Purchase order ID');
     expect(out).toContain('action="/procurement/receipts"');
     expect(out).not.toContain('/procurement/orders');
     expect(api.listReceipts).not.toHaveBeenCalled();
+    expect(api.listReceivableOrders).not.toHaveBeenCalled();
   });
 
   it('says an ID that is not one is not one, and offers the order list to procurement only', async () => {
+    session.roles = ['operations_officer'];
     const out = await list({ po: '../admin' });
     expect(out).toContain('That is not a purchase order ID');
     expect(api.listReceipts).not.toHaveBeenCalled();
     session.roles = ['procurement'];
     expect(await list({})).toContain('href="/procurement/orders"');
+    expect(api.listReceivableOrders).not.toHaveBeenCalled();
+  });
+
+  it('lists the orders waiting to be received for the warehouse, each row linking to its receipts', async () => {
+    api.listReceivableOrders.mockResolvedValue([
+      waiting(),
+      waiting({
+        id: SERVICE,
+        number: 'PO-2082-0002',
+        vendorName: 'Everest Cleaners',
+        kind: 'service',
+        status: 'issued',
+        issuedAt: undefined,
+        openQuantity: '12.5000',
+      }),
+    ]);
+    const out = await list({});
+    expect(api.listReceivableOrders).toHaveBeenCalledTimes(1);
+    expect(api.listReceipts).not.toHaveBeenCalled();
+    expect(out).toContain('Waiting to be received');
+    expect(out).toContain('PO-2082-0001');
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
+    expect(out).toContain('Partly received');
+    expect(out).toContain('9 Nov 2026');
+    expect(out).toContain('>9<');
+    expect(out).toContain('>12.5<');
+    expect(out).toContain('Everest Cleaners');
+    expect(out).toContain('>Service<');
+    expect(out).toContain('>Mixed<');
+    expect(out).toContain('Not recorded');
+    expect(out).toContain(`href="/procurement/receipts?po=${PO}"`);
+    expect(out).toContain(`href="/procurement/receipts/new?po=${PO}"`);
+    expect(out).toContain(`href="/procurement/receipts/new?po=${SERVICE}"`);
+    expect(out).toContain('aria-label="New receipt for PO-2082-0001"');
+    // The ID form stays below as a fallback.
+    expect(out).toContain('Purchase order ID');
+    expect(out.indexOf('Waiting to be received')).toBeLessThan(out.indexOf('Purchase order ID'));
+  });
+
+  it('says no purchase order is waiting, and keeps the ID form', async () => {
+    api.listReceivableOrders.mockResolvedValue([]);
+    const out = await list({});
+    expect(out).toContain('No purchase orders are waiting to be received');
+    expect(out).toContain('Purchase order ID');
+  });
+
+  it('falls back to the ID form alone when the list is forbidden', async () => {
+    api.listReceivableOrders.mockRejectedValue(apiError(403, 'forbidden'));
+    const out = await list({});
+    expect(out).toContain('Purchase order ID');
+    expect(out).not.toContain('Waiting to be received');
+    expect(out).not.toContain('role="alert"');
+  });
+
+  it('shows an error alert on a failed list, and the ID form still works', async () => {
+    api.listReceivableOrders.mockRejectedValue(apiError(500));
+    const out = await list({});
+    expect(out).toContain('role="alert"');
+    expect(out).toContain('The waiting orders did not load');
+    expect(out).not.toContain('internal wording');
+    expect(out).toContain('Purchase order ID');
+    expect(out).toContain('action="/procurement/receipts"');
+  });
+
+  it('keeps the invalid-ID alert above the list for the warehouse', async () => {
+    const out = await list({ po: '../admin' });
+    expect(out).toContain('That is not a purchase order ID');
+    expect(out).toContain('Waiting to be received');
+    expect(api.listReceipts).not.toHaveBeenCalled();
   });
 
   it('shows each receipt with its kind, status, date and a link, and the order progress', async () => {
