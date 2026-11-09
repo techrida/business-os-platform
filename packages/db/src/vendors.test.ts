@@ -3,8 +3,8 @@
 //
 // What 0032 must hold:
 //   * the migrations apply on a fresh database, and the four vendor tables exist;
-//   * checkTenancy() with its strict defaults (vendors, vendor_contacts and vendor_bank_accounts listed as
-//     tenant-scoped, which the lead adds to TENANT_SCOPED) and checkAudit() find nothing;
+//   * checkTenancy() with its strict defaults (vendors, vendor_contacts and vendor_bank_accounts are listed in
+//     TENANT_SCOPED) and checkAudit() find nothing;
 //   * a vendor's id must be a vendor party, never a customer party (the kind FK);
 //   * a vendor cannot be approved by the person who created it, and an approved vendor names its approver;
 //   * a PAN is required, nine digits, unless the vendor is foreign; unique within a tenant, free across tenants;
@@ -22,7 +22,7 @@ import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { checkAudit } from './check-audit.js';
-import { checkTenancy, describeViolations, TENANT_SCOPED } from './check-tenancy.js';
+import { checkTenancy, describeViolations } from './check-tenancy.js';
 import { runMigrations } from './migrate.js';
 import { createParty, createStaffUser, createTenantWithEntity } from './testing/fixtures.js';
 
@@ -35,9 +35,6 @@ const VENDOR_TABLES = [
   'vendor_accounts',
   'vendor_bank_accounts',
 ] as const;
-
-/** The three tenant-level tables of 0032; the lead adds them to check-tenancy's TENANT_SCOPED. */
-const VENDOR_TENANT_SCOPED = ['app.vendors', 'app.vendor_contacts', 'app.vendor_bank_accounts'];
 
 let container: StartedPostgreSqlContainer;
 let owner: Pool;
@@ -268,9 +265,7 @@ describe('0032_vendors on a fresh database', () => {
   });
 
   it('passes checkTenancy() with the strict defaults', async () => {
-    const violations = await checkTenancy(owner, {
-      tenantScoped: [...TENANT_SCOPED, ...VENDOR_TENANT_SCOPED],
-    });
+    const violations = await checkTenancy(owner);
     expect(violations, describeViolations(violations)).toEqual([]);
   });
 
