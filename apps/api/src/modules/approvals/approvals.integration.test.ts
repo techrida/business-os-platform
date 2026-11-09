@@ -18,6 +18,7 @@ import {
   approvalRequests,
   approvalSteps,
   checkTenancy,
+  createDepartment,
   createStaffUser,
   createTenantWithEntity,
   runMigrations,
@@ -1364,3 +1365,128 @@ describe('subject hooks (K1): link and onCancelled', () => {
     expect(row).toMatchObject({ status: 'pending', version: 1 });
   });
 });
+
+describe('request eligibility before disclosure or locking', () => {
+  const action = { action: 'approve' as const, expectedVersion: 1 };
+
+  it.each(['customer', 'vendor', 'staff'] as const)(
+    'answers identically for existing and unknown ids to an unrelated %s principal',
+    async (orgKind) => {
+      const { requestId } = await submit();
+      me = U.stranger;
+      grants = new Map();
+      const original = caller.current();
+      const identity = vi.spyOn(caller, 'current').mockReturnValue({
+        ...original,
+        principal: { ...original.principal, orgKind },
+      });
+      try {
+        for (const read of [
+          (id: string) => service.get(id),
+          (id: string) => service.getForAction(id, action, 'unrelated-key'),
+          (id: string) => service.act(id, action, 'unrelated-key'),
+        ]) {
+          const responses = [];
+          for (const id of [requestId, randomUUID()]) {
+            const error = await read(id).catch((e: unknown) => e);
+            expect(error).toMatchObject({ status: 404 });
+            responses.push((error as { getResponse(): unknown }).getResponse());
+          }
+          expect(responses[0]).toEqual(responses[1]);
+        }
+      } finally {
+        identity.mockRestore();
+      }
+    },
+  );
+
+  it('refuses portal callers before any request query, even with approval grants', async () => {
+    me = U.acc;
+    const original = caller.current();
+    const identity = vi.spyOn(caller, 'current').mockReturnValue({
+      ...original,
+      principal: { ...original.principal, orgKind: 'vendor' },
+    });
+    const select = vi.spyOn(db, 'select');
+    const transaction = vi.spyOn(db, 'transaction');
+    try {
+      await expect(service.get(randomUUID())).rejects.toMatchObject({ status: 404 });
+      await expect(service.getForAction(randomUUID(), action, 'portal-key')).rejects.toMatchObject({ status: 404 });
+      await expect(service.act(randomUUID(), action, 'portal-key')).rejects.toMatchObject({ status: 404 });
+      await expect(service.inbox()).rejects.toMatchObject({ status: 404 });
+      expect(select).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+    } finally {
+      select.mockRestore();
+      transaction.mockRestore();
+      identity.mockRestore();
+    }
+  });
+
+  it('refuses unrelated staff before starting the locking transaction', async () => {
+    const { requestId } = await submit();
+    me = U.stranger;
+    grants = new Map();
+    const transaction = vi.spyOn(db, 'transaction');
+    try {
+      await expect(service.act(requestId, action, 'staff-key')).rejects.toMatchObject({ status: 404 });
+      expect(transaction).not.toHaveBeenCalled();
+    } finally {
+      transaction.mockRestore();
+    }
+  });
+
+  it('refuses an entity-mismatched principal before querying or starting a transaction', async () => {
+    me = U.acc;
+    const original = caller.current();
+    const identity = vi.spyOn(caller, 'current').mockReturnValue({
+      ...original,
+      principal: { ...original.principal, organizationId: scopeB.organizationId },
+    });
+    const select = vi.spyOn(db, 'select');
+    const transaction = vi.spyOn(db, 'transaction');
+    try {
+      await expect(service.act(randomUUID(), action, 'wrong-entity-key')).rejects.toMatchObject({ status: 404 });
+      expect(select).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+    } finally {
+      select.mockRestore();
+      transaction.mockRestore();
+      identity.mockRestore();
+    }
+  });
+
+  it('lets a designated head without an approval role read and act, and conflicts on a key reused across requests', async () => {
+    me = U.founder;
+    const { departmentId } = await createDepartment(ownerPool, scope);
+    await withTx(db, scope, systemActor('head-seed'), (tx) =>
+      tx.execute(sql`UPDATE app.departments SET head_user_id = ${U.deputy} WHERE id = ${departmentId}`),
+    );
+    await admin.createWorkflow({
+      key: 'purchase_request',
+      name: 'Head approval',
+      spec: {
+        documentType: 'purchase_request',
+        steps: [{ id: 'head', kind: 'department_head', fallbackRole: 'operations_head', reason: 'Head approves' }],
+        rules: [],
+      },
+    });
+    await admin.publish('purchase_request', 1);
+    service.registerSubject({ documentType: 'purchase_request', onDecided });
+    const first = await submit({ documentType: 'purchase_request', facts: { departmentId } });
+    const second = await submit({ documentType: 'purchase_request', facts: { departmentId } });
+    me = U.deputy;
+    grants = new Map();
+    expect(rolesOf(me)).toEqual([]);
+    expect((await service.get(first.requestId)).requestId).toBe(first.requestId);
+    const key = randomUUID();
+    await service.getForAction(first.requestId, action, key);
+    const result = await service.act(first.requestId, action, key);
+    expect(await service.act(first.requestId, action, key)).toEqual(result);
+    await service.getForAction(second.requestId, action, key);
+    await expect(service.act(second.requestId, action, key)).rejects.toMatchObject({ status: 409 });
+    expect((await service.get(second.requestId)).status).toBe('pending');
+    expect(await countActions(second.requestId, 'approve')).toBe(0);
+  });
+});
+
