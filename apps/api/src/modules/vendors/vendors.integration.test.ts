@@ -1,0 +1,668 @@
+// Integration test of the vendors service (P4 V1) on a real Postgres (Testcontainers, needs Docker in WSL).
+// Real parts: every migration as bos_owner, queries as bos_app, VendorsController, VendorsService, the real
+// VerificationService and VerificationController, AuditService and the pure can(). The vendor adapter is
+// registered the way VendorsModule does it (VendorPartyOwnerRegistrar).
+// Run: pnpm --filter @bos/api exec vitest run src/modules/vendors/vendors.integration.test.ts
+// supertest bodies are `any`; the assertions below read them directly, as the HTTP contract is what is under test.
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call */
+import 'reflect-metadata';
+
+import { randomUUID } from 'node:crypto';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  VendorAccountDtoSchema,
+  VendorDtoSchema,
+  VerificationCaseDtoSchema,
+  type Permission,
+  type RoleKey,
+  type Scope,
+  type VendorDto,
+} from '@bos/contracts';
+import { createParty, createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import { ForbiddenException, type INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool, type PoolClient } from 'pg';
+import request from 'supertest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { configureApp } from '../../app.setup';
+import { AuditService } from '../../platform/audit/audit.service';
+import { can } from '../../platform/authz/can';
+import type { AuthzService } from '../../platform/authz/authz.service';
+import type { Principal } from '../../platform/authz/principal';
+import type { Db } from '../../platform/db/db.module';
+import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
+import { VerificationController } from '../verification/verification.controller';
+import { VerificationService } from '../verification/verification.service';
+import { VendorsController } from './vendors.controller';
+import { VendorPartyOwnerRegistrar } from './vendors.module';
+import { VendorsService } from './vendors.service';
+
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
+
+const OWNER_PW = 'owner-test-pw';
+const APP_PW = 'app-test-pw';
+
+let container: StartedPostgreSqlContainer;
+let ownerPool: Pool;
+let appPool: Pool;
+let db: Db;
+let app: INestApplication;
+let baseUrl: string;
+let service: VendorsService;
+let tenantId: string;
+let orgA: string;
+let orgB: string;
+let staffIdpOrgId: string;
+
+const U = {} as Record<'founder' | 'procurement' | 'accountant', string>;
+
+const grantsOf = (role: RoleKey) =>
+  new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
+const current: { userId: string; role: RoleKey; organizationId: string } = {
+  userId: '',
+  role: 'founder',
+  organizationId: '',
+};
+const as = (key: keyof typeof U, role: RoleKey, organizationId = orgA) => {
+  current.userId = U[key];
+  current.role = role;
+  current.organizationId = organizationId;
+};
+
+const scopeNow = () => ({ tenantId, organizationId: current.organizationId });
+const principalNow = (): Principal => ({
+  userId: current.userId,
+  zitadelUserId: `z-${current.userId}`,
+  ...scopeNow(),
+  orgKind: 'staff',
+  partyId: null,
+  idpOrgId: staffIdpOrgId,
+  roles: [],
+  departmentId: null,
+  status: 'active',
+  grants: grantsOf(current.role),
+});
+const caller = {
+  current: () => ({
+    scope: scopeNow(),
+    actor: { kind: 'user' as const, id: current.userId, correlationId: 'test-corr' },
+    principal: principalNow(),
+  }),
+};
+const authz = {
+  assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
+    const d = can(principalNow(), action, ref);
+    if (!d.allowed) {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden', reason: d.reason });
+    }
+  },
+};
+
+const urlFor = (user: string, password: string, database: string) => {
+  const url = new URL(container.getConnectionUri());
+  url.username = user;
+  url.password = password;
+  url.pathname = `/${database}`;
+  return url.toString();
+};
+
+/** A transaction as bos_owner with the bos.* settings the audit triggers need (the fixtures do the same). */
+async function ownerTx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await ownerPool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const [k, v] of Object.entries({
+      'bos.tenant_id': tenantId,
+      'bos.organization_id': orgA,
+      'bos.actor_kind': 'system',
+      'bos.actor_id': 'system:test',
+      'bos.correlation_id': `test:${randomUUID()}`,
+      'bos.ip': '',
+      'bos.user_agent': '',
+    })) {
+      await client.query('SELECT set_config($1, $2, true)', [k, v]);
+    }
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const admin0 = new Pool({ connectionString: container.getConnectionUri(), max: 1 });
+  await admin0.query(`CREATE ROLE bos_owner LOGIN PASSWORD '${OWNER_PW}'`);
+  await admin0.query(`CREATE ROLE bos_app LOGIN PASSWORD '${APP_PW}'`);
+  await admin0.query('CREATE DATABASE bos OWNER bos_owner');
+  await admin0.query('GRANT CONNECT ON DATABASE bos TO bos_app');
+  await admin0.end();
+  const bosAdmin = new Pool({ connectionString: urlFor('test', 'test', 'bos'), max: 1 });
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT USAGE ON SCHEMAS TO bos_app',
+  );
+  await bosAdmin.query(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE bos_owner GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bos_app',
+  );
+  await bosAdmin.end();
+  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
+
+  ownerPool = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  appPool = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 6 });
+  db = drizzle({ client: appPool });
+
+  const tenant = await createTenantWithEntity(appPool);
+  tenantId = tenant.tenantId;
+  orgA = tenant.organizationId;
+  staffIdpOrgId = tenant.idpOrgId;
+  orgB = randomUUID();
+  await ownerTx(async (client) => {
+    await client.query(
+      `INSERT INTO app.organizations (id, tenant_id, organization_id, code, name, legal_name, is_default)
+       VALUES ($1, $2, $1, 'ENT-B', 'Entity B', 'Entity B', false)`,
+      [orgB, tenantId],
+    );
+  });
+  for (const key of ['founder', 'procurement', 'accountant'] as const) {
+    U[key] = (
+      await createStaffUser(appPool, { tenantId, organizationId: orgA, idpOrgId: tenant.idpOrgId })
+    ).userId;
+  }
+  // The founder may act for entity B as well; the procurement officer may not.
+  await ownerTx(async (client) => {
+    await client.query(
+      `INSERT INTO app.user_entities (tenant_id, organization_id, user_id, is_default) VALUES ($1, $2, $3, false)`,
+      [tenantId, orgB, U.founder],
+    );
+  });
+
+  const verification = new VerificationService(
+    db,
+    // Opening a case never touches documents; Nest calls onModuleInit, which registers an owner policy.
+    { registerOwner: vi.fn() } as never,
+    authz as unknown as AuthzService,
+    new AuditService(db),
+    caller,
+  );
+  // What VendorsModule does when it starts.
+  new VendorPartyOwnerRegistrar(verification).onModuleInit();
+  service = new VendorsService(
+    db,
+    authz as unknown as AuthzService,
+    caller,
+    verification,
+    new AuditService(db),
+  );
+  const moduleRef = await Test.createTestingModule({
+    controllers: [VendorsController, VerificationController],
+    providers: [
+      { provide: VendorsService, useValue: service },
+      { provide: VerificationService, useValue: verification },
+    ],
+  }).compile();
+  app = moduleRef.createNestApplication({ rawBody: true, logger: false });
+  configureApp(app);
+  app.useGlobalFilters(new ErrorBodyFilter());
+  await app.listen(0, '127.0.0.1');
+  baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
+});
+
+afterAll(async () => {
+  await app?.close();
+  await appPool?.end();
+  await ownerPool?.end();
+  await container?.stop();
+});
+
+beforeEach(() => as('founder', 'founder'));
+
+// ---------------------------------------------------------------------------------------------- helpers
+
+const api = () => request(baseUrl);
+let panCounter = 100_000_000;
+const nextPan = () => String(panCounter++);
+const idem = () => ({ 'Idempotency-Key': randomUUID() });
+
+async function createVendor(
+  overrides: Record<string, unknown> = {},
+  key: string = randomUUID(),
+): Promise<request.Response> {
+  return api()
+    .post('/v1/vendors')
+    .set('Idempotency-Key', key)
+    .send({
+      legalName: 'Himal Traders Pvt Ltd',
+      kind: 'company',
+      pan: nextPan(),
+      vatRegistered: true,
+      country: 'NP',
+      ...overrides,
+    });
+}
+
+/** A vendor created by `creator` (default: procurement), parsed against the contract. */
+async function newVendor(creator: [keyof typeof U, RoleKey] = ['procurement', 'procurement']) {
+  as(creator[0], creator[1]);
+  const res = await createVendor();
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  const dto: VendorDto = VendorDtoSchema.parse(res.body);
+  as('founder', 'founder');
+  return dto;
+}
+
+/** Sets the KYB case of a vendor to a status (the case flow itself is tested in the verification files). */
+async function setCase(
+  partyId: string,
+  status: 'submitted' | 'approved',
+  taxClearanceExpiresOn = '2099-01-01',
+) {
+  await ownerTx(async (client) => {
+    await client.query(
+      `UPDATE app.verification_cases
+          SET status = $2, submitted_by_user_id = $3, submitted_at = now(),
+              reviewer_user_id = $4, decided_at = $5, checklist = $6::jsonb
+        WHERE tenant_id = $1 AND party_id = $7`,
+      [
+        tenantId,
+        status,
+        U.accountant,
+        status === 'approved' ? U.founder : null,
+        status === 'approved' ? new Date() : null,
+        JSON.stringify([
+          {
+            key: 'tax_clearance',
+            required: true,
+            status: status === 'approved' ? 'accepted' : 'provided',
+            documentId: randomUUID(),
+            expiresOn: taxClearanceExpiresOn,
+          },
+        ]),
+        partyId,
+      ],
+    );
+  });
+}
+
+const post = (path: string, body?: unknown) =>
+  api()
+    .post(path)
+    .set(idem())
+    .send(body ?? {});
+
+const rowOf = async <T extends object>(sqlText: string, params: unknown[]): Promise<T[]> =>
+  (await ownerPool.query(sqlText, params)).rows as T[];
+
+/** draft -> pending_kyc -> under_review, by `procurement`, with the KYB case set to submitted. */
+async function toUnderReview(v: VendorDto) {
+  as('procurement', 'procurement');
+  expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+  await setCase(v.id, 'submitted');
+  const res = await post(`/v1/vendors/${v.id}/submit-kyc`);
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  expect(res.body.status).toBe('under_review');
+  as('founder', 'founder');
+}
+
+// -------------------------------------------------------------------------------------------------- tests
+
+describe('create', () => {
+  it('writes party (vendor), vendor and the account of the acting entity in one transaction', async () => {
+    as('procurement', 'procurement');
+    const res = await createVendor({ kind: 'sole_proprietor' });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const dto = VendorDtoSchema.parse(res.body);
+    expect(dto).toMatchObject({ status: 'draft', kind: 'sole_proprietor', version: 1 });
+
+    const party = await rowOf<{ kind: string; code: string }>(
+      'SELECT kind, code FROM app.parties WHERE id = $1',
+      [dto.id],
+    );
+    expect(party).toEqual([{ kind: 'vendor', code: expect.stringMatching(/^VEN-[0-9A-F]{12}$/) }]);
+    const vendor = await rowOf<{ kind: string; created_by: string; owner_user_id: string }>(
+      'SELECT kind, created_by, owner_user_id FROM app.vendors WHERE id = $1',
+      [dto.id],
+    );
+    expect(vendor).toEqual([
+      { kind: 'proprietor', created_by: U.procurement, owner_user_id: U.procurement },
+    ]);
+    const accounts = await rowOf<{ organization_id: string; default_currency: string }>(
+      'SELECT organization_id, default_currency FROM app.vendor_accounts WHERE vendor_id = $1',
+      [dto.id],
+    );
+    expect(accounts).toEqual([{ organization_id: orgA, default_currency: 'NPR' }]);
+  });
+
+  it('replays the same Idempotency-Key without a second vendor, and refuses a missing key', async () => {
+    const key = randomUUID();
+    const body = { legalName: 'Replay Co', pan: nextPan() };
+    const first = await createVendor(body, key);
+    const second = await createVendor(body, key);
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body.id).toBe(first.body.id);
+    const rows = await rowOf('SELECT 1 FROM app.vendors WHERE pan = $1', [body.pan]);
+    expect(rows).toHaveLength(1);
+    const noKey = await api().post('/v1/vendors').send({ legalName: 'x' });
+    expect(noKey.status).toBe(400);
+  });
+
+  it('answers 409 for a PAN another vendor of the tenant holds, also when two creates race', async () => {
+    const pan = nextPan();
+    expect((await createVendor({ pan })).status).toBe(201);
+    const dup = await createVendor({ pan, legalName: 'Same PAN Again' });
+    expect(dup.status, JSON.stringify(dup.body)).toBe(409);
+    expect(dup.body.error.message).toMatch(/PAN .* already exists/);
+
+    const racePan = nextPan();
+    const results = await Promise.all([
+      createVendor({ pan: racePan }),
+      createVendor({ pan: racePan }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(await rowOf('SELECT 1 FROM app.vendors WHERE pan = $1', [racePan])).toHaveLength(1);
+  });
+
+  it('answers 400 for a foreign vendor with country NP, and 201 for a real foreign vendor without a PAN', async () => {
+    const bad = await createVendor({ kind: 'foreign', country: 'NP' });
+    expect(bad.status).toBe(400);
+    const ok = await createVendor({ kind: 'foreign', country: 'IN', pan: undefined });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect(ok.body.pan).toBeNull();
+  });
+
+  it('is refused without vendor.write (accountant)', async () => {
+    as('accountant', 'accountant');
+    expect((await createVendor()).status).toBe(403);
+  });
+});
+
+describe('edit', () => {
+  it('uses expectedVersion (stale is 409) and locks the tax identity of an approved vendor', async () => {
+    const v = await newVendor();
+    const ok = await api()
+      .patch(`/v1/vendors/${v.id}`)
+      .send({ expectedVersion: 1, vatRegistered: false });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body).toMatchObject({ vatRegistered: false, version: 2 });
+    const stale = await api()
+      .patch(`/v1/vendors/${v.id}`)
+      .send({ expectedVersion: 1, vatRegistered: true });
+    expect(stale.status).toBe(409);
+
+    await toUnderReview(v);
+    await setCase(v.id, 'approved');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(200);
+    const locked = await api()
+      .get(`/v1/vendors/${v.id}`)
+      .then((r) => r.body.version as number)
+      .then((version) =>
+        api().patch(`/v1/vendors/${v.id}`).send({ expectedVersion: version, legalName: 'Renamed' }),
+      );
+    expect(locked.status).toBe(409);
+    expect(locked.body.error.message).toMatch(/new KYB review/);
+  });
+
+  it('answers 404 for an unknown vendor', async () => {
+    expect((await api().get(`/v1/vendors/${randomUUID()}`)).status).toBe(404);
+  });
+});
+
+describe('the vendor KYB case through the registered adapter', () => {
+  it('opens for a vendor with vendor.write, is refused without it, and is 404 for a customer party', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    const opened = await api().post('/v1/verification-cases').send({ partyId: v.id });
+    expect(opened.status, JSON.stringify(opened.body)).toBe(201);
+    expect(VerificationCaseDtoSchema.parse(opened.body).partyId).toBe(v.id);
+    const [kind] = await rowOf<{ party_kind: string }>(
+      'SELECT party_kind FROM app.verification_cases WHERE party_id = $1',
+      [v.id],
+    );
+    expect(kind?.party_kind).toBe('vendor');
+
+    const other = await newVendor();
+    as('accountant', 'accountant');
+    expect((await api().post('/v1/verification-cases').send({ partyId: other.id })).status).toBe(
+      403,
+    );
+
+    const customer = (await createParty(appPool, { tenantId, kind: 'customer' })).partyId;
+    as('procurement', 'procurement');
+    // A customer party has no vendor row, and the vendor adapter is not asked for it: the customer adapter is.
+    const res = await api().post('/v1/verification-cases').send({ partyId: customer });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('lifecycle and activation', () => {
+  it('moves draft -> pending_kyc (opening the KYB case) -> under_review once the case is submitted', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    const first = await post(`/v1/vendors/${v.id}/submit-kyc`);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(first.body.status).toBe('pending_kyc');
+    expect(
+      await rowOf('SELECT 1 FROM app.verification_cases WHERE party_id = $1', [v.id]),
+    ).toHaveLength(1);
+
+    const early = await post(`/v1/vendors/${v.id}/submit-kyc`);
+    expect(early.status).toBe(409);
+    expect(early.body.error.message).toMatch(/KYB case must be submitted/);
+
+    await setCase(v.id, 'submitted');
+    const second = await post(`/v1/vendors/${v.id}/submit-kyc`);
+    expect(second.status, JSON.stringify(second.body)).toBe(200);
+    expect(second.body.status).toBe('under_review');
+  });
+
+  it('answers 409 to an activation without an approved KYB case', async () => {
+    const v = await newVendor();
+    const draft = await post(`/v1/vendors/${v.id}/activate`);
+    expect(draft.status).toBe(409);
+    expect(draft.body.error.message).toMatch(/cannot be moved to approved/);
+
+    await toUnderReview(v); // the case is submitted, not approved
+    const res = await post(`/v1/vendors/${v.id}/activate`);
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body.error.code).toBe('kyb_not_verified');
+    const [row] = await rowOf<{ status: string }>('SELECT status FROM app.vendors WHERE id = $1', [
+      v.id,
+    ]);
+    expect(row?.status).toBe('under_review');
+  });
+
+  it('answers 403 to the creator activating their own vendor, and the DB CHECK is the backstop', async () => {
+    const v = await newVendor(['founder', 'founder']);
+    as('founder', 'founder');
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+    await setCase(v.id, 'submitted');
+    expect((await post(`/v1/vendors/${v.id}/submit-kyc`)).status).toBe(200);
+    await setCase(v.id, 'approved');
+
+    const res = await post(`/v1/vendors/${v.id}/activate`);
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    const [row] = await rowOf<{ status: string; approved_by: string | null }>(
+      'SELECT status, approved_by FROM app.vendors WHERE id = $1',
+      [v.id],
+    );
+    expect(row).toEqual({ status: 'under_review', approved_by: null });
+
+    await expect(
+      ownerTx((client) =>
+        client.query(
+          `UPDATE app.vendors SET status = 'approved', approved_by = created_by WHERE id = $1`,
+          [v.id],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('activates a vendor another user created once its KYB case is approved; accountant may not', async () => {
+    const v = await newVendor();
+    await toUnderReview(v);
+    await setCase(v.id, 'approved');
+    as('accountant', 'accountant');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(403);
+
+    as('founder', 'founder');
+    const res = await post(`/v1/vendors/${v.id}/activate`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe('approved');
+    const [row] = await rowOf<{ approved_by: string }>(
+      'SELECT approved_by FROM app.vendors WHERE id = $1',
+      [v.id],
+    );
+    expect(row?.approved_by).toBe(U.founder);
+  });
+
+  it('suspends, blocks and archives along the contract state machine only', async () => {
+    const v = await newVendor();
+    await toUnderReview(v);
+    await setCase(v.id, 'approved');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(200);
+
+    expect((await post(`/v1/vendors/${v.id}/archive`, { reason: 'too early' })).status).toBe(409);
+    expect((await post(`/v1/vendors/${v.id}/suspend`)).status).toBe(400); // a reason is required
+    const suspended = await post(`/v1/vendors/${v.id}/suspend`, { reason: 'audit hold' });
+    expect(suspended.body.status).toBe('suspended');
+    const blocked = await post(`/v1/vendors/${v.id}/block`, { reason: 'fraud suspicion' });
+    expect(blocked.body.status).toBe('blocked');
+    const archived = await post(`/v1/vendors/${v.id}/archive`, { reason: 'closed' });
+    expect(archived.body.status).toBe('archived');
+    expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(409);
+  });
+});
+
+describe('daily KYC expiry (suspendLapsedKyc)', () => {
+  const DAY = 86_400_000;
+  const day = (offset: number) => new Date(Date.now() + offset * DAY).toISOString().slice(0, 10);
+
+  it('suspends an approved vendor whose tax clearance lapsed, and a reactivation needs a renewed one', async () => {
+    const lapsed = await newVendor();
+    const valid = await newVendor();
+    for (const v of [lapsed, valid]) {
+      await toUnderReview(v);
+      await setCase(v.id, 'approved', v === lapsed ? day(5) : '2099-01-01');
+      expect((await post(`/v1/vendors/${v.id}/activate`)).status).toBe(200);
+    }
+
+    // Ten days on, the clearance that ran out five days ahead has lapsed; the other one has not.
+    const later = new Date(Date.now() + 10 * DAY);
+    expect((await service.suspendLapsedKyc(later)).suspended).toEqual([lapsed.id]);
+    const status = async (id: string) =>
+      (await rowOf<{ status: string }>('SELECT status FROM app.vendors WHERE id = $1', [id]))[0]
+        ?.status;
+    expect(await status(lapsed.id)).toBe('suspended');
+    expect(await status(valid.id)).toBe('approved');
+    // A second run finds nothing left to do.
+    expect((await service.suspendLapsedKyc(later)).suspended).toEqual([]);
+
+    await setCase(lapsed.id, 'approved', '2020-01-01');
+    const refused = await post(`/v1/vendors/${lapsed.id}/activate`);
+    expect(refused.status, JSON.stringify(refused.body)).toBe(409);
+    expect(refused.body.error.message).toMatch(/tax clearance .* expired/);
+    await setCase(lapsed.id, 'approved', '2099-01-01');
+    expect((await post(`/v1/vendors/${lapsed.id}/activate`)).status).toBe(200);
+  });
+});
+
+describe('contacts', () => {
+  it('makes the first contact primary, swaps the primary, and deletes', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    const a = await post(`/v1/vendors/${v.id}/contacts`, {
+      name: 'Sita Rai',
+      email: 'Sita@Example.com',
+      phone: '+9779812345678',
+      role: 'Accounts',
+    });
+    expect(a.status, JSON.stringify(a.body)).toBe(201);
+    expect(a.body).toMatchObject({
+      name: 'Sita Rai',
+      email: 'sita@example.com',
+      role: 'Accounts',
+      isPrimary: true,
+    });
+    const b = await post(`/v1/vendors/${v.id}/contacts`, { name: 'Ram Karki' });
+    expect(b.body.isPrimary).toBe(false);
+
+    const swap = await api()
+      .patch(`/v1/vendors/${v.id}/contacts/${b.body.id}`)
+      .send({ expectedVersion: 1, isPrimary: true });
+    expect(swap.status, JSON.stringify(swap.body)).toBe(200);
+    expect(swap.body.isPrimary).toBe(true);
+    const list = await api().get(`/v1/vendors/${v.id}/contacts`);
+    expect(
+      list.body.map((c: { name: string; isPrimary: boolean }) => [c.name, c.isPrimary]),
+    ).toEqual([
+      ['Ram Karki', true],
+      ['Sita Rai', false],
+    ]);
+
+    const stale = await api()
+      .patch(`/v1/vendors/${v.id}/contacts/${a.body.id}`)
+      .send({ expectedVersion: 1, name: 'S' });
+    expect(stale.status).toBe(409); // version moved to 2 when it stepped down as primary
+
+    const other = await newVendor();
+    as('procurement', 'procurement');
+    expect((await api().delete(`/v1/vendors/${other.id}/contacts/${a.body.id}`)).status).toBe(404);
+    expect((await api().delete(`/v1/vendors/${v.id}/contacts/${a.body.id}`)).status).toBe(204);
+    expect((await api().get(`/v1/vendors/${v.id}/contacts`)).body).toHaveLength(1);
+  });
+});
+
+describe('accounts per entity', () => {
+  it('answers 404 to a cross-entity read, and 200 once the caller acts for that entity', async () => {
+    const v = await newVendor();
+    as('founder', 'founder');
+    const created = await post(`/v1/vendors/${v.id}/accounts`, {
+      organizationId: orgB,
+      defaultCurrency: 'USD',
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(VendorAccountDtoSchema.parse(created.body)).toMatchObject({
+      organizationId: orgB,
+      defaultCurrency: 'USD',
+      vendorPartyId: v.id,
+    });
+
+    // Acting for entity A: the account of entity B is out of scope.
+    const cross = await api().get(`/v1/vendors/${v.id}/accounts/${orgB}`);
+    expect(cross.status, JSON.stringify(cross.body)).toBe(404);
+    const own = await api().get(`/v1/vendors/${v.id}/accounts/${orgA}`);
+    expect(own.status).toBe(200);
+    const listA = await api().get(`/v1/vendors/${v.id}/accounts`);
+    expect(listA.body.map((a: { organizationId: string }) => a.organizationId)).toEqual([orgA]);
+
+    as('founder', 'founder', orgB);
+    const asB = await api().get(`/v1/vendors/${v.id}/accounts/${orgB}`);
+    expect(asB.status, JSON.stringify(asB.body)).toBe(200);
+    expect((await api().get(`/v1/vendors/${v.id}/accounts/${orgA}`)).status).toBe(404);
+  });
+
+  it('refuses an entity the caller is not a member of (404) and a second account for the same entity (409)', async () => {
+    const v = await newVendor();
+    as('procurement', 'procurement');
+    const notMember = await post(`/v1/vendors/${v.id}/accounts`, { organizationId: orgB });
+    expect(notMember.status).toBe(404);
+    const dup = await post(`/v1/vendors/${v.id}/accounts`, { organizationId: orgA });
+    expect(dup.status).toBe(409);
+    expect(dup.body.error.message).toMatch(/already has an account/);
+    const badTerm = await post(`/v1/vendors/${v.id}/accounts`, {
+      organizationId: orgA,
+      paymentTermId: randomUUID(),
+    });
+    expect(badTerm.status).toBe(400);
+  });
+});
