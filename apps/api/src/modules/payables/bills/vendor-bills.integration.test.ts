@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  type DocumentVersionStatus,
   type Permission,
   type RoleKey,
   type Scope,
@@ -338,13 +339,38 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
   return { id, lineId, vendorId };
 }
 
-async function doc(): Promise<string> {
+async function doc(versions: readonly DocumentVersionStatus[] = ['clean']): Promise<string> {
   const { rows } = await exec(
     scopeA,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
         VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill', ${randomUUID()}) RETURNING id`,
   );
-  return (rows[0] as { id: string }).id;
+  const documentId = (rows[0] as { id: string }).id;
+  for (const [i, status] of versions.entries()) {
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.document_versions (tenant_id, organization_id, document_id, version, filename,
+            declared_mime, size_bytes, storage_key, status)
+          VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, ${documentId}, ${i + 1}, 'invoice.pdf',
+                  'application/pdf', 1024, ${`${scopeA.tenantId}/${randomUUID()}`}, ${status})`,
+    );
+  }
+  return documentId;
+}
+
+async function billWithoutPo(documentId: string, vendorPartyId?: string) {
+  return service.create(
+    {
+      vendorPartyId: vendorPartyId ?? (await vendor()),
+      kind: 'bill',
+      vendorInvoiceNo: `INV-${randomUUID().slice(0, 8)}`,
+      invoiceDate: '2026-11-09',
+      currency: 'NPR',
+      documentId,
+      lines: [{ accountId: randomUUID(), quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode }],
+    },
+    randomUUID(),
+  );
 }
 
 async function billFor(
@@ -408,6 +434,17 @@ async function decide(user: string, role: RoleKey, requestId: string) {
 // ---------------------------------------------------------------------------------------- check 6
 
 describe('match (check 6, AD6 defaults from settings)', () => {
+  it('returns the vendor name on bill list and detail without requiring vendor.read', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    const expected = {
+      vendorPartyId: po.vendorId,
+      vendorName: `Vendor ${po.vendorId.slice(0, 6)}`,
+    };
+    expect(await service.get(bill.id)).toMatchObject(expected);
+    expect((await service.list()).find((row) => row.id === bill.id)).toMatchObject(expected);
+  });
+
   it('passes +2% on 10,000 and lets the bill through to Accountant -> Finance', async () => {
     const po = await receivedPo('1', '10000.00', '1');
     const bill = await billFor(po, '1', '10200.00');
@@ -493,6 +530,84 @@ describe('match (check 6, AD6 defaults from settings)', () => {
         .orderBy(asc(matchResults.runNo)),
     );
     expect(runs.map((r) => r.runNo)).toEqual([1, 2]);
+  });
+});
+
+describe('invoice documents', () => {
+  it.each<DocumentVersionStatus>([
+    'awaiting_content',
+    'quarantined',
+    'infected',
+    'rejected',
+    'scan_failed',
+  ])(
+    'refuses submit when the newest invoice version is %s even after an older clean version',
+    async (status) => {
+      const bill = await billWithoutPo(await doc(['clean', status]));
+      const refused = await httpErrorOf(service.submit(bill.id, randomUUID()));
+      expect(refused.getStatus()).toBe(409);
+      expect(codeOf(refused)).toBe('BILL_DOCUMENT_NOT_CLEAN');
+      expect(await service.get(bill.id)).toMatchObject({
+        status: bill.status,
+        version: bill.version,
+        approvalRequestId: null,
+      });
+      expect(
+        await read((tx) =>
+          tx.select().from(approvalRequests).where(eq(approvalRequests.documentId, bill.id)),
+        ),
+      ).toHaveLength(0);
+    },
+  );
+
+  it('refuses submit when the invoice document has no version', async () => {
+    const bill = await billWithoutPo(await doc([]));
+    const refused = await httpErrorOf(service.submit(bill.id, randomUUID()));
+    expect(refused.getStatus()).toBe(409);
+    expect(codeOf(refused)).toBe('BILL_DOCUMENT_NOT_CLEAN');
+    expect((await service.get(bill.id)).approvalRequestId).toBeNull();
+  });
+
+  it('refuses submit after the invoice document is removed', async () => {
+    const bill = await billWithoutPo(await doc());
+    await exec(
+      scopeA,
+      sql`UPDATE app.documents SET removed_at = now() WHERE id = ${bill.documentId}`,
+    );
+    const refused = await httpErrorOf(service.submit(bill.id, randomUUID()));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+    expect((await service.get(bill.id)).approvalRequestId).toBeNull();
+  });
+
+  it('refuses a removed document when entering a bill', async () => {
+    const documentId = await doc();
+    await exec(scopeA, sql`UPDATE app.documents SET removed_at = now() WHERE id = ${documentId}`);
+    const refused = await httpErrorOf(billWithoutPo(documentId));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+  });
+
+  it('keeps staff intake documents attached to their selected vendor', async () => {
+    const documentId = await doc();
+    const vendorId = await vendor();
+    await exec(
+      scopeA,
+      sql`UPDATE app.documents SET owner_type = 'vendor_bill_intake', owner_id = ${vendorId}
+          WHERE id = ${documentId}`,
+    );
+    const refused = await httpErrorOf(billWithoutPo(documentId, await vendor()));
+    expect(refused.getStatus()).toBe(422);
+    expect(codeOf(refused)).toBe('DOCUMENT_NOT_FOUND');
+    const bill = await billWithoutPo(documentId, vendorId);
+    expect(bill.vendorPartyId).toBe(vendorId);
+  });
+
+  it('allows submit once the newest version is clean', async () => {
+    const bill = await billWithoutPo(await doc(['quarantined', 'clean']));
+    const submitted = await service.submit(bill.id, randomUUID());
+    expect(submitted.status).toBe('pending_approval');
+    expect(submitted.approvalRequestId).not.toBeNull();
   });
 });
 
