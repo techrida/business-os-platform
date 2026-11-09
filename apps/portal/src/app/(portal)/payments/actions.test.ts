@@ -11,7 +11,11 @@ class Redirect extends Error {
     super(`redirect ${to}`);
   }
 }
+class NotFound extends Error {}
 vi.mock('next/navigation', () => ({
+  notFound: () => {
+    throw new NotFound();
+  },
   redirect: (to: string) => {
     throw new Redirect(to);
   },
@@ -86,6 +90,14 @@ describe('submitPaymentAction validation', () => {
 });
 
 describe('submitPaymentAction submit', () => {
+  it('answers a vendor session with a uniform 404 before validating the form or calling the API', async () => {
+    getSession.mockResolvedValue({ ...session, orgKind: 'vendor' });
+    await expect(
+      submitPaymentAction({ key: IDEM }, form({ amount: '0.00' }, [])),
+    ).rejects.toBeInstanceOf(NotFound);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('strips lakh commas, POSTs the strict body with the Idempotency-Key and no customer id, then shows the list', async () => {
     fetchMock.mockResolvedValue(json({ id: ID }, 201));
     const to = await redirectOf(submitPaymentAction({ key: IDEM }, form()));
