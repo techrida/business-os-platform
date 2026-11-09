@@ -64,7 +64,7 @@ export function QuoteForm({
   vendors: VendorOption[];
   submission?: SubmissionInfo;
   prLines: PrLineOption[];
-  /** Null when the list could not be read: the tax code is then typed as an id. */
+  /** Null when the list could not be read. Entry waits for an available tax-code list. */
   taxCodes: TaxCode[] | null;
   cancelHref: string;
   reloadHref: string;
@@ -98,6 +98,7 @@ export function QuoteForm({
     }));
 
   const err = state.errors;
+  const hasTaxCodes = taxCodes !== null && taxCodes.length > 0;
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
@@ -106,6 +107,19 @@ export function QuoteForm({
       <input type="hidden" name="mode" value={mode} />
       {mode === 'convert' ? (
         <input type="hidden" name="submissionId" value={values.submissionId} />
+      ) : null}
+
+      {!hasTaxCodes ? (
+        <Alert
+          tone={taxCodes === null ? 'error' : 'info'}
+          role={taxCodes === null ? 'alert' : 'status'}
+          title={taxCodes === null ? 'Tax codes did not load' : 'No tax codes are available'}
+          actions={<a href={reloadHref}>Try loading tax codes again</a>}
+        >
+          {taxCodes === null
+            ? 'Load the tax codes before recording this quotation.'
+            : 'Ask an administrator to configure tax codes before recording this quotation.'}
+        </Alert>
       ) : null}
 
       {state.error ? (
@@ -312,44 +326,24 @@ export function QuoteForm({
                       />
                     )}
                   </Field>
-                  <Field
-                    label="Tax code"
-                    hint={
-                      taxCodes === null
-                        ? 'The tax code list is not available to you. Enter its id.'
-                        : undefined
-                    }
-                    error={err[`lines.${i}.taxCodeId`]}
-                  >
-                    {(control) =>
-                      taxCodes !== null ? (
-                        <Select
-                          name={`lines.${i}.taxCodeId`}
-                          value={line.taxCodeId}
-                          onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
-                          disabled={!line.include}
-                          {...control}
-                        >
-                          <option value="">Choose a tax code</option>
-                          {taxCodes.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <Input
-                          name={`lines.${i}.taxCodeId`}
-                          value={line.taxCodeId}
-                          onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
-                          autoComplete="off"
-                          spellCheck={false}
-                          className={styles.numeric}
-                          disabled={!line.include}
-                          {...control}
-                        />
-                      )
-                    }
+                  <Field label="Tax code" error={err[`lines.${i}.taxCodeId`]}>
+                    {(control) => (
+                      <Select
+                        name={`lines.${i}.taxCodeId`}
+                        value={line.taxCodeId}
+                        onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
+                        disabled={!line.include || !hasTaxCodes}
+                        required={line.include}
+                        {...control}
+                      >
+                        <option value="">Choose a tax code</option>
+                        {(taxCodes ?? []).map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
                   </Field>
                 </div>
               </fieldset>
@@ -364,7 +358,7 @@ export function QuoteForm({
       </Panel>
 
       <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || !hasTaxCodes}>
           {pending ? 'Saving' : mode === 'convert' ? 'Convert to quotation' : 'Record quotation'}
         </Button>
         <LinkButton href={cancelHref} variant="ghost">
