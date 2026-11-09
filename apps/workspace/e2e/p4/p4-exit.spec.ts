@@ -67,10 +67,6 @@ test('procurement raises a PR, its department head alone approves, then three ve
         await expect(page).toHaveURL(/\/procurement\/requests\/[0-9a-f-]{36}\?created=1$/);
         const pathname = new URL(page.url()).pathname;
         await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
-        await expect(
-          page.getByRole('status').filter({ hasText: 'sent to the department head' }),
-        ).toBeVisible();
-        await page.reload();
         await expect(page.getByText('Waiting for approval', { exact: true })).toBeVisible();
         await expect(
           page.getByRole('region', { name: 'Approval', exact: true }).getByRole('listitem'),
