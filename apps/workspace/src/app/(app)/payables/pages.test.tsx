@@ -25,6 +25,8 @@ vi.mock('./actions', () => ({
   voidBillAction: vi.fn(),
   convertSubmissionAction: vi.fn(),
   rejectSubmissionAction: vi.fn(),
+  requestExceptionAction: vi.fn(),
+  createBillAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
   listBills: vi.fn(),
@@ -33,6 +35,7 @@ const api = vi.hoisted(() => ({
   getPoProgress: vi.fn(),
   getVendor: vi.fn(),
   listTaxCodes: vi.fn(),
+  listVendors: vi.fn(),
 }));
 vi.mock('@/lib/api-payables', () => ({
   listBills: api.listBills,
@@ -40,8 +43,8 @@ vi.mock('@/lib/api-payables', () => ({
   listBillSubmissions: api.listBillSubmissions,
 }));
 vi.mock('@/lib/api-purchase-orders', () => ({ getPoProgress: api.getPoProgress }));
-vi.mock('@/lib/api-vendors', () => ({ getVendor: api.getVendor }));
-vi.mock('@/components/p2/quote-builder/api', () => ({ listTaxCodes: api.listTaxCodes }));
+vi.mock('@/lib/api-vendors', () => ({ getVendor: api.getVendor, listVendors: api.listVendors }));
+vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: api.listTaxCodes }));
 
 const { default: BillsPage } = await import('./bills/page');
 const { default: BillPage } = await import('./bills/[id]/page');
@@ -67,6 +70,7 @@ const header = {
   kind: 'bill',
   number: 'BILL-2083-0001',
   vendorPartyId: VENDOR,
+  vendorName: 'Himal Traders',
   vendorInvoiceNo: 'INV-001',
   invoiceDate: '2026-11-08',
   fiscalYear: '2083/84',
@@ -121,6 +125,8 @@ const submission = {
   receivedAt: '2026-11-08T05:45:00.000Z',
 };
 const progress = {
+  vendorId: VENDOR,
+  vendorName: 'Himal Traders',
   purchaseOrderId: PO,
   number: 'PO-2083-0007',
   status: 'issued',
@@ -148,6 +154,10 @@ beforeEach(() => {
   api.getVendor.mockResolvedValue({ legalName: 'Himal Traders' });
   api.getPoProgress.mockResolvedValue(progress);
   api.listTaxCodes.mockResolvedValue([{ id: VENDOR, label: 'VAT 13%' }]);
+  api.listVendors.mockResolvedValue({
+    items: [{ id: VENDOR, legalName: 'Himal Traders' }],
+    total: 1,
+  });
 });
 
 describe('bills list', () => {
@@ -157,6 +167,7 @@ describe('bills list', () => {
     expect(api.listBills).toHaveBeenCalledWith(expect.anything(), 'variance');
     expect(out).toContain('BILL-2083-0001');
     expect(out).toContain('INV-001');
+    expect(out).toContain('Himal Traders');
     expect(out).toContain('12,34,567.00');
     api.listBills.mockClear();
     const bad = await html(BillsPage({ searchParams: Promise.resolve({ status: 'bogus' }) }));
@@ -193,6 +204,7 @@ describe('bill detail', () => {
     expect(out).toContain('100.00');
     expect(out).toContain('outside the tolerance');
     expect(out).toContain('Match again');
+    expect(out).toContain('Request match exception');
     expect(out).not.toContain('Submit for approval');
     expect(out).not.toContain('Void bill');
   });
@@ -227,7 +239,7 @@ describe('bill detail', () => {
     api.getVendor.mockRejectedValue(apiError(403));
     api.getPoProgress.mockRejectedValue(apiError(500));
     const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
-    expect(out).toContain('Open the vendor');
+    expect(out).toContain('Himal Traders');
     expect(out).toContain('INV-001');
   });
 
@@ -245,10 +257,30 @@ describe('bill entry', () => {
   const search = (submissionId?: string) =>
     Promise.resolve(submissionId === undefined ? {} : { submission: submissionId });
 
-  it('sends a visit with no submission back to the inbox', async () => {
+  it('opens standalone entry with a vendor picker, invoice details and upload', async () => {
     const out = await html(NewBillPage({ searchParams: search() }));
-    expect(out).toContain('Start from a vendor submission.');
-    expect(out).not.toContain('<form');
+    expect(out).toContain('name="vendorPartyId"');
+    expect(out).toContain('name="vendorInvoiceNo"');
+    expect(out).toContain('name="invoiceDate"');
+    expect(out).toContain('type="file"');
+    expect(out).toContain('Upload invoice');
+    expect(api.listBillSubmissions).not.toHaveBeenCalled();
+  });
+
+  it('prefills the PO vendor and fixed lines using the progress read', async () => {
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(api.getPoProgress).toHaveBeenCalledWith(expect.anything(), PO);
+    expect(out).toContain('Himal Traders');
+    expect(out).toContain(`name="purchaseOrderId" value="${PO}"`);
+    expect(out).toContain(`name="vendorPartyId" value="${VENDOR}"`);
+    expect(out).not.toContain('Add a line');
+  });
+
+  it('does not silently turn a malformed PO URL into a non-PO bill', async () => {
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: '../wrong' }) }));
+    expect(out).toContain('purchase order');
+    expect(out).not.toContain('Create bill');
+    expect(api.getPoProgress).not.toHaveBeenCalled();
   });
 
   it('says a submission that is not in the inbox any more is gone', async () => {
