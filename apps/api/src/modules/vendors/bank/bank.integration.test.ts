@@ -6,7 +6,7 @@
 // type check and ScanProcessor against the fake clamd over TCP.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/vendors/bank/bank.integration.test.ts
 // supertest bodies are `any`; the assertions below read them directly, as the HTTP contract is what is under test.
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 import 'reflect-metadata';
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
