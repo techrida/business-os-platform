@@ -27,7 +27,10 @@ const dataWith = (management: string[]): DirectoryData => ({
   delegations: [],
 });
 
-function plan(amountNpr: string, opts: { founder?: boolean; mgmt?: string[]; sod?: string[] } = {}) {
+function plan(
+  amountNpr: string,
+  opts: { founder?: boolean; mgmt?: string[]; sod?: string[] } = {},
+) {
   const sod = opts.sod ?? ['requester'];
   const facts = commitmentFactsOf({
     amountNpr,
@@ -101,7 +104,14 @@ describe('hasDistinctApprovers', () => {
     [[['a'], ['b']], true],
     [[['a'], ['a']], false],
     [[['a', 'b'], ['a']], true],
-    [[['a', 'b'], ['a', 'b'], ['a', 'b']], false],
+    [
+      [
+        ['a', 'b'],
+        ['a', 'b'],
+        ['a', 'b'],
+      ],
+      false,
+    ],
     [[['a', 'b', 'c'], ['a'], ['b']], true],
   ])('%j -> %s', (sets, ok) => {
     expect(hasDistinctApprovers(sets.map((eligibleUserIds) => ({ eligibleUserIds })))).toBe(ok);
@@ -134,9 +144,9 @@ describe('quoteCountVerdict (AD13, AD12)', () => {
     expect(quoteCountVerdict({ ...base, count: 2 }).ok).toBe(false);
   });
   it('two quotes with a reason pass and keep it', () => {
-    expect(quoteCountVerdict({ ...base, count: 2, fewerThanThreeReason: 'Sole distributor' })).toEqual(
-      { ok: true, fewerThanThreeReason: 'Sole distributor' },
-    );
+    expect(
+      quoteCountVerdict({ ...base, count: 2, fewerThanThreeReason: 'Sole distributor' }),
+    ).toEqual({ ok: true, fewerThanThreeReason: 'Sole distributor' });
   });
   it('an emergency request goes below three on its emergency reason', () => {
     expect(
