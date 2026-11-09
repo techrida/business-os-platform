@@ -192,6 +192,24 @@ describe('invoice detail page', () => {
     expect(await render()).not.toContain('data-slot="invoice-note-actions"');
   });
 
+  it('puts the actions the role may take into the action slot, and none on an issued invoice', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getInvoice.mockResolvedValue(invoiceDetail());
+    const draft = await render();
+    expect(draft).toContain('Submit for approval');
+    expect(draft).toContain('Discard');
+    expect(draft).not.toContain('Issue tax invoice');
+
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['finance'] });
+    mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'approved' }));
+    expect(await render()).toContain('Issue tax invoice');
+
+    mocks.getInvoice.mockResolvedValue(issued());
+    const done = await render();
+    expect(done).not.toContain('Issue tax invoice');
+    expect(done).not.toContain('Submit for approval');
+  });
+
   it('keeps a long manual reason in the page, where it wraps', async () => {
     mocks.getInvoice.mockResolvedValue(invoiceDetail({ manualReason: 'x'.repeat(900) }));
     expect(await render()).toContain('x'.repeat(900));
