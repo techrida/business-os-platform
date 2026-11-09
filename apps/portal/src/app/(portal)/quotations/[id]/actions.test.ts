@@ -169,6 +169,20 @@ describe('acceptAction', () => {
   });
 });
 
+// Server actions run no layout, so each one checks the kind itself. A vendor session gets the same
+// answer as a signed-out visitor and the API is never called.
+describe('customer-only actions', () => {
+  it.each([
+    ['acceptAction', acceptAction, { acceptedByName: 'J', confirm: 'on' }],
+    ['rejectAction', rejectAction, { comment: 'Over budget' }],
+  ])('%s refuses a vendor session like a signed-out one', async (_name, action, fields) => {
+    getSession.mockResolvedValue({ ...session, orgKind: 'vendor' });
+    const to = await redirectOf(action({ key: IDEM }, form(fields)));
+    expect(to).toBe(`/auth/login?returnTo=${encodeURIComponent(`/quotations/${ID}`)}`);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('rejectAction', () => {
   it('needs a comment, then POSTs it with the key and shows the result', async () => {
     const empty = await rejectAction({ key: IDEM }, form({ comment: '   ' }));
