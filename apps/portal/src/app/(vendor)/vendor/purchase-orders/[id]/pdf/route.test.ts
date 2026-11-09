@@ -14,7 +14,7 @@ const session: Session = {
   id: 'A'.repeat(43),
   sub: 'user-1',
   orgId: '00000000-0000-4000-8000-000000000002',
-  orgKind: 'customer',
+  orgKind: 'vendor',
   partyId: '00000000-0000-4000-8000-0000000000aa',
   roles: [],
   accessToken: 'eyJ.secret-access-token.sig',
@@ -62,6 +62,15 @@ describe('GET /vendor/purchase-orders/:id/pdf', () => {
     const res = await call(ID);
     expect(res.status).toBe(401);
     expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('answers a customer session with the plain 404 and calls nothing', async () => {
+    getSession.mockResolvedValue({ ...session, orgKind: 'customer' });
+    const res = await call(ID);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
+    expect(await res.text()).toBe('Purchase order not found.');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
