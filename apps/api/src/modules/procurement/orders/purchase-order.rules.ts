@@ -155,16 +155,24 @@ export type AmendVerdict = { ok: true; lines: AmendedLine[] } | { ok: false; mes
  */
 export function amendLines(
   current: readonly PoLineState[],
-  changes: readonly { poLineId: string; quantity?: string; unitPrice?: string }[],
+  changes: readonly {
+    poLineId: string;
+    quantity?: string | undefined;
+    unitPrice?: string | undefined;
+  }[],
   rateBpOf: (taxCodeId: string) => number,
 ): AmendVerdict {
   const byId = new Map(current.map((l) => [l.id, l]));
-  const changeOf = new Map<string, { quantity?: string; unitPrice?: string }>();
+  const changeOf = new Map<
+    string,
+    { quantity?: string | undefined; unitPrice?: string | undefined }
+  >();
   for (const c of changes) {
     if (!byId.has(c.poLineId)) {
       return { ok: false, message: `Line ${c.poLineId} is not a line of this purchase order` };
     }
-    if (changeOf.has(c.poLineId)) return { ok: false, message: `Line ${c.poLineId} is named twice` };
+    if (changeOf.has(c.poLineId))
+      return { ok: false, message: `Line ${c.poLineId} is named twice` };
     changeOf.set(c.poLineId, c);
   }
   let changed = false;

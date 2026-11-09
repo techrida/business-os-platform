@@ -67,8 +67,15 @@ describe('amendLines (done check 2 arithmetic)', () => {
     const v = amendLines([line()], [{ poLineId: 'l1', unitPrice: '87610.62' }], rate);
     expect(v.ok).toBe(true);
     if (!v.ok) return;
-    expect(v.lines[0]).toMatchObject({ gross: '87610.62', taxAmount: '11389.38', lineTotal: '99000.00' });
-    const t = versionTotals(v.lines.map((l) => l.lineTotal), '1');
+    expect(v.lines[0]).toMatchObject({
+      gross: '87610.62',
+      taxAmount: '11389.38',
+      lineTotal: '99000.00',
+    });
+    const t = versionTotals(
+      v.lines.map((l) => l.lineTotal),
+      '1',
+    );
     expect(t.band).toBe('base');
     expect(bandRises(t.band, 'base')).toBe(false);
   });
@@ -106,7 +113,11 @@ describe('amendLines (done check 2 arithmetic)', () => {
   });
 
   it('refuses ordering below received plus cancelled', () => {
-    const l = line({ orderedQuantity: '10.0000', receivedQuantity: '4.0000', cancelledQuantity: '1' });
+    const l = line({
+      orderedQuantity: '10.0000',
+      receivedQuantity: '4.0000',
+      cancelledQuantity: '1',
+    });
     expect(amendLines([l], [{ poLineId: 'l1', quantity: '4.9999' }], rate).ok).toBe(false);
     expect(amendLines([l], [{ poLineId: 'l1', quantity: '5' }], rate).ok).toBe(true);
   });
