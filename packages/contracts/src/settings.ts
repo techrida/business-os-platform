@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { SlaSpecSchema } from './approvals.js';
 import { AddressSchema, PanVatNoSchema } from './crm.js';
 import { CurrencySchema, DecimalString } from './money.js';
-import { EVIDENCE_KINDS } from './quotations.js';
 import { DEFAULT_SALES_SCHEDULE, ScheduleTemplateSchema } from './sales.js';
+import { EVIDENCE_KINDS, NonNegativeDecimalString } from './quotations.js';
 
 /**
  * Evidence an accepted quotation needs before Won: one evidence kind, or `both`, which means a contract AND a
@@ -16,6 +16,39 @@ import { DEFAULT_SALES_SCHEDULE, ScheduleTemplateSchema } from './sales.js';
 export const EVIDENCE_POLICIES = [...EVIDENCE_KINDS, 'both'] as const;
 export const EvidencePolicySchema = z.enum(EVIDENCE_POLICIES);
 export type EvidencePolicy = z.infer<typeof EvidencePolicySchema>;
+
+/**
+ * P4 procurement and payables settings (a separate block so it merges cleanly). Percentages and NPR
+ * amounts are strings like `tax.vat_rate`, so decimal.js reads them exactly (ADR 0024).
+ */
+const PercentString = DecimalString.refine(
+  (v) => Number(v) >= 0 && Number(v) <= 100,
+  'must be 0 to 100',
+);
+export const P4_SETTINGS = {
+  /** Quotes an RFQ needs before a recommendation; fewer needs a written reason (AD13). */
+  'procurement.min_quotes': z.number().int().min(1).max(10),
+  /** How far above the PO quantity a bill line may go, in percent (AD6). 0 means no tolerance. */
+  'procurement.match.qty_pct': PercentString,
+  /** Price tolerance per bill line, in percent of the PO price; the lower of this and the NPR figure applies. */
+  'procurement.match.price_pct': PercentString,
+  /** Price tolerance per bill line in NPR. */
+  'procurement.match.price_npr': NonNegativeDecimalString,
+  /** A commitment or payment above this NPR total adds a Management step (AD4). */
+  'procurement.band.management_npr': NonNegativeDecimalString,
+  /** Above this NPR total a Founder step is added too (AD4). */
+  'procurement.band.founder_npr': NonNegativeDecimalString,
+} as const;
+
+/** Defaults of the P4 keys. The API's SETTING_DEFAULTS spreads these, so the two cannot drift apart. */
+export const P4_SETTING_DEFAULTS = {
+  'procurement.min_quotes': 3,
+  'procurement.match.qty_pct': '0',
+  'procurement.match.price_pct': '2',
+  'procurement.match.price_npr': '500',
+  'procurement.band.management_npr': '100000',
+  'procurement.band.founder_npr': '1000000',
+} as const satisfies { [K in keyof typeof P4_SETTINGS]: z.infer<(typeof P4_SETTINGS)[K]> };
 
 export const SETTINGS = {
   /** Used when a workflow spec leaves its `sla` out. */
@@ -48,6 +81,7 @@ export const SETTINGS = {
   // P3 sales and invoicing.
   /** Billing split used when the accepted quotation has no payment schedule: slices that add up to 100%. */
   'sales.default_schedule': ScheduleTemplateSchema,
+  ...P4_SETTINGS,
 } as const;
 
 /** Defaults of the P2 keys. The API's SETTING_DEFAULTS reuses these, so the two cannot drift apart. */
