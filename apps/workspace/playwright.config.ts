@@ -84,7 +84,13 @@ export default defineConfig({
     {
       name: 'dev',
       // P1: the full-stack exit story (exit.spec.ts) runs after the persona logins, then the inbox checks, then the P2 CRM, customer and quote-builder specs.
-      testMatch: ['personas.spec.ts', 'exit.spec.ts', 'inbox.spec.ts', 'p2/*.spec.ts'],
+      testMatch: [
+        'personas.spec.ts',
+        'exit.spec.ts',
+        'inbox.spec.ts',
+        'p2/*.spec.ts',
+        'p4/*.spec.ts',
+      ],
       use: { ...common, baseURL: devBaseURL },
     },
     {
