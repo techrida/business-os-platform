@@ -665,7 +665,7 @@ describe('invoice documents', () => {
     );
   });
 
-  it.each(['vendor_portal_intake', 'vendor_kyb', 'payment_proof', 'purchase_order'])(
+  it.each(['vendor_portal_intake', 'verification_case', 'payment_intake', 'purchase_order_version'])(
     'refuses an unrelated %s invoice document',
     async (ownerType) => {
       const documentId = await doc();
