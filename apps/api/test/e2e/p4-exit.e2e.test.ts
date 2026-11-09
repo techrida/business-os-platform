@@ -349,7 +349,7 @@ describe('P4 exit Journey 11: department request to approved payment request ove
       .set('authorization', requester)
       .set('idempotency-key', randomUUID())
       .send({ action: 'approve', expectedVersion: headDetail.version });
-    expect(selfAction.status, show(selfAction)).toBe(403);
+    expect(selfAction.status, show(selfAction)).toBe(404);
 
     const decisionKey = randomUUID();
     const decisionBody = { action: 'approve', expectedVersion: headDetail.version };
