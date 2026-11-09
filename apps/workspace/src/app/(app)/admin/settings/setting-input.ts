@@ -50,6 +50,15 @@ export function parseSettingInput(key: SettingKey, raw: readonly string[]): Sett
       value = Number(text);
       break;
     }
+    case 'procurement.min_quotes': {
+      // Digits only, as for the day counts above: Number() would also take '1e1', '0x10' and '7.5'.
+      const text = (raw[0] ?? '').trim();
+      if (!/^[0-9]+$/.test(text)) {
+        return { ok: false, message: 'Enter a whole number of quotes, such as 3.' };
+      }
+      value = Number(text);
+      break;
+    }
     default:
       value = (raw[0] ?? '').trim();
   }
