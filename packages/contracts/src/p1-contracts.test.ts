@@ -211,10 +211,14 @@ describe('DEFAULT_ROLE_PERMISSIONS', () => {
     }
   });
 
-  it('gives founder every permission at scope all and vendor users nothing', () => {
+  it('gives founder every permission at scope all and vendor users only the vendor-portal grants', () => {
     expect(Object.keys(DEFAULT_ROLE_PERMISSIONS.founder).sort()).toEqual([...PERMISSIONS].sort());
     expect(new Set(Object.values(DEFAULT_ROLE_PERMISSIONS.founder))).toEqual(new Set(['all']));
-    expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({});
+    // D03: a vendor user holds only the two vendor-portal grants, at its own company.
+    expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({
+      'portal.vendor.read': 'customer_org',
+      'portal.vendor.submit': 'customer_org',
+    });
   });
 
   it('matches the plan for the staff roles', () => {
