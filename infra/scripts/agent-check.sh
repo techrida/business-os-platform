@@ -14,7 +14,7 @@ CLONE="$HOME/src/business-os-platform"
 DIR="/var/tmp/agents-$UNIT"
 trap 'rm -rf "$DIR"' EXIT
 rm -rf "$DIR"; mkdir -p "$DIR"
-( cd "$SRC" && tar --exclude=node_modules --exclude=.next --exclude=dist --exclude=.git -cf - . ) | tar -xf - -C "$DIR"
+( cd "$SRC" && tar --exclude=node_modules --exclude=.next --exclude=dist --exclude=.git --exclude=.env.example -cf - . ) | tar -xf - -C "$DIR"
 # Own node_modules for the scratch copy: an offline install hard-links from the shared pnpm store
 # (seconds, no network). Never symlink the dev clone's node_modules: pnpm commands run here would
 # rewrite the clone's workspace links to point at this scratch dir (seen 2026-11-08).
