@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_ROLE_PERMISSIONS, type Permission } from '@bos/contracts';
 
 import {
   NAV_GROUPS,
@@ -59,6 +60,18 @@ describe('NAV_GROUPS', () => {
     for (const item of items.filter((i) => i.phase === 'later')) {
       expect(isBuilt(item), item.label).toBe(false);
     }
+  });
+
+  it('only builds shipped phases or the explicitly early-linked P4 phase', () => {
+    for (const item of items.filter(isBuilt)) {
+      expect([...SHIPPED_PHASES, 'P4'], item.label).toContain(item.phase);
+    }
+    for (const phase of ['P3', 'later'] as const) {
+      expect(isBuilt({ label: 'Future screen', href: '/future', icon: 'home', phase })).toBe(false);
+    }
+    expect(isBuilt({ label: 'Early screen', href: '/early', icon: 'home', phase: 'P4' })).toBe(
+      true,
+    );
   });
 
   it('links exactly the built pages', () => {
@@ -162,7 +175,11 @@ describe('NAV_GROUPS', () => {
         label: 'Receipts',
         href: '/procurement/receipts',
         phase: 'P4',
-        permission: 'procurement.receipt.confirm',
+        permission: [
+          'procurement.receipt.confirm',
+          'procurement.po.issue',
+          'procurement.pr.create',
+        ],
       }),
       expect.objectContaining({
         label: 'Vendors',
@@ -173,17 +190,48 @@ describe('NAV_GROUPS', () => {
     ]);
   });
 
-  it('shows each procurement link only for its own permission', () => {
+  it('shows procurement links for any of their permissions and denies missing grants', () => {
     const purchases = NAV_GROUPS.find((g) => g.label === 'Purchases')?.items ?? [];
     for (const item of purchases) {
-      const shown = visibleGroups(false, (permission) => permission === item.permission).find(
-        (g) => g.label === 'Purchases',
-      )?.items;
-      expect(shown).toEqual([item]);
+      const permissions =
+        typeof item.permission === 'string' ? [item.permission] : (item.permission ?? []);
+      for (const grant of permissions) {
+        const shown = visibleGroups(false, (permission) => permission === grant).find(
+          (g) => g.label === 'Purchases',
+        )?.items;
+        expect(shown).toContainEqual(item);
+        for (const other of shown ?? []) {
+          const allowed =
+            typeof other.permission === 'string' ? [other.permission] : (other.permission ?? []);
+          expect(allowed).toContain(grant);
+        }
+      }
     }
     expect(visibleGroups(false).some((g) => g.label === 'Purchases')).toBe(false);
     expect(visibleGroups(false, () => false).some((g) => g.label === 'Purchases')).toBe(false);
   });
+
+  it.each(['warehouse', 'procurement', 'operations_officer', 'accountant'] as const)(
+    'renders Receipts according to the real %s role grants',
+    (role) => {
+      const grants = DEFAULT_ROLE_PERMISSIONS[role];
+      const labels = visibleGroups(
+        false,
+        (permission) => grants[permission as Permission] !== undefined,
+      ).flatMap((group) => group.items.map((item) => item.label));
+      expect(labels.includes('Receipts')).toBe(role !== 'accountant');
+      if (role === 'accountant') {
+        expect(
+          visibleGroups(
+            false,
+            (permission) =>
+              permission === 'procurement.pr.create' ||
+              grants[permission as Permission] !== undefined,
+          ).flatMap((group) => group.items.map((item) => item.label)),
+        ).toContain('Receipts');
+      }
+    },
+  );
 
   it('marks every /admin page as admin-only, and nothing else', () => {
     for (const item of items) {
