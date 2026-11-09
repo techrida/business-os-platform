@@ -182,8 +182,12 @@ export interface BuilderClient {
   getOpportunity(s: S, id: string): Promise<OpportunityDto>;
   getCustomer(s: S, id: string): Promise<CustomerDto>;
   listContacts(s: S, customerId: string): Promise<ContactDto[]>;
-  listTaxCodes(s: S): Promise<TaxCode[]>;
   listPaymentTerms(s: S): Promise<PaymentTerm[]>;
+}
+
+/** lib/api-tax-codes.ts (shared by quotation, sourcing and bill entry). */
+export interface TaxCodesClient {
+  listTaxCodes(s: S): Promise<TaxCode[]>;
 }
 
 /** components/p2/quotations/api.ts */
@@ -296,6 +300,7 @@ export interface BffClients {
   verification: VerificationClient;
   customers: CustomersClient;
   builder: BuilderClient;
+  taxCodes: TaxCodesClient;
   quotations: QuotationsClient;
   billing: BillingClient;
   receivables: ReceivablesClient;
@@ -366,6 +371,7 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
     verification,
     customers,
     builder,
+    taxCodes,
     quotations,
     billing,
     receivables,
@@ -378,6 +384,7 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
     load<VerificationClient>('components/p2/crm/verification-api.ts'),
     load<CustomersClient>('components/p2/customers/api.ts'),
     load<BuilderClient>('components/p2/quote-builder/api.ts'),
+    load<TaxCodesClient>('lib/api-tax-codes.ts'),
     load<QuotationsClient>('components/p2/quotations/api.ts'),
     load<BillingClient>('lib/api-billing.ts'),
     load<ReceivablesClient>('lib/api-receivables.ts'),
@@ -391,6 +398,7 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
     verification,
     customers,
     builder,
+    taxCodes,
     quotations,
     billing,
     receivables,
