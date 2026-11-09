@@ -4,6 +4,7 @@ import { ApiError, apiFetch } from './api';
 import {
   cancelPaymentRequest,
   createBillDocument,
+  replaceBillDocument,
   createPaymentRequest,
   getPaymentRequest,
   getVatRegister,
@@ -109,6 +110,37 @@ describe('staff invoice upload client', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ vendorPartyId: id, ...file }),
     });
+  });
+
+  it('declares a replacement version on the existing invoice document', async () => {
+    reply(created, 201);
+    const file = { filename: 'replacement.pdf', declaredMime: 'application/pdf', sizeBytes: 3 };
+    expect(await replaceBillDocument(session, id, file)).toEqual(created);
+    expect(apiFetch).toHaveBeenCalledExactlyOnceWith(
+      session,
+      `/v1/payables/bill-documents/${id}/versions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(file),
+      },
+    );
+  });
+
+  it('encodes replacement ids and preserves refusal status', async () => {
+    reply({ error: { code: 'invalid_transition' } }, 409);
+    await expect(
+      replaceBillDocument(session, '../other', {
+        filename: 'replacement.pdf',
+        declaredMime: 'application/pdf',
+        sizeBytes: 3,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(apiFetch).toHaveBeenCalledWith(
+      session,
+      '/v1/payables/bill-documents/..%2Fother/versions',
+      expect.anything(),
+    );
   });
 
   it.each([
