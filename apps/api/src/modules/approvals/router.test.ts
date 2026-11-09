@@ -310,6 +310,146 @@ describe('route: distinct approvers across a request (R12)', () => {
   });
 });
 
+describe('route: distinct approvers must exist at plan time (AD8)', () => {
+  // Under distinctApprovers one person decides at most one step, so the plan is blocked unless every
+  // open step can get its own person; otherwise it would stick after the first decision.
+  const spec = (steps: { id: string; role: string }[], distinctApprovers = true) =>
+    WorkflowSpecSchema.parse({
+      documentType: 'x',
+      distinctApprovers,
+      steps: steps.map((s) => ({ ...s, kind: 'role', reason: s.id })),
+    });
+  const twoManagement = spec([
+    { id: 'm1', role: 'management' },
+    { id: 'm2', role: 'management' },
+  ]);
+  const dirWith = (
+    roleMembers: [string, string[]][],
+    delegations: DirectoryData['delegations'] = [],
+  ) =>
+    buildDirectory(
+      { roleMembers: new Map(roleMembers), groups: new Map(), delegations },
+      { now: NOW, documentType: 'x' },
+    );
+
+  it('blocks two Management steps with one Management user', () => {
+    const plan = route(twoManagement, {}, dirWith([['management', ['mgmt-1']]]), []);
+    expect(plan.steps.map((s) => s.blocked)).toEqual([false, true]);
+    expect(plan.steps[1]?.eligibleUserIds).toEqual(['mgmt-1']);
+    expect(plan.blocked).toBe(true);
+    expect(plan.blockReason).toBe(
+      "Step 2 (role management) has no eligible approver distinct from the other steps' approvers",
+    );
+  });
+
+  it('plans two Management steps with two Management users', () => {
+    const plan = route(twoManagement, {}, dirWith([['management', ['mgmt-1', 'mgmt-2']]]), []);
+    expect(plan.blocked).toBe(false);
+    expect(plan.steps.map((s) => s.blocked)).toEqual([false, false]);
+  });
+
+  it('blocks mixed roles when one person holds both and is the only candidate for both', () => {
+    const plan = route(
+      spec([
+        { id: 'a', role: 'accountant' },
+        { id: 'f', role: 'finance' },
+      ]),
+      {},
+      dirWith([
+        ['accountant', ['u-1']],
+        ['finance', ['u-1']],
+      ]),
+      [],
+    );
+    expect(plan.blocked).toBe(true);
+    expect(plan.blockReason).toBe(
+      "Step 2 (role finance) has no eligible approver distinct from the other steps' approvers",
+    );
+  });
+
+  it('finds an assignment a greedy pick would miss (augmenting path)', () => {
+    // Step 1 may take u-1 or u-2, step 2 only u-1: step 1 must give u-1 up.
+    const plan = route(
+      spec([
+        { id: 'a', role: 'accountant' },
+        { id: 'f', role: 'finance' },
+      ]),
+      {},
+      dirWith([
+        ['accountant', ['u-1', 'u-2']],
+        ['finance', ['u-1']],
+      ]),
+      [],
+    );
+    expect(plan.blocked).toBe(false);
+  });
+
+  it('counts a delegate as a distinct person', () => {
+    const plan = route(
+      twoManagement,
+      {},
+      dirWith(
+        [['management', ['mgmt-1']]],
+        [
+          {
+            fromUserId: 'mgmt-1',
+            toUserId: 'deputy-1',
+            startsAt: new Date('2026-11-01T00:00:00Z'),
+            endsAt: new Date('2026-11-30T00:00:00Z'),
+            documentType: null,
+            revokedAt: null,
+          },
+        ],
+      ),
+      [],
+    );
+    expect(plan.blocked).toBe(false);
+  });
+
+  it('leaves the plan unblocked when distinctApprovers is off', () => {
+    const plan = route(
+      spec(
+        [
+          { id: 'm1', role: 'management' },
+          { id: 'm2', role: 'management' },
+        ],
+        false,
+      ),
+      {},
+      dirWith([['management', ['mgmt-1']]]),
+      [],
+    );
+    expect(plan.blocked).toBe(false);
+    expect(plan.steps.map((s) => s.eligibleUserIds)).toEqual([['mgmt-1'], ['mgmt-1']]);
+  });
+
+  it('keeps the separation-of-duties reason when a step is empty', () => {
+    const plan = route(twoManagement, {}, dirWith([['management', ['mgmt-1']]]), ['mgmt-1']);
+    expect(plan.blockReason).toBe(
+      'Step 1 (role management) has no eligible approver after separation of duties',
+    );
+  });
+
+  it('leaves decided steps out: their decider is already kept off the later steps', () => {
+    // u-1 decided step 1 and has since left accountant; step 1 must not take u-2 away from step 2.
+    const plan = route(
+      spec([
+        { id: 'a', role: 'accountant' },
+        { id: 'f', role: 'finance' },
+      ]),
+      {},
+      dirWith([
+        ['accountant', ['u-2']],
+        ['finance', ['u-1', 'u-2']],
+      ]),
+      [],
+      [{ seq: 1, deciders: ['u-1'] }],
+    );
+    expect(plan.blocked).toBe(false);
+    expect(plan.steps[1]?.eligibleUserIds).toEqual(['u-2']);
+  });
+});
+
 describe('resolveActor: which approver a delegate acts for (R12)', () => {
   // act() passes the SoD people and, under distinctApprovers, the earlier deciders as preferNot, so a
   // delegate for both u-1 (decided step 1) and u-2 acts for u-2 instead of being refused.
