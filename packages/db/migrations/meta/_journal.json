@@ -211,6 +211,13 @@
       "when": 1783000000034,
       "tag": "0034_procurement_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1783000000035,
+      "tag": "0035_payables",
+      "breakpoints": true
     }
   ]
 }
