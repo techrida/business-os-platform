@@ -45,6 +45,12 @@ export interface CounterpartyPrincipal {
  */
 export interface DocumentOwnerPolicy {
   ownerType: string;
+  /**
+   * The permission that authorises a staff upload to this owner (create, receive, new version, remove), checked
+   * against the same owner ref. Absent means `documents.upload`. Reads, the system path, the counterparty hook,
+   * the type, size and scan rules are unchanged. P3: payment proof uses `payment.record`.
+   */
+  uploadPermission?: Permission;
   /** The record's ResourceRef for authz, or null when the owner does not exist or is invisible. */
   resource(scope: TxScope, ownerId: string): Promise<ResourceRef | null>;
   /**
