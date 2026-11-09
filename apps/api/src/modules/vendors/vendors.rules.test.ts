@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  isoDay,
   kindCountryProblem,
   kindFromRow,
   kindToRow,
@@ -91,5 +92,12 @@ describe('lapsedTaxClearance', () => {
       false,
     );
     expect(lapsedTaxClearance([], '2030-01-01')).toBe(false);
+  });
+});
+
+describe('isoDay', () => {
+  it('is the calendar day in Kathmandu (UTC+05:45), not in UTC', () => {
+    expect(isoDay(new Date('2026-11-09T18:00:00Z'))).toBe('2026-11-09');
+    expect(isoDay(new Date('2026-11-09T18:15:00Z'))).toBe('2026-11-10');
   });
 });
