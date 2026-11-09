@@ -1,6 +1,6 @@
 // Pure rules of sourcing and the commitment approval (P4 unit P2; AD3, AD4, AD8, AD10, AD12, AD13): the
-// `pr_commitment` workflow spec, the commitment facts, the PO band, the quote-count rule, the distinct-approver
-// check, quotation line arithmetic and the request bodies. No I/O, so every rule is cheap to table-test.
+// `pr_commitment` workflow spec, the commitment facts, the PO band, the quote-count rule, quotation line
+// arithmetic and the request bodies. No I/O, so every rule is cheap to table-test.
 // Serves the NFRs "money moves only after the right people agree" (the bands are strict `>` on the grand total
 // including VAT, in NPR, from the recommended quote) and "amounts are exact" (decimal.js, ROUND_HALF_UP, strings).
 import { CurrencySchema, type PoApprovedBand } from '@bos/contracts';
@@ -25,8 +25,8 @@ export const DEFAULT_MIN_QUOTES = 3;
  * The workflow the seed unit publishes for `pr_commitment` (v1). AD10: Accountant → Finance on the recommended
  * quote. AD4 (strict >): above 100,000.00 adds Management, above 1,000,000.00 adds Founder. AD8: when the requester
  * is the Founder, a second, distinct Management step replaces the Founder step. distinctApprovers makes the two
- * Management steps two people; the service refuses with 422 when the directory cannot supply them, because the
- * router alone only separates approvers who have already decided. Kept here as the one copy the tests and the
+ * Management steps two people; the router blocks the plan when the directory cannot supply them, and the service
+ * answers 422. Kept here as the one copy the tests and the
  * hand-back quote; the seed copies it word for word.
  */
 export const PR_COMMITMENT_WORKFLOW_SPEC: unknown = {
@@ -148,30 +148,6 @@ export function quoteCountVerdict(i: {
     ok: false,
     message: `Only ${i.count} of ${i.minQuotes} quotations: fewerThanThreeReason is required`,
   };
-}
-
-/**
- * Whether every step can get its own approver (a system of distinct representatives over the steps' eligible
- * users; augmenting paths, Kuhn's algorithm). Under distinctApprovers one person may not decide two steps, so a
- * route whose steps share too few people would stay pending forever after the first decision.
- */
-export function hasDistinctApprovers(
-  steps: readonly { eligibleUserIds: readonly string[] }[],
-): boolean {
-  const owner = new Map<string, number>();
-  const tryAssign = (step: number, seen: Set<string>): boolean => {
-    for (const user of steps[step]!.eligibleUserIds) {
-      if (seen.has(user)) continue;
-      seen.add(user);
-      const holder = owner.get(user);
-      if (holder === undefined || tryAssign(holder, seen)) {
-        owner.set(user, step);
-        return true;
-      }
-    }
-    return false;
-  };
-  return steps.every((_, i) => tryAssign(i, new Set()));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
