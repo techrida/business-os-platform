@@ -340,11 +340,11 @@ async function receivedPo(defaultTds: string | null): Promise<Po> {
   return { id, lineId, vendorId };
 }
 
-async function doc(): Promise<string> {
+async function doc(vendorId: string): Promise<string> {
   const { rows } = await exec(
     scopeA,
     sql`INSERT INTO app.documents (tenant_id, organization_id, owner_type, owner_id)
-        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill', ${randomUUID()}) RETURNING id`,
+        VALUES (${scopeA.tenantId}, ${scopeA.organizationId}, 'vendor_bill_intake', ${vendorId}) RETURNING id`,
   );
   const documentId = (rows[0] as { id: string }).id;
   await exec(
@@ -367,7 +367,7 @@ async function submittedBill(po: Po, lineTds?: string) {
       invoiceDate: '2026-11-09',
       currency: 'NPR',
       purchaseOrderId: po.id,
-      documentId: await doc(),
+      documentId: await doc(po.vendorId),
       lines: [
         {
           poLineId: po.lineId,
