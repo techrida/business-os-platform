@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { InvoiceRenderModule } from './modules/invoices/render/invoice-render.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
@@ -66,6 +67,7 @@ import { UsersModule } from './platform/users/users.module';
     PaymentsModule,
     ReceivablesModule,
     InvoicesModule,
+    InvoiceRenderModule,
     CustomersModule,
     OpportunitiesModule,
     LeadsModule,
