@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from './api';
 import {
   cancelPaymentRequest,
+  createBillDocument,
   createPaymentRequest,
   getPaymentRequest,
   getVatRegister,
   listPaymentRequests,
+  listPaymentRequestItems,
   requestBillException,
   submitPaymentRequest,
+  uploadBillDocumentContent,
 } from './api-payables';
 import type { Session } from './session';
 
@@ -49,9 +52,107 @@ const input = {
 const reply = (body: unknown, status = 200) =>
   vi
     .mocked(apiFetch)
-    .mockImplementation(async () => new Response(JSON.stringify(body), { status }));
+    .mockImplementation(() => Promise.resolve(new Response(JSON.stringify(body), { status })));
 
 beforeEach(() => vi.clearAllMocks());
+
+describe('available payment request items client', () => {
+  const item = {
+    openItemId: id,
+    vendorPartyId: id,
+    vendorName: 'Himal Traders',
+    vendorBillId: id,
+    billNumber: null,
+    vendorInvoiceNo: 'INV-1',
+    currency: 'NPR',
+    openAmount: '56399.75',
+    claimedAmount: '200.10',
+    availableAmount: '56199.65',
+  };
+
+  it('reads the dedicated items route and preserves the server labels and decimal amounts', async () => {
+    reply([item]);
+    expect(await listPaymentRequestItems(session)).toEqual([item]);
+    expect(apiFetch).toHaveBeenCalledExactlyOnceWith(
+      session,
+      '/v1/payables/payment-requests/items',
+      undefined,
+    );
+  });
+
+  it.each([
+    { ...item, openItemId: 'invalid' },
+    { ...item, vendorName: undefined },
+    { ...item, availableAmount: 56199.65 },
+    { ...item, currency: 'EUR' },
+  ])('refuses an item response that drifts from its schema: %j', async (invalid) => {
+    reply([invalid]);
+    await expect(listPaymentRequestItems(session)).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe('staff invoice upload client', () => {
+  const uploadPath = `/v1/payables/bill-documents/${id}/versions/${key}/content`;
+  const created = { documentId: id, versionId: key, uploadPath };
+  const upload = () => ({
+    body: new Blob(['PDF']).stream(),
+    contentLength: 3,
+    contentType: 'application/pdf',
+  });
+
+  it('declares an invoice for the vendor without requiring the generic documents upload route', async () => {
+    reply(created, 201);
+    const file = { filename: 'invoice.pdf', declaredMime: 'application/pdf', sizeBytes: 3 };
+    expect(await createBillDocument(session, id, file)).toEqual(created);
+    expect(apiFetch).toHaveBeenCalledExactlyOnceWith(session, '/v1/payables/bill-documents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ vendorPartyId: id, ...file }),
+    });
+  });
+
+  it.each([
+    `https://other.example${uploadPath}`,
+    `${uploadPath}?redirect=other`,
+    `/v1/documents/${id}/versions/${key}/content`,
+    `/v1/payables/bill-documents/${key}/versions/${id}/content`,
+  ])(
+    'rejects any path other than this document/version content path before sending bytes: %s',
+    (path) => {
+      expect(() =>
+        uploadBillDocumentContent(session, { ...created, uploadPath: path }, upload()),
+      ).toThrow(ApiError);
+      expect(apiFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('streams bytes only to the exact content path with their content type and length', async () => {
+    const version = {
+      id: key,
+      documentId: id,
+      version: 1,
+      filename: 'invoice.pdf',
+      declaredMime: 'application/pdf',
+      detectedMime: 'application/pdf',
+      sizeBytes: 3,
+      sha256: null,
+      status: 'quarantined',
+      scanSignature: null,
+      scannedAt: null,
+      uploadedBy: id,
+      createdAt: '2026-11-09T04:00:00Z',
+    };
+    reply(version);
+    const content = upload();
+    expect(await uploadBillDocumentContent(session, created, content)).toEqual(version);
+    expect(apiFetch).toHaveBeenCalledExactlyOnceWith(session, uploadPath, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/pdf', 'content-length': '3' },
+      body: content.body,
+      duplex: 'half',
+    });
+  });
+});
 
 describe('payment request client', () => {
   it('reads the list without lines and validates its optional status', async () => {
