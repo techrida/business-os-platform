@@ -1,0 +1,85 @@
+/* Pieces that belong to the sales-order screens only. The list toolbar, the totals block and the
+   dialog frame come from the quotation modules; everything else comes from components/ui.
+   Colours are Figma tokens. */
+
+/* A step's name with what triggers it under it. Free text wraps instead of widening the table. */
+.step {
+  display: grid;
+  gap: 2px;
+  min-width: 14ch;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.description {
+  min-width: 18ch;
+  max-width: 56ch;
+  overflow-wrap: anywhere;
+}
+
+/* An id, shown whole because it is data a person may copy into a form. */
+.id {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The last column of the schedule: a button or a link, with its error under it when it fails. */
+.actionCell {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.inlineForm {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  width: 100%;
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+.evidence {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidenceItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 16px;
+  padding-block: 10px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
+}
+
+.evidenceItem:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.evidenceItem:last-child {
+  padding-bottom: 0;
+}
+
+.evidenceKind {
+  font-weight: var(--font-weight-medium);
+}
+
+.release {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
