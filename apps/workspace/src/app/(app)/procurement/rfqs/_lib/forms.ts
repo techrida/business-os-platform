@@ -1,10 +1,14 @@
 import {
   ConvertSubmissionBodySchema,
   CreateRfqBodySchema,
+  RecommendQuotationBodySchema,
   RecordQuotationBodySchema,
+  ScoreQuotationBodySchema,
   type ConvertSubmissionBody,
   type CreateRfqBody,
+  type RecommendQuotationBody,
   type RecordQuotationBody,
+  type ScoreQuotationBody,
 } from '@bos/contracts';
 
 /**
@@ -250,6 +254,116 @@ export function parseQuoteValues(input: QuoteValues): ParsedQuote {
         errors[head] ??= QUOTE_WORDS[head] ?? issue.message;
       }
     }
+  }
+  if (Object.keys(errors).length === 0) errors.form = 'Check the form and try again.';
+  return { ok: false, errors };
+}
+
+// ----------------------------------------------------------------------------- scores
+
+export const MAX_SCORE_ROWS = 20;
+
+export interface ScoreRowValues {
+  criterion: string;
+  /** The text typed: converted to a number only after it passes the pattern below. */
+  score: string;
+}
+
+/** Reads `scores.<n>.criterion` and `scores.<n>.score` in index order. */
+export function scoreValuesFromForm(form: FormData): ScoreRowValues[] {
+  const indexes = new Set<number>();
+  for (const name of form.keys()) {
+    const m = /^scores\.(\d{1,3})\./.exec(name);
+    if (m?.[1] !== undefined) indexes.add(Number(m[1]));
+  }
+  return [...indexes]
+    .sort((a, b) => a - b)
+    .map((i) => ({
+      criterion: str(form, `scores.${i}.criterion`),
+      score: str(form, `scores.${i}.score`),
+    }));
+}
+
+/** 0 to 100 with at most two decimals: the platform stores two places and would round more. */
+const SCORE_TEXT = /^\d{1,3}(\.\d{1,2})?$/;
+
+export type ParsedScores =
+  { ok: true; data: ScoreQuotationBody } | { ok: false; errors: FieldErrors };
+
+/**
+ * A row left empty is skipped; errors carry the row's place on screen. A criterion is scored once
+ * per submission because each row is an upsert and the later one would silently replace the earlier.
+ */
+export function parseScoreValues(rows: readonly ScoreRowValues[]): ParsedScores {
+  const errors: FieldErrors = {};
+  const seen = new Set<string>();
+  const scores: { criterion: string; score: number }[] = [];
+  rows.forEach((row, i) => {
+    const criterion = trim(row.criterion);
+    const score = trim(row.score);
+    if (criterion === '' && score === '') return;
+    if (criterion === '') {
+      errors[`scores.${i}.criterion`] = 'Name the criterion, for example Price or Delivery.';
+    } else if (criterion.length > 64) {
+      errors[`scores.${i}.criterion`] = 'A criterion name can be up to 64 characters.';
+    } else if (seen.has(criterion.toLowerCase())) {
+      errors[`scores.${i}.criterion`] =
+        'Each criterion can be scored once. Rename or clear this row.';
+    }
+    seen.add(criterion.toLowerCase());
+    if (!SCORE_TEXT.test(score) || Number(score) > 100) {
+      errors[`scores.${i}.score`] = 'Enter a score from 0 to 100, with up to 2 decimal places.';
+    }
+    scores.push({ criterion, score: Number(score) });
+  });
+  if (scores.length === 0) errors.scores ??= 'Score at least one criterion.';
+  if (scores.length > MAX_SCORE_ROWS) {
+    errors.scores = `Score up to ${MAX_SCORE_ROWS} criteria at a time.`;
+  }
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  const parsed = ScoreQuotationBodySchema.safeParse({ scores });
+  if (parsed.success) return { ok: true, data: parsed.data };
+  return { ok: false, errors: { form: 'Check the scores and try again.' } };
+}
+
+// ----------------------------------------------------------------------- recommendation
+
+export interface RecommendValues {
+  vendorQuotationId: string;
+  rationale: string;
+  /** Needed only when the RFQ has fewer quotations than the company's minimum. */
+  fewerThanThreeReason: string;
+}
+
+export function recommendValuesFromForm(form: FormData): RecommendValues {
+  return {
+    vendorQuotationId: str(form, 'vendorQuotationId'),
+    rationale: str(form, 'rationale'),
+    fewerThanThreeReason: str(form, 'fewerThanThreeReason'),
+  };
+}
+
+const RECOMMEND_WORDS: Record<string, string> = {
+  vendorQuotationId: 'Choose the quotation you recommend.',
+  rationale: 'Say why this quotation is the right one, in up to 2000 characters.',
+  fewerThanThreeReason: 'The reason can be up to 1000 characters.',
+};
+
+export type ParsedRecommend =
+  { ok: true; data: RecommendQuotationBody } | { ok: false; errors: FieldErrors };
+
+export function parseRecommendValues(input: RecommendValues): ParsedRecommend {
+  const reason = trim(input.fewerThanThreeReason);
+  const parsed = RecommendQuotationBodySchema.safeParse({
+    vendorQuotationId: trim(input.vendorQuotationId),
+    rationale: trim(input.rationale),
+    ...(reason !== '' ? { fewerThanThreeReason: reason } : {}),
+  });
+  if (parsed.success) return { ok: true, data: parsed.data };
+  const errors: FieldErrors = {};
+  for (const issue of parsed.error.issues) {
+    const head = issue.path[0];
+    if (typeof head === 'string') errors[head] ??= RECOMMEND_WORDS[head] ?? issue.message;
   }
   if (Object.keys(errors).length === 0) errors.form = 'Check the form and try again.';
   return { ok: false, errors };
