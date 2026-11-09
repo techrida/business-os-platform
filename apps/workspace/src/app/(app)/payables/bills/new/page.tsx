@@ -4,15 +4,17 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
 import { isGuid } from '@/components/p2/customers/format';
-import { listTaxCodes } from '@/components/p2/quote-builder/api';
+import { listTaxCodes } from '@/lib/api-tax-codes';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { LinkButton } from '@/components/ui/button';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Field, Input } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { listBillSubmissions, type BillSubmission } from '@/lib/api-payables';
 import { getPoProgress, type PoProgress } from '@/lib/api-purchase-orders';
+import { listVendors } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
@@ -33,7 +35,7 @@ function Shell({ children }: { children: ReactNode }) {
       <Breadcrumb items={[{ label: 'Inbox', href: INBOX }, { label: 'New bill' }]} />
       <PageHeader
         title="New bill"
-        description="Key in a vendor's invoice from the inbox. The header comes from the vendor's submission; you enter the lines."
+        description="Key in a vendor's invoice, or start from an invoice in the inbox. The platform calculates VAT, withholding and totals from the lines."
       />
       {children}
     </Page>
@@ -43,11 +45,26 @@ function Shell({ children }: { children: ReactNode }) {
 export default async function NewBillPage({
   searchParams,
 }: {
-  searchParams: Promise<{ submission?: string | string[]; po?: string | string[] }>;
+  searchParams: Promise<{
+    submission?: string | string[];
+    po?: string | string[];
+    q?: string | string[];
+  }>;
 }) {
   const params = await searchParams;
   const submissionId = typeof params.submission === 'string' ? params.submission.trim() : '';
-  const here = `/payables/bills/new${submissionId !== '' ? `?submission=${submissionId}` : ''}`;
+  const poId = typeof params.po === 'string' ? params.po.trim() : '';
+  const q = typeof params.q === 'string' ? params.q.trim().slice(0, 200) : '';
+  const query = new URLSearchParams(
+    submissionId !== ''
+      ? { submission: submissionId }
+      : poId !== ''
+        ? { po: poId }
+        : q !== ''
+          ? { q }
+          : {},
+  );
+  const here = `/payables/bills/new${query.size > 0 ? `?${query}` : ''}`;
   const session = await requireStaffSession(here);
 
   if (!billGrants(session.roles).enter) {
@@ -60,21 +77,131 @@ export default async function NewBillPage({
     );
   }
 
-  // A bill is keyed from a vendor submission: the invoice file is the submission's.
-  if (!isGuid(submissionId)) {
+  if (submissionId === '') {
+    if (params.po !== undefined && !isGuid(poId))
+      return (
+        <Shell>
+          <Alert tone="warning" role="alert">
+            That is not a valid purchase order. Open the order again and choose Enter bill.
+          </Alert>
+        </Shell>
+      );
+    let standaloneOrder: PoProgress | undefined;
+    let vendors: { id: string; name: string }[] = [];
+    let vendorCount = 0;
+    let standaloneTax: { id: string; label: string }[];
+    try {
+      if (poId !== '') {
+        standaloneOrder = await getPoProgress(session, poId);
+      } else {
+        const result = await listVendors(session, {
+          limit: 100,
+          offset: 0,
+          ...(q === '' ? {} : { q }),
+        });
+        vendors = result.items.map((vendor) => ({ id: vendor.id, name: vendor.legalName }));
+        vendorCount = result.total;
+      }
+      standaloneTax = (await listTaxCodes(session)).map((tax) => ({
+        id: tax.id,
+        label: tax.label,
+      }));
+    } catch (err) {
+      return (
+        <Shell>
+          <Alert
+            tone="error"
+            role="alert"
+            title="The bill details did not load"
+            actions={<a href={here}>Try again</a>}
+          >
+            {billFailure(err, 'load').message}
+          </Alert>
+        </Shell>
+      );
+    }
+    if (
+      standaloneOrder &&
+      !['issued', 'partially_received', 'fully_received'].includes(standaloneOrder.status)
+    )
+      return (
+        <Shell>
+          <Alert tone="warning" role="alert">
+            This purchase order cannot be billed in its current status.
+          </Alert>
+        </Shell>
+      );
+    if (standaloneTax.length === 0)
+      return (
+        <Shell>
+          <Alert tone="warning" role="alert">
+            No VAT codes are set up yet. Ask an administrator before entering a bill.
+          </Alert>
+        </Shell>
+      );
     return (
       <Shell>
-        <EmptyState
-          title="Start from a vendor submission."
-          icon="file-text"
-          action={<LinkButton href={INBOX}>Open the inbox</LinkButton>}
-        >
-          A bill needs the vendor&apos;s invoice file. Pick a submission in the inbox and choose
-          Create bill. Entering a bill without a submission is not available yet.
-        </EmptyState>
+        {poId === '' ? (
+          <form method="get" action="/payables/bills/new" className={styles.filter}>
+            <Field label="Find a vendor">
+              {(control) => <Input name="q" defaultValue={q} {...control} />}
+            </Field>
+            <Button type="submit" variant="secondary">
+              Find vendor
+            </Button>
+          </form>
+        ) : null}
+        {vendorCount > 100 ? (
+          <p className={styles.note}>
+            Showing the first 100 vendors. Search by name to narrow the list.
+          </p>
+        ) : null}
+        {poId === '' && vendors.length === 0 ? (
+          <Alert tone="info" role="status">
+            No vendors match this search. Try another name, or ask Procurement to add the vendor.
+          </Alert>
+        ) : (
+          <Panel
+            title={standaloneOrder ? `Invoice for ${standaloneOrder.number}` : 'Vendor invoice'}
+          >
+            <BillEntryForm
+              idempotencyKey={randomUUID()}
+              orderLines={
+                standaloneOrder?.lines.map((line) => ({
+                  poLineId: line.poLineId,
+                  lineNo: line.lineNo,
+                  description: line.description,
+                  uom: line.uom,
+                  open: qtyText(line.openQuantity),
+                })) ?? []
+              }
+              taxCodes={standaloneTax}
+              cancelHref="/payables/bills"
+              reloadHref={here}
+              entry={{
+                vendors,
+                ...(standaloneOrder
+                  ? {
+                      vendorPartyId: standaloneOrder.vendorId,
+                      vendorName: standaloneOrder.vendorName,
+                      purchaseOrderId: standaloneOrder.purchaseOrderId,
+                    }
+                  : {}),
+              }}
+            />
+          </Panel>
+        )}
       </Shell>
     );
   }
+  if (!isGuid(submissionId))
+    return (
+      <Shell>
+        <Alert tone="warning" role="alert">
+          That is not a valid submission. Open the inbox again.
+        </Alert>
+      </Shell>
+    );
 
   let submission: BillSubmission | undefined;
   try {

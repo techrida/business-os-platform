@@ -4,6 +4,9 @@ import {
   BillKindSchema,
   BillStatusSchema,
   MatchStatusSchema,
+  DocumentVersionDtoSchema,
+  type CreateVendorBillBody,
+  type CreateDocumentBody,
   MatchExceptionStatusSchema,
   PaymentRequestStatusSchema,
   PaymentTypeSchema,
@@ -71,6 +74,7 @@ const billFields = {
   kind: BillKindSchema,
   number: Text.nullable(),
   vendorPartyId: z.guid(),
+  vendorName: Text,
   vendorInvoiceNo: Text,
   invoiceDate: Text,
   fiscalYear: Text,
@@ -175,6 +179,49 @@ export function listBills(session: Session, status?: BillStatus): Promise<BillLi
 
 export function getBill(session: Session, id: string): Promise<VendorBill> {
   return call(session, `${BILLS}/${seg(id)}`, VendorBillSchema);
+}
+
+export function createBill(
+  session: Session,
+  body: CreateVendorBillBody,
+  key: string,
+): Promise<VendorBill> {
+  return call(session, BILLS, VendorBillSchema, post(key, body));
+}
+
+const BillDocumentSchema = z.object({
+  documentId: z.guid(),
+  versionId: z.guid(),
+  uploadPath: Text,
+});
+type BillDocument = z.infer<typeof BillDocumentSchema>;
+export function createBillDocument(
+  session: Session,
+  vendorPartyId: string,
+  file: Pick<CreateDocumentBody, 'filename' | 'declaredMime' | 'sizeBytes'>,
+): Promise<BillDocument> {
+  return call(session, '/v1/payables/bill-documents', BillDocumentSchema, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ vendorPartyId, ...file }),
+  });
+}
+
+export function uploadBillDocumentContent(
+  session: Session,
+  created: BillDocument,
+  upload: { body: ReadableStream<Uint8Array>; contentLength: number; contentType: string },
+) {
+  const expected = `/v1/payables/bill-documents/${created.documentId}/versions/${created.versionId}/content`;
+  if (created.uploadPath !== expected)
+    throw new ApiError(502, 'The invoice upload returned an unexpected content path');
+  const init: RequestInit & { duplex: 'half' } = {
+    method: 'PUT',
+    headers: { 'content-type': upload.contentType, 'content-length': String(upload.contentLength) },
+    body: upload.body,
+    duplex: 'half',
+  };
+  return call(session, expected, DocumentVersionDtoSchema, init);
 }
 
 /** A new match run (needs `payables.bill.enter`). 409 `MATCH_NOT_REQUIRED` for a bill without a purchase order. */
