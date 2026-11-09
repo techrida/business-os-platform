@@ -165,6 +165,23 @@ export class VerificationService implements OnModuleInit {
         const l = await this.load(tx ?? this.db, scope.tenantId, ownerId, tx ? 'share' : undefined);
         return l !== undefined && isEditable(l.row.status);
       },
+      // P4 PV2: a vendor portal caller uploads KYC files to its own vendor case only. The case row is read in the
+      // upload transaction; canAttach (draft or rejected) and the type, size and scan rules still apply after it.
+      allowsCounterparty: async (who, ownerId, tx) => {
+        if (who.kind !== 'vendor') return false;
+        const [row] = await tx
+          .select({ id: verificationCases.id })
+          .from(verificationCases)
+          .where(
+            and(
+              eq(verificationCases.tenantId, who.tenantId),
+              eq(verificationCases.id, ownerId),
+              eq(verificationCases.partyId, who.partyId),
+              eq(verificationCases.partyKind, 'vendor'),
+            ),
+          );
+        return row !== undefined;
+      },
     };
     this.documents.registerOwner(policy);
   }
