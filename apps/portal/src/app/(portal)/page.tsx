@@ -10,13 +10,15 @@ import { getSession } from '@/lib/session';
 export const dynamic = 'force-dynamic';
 
 /**
- * Landing page: the customer's own quotations, newest first as the API orders them. The API
+ * Landing page: the customer's own quotations, newest first as the API orders them. A vendor who
+ * opens `/` is sent on to /vendor, never to /no-access. The API
  * returns only customer-visible states for the session's party, and the strict list schema
  * refuses anything else (a 502, shown by error.tsx), so a draft can never be listed here.
  */
 export default async function QuotationsPage() {
   const session = await getSession();
   if (!session) redirect('/auth/login?returnTo=%2F');
+  if (session.orgKind !== 'customer') redirect('/vendor');
 
   let items;
   try {
