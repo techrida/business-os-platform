@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   describeCondition,
+  describeStepTarget,
   emptyRule,
   emptySpecForm,
   formToSpec,
@@ -119,6 +120,90 @@ describe('specToForm and formToSpec', () => {
     if (!converted.ok) throw new Error('should convert');
     expect(converted.form.steps.map((s) => s.target)).toEqual(['ops', 'abc']);
     expect(formToSpec(converted.form)).toEqual({ ok: true, spec });
+  });
+
+  it('round-trips a department_head step with its fallback role, as a step and as a rule step', () => {
+    const spec = WorkflowSpecSchema.parse({
+      ...seedSpec,
+      steps: [
+        { id: 'head', kind: 'department_head', fallbackRole: 'management', reason: 'Head signs' },
+        { id: 'finance', kind: 'role', role: 'finance', reason: 'Finance approves' },
+      ],
+      rules: [
+        {
+          id: 'big',
+          when: { field: 'amountNpr', op: 'gt', value: '100000' },
+          add: { id: 'big-head', kind: 'department_head', reason: 'Head again' },
+          position: 'end',
+          reason: 'Big',
+        },
+      ],
+    });
+    const converted = specToForm(spec);
+    if (!converted.ok) throw new Error('should convert');
+    expect(converted.form.steps[0]).toMatchObject({
+      kind: 'department_head',
+      target: 'management',
+    });
+    // The schema fills in operations_head when the spec names no fallback.
+    expect(converted.form.rules[0]?.step).toMatchObject({
+      kind: 'department_head',
+      target: 'operations_head',
+    });
+    const built = formToSpec(converted.form);
+    expect(built).toEqual({ ok: true, spec });
+    if (!built.ok) return;
+    expect(built.spec.steps[0]).toEqual({
+      id: 'head',
+      kind: 'department_head',
+      fallbackRole: 'management',
+      reason: 'Head signs',
+    });
+    expect(built.spec.steps[0]).not.toHaveProperty('department_head');
+  });
+
+  it('builds a department_head step from the form with no target typed in', () => {
+    const form = emptySpecForm('test_memo');
+    form.steps = [
+      { id: 'head', kind: 'department_head', target: 'operations_head', reason: 'Head signs' },
+    ];
+    const built = formToSpec(form);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.spec.steps[0]).toMatchObject({
+      kind: 'department_head',
+      fallbackRole: 'operations_head',
+    });
+  });
+
+  it('keeps a spec with a stray field on a department_head step in JSON', () => {
+    const converted = specToForm({
+      ...seedSpec,
+      steps: [
+        {
+          id: 'head',
+          kind: 'department_head',
+          fallbackRole: 'operations_head',
+          role: 'finance',
+          reason: 'x',
+        },
+      ],
+      rules: [],
+    });
+    expect(converted.ok).toBe(false);
+    if (converted.ok) return;
+    expect(converted.reasons[0]).toContain('role');
+  });
+
+  it('describes a department_head step for the read-only view', () => {
+    expect(
+      describeStepTarget({
+        id: 'head',
+        kind: 'department_head',
+        fallbackRole: 'management',
+        reason: 'x',
+      }),
+    ).toBe('department head (falls back to management)');
   });
 });
 
