@@ -375,10 +375,11 @@ export interface DevPersona {
   displayName: string;
 }
 
-/** The dev procurement flows need these three people to exist as rows before anyone has logged in. */
+/** The dev procurement flows need these people to exist as rows before anyone has logged in. */
 const VENDOR_CREATOR_KEY = 'procurement';
 const VENDOR_APPROVER_KEY = 'management';
 const DEPARTMENT_HEAD_KEY = 'depthead';
+const RECEIPT_CONFIRMER_KEY = 'warehouse';
 const DEV_DEPARTMENT_NAME = 'Operations';
 /** A nine-digit Nepal PAN (vendors_pan_check). Fictional: the dev vendor is not a real company. */
 const DEV_VENDOR_PAN = '123456789';
@@ -388,17 +389,19 @@ const DEV_VENDOR_TERM = 'NET30';
 
 /** The personas the dev people step needs, in a fixed order; a missing one is an error, not a skip. */
 function devPeople(personas: readonly DevPersona[]): (DevPersona & { role: string })[] {
-  return [VENDOR_CREATOR_KEY, VENDOR_APPROVER_KEY, DEPARTMENT_HEAD_KEY].map((key) => {
-    const persona = personas.find((p) => p.personaKey === key);
-    if (!persona) throw new Error(`dev seed needs persona "${key}" but it was not passed`);
-    const role = PERSONAS.find((p) => p.key === key)?.role;
-    if (!role) throw new Error(`dev seed: persona "${key}" is not in PERSONAS`);
-    return { ...persona, role };
-  });
+  return [VENDOR_CREATOR_KEY, VENDOR_APPROVER_KEY, DEPARTMENT_HEAD_KEY, RECEIPT_CONFIRMER_KEY].map(
+    (key) => {
+      const persona = personas.find((p) => p.personaKey === key);
+      if (!persona) throw new Error(`dev seed needs persona "${key}" but it was not passed`);
+      const role = PERSONAS.find((p) => p.key === key)?.role;
+      if (!role) throw new Error(`dev seed: persona "${key}" is not in PERSONAS`);
+      return { ...persona, role };
+    },
+  );
 }
 
 /**
- * Dev data that the procurement flows need: the procurement, management and department-head users with a TR
+ * Dev data that the procurement flows need: procurement, management, department-head and warehouse users with a TR
  * membership each, a department headed by the department head (procurement belongs to it), and VEND-DEV as an
  * approved vendor with a TR account. The API's user mirror would create the users later (JIT or webhook); the
  * vendor's maker-checker columns need real user ids now. Same rules as the mirror: a user is inserted when
