@@ -40,6 +40,23 @@ export const PERMISSIONS = [
   // Customer portal: a customer user reads and answers their own company's quotations.
   'portal.quotation.read',
   'portal.quotation.respond',
+  // P3 sales and invoicing: sales orders, invoices, payments and receivables.
+  'sales_order.read',
+  'sales_order.confirm',
+  'sales_order.mark_billable',
+  'invoice.read',
+  'invoice.draft',
+  'invoice.submit',
+  'invoice.issue',
+  'invoice.credit_note',
+  'payment.read',
+  'payment.record',
+  'payment.verify',
+  'payment.allocate',
+  'ar.read',
+  // Customer portal: a customer user reads their own issued invoices and submits proof of payment.
+  'portal.invoice.read',
+  'portal.payment.submit',
 ] as const;
 export const PermissionSchema = z.enum(PERMISSIONS);
 export type Permission = z.infer<typeof PermissionSchema>;
@@ -97,6 +114,37 @@ const salesCreatorGrants: RoleGrants = {
   'quotation.submit': 'own',
 };
 
+// --- P3 sales and invoicing grants (a separate block, so the merge with P4 stays small) ---
+
+/** Read every sales order, invoice, payment and the receivables aging. Reading is not changing. */
+const billingReadAllGrants: RoleGrants = {
+  'sales_order.read': 'all',
+  'invoice.read': 'all',
+  'payment.read': 'all',
+  'ar.read': 'all',
+};
+
+/**
+ * The Accountant prepares the money documents: confirms orders, marks schedule lines billable, drafts
+ * and submits invoices, and records and allocates payments. The Accountant does not issue, credit or
+ * verify: those are Finance (maker-checker, and the verifier must differ from the recorder).
+ */
+const billingPreparerGrants: RoleGrants = {
+  'sales_order.confirm': 'all',
+  'sales_order.mark_billable': 'all',
+  'invoice.draft': 'all',
+  'invoice.submit': 'all',
+  'payment.record': 'all',
+  'payment.allocate': 'all',
+};
+
+/** Finance holds the checker powers: issue an approved invoice, issue a credit or debit note, verify a payment. */
+const billingFinanceGrants: RoleGrants = {
+  'invoice.issue': 'all',
+  'invoice.credit_note': 'all',
+  'payment.verify': 'all',
+};
+
 /** What every internal user who is not an approver may do in the kernel: their own memos, documents and requests. */
 const staffBaseGrants: RoleGrants = {
   'memo.create': 'own',
@@ -113,9 +161,23 @@ const staffBaseGrants: RoleGrants = {
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   founder: founderGrants,
-  management: { ...approverGrants, ...salesReadAllGrants },
-  finance: { ...approverGrants, 'audit.read': 'all', ...salesReadAllGrants, ...salesCreatorGrants },
-  accountant: { ...approverGrants, ...salesReadAllGrants, ...salesCreatorGrants },
+  management: { ...approverGrants, ...salesReadAllGrants, ...billingReadAllGrants },
+  finance: {
+    ...approverGrants,
+    'audit.read': 'all',
+    ...salesReadAllGrants,
+    ...salesCreatorGrants,
+    ...billingReadAllGrants,
+    ...billingPreparerGrants,
+    ...billingFinanceGrants,
+  },
+  accountant: {
+    ...approverGrants,
+    ...salesReadAllGrants,
+    ...salesCreatorGrants,
+    ...billingReadAllGrants,
+    ...billingPreparerGrants,
+  },
   sales: {
     ...staffBaseGrants,
     'crm.lead.read': 'own',
@@ -138,6 +200,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   customer_user: {
     'portal.quotation.read': 'customer_org',
     'portal.quotation.respond': 'customer_org',
+    'portal.invoice.read': 'customer_org',
+    'portal.payment.submit': 'customer_org',
   },
   vendor_user: {},
   pmo: {

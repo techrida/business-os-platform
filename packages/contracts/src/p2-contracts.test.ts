@@ -148,10 +148,12 @@ describe('P2 permissions', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({});
   });
 
-  it('gives customer_user only the two portal quotation grants, at its own company', () => {
+  it('gives customer_user only portal grants, at its own company (P3 adds the invoice and payment ones)', () => {
     expect(DEFAULT_ROLE_PERMISSIONS.customer_user).toEqual({
       'portal.quotation.read': 'customer_org',
       'portal.quotation.respond': 'customer_org',
+      'portal.invoice.read': 'customer_org',
+      'portal.payment.submit': 'customer_org',
     });
   });
 
