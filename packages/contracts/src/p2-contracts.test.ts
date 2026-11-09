@@ -27,7 +27,7 @@ const NEW_PERMISSIONS: readonly Permission[] = [
 ];
 
 describe('P2 roles', () => {
-  it.each(['pmo', 'operations_head', 'procurement', 'receiver'])('knows the role %s', (role) => {
+  it.each(['pmo', 'operations_head', 'procurement', 'warehouse', 'operations_officer'])('knows the role %s', (role) => {
     expect(RoleKeySchema.safeParse(role).success).toBe(true);
     expect(ROLE_KEYS).toContain(role);
     expect(DEFAULT_ROLE_PERMISSIONS).toHaveProperty(role);
@@ -138,14 +138,17 @@ describe('P2 permissions', () => {
     }
   });
 
-  it('gives procurement and receiver nothing from CRM or quotations', () => {
-    for (const role of [DEFAULT_ROLE_PERMISSIONS.procurement, DEFAULT_ROLE_PERMISSIONS.receiver]) {
+  it('gives procurement and warehouse nothing from CRM or quotations', () => {
+    for (const role of [DEFAULT_ROLE_PERMISSIONS.procurement, DEFAULT_ROLE_PERMISSIONS.warehouse]) {
       for (const p of NEW_PERMISSIONS) expect(role[p], p).toBeUndefined();
     }
   });
 
-  it('keeps vendor_user empty', () => {
-    expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({});
+  it('keeps vendor_user to the two vendor-portal grants', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.vendor_user).toEqual({
+      'portal.vendor.read': 'customer_org',
+      'portal.vendor.submit': 'customer_org',
+    });
   });
 
   it('gives customer_user only portal grants, at its own company (P3 adds the invoice and payment ones)', () => {
