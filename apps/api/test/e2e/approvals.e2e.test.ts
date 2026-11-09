@@ -266,7 +266,7 @@ describe('P1 exit scenario: two-step approval of a test memo', () => {
     );
   });
 
-  it('3. no self-approval: sales gets 403, finance on step 1 gets 403 out_of_scope', async () => {
+  it('3. no self-approval: unassigned sales gets 404, finance on step 1 gets 403 out_of_scope', async () => {
     const before = await getRequest(await auth('finance'), s.requestId);
     expect(before.status).toBe('pending');
     expect(before.currentSeq).toBe(1);
@@ -275,9 +275,9 @@ describe('P1 exit scenario: two-step approval of a test memo', () => {
       action: 'approve',
       expectedVersion: before.version,
     });
-    expect(salesTry.status, show(salesTry)).toBe(403);
+    expect(salesTry.status, show(salesTry)).toBe(404);
     const salesErr = errorOf(salesTry.body);
-    expect(salesErr.code).toBe('forbidden');
+    expect(salesErr.code).toBe('not_found');
 
     // The current version, so a 409 cannot hide the 403 (act() checks the version before the scope).
     const financeTry = await act(await auth('finance'), s.requestId, randomUUID(), {
@@ -288,7 +288,7 @@ describe('P1 exit scenario: two-step approval of a test memo', () => {
     const financeErr = errorOf(financeTry.body);
     expect(financeErr).toMatchObject({ code: 'forbidden', reason: 'out_of_scope' });
     console.log(
-      `step 3: sales approve -> 403 ${salesErr.code}${salesErr.reason ? `/${salesErr.reason}` : ''}; ` +
+      `step 3: sales approve -> 404 ${salesErr.code}${salesErr.reason ? `/${salesErr.reason}` : ''}; ` +
         `finance on step 1 -> 403 ${financeErr.code}/${financeErr.reason}`,
     );
   });
