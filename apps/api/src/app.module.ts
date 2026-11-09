@@ -8,6 +8,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
 import { MeModule } from './modules/me/me.module';
 import { OpportunitiesModule } from './modules/opportunities/opportunities.module';
 import { VendorBillsModule } from './modules/payables/bills/vendor-bills.module';
+import { PaymentRequestsModule } from './modules/payables/payment-requests/payment-requests.module';
 import { PortalModule } from './modules/portal/portal.module';
 import { PortalAccessModule } from './modules/portal-access/portal-access.module';
 import { VendorPortalInboxModule } from './modules/portal-vendor/inbox/portal-vendor-inbox.module';
@@ -87,6 +88,7 @@ import { UsersModule } from './platform/users/users.module';
     PurchaseOrdersModule,
     PurchaseOrderRenderModule,
     VendorBillsModule,
+    PaymentRequestsModule,
   ],
 })
 export class AppModule {}
