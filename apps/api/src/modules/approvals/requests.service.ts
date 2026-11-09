@@ -309,6 +309,7 @@ export class ApprovalsService {
           and(
             eq(approvalActions.tenantId, scope.tenantId),
             eq(approvalActions.actorUserId, userId),
+            eq(approvalActions.requestId, requestId),
             eq(approvalActions.idempotencyKey, idempotencyKey),
           ),
         );
