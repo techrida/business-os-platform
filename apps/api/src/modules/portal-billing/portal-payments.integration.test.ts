@@ -368,6 +368,50 @@ beforeEach(() => {
 });
 
 describe('POST /v1/portal/payments', () => {
+  it('refuses a real vendor portal principal for submit, list and proof upload, and writes nothing', async () => {
+    const w = await newWorld();
+    const doc = await cleanProof(w.me);
+    const vendor = await createParty(pool, { tenantId: w.scope.tenantId, kind: 'vendor' });
+    const user = await createPortalUser(pool, {
+      tenantId: w.scope.tenantId,
+      idpOrgId: vendor.idpOrgId,
+    });
+    const principal: Principal = {
+      ...w.me,
+      userId: user.userId,
+      idpOrgId: vendor.idpOrgId,
+      partyId: vendor.partyId,
+      orgKind: 'vendor',
+      roles: ['vendor_user'],
+    };
+    const documentsBefore = await pool.query(
+      'SELECT id FROM app.documents WHERE tenant_id = $1 ORDER BY id',
+      [w.scope.tenantId],
+    );
+    expect(await refusal(submitAs(principal, bodyOf(doc)))).toMatch(/^403 .*"code":"forbidden"/);
+    expect(await refusal(listAs(principal))).toMatch(/^403 .*"code":"forbidden"/);
+    expect(
+      await refusal(
+        asCaller(principal, () =>
+          proofs.create({
+            filename: 'vendor-slip.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: PDF().length,
+          }),
+        ),
+      ),
+    ).toMatch(/^403 /);
+    expect(await paymentRows(w.scope.tenantId)).toHaveLength(0);
+    expect(
+      (
+        await pool.query('SELECT id FROM app.documents WHERE tenant_id = $1 ORDER BY id', [
+          w.scope.tenantId,
+        ])
+      ).rows,
+    ).toEqual(documentsBefore.rows);
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
   it("lands a submitted payment on channel portal for the caller's party only", async () => {
     const w = await newWorld();
     const doc = await cleanProof(w.me);
