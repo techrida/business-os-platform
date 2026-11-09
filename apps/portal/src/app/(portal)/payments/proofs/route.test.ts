@@ -47,6 +47,14 @@ afterEach(() => {
 });
 
 describe('proof upload route', () => {
+  it('answers a vendor session with a uniform 404 before reading the file or calling the API', async () => {
+    getSession.mockResolvedValue({ ...session, orgKind: 'vendor' });
+    const res = await upload({ type: 'application/x-msdownload' });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Not found.' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('stores the file through the API and returns only the document id and name', async () => {
     fetchMock
       .mockResolvedValueOnce(json({ documentId: ID, versionId: IDEM, uploadPath: PATH }, 201))
