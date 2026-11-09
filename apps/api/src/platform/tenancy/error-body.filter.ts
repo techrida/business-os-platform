@@ -40,6 +40,22 @@ export type ErrorCode =
   | 'NO_ELIGIBLE_APPROVER'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
+  // P3 sales orders, payments and invoices.
+  | 'quotation_not_accepted'
+  | 'sales_order_not_open'
+  | 'schedule_line_not_planned'
+  | 'SCHEDULE_LINE_TAKEN'
+  | 'NOT_APPROVED'
+  | 'payment_not_submitted'
+  | 'payment_not_verified'
+  | 'proof_not_clean'
+  | 'invalid_proof'
+  | 'unknown_customer'
+  | 'unknown_withholding_code'
+  | 'reason_required'
+  | 'invalid_evidence_document'
+  | 'invalid_payment_schedule'
+  | 'evidence_required'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -87,6 +103,21 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
+  quotation_not_accepted: 'Only an accepted quotation can be confirmed',
+  sales_order_not_open: 'This sales order is not open for this change',
+  schedule_line_not_planned: 'This schedule line is no longer planned',
+  SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
+  NOT_APPROVED: 'This invoice is issued only after it has been approved',
+  payment_not_submitted: 'This payment is not waiting for verification',
+  payment_not_verified: 'Only a verified payment can be reversed',
+  proof_not_clean: 'Every proof must pass the virus scan first',
+  invalid_proof: 'A proof file is not valid for this payment',
+  unknown_customer: 'No such customer',
+  unknown_withholding_code: 'No such withholding code',
+  reason_required: 'A reason is required',
+  invalid_evidence_document: 'An evidence document does not exist or was removed',
+  invalid_payment_schedule: 'The payment schedule is not valid',
+  evidence_required: 'This step needs an evidence document',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -150,6 +181,18 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'kyb_not_verified',
   'customer_merged',
   'idp_org_taken',
+  // U8 sales orders: only an accepted quotation confirms, only a confirmed order marks a line, only a planned
+  // line becomes billable.
+  'quotation_not_accepted',
+  'sales_order_not_open',
+  'schedule_line_not_planned',
+  // U10 invoices: the line already has a live invoice; a tax invoice, credit or debit note needs approval first.
+  'SCHEDULE_LINE_TAKEN',
+  'NOT_APPROVED',
+  // U7 payments: verify and reject need a submitted payment, reverse a verified one, verify needs clean proofs.
+  'payment_not_submitted',
+  'payment_not_verified',
+  'proof_not_clean',
 ];
 
 function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
@@ -169,6 +212,16 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'NO_ELIGIBLE_APPROVER',
   'evidence_policy_unmet',
   'decided_on_in_future',
+  // U7 payments: a proof that is not a clean file for this customer, an unknown customer or withholding code,
+  // a rejection or reversal without a reason.
+  'invalid_proof',
+  'unknown_customer',
+  'unknown_withholding_code',
+  'reason_required',
+  // U8 sales orders: an evidence document that is missing or gone, or a payment schedule that does not add up.
+  'invalid_evidence_document',
+  'invalid_payment_schedule',
+  'evidence_required',
 ];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
