@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { ApprovalsWorkerModule } from './modules/approvals/approvals.worker.module';
 import { PortalLoginPolicyWorkerModule } from './modules/portal-access/portal-login-policy.worker.module';
+import { PurchaseOrderRenderWorkerModule } from './modules/procurement/orders/render/purchase-order-render.worker.module';
 import { QuotationExpiryWorkerModule } from './modules/quotations/expiry/quotation-expiry.worker.module';
 import { QuotationRenderWorkerModule } from './modules/quotations/render/quotation-render.worker.module';
 import { VendorKycExpiryJobsModule } from './modules/vendors/vendor-kyc-expiry.worker.module';
@@ -36,6 +37,7 @@ import { WorkerHealth } from './platform/queue/worker-health';
     UsersWorkerModule,
     ApprovalsWorkerModule,
     QuotationRenderWorkerModule,
+    PurchaseOrderRenderWorkerModule,
     QuotationExpiryWorkerModule,
     PortalLoginPolicyWorkerModule,
     VendorKycExpiryJobsModule,
