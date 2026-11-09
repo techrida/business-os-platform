@@ -27,6 +27,15 @@ afterEach(() => {
 });
 
 describe('invoice PDF route', () => {
+  it('answers a vendor session with the plain 404 and calls nothing', async () => {
+    getSession.mockResolvedValue({ ...session, orgKind: 'vendor' });
+    const res = await call();
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
+    expect(await res.text()).toBe('Invoice not found.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('streams the PDF with only the safe headers', async () => {
     fetchMock
       .mockResolvedValueOnce(json({ url: '/v1/files/tok-1', expiresAt: '2026-11-09T10:00:00Z' }))
