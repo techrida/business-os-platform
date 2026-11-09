@@ -292,11 +292,14 @@ export const invoiceLines = appSchema.table(
     gross: money('gross').notNull(),
     discountAlloc: money('discount_alloc').notNull().default('0'),
     taxable: money('taxable').notNull(),
+    /** The original invoice line a credit-note line credits (0024); NULL on every other kind of line. */
+    originalLineId: uuid('original_line_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     unique('invoice_lines_tenant_id_unique').on(t.tenantId, t.id),
+    unique('invoice_lines_tenant_org_id_unique').on(t.tenantId, t.organizationId, t.id),
     unique('invoice_lines_tenant_org_invoice_line_no_unique').on(
       t.tenantId,
       t.organizationId,
@@ -318,7 +321,13 @@ export const invoiceLines = appSchema.table(
       columns: [t.tenantId, t.taxCodeId],
       foreignColumns: [taxCodes.tenantId, taxCodes.id],
     }),
+    foreignKey({
+      name: 'invoice_lines_original_line_fk',
+      columns: [t.tenantId, t.organizationId, t.originalLineId],
+      foreignColumns: [t.tenantId, t.organizationId, t.id],
+    }),
     index('invoice_lines_tenant_tax_code_idx').on(t.tenantId, t.taxCodeId),
+    index('invoice_lines_tenant_original_line_idx').on(t.tenantId, t.originalLineId),
     check('invoice_lines_line_no_check', sql`${t.lineNo} >= 1`),
     check('invoice_lines_quantity_check', sql`${t.quantity} > 0`),
     check('invoice_lines_unit_price_check', sql`${t.unitPrice} >= 0`),
