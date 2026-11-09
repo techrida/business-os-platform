@@ -92,6 +92,8 @@ export type ErrorCode =
   | 'BILL_NOT_PAYABLE'
   | 'CURRENCY_MISMATCH'
   | 'PURCHASE_ORDER_NOT_FOUND'
+  | 'unprocessable'
+  | 'supporting_document_unsupported'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'bad_request'
@@ -192,6 +194,9 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   BILL_NOT_PAYABLE: 'A line names a bill that is not approved for payment',
   CURRENCY_MISMATCH: 'The payable items of a payment request must all be in one currency',
   PURCHASE_ORDER_NOT_FOUND: 'This vendor has no such purchase order',
+  unprocessable: 'The submitted data cannot be processed',
+  supporting_document_unsupported:
+    'A supporting document cannot be attached to a bank change request yet',
   payload_too_large: 'Payload too large',
   unsupported_media_type: 'Unsupported media type',
   bad_request: 'Bad request',
@@ -345,6 +350,9 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'BILL_NOT_PAYABLE',
   'CURRENCY_MISMATCH',
   'PURCHASE_ORDER_NOT_FOUND',
+  // P4 vendor portal: a KYC document fails the checklist or expiry rules, or a bank change names a file.
+  'unprocessable',
+  'supporting_document_unsupported',
 ];
 
 function unprocessableCodeOf(exception: HttpException): ErrorCode | undefined {
