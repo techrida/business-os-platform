@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { randomBytes } from 'node:crypto';
+
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { Type } from '@nestjs/common';
@@ -54,6 +56,8 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
     OIDC_ISSUER: issuer.url,
     OIDC_AUDIENCE: PROJECT_ID,
     OIDC_CLIENT_ID: CLIENT_ID,
+    // CryptoModule (vendor bank accounts) throws at boot without a keyring.
+    FIELD_ENC_KEYS: 'k1:' + randomBytes(32).toString('base64'),
   });
 
   const { AppModule } = await import('../../../src/app.module');

@@ -1,5 +1,7 @@
 import 'reflect-metadata';
 
+import { randomBytes } from 'node:crypto';
+
 import { Controller, Get, Post } from '@nestjs/common';
 import { DiscoveryService, ModulesContainer } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
@@ -113,6 +115,8 @@ describe('route policy sweep on the real AppModule', () => {
       OIDC_ISSUER: 'http://127.0.0.1:1',
       OIDC_AUDIENCE: 'route-policy-check',
       OIDC_CLIENT_ID: 'route-policy-client',
+      // CryptoModule (vendor bank accounts) throws at boot without a keyring.
+      FIELD_ENC_KEYS: 'k1:' + randomBytes(32).toString('base64'),
     });
     const { AppModule } = await import('../../app.module');
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
