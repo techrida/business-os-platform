@@ -138,6 +138,13 @@ describe('listPurchaseRequests', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('reads the live RFQ id, and treats an answer without one as no RFQ', async () => {
+    answer(reply([{ ...item, rfqId: ID_B }, item]));
+    const out = await listPurchaseRequests(session, {});
+    expect(out[0]?.rfqId).toBe(ID_B);
+    expect(out[1]?.rfqId).toBeNull();
+  });
+
   it('keeps money as the server wrote it, as strings', async () => {
     answer(reply([item]));
     const [first] = await listPurchaseRequests(session, {});

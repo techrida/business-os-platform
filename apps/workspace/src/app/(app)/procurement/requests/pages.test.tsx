@@ -255,6 +255,31 @@ describe('the detail', () => {
     expect(out).not.toContain('Cancel request');
   });
 
+  it('a department-approved request with no RFQ offers Start RFQ to sourcing staff only', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail({ status: 'dept_approved' }));
+    const out = await detailHtml();
+    expect(out).toContain('Start RFQ');
+    expect(out).toContain(`/procurement/rfqs/new?pr=${ID}`);
+    session.roles = ['sales'];
+    expect(await detailHtml()).not.toContain('Start RFQ');
+  });
+
+  it('a request with an RFQ opens it instead of starting another', async () => {
+    const RFQ = '99999999-9999-4999-8999-999999999999';
+    api.getPurchaseRequest.mockResolvedValue(detail({ status: 'sourcing', rfqId: RFQ }));
+    const out = await detailHtml();
+    expect(out).toContain('Open RFQ');
+    expect(out).toContain(`/procurement/rfqs/${RFQ}`);
+    expect(out).not.toContain('Start RFQ');
+  });
+
+  it('no RFQ button before the department head approved, or when the RFQ id is absent', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail({ status: 'submitted' }));
+    const out = await detailHtml();
+    expect(out).not.toContain('Start RFQ');
+    expect(out).not.toContain('Open RFQ');
+  });
+
   it('a missing or foreign request is the not-found page', async () => {
     api.getPurchaseRequest.mockRejectedValue(apiError(404, 'not_found'));
     await expect(detailHtml()).rejects.toThrow('NOT_FOUND');
