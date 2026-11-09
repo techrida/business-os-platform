@@ -8,10 +8,15 @@
 //   tolerance (from settings) or Finance approved a match exception; the bill route has the person who entered it
 //   in sod_user_ids, so its Accountant step is another accountant (AD5);
 // - "no double effects" and "no lost updates": every write runs in withIdempotency and locks the bill FOR UPDATE
-//   before it changes it;
+//   before it changes it; a match run also locks the PO lines it reads (ascending id, after the bill), so two bills
+//   against one receipt are matched one after the other and the second sees the first's quantity;
 // - "one legal entity at a time": every read is scoped to the acting entity; a bill, PO or line of another entity
-//   is a 404 (or a 422 for a line), never a 403.
-// Approval of a bill (the payable open item and `vendor_bill_posted`), void and the VAT register are the next unit.
+//   is a 404 (or a 422 for a line), never a 403;
+// - "a void leaves a trail" (unit A1c): open items are append-only, so a void opens a vendor_debit_note payable
+//   debit for the full amount and allocates it against the bill's credit item through LedgerService; only a bill
+//   with nothing allocated yet may be voided;
+// - the purchase VAT register (check 17): its total is the creditable VAT of the approved bills of the period.
+// Approval of a bill (the payable open item and `vendor_bill_posted`) is the subject's (vendor-bill.subject.ts).
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -19,11 +24,13 @@ import type {
   CreateVendorBillBody,
   MatchStatus,
   RequestMatchExceptionBody,
+  VoidVendorBillBody,
 } from '@bos/contracts';
 import {
   documents,
   matchExceptions,
   matchResults,
+  openItems,
   poLineProgress,
   purchaseOrderLines,
   purchaseOrders,
@@ -33,9 +40,10 @@ import {
   vendorAccounts,
   vendorBillLines,
   vendorBills,
+  vendors,
   withholdingCodes,
 } from '@bos/db';
-import { fiscalYearOf } from '@bos/locale';
+import { fiscalYearOf, formatBs, kathmanduDate } from '@bos/locale';
 import { parseDecimal, type MatchTolerance } from '@bos/money-rules';
 import {
   ConflictException,
@@ -46,7 +54,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, desc, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, asc, between, desc, eq, inArray, max, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
@@ -54,6 +62,7 @@ import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { LedgerService } from '../../ledger/ledger.service';
 import {
   BILLABLE_PO_STATUSES,
   BILL_AUDIT_ENTITY,
@@ -138,6 +147,33 @@ export interface MatchExceptionDto {
   approvalRequestId: string | null;
 }
 
+export interface VatRegisterRowDto {
+  vendorBillId: string;
+  billNumber: string | null;
+  vendorPartyId: string;
+  vendorName: string;
+  /** Absent only for a foreign vendor. */
+  vendorPan: string | null;
+  vendorInvoiceNo: string;
+  invoiceDate: string;
+  /** The invoice date in Bikram Sambat, YYYY-MM-DD. */
+  invoiceDateBs: string;
+  /** Net of the lines whose tax code is creditable (a vendor credit note counts negative). */
+  taxableAmount: string;
+  /** VAT of the lines whose tax code is creditable (a vendor credit note counts negative). */
+  vatAmount: string;
+}
+
+export interface VatRegisterDto {
+  from: string;
+  to: string;
+  rows: VatRegisterRowDto[];
+  total: { taxableAmount: string; vatAmount: string };
+}
+
+/** Bills whose input VAT is claimed: approved and onward, never voided, rejected or still in approval. */
+const VAT_REGISTER_STATUSES = ['approved', 'partially_paid', 'paid'] as const;
+
 const notFound = (what: string) =>
   new NotFoundException({ code: 'not_found', message: `${what} not found` });
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
@@ -182,6 +218,8 @@ export class VendorBillsService {
     @Optional()
     @Inject(VENDOR_BILLS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    // Last and defaulted so callers that build the service by hand keep working; LedgerService holds no state.
+    private readonly ledger: LedgerService = new LedgerService(),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -489,12 +527,18 @@ export class VendorBillsService {
     const lines = await this.linesOf(tx, scope, bill.id);
     const poLineIds = [...new Set(lines.flatMap((l) => (l.poLineId ? [l.poLineId] : [])))];
     const s = scoped(scope);
+    // Lock the PO lines (ascending id, after the bill) before reading their progress, so a second bill against the
+    // same lines waits here and then reads the first bill's quantity in a fresh statement (READ COMMITTED). NO KEY
+    // UPDATE, not UPDATE: each bill's line insert holds FOR KEY SHARE on these rows (vendor_bill_lines_po_line_fk),
+    // and FOR UPDATE would deadlock two bills that both inserted lines; NO KEY UPDATE still excludes NO KEY UPDATE.
     const poLines = new Map(
       (
         await tx
           .select()
           .from(purchaseOrderLines)
           .where(s.where(purchaseOrderLines, inArray(purchaseOrderLines.id, poLineIds)))
+          .orderBy(asc(purchaseOrderLines.id))
+          .for('no key update')
       ).map((r) => [r.id, r]),
     );
     const progress = new Map(
@@ -762,6 +806,221 @@ export class VendorBillsService {
     }
   }
 
+  // ------------------------------------------------------------------------------------------------- void
+
+  /**
+   * Voids an approved bill that nothing has been allocated against yet: opens a vendor_debit_note payable debit
+   * for the full amount (source = the bill), allocates it against the bill's credit item, records
+   * `vendor_debit_note_issued` and marks the bill voided. 200 with the bill. 404 outside the acting entity; 409
+   * invalid_transition unless the bill is approved (a second void included), BILL_NOT_POSTED when the bill has no
+   * credit item, BILL_HAS_ALLOCATIONS when part of it is already paid or settled.
+   */
+  async void(id: string, body: VoidVendorBillBody, idempotencyKey: string): Promise<VendorBillDto> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        { command: 'payables.bill.void', key: idempotencyKey, body: { id, ...body } },
+        async () => {
+          const bill = await this.lockBill(tx, scope, id);
+          if (bill.status !== 'approved') {
+            throw conflict('invalid_transition', `A ${bill.status} bill cannot be voided`);
+          }
+          const [credit] = await tx
+            .select({ id: openItems.id })
+            .from(openItems)
+            .where(
+              scoped(scope).where(
+                openItems,
+                and(eq(openItems.sourceType, 'vendor_bill'), eq(openItems.sourceId, bill.id)),
+              ),
+            );
+          if (credit === undefined) {
+            throw conflict('BILL_NOT_POSTED', 'This bill has no payable item to void yet');
+          }
+          // Lock the credit item before reading its open amount, so no allocation lands between the check and ours.
+          await this.ledger.lockForMoneyCommand(tx, scope, [
+            { rank: 'open_item', ids: [credit.id] },
+          ]);
+          const open = (await this.ledger.openAmounts(tx, scope, [credit.id])).get(credit.id);
+          if (open === undefined) {
+            throw conflict('BILL_NOT_POSTED', 'This bill has no payable item to void yet');
+          }
+          if (!new Decimal(open).eq(bill.payableTotal)) {
+            throw conflict(
+              'BILL_HAS_ALLOCATIONS',
+              'Part of this bill is already paid or settled, so it cannot be voided',
+            );
+          }
+          const { item: debit } = await this.ledger.openItem(tx, scope, actor, {
+            side: 'payable',
+            direction: 'debit',
+            partyId: bill.vendorId,
+            sourceType: 'vendor_debit_note',
+            sourceId: bill.id,
+            currency: bill.currency,
+            amount: bill.payableTotal,
+            amountNpr: bill.payableTotalNpr,
+            fxRate: bill.fxRate,
+            fxSource: bill.fxSource,
+            fxDate: bill.fxDate,
+            documentDate: isoDateOf(now),
+          });
+          const allocation = await this.ledger.allocate(tx, scope, actor, {
+            debitItemId: debit.id,
+            creditItemId: credit.id,
+            amount: bill.payableTotal,
+          });
+          await this.ledger.recordEvent(tx, scope, actor, {
+            sourceType: 'vendor_debit_note',
+            sourceId: bill.id,
+            event: 'vendor_debit_note_issued',
+            payload: {
+              vendorBillId: bill.id,
+              debitItemId: debit.id,
+              creditItemId: credit.id,
+              allocationId: allocation.id,
+              amount: bill.payableTotal,
+              currency: bill.currency,
+              reason: body.reason,
+            },
+          });
+          await tx
+            .update(vendorBills)
+            .set({
+              status: 'voided',
+              voidedBy: principal.userId,
+              voidedAt: now,
+              voidReason: body.reason,
+              version: sql`${vendorBills.version} + 1`,
+              updatedAt: now,
+            })
+            .where(
+              scoped(scope).where(
+                vendorBills,
+                and(eq(vendorBills.id, bill.id), eq(vendorBills.status, 'approved')),
+              ),
+            );
+          await this.audit.record(tx, {
+            action: 'payables.bill.voided',
+            entityType: BILL_AUDIT_ENTITY,
+            entityId: bill.id,
+            before: { status: bill.status },
+            after: { status: 'voided', reason: body.reason, debitItemId: debit.id },
+          });
+          return { status: 200, response: await this.dto(tx, scope, bill.id) };
+        },
+      );
+      return done.response;
+    });
+  }
+
+  // ------------------------------------------------------------------------------------------------- VAT register
+
+  /**
+   * The purchase VAT register of the acting entity for invoice dates from `from` to `to` (inclusive): one row per
+   * approved, partially paid or paid bill, oldest first, with the net and VAT of its creditable lines. The total
+   * is the creditable VAT claimed for the period (check 17).
+   */
+  async vatRegister(from: string, to: string): Promise<VatRegisterDto> {
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const bills = await tx
+        .select({
+          id: vendorBills.id,
+          kind: vendorBills.kind,
+          number: vendorBills.number,
+          vendorId: vendorBills.vendorId,
+          vendorInvoiceNo: vendorBills.vendorInvoiceNo,
+          invoiceDate: vendorBills.invoiceDate,
+          vendorName: vendors.legalName,
+          vendorPan: vendors.pan,
+        })
+        .from(vendorBills)
+        .innerJoin(
+          vendors,
+          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
+        )
+        .where(
+          scoped(scope).where(
+            vendorBills,
+            and(
+              inArray(vendorBills.status, [...VAT_REGISTER_STATUSES]),
+              between(vendorBills.invoiceDate, from, to),
+            ),
+          ),
+        )
+        .orderBy(
+          asc(vendorBills.invoiceDate),
+          asc(vendorBills.vendorInvoiceNo),
+          asc(vendorBills.id),
+        );
+      const lines =
+        bills.length === 0
+          ? []
+          : await tx
+              .select({
+                billId: vendorBillLines.vendorBillId,
+                net: vendorBillLines.netAmount,
+                vat: vendorBillLines.vatAmount,
+              })
+              .from(vendorBillLines)
+              .innerJoin(
+                taxCodes,
+                and(
+                  eq(taxCodes.tenantId, vendorBillLines.tenantId),
+                  eq(taxCodes.id, vendorBillLines.taxCodeId),
+                ),
+              )
+              .where(
+                scoped(scope).where(
+                  vendorBillLines,
+                  and(
+                    inArray(
+                      vendorBillLines.vendorBillId,
+                      bills.map((b) => b.id),
+                    ),
+                    eq(taxCodes.creditable, true),
+                  ),
+                ),
+              );
+      const byBill = new Map<string, { net: Decimal; vat: Decimal }>();
+      for (const l of lines) {
+        const acc = byBill.get(l.billId) ?? { net: new Decimal(0), vat: new Decimal(0) };
+        byBill.set(l.billId, { net: acc.net.plus(l.net), vat: acc.vat.plus(l.vat) });
+      }
+      let totalNet = new Decimal(0);
+      let totalVat = new Decimal(0);
+      const rows = bills.map((b): VatRegisterRowDto => {
+        const sign = b.kind === 'vendor_credit_note' ? -1 : 1;
+        const sums = byBill.get(b.id) ?? { net: new Decimal(0), vat: new Decimal(0) };
+        const net = sums.net.times(sign);
+        const vat = sums.vat.times(sign);
+        totalNet = totalNet.plus(net);
+        totalVat = totalVat.plus(vat);
+        return {
+          vendorBillId: b.id,
+          billNumber: b.number,
+          vendorPartyId: b.vendorId,
+          vendorName: b.vendorName,
+          vendorPan: b.vendorPan,
+          vendorInvoiceNo: b.vendorInvoiceNo,
+          invoiceDate: b.invoiceDate,
+          invoiceDateBs: formatBs(invoiceInstant(b.invoiceDate), 'YYYY-MM-DD'),
+          taxableAmount: net.toFixed(2),
+          vatAmount: vat.toFixed(2),
+        };
+      });
+      return {
+        from,
+        to,
+        rows,
+        total: { taxableAmount: totalNet.toFixed(2), vatAmount: totalVat.toFixed(2) },
+      };
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------- helpers
 
   private async tolerance(scope: TxScope): Promise<MatchTolerance> {
@@ -828,6 +1087,12 @@ export class VendorBillsService {
     if (bill === undefined) throw notFound('Bill');
     return toDto(bill, await this.linesOf(tx, scope, id), await this.latestResults(tx, scope, id));
   }
+}
+
+/** The Kathmandu calendar date of an instant, YYYY-MM-DD. */
+function isoDateOf(instant: Date): string {
+  const { y, m, d } = kathmanduDate(instant);
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
 function toDto(bill: BillRow, lines: BillLineRow[], results: MatchResultRow[]): VendorBillDto {
