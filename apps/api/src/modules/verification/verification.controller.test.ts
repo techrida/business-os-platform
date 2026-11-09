@@ -1,5 +1,5 @@
 // Unit tests of the verification routes with a fake service: what the edge refuses before any rule runs
-// (400s), the status codes, and that every route names a permission (deny by default).
+// (400s), the status codes, and that every route names its policy (deny by default).
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
@@ -13,7 +13,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configureApp } from '../../app.setup';
-import { CAN_KEY } from '../../platform/authz/decorators';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { VerificationController } from './verification.controller';
 import { VerificationService } from './verification.service';
@@ -53,18 +53,26 @@ beforeEach(() => {
 });
 
 describe('route policy', () => {
-  it('names a permission on every route', () => {
-    const proto = VerificationController.prototype as unknown as Record<string, unknown>;
+  const proto = VerificationController.prototype as unknown as Record<string, object>;
+
+  it('names a permission on the read and decision routes', () => {
     const wanted: Record<string, Permission> = {
       list: 'verification.read',
       get: 'verification.read',
-      create: 'customer.write',
-      setChecklist: 'customer.write',
-      submit: 'customer.write',
       decide: 'verification.review',
     };
     for (const [method, permission] of Object.entries(wanted)) {
-      expect(Reflect.getMetadata(CAN_KEY, proto[method] as object), method).toBe(permission);
+      expect(Reflect.getMetadata(CAN_KEY, proto[method]!), method).toBe(permission);
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, proto[method]!), method).toBeUndefined();
+    }
+  });
+
+  // A customer case is written with customer.write and a vendor case with vendor.write, so no single route-level
+  // permission fits: the service checks the party kind's write permission before it reads anything.
+  it('leaves the write routes to the service, with no single route-level permission', () => {
+    for (const method of ['create', 'setChecklist', 'submit']) {
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, proto[method]!), method).toBe(true);
+      expect(Reflect.getMetadata(CAN_KEY, proto[method]!), method).toBeUndefined();
     }
   });
 });
