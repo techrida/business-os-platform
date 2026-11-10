@@ -24,6 +24,7 @@ export function StaffPicker({
   const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
+  const duplicateName = (person: Person) => people.filter((p) => p.name === person.name).length > 1;
   const selected = people.find((p) => p.userId === value);
   const filtered = people
     .filter((p) =>
@@ -130,7 +131,9 @@ export function StaffPicker({
                       }}
                     >
                       <strong>{p.name}</strong> {p.jobTitle ? <span>({p.jobTitle})</span> : null} ·{' '}
-                      {p.department ?? 'Unassigned'} {p.userId === value ? '✓' : ''}
+                      {p.department ?? 'Unassigned'}{' '}
+                      {duplicateName(p) ? `· Staff reference ${p.userId.slice(-8)}` : ''}{' '}
+                      {p.userId === value ? '✓' : ''}
                     </button>
                   ))}
               </section>

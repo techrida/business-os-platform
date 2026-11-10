@@ -46,6 +46,17 @@ it('applies missing older phase migrations by hash and preserves the ledger on r
     expect((await pool.query('SELECT value, memo, crm FROM preserved')).rows).toEqual([
       { value: 'seed', memo: null, crm: null },
     ]);
+    await writeFile(join(folder, 'base.sql'), 'CREATE TABLE tampered_source (value text);');
+    await expect(runMigrations(container.getConnectionUri(), folder)).rejects.toThrow(
+      'unknown applied SQL hash',
+    );
+    expect((await pool.query("SELECT to_regclass('public.tampered_source') AS name")).rows).toEqual(
+      [{ name: null }],
+    );
+    await writeFile(
+      join(folder, 'base.sql'),
+      "CREATE TABLE preserved (value text); INSERT INTO preserved VALUES ('seed');",
+    );
     await writeFile(
       join(folder, 'broken.sql'),
       'ALTER TABLE preserved ADD COLUMN rolled_back text; SELECT missing_column FROM preserved;',
