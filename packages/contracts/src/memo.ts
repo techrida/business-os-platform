@@ -7,7 +7,50 @@ import { CurrencySchema, DecimalString, RateString } from './money.js';
 export const MEMO_STATUSES = ['draft', 'submitted', 'approved', 'returned', 'rejected'] as const;
 export const MemoStatusSchema = z.enum(MEMO_STATUSES);
 
+export const MemoPersonSchema = z.object({
+  userId: z.guid(),
+  name: z.string(),
+  jobTitle: z.string().nullable(),
+  department: z.string().nullable(),
+});
+export const MemoTemplateInputSchema = z
+  .object({
+    departmentId: z.guid(),
+    date: z.iso.date(),
+    closing: z.string().trim().max(1000),
+    preparedByUserId: z.guid(),
+    recommenderUserIds: z.array(z.guid()).max(20),
+    approvedByUserId: z.guid(),
+  })
+  .superRefine((v, ctx) => {
+    const ids = [v.preparedByUserId, ...v.recommenderUserIds, v.approvedByUserId];
+    if (new Set(ids).size !== ids.length)
+      ctx.addIssue({ code: 'custom', message: 'Choose different people for each role' });
+  });
+export const MemoTemplateSnapshotSchema = z.object({
+  organizationId: z.guid(),
+  organizationName: z.string(),
+  departmentId: z.guid(),
+  departmentName: z.string(),
+  date: z.iso.date(),
+  closing: z.string(),
+  preparedBy: MemoPersonSchema,
+  recommenders: z.array(MemoPersonSchema),
+  approvedBy: MemoPersonSchema,
+});
+export type MemoTemplateSnapshot = z.infer<typeof MemoTemplateSnapshotSchema>;
+export const MemoDirectorySchema = z.object({
+  organizationId: z.guid(),
+  organizationName: z.string(),
+  currentUserId: z.guid(),
+  departmentId: z.guid().nullable(),
+  departments: z.array(z.object({ id: z.guid(), name: z.string() })),
+  people: z.array(MemoPersonSchema),
+});
+export type MemoDirectory = z.infer<typeof MemoDirectorySchema>;
+
 export const CreateMemoBodySchema = z.object({
+  template: MemoTemplateInputSchema.optional(),
   title: z.string().trim().min(1).max(200),
   body: z.string().max(10_000),
   /** The table has CHECK (amount >= 0), so a negative amount is refused here with a clear message. */
@@ -22,6 +65,7 @@ export const CreateMemoBodySchema = z.object({
 export type CreateMemoBody = z.infer<typeof CreateMemoBodySchema>;
 
 export const MemoDtoSchema = z.object({
+  template: MemoTemplateSnapshotSchema.nullable().optional(),
   id: z.guid(),
   number: z.string(),
   title: z.string(),

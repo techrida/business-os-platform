@@ -85,6 +85,8 @@ export interface SubmitInput {
   /** Who pressed submit, when not the requester (someone submitting on their behalf). Defaults to the requester. */
   submittedByUserId?: string;
   sodUserIds: string[];
+  /** Proposed printed signers, checked against the authoritative plan inside the submit transaction. */
+  proposedApproverIds?: string[];
 }
 
 type Q = Db | DbTransaction;
@@ -167,6 +169,16 @@ export class ApprovalsService {
       if (s.kind === 'group' && s.groupId === undefined) {
         throw new ConflictException('The workflow names an approval group that does not exist');
       }
+    }
+    if (
+      i.proposedApproverIds &&
+      (plan.blocked ||
+        plan.steps.length !== i.proposedApproverIds.length ||
+        i.proposedApproverIds.some((id, index) => !plan.steps[index]?.eligibleUserIds.includes(id)))
+    ) {
+      throw new ConflictException(
+        'Selected recommenders and approver must match the current approval route in order. Review the route before submitting.',
+      );
     }
     const status = plan.blocked ? 'blocked' : 'pending';
 

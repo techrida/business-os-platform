@@ -189,6 +189,7 @@ export const userEntities = appSchema.table(
     /** The roles this membership allows; NULL = every role in the token. */
     roleKeys: text('role_keys').array(),
     departmentId: uuid('department_id'),
+    jobTitle: text('job_title'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
