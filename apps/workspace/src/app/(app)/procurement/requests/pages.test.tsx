@@ -27,6 +27,7 @@ vi.mock('./actions', () => ({
 const api = vi.hoisted(() => ({
   listPurchaseRequests: vi.fn(),
   getPurchaseRequest: vi.fn(),
+  listCostCenters: vi.fn(),
 }));
 vi.mock('@/lib/api-procurement', () => api);
 const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
@@ -102,6 +103,9 @@ const editHtml = async () => html(await EditPage({ params: Promise.resolve({ id:
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  api.listCostCenters.mockResolvedValue([
+    { id: DEPT, code: 'GENERAL', name: 'General', active: true },
+  ]);
 });
 
 describe('the list', () => {
@@ -347,5 +351,50 @@ describe('edit and new', () => {
     const out = html(await NewPage());
     expect(out).toContain('do not include raising purchase requests');
     expect(out).not.toContain('Save draft');
+  });
+});
+
+describe('cost centre picker', () => {
+  it('loads the entity catalogue on new requests and renders a labelled select', async () => {
+    const out = html(await NewPage());
+    expect(api.listCostCenters).toHaveBeenCalledOnce();
+    expect(out).toMatch(/<select[^>]*name="costCenterId"/);
+    expect(out).toContain('GENERAL \u00b7 General');
+    expect(out).not.toContain('The cost centre&#x27;s id.');
+  });
+
+  it('loads the catalogue when editing and keeps the selected centre', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail());
+    const out = await editHtml();
+    expect(api.listCostCenters).toHaveBeenCalledOnce();
+    expect(out).toContain(`value="${DEPT}" selected=""`);
+  });
+
+  it('shows a retryable error when the catalogue cannot load', async () => {
+    api.listCostCenters.mockRejectedValue(new ApiError(502, 'unavailable'));
+    const out = html(await NewPage());
+    expect(out).toContain('Cost centres did not load');
+    expect(out).not.toContain('name="costCenterId"');
+  });
+});
+
+describe('cost centre catalogue states', () => {
+  it('keeps an existing inactive centre selected on edit, and hides inactive alternatives', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail());
+    api.listCostCenters.mockResolvedValue([
+      { id: DEPT, code: 'OLD', name: 'Legacy', active: false },
+      { id: ID, code: 'CLOSED', name: 'Other closed centre', active: false },
+    ]);
+    const out = await editHtml();
+    expect(out).toContain('Legacy (inactive)');
+    expect(out).not.toContain('Other closed centre');
+    expect(out).toContain(`value="${DEPT}" selected=""`);
+  });
+
+  it('explains an empty catalogue and disables saving', async () => {
+    api.listCostCenters.mockResolvedValue([]);
+    const out = html(await NewPage());
+    expect(out).toContain('No active cost centres');
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Save draft<\/button>/);
   });
 });
