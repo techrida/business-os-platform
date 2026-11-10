@@ -74,13 +74,30 @@ export async function createDraftMemo(
   // The form's inputs are controlled: text typed before React hydrates is wiped. Wait for the
   // page's own requests to settle, then confirm the values stuck.
   await page.waitForLoadState('networkidle');
-  const title = page.getByLabel('Title', { exact: true });
+  const title = page.getByLabel('Subject', { exact: true });
   const amount = page.getByLabel('Amount', { exact: true });
   await title.fill(input.title);
-  await page.getByLabel('Details', { exact: true }).fill('Created by the Playwright exit spec.');
+  await page.getByLabel('Body', { exact: true }).fill('Created by the Playwright exit spec.');
   await amount.fill(input.amount);
   await expect(title).toHaveValue(input.title);
   await expect(amount).toHaveValue(input.amount);
+  const department = page.getByLabel('Department', { exact: true });
+  if (!(await department.inputValue())) await department.selectOption({ index: 1 });
+  // These are real seeded directory names, never synthetic entries injected into the form.
+  const signers = ['Dev Accountant', 'Dev Finance'];
+  const amountNpr = Number(input.amount.replace(/[,\s]/g, ''));
+  if (amountNpr > 100000) signers.push('Dev Management');
+  if (amountNpr > 1000000) signers.push('Dev Founder');
+  for (let i = 0; i < signers.length; i++) {
+    const label = i === signers.length - 1 ? 'Approved by' : `Recommender ${i + 1}`;
+    if (i < signers.length - 1)
+      await page.getByRole('button', { name: 'Add recommender', exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(`^${label}:`) }).click();
+    const popup = page.getByRole('dialog', { name: `Choose ${label}`, exact: true });
+    await popup.getByRole('textbox', { name: `Search ${label}`, exact: true }).fill(signers[i]!);
+    await popup.getByRole('button', { name: new RegExp(`^${signers[i]}(?: |$)`) }).click();
+  }
+
   await page.getByRole('button', { name: 'Save draft' }).click();
 
   await page.waitForURL(/\/memos\/[0-9a-f-]{36}(\?.*)?$/, { timeout: 30_000 });

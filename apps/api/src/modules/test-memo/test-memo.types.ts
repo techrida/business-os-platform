@@ -7,6 +7,7 @@ import { z } from 'zod';
 /** PATCH body: any subset of the create fields, at least one, nothing else (a typo is a 400, not a silent no-op). */
 export const UpdateMemoBodySchema = z
   .strictObject({
+    template: CreateMemoBodySchema.shape.template,
     title: CreateMemoBodySchema.shape.title.optional(),
     body: CreateMemoBodySchema.shape.body.optional(),
     amount: CreateMemoBodySchema.shape.amount.optional(),

@@ -11,6 +11,7 @@ import {
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
   DEFAULT_ROLE_PERMISSIONS,
   DecimalString,
+  MemoTemplateSnapshotSchema,
   ROLE_KEYS,
   WorkflowSpecSchema,
   type ApprovalActionBody,
@@ -44,6 +45,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
@@ -107,6 +109,8 @@ export interface SubmitInput {
   /** Who pressed submit, when not the requester (someone submitting on their behalf). Defaults to the requester. */
   submittedByUserId?: string;
   sodUserIds: string[];
+  /** Proposed printed signers, checked against the authoritative plan inside the submit transaction. */
+  proposedApproverIds?: string[];
 }
 
 type Q = Db | DbTransaction;
@@ -190,6 +194,16 @@ export class ApprovalsService {
       if (s.kind === 'group' && s.groupId === undefined) {
         throw new ConflictException('The workflow names an approval group that does not exist');
       }
+    }
+    if (
+      i.proposedApproverIds &&
+      (plan.blocked ||
+        plan.steps.length !== i.proposedApproverIds.length ||
+        i.proposedApproverIds.some((id, index) => !plan.steps[index]?.eligibleUserIds.includes(id)))
+    ) {
+      throw new ConflictException(
+        'Selected recommenders and approver must match the current approval route in order. Review the route before submitting.',
+      );
     }
     const status = plan.blocked ? 'blocked' : 'pending';
     const documentNumber = i.documentNumber ?? draftReference(i.documentType, i.documentId);
@@ -357,6 +371,20 @@ export class ApprovalsService {
       );
       if (!who.eligible)
         throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      if (request.documentType === 'test_memo') {
+        const memo = z.object({ template: MemoTemplateSnapshotSchema }).safeParse(request.snapshot);
+        if (memo.success) {
+          const selected = [...memo.data.template.recommenders, memo.data.template.approvedBy][
+            current.seq - 1
+          ];
+          if (!selected || (selected.userId !== userId && selected.userId !== who.onBehalfOf)) {
+            throw forbidden(
+              'out_of_scope',
+              'This memo names a different person for this approval step',
+            );
+          }
+        }
+      }
       // The role mirror lags ZITADEL: a revoked role stays in app.user_roles until the sync runs. The
       // token's roles are the truth for a direct approver. A delegate acts on the delegator's mirror roles
       // (the delegator is not the caller, so there is no token to check): an accepted limit.
@@ -1104,7 +1132,7 @@ export class ApprovalsService {
         .from(approvalGroups)
         .leftJoin(approvalGroupMembers, eq(approvalGroupMembers.groupId, approvalGroups.id))
         // Only active members of the request's entity approve, the same rule as userIdsWithRole
-        // (ADR 0027 §3); an inactive member, or one without a membership in this entity, drops out
+        // (ADR 0027 Â§3); an inactive member, or one without a membership in this entity, drops out
         // here, so their delegates (who act on their behalf) drop out with them.
         .leftJoin(
           appUsers,
@@ -1409,7 +1437,7 @@ export class ApprovalsService {
 
 /**
  * The ids among `ids` of active staff users of the tenant who have a membership in the scope's entity
- * (ADR 0027 §3): `app.users` is tenant-scoped, so the entity comes from `app.user_entities`, and the
+ * (ADR 0027 Â§3): `app.users` is tenant-scoped, so the entity comes from `app.user_entities`, and the
  * staff IdP org tells staff from portal users. Shared with the admin service's user checks.
  */
 export async function activeEntityStaff(

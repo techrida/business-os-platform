@@ -82,18 +82,17 @@ describe('migration history on real Postgres', () => {
       await runMigrations(url);
       await runMigrations(url);
       await expectComplete(pool);
-      // Either field stored by Drizzle is sufficient to identify an already-applied migration.
+      // Hashes, rather than timestamps alone, identify applied SQL in the combined runner.
       const file = readMigrationFiles({ migrationsFolder: MIGRATIONS_FOLDER })[20]!;
-      await pool.query('UPDATE drizzle.__drizzle_migrations SET hash = $1 WHERE created_at = $2', [
-        'legacy-hash',
-        file.folderMillis,
+      await pool.query('UPDATE drizzle.__drizzle_migrations SET created_at = 1 WHERE hash = $1', [
+        file.hash,
       ]);
       await expect(runMigrations(url)).resolves.toBeUndefined();
-      await pool.query(
-        'UPDATE drizzle.__drizzle_migrations SET hash = $1, created_at = 1 WHERE created_at = $2',
-        [file.hash, file.folderMillis],
-      );
-      await expect(runMigrations(url)).resolves.toBeUndefined();
+      await pool.query('UPDATE drizzle.__drizzle_migrations SET hash = $1 WHERE hash = $2', [
+        'legacy-hash',
+        file.hash,
+      ]);
+      await expect(runMigrations(url)).rejects.toThrow('unknown applied SQL hash');
     });
   });
 
@@ -109,34 +108,76 @@ describe('migration history on real Postgres', () => {
       await expectComplete(pool);
     });
   });
-
-  it('refuses a P4-line history missing P3 0020-0024 before running any migration', async () => {
-    await inDatabase(async (url, pool) => {
-      // Simulate Drizzle's rows on the already-pushed P4 line; no shared dev database is used.
-      await pool.query('CREATE SCHEMA drizzle');
-      await pool.query(
-        'CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint)',
-      );
-      const files = readMigrationFiles({ migrationsFolder: MIGRATIONS_FOLDER });
-      for (const file of files) {
-        const entry = journal.entries.find((item) => item.when === file.folderMillis)!;
-        if (entry.idx >= 20 && entry.idx <= 24) continue;
-        await pool.query(
-          'INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)',
-          [file.hash, file.folderMillis],
-        );
-      }
-      const before = await pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id');
-      await expect(runMigrations(url)).rejects.toThrow(
-        /0020_sales_orders.*0021_invoices.*0022_payments.*0023_invoice_credit_release.*0024_credit_note_line_link.*apply them in order/i,
-      );
-      expect(
-        (await pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows,
-      ).toEqual(before.rows);
-      expect(
-        (await pool.query<{ schema: string | null }>("SELECT to_regnamespace('app') AS schema"))
-          .rows[0]?.schema,
-      ).toBeNull();
-    });
-  });
 });
+
+it('applies missing older phase migrations by hash and preserves the ledger on rerun', async () => {
+  const container = await new PostgreSqlContainer('postgres:16-alpine').start();
+  const folder = await mkdtemp(join(tmpdir(), 'bos-phase-migrations-'));
+  const pool = new Pool({ connectionString: container.getConnectionUri() });
+  const entry = (idx: number, tag: string, when: number) => ({
+    idx,
+    tag,
+    when,
+    version: '7',
+    breakpoints: true,
+  });
+  const base = entry(0, 'base', 14),
+    memo = entry(1, 'memo', 37),
+    crm = entry(1, 'crm', 15);
+  const journal = async (entries: unknown[]) =>
+    writeFile(
+      join(folder, 'meta/_journal.json'),
+      JSON.stringify({ version: '7', dialect: 'postgresql', entries }),
+    );
+  try {
+    await mkdir(join(folder, 'meta'));
+    await writeFile(
+      join(folder, 'base.sql'),
+      "CREATE TABLE preserved (value text); INSERT INTO preserved VALUES ('seed');",
+    );
+    await writeFile(join(folder, 'memo.sql'), 'ALTER TABLE preserved ADD COLUMN memo text;');
+    await writeFile(join(folder, 'crm.sql'), 'ALTER TABLE preserved ADD COLUMN crm text;');
+    await journal([base, memo]);
+    await runMigrations(container.getConnectionUri(), folder);
+    const before = (await pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id'))
+      .rows;
+    await journal([base, crm, { ...memo, idx: 2 }]);
+    await runMigrations(container.getConnectionUri(), folder);
+    await runMigrations(container.getConnectionUri(), folder);
+    const after = (await pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows;
+    expect(after.slice(0, 2)).toEqual(before);
+    expect(after).toHaveLength(3);
+    expect((await pool.query('SELECT value, memo, crm FROM preserved')).rows).toEqual([
+      { value: 'seed', memo: null, crm: null },
+    ]);
+    await writeFile(join(folder, 'base.sql'), 'CREATE TABLE tampered_source (value text);');
+    await expect(runMigrations(container.getConnectionUri(), folder)).rejects.toThrow(
+      'unknown applied SQL hash',
+    );
+    expect((await pool.query("SELECT to_regclass('public.tampered_source') AS name")).rows).toEqual(
+      [{ name: null }],
+    );
+    await writeFile(
+      join(folder, 'base.sql'),
+      "CREATE TABLE preserved (value text); INSERT INTO preserved VALUES ('seed');",
+    );
+    await writeFile(
+      join(folder, 'broken.sql'),
+      'ALTER TABLE preserved ADD COLUMN rolled_back text; SELECT missing_column FROM preserved;',
+    );
+    await journal([base, crm, { ...memo, idx: 2 }, entry(3, 'broken', 38)]);
+    await expect(runMigrations(container.getConnectionUri(), folder)).rejects.toThrow();
+    expect((await pool.query('SELECT * FROM drizzle.__drizzle_migrations')).rows).toHaveLength(3);
+    expect(
+      (
+        await pool.query(
+          "SELECT column_name FROM information_schema.columns WHERE table_name='preserved' AND column_name='rolled_back'",
+        )
+      ).rows,
+    ).toHaveLength(0);
+  } finally {
+    await pool.end();
+    await container.stop();
+    await rm(folder, { recursive: true, force: true });
+  }
+}, 60_000);
