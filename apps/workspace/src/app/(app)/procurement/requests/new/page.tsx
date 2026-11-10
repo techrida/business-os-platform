@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
@@ -14,7 +15,7 @@ import { EMPTY_PR_VALUES } from '../_lib/forms';
 import { prFailure } from '../_lib/failure';
 import { prGrants } from '../_lib/model';
 
-export const metadata: Metadata = { title: 'New purchase request · Business OS' };
+export const metadata: Metadata = { title: 'New purchase request Â· Business OS' };
 export const dynamic = 'force-dynamic';
 
 export default async function NewPurchaseRequestPage() {
@@ -32,7 +33,7 @@ export default async function NewPurchaseRequestPage() {
             tone={failure.status === 403 ? 'info' : 'error'}
             role="alert"
             title="Cost centres did not load"
-            actions={<a href="/procurement/requests/new">Try again</a>}
+            actions={<Link href="/procurement/requests/new">Try again</Link>}
           >
             {failure.message}
           </Alert>
