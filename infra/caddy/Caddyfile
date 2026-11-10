@@ -1,0 +1,66 @@
+# Business OS edge proxy. Hostnames, TLS mode and upstreams come from the environment (see compose.yaml).
+# Dev: *.localhost with Caddy's own CA (`tls internal`). Browsers send *.localhost to 127.0.0.1 by themselves.
+
+(site_tls) {
+	tls {$CADDY_TLS:internal}
+}
+
+# ZITADEL: API (gRPC, Connect, OIDC) on h2c plus the Login V2 UI, same routing as ZITADEL's official compose.
+{$AUTH_HOST:auth.localhost} {
+	import site_tls
+
+	# "/" opens the login UI
+	@root path /
+	rewrite @root /ui/v2/login/
+
+	# Prod only: compose.prod.yaml mounts infra/caddy/auth-restricted.caddy here, which answers 404 for everything
+	# except the paths OIDC sign-in needs (no console, no admin APIs). Dev mounts nothing, a glob that matches no
+	# file imports nothing, so dev stays fully open (the e2e logins and the seed tool need that).
+	import /etc/caddy/auth.d/*
+
+	@login path /ui/v2/login /ui/v2/login/*
+	handle @login {
+		reverse_proxy zitadel-login:3000
+	}
+
+	# convenience alias: /api/<path> reaches the API as /<path>
+	handle_path /api/* {
+		reverse_proxy h2c://zitadel-api:8080 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy h2c://zitadel-api:8080 {
+			flush_interval -1
+		}
+	}
+}
+
+# Workspace (Next.js staff app)
+{$APP_HOST:app.localhost} {
+	import site_tls
+	reverse_proxy {$WORKSPACE_UPSTREAM:workspace:3000}
+}
+
+# API. /metrics is never served here (metrics live on an internal port).
+{$API_HOST:api.localhost} {
+	import site_tls
+
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy {$API_UPSTREAM:api:3001} {
+			header_up X-Request-Id {http.request.uuid}
+		}
+	}
+}
+
+# Mailpit web UI (dev only: in prod there is no mailpit container, so this host answers 502)
+{$MAIL_HOST:mail.localhost} {
+	import site_tls
+	reverse_proxy {$MAIL_UPSTREAM:mailpit:8025}
+}

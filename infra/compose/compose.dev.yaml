@@ -1,0 +1,62 @@
+# Dev overlay: use together with compose.yaml, always with --env-file .env (see the header of compose.yaml).
+#   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core up -d --wait --wait-timeout 300
+#
+# What it adds:
+#   - Caddy published on 127.0.0.1:80 and :443 only (Windows reaches it through WSL localhost forwarding)
+#   - Postgres and Valkey published on 127.0.0.1 only, for apps and tests that run on the host
+#   - Caddy upstreams for app.localhost and api.localhost point at dev servers on the host
+#   - Mailpit (fake SMTP server with a web UI) behind https://mail.localhost
+#   - BOS_DEV_LOGIN_RATE_LIMIT=200 on the workspace service (the `app` profile), so e2e runs do not trip the login limit
+
+services:
+  caddy:
+    ports:
+      - '127.0.0.1:80:80'
+      - '127.0.0.1:443:443'
+    environment:
+      # Host dev servers (`next dev` on 3000, `nest start --watch` on 3001) must listen on 0.0.0.0, not only
+      # on 127.0.0.1, or Caddy (which reaches them through the docker bridge) gets "connection refused".
+      WORKSPACE_UPSTREAM: ${WORKSPACE_UPSTREAM:-host.docker.internal:3000}
+      API_UPSTREAM: ${API_UPSTREAM:-host.docker.internal:3001}
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+  postgres:
+    ports:
+      - '127.0.0.1:5432:5432'
+    # Published ports do not work from a container that is only on an internal network, so postgres
+    # (and valkey below) also join edge in dev.
+    networks: [backend, edge]
+
+  valkey:
+    ports:
+      - '127.0.0.1:6379:6379'
+    networks: [backend, edge]
+
+  mailpit:
+    profiles: [core]
+    image: axllent/mailpit:v1.33@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: '1'
+      MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+      MP_MAX_MESSAGES: '500'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    # edge: so Caddy can serve the web UI. backend: so ZITADEL can send mail to mailpit:1025.
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          # 40M, not 64M: keeps the dev core total under 3.2 GB now that valkey-oidc exists (see compose.yaml header).
+          memory: 40M
+
+  workspace:
+    environment:
+      # Dev only: the login limit (CR-03) is 20 per minute per client IP, and all local traffic shares one Caddy
+      # IP, so a persona e2e run trips it. The app refuses this unless WORKSPACE_PUBLIC_URL is localhost or
+      # *.localhost. Never copy it to compose.yaml or compose.prod.yaml.
+      BOS_DEV_LOGIN_RATE_LIMIT: ${BOS_DEV_LOGIN_RATE_LIMIT:-200}

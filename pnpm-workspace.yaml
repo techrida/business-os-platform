@@ -1,0 +1,89 @@
+# pnpm 11 settings live here (not in .npmrc or package.json). Key names checked against
+# https://pnpm.io/11.x/settings (build.allowBuilds, dependency-resolution.minimumReleaseAge).
+packages:
+  - apps/*
+  - packages/*
+  - tools/*
+
+# Supply chain: refuse versions published less than one day ago, for direct and transitive
+# dependencies. Explicitly setting it also turns on minimumReleaseAgeStrict.
+minimumReleaseAge: 1440
+
+# Install scripts are blocked unless allowed here. true = may run its install script,
+# false = reviewed and denied. The denied entries are optional native add-ons with a pure-JS
+# fallback (msgpackr-extract via bullmq, ssh2 and cpu-features via testcontainers).
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: false
+  ssh2: false
+  cpu-features: false
+
+# The first install was not run when this file was written, so the full dependency graph was
+# not scanned for other install scripts. With false, an unlisted script is skipped and
+# reported as a warning instead of failing the install. After the first clean install, run
+# `pnpm approve-builds` to review anything it lists, then remove this line (default is true).
+strictDepBuilds: false
+
+# One place for every external version. Workspace package.json files use "catalog:".
+catalog:
+  # Runtime and language
+  typescript: ~6.0.3
+  '@types/node': ^24.19.2
+  zod: ^4.6.7
+
+  # Test and lint tooling
+  vitest: ^5.1.0
+  '@vitest/coverage-v8': ^5.1.0
+  eslint: ^9.39.5
+  '@eslint/js': ^9.39.5
+  typescript-eslint: ^8.72.1
+  eslint-config-next: ^16.4.5
+  globals: ^16.5.0
+  prettier: ^3.9.10
+  tsx: ^4.23.15
+  '@playwright/test': ^1.65.0
+  supertest: ^7.3.2
+  '@types/supertest': ^7.2.1
+  testcontainers: ^12.2.1
+  '@testcontainers/postgresql': ^12.2.1
+
+  # API and worker
+  '@nestjs/common': ^12.4.0
+  '@nestjs/core': ^12.4.0
+  '@nestjs/platform-express': ^12.4.0
+  '@nestjs/testing': ^12.4.0
+  '@nestjs/terminus': ^12.1.0
+  '@nestjs/bullmq': ^12.0.1
+  '@nestjs/cli': ^12.0.12
+  '@swc/core': ^1.16.22
+  '@swc/cli': ^0.8.2
+  chokidar: ^5.0.0
+  unplugin-swc: ^2.0.0
+  '@types/express': ^5.0.6
+  reflect-metadata: ^0.2.2
+  rxjs: ^7.8.2
+  nestjs-pino: ^5.3.1
+  pino: ^10.4.0
+  pino-http: ^11.0.0
+  prom-client: ^15.1.3
+  jose: ^6.2.15
+  bullmq: ^5.81.5
+  ioredis: ^5.11.1
+  ioredis-mock: ^8.13.0
+  server-only: ^0.0.1
+
+  # Data
+  drizzle-orm: ^0.45.4
+  drizzle-kit: ^0.31.11
+  pg: ^8.23.1
+  '@types/pg': ^8.23.1
+
+  # Workspace web app
+  next: ^16.4.5
+  react: ^19.3.1
+  react-dom: ^19.3.1
+  '@types/react': ^19.3.0
+  '@types/react-dom': ^19.3.0
+  '@fontsource-variable/outfit': ^5.2.0
+  openid-client: ^6.8.9

@@ -1,0 +1,57 @@
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 16px 20px;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+
+.link {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+/* Stretch the link over the whole card, so the card is the hit area. */
+.link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-xl);
+}
+
+.link:focus-visible {
+  box-shadow: none;
+}
+
+.link:focus-visible::after {
+  box-shadow: var(--bos-focus-shadow);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}

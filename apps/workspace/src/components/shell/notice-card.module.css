@@ -1,0 +1,21 @@
+.notice {
+  padding: 32px;
+}
+
+.title {
+  font-size: var(--font-size-h2);
+  line-height: var(--line-height-h2);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  display: grid;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}

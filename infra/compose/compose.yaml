@@ -1,0 +1,600 @@
+# Business OS: base compose file (services, profiles, networks, volumes, healthchecks, memory limits).
+#
+# Layering: this file + compose.dev.yaml (dev) or compose.prod.yaml (prod). Never run it alone in dev.
+#
+# HOW TO CALL IT (important):
+#   Compose treats the folder of the FIRST -f file (infra/compose) as the project directory, so a repo-root
+#   `.env` is NOT read by default. Every call must pass `--env-file .env` from the repo root:
+#     docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core up -d --wait --wait-timeout 300
+#   All relative paths below (../postgres, ../../.dev, ...) are relative to infra/compose.
+#
+# Profiles:
+#   core   postgres, backup-scheduler, valkey, valkey-oidc, zitadel-api, zitadel-login, caddy (+ mailpit, defined in compose.dev.yaml)
+#   app    migrate, api, worker, workspace   (images bos/api:dev and bos/workspace:dev, built by U3/U5)
+#   tools  seed-zitadel, k6, restore-drill   (one-shot, started with `docker compose run --rm`)
+#   obs    prometheus
+#
+# Running the `app` profile behind Caddy: the dev default for the Caddy upstreams points at host-run dev
+# servers. Override per call (a shell variable beats .env):
+#   WORKSPACE_UPSTREAM=workspace:3000 API_UPSTREAM=api:3001 docker compose --env-file .env -f ... --profile core --profile app up -d --wait
+#
+# Memory limits (deploy.resources.limits.memory). The `core` sum must stay <= 3.2 GB.
+# Units are MiB (1 MiB = 1.048576 MB); the sum is also under 3.2 GB decimal.
+#
+#   service         profile   limit     notes
+#   postgres        core      1024 MiB  shared_buffers=256MB, max_connections=100
+#   backup-scheduler core       64 MiB  sleeps; pgbackrest runs for a few minutes a day
+#   valkey          core       256 MiB  maxmemory 192mb, noeviction (BullMQ needs it)
+#   valkey-oidc     core        64 MiB  maxmemory 32mb, volatile-ttl, no persistence (OIDC login state)
+#   zitadel-api     core       960 MiB  measure with `docker stats` after seed + k6, then tighten
+#   zitadel-login   core       512 MiB  Next.js Login V2 UI
+#   caddy           core       128 MiB
+#   mailpit         core        40 MiB  dev file only (was 64 MiB: cut to make room for valkey-oidc)
+#   --------------------------------------------------------------
+#   core total (dev)          3048 MiB  = 2.9766 GiB = 3.196 GB decimal  (64 + 1024 + 256 + 64 + 960 + 512 + 128 + 40)
+#   core total (prod)         3008 MiB  = 3.154 GB decimal (no mailpit)
+#   (With mailpit at its old 64 MiB the dev total would be 3072 MiB = 3.221 GB decimal, over the 3.2 GB budget.)
+#
+#   migrate         app        256 MiB  one-shot
+#   api             app        512 MiB
+#   worker          app        384 MiB
+#   workspace       app        512 MiB
+#   app total                 1664 MiB  (core + app = 4608 MiB = 4.5 GiB)
+#
+#   seed-zitadel    tools      256 MiB  transient
+#   k6              tools      512 MiB  transient
+#   restore-drill   tools     1024 MiB  transient
+#   prometheus      obs        256 MiB
+
+name: bos
+
+x-ca-mount: &ca-mount
+  # Caddy's local root CA, exported by infra/scripts/export-dev-ca.sh. Node trusts it through NODE_EXTRA_CA_CERTS.
+  # create_host_path false: a missing file is an error, not a silently created directory.
+  type: bind
+  source: ../../.dev/caddy-root.crt
+  target: /certs/caddy-root.crt
+  read_only: true
+  bind:
+    create_host_path: false
+
+networks:
+  # edge: everything that talks through Caddy. Caddy carries aliases for the public hostnames, so a container
+  # resolves auth.localhost and friends to Caddy and sees the same issuer URL as the browser.
+  edge: {}
+  # backend: data stores and internal services. No route out. (The dev file also attaches postgres and valkey to
+  # edge, because Docker cannot publish ports from a container that is only on an internal network.)
+  backend:
+    internal: true
+
+volumes:
+  pgdata: {}
+  pgbackrest-repo: {}
+  pgsocket: {}
+  pgdata-drill: {}
+  valkey-data: {}
+  zitadel-bootstrap: {}
+  caddy-data: {}
+  caddy-config: {}
+
+configs:
+  prometheus_yml:
+    content: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: bos-api
+          static_configs:
+            - targets: ["api:9464"]
+        - job_name: bos-worker
+          static_configs:
+            - targets: ["worker:9465"]
+
+services:
+  # ---------------------------------------------------------------- core
+  postgres:
+    profiles: [core]
+    build:
+      context: ../postgres
+    image: bos/postgres:16
+    command: ['postgres', '-c', 'config_file=/etc/postgresql/postgresql.conf']
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --data-checksums --auth-host=scram-sha-256
+      # Read by init-dbs.sh (baked into the image) on the first start of an empty data volume only.
+      BOS_DB_OWNER_PASSWORD: ${BOS_DB_OWNER_PASSWORD:?set BOS_DB_OWNER_PASSWORD in .env}
+      BOS_DB_APP_PASSWORD: ${BOS_DB_APP_PASSWORD:?set BOS_DB_APP_PASSWORD in .env}
+      ZITADEL_DB_PASSWORD: ${ZITADEL_DB_PASSWORD:?set ZITADEL_DB_PASSWORD in .env}
+      # Encryption passphrase of the pgBackRest repository (repo1-cipher-type in pgbackrest.conf). pgBackRest reads
+      # it from this variable, also when Postgres runs archive_command. Never change it for an existing repository.
+      PGBACKREST_REPO1_CIPHER_PASS: ${PGBACKREST_REPO1_CIPHER_PASS:?set PGBACKREST_REPO1_CIPHER_PASS in .env (backups are encrypted)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pgbackrest-repo:/var/lib/pgbackrest
+      # Shared with backup-scheduler: a second container needs this socket to run `pgbackrest backup` against us.
+      - pgsocket:/var/run/postgresql
+      # U2 owns this file. long syntax + create_host_path false: if it is missing, compose fails instead of
+      # creating a directory called pgbackrest.conf on the host.
+      - type: bind
+        source: ../postgres/pgbackrest.conf
+        target: /etc/pgbackrest/pgbackrest.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    shm_size: 128mb
+    stop_grace_period: 60s
+    healthcheck:
+      # -h 127.0.0.1 on purpose: the temporary server that runs init-dbs.sh listens on the unix socket only,
+      # so a socket check would report "ready" before the databases exist.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U postgres -d bos']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # Scheduled backups: one incr a day, one full a week (infra/backup/backup-scheduler.sh). Same image as postgres
+  # (it has pgbackrest). It reads the data directory (read-only) and talks to Postgres over the shared socket volume,
+  # so `pgbackrest backup` runs here, not inside the database container. Same paths as in the postgres service, which
+  # pgbackrest.conf needs.
+  backup-scheduler:
+    profiles: [core]
+    image: bos/postgres:16
+    entrypoint: ['/bin/bash']
+    command: ['/opt/backup/backup-scheduler.sh']
+    user: postgres
+    environment:
+      BOS_BACKUP_IN_CONTAINER: '1'
+      PGBACKREST_REPO1_CIPHER_PASS: ${PGBACKREST_REPO1_CIPHER_PASS:?set PGBACKREST_REPO1_CIPHER_PASS in .env (backups are encrypted)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:ro
+      - pgsocket:/var/run/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - type: bind
+        source: ../postgres/pgbackrest.conf
+        target: /etc/pgbackrest/pgbackrest.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../backup
+        target: /opt/backup
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  valkey:
+    profiles: [core]
+    image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    command:
+      - valkey-server
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - noeviction
+      - --appendonly
+      - 'yes'
+      # Password required (CR-13). Hex only, so it is safe inside the redis:// URLs the apps use.
+      - --requirepass
+      - ${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env (infra/scripts/make-dev-env.sh adds it)}
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      # Authenticated: without -a the server answers NOAUTH, so a plain ping would never turn healthy.
+      test: ['CMD', 'valkey-cli', '-a', '${VALKEY_PASSWORD}', '--no-auth-warning', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # OIDC login state (state, nonce, PKCE verifier; CR-03) on its own server. maxmemory is per server, so a separate
+  # DB index on `valkey` would not stop a flood of login attempts from filling the queue store. Here the flood can
+  # only fill these 32 MB: volatile-ttl evicts the keys closest to expiry (the app must set a TTL on every key),
+  # and nothing is written to disk.
+  valkey-oidc:
+    profiles: [core]
+    image: valkey/valkey:9.1-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    command:
+      - valkey-server
+      - --maxmemory
+      - 32mb
+      - --maxmemory-policy
+      - volatile-ttl
+      - --appendonly
+      - 'no'
+      - --save
+      - ''
+      - --requirepass
+      - ${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env (infra/scripts/make-dev-env.sh adds it)}
+    healthcheck:
+      test: ['CMD', 'valkey-cli', '-a', '${VALKEY_PASSWORD}', '--no-auth-warning', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  zitadel-api:
+    profiles: [core]
+    image: ghcr.io/zitadel/zitadel:v4.20.1@sha256:4817dbd8896306867f28bba63e7dc3526b2d2646ac7111db9524eb3ab6e82301
+    # user "0": the bootstrap volume is root-owned and the image runs as a non-root user, which could not write
+    # the PAT (personal access token) files. Same as ZITADEL's official compose.
+    user: '0'
+    # --masterkeyFromEnv reads ZITADEL_MASTERKEY (official compose passes --masterkey "<value>" instead).
+    command: start-from-init --masterkeyFromEnv
+    environment:
+      ZITADEL_MASTERKEY: ${ZITADEL_MASTERKEY:?set ZITADEL_MASTERKEY in .env (exactly 32 characters)}
+      ZITADEL_PORT: '8080'
+      # These three must match the public URL exactly, or every request fails with "Instance not found".
+      ZITADEL_EXTERNALDOMAIN: ${AUTH_HOST:-auth.localhost}
+      ZITADEL_EXTERNALPORT: '443'
+      ZITADEL_EXTERNALSECURE: 'true'
+      ZITADEL_TLS_ENABLED: 'false' # Caddy terminates TLS
+
+      # DSN mode: the zitadel role must already exist and own the zitadel database (init-dbs.sh does that).
+      ZITADEL_DATABASE_POSTGRES_DSN: postgresql://zitadel:${ZITADEL_DB_PASSWORD}@postgres:5432/zitadel?sslmode=disable
+
+      # First instance: human admin (retired in P1) plus the bootstrap machine user (IAM_OWNER) for the seed tool.
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: Techrida Staff
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: ${ZITADEL_ADMIN_USERNAME:?set ZITADEL_ADMIN_USERNAME in .env}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD:?set ZITADEL_ADMIN_PASSWORD in .env}
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: 'false'
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: bos-bootstrap-sa
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: BOS bootstrap service account
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:-2099-01-01T00:00:00Z}
+      ZITADEL_FIRSTINSTANCE_PATPATH: /zitadel/bootstrap/admin.pat
+
+      # Login V2: the login-client PAT is written here and read by zitadel-login through the shared volume.
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /zitadel/bootstrap/login-client.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Automatically Initialized IAM_LOGIN_CLIENT
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:-2099-01-01T00:00:00Z}
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: 'true'
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: https://${AUTH_HOST:-auth.localhost}/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: https://${AUTH_HOST:-auth.localhost}/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: https://${AUTH_HOST:-auth.localhost}/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: https://${AUTH_HOST:-auth.localhost}/ui/v2/login/login?samlRequest=
+    healthcheck:
+      test: ['CMD', '/app/zitadel', 'ready']
+      interval: 10s
+      timeout: 30s
+      retries: 20
+      start_period: 60s
+    volumes:
+      - zitadel-bootstrap:/zitadel/bootstrap:rw
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 960M
+
+  zitadel-login:
+    profiles: [core]
+    image: ghcr.io/zitadel/zitadel-login:v4.20.1@sha256:1508e83275f1471b20ed42b159174e6b3e10e6c2481e64c0aee7ed5bfeeec18b
+    user: '0' # same reason as zitadel-api; also lets it read the root-owned PAT file
+    environment:
+      ZITADEL_API_URL: http://zitadel-api:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /zitadel/bootstrap/login-client.pat
+      # Signs the Login UI session cookie; at least 32 characters.
+      ZITADEL_SESSION_COOKIE_SECRET: ${ZITADEL_LOGIN_COOKIE_SECRET:?set ZITADEL_LOGIN_COOKIE_SECRET in .env (32+ characters)}
+      # Tells the API which public host and scheme the browser used (Caddy already terminated TLS).
+      CUSTOM_REQUEST_HEADERS: Host:${AUTH_HOST:-auth.localhost},X-Forwarded-Proto:https
+    healthcheck:
+      test:
+        [
+          'CMD',
+          '/bin/sh',
+          '-c',
+          'node /app/healthcheck.mjs http://localhost:3000/ui/v2/login/healthy',
+        ]
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - zitadel-bootstrap:/zitadel/bootstrap:ro
+    depends_on:
+      zitadel-api:
+        condition: service_healthy
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  caddy:
+    profiles: [core]
+    image: caddy:2.11-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
+    environment:
+      AUTH_HOST: ${AUTH_HOST:-auth.localhost}
+      APP_HOST: ${APP_HOST:-app.localhost}
+      API_HOST: ${API_HOST:-api.localhost}
+      MAIL_HOST: ${MAIL_HOST:-mail.localhost}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+      # Defaults suit the `app` profile; compose.dev.yaml points them at host-run dev servers instead.
+      WORKSPACE_UPSTREAM: ${WORKSPACE_UPSTREAM:-workspace:3000}
+      API_UPSTREAM: ${API_UPSTREAM:-api:3001}
+      MAIL_UPSTREAM: mailpit:8025
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:2019/config/ >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    depends_on:
+      zitadel-api:
+        condition: service_healthy
+      zitadel-login:
+        condition: service_healthy
+    networks:
+      edge:
+        aliases:
+          - ${AUTH_HOST:-auth.localhost}
+          - ${APP_HOST:-app.localhost}
+          - ${API_HOST:-api.localhost}
+          - ${MAIL_HOST:-mail.localhost}
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ---------------------------------------------------------------- app
+  migrate:
+    profiles: [app]
+    image: bos/api:dev
+    command: ['node', 'packages/db/dist/migrate.js']
+    environment:
+      DATABASE_MIGRATE_URL: postgresql://bos_owner:${BOS_DB_OWNER_PASSWORD}@postgres:5432/bos
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  api:
+    profiles: [app]
+    image: bos/api:dev
+    environment:
+      API_PORT: '3001'
+      METRICS_PORT: '9464'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
+    # OIDC_ISSUER, OIDC_AUDIENCE and OIDC_CLIENT_ID come from the seed output. The root .env is deliberately not
+    # passed in: it holds host-side values (127.0.0.1 URLs).
+    env_file:
+      - path: ../../.dev/zitadel.env
+        required: false
+    volumes:
+      - *ca-mount
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  worker:
+    profiles: [app]
+    image: bos/api:dev
+    command: ['node', 'dist/worker.js']
+    environment:
+      METRICS_PORT: '9465'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://bos_app:${BOS_DB_APP_PASSWORD}@postgres:5432/bos
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
+    env_file:
+      - path: ../../.dev/zitadel.env
+        required: false
+    volumes:
+      - *ca-mount
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:9465/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  workspace:
+    profiles: [app]
+    image: bos/workspace:dev
+    environment:
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKSPACE_PUBLIC_URL: https://${APP_HOST:-app.localhost}
+      OIDC_REDIRECT_URI: https://${APP_HOST:-app.localhost}/auth/callback
+      API_INTERNAL_URL: http://api:3001
+      VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      # Login state (CR-03) lives on its own Valkey with a small memory cap.
+      OIDC_STATE_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey-oidc:6379
+      # Session encryption key (32 random bytes, base64) and its id. Required in prod (compose.prod.yaml); dev
+      # falls back to empty/k1 so an older .env still starts. Not consumed by the app yet.
+      SESSION_ENC_KEY: ${SESSION_ENC_KEY:-}
+      SESSION_ENC_KEY_ID: ${SESSION_ENC_KEY_ID:-k1}
+      NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
+    env_file:
+      - path: ../../.dev/zitadel.env
+        required: false
+    volumes:
+      - *ca-mount
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      valkey:
+        condition: service_healthy
+      valkey-oidc:
+        condition: service_healthy
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ---------------------------------------------------------------- tools (one-shot: docker compose run --rm <name>)
+  seed-zitadel:
+    profiles: [tools]
+    image: node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
+    user: '0' # admin.pat in the bootstrap volume is root-owned
+    working_dir: /repo
+    # ASSUMPTION: U6 builds tools/seed-zitadel to dist/index.js. Override the command if it runs through tsx.
+    command: ['node', 'tools/seed-zitadel/dist/index.js']
+    environment:
+      OIDC_ISSUER: https://${AUTH_HOST:-auth.localhost}
+      ZITADEL_ADMIN_PAT_FILE: /zitadel/bootstrap/admin.pat
+      DATABASE_MIGRATE_URL: postgresql://bos_owner:${BOS_DB_OWNER_PASSWORD}@postgres:5432/bos
+      BOS_DEV_PERSONAS_FILE: /repo/.dev/personas.json
+      NODE_EXTRA_CA_CERTS: /repo/.dev/caddy-root.crt
+    volumes:
+      - ../..:/repo:ro
+      - ../../.dev:/repo/.dev:rw
+      - zitadel-bootstrap:/zitadel/bootstrap:ro
+    restart: 'no'
+    networks: [edge, backend]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  k6:
+    profiles: [tools]
+    image: grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
+    command: ['run', '/perf/load.js']
+    environment:
+      SSL_CERT_FILE: /certs/caddy-root.crt # Go trusts Caddy's root CA through this
+      K6_API_BASE_URL: https://${API_HOST:-api.localhost}
+      OIDC_ISSUER: https://${AUTH_HOST:-auth.localhost}
+      # Empty means "use the default threshold"; load.js must treat "" as unset.
+      K6_READ_P95_MS: ${K6_READ_P95_MS:-}
+    env_file:
+      - path: ../../.dev/k6.env
+        required: false
+    volumes:
+      - ../../perf/k6:/perf:ro
+      - *ca-mount
+    restart: 'no'
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  restore-drill:
+    profiles: [tools]
+    image: bos/postgres:16
+    # U2's restore-drill.sh passes the command, e.g.: docker compose run --rm restore-drill -c '<restore steps>'
+    entrypoint: ['/bin/bash']
+    user: postgres
+    environment:
+      # Same passphrase as the postgres service: the restore has to decrypt the repository.
+      PGBACKREST_REPO1_CIPHER_PASS: ${PGBACKREST_REPO1_CIPHER_PASS:?set PGBACKREST_REPO1_CIPHER_PASS in .env (backups are encrypted)}
+    volumes:
+      - pgbackrest-repo:/var/lib/pgbackrest:ro
+      - pgdata-drill:/var/lib/postgresql/data
+      - type: bind
+        source: ../postgres/pgbackrest.conf
+        target: /etc/pgbackrest/pgbackrest.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: 'no'
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # ---------------------------------------------------------------- obs
+  prometheus:
+    profiles: [obs]
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    configs:
+      - source: prometheus_yml
+        target: /etc/prometheus/prometheus.yml
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
