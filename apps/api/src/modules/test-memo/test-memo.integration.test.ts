@@ -1004,6 +1004,30 @@ describe('internal memo template', () => {
       [(submitted.body as { requestId: string }).requestId],
     );
     expect(rows.rows[0]!.snapshot.template).toEqual(MemoDtoSchema.parse(created.body).template);
+    const requestId = (submitted.body as { requestId: string }).requestId;
+    roles.accountant = [U.acc, U.boss];
+    as(U.boss, 'founder');
+    await expect(
+      approvals.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+    ).rejects.toThrow('different person');
+    as(U.acc, 'founder');
+    const first = await approvals.act(
+      requestId,
+      { action: 'approve', expectedVersion: 1 },
+      randomUUID(),
+    );
+    as(U.fin, 'founder');
+    await approvals.act(
+      requestId,
+      { action: 'approve', expectedVersion: first.version },
+      randomUUID(),
+    );
+    as(U.salesA, 'sales');
+    expect(
+      MemoDtoSchema.parse(
+        (await request(baseUrl).get(`/v1/test-memos/${MemoDtoSchema.parse(created.body).id}`)).body,
+      ).status,
+    ).toBe('approved');
   });
 
   it('rejects spoofed prepared attribution, foreign staff IDs, and duplicate signers', async () => {

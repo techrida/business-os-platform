@@ -10,6 +10,7 @@ import {
   ApprovalActionBodySchema,
   DEFAULT_ROLE_PERMISSIONS,
   DecimalString,
+  MemoTemplateSnapshotSchema,
   ROLE_KEYS,
   WorkflowSpecSchema,
   type ApprovalActionBody,
@@ -42,6 +43,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
 import { UserDirectory } from '../../platform/authz/user-directory';
@@ -325,6 +327,20 @@ export class ApprovalsService {
       );
       if (!who.eligible)
         throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      if (request.documentType === 'test_memo') {
+        const memo = z.object({ template: MemoTemplateSnapshotSchema }).safeParse(request.snapshot);
+        if (memo.success) {
+          const selected = [...memo.data.template.recommenders, memo.data.template.approvedBy][
+            current.seq - 1
+          ];
+          if (!selected || (selected.userId !== userId && selected.userId !== who.onBehalfOf)) {
+            throw forbidden(
+              'out_of_scope',
+              'This memo names a different person for this approval step',
+            );
+          }
+        }
+      }
       // The role mirror lags ZITADEL: a revoked role stays in app.user_roles until the sync runs. The
       // token's roles are the truth for a direct approver. A delegate acts on the delegator's mirror roles
       // (the delegator is not the caller, so there is no token to check): an accepted limit.
