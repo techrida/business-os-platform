@@ -174,8 +174,8 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
       description="Payment terms and credit limits are agreed with each legal entity separately."
     >
       {accounts === undefined ? (
-        <EmptyState title="Terms are not available yet." icon="building" headingLevel={3}>
-          The platform did not send this customer&apos;s terms. They will show here when it does.
+        <EmptyState title="Terms could not be loaded." icon="building" headingLevel={3}>
+          Reload this page to try loading this customer&apos;s terms again.
         </EmptyState>
       ) : accounts.length === 0 ? (
         <EmptyState title="No terms set yet." icon="building" headingLevel={3}>
@@ -455,8 +455,8 @@ export default async function CustomerPage({
             }
           />
           <Panel title="Activity" as="aside">
-            <EmptyState title="The timeline is not connected yet." headingLevel={3}>
-              Calls, notes and changes to this customer will be listed here.
+            <EmptyState title="No activity to show." headingLevel={3}>
+              There are no activity entries shown for this customer.
             </EmptyState>
           </Panel>
         </div>
