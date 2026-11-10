@@ -90,20 +90,39 @@ Use a scratch copy for the production build: a build overwrites `.next`, which a
 - **Docker on Linux.** Not in the `docker` group means no socket. `docker compose run` without `-T` and `</dev/null` swallows the rest of a script.
 - **`next build` and `next dev` share `.next`.**
 
-## 6. Not done: the instant account switcher (needs Kuu's decision)
+## 6. Instant development account switcher
 
-Step 3 was meant to be a dev-menu list of the dev accounts where one click signs in as that account. It was **not built**. The tool's auto-mode safety classifier refused two things, correctly cautious, and I did not work around either:
+Implemented following Kuu's 2026-11-10 approval for seeded and manually created
+local development users. The Dev menu and `/dev/personas` list active human users
+from ZITADEL on every refresh. A POST revalidates the account, creates a real
+ZITADEL user-only session with a dedicated local `IAM_LOGIN_CLIENT`, completes a
+real authorization request, and redirects through the existing PKCE/browser-bound
+callback. The API remains authoritative for roles and organization access. Users
+without application roles follow the normal no-access behavior. No passwords,
+OTP seeds or identity/session tokens are returned to the browser.
 
-1. Creating a ZITADEL machine user with the instance role `IAM_LOGIN_CLIENT` (it can finish a login for any user). Refused as a permission grant.
-2. A dev-only route that signs a persona in without the password prompt. Refused as weakening security.
+Provision each disposable local stack independently:
 
-What I proved first (the probe ran before the refusal, using ZITADEL's own Login V2 token read from the Docker volume, which I should have flagged as a credential use; I used it only to test, never stored or printed it):
+1. Copy `/zitadel/bootstrap/admin.pat` from that stack's zitadel-api container to
+   an ignored owner-only local file. Do not print it or reuse a different stack's token.
+2. Run `infra/scripts/dev-login-client.mjs` with `NODE_ENV=development`,
+   `NODE_EXTRA_CA_CERTS` pointing at the local CA,
+   `BOS_DEV_BOOTSTRAP_TOKEN_FILE` pointing at the copied bootstrap token and
+   `BOS_DEV_LOGIN_CLIENT_TOKEN_FILE` pointing at a new ignored output file.
+   Load the matching `.dev/zitadel.env` with Node's `--env-file` option. The script
+   grants only `IAM_LOGIN_CLIENT` and writes a 30-day token with mode 0600.
+   An existing output file is never overwritten. Remove the temporary bootstrap copy.
+3. Set `BOS_DEV_LOGIN_CLIENT_TOKEN_FILE` in the `next dev` process and restart it.
+   Existing `OIDC_ISSUER`, client/audience/redirect and `WORKSPACE_PUBLIC_URL`
+   must describe the same local stack. No seed rerun or data reset is required.
+4. Open `/dev/personas` while signed out, or Accounts in the Dev menu. Refresh
+   Accounts to discover newly created users. Rotate the dev token when it expires.
 
-- `POST /v2/sessions` with a persona's login name and password returns a session. Works with the admin token.
-- Finishing the login (`POST /v2/oidc/auth_requests/{id}` with that session) is **refused for the admin token** ("No matching permissions") and **works with a login-client token**.
-- The production `/auth/callback` then creates the workspace session. So the design is sound: no browser password typing, no change to production code. The only cost is the one dedicated token.
-
-This is Q29 in life-kb `Techrida/questions.md`. On P1 and later the same route must also send the persona's TOTP code (the P1 seed stores the secrets), because MFA is forced. Passkeys cannot be driven from a server (the signature happens in the browser); test them with Chrome's virtual authenticator instead.
+Local configured `*.bos.test` and `*.localhost` hosts are supported. Switching
+requires a same-origin POST and is rate limited. Production route discovery omits
+all `.dev` routes; the post-build checker also scans for the server service/token
+configuration markers. Missing dev token setup fails closed with a helpful message.
+Never configure this client or token on a production identity instance.
 
 ## 7. Other open items from the same session (not started)
 

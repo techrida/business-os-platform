@@ -207,7 +207,7 @@ function mount(): () => void {
   const accountsSection = el('section', { class: 'section' });
   accountsSection.append(
     el('h3', { class: 'section-title' }, 'Accounts'),
-    el('p', { class: 'note' }, 'Account switcher is added in the next step.'),
+    el('p', { class: 'note' }, 'Loading accounts…'),
   );
 
   panel.append(head, whoamiSection, accountsSection);
@@ -221,6 +221,40 @@ function mount(): () => void {
 
   function showNote(text: string): void {
     whoami.replaceChildren(el('p', { class: 'note' }, text));
+  }
+
+  async function loadAccounts(): Promise<void> {
+    try {
+      const response = await fetch('/dev/api/accounts', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error('Unavailable');
+      const data = (await response.json()) as {
+        accounts: { id: string; label: string; login: string }[];
+      };
+      const list = el('div', { class: 'rows' });
+      for (const account of data.accounts) {
+        const form = el('form', { method: 'post', action: '/dev/api/accounts' });
+        const input = el('input', { type: 'hidden', name: 'account', value: account.id });
+        const entry = button('action', account.label, { title: account.login });
+        entry.type = 'submit';
+        form.append(input, entry);
+        form.addEventListener('submit', () => {
+          list.querySelectorAll('button').forEach((node) => {
+            node.disabled = true;
+          });
+          entry.setAttribute('aria-busy', 'true');
+        });
+        list.append(form);
+      }
+      accountsSection.replaceChildren(el('h3', { class: 'section-title' }, 'Accounts'), list);
+    } catch {
+      accountsSection.replaceChildren(
+        el('h3', { class: 'section-title' }, 'Accounts'),
+        el('p', { class: 'note' }, 'Accounts unavailable. Check development login-client setup.'),
+      );
+    }
   }
 
   async function loadWhoami(): Promise<void> {
@@ -262,6 +296,7 @@ function mount(): () => void {
     if (open && !loadedOnce) {
       loadedOnce = true;
       void loadWhoami();
+      void loadAccounts();
     }
   }
 
@@ -278,7 +313,10 @@ function mount(): () => void {
     update({ hidden: false });
     pill.focus();
   });
-  refreshButton.addEventListener('click', () => void loadWhoami());
+  refreshButton.addEventListener('click', () => {
+    void loadWhoami();
+    void loadAccounts();
+  });
 
   const abort = new AbortController();
   document.addEventListener(
