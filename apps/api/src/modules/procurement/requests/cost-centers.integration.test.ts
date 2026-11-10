@@ -278,8 +278,8 @@ describe('cost centre management', () => {
     await expect(
       controller.create(randomUUID(), { code: 'NEW', name: 'Duplicate' }),
     ).rejects.toMatchObject({ status: 409 });
-    await expect(controller.create(randomUUID(), { code: '', name: 'Bad' })).rejects.toMatchObject({
-      status: 400,
-    });
+    expect(() => controller.create(randomUUID(), { code: '', name: 'Bad' })).toThrow(
+      'code: Too small',
+    );
   });
 });
