@@ -2,7 +2,7 @@
 
 Implementation owner: an assistant. Starting P1 head: ee22fd34542e8345e4b19758774535d6baf999c9.
 
-Status: P1 source merged and refreshed at canonical cbcf01c6; browser save/reopen/submit passed. Final human-directory API refresh and phase cascades are in progress.
+Status: P1 delivered, refreshed and browser-verified, including the human-only directory and frozen approval-page preview. Higher-phase cascades are in progress. Canonical heads are recorded in the shared KB and coordinator handoff.
 
 ## Migration cascade
 
@@ -27,3 +27,5 @@ Follow-up verification: runner rejects unknown applied hashes before applying pe
 Browser acceptance (2026-11-10): live P1 created MEMO-2083/84-00004, reopened it with persisted letterhead/people/date/department/closing/body, and submitted to internal approval request 06ae6b0e-c6b2-4427-acc1-0e04ae0b8c33. No external correspondence action used. Preview preserves single newlines, paragraph gap, app font and no subject divider; 390px layout has no horizontal overflow. Keyboard search, ArrowDown/Enter selection, Escape focus restoration, empty-result announcement and one closed popup after selection verified. Full assistive-technology screen-reader testing remains unrun. Missing departments initially showed the honest empty state; runtime owner added an actual Operations directory department for the test, without fabricated staff/titles.
 
 Human-only eligibility uses nonempty mirrored human email: the existing ZITADEL mapper reads email only from `human.email`, never machine profiles. The upstream CreateUserRequest.Human and AddHumanUserRequest both require SetHumanEmail (https://github.com/zitadel/zitadel/blob/main/proto/zitadel/user/v2/user_service.proto). No email is returned to the client or printed as a title. Focused integration proves service-account exclusion; human records with incomplete synchronization remain unavailable until synchronized.
+
+Final P1 acceptance: the refreshed directory contains six real human staff and omits all service accounts. The submitted approval route renders the frozen memo as a document and names the selected accountant and finance approver. Source and type checks passed after this consumer fix. Browser form submissions use CRLF line endings; normalize those in presentation before paragraph splitting so paragraph ends do not introduce extra visual blank lines. Stored snapshots and single newlines remain intact. No real job titles were invented; null titles omit cleanly. Full screen-reader testing remains outstanding.
