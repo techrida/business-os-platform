@@ -44,7 +44,6 @@ export interface NavItem {
   /** Present only on built items. */
   href?: string;
   icon: NavIconName;
-  /** The phase that builds this item. */
   /** Internal: the phase that will enable this item. Never shown to users. */
   phase: Phase;
   /**
