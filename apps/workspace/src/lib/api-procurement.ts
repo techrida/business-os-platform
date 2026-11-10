@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  CostCenterSchema,
   CurrencySchema,
   PrRequestTypeSchema,
   PrStatusSchema,
@@ -219,4 +220,9 @@ export function cancelPurchaseRequest(
     PurchaseRequestDtoSchema,
     jsonInit('POST', commandBody(expectedVersion), idempotencyKey),
   );
+}
+
+/** Cost centres of the acting entity, including inactive entries retained on existing requests. */
+export function listCostCenters(session: Session) {
+  return call(session, '/v1/cost-centers', z.array(CostCenterSchema));
 }

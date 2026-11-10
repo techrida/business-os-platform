@@ -5,11 +5,13 @@ import type { Metadata } from 'next';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { listCostCenters } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 
 import { createPrAction } from '../actions';
 import { PrForm } from '../_components/pr-form';
 import { EMPTY_PR_VALUES } from '../_lib/forms';
+import { prFailure } from '../_lib/failure';
 import { prGrants } from '../_lib/model';
 
 export const metadata: Metadata = { title: 'New purchase request · Business OS' };
@@ -18,6 +20,26 @@ export const dynamic = 'force-dynamic';
 export default async function NewPurchaseRequestPage() {
   const session = await requireStaffSession('/procurement/requests/new');
   const allowed = prGrants(session.roles).create;
+  let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];
+  if (allowed) {
+    try {
+      costCenters = await listCostCenters(session);
+    } catch (err) {
+      const failure = prFailure(err, 'load');
+      return (
+        <Page width="narrow">
+          <Alert
+            tone={failure.status === 403 ? 'info' : 'error'}
+            role="alert"
+            title="Cost centres did not load"
+            actions={<a href="/procurement/requests/new">Try again</a>}
+          >
+            {failure.message}
+          </Alert>
+        </Page>
+      );
+    }
+  }
   return (
     <Page width="narrow">
       <Breadcrumb
@@ -32,6 +54,7 @@ export default async function NewPurchaseRequestPage() {
       />
       {allowed ? (
         <PrForm
+          costCenters={costCenters}
           action={createPrAction}
           initial={EMPTY_PR_VALUES}
           mode="create"

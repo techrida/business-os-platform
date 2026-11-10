@@ -26,6 +26,7 @@ export {
 } from './scoped.js';
 // SQL helpers for tests: a tenant with its default entity, parties, staff and portal users (ADR 0027).
 export {
+  createCostCenter,
   createDepartment,
   createParty,
   createPortalUser,
@@ -57,3 +58,4 @@ export * from './schema/vendors.js';
 export * from './schema/procurement.js';
 export * from './schema/procurement-orders.js';
 export * from './schema/payables.js';
+export * from './schema/cost-centers.js';
