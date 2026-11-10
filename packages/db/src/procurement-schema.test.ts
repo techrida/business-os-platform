@@ -9,6 +9,8 @@ import { readFileSync } from 'node:fs';
 import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 
+import { costCenters } from './schema/cost-centers.js';
+
 import {
   PURCHASE_REQUEST_STATUSES,
   PURCHASE_REQUEST_TYPES,
@@ -24,7 +26,7 @@ import {
   vendorQuotations,
 } from './schema/procurement.js';
 
-const SQL_TEXT = ['0033_procurement_sourcing', '0036_purchase_request_serials']
+const SQL_TEXT = ['0033_procurement_sourcing', '0036_purchase_request_serials', '0037_cost_centers']
   .map((name) => readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), 'utf8'))
   .join('\n');
 
@@ -138,6 +140,7 @@ const sorted = (shape: Shape): Shape => ({
 });
 
 const DRIZZLE: Record<string, PgTable> = {
+  cost_centers: costCenters,
   purchase_requests: purchaseRequests,
   purchase_request_lines: purchaseRequestLines,
   rfqs,
@@ -194,8 +197,11 @@ describe('0033_procurement_sourcing and src/schema/procurement.ts', () => {
     );
   });
 
-  it('puts no foreign key on cost_center_id and project_id (no such tables yet)', () => {
+  it('scopes the cost centre FK to the acting entity and leaves projects for later', () => {
     const fks = parsed.get('purchase_requests')?.names.foreignKey ?? [];
-    expect(fks.filter((f) => /cost_center|project/.test(f))).toEqual([]);
+    expect(fks).toContain(
+      'purchase_requests_cost_center_fk (tenant_id,organization_id,cost_center_id) -> cost_centers(tenant_id,organization_id,id)',
+    );
+    expect(fks.filter((f) => /project/.test(f))).toEqual([]);
   });
 });
