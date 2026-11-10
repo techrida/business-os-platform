@@ -1030,6 +1030,23 @@ export class VendorBillsService {
                 and(eq(vendorBills.id, id), eq(vendorBills.status, 'draft')),
               ),
             );
+          // Conversion locks the submission before creating a bill. Lock its source row too before
+          // returning it to the inbox; a discarded bill retry must never reopen a newer conversion.
+          const sources = await tx.select().from(vendorBillSubmissions)
+            .where(scoped(scope).where(vendorBillSubmissions,
+              and(eq(vendorBillSubmissions.convertedBillId, id), eq(vendorBillSubmissions.status, 'converted'))))
+            .for('update');
+          for (const source of sources) {
+            await tx.update(vendorBillSubmissions).set({
+              status: 'received', convertedBillId: null, reviewedBy: null, reviewedAt: null,
+              version: sql`${vendorBillSubmissions.version} + 1`, updatedAt: this.clock(),
+            }).where(scoped(scope).where(vendorBillSubmissions, eq(vendorBillSubmissions.id, source.id)));
+            await this.audit.record(tx, {
+              action: 'payables.bill_submission.reopened', entityType: 'vendor_bill_submissions', entityId: source.id,
+              before: { status: 'converted', convertedBillId: id },
+              after: { status: 'received', convertedBillId: null },
+            });
+          }
           await this.audit.record(tx, {
             action: 'payables.bill.discarded',
             entityType: BILL_AUDIT_ENTITY,
