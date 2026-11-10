@@ -69,11 +69,17 @@ describe('historyRows', () => {
     expect(rows.map((r) => r.revision)).toEqual([null, 'Rev 2']);
   });
 
-  it('says "System" when no person did it, and a staff label otherwise', () => {
+  it('uses a permitted directory name without changing stored actor references', () => {
+    const event = entry();
+    const [row] = historyRows([event], revisions, new Map([[event.actorId!, 'Mina']]));
+    expect(row?.actor).toBe('Mina');
+    expect(event.actorId).not.toBe('Mina');
+  });
+  it('says "System" when no person did it, and an unavailable name otherwise', () => {
     const [system] = historyRows([entry({ actorId: null })], revisions);
     expect(system?.actor).toBe('System');
     const [person] = historyRows([entry()], revisions);
-    expect(person?.actor).toBe('Staff member');
+    expect(person?.actor).toBe('Person name unavailable');
   });
 });
 

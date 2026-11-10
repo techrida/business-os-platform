@@ -12,12 +12,18 @@ import {
   ParseIntPipe,
   ParseUUIDPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';
 import { ApprovalsAdminService, type WorkflowDto, type WorkflowVersionDto } from './admin.service';
 import { parseOr400 } from './approvals.controller';
+
+const PeopleQuery = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  after: z.uuid().optional(),
+});
 
 const KEY = z
   .string()
@@ -42,6 +48,12 @@ const CreateDelegationSchema = z.strictObject({
 @Controller('v1/admin/workflows')
 export class AdminWorkflowsController {
   constructor(private readonly admin: ApprovalsAdminService) {}
+
+  @Get('people')
+  @Can('approvals.definitions.write')
+  people(@Query() query: unknown) {
+    return this.admin.listAssignmentPeople(parseOr400(PeopleQuery, query));
+  }
 
   @Get()
   @Can('approvals.definitions.read')
@@ -75,6 +87,12 @@ export class AdminWorkflowsController {
 @Controller('v1/admin/approval-groups')
 export class AdminApprovalGroupsController {
   constructor(private readonly admin: ApprovalsAdminService) {}
+
+  @Get('people')
+  @Can('approvals.groups.write')
+  people(@Query() query: unknown) {
+    return this.admin.listAssignmentPeople(parseOr400(PeopleQuery, query));
+  }
 
   @Get()
   @Can('approvals.groups.write')
@@ -116,6 +134,12 @@ export class AdminApprovalGroupsController {
 @Controller('v1/admin/delegations')
 export class AdminDelegationsController {
   constructor(private readonly admin: ApprovalsAdminService) {}
+
+  @Get('people')
+  @Can('approvals.delegations.write')
+  people(@Query() query: unknown) {
+    return this.admin.listAssignmentPeople(parseOr400(PeopleQuery, query));
+  }
 
   @Get()
   @Can('approvals.delegations.write')

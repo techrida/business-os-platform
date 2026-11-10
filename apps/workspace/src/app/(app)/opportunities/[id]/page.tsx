@@ -22,6 +22,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import { getCustomer } from '@/components/p2/customers/api';
 
 import { logActivityAction } from '../../activities/actions';
 import { moveOpportunityStageAction } from '../actions';
@@ -31,7 +32,7 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facts(o: OpportunityDto): Fact[] {
+function facts(o: OpportunityDto, customerName: string): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
     { key: 'value', label: 'Value', value: moneyOrNull(o.value, o.currency) ?? dash },
@@ -48,7 +49,7 @@ function facts(o: OpportunityDto): Fact[] {
     {
       key: 'customer',
       label: 'Customer record',
-      value: <Link href={`/customers/${o.customerId}`}>Open customer</Link>,
+      value: <Link href={`/customers/${o.customerId}`}>{customerName}</Link>,
     },
     {
       key: 'lead',
@@ -91,6 +92,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
     );
   }
   const opp = oppResult.value;
+  const customer = await getCustomer(session, opp.customerId).catch(() => null);
   const moves = userMoves('opportunity', opp.stage);
   let activities: ActivityDto[] | null = null;
   let activityProblem: string | null = null;
@@ -124,7 +126,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       <div className={styles.columns}>
         <div className={styles.main}>
           <Panel title="Overview">
-            <FactList facts={facts(opp)} />
+            <FactList
+              facts={facts(
+                opp,
+                customer
+                  ? `${customer.legalName} · ${customer.number}`
+                  : 'Customer name unavailable',
+              )}
+            />
           </Panel>
 
           <Panel

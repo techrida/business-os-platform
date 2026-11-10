@@ -7,6 +7,9 @@ import {
   approvalGroupMembers,
   approvalGroups,
   delegations,
+  idpOrgs,
+  userEntities,
+  users,
   workflowDefinitions,
   workflowVersions,
 } from '@bos/db';
@@ -17,7 +20,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
@@ -64,6 +67,36 @@ export class ApprovalsAdminService {
         throw new ConflictException('A published workflow version cannot change');
       throw error;
     }
+  }
+
+  /** Minimal picker data, restricted to the same active entity staff accepted by assignment writes.
+   * HTTP callers need the corresponding approval-management permission, never directory access.
+   */
+  async listAssignmentPeople(q: { limit: number; after?: string | undefined }) {
+    const { scope } = this.caller.current();
+    const items = await this.db
+      .select({ id: users.id, displayName: users.displayName, email: users.email })
+      .from(users)
+      .innerJoin(
+        userEntities,
+        and(
+          eq(userEntities.tenantId, users.tenantId),
+          eq(userEntities.userId, users.id),
+          eq(userEntities.organizationId, scope.organizationId),
+        ),
+      )
+      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
+      .where(
+        and(
+          eq(users.tenantId, scope.tenantId),
+          eq(users.status, 'active'),
+          eq(idpOrgs.kind, 'staff'),
+          q.after ? gt(users.id, q.after) : undefined,
+        ),
+      )
+      .orderBy(asc(users.id))
+      .limit(q.limit);
+    return { items, nextAfter: items.length === q.limit ? (items.at(-1)?.id ?? null) : null };
   }
 
   // ---- workflows -----------------------------------------------------------------------------------

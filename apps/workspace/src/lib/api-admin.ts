@@ -32,6 +32,17 @@ const UsersPageSchema = z.object({
   nextAfter: z.string().nullable(),
 });
 
+const ApprovalPeoplePageSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      displayName: z.string().nullable(),
+      email: z.string().nullable(),
+    }),
+  ),
+  nextAfter: z.string().nullable(),
+});
+
 const WorkflowVersionSchema = z.object({
   id: z.string(),
   version: z.number().int(),
@@ -169,6 +180,31 @@ export function listUsers(
   const params = new URLSearchParams({ limit: String(q.limit ?? 50) });
   if (q.after) params.set('after', q.after);
   return requestParsed(session, 'GET', `/v1/admin/users?${params.toString()}`, UsersPageSchema);
+}
+
+/** Complete, caller-scoped picker data. These routes expose no directory administration fields. */
+export async function listApprovalPeople(
+  session: Session,
+  area: 'workflows' | 'approval-groups' | 'delegations',
+) {
+  const items: z.infer<typeof ApprovalPeoplePageSchema>['items'] = [];
+  let after: string | null = null;
+  const seen = new Set<string>();
+  do {
+    const params = new URLSearchParams({ limit: '200' });
+    if (after) params.set('after', after);
+    const page = await requestParsed(
+      session,
+      'GET',
+      `/v1/admin/${area}/people?${params}`,
+      ApprovalPeoplePageSchema,
+    );
+    items.push(...page.items);
+    after = page.nextAfter;
+    if (after && seen.has(after)) throw new ApiError(502, 'People pagination did not advance');
+    if (after) seen.add(after);
+  } while (after);
+  return items;
 }
 
 export function inviteUser(
