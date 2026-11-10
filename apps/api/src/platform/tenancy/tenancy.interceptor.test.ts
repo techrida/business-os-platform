@@ -18,6 +18,7 @@ import { lastValueFrom, of } from 'rxjs';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { AuthIdentity } from '../auth/claims';
+import { CustomersController } from '../../modules/customers/customers.controller';
 import { AnyAuthenticated, Can } from '../authz/decorators';
 import { type Principal, principal } from '../authz/principal';
 import type { RoleCache } from '../authz/role-cache';
@@ -268,6 +269,18 @@ const ENTITY_DENIED = { code: 'forbidden', message: 'Forbidden', reason: 'entity
 
 describe('TenancyInterceptor', () => {
   let interceptor: TenancyInterceptor;
+
+  it('refuses the real customer search handler when the caller lacks customer.read', async () => {
+    const result = await denial(
+      run(
+        interceptor,
+        auth({ [ZIT_ORG]: ['sales'] }),
+        CustomersController,
+        CustomersController.prototype.list,
+      ),
+    );
+    expect(result).toEqual({ code: 'forbidden', message: 'Forbidden', reason: 'no_permission' });
+  });
 
   beforeEach(() => {
     now = 1_000_000;

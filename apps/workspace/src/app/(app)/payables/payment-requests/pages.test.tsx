@@ -128,3 +128,23 @@ it('never sends a malformed detail id upstream', async () => {
   );
   expect(api.getPaymentRequest).not.toHaveBeenCalled();
 });
+
+it('resolves each bill reference and links to permitted bills', async () => {
+  const other = '22222222-2222-4222-8222-222222222222';
+  api.getPaymentRequest.mockResolvedValue({
+    ...record,
+    lines: [record.lines[0], { id: other, lineNo: 2, openItemId: other, amount: '20.00' }],
+  });
+  const html = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
+  expect(html).toContain('BILL-1');
+  expect(html).toContain('INV-1');
+  expect(html).toContain(`/payables/bills/${id}`);
+  expect(html).toContain('Bill 2 of 2');
+});
+
+it('keeps distinct non-ID bill labels when the reference lookup fails', async () => {
+  api.listPaymentRequestItems.mockRejectedValue(new Error('offline'));
+  const html = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
+  expect(html).toContain('Bill 1 of 1');
+  expect(html).not.toContain('Bill reference unavailable');
+});

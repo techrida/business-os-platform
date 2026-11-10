@@ -27,6 +27,7 @@ vi.mock('./actions', () => ({
 const api = vi.hoisted(() => ({
   listPurchaseRequests: vi.fn(),
   getPurchaseRequest: vi.fn(),
+  listDepartments: vi.fn(),
 }));
 vi.mock('@/lib/api-procurement', () => api);
 const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
@@ -102,6 +103,7 @@ const editHtml = async () => html(await EditPage({ params: Promise.resolve({ id:
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  api.listDepartments.mockResolvedValue([{ id: DEPT, name: 'Operations' }]);
 });
 
 describe('the list', () => {
@@ -348,4 +350,44 @@ describe('edit and new', () => {
     expect(out).toContain('do not include raising purchase requests');
     expect(out).not.toContain('Save draft');
   });
+});
+
+it('uses named departments and allows editing cost centre and project references', async () => {
+  api.getPurchaseRequest.mockResolvedValue(detail({ projectId: DEPT }));
+  const out = await editHtml();
+  expect(out).toContain('Operations');
+  expect(out).toMatch(/<select[^>]*name="departmentId"/);
+  expect(out).toMatch(/<input(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
+  expect(out).not.toContain('type="hidden" name="costCenterId"');
+  expect(out).toContain(`name="projectId"`);
+  expect(out).not.toContain('type="hidden" name="projectId"');
+  expect(out).not.toContain('Cost centre name unavailable');
+  expect(out).toContain('Optional. Enter the project reference, or leave blank.');
+  expect(out).not.toMatch(/<input[^>]+name="departmentId"/);
+  expect(out).not.toContain(`>${DEPT}<`);
+});
+
+it('preserves editing if departments cannot load, without exposing a department ID', async () => {
+  api.getPurchaseRequest.mockResolvedValue(detail());
+  api.listDepartments.mockRejectedValue(new Error('offline'));
+  const out = await editHtml();
+  expect(out).toContain('Department name unavailable');
+  expect(out).toContain('Save changes');
+  expect(out).not.toContain(`>${DEPT}<`);
+});
+
+it('allows create with a manually supplied cost centre until a named lookup exists', async () => {
+  const out = html(await NewPage());
+  expect(out).toMatch(/<input(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
+  expect(out).not.toContain('Cost centre selection unavailable');
+  expect(out).not.toContain('Contact your administrator');
+  expect(out).toMatch(/<button[^>]*type="submit"[^>]*>Save draft/);
+  expect(out).not.toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+});
+
+it('does not read departments or expose cost centre entry without create permission', async () => {
+  session.roles = ['finance'];
+  const out = html(await NewPage());
+  expect(api.listDepartments).not.toHaveBeenCalled();
+  expect(out).not.toContain('name="costCenterId"');
 });

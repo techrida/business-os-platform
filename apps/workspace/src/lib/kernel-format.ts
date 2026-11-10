@@ -62,6 +62,9 @@ const referenceKeys = new Set([
 /** Display technical references without exposing opaque keys, including nested frozen records. */
 function snapshotValue(value: unknown, references: ReadonlyMap<string, string>): unknown {
   if (Array.isArray(value)) return value.map((item) => snapshotValue(item, references));
+  if (typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) {
+    return references.get(value) ?? 'Name unavailable';
+  }
   if (value === null || typeof value !== 'object') return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, raw]) => {

@@ -6,8 +6,10 @@ import { requireStaffSession } from '@/lib/bff';
 /** Read through the existing APIs with the caller's token; their permissions remain authoritative. */
 export async function searchConversionCustomers(query: string) {
   const session = await requireStaffSession('/leads');
+  const q = query.trim();
+  if (!q || q.length > 100) return { options: [], error: '' };
   try {
-    const result = await listCustomers(session, { q: query.trim().slice(0, 100), limit: 20 });
+    const result = await listCustomers(session, { q, limit: 20 });
     return {
       options: result.items.map((c) => ({ id: c.id, label: `${c.legalName} · ${c.number}` })),
       error: '',

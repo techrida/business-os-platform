@@ -95,7 +95,11 @@ export function BillHeaderInputs({
             <input type="hidden" name="vendorPartyId" value={entry.vendorPartyId} />
             <Field label="Vendor">
               {(control) => (
-                <Input value={entry.vendorName ?? entry.vendorPartyId} readOnly {...control} />
+                <Input
+                  value={entry.vendorName ?? 'Vendor name unavailable'}
+                  readOnly
+                  {...control}
+                />
               )}
             </Field>
           </>

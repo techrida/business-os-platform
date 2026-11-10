@@ -13,7 +13,6 @@ import { getRfq, listSubmissions, type RfqDto } from '@/lib/api-rfqs';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { recordQuotationAction } from '../../../actions';
 import { QuoteForm, type SubmissionInfo } from '../../../_components/quote-form';
@@ -167,7 +166,10 @@ export default async function NewQuotationPage({
         idempotencyKey={randomUUID()}
         rfqId={rfq.id}
         mode={convert ? 'convert' : 'record'}
-        vendors={rfq.vendorIds.map((vid) => ({ id: vid, name: names.get(vid) ?? shortId(vid) }))}
+        vendors={rfq.vendorIds.map((vid) => ({
+          id: vid,
+          name: names.get(vid) ?? 'Vendor name unavailable',
+        }))}
         {...(submission !== undefined ? { submission } : {})}
         prLines={pr.lines.map((l) => ({
           id: l.id,
