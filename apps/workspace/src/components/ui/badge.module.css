@@ -1,0 +1,47 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  /* Figma Label/small: text-xs, medium, leading-4, tracking-tight. */
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-caption);
+  white-space: nowrap;
+}
+
+.neutral {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.info {
+  background: var(--badge-info-bg);
+  color: var(--badge-info-text);
+}
+
+/* Success, warning and error text uses the -700 primitives, not Figma's -600 badge tokens: on
+   the Figma tints -600 measures 3.1 to 4.4:1, under the WCAG AA 4.5:1 minimum. The backgrounds
+   are Figma's. Info (4.75:1) already passes. */
+.success {
+  background: var(--badge-success-bg);
+  color: var(--success-700);
+}
+
+.warning {
+  background: var(--badge-warning-bg);
+  color: var(--warning-700);
+}
+
+.error {
+  background: var(--badge-error-bg);
+  color: var(--error-700);
+}
+
+/* Figma "disabled": Input/disabled-text on Input/disabled-bg. */
+.disabled {
+  background: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+}

@@ -1,0 +1,32 @@
+/* Styles for the pages inside the app shell. The frame, sidebar and header have their own
+   modules in components/shell. Content is 1124px wide with a 48px margin at 1440 (Figma
+   388:32694): the margin comes from --margin-page, which steps down 48 / 32 / 24 / 16 with the
+   breakpoints. The page title starts 36px below the header and the first card 32px below it. */
+
+.main {
+  width: 100%;
+  max-width: calc(1124px + 2 * var(--margin-page));
+  margin-inline: auto;
+  padding: 36px var(--margin-page) 48px;
+}
+
+/* Page heading block: 24px semibold title, 12px line under it. */
+.pageHead {
+  display: grid;
+  gap: 1px;
+  margin-bottom: 32px;
+}
+
+.pageTitle {
+  font-size: 24px;
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.pageLede {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}

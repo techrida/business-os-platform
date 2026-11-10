@@ -1,0 +1,83 @@
+# syntax=docker/dockerfile:1
+#
+# One image, two entry points: `node dist/main.js` (API, the default) and `node dist/worker.js`
+# (BullMQ worker). It also carries the migration runner for the compose `migrate` job:
+# `node packages/db/dist/migrate.js`.
+#
+# Build context is the REPO ROOT (the workspace needs pnpm-lock.yaml and packages/*):
+#   docker build -f apps/api/Dockerfile -t bos/api:dev .
+
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
+ARG PNPM_VERSION=11.28.11
+
+# ---------------------------------------------------------------- build
+FROM ${NODE_IMAGE} AS build
+ARG PNPM_VERSION
+# CI=true stops pnpm from asking questions (there is no TTY in a build).
+ENV CI=true
+# Corepack is gone after Node 24, so pnpm comes from npm, pinned to the root packageManager.
+RUN npm install --global pnpm@${PNPM_VERSION}
+WORKDIR /repo
+
+# 1. Manifests first: this layer (and the install below) is reused until a dependency changes.
+#    Every workspace manifest is copied, or the frozen lockfile would not match the workspace.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/workspace/package.json apps/workspace/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY tools/seed-zitadel/package.json tools/seed-zitadel/package.json
+# `@bos/api...` = the API and the workspace packages it depends on, nothing else (no Next.js).
+RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
+    pnpm install --frozen-lockfile --store-dir /pnpm-store --filter "@bos/api..."
+
+# 2. Sources, then build: the workspace packages first (tsc), then the API (SWC via nest build).
+COPY tsconfig.base.json ./
+COPY packages/contracts packages/contracts
+COPY packages/db packages/db
+COPY apps/api apps/api
+RUN pnpm --filter @bos/contracts --filter @bos/db run build \
+ && pnpm --filter @bos/api run build \
+ # Tests are compiled too; they import vitest, which is not in the production image.
+ && find apps/api/dist -name '*.test.js*' -delete
+
+# 3. Production dependencies only. `--legacy` because pnpm 11's default deploy needs
+#    `injectWorkspacePackages: true` in pnpm-workspace.yaml (a root file this image does not own).
+RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
+    pnpm --filter @bos/api --prod deploy --legacy --store-dir /pnpm-store /out
+
+# The checks below turn a wrong layout into a build failure instead of a crash at runtime.
+RUN test -f apps/api/dist/main.js \
+ && test -f apps/api/dist/worker.js \
+ && test -f /out/node_modules/@bos/db/dist/index.js \
+ && test -f /out/node_modules/@bos/contracts/dist/index.js
+
+# ---------------------------------------------------------------- runtime
+FROM ${NODE_IMAGE} AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Production node_modules from `pnpm deploy`, and the compiled API (copied from the build
+# tree because deploy only packs files a package.json `files` list or ignore rules allow).
+COPY --from=build --chown=node:node /out/node_modules ./node_modules
+COPY --from=build --chown=node:node /repo/apps/api/package.json ./package.json
+COPY --from=build --chown=node:node /repo/apps/api/dist ./dist
+# The compose `migrate` job runs `node packages/db/dist/migrate.js` from this working
+# directory. package.json is needed there too: it holds `"type": "module"`, without which Node
+# would read the ESM migrate script as CommonJS. Its imports resolve through /app/node_modules.
+COPY --from=build --chown=node:node /repo/packages/db/package.json ./packages/db/package.json
+COPY --from=build --chown=node:node /repo/packages/db/dist ./packages/db/dist
+COPY --from=build --chown=node:node /repo/packages/db/migrations ./packages/db/migrations
+
+# Never run as root. The `node` user (uid 1000) ships with the official image.
+USER node
+
+# 3001 = API, 9464 = API metrics (internal network only), 9465 = worker metrics and /health.
+EXPOSE 3001 9464 9465
+
+# Healthcheck for the API. The worker (`node dist/worker.js`) and migrate job get their own
+# in compose: the worker's checks :9465/health, which this one does not.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=10 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.API_PORT||3001)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+CMD ["node", "dist/main.js"]

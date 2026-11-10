@@ -1,0 +1,100 @@
+/* The app frame: sidebar column plus main column.
+
+   Widths (Figma, 1440 canvas): sidebar 220, collapsed rail 108.
+   Breakpoints (Figma Foundation): 1024 and 768. Below 1024 the sidebar is always the rail.
+   Below 768 it is a drawer (see sidebar.module.css). The toggle only changes the column width;
+   the sidebar hides its own labels with a container query when it is narrow. */
+
+.frame {
+  display: grid;
+  grid-template-columns: var(--bos-sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.frame[data-shell-collapsed='true'] {
+  grid-template-columns: var(--bos-rail-width) minmax(0, 1fr);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 100vh;
+  /* Figma's main area is white; the header and sidebar are the pale surfaces. */
+  background: var(--surface-default);
+}
+
+/* Square icon-only buttons used by the shell controls. */
+.iconButton {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.iconButton:hover {
+  background: var(--interactive-hover);
+}
+
+.iconButton:active {
+  background: var(--interactive-pressed);
+}
+
+.menuButton,
+.drawerClose,
+.scrim {
+  display: none;
+}
+
+@media (max-width: 1023.98px) {
+  .frame,
+  .frame[data-shell-collapsed='true'] {
+    grid-template-columns: var(--bos-rail-width) minmax(0, 1fr);
+  }
+
+  /* The rail is fixed at this width, so there is nothing to toggle. */
+  .collapseToggle {
+    display: none;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .frame,
+  .frame[data-shell-collapsed='true'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .menuButton,
+  .drawerClose {
+    display: inline-grid;
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    padding: 0;
+    border: 0;
+    background: color-mix(in srgb, var(--overlay-scrim) 50%, transparent);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 200ms ease,
+      visibility 0s linear 200ms;
+  }
+
+  .frame[data-shell-drawer='open'] .scrim {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+}

@@ -1,0 +1,212 @@
+# Continuous integration for the Business OS monorepo (ADR 0016).
+#
+# Every job must pass for a pull request to merge. Nothing here is allowed to fail:
+# no step is marked as tolerating failure, on purpose.
+#
+# Every third-party action is pinned to a full commit SHA (the comment beside it names the release),
+# because a tag can be moved after the fact. Dependabot (github-actions ecosystem) can bump the SHA.
+# Container images are pinned by digest too; `infra/scripts/check-image-pins.mjs` enforces that.
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'p*/**'
+  pull_request:
+
+# The least privilege that lets the jobs read the code. No job here writes to the repo,
+# the registry or pull requests.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the older run, so the queue never
+# fills with results nobody will read.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # pnpm's own prompts would hang a job with no terminal.
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  # Fast gate: types, lint, unit tests, formatting. No containers started by this repo's
+  # own compose files. Note `pnpm test` runs every workspace package's `test` script.
+  checks:
+    name: checks (typecheck, lint, unit, format)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Order matters: pnpm must exist before setup-node asks it for the store path (cache: pnpm).
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (lockfile must match every package.json)
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint (zero warnings allowed)
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Format check
+        run: pnpm format:check
+
+      # Fails if any compose `image:` or Dockerfile `FROM` is not pinned by @sha256 digest (supply chain).
+      - name: Container images are pinned by digest
+        run: node infra/scripts/check-image-pins.mjs
+
+  # Scans the whole git history for committed secrets. Config: .gitleaks.toml (test fixtures only).
+  # Runs the open-source gitleaks CLI directly (the gitleaks-action wrapper needs a GITLEAKS_LICENSE
+  # secret on organisation repos). The release tarball is pinned by sha256, taken from the release's
+  # gitleaks_8.30.1_checksums.txt; a mismatch fails the job before anything is executed.
+  secrets:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: a secret removed in a later commit is still leaked.
+          fetch-depth: 0
+
+      - name: Install gitleaks 8.30.1 (sha256-pinned)
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o gitleaks.tar.gz             https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/gitleaks"
+          tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP/gitleaks" gitleaks
+          rm gitleaks.tar.gz
+
+      - name: Scan full history
+        # --redact keeps any finding's secret out of the job log; exit code 1 fails the job.
+        # --log-opts=HEAD scans every commit this checkout's history holds, not every fetched
+        # branch (gitleaks' default is --all), so another phase branch's finding fails that
+        # branch's own CI instead of every PR.
+        run: >-
+          "$RUNNER_TEMP/gitleaks/gitleaks" git --log-opts=HEAD
+          --config .gitleaks.toml --redact --exit-code 1 --no-banner .
+
+  # Real Postgres through Testcontainers (it starts throw-away Docker containers from inside
+  # the tests). ubuntu-24.04 runners already have Docker, so nothing extra to install.
+  e2e:
+    name: e2e (db tenancy, api auth)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Database tests (migrations, tenancy check)
+        run: pnpm --filter @bos/db test
+
+      - name: API end-to-end tests
+        run: pnpm --filter @bos/api test:e2e
+
+      # NOT run in CI: the Playwright browser tests (apps/workspace/e2e). They log in through the real
+      # ZITADEL, Caddy and Postgres stack (compose `core` + `app` profiles, seeded), which this job does not
+      # start; that needs the full stack and a local CA. Until a CI stack exists they run on the dev machine
+      # only (CR-09), so a green `e2e` job here does not mean the browser login flows were exercised.
+
+  # Builds the production Next.js app, then proves the dev-only persona pages are not in it.
+  web:
+    name: web (build, no dev routes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.11
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `@bos/workspace...` = the app plus the workspace packages it depends on.
+      - name: Build the workspace app (production)
+        run: pnpm --filter '@bos/workspace...' build
+
+      # No existence guard on purpose: a missing checker is an error (node exits 1), never a silent skip.
+      # The checker itself exits 2 when there is no build output to inspect.
+      - name: Check no dev routes in the production build
+        run: node apps/workspace/scripts/check-no-dev-routes.mjs
+
+  # Proves both production images still build. Nothing is pushed anywhere.
+  docker:
+    name: docker (build both images)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The build context is the repo root (the Dockerfiles need pnpm-lock.yaml and packages/*).
+      # Each image has its own cache scope so one image's layers don't evict the other's.
+      - name: Build api image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      # load: true keeps the image in the runner's Docker so the next step can look inside it.
+      - name: Build workspace image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/workspace/Dockerfile
+          push: false
+          load: true
+          tags: bos/workspace:ci
+          cache-from: type=gha,scope=workspace
+          cache-to: type=gha,scope=workspace,mode=max
+
+      # The `web` job checks the build on the runner; this checks what actually ships. The image has no source
+      # and the runtime stage has no checker, so the checker is mounted read-only from the checkout and run with
+      # the image's own Node against the image's .next folder. It exits 1 on a dev route, and 2 when the folder
+      # is not a finished build, which fails the step too.
+      - name: Check no dev routes in the workspace image
+        run: |
+          docker run --rm \
+            -v "$PWD/apps/workspace/scripts/check-no-dev-routes.mjs:/check/check-no-dev-routes.mjs:ro" \
+            --entrypoint node \
+            bos/workspace:ci \
+            /check/check-no-dev-routes.mjs /app/apps/workspace/.next

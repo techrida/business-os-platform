@@ -1,0 +1,66 @@
+# Prod overlay: use together with compose.yaml, always with --env-file .env (see the header of compose.yaml).
+#   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.prod.yaml --profile core --profile app up -d --wait
+#
+# P0 production serves admin sign-in over HTTPS through Caddy and ZITADEL.
+# BIND_ADDR selects the server interface. Remote host administration is a separate open decision.
+# Set AUTH_HOST, APP_HOST and API_HOST in .env to the real domains. Nothing is published except Caddy.
+# Not verified until that server exists (no prod run happened in P0).
+#
+# Hardening still to do before real data (tracked for P1):
+#   - split ZITADEL into init / setup / start (see the "prodlike" overlay in ZITADEL's deploy/compose)
+#   - delete admin.pat plus the bootstrap service account after setup (ZITADEL_PAT_EXPIRATION is already required below)
+#   - the public auth host now answers 404 for the console and admin APIs (infra/caddy/auth-restricted.caddy), but
+#     tools/seed-zitadel reaches those APIs through OIDC_ISSUER, i.e. through that host. In prod the seed needs
+#     another route to ZITADEL (internal URL with the public Host header) or a temporary unrestricted Caddy.
+#   - choose CADDY_TLS (default "internal" = Caddy's private CA; clients must trust it)
+#   - mail: there is no mailpit here; the Postal stack arrives in P1 (mail.<domain> answers 502 until then)
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+  backup-scheduler:
+    <<: *restart
+  valkey:
+    <<: *restart
+  valkey-oidc:
+    <<: *restart
+  zitadel-api:
+    <<: *restart
+    environment:
+      # Prod must choose an expiry for the two bootstrap tokens (compose.yaml defaults to 2099 for dev). Required, so
+      # a prod start without it fails instead of minting tokens that never expire (CR-10). Format:
+      # ZITADEL_PAT_EXPIRATION=2027-01-01T00:00:00Z. It only applies when the first instance is created.
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:?set ZITADEL_PAT_EXPIRATION in .env (RFC 3339, e.g. 2027-01-01T00:00:00Z; prod tokens must expire)}
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: ${ZITADEL_PAT_EXPIRATION:?set ZITADEL_PAT_EXPIRATION in .env (RFC 3339, e.g. 2027-01-01T00:00:00Z; prod tokens must expire)}
+  zitadel-login:
+    <<: *restart
+  api:
+    <<: *restart
+  worker:
+    <<: *restart
+  workspace:
+    <<: *restart
+    environment:
+      # Required in prod so a start without the session key fails instead of running with an empty one.
+      SESSION_ENC_KEY: ${SESSION_ENC_KEY:?set SESSION_ENC_KEY in .env (32 random bytes, base64, from openssl rand -base64 32)}
+      SESSION_ENC_KEY_ID: ${SESSION_ENC_KEY_ID:?set SESSION_ENC_KEY_ID in .env (e.g. k1)}
+  caddy:
+    <<: *restart
+    ports:
+      - '${BIND_ADDR:?set BIND_ADDR in .env (the server interface address)}:80:80'
+      - '${BIND_ADDR}:443:443'
+    volumes:
+      # Restricts the public auth host to OIDC sign-in paths (the Caddyfile imports /etc/caddy/auth.d/*).
+      - type: bind
+        source: ../caddy/auth-restricted.caddy
+        target: /etc/caddy/auth.d/restricted.caddy
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      # In prod the apps run as containers, never on the host.
+      WORKSPACE_UPSTREAM: workspace:3000
+      API_UPSTREAM: api:3001

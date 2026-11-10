@@ -1,0 +1,28 @@
+{
+  "name": "@bos/seed-zitadel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Idempotent ZITADEL provisioning: project, roles, apps, orgs, personas and the k6 machine user.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bos/contracts": "workspace:*",
+    "@bos/db": "workspace:*",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

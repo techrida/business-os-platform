@@ -1,0 +1,36 @@
+{
+  "name": "business-os-platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Business OS platform monorepo (apps/api, apps/workspace, packages/*, tools/*).",
+  "packageManager": "pnpm@11.28.11",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.28.11 <12"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "lint": "eslint . --max-warnings 0",
+    "test": "pnpm -r --if-present run test",
+    "test:e2e": "pnpm -r --if-present run test:e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "stack:up": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core up -d --wait --wait-timeout 300",
+    "stack:down": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core --profile app --profile tools down --remove-orphans",
+    "stack:nuke": "bash infra/scripts/stack-nuke.sh",
+    "stack:logs": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile core --profile app logs --follow --tail 100",
+    "seed": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm seed-zitadel",
+    "perf:load": "docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml --profile tools run --rm -e K6_READ_P95_MS k6 run /perf/load.js",
+    "drill": "bash infra/backup/restore-drill.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-next": "catalog:",
+    "globals": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:"
+  }
+}
