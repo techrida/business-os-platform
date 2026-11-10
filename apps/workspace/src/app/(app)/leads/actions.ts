@@ -11,6 +11,8 @@ import { requireStaffSession } from '@/lib/bff';
 
 import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
 import { convertLead, createLead } from '@/components/p2/crm/crm-api';
+import { listContacts } from '@/components/p2/customers/api';
+import type { ContactChoices } from '@/components/p2/crm/convert-dialog';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
 import { parseConvert, parseLead } from '@/components/p2/crm/forms';
 import { keyOf, nextKey } from '@/components/p2/crm/idempotency';
@@ -81,4 +83,18 @@ export async function convertLeadAction(
   revalidatePath(`/leads/${leadId}`);
   revalidatePath('/opportunities');
   redirect(`/opportunities/${opportunityId}`);
+}
+
+/** The existing API read enforces customer.read and customer visibility for this session. */
+export async function loadConvertContacts(customerId: string): Promise<ContactChoices> {
+  const session = await requireStaffSession('/leads');
+  if (!UUID.test(customerId)) return { contacts: [], error: 'Select a customer first.' };
+  try {
+    const result = await listContacts(session, customerId);
+    return {
+      contacts: result.items.map((contact) => ({ id: contact.id, name: contact.fullName })),
+    };
+  } catch (err) {
+    return { contacts: [], error: failureOf(err).message };
+  }
 }

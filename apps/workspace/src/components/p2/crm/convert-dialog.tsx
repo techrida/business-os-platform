@@ -4,7 +4,7 @@ import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 
 import styles from './crm.module.css';
 import type { ConvertAction, ConvertState } from './types';
@@ -46,7 +46,17 @@ function initialValues(lead: ConvertLead): Record<string, string> {
  * checks for duplicates. When it finds one, the dialog lists the candidates: "Use existing" links
  * to that record, or "Create anyway" with a reason. Typed values survive every refusal.
  */
-export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: ConvertAction }) {
+export type ContactChoices = { contacts: { id: string; name: string }[]; error?: string };
+
+export function ConvertDialog({
+  lead,
+  action,
+  loadContacts,
+}: {
+  lead: ConvertLead;
+  action: ConvertAction;
+  loadContacts?: (customerId: string) => Promise<ContactChoices>;
+}) {
   const [state, formAction, pending] = useActionState<ConvertState, FormData>(action, {
     values: initialValues(lead),
     fieldErrors: {},
@@ -77,6 +87,32 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
 
   const customerExisting = values['customerMode'] === 'existing';
   const contactMode = values['contactMode'];
+  const customerId = customerExisting ? (values['customerId'] ?? '') : '';
+  const [loadedContacts, setContacts] = useState<{
+    customerId: string;
+    result: ContactChoices;
+  } | null>(null);
+  const contacts = loadedContacts?.customerId === customerId ? loadedContacts.result : null;
+  useEffect(() => {
+    let active = true;
+    if (customerId && loadContacts) {
+      void loadContacts(customerId).then(
+        (result) => {
+          if (active) setContacts({ customerId, result });
+        },
+        () => {
+          if (active)
+            setContacts({
+              customerId,
+              result: { contacts: [], error: 'Contacts could not be loaded.' },
+            });
+        },
+      );
+    }
+    return () => {
+      active = false;
+    };
+  }, [customerId, loadContacts]);
 
   return (
     <>
@@ -154,6 +190,9 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                                 customerMode: 'existing',
                                 customerId: d.id,
                                 customerLabel: d.label,
+                                contactMode: 'create',
+                                contactId: '',
+                                contactLabel: '',
                                 createAnyway: '',
                               })
                             : patch({
@@ -295,6 +334,19 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 No contact
               </label>
 
+              {customerExisting ? (
+                <label className={styles.choice}>
+                  <input
+                    type="radio"
+                    name="contactMode"
+                    value="existing"
+                    checked={contactMode === 'existing'}
+                    onChange={set('contactMode')}
+                  />
+                  Use an existing contact
+                </label>
+              ) : null}
+
               {contactMode === 'create' ? (
                 <div className={styles.formGrid}>
                   <Field label="Contact name" error={err['contactName']}>
@@ -342,9 +394,27 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 <Field label="Contact" error={err['contactId']}>
                   {(c) => (
                     <>
-                      <input type="hidden" name="contactMode" value="existing" />
-                      <input type="hidden" name="contactId" value={values['contactId']} />
-                      <Input value={values['contactLabel'] ?? 'Selected contact'} readOnly {...c} />
+                      <Select
+                        name="contactId"
+                        value={values['contactId']}
+                        onChange={set('contactId')}
+                        {...c}
+                      >
+                        <option value="">Select a contact</option>
+                        {values['contactId'] &&
+                        !contacts?.contacts.some((c) => c.id === values['contactId']) ? (
+                          <option value={values['contactId']}>
+                            {values['contactLabel'] ?? 'Selected contact'}
+                          </option>
+                        ) : null}
+                        {contacts?.contacts.map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {contact.name}
+                          </option>
+                        ))}
+                      </Select>
+                      {contacts?.error ? <p role="alert">{contacts.error}</p> : null}
+                      {!contacts && loadContacts ? <p role="status">Loading contacts</p> : null}
                     </>
                   )}
                 </Field>
