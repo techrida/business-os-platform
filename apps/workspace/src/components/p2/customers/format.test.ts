@@ -131,12 +131,12 @@ describe('small helpers', () => {
     expect(isGuid('')).toBe(false);
   });
 
-  it('names a customer, or uses a neutral fallback when the name could not be read', () => {
+  it('names a customer, or shows an unavailable label when the name could not be read', () => {
     expect(customerLabel({ legalName: 'Himalayan Construction', number: 'CUS-0001' })).toBe(
       'Himalayan Construction',
     );
     expect(customerLabel(undefined, 'aaaabbbb-1111-4111-8111-1234567890ab')).toBe(
-      'Unknown customer',
+      'Customer name unavailable',
     );
   });
 });

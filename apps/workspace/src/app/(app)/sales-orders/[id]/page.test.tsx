@@ -78,6 +78,16 @@ describe('sales order detail', () => {
     expect(html).toContain('no evidence attached to this order yet');
   });
 
+  it('labels evidence in the list and billing selector without displaying opaque document keys', async () => {
+    const html = await render();
+    expect(html).toContain('Document 1');
+    expect(html).toContain('Customer purchase order · Document 1</option>');
+    expect(html).toContain('Contract · Document 2</option>');
+    const text = html.replace(/<[^>]*>/g, '');
+    for (const item of salesOrderDetail().evidence) expect(text).not.toContain(item.documentId);
+    expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+  });
+
   it('links a drafted or invoiced line to its invoice and offers no second draft', async () => {
     mocks.getSalesOrder.mockResolvedValue(
       salesOrderDetail({

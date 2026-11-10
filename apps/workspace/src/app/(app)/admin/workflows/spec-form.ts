@@ -272,5 +272,5 @@ export function describeStepTarget(
   }
   if (step.kind === 'user') return `Person: ${people[step.user ?? ''] ?? 'Name unavailable'}`;
   if (step.kind === 'group') return `Group: ${groups[step.group ?? ''] ?? 'Name unavailable'}`;
-  return `${step.kind}: ${step[step.kind] ?? '(missing)'}`;
+  return `Role: ${step.role ?? '(missing)'}`;
 }

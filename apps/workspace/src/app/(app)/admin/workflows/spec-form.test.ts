@@ -255,3 +255,23 @@ describe('describeCondition', () => {
     ).toBe('(currency in [USD, INR] or (amountNpr <= 5))');
   });
 });
+
+describe('describeStepTarget', () => {
+  it('uses names for people and groups and never exposes a missing target id', () => {
+    const user = { id: 'review', kind: 'user' as const, user: 'opaque-user', reason: 'Review' };
+    const group = { id: 'review', kind: 'group' as const, group: 'opaque-group', reason: 'Review' };
+    expect(describeStepTarget(user, { 'opaque-user': 'Mina' })).toBe('Person: Mina');
+    expect(describeStepTarget(group, {}, { 'opaque-group': 'Reviewers' })).toBe('Group: Reviewers');
+    expect(describeStepTarget(user)).toBe('Person: Name unavailable');
+    expect(describeStepTarget(group)).toBe('Group: Name unavailable');
+  });
+
+  it('keeps the incoming role label alongside the department-head fallback label', () => {
+    expect(
+      describeStepTarget({ id: 'review', kind: 'role', role: 'finance', reason: 'Review' }),
+    ).toBe('Role: finance');
+    expect(describeStepTarget({ id: 'head', kind: 'department_head', reason: 'Review' })).toBe(
+      'department head (falls back to operations_head)',
+    );
+  });
+});
