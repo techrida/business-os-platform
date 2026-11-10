@@ -153,6 +153,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                             ? patch({
                                 customerMode: 'existing',
                                 customerId: d.id,
+                                customerLabel: d.label,
                                 createAnyway: '',
                               })
                             : patch({
@@ -160,6 +161,8 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                                 customerId: d.customerId ?? values['customerId'] ?? '',
                                 contactMode: 'existing',
                                 contactId: d.id,
+                                customerLabel: 'Customer of ' + d.label,
+                                contactLabel: d.label,
                                 createAnyway: '',
                               })
                         }
@@ -184,31 +187,24 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 />
                 Create a new customer
               </label>
-              <label className={styles.choice}>
-                <input
-                  type="radio"
-                  name="customerMode"
-                  value="existing"
-                  checked={customerExisting}
-                  onChange={set('customerMode')}
-                />
-                Link to an existing customer
-              </label>
+              <p className={styles.quiet}>
+                If a matching customer is found, select it from the matching records above.
+              </p>
 
               {customerExisting ? (
-                <Field
-                  label="Customer id"
-                  hint="Paste the id from the customer's page. A customer picker comes with the customer screens."
-                  error={err['customerId']}
-                >
+                <input type="hidden" name="customerMode" value="existing" />
+              ) : null}
+              {customerExisting ? (
+                <Field label="Customer" error={err['customerId']}>
                   {(c) => (
-                    <Input
-                      name="customerId"
-                      value={values['customerId']}
-                      onChange={set('customerId')}
-                      autoComplete="off"
-                      {...c}
-                    />
+                    <>
+                      <input type="hidden" name="customerId" value={values['customerId']} />
+                      <Input
+                        value={values['customerLabel'] ?? 'Selected customer'}
+                        readOnly
+                        {...c}
+                      />
+                    </>
                   )}
                 </Field>
               ) : (
@@ -292,16 +288,6 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 <input
                   type="radio"
                   name="contactMode"
-                  value="existing"
-                  checked={contactMode === 'existing'}
-                  onChange={set('contactMode')}
-                />
-                Link to an existing contact
-              </label>
-              <label className={styles.choice}>
-                <input
-                  type="radio"
-                  name="contactMode"
                   value="none"
                   checked={contactMode === 'none'}
                   onChange={set('contactMode')}
@@ -353,15 +339,13 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 </div>
               ) : null}
               {contactMode === 'existing' ? (
-                <Field label="Contact id" error={err['contactId']}>
+                <Field label="Contact" error={err['contactId']}>
                   {(c) => (
-                    <Input
-                      name="contactId"
-                      value={values['contactId']}
-                      onChange={set('contactId')}
-                      autoComplete="off"
-                      {...c}
-                    />
+                    <>
+                      <input type="hidden" name="contactMode" value="existing" />
+                      <input type="hidden" name="contactId" value={values['contactId']} />
+                      <Input value={values['contactLabel'] ?? 'Selected contact'} readOnly {...c} />
+                    </>
                   )}
                 </Field>
               ) : null}
