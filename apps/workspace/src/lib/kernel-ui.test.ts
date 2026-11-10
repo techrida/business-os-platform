@@ -134,6 +134,15 @@ describe('display helpers', () => {
     expect(by['editors']?.block).toBe(true);
     expect(by['note']?.value).toBe('None');
   });
+  it('omits internal references in snapshot rows and nested business facts without changing the snapshot', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const snapshot = { customerId: id, title: 'Laptop', lines: [{ id, description: 'Support' }] };
+    const rows = snapshotEntries(snapshot);
+    expect(rows.map((row) => row.key)).toEqual(['title', 'lines']);
+    expect(JSON.stringify(rows)).not.toContain(id);
+    expect(JSON.stringify(rows)).toContain('Support');
+    expect(snapshot.lines[0]?.id).toBe(id);
+  });
   it('handles an empty or non-object snapshot', () => {
     expect(snapshotEntries(null)).toEqual([]);
     expect(snapshotEntries('text')[0]?.block).toBe(true);
