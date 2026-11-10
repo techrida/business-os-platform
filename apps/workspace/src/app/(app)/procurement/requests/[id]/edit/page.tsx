@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
@@ -45,7 +46,7 @@ export default async function EditPurchaseRequestPage({
           tone={f.status === 403 ? 'info' : 'error'}
           role="alert"
           title="The purchase request did not load"
-          actions={<a href={`${back}/edit`}>Try again</a>}
+          actions={<Link href={`${back}/edit`}>Try again</Link>}
         >
           {f.message}
         </Alert>
@@ -67,7 +68,7 @@ export default async function EditPurchaseRequestPage({
             tone={failure.status === 403 ? 'info' : 'error'}
             role="alert"
             title="Cost centres did not load"
-            actions={<a href={`${back}/edit`}>Try again</a>}
+            actions={<Link href={`${back}/edit`}>Try again</Link>}
           >
             {failure.message}
           </Alert>
