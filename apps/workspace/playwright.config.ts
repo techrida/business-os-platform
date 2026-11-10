@@ -84,7 +84,13 @@ export default defineConfig({
     {
       name: 'dev',
       // Run the platform journeys, shell regression, and Phase 2 CRM/customer/quotation specs.
-      testMatch: ['personas.spec.ts', 'exit.spec.ts', 'inbox.spec.ts', 'p0-shell.spec.ts', 'p2/*.spec.ts'],
+      testMatch: [
+        'personas.spec.ts',
+        'exit.spec.ts',
+        'inbox.spec.ts',
+        'p0-shell.spec.ts',
+        'p2/*.spec.ts',
+      ],
       use: { ...common, baseURL: devBaseURL },
     },
     {
