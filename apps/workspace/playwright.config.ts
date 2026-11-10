@@ -83,11 +83,12 @@ export default defineConfig({
   projects: [
     {
       name: 'dev',
-      // P1: the full-stack exit story (exit.spec.ts) runs after the persona logins, then the inbox checks, then the P2 CRM, customer and quote-builder specs, then the P3 invoice and P4 procurement specs.
+      // Run platform journeys, the shell regression, and P2/P3/P4 business workflows.
       testMatch: [
         'personas.spec.ts',
         'exit.spec.ts',
         'inbox.spec.ts',
+        'p0-shell.spec.ts',
         'p2/*.spec.ts',
         'p3/*.spec.ts',
         'p4/*.spec.ts',

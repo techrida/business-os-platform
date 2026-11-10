@@ -3,13 +3,11 @@
 //   node packages/db/dist/migrate.js        (the `migrate` service in compose; reads DATABASE_MIGRATE_URL)
 //
 // Safe to run any number of times: Drizzle records what it applied in drizzle.__drizzle_migrations and only
-// applies files that are newer than the last recorded one.
-import { readFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+// applies files whose content hashes are not recorded, including older phase additions.
+import { realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { z } from 'zod';
 
 import { createDb } from './client.js';
@@ -21,38 +19,50 @@ import { createDb } from './client.js';
 export const MIGRATIONS_FOLDER = fileURLToPath(new URL('../migrations', import.meta.url));
 
 /** Connects as the given role (it must be able to create schemas: bos_owner) and applies pending migrations. */
-export async function runMigrations(connectionString: string): Promise<void> {
-  const { db, pool, close } = createDb(connectionString, { max: 1 });
+export async function runMigrations(
+  connectionString: string,
+  migrationsFolder = MIGRATIONS_FOLDER,
+): Promise<void> {
+  const { pool, close } = createDb(connectionString, { max: 1 });
   try {
-    const history = await pool.query<{ table_name: string | null }>(
-      "SELECT to_regclass('drizzle.__drizzle_migrations')::text AS table_name",
-    );
-    if (history.rows[0]?.table_name !== null) {
-      const { rows } = await pool.query<{ hash: string; created_at: string | null }>(
-        'SELECT hash, created_at FROM drizzle.__drizzle_migrations',
+    const migrations = readMigrationFiles({ migrationsFolder });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Serialize all phase runners before reading the shared ledger.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('bos:migrations'))");
+      await client.query('CREATE SCHEMA IF NOT EXISTS drizzle');
+      await client.query(`CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (
+        id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint
+      )`);
+      const applied = await client.query<{ hash: string }>(
+        'SELECT hash FROM drizzle.__drizzle_migrations',
       );
-      const newest = Math.max(...rows.map((row) => Number(row.created_at)));
-      const hashes = new Set(rows.map((row) => row.hash));
-      const timestamps = new Set(rows.map((row) => Number(row.created_at)));
-      const journal = JSON.parse(
-        readFileSync(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
-      ) as { entries: { when: number; tag: string }[] };
-      const tags = new Map(journal.entries.map((entry) => [entry.when, entry.tag]));
-      // Drizzle only applies files newer than the last recorded timestamp. Detect older gaps before it
-      // can silently skip them when the separately-pushed P3 and P4 histories converge.
-      const missing = readMigrationFiles({ migrationsFolder: MIGRATIONS_FOLDER }).filter(
-        (file) =>
-          file.folderMillis < newest &&
-          !hashes.has(file.hash) &&
-          !timestamps.has(file.folderMillis),
-      );
-      if (missing.length > 0) {
+      const hashes = new Set(applied.rows.map((row) => row.hash));
+      const knownHashes = new Set(migrations.map((migration) => migration.hash));
+      if ([...hashes].some((hash) => !knownHashes.has(hash))) {
         throw new Error(
-          `Migration history is missing earlier migrations: ${missing.map((file) => tags.get(file.folderMillis)).join(', ')}; apply them in order before running migrations again`,
+          'Migration ledger contains an unknown applied SQL hash; use the complete matching phase source and restore any modified migration files before retrying',
         );
       }
+      // Phase branches can introduce older timestamps. A timestamp is ordering metadata,
+      // not evidence that a particular SQL file was applied. Preserve all recorded hashes.
+      for (const migration of migrations) {
+        if (hashes.has(migration.hash)) continue;
+        for (const statement of migration.sql) await client.query(statement);
+        await client.query(
+          'INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)',
+          [migration.hash, migration.folderMillis],
+        );
+        hashes.add(migration.hash);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-    await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
   } finally {
     await close();
   }
