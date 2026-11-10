@@ -16,7 +16,8 @@ import {
 import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { snapshotEntries, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
+import { userNames } from '@/lib/business-labels';
+import { listApprovalGroups } from '@/lib/api-admin';
 
 import { StatusBadge, statusText } from '../../kit';
 import { DecisionForm } from './decision-form';
@@ -39,10 +40,12 @@ const ACTION_LABEL: Record<string, string> = {
 type Step = ApprovalRequestDto['steps'][number];
 
 /** Who a step belongs to, in words. Names are not available to staff without admin rights. */
-function stepWho(step: Step): string {
+function stepWho(step: Step, people: Map<string, string>, groups: Map<string, string>): string {
   if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
-  if (step.kind === 'group' && step.groupId) return `Approval group ${shortId(step.groupId)}`;
-  if (step.kind === 'user' && step.userId) return `Person ${shortId(step.userId)}`;
+  if (step.kind === 'group' && step.groupId)
+    return groups.get(step.groupId) ?? 'Approval group name unavailable';
+  if (step.kind === 'user' && step.userId)
+    return people.get(step.userId) ?? 'Approver name unavailable';
   return `Step ${step.seq}`;
 }
 
@@ -63,8 +66,8 @@ function titleOf(snapshot: unknown): string | null {
   return null;
 }
 
-function Person({ id }: { id: string }) {
-  return <span title={id}>person {shortId(id)}</span>;
+function Person({ id, people }: { id: string; people: Map<string, string> }) {
+  return <span>{people.get(id) ?? 'Person name unavailable'}</span>;
 }
 
 export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -98,6 +101,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   }
 
   const request = detail.value;
+  const people = await userNames(session);
+  const groups = await listApprovalGroups(session).then(
+    (rows) => new Map(rows.map((g) => [g.id, g.name])),
+    () => new Map<string, string>(),
+  );
   const items: InboxItemDto[] | null = inbox.status === 'fulfilled' ? inbox.value : null;
   const inboxDenied = inbox.status === 'rejected' && failureOf(inbox.reason).status === 403;
   // `yes` when the inbox lists it, `no` when it does not (or the person has no approval rights),
@@ -114,7 +122,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           : 'unknown';
 
   const title = titleOf(request.snapshot);
-  const rows = snapshotEntries(request.snapshot);
+  const rows = snapshotEntries(request.snapshot, people);
   const inboxItem = items?.find((i) => i.requestId === request.requestId);
 
   const facts: Fact[] = rows.map((row) => ({
@@ -126,7 +134,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
   const timeline: TimelineStep[] = request.steps.map((step) => ({
     key: step.seq,
-    title: stepWho(step),
+    title: stepWho(step, people, groups),
     status: statusText(step.status),
     tone: STEP_TONE[step.status] ?? 'upcoming',
     detail: (
@@ -135,11 +143,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
         {step.decidedBy ? (
           <>
             <br />
-            Decided by <Person id={step.decidedBy} />
+            Decided by <Person people={people} id={step.decidedBy} />
             {step.decidedOnBehalfOf ? (
               <>
                 {' '}
-                for <Person id={step.decidedOnBehalfOf} />
+                for <Person people={people} id={step.decidedOnBehalfOf} />
               </>
             ) : null}
           </>
@@ -161,7 +169,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             {title !== null ? `${request.documentNumber} · ` : ''}
             Submitted <time dateTime={request.submittedAt}>
               {when(request.submittedAt)}
-            </time> by <Person id={request.requesterUserId} />
+            </time> by <Person people={people} id={request.requesterUserId} />
           </>
         }
       />
@@ -215,11 +223,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                     <div className={styles.eventHead}>
                       <span className={styles.eventName}>{ACTION_LABEL[a.action] ?? a.action}</span>
                       <span className={styles.eventMeta}>
-                        <Person id={a.actorUserId} />
+                        <Person people={people} id={a.actorUserId} />
                         {a.onBehalfOfUserId ? (
                           <>
                             {' '}
-                            for <Person id={a.onBehalfOfUserId} />
+                            for <Person people={people} id={a.onBehalfOfUserId} />
                           </>
                         ) : null}
                       </span>

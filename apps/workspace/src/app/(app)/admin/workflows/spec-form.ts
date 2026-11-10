@@ -252,6 +252,12 @@ export function describeCondition(c: Condition): string {
   return `${c.field} ${OP_SYMBOL[c.op] ?? c.op} ${value}`;
 }
 
-export function describeStepTarget(step: StepSpec): string {
-  return `${step.kind}: ${step[step.kind] ?? '(missing)'}`;
+export function describeStepTarget(
+  step: StepSpec,
+  people: Record<string, string> = {},
+  groups: Record<string, string> = {},
+): string {
+  if (step.kind === 'user') return `Person: ${people[step.user ?? ''] ?? 'Name unavailable'}`;
+  if (step.kind === 'group') return `Group: ${groups[step.group ?? ''] ?? 'Name unavailable'}`;
+  return `Role: ${step.role ?? '(missing)'}`;
 }

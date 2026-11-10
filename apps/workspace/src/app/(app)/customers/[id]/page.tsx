@@ -31,7 +31,8 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
+import { userNames } from '@/lib/business-labels';
+import { listPaymentTerms } from '@/components/p2/quote-builder/api';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
 
@@ -166,7 +167,7 @@ function Contacts({
   );
 }
 
-function Accounts({ customer }: { customer: CustomerDetail }) {
+function Accounts({ customer, terms }: { customer: CustomerDetail; terms: Map<string, string> }) {
   const accounts: PartyAccountDto[] | undefined = customer.accounts;
   const currency = customer.defaultCurrency;
   return (
@@ -175,8 +176,8 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
       description="Payment terms and credit limits are agreed with each legal entity separately."
     >
       {accounts === undefined ? (
-        <EmptyState title="Terms are not available yet." icon="building" headingLevel={3}>
-          The platform did not send this customer&apos;s terms. They will show here when it does.
+        <EmptyState title="Terms could not be loaded." icon="building" headingLevel={3}>
+          This customer&apos;s terms could not be loaded.
         </EmptyState>
       ) : accounts.length === 0 ? (
         <EmptyState title="No terms set yet." icon="building" headingLevel={3}>
@@ -196,15 +197,11 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
               {accounts.map((a) => (
                 <tr key={a.organizationId}>
                   <Td>
-                    <span className={styles.ref} title={a.organizationId}>
-                      Entity {shortId(a.organizationId)}
-                    </span>
+                    <span>Legal entity name unavailable</span>
                   </Td>
                   <Td>
                     {a.paymentTermId !== null ? (
-                      <span className={styles.ref} title={a.paymentTermId}>
-                        Terms {shortId(a.paymentTermId)}
-                      </span>
+                      <span>{terms.get(a.paymentTermId) ?? 'Payment terms unavailable'}</span>
                     ) : (
                       <span className={styles.quiet}>Not set</span>
                     )}
@@ -224,8 +221,8 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
           </Table>
           <p className={styles.note}>
             {currency !== null
-              ? `The platform sends no currency with a credit limit, so each is shown in this customer's default currency, ${currency}.`
-              : 'The platform sends no currency with a credit limit, and this customer has no default currency, so the limits are shown as plain numbers.'}
+              ? `Credit limits are shown in the customer's default currency, ${currency}.`
+              : 'Credit limit currency is unavailable. Confirm the currency before relying on these limits.'}
           </p>
         </>
       )}
@@ -344,9 +341,11 @@ export default async function CustomerPage({
   }
 
   // The panels below load on their own: one failing leaves the profile and the other panels usable.
-  const [contacts, cases] = await Promise.allSettled([
+  const [contacts, cases, people, paymentTerms] = await Promise.allSettled([
     listContacts(session, id),
     listVerificationCases(session, { partyId: id }),
+    userNames(session),
+    listPaymentTerms(session),
   ]);
 
   const mayWrite = hasPermission(session.roles, 'customer.write');
@@ -376,7 +375,11 @@ export default async function CustomerPage({
       label: 'Account owner',
       value:
         customer.ownerUserId !== null ? (
-          <span title={customer.ownerUserId}>Person {shortId(customer.ownerUserId)}</span>
+          <span>
+            {people.status === 'fulfilled'
+              ? (people.value.get(customer.ownerUserId) ?? 'Owner name unavailable')
+              : 'Owner name unavailable'}
+          </span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>
         ),
@@ -445,7 +448,16 @@ export default async function CustomerPage({
             mayWrite={mayWrite && !merged}
             customerId={customer.id}
           />
-          <Accounts customer={customer} />
+          <Accounts
+            customer={customer}
+            terms={
+              new Map(
+                paymentTerms.status === 'fulfilled'
+                  ? paymentTerms.value.map((t) => [t.id, t.label])
+                  : [],
+              )
+            }
+          />
         </div>
 
         <div className={styles.sideStack}>
@@ -459,11 +471,6 @@ export default async function CustomerPage({
               mayWrite && !merged ? { customerId: customer.id, idempotencyKey: randomUUID() } : null
             }
           />
-          <Panel title="Activity" as="aside">
-            <EmptyState title="The timeline is not connected yet." headingLevel={3}>
-              Calls, notes and changes to this customer will be listed here.
-            </EmptyState>
-          </Panel>
         </div>
       </div>
     </Page>

@@ -103,6 +103,28 @@ describe('check-no-dev-routes', () => {
     // Spawns the checker on a fixture build: allow a loaded machine more than vitest's 5 s.
   }, 30_000);
 
+  it('checks a dedicated portal build fixture and rejects a leaked portal dev menu', () => {
+    const manifest = {
+      '/(portal)/page': 'app/(portal)/page.js',
+      '/(portal)/invoices/[id]/page': 'app/(portal)/invoices/[id]/page.js',
+      '/auth/login/route': 'app/auth/login/route.js',
+      '/healthz/route': 'app/healthz/route.js',
+    };
+    const nextDir = fixtureBuild({ manifest });
+    expect(run([nextDir]).status).toBe(0);
+    write(path.join(nextDir, 'static/chunks/portal.js'), DEV_MENU_MARKER);
+    expect(run([nextDir]).status).toBe(1);
+    write(path.join(nextDir, 'static/chunks/portal.js'), 'clean');
+    write(
+      path.join(nextDir, 'server/app-paths-manifest.json'),
+      JSON.stringify({
+        ...manifest,
+        '/(portal)/dev/personas/page': 'app/(portal)/dev/personas/page.js',
+      }),
+    );
+    expect(run([nextDir]).status).toBe(1);
+  });
+
   it('fails when the manifest has a /dev route, even without the marker', () => {
     const nextDir = fixtureBuild({
       manifest: { ...REAL_BUILD_MANIFEST, '/dev/personas/page': 'app/dev/personas/page.js' },

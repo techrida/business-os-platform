@@ -2,7 +2,6 @@ import type { QuotationStatusHistoryDto } from '@bos/contracts';
 
 import { Panel } from '@/components/ui/panel';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import styles from './detail.module.css';
 import { quotationStatusMeta } from './status';
@@ -21,11 +20,12 @@ export interface HistoryRow {
 /**
  * Turns the status history into rows for display, newest first. A change with no earlier status
  * is the creation; every other change names both ends in the same labels the badges use. The API
- * sends names for no one, so a person shows as a short id (the inbox does the same).
+ * does not include names; directory lookups may supply them when the caller has access.
  */
 export function historyRows(
   history: readonly QuotationStatusHistoryDto[],
   versions: readonly { id: string; revisionNo: number }[],
+  people: ReadonlyMap<string, string> = new Map(),
 ): HistoryRow[] {
   const revisionOf = new Map(versions.map((v) => [v.id, `Rev ${v.revisionNo}`]));
   return history
@@ -42,7 +42,10 @@ export function historyRows(
         entry.fromStatus === null
           ? `Created as ${quotationStatusMeta(entry.toStatus).label}`
           : `Changed from ${quotationStatusMeta(entry.fromStatus).label} to ${quotationStatusMeta(entry.toStatus).label}`,
-      actor: entry.actorId === null ? 'System' : `person ${shortId(entry.actorId)}`,
+      actor:
+        entry.actorId === null
+          ? 'System'
+          : (people.get(entry.actorId) ?? 'Person name unavailable'),
       reason: entry.reason !== null && entry.reason !== '' ? entry.reason : null,
       at: entry.at,
     }));
@@ -52,11 +55,13 @@ export function historyRows(
 export function StatusHistory({
   history,
   versions,
+  people,
 }: {
   history: readonly QuotationStatusHistoryDto[];
   versions: readonly { id: string; revisionNo: number }[];
+  people?: ReadonlyMap<string, string>;
 }) {
-  const rows = historyRows(history, versions);
+  const rows = historyRows(history, versions, people);
   return (
     <Panel title="Status history">
       {rows.length === 0 ? (
