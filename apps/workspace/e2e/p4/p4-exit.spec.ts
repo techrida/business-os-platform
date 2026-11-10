@@ -55,7 +55,7 @@ test('procurement raises a PR, its department head alone approves, then three ve
         await page.waitForLoadState('networkidle');
         await page.getByLabel('Needed by').fill('2030-12-31');
         await page.getByLabel('Department').fill(departmentId);
-        await page.getByLabel('Cost centre').fill(costCenterId);
+        await page.getByLabel('Cost centre').selectOption(costCenterId);
         await page.getByLabel('Budget code').fill('P4-EXIT');
         await page.getByLabel('Why is this needed?').fill(`Journey 11 browser ${Date.now()}`);
         await page.getByLabel('Description', { exact: true }).fill('Two serialized devices');
