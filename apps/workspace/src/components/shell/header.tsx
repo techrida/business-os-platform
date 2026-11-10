@@ -35,7 +35,7 @@ export function Header({ orgKind, roles }: { orgKind: string; roles: readonly st
             type="search"
             className={styles.searchInput}
             aria-label="Search"
-            placeholder="Search (coming soon)"
+            placeholder="Search"
             disabled
           />
         </div>
