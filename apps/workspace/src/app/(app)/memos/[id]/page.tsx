@@ -9,6 +9,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { failureOf, getMemo, listAudit, previewRoute, type MemoDetail } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
+import { userNames } from '@/lib/business-labels';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
 
 import { StatusBadge } from '../../kit';
@@ -23,10 +24,11 @@ export const dynamic = 'force-dynamic';
 
 type SearchParams = Promise<{ saved?: string | string[]; submitted?: string | string[] }>;
 
-/** `test_memos.update` becomes `Test memos update`: the audit action names are dotted identifiers. */
-const auditLabel = (action: string): string => humanizeKey(action);
+/** Present the historical test-memo action namespace using the product document name. */
+const auditLabel = (action: string): string =>
+  humanizeKey(action.replace(/^test_memos[.]/, 'memo.'));
 
-function Timeline({ events }: { events: AuditEventDto[] }) {
+function Timeline({ events, people }: { events: AuditEventDto[]; people: Map<string, string> }) {
   return (
     <ol className={styles.history}>
       {events.map((e) => (
@@ -34,7 +36,9 @@ function Timeline({ events }: { events: AuditEventDto[] }) {
           <div className={styles.eventHead}>
             <span className={styles.eventName}>{auditLabel(e.action)}</span>
             <span className={styles.eventMeta}>
-              {e.actorKind === 'user' ? 'Staff member' : e.actorKind}
+              {e.actorKind === 'user'
+                ? (people.get(e.actorId) ?? 'Person name unavailable')
+                : e.actorKind}
             </span>
             <time className={styles.eventMeta} dateTime={e.occurredAt}>
               {when(e.occurredAt)}
@@ -57,6 +61,7 @@ export default async function MemoPage({
   const path = `/memos/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
   const query = await searchParams;
+  const people = await userNames(session);
   const saved = query.saved === '1';
   const submitted =
     query.submitted === 'pending' || query.submitted === 'blocked' ? query.submitted : null;
@@ -253,7 +258,7 @@ export default async function MemoPage({
             ) : events.length === 0 ? (
               <p className={styles.note}>No events recorded yet.</p>
             ) : (
-              <Timeline events={events} />
+              <Timeline events={events} people={people} />
             )}
           </Panel>
         </div>

@@ -31,6 +31,8 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
+import { userNames } from '@/lib/business-labels';
+import { listPaymentTerms } from '@/components/p2/quote-builder/api';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
 
@@ -165,7 +167,7 @@ function Contacts({
   );
 }
 
-function Accounts({ customer }: { customer: CustomerDetail }) {
+function Accounts({ customer, terms }: { customer: CustomerDetail; terms: Map<string, string> }) {
   const accounts: PartyAccountDto[] | undefined = customer.accounts;
   const currency = customer.defaultCurrency;
   return (
@@ -192,14 +194,14 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a, index) => (
+              {accounts.map((a) => (
                 <tr key={a.organizationId}>
                   <Td>
-                    <span className={styles.ref}>Legal entity {index + 1}</span>
+                    <span>Legal entity name unavailable</span>
                   </Td>
                   <Td>
                     {a.paymentTermId !== null ? (
-                      <span className={styles.ref}>Terms assigned</span>
+                      <span>{terms.get(a.paymentTermId) ?? 'Payment terms unavailable'}</span>
                     ) : (
                       <span className={styles.quiet}>Not set</span>
                     )}
@@ -219,8 +221,8 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
           </Table>
           <p className={styles.note}>
             {currency !== null
-              ? `The platform sends no currency with a credit limit, so each is shown in this customer's default currency, ${currency}.`
-              : 'The platform sends no currency with a credit limit, and this customer has no default currency, so the limits are shown as plain numbers.'}
+              ? `Credit limits are shown in the customer's default currency, ${currency}.`
+              : 'Credit limit currency is unavailable. Confirm the currency before relying on these limits.'}
           </p>
         </>
       )}
@@ -339,9 +341,11 @@ export default async function CustomerPage({
   }
 
   // The panels below load on their own: one failing leaves the profile and the other panels usable.
-  const [contacts, cases] = await Promise.allSettled([
+  const [contacts, cases, people, paymentTerms] = await Promise.allSettled([
     listContacts(session, id),
     listVerificationCases(session, { partyId: id }),
+    userNames(session),
+    listPaymentTerms(session),
   ]);
 
   const mayWrite = hasPermission(session.roles, 'customer.write');
@@ -371,7 +375,11 @@ export default async function CustomerPage({
       label: 'Account owner',
       value:
         customer.ownerUserId !== null ? (
-          <span>Name unavailable</span>
+          <span>
+            {people.status === 'fulfilled'
+              ? (people.value.get(customer.ownerUserId) ?? 'Owner name unavailable')
+              : 'Owner name unavailable'}
+          </span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>
         ),
@@ -440,7 +448,16 @@ export default async function CustomerPage({
             mayWrite={mayWrite && !merged}
             customerId={customer.id}
           />
-          <Accounts customer={customer} />
+          <Accounts
+            customer={customer}
+            terms={
+              new Map(
+                paymentTerms.status === 'fulfilled'
+                  ? paymentTerms.value.map((t) => [t.id, t.label])
+                  : [],
+              )
+            }
+          />
         </div>
 
         <div className={styles.sideStack}>

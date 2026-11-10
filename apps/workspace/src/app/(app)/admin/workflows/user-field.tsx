@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Select } from '@/components/ui/field';
 
 export interface UserOption {
   id: string;
@@ -14,7 +14,7 @@ export interface UserOption {
 
 /**
  * Picks a person by id. With a user list it is a select; without one (the viewer lacks
- * `admin.users.read`, or the list failed) it is a text field for the user's id, so the form still works.
+ * `admin.users.read`, or the list failed) new selection is unavailable.
  */
 export function UserField({
   name,
@@ -27,31 +27,39 @@ export function UserField({
   users: readonly UserOption[] | null;
   defaultValue?: string;
 }) {
+  const available = users ?? [];
   return (
-    <Field label={label}>
-      {(control) =>
-        users && users.length > 0 ? (
-          <Select {...control} name={name} required defaultValue={defaultValue}>
-            <option value="" disabled>
-              Choose a person
-            </option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.label}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <Input
-            {...control}
-            name={name}
-            required
-            autoComplete="off"
-            placeholder="User id"
-            defaultValue={defaultValue}
-          />
-        )
+    <Field
+      label={label}
+      hint={
+        users === null
+          ? 'People could not be loaded. Reload or ask an administrator for access.'
+          : available.length === 0
+            ? 'No people are available to select.'
+            : undefined
       }
+    >
+      {(control) => (
+        <Select
+          {...control}
+          name={name}
+          required
+          defaultValue={defaultValue}
+          disabled={available.length === 0 && !defaultValue}
+        >
+          <option value="" disabled>
+            Choose a person
+          </option>
+          {defaultValue && !available.some((u) => u.id === defaultValue) ? (
+            <option value={defaultValue}>Current person (name unavailable)</option>
+          ) : null}
+          {available.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.label}
+            </option>
+          ))}
+        </Select>
+      )}
     </Field>
   );
 }
