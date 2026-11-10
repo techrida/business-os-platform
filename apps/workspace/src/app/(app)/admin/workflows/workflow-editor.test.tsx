@@ -14,7 +14,7 @@ const spec = {
 function render(users: { id: string; label: string; name: string; email: null }[] | null) {
   return renderToStaticMarkup(
     <WorkflowEditor
-      action={async () => IDLE}
+      action={() => Promise.resolve(IDLE)}
       mode="version"
       documentType="test_memo"
       initialSpec={spec}
