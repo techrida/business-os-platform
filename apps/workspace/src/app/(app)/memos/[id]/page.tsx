@@ -34,7 +34,7 @@ function Timeline({ events }: { events: AuditEventDto[] }) {
           <div className={styles.eventHead}>
             <span className={styles.eventName}>{auditLabel(e.action)}</span>
             <span className={styles.eventMeta}>
-              {e.actorKind === 'user' ? 'Name unavailable' : e.actorKind}
+              {e.actorKind === 'user' ? 'Staff member' : e.actorKind}
             </span>
             <time className={styles.eventMeta} dateTime={e.occurredAt}>
               {when(e.occurredAt)}

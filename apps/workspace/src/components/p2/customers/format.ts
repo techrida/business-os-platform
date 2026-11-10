@@ -130,11 +130,11 @@ export function parseDecision(raw: {
   return parsed.success ? { ok: true, data: parsed.data } : { ok: false, formError: true };
 }
 
-/** A customer's name for a table or a heading; an unavailable-name label when the customer could not be read. */
+/** A customer's name for a table or a heading; a neutral label when the customer could not be read. */
 export function customerLabel(
   customer: { legalName: string; number: string } | undefined,
-  partyId?: string,
+  _partyId?: string,
 ): string {
   if (customer !== undefined) return customer.legalName;
-  return partyId !== undefined ? 'Customer name unavailable' : 'Unknown customer';
+  return 'Unknown customer';
 }

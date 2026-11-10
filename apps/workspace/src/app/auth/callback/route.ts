@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 
 import { ApiError, getMe } from '@/lib/api';
 import { getEnv } from '@/lib/env';
-import { completeLogin, LOGIN_COOKIE } from '@/lib/oidc';
+import { completeLogin, LOGIN_COOKIE, LoginStateExpiredError } from '@/lib/oidc';
 import { createSession, setSessionCookie } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -19,6 +19,15 @@ function redirectTo(path: string): Response {
     },
   });
 }
+
+// A short-lived browser marker bounds automatic recovery to one fresh login attempt.
+const RECOVERY_COOKIE = '__Host-bos_login_recovery';
+const RECOVERY_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'lax' as const,
+  path: '/',
+};
 
 export async function GET(req: Request): Promise<Response> {
   const incoming = new URL(req.url);
@@ -61,9 +70,17 @@ export async function GET(req: Request): Promise<Response> {
       ...tokens,
     });
     await setSessionCookie(id);
+    jar.set(RECOVERY_COOKIE, '', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 0 });
     // returnTo went through safeReturnTo in /auth/login and was stored server-side with the state.
     return redirectTo(returnTo);
   } catch (err) {
+    // The identity provider may have completed MFA after our ten-minute transaction expired.
+    // Start a fresh, browser-bound flow; never accept the stale code or bypass its checks.
+    // ZITADEL can reuse its authenticated session, so this normally needs no user input.
+    if (err instanceof LoginStateExpiredError && !jar.get(RECOVERY_COOKIE)?.value) {
+      jar.set(RECOVERY_COOKIE, '1', { ...RECOVERY_COOKIE_OPTIONS, maxAge: 600 });
+      return redirectTo('/auth/login');
+    }
     // CR-02: the API answers 403 for staff without a project role. That is a valid login with
     // no access, not a failure: no session is created, and /no-access renders without one. Its
     // Sign out posts to /auth/logout, which ends the ZITADEL session, so there is no silent

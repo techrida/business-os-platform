@@ -246,7 +246,7 @@ function Schedule({
                   <Td>
                     {line.billableEvidenceDocumentId !== null ? (
                       <span className={local.step}>
-                        <span className={local.id}>Attached document</span>
+                        <span className={local.id}>Supporting document</span>
                         {line.billableMarkedAt !== null ? (
                           <span className={local.meta}>
                             Marked {when(line.billableMarkedAt, 'date')}
@@ -306,10 +306,10 @@ function Evidence({ items }: { items: SalesOrderDetail['evidence'] }) {
         <p className={detail.note}>No evidence is attached to this order.</p>
       ) : (
         <ul className={local.evidence}>
-          {items.map((item) => (
+          {items.map((item, index) => (
             <li key={item.documentId} className={local.evidenceItem}>
               <span className={local.evidenceKind}>{evidenceKindLabel(item.kind)}</span>
-              <span className={`${local.id} ${local.meta}`}>Attached document</span>
+              <span className={`${local.id} ${local.meta}`}>Document {index + 1}</span>
             </li>
           ))}
         </ul>
@@ -362,7 +362,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   };
   const evidence: EvidenceOption[] = data.evidence.map((item, index) => ({
     documentId: item.documentId,
-    label: `${evidenceKindLabel(item.kind)} (document ${index + 1})`,
+    label: `${evidenceKindLabel(item.kind)} · Document ${index + 1}`,
   }));
 
   return (

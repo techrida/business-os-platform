@@ -83,7 +83,7 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       label: 'Customer',
       value: (
         <Link href={`/customers/${encodeURIComponent(invoice.customerId)}`} className={styles.wrap}>
-          {invoice.buyer?.legalName ?? 'Customer name unavailable'}
+          {invoice.buyer?.legalName ?? 'Customer details unavailable'}
         </Link>
       ),
     },
@@ -93,7 +93,9 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       key: 'order',
       label: 'Sales order',
       value: (
-        <Link href={`/sales-orders/${encodeURIComponent(invoice.salesOrderId)}`}>Open order</Link>
+        <Link href={`/sales-orders/${encodeURIComponent(invoice.salesOrderId)}`}>
+          Open sales order
+        </Link>
       ),
     });
   }
@@ -103,7 +105,7 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       label: 'Corrects',
       value: (
         <Link href={`/invoices/${encodeURIComponent(invoice.originalInvoiceId)}`}>
-          Open invoice
+          Open original invoice
         </Link>
       ),
     });
@@ -204,7 +206,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         }
         description={
           <span className={styles.wrap}>
-            {invoice.buyer?.legalName ?? 'Customer name unavailable'}
+            {invoice.buyer?.legalName ?? 'Customer details unavailable'}
           </span>
         }
       />

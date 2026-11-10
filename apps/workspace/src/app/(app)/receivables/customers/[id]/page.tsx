@@ -184,7 +184,7 @@ export default async function CustomerStatementPage({
   }
 
   const [advance, customer] = await Promise.all([advanceRequest, customerRequest]);
-  const customerName = customer?.legalName ?? 'Customer name unavailable';
+  const customerName = customer?.legalName ?? 'Customer details unavailable';
 
   return (
     <Page>

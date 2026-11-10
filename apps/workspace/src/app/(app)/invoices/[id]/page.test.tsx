@@ -59,6 +59,27 @@ describe('invoice detail page', () => {
     expect(html).not.toMatch(/<input[^>]*(number|issueDate)/i);
   });
 
+  it('uses readable relationship labels without exposing database IDs', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      invoiceDetail({
+        kind: 'credit_note',
+        buyer: null,
+        originalInvoiceId: ID,
+        noteReason: 'Correction',
+      }),
+    );
+    const html = await render();
+    const text = html.replace(/<[^>]*>/g, '');
+    expect(text).toContain('Customer details unavailable');
+    expect(text).toContain('Open sales order');
+    expect(text).toContain('Open original invoice');
+    for (const id of [CUSTOMER, SALES_ORDER, ID]) {
+      expect(text).not.toContain(id.slice(-8));
+    }
+    expect(html).toContain(`/sales-orders/${SALES_ORDER}`);
+    expect(html).toContain(`/invoices/${ID}`);
+  });
+
   it('shows the totals by bucket, from the server, in lakh grouping', async () => {
     const html = await render();
     for (const label of [

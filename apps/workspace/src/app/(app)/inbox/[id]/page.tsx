@@ -40,8 +40,8 @@ type Step = ApprovalRequestDto['steps'][number];
 /** Who a step belongs to, in words. Names are not available to staff without admin rights. */
 function stepWho(step: Step): string {
   if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
-  if (step.kind === 'group' && step.groupId) return 'Approval group';
-  if (step.kind === 'user' && step.userId) return 'Name unavailable';
+  if (step.kind === 'group' && step.groupId) return 'Assigned approval group';
+  if (step.kind === 'user' && step.userId) return 'Assigned person';
   return `Step ${step.seq}`;
 }
 
@@ -62,8 +62,8 @@ function titleOf(snapshot: unknown): string | null {
   return null;
 }
 
-function Person(_: { id: string }) {
-  return <span>Name unavailable</span>;
+function Person({ id: _id }: { id: string }) {
+  return <span>a staff member</span>;
 }
 
 export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {
