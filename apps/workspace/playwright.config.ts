@@ -90,6 +90,7 @@ export default defineConfig({
         'inbox.spec.ts',
         'p2/*.spec.ts',
         'p3/*.spec.ts',
+        'p0-shell.spec.ts',
       ],
       use: { ...common, baseURL: devBaseURL },
     },
