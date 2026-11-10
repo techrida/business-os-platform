@@ -262,11 +262,15 @@ export function describeCondition(c: Condition): string {
   return `${c.field} ${OP_SYMBOL[c.op] ?? c.op} ${value}`;
 }
 
-export function describeStepTarget(step: StepSpec): string {
+export function describeStepTarget(
+  step: StepSpec,
+  people: Record<string, string> = {},
+  groups: Record<string, string> = {},
+): string {
   if (step.kind === 'department_head') {
     return `department head (falls back to ${step.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE})`;
   }
-  if (step.kind === 'user') return 'Selected person';
-  if (step.kind === 'group') return 'Selected approval group';
+  if (step.kind === 'user') return `Person: ${people[step.user ?? ''] ?? 'Name unavailable'}`;
+  if (step.kind === 'group') return `Group: ${groups[step.group ?? ''] ?? 'Name unavailable'}`;
   return `${step.kind}: ${step[step.kind] ?? '(missing)'}`;
 }

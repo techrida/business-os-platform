@@ -8,7 +8,15 @@ import styles from './workflows.module.css';
  * edited (the database refuses it). A spec that no longer matches the current schema falls back to
  * its raw JSON, so nothing is hidden.
  */
-export function SpecSummary({ spec }: { spec: unknown }) {
+export function SpecSummary({
+  spec,
+  people = {},
+  groups = {},
+}: {
+  spec: unknown;
+  people?: Record<string, string>;
+  groups?: Record<string, string>;
+}) {
   const parsed = WorkflowSpecSchema.safeParse(spec);
   if (!parsed.success) {
     // Scrollable, so it must be reachable by keyboard.
@@ -26,7 +34,7 @@ export function SpecSummary({ spec }: { spec: unknown }) {
         <ol className={styles.steps}>
           {s.steps.map((step) => (
             <li key={step.id}>
-              <span className={styles.mono}>{describeStepTarget(step)}</span>
+              <span className={styles.mono}>{describeStepTarget(step, people, groups)}</span>
               <span className={styles.muted}> - {step.reason}</span>
             </li>
           ))}
@@ -39,7 +47,7 @@ export function SpecSummary({ spec }: { spec: unknown }) {
             {s.rules.map((rule) => (
               <li key={rule.id}>
                 When <span className={styles.mono}>{describeCondition(rule.when)}</span>, add{' '}
-                <span className={styles.mono}>{describeStepTarget(rule.add)}</span>{' '}
+                <span className={styles.mono}>{describeStepTarget(rule.add, people, groups)}</span>{' '}
                 {rule.position === 'end' ? 'at the end' : `after ${rule.position.after}`}
                 <span className={styles.muted}> - {rule.reason}</span>
               </li>

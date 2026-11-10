@@ -303,6 +303,46 @@ const countActions = async (requestId: string, action: string) =>
     (a) => a.action === action,
   ).length;
 
+describe('assignment people lookup', () => {
+  it('paginates only active staff in the caller tenant/entity and accepts the selected assignments', async () => {
+    grants = new Map<Permission, Scope>([
+      ['approvals.groups.write', 'all'],
+      ['approvals.delegations.write', 'all'],
+    ]);
+    expect(caller.current().principal.grants.has('admin.users.read')).toBe(false);
+    const foreign = await createTenantWithEntity(ownerPool);
+    const outsider = await createStaffUser(ownerPool, foreign);
+    const found: string[] = [];
+    let after: string | undefined;
+    do {
+      const page = await admin.listAssignmentPeople({ limit: 2, after });
+      found.push(...page.items.map((u) => u.id));
+      after = page.nextAfter ?? undefined;
+    } while (after);
+    expect(found).toContain(U.acc);
+    expect(found).toContain(U.deputy);
+    expect(found).not.toContain(outsider.userId);
+    expect(found).not.toContain(userB);
+    expect(found).not.toContain(inactiveUser);
+    const group = await admin.createGroup({
+      key: `picker-${randomUUID()}`,
+      name: 'Picker regression',
+    });
+    await admin.addMember(group.id, U.acc);
+    await expect(admin.addMember(group.id, outsider.userId)).rejects.toThrow('Not an active user');
+    const delegation = await admin.createDelegation({
+      fromUserId: U.acc,
+      toUserId: U.deputy,
+      startsAt: now,
+      endsAt: new Date(now.getTime() + 3_600_000),
+      documentType: null,
+    });
+    expect(delegation.id).toBeTruthy();
+    await admin.revokeDelegation(delegation.id);
+    await admin.deleteGroup(group.id);
+  });
+});
+
 describe('migration 0006', () => {
   it('gives every approvals table its tenancy columns', async () => {
     const mine = new Set([

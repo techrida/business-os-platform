@@ -142,7 +142,7 @@ export function AddMemberForm({
           }
           users={users}
         />
-        <Button type="submit" variant="secondary" disabled={pending}>
+        <Button type="submit" variant="secondary" disabled={pending || !users?.length}>
           Add
         </Button>
       </div>
@@ -224,7 +224,7 @@ export function DelegationForm({
         that were meant for the person handing over.
       </p>
       <div className={styles.formActions}>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || !users?.length}>
           Create delegation
         </Button>
       </div>
