@@ -42,7 +42,7 @@ import {
   Optional,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
@@ -224,6 +224,9 @@ export class TestMemoService implements OnModuleInit {
         and(
           scoped(scope).where(userEntities),
           eq(users.status, 'active'),
+          // The authoritative mirror takes email only from ZITADEL human.email; machine users have null.
+          isNotNull(users.email),
+          ne(users.email, ''),
           eq(idpOrgs.kind, 'staff'),
         ),
       );
