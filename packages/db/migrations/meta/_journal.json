@@ -176,6 +176,13 @@
       "when": 1783000000024,
       "tag": "0024_credit_note_line_link",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783000000037,
+      "tag": "0037_internal_memos",
+      "breakpoints": true
     }
   ]
 }
