@@ -134,6 +134,36 @@ describe('display helpers', () => {
     expect(by['editors']?.block).toBe(true);
     expect(by['note']?.value).toBe('None');
   });
+  it('keeps business numbers and audit facts while replacing nested technical references', () => {
+    const snapshot = {
+      number: 'MEM-001',
+      taxId: 'PAN-12345',
+      ownerUserId: 'opaque-owner',
+      amountNpr: '100.00',
+      attachments: [
+        {
+          documentId: 'opaque-document',
+          versionId: 'opaque-version',
+          filename: 'receipt.pdf',
+          sha256: 'audit-hash',
+        },
+      ],
+    };
+    const rows = snapshotEntries(snapshot);
+    const text = JSON.stringify(rows);
+    expect(text).not.toContain('opaque-');
+    expect(text).toContain('MEM-001');
+    expect(text).toContain('PAN-12345');
+    expect(text).toContain('receipt.pdf');
+    expect(text).toContain('audit-hash');
+    expect(text).toContain('Name unavailable');
+    expect(snapshot.ownerUserId).toBe('opaque-owner');
+    expect(
+      snapshotEntries(snapshot, new Map([['opaque-owner', 'Mina']])).find(
+        (row) => row.key === 'ownerUser',
+      )?.value,
+    ).toBe('Mina');
+  });
   it('handles an empty or non-object snapshot', () => {
     expect(snapshotEntries(null)).toEqual([]);
     expect(snapshotEntries('text')[0]?.block).toBe(true);

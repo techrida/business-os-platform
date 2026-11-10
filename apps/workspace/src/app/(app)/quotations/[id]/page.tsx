@@ -16,7 +16,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
+import { userNames } from '@/lib/business-labels';
 
 export const metadata: Metadata = { title: 'Quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -127,6 +127,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
   const contact =
     current?.contactId != null ? contacts.find((c) => c.id === current.contactId) : undefined;
 
+  const people = await userNames(session);
   const facts: Fact[] =
     current === null
       ? []
@@ -151,7 +152,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
             label: 'Owner',
             value:
               quotation.ownerUserId !== null ? (
-                <span title={quotation.ownerUserId}>person {shortId(quotation.ownerUserId)}</span>
+                <span>{people.get(quotation.ownerUserId) ?? 'Owner name unavailable'}</span>
               ) : (
                 <span className={styles.quiet}>Unassigned</span>
               ),
@@ -216,8 +217,8 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
           role="alert"
           title="The current revision is missing from this answer."
         >
-          The quotation says its current revision is {shortId(quotation.currentVersionId)}, but the
-          platform did not send it. The history below is still correct. Reload to try again.
+          The current revision could not be loaded. Reload to try again. Earlier revisions remain
+          available below.
         </Alert>
       ) : null}
 
@@ -247,7 +248,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
         </Panel>
       ) : null}
 
-      <StatusHistory history={detail.statusHistory} versions={versions} />
+      <StatusHistory history={detail.statusHistory} versions={versions} people={people} />
     </Page>
   );
 }
