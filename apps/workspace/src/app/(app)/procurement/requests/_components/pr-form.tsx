@@ -16,8 +16,6 @@ import styles from '../requests.module.css';
 const WIDE = styles.wide ?? '';
 const MAX_LINES = 200;
 
-// Cost centres have no backing table or lookup yet. Keep manual reference entry in both modes.
-
 interface Row {
   /** Stable across add and remove, so a typed value never jumps to another line. */
   uid: number;

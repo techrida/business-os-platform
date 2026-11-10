@@ -38,6 +38,7 @@ it.each(['create', 'edit'] as const)(
     mounted = await mountForm(
       <PrForm
         action={mode === 'create' ? createPrAction : updatePrAction}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
         departments={[{ id: PROJECT, name: 'Operations' }]}
         initial={{
           ...EMPTY_PR_VALUES,

@@ -27,6 +27,10 @@ it.each(['create', 'edit'] as const)(
       <PrForm
         action={action}
         departments={[]}
+        costCenters={[
+          { id: PROJECT, code: 'OPS', name: 'Operations', active: true },
+          { id: NEXT_PROJECT, code: 'ADMIN', name: 'Administration', active: true },
+        ]}
         initial={{ ...EMPTY_PR_VALUES, projectId: mode === 'edit' ? PROJECT : '' }}
         mode={mode}
         idempotencyKey={PROJECT}
@@ -53,6 +57,10 @@ it('edit clears an assigned project in submitted FormData', async () => {
     <PrForm
       action={action}
       departments={[]}
+      costCenters={[
+        { id: PROJECT, code: 'OPS', name: 'Operations', active: true },
+        { id: NEXT_PROJECT, code: 'ADMIN', name: 'Administration', active: true },
+      ]}
       initial={{ ...EMPTY_PR_VALUES, projectId: PROJECT }}
       mode="edit"
       idempotencyKey={PROJECT}
@@ -75,6 +83,10 @@ it('edit submits a corrected cost centre through the real form', async () => {
     <PrForm
       action={action}
       departments={[]}
+      costCenters={[
+        { id: PROJECT, code: 'OPS', name: 'Operations', active: true },
+        { id: NEXT_PROJECT, code: 'ADMIN', name: 'Administration', active: true },
+      ]}
       initial={{ ...EMPTY_PR_VALUES, costCenterId: PROJECT }}
       mode="edit"
       idempotencyKey={PROJECT}
@@ -84,7 +96,7 @@ it('edit submits a corrected cost centre through the real form', async () => {
       reloadHref="/"
     />,
   );
-  const input = mounted.container.querySelector('input[name="costCenterId"]');
+  const input = mounted.container.querySelector('select[name="costCenterId"]');
   expect(input).not.toHaveProperty('readOnly', true);
   expect(input).not.toHaveProperty('type', 'hidden');
   expect(input).toHaveProperty('required', true);
