@@ -16,7 +16,6 @@ import { failureOf } from '@/lib/api-kernel';
 import { getCustomerAdvance, getCustomerStatement } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { isZeroAmount } from '../../_lib/aging';
 import { settlementMeta } from '../../_lib/settlement';
@@ -185,7 +184,7 @@ export default async function CustomerStatementPage({
   }
 
   const [advance, customer] = await Promise.all([advanceRequest, customerRequest]);
-  const customerName = customer?.legalName ?? `Customer ${shortId(id)}`;
+  const customerName = customer?.legalName ?? 'Customer name unavailable';
 
   return (
     <Page>

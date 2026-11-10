@@ -48,7 +48,7 @@ function facts(o: OpportunityDto): Fact[] {
     {
       key: 'customer',
       label: 'Customer record',
-      value: <span className={styles.long}>{o.customerId}</span>,
+      value: <span className={styles.long}>Customer name unavailable</span>,
     },
     {
       key: 'lead',

@@ -127,10 +127,10 @@ describe('customer statement', () => {
     expect(html).toContain('The advance could not be loaded');
   });
 
-  it('falls back to a short id when the customer name cannot be read', async () => {
+  it('falls back to an unavailable-name label when the customer name cannot be read', async () => {
     mocks.getCustomer.mockRejectedValue(new ApiError(403, 'no'));
     const html = await render();
-    expect(html).toContain('Customer 33333333');
+    expect(html).toContain('Customer name unavailable');
     expect(html).toContain('INV-2083/84-00007');
   });
 
