@@ -13,12 +13,16 @@ const MARKER = 'BOS_DEV_PERSONA_SWITCHER';
 const DEV_MENU_MARKER = 'BOS_DEV_MENU';
 
 /**
- * The manifest of a real `next build` of this app (Next 16.4.5, Turbopack), copied from
- * `.next/server/app-paths-manifest.json`. Keeping the real shape matters: route keys carry
+ * Based on a real Next 16.4.5 build manifest, extended with the P3 billing routes.
+ * Keeping the real shape matters: route keys carry
  * `(group)` segments and a trailing `/page` or `/route`, and values are file paths.
  */
 const REAL_BUILD_MANIFEST: Record<string, string> = {
   '/(app)/page': 'app/(app)/page.js',
+  '/(app)/invoices/[id]/page': 'app/(app)/invoices/[id]/page.js',
+  '/(app)/payments/[id]/page': 'app/(app)/payments/[id]/page.js',
+  '/(app)/receivables/aging/page': 'app/(app)/receivables/aging/page.js',
+  '/(app)/sales-orders/[id]/page': 'app/(app)/sales-orders/[id]/page.js',
   '/_global-error/page': 'app/_global-error/page.js',
   '/_not-found/page': 'app/_not-found/page.js',
   '/auth/callback/route': 'app/auth/callback/route.js',
@@ -151,6 +155,13 @@ describe('check-no-dev-routes', () => {
   it('fails when the DEV MENU marker is in the standalone output', () => {
     const nextDir = fixtureBuild({
       files: { 'standalone/apps/workspace/.next/server/chunks/a.js': DEV_MENU_MARKER },
+    });
+    expect(run([nextDir]).status).toBe(1);
+  });
+
+  it('rejects dev tooling bundled into P3 billing output', () => {
+    const nextDir = fixtureBuild({
+      files: { 'server/app/(app)/invoices/[id]/page.js': DEV_MENU_MARKER },
     });
     expect(run([nextDir]).status).toBe(1);
   });
