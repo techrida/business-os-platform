@@ -279,6 +279,22 @@ export function WorkflowEditor({
                 </option>
               ))}
             </Select>
+          ) : step.kind === 'user' ? (
+            <Select
+              {...control}
+              value={step.target}
+              onChange={(e) => change({ target: e.target.value })}
+            >
+              <option value="">Choose a person</option>
+              {step.target !== '' && !(users ?? []).some((u) => u.id === step.target) ? (
+                <option value={step.target}>Current person (name unavailable)</option>
+              ) : null}
+              {(users ?? []).map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.label}
+                </option>
+              ))}
+            </Select>
           ) : (
             <>
               <Input
@@ -286,17 +302,13 @@ export function WorkflowEditor({
                 value={step.target}
                 list={`${control.id}-list`}
                 autoComplete="off"
-                placeholder={step.kind === 'group' ? 'Group key' : 'User id'}
+                placeholder="Group key"
                 onChange={(e) => change({ target: e.target.value })}
               />
               <datalist id={`${control.id}-list`}>
-                {step.kind === 'group'
-                  ? groupKeys.map((g) => <option key={g} value={g} />)
-                  : (users ?? []).map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.label}
-                      </option>
-                    ))}
+                {groupKeys.map((g) => (
+                  <option key={g} value={g} />
+                ))}
               </datalist>
             </>
           )
