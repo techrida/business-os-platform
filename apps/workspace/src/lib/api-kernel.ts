@@ -14,6 +14,7 @@ import {
   type InboxItemDto,
   InboxItemDtoSchema,
   MemoDtoSchema,
+  MemoDirectorySchema,
   type NotificationDto,
   NotificationDtoSchema,
   type RoutePlan,
@@ -336,3 +337,6 @@ export async function listAudit(
   const { items } = await call(session, `/v1/audit?${query.toString()}`, AuditListSchema);
   return items;
 }
+
+export const getMemoDirectory = (session: Session) =>
+  call(session, '/v1/test-memos/directory', MemoDirectorySchema);

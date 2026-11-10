@@ -18,6 +18,7 @@ export interface MemoValues {
   body: string;
   amount: string;
   currency: string;
+  template?: string | undefined;
 }
 
 export interface MemoFormState {
@@ -29,6 +30,7 @@ export interface MemoFormState {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const FIELD_MESSAGE: Record<keyof MemoValues, string> = {
+  template: 'Check the department, date and staff selections.',
   title: 'Enter a title, up to 200 characters.',
   body: 'The body is too long. The limit is 10,000 characters.',
   amount: 'Enter an amount such as 1250.50: digits with at most two decimals, not negative.',
@@ -47,11 +49,18 @@ function readValues(form: FormData): MemoValues {
     // People type 12,50,000.00 in Nepal; the contract wants plain digits, so drop grouping.
     amount: text(form, 'amount').replace(/[\s,]/g, ''),
     currency: text(form, 'currency'),
+    template: text(form, 'template') || undefined,
   };
 }
 
 function validate(values: MemoValues) {
-  const parsed = CreateMemoBodySchema.safeParse(values);
+  let template: unknown;
+  try {
+    template = values.template ? JSON.parse(values.template) : undefined;
+  } catch {
+    return { ok: false as const, fieldErrors: {}, error: 'Invalid memo fields' };
+  }
+  const parsed = CreateMemoBodySchema.safeParse({ ...values, template });
   if (parsed.success) return { ok: true as const, data: parsed.data };
   const fieldErrors: MemoFormState['fieldErrors'] = {};
   for (const issue of parsed.error.issues) {
@@ -71,7 +80,12 @@ export async function createMemoAction(
   const session = await requireStaffSession('/memos/new');
   const values = readValues(form);
   const checked = validate(values);
-  if (!checked.ok) return { values, fieldErrors: checked.fieldErrors };
+  if (!checked.ok)
+    return {
+      values,
+      fieldErrors: checked.fieldErrors,
+      error: 'Check all memo fields and choose different people for each role.',
+    };
 
   let id: string;
   try {
@@ -94,7 +108,12 @@ export async function updateMemoAction(
   }
   const session = await requireStaffSession(`/memos/${memoId}`);
   const checked = validate(values);
-  if (!checked.ok) return { values, fieldErrors: checked.fieldErrors };
+  if (!checked.ok)
+    return {
+      values,
+      fieldErrors: checked.fieldErrors,
+      error: 'Check all memo fields and choose different people for each role.',
+    };
 
   try {
     await updateMemo(session, memoId, checked.data);

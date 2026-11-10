@@ -10,6 +10,7 @@ import {
   ApprovalActionBodySchema,
   DEFAULT_ROLE_PERMISSIONS,
   DecimalString,
+  MemoTemplateSnapshotSchema,
   ROLE_KEYS,
   WorkflowSpecSchema,
   type ApprovalActionBody,
@@ -42,6 +43,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
 import { UserDirectory } from '../../platform/authz/user-directory';
@@ -104,6 +106,8 @@ export interface SubmitInput {
   /** Who pressed submit, when not the requester (someone submitting on their behalf). Defaults to the requester. */
   submittedByUserId?: string;
   sodUserIds: string[];
+  /** Proposed printed signers, checked against the authoritative plan inside the submit transaction. */
+  proposedApproverIds?: string[];
 }
 
 type Q = Db | DbTransaction;
@@ -187,6 +191,16 @@ export class ApprovalsService {
       if (s.kind === 'group' && s.groupId === undefined) {
         throw new ConflictException('The workflow names an approval group that does not exist');
       }
+    }
+    if (
+      i.proposedApproverIds &&
+      (plan.blocked ||
+        plan.steps.length !== i.proposedApproverIds.length ||
+        i.proposedApproverIds.some((id, index) => !plan.steps[index]?.eligibleUserIds.includes(id)))
+    ) {
+      throw new ConflictException(
+        'Selected recommenders and approver must match the current approval route in order. Review the route before submitting.',
+      );
     }
     const status = plan.blocked ? 'blocked' : 'pending';
     const documentNumber = i.documentNumber ?? draftReference(i.documentType, i.documentId);
@@ -334,6 +348,20 @@ export class ApprovalsService {
       );
       if (!who.eligible)
         throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      if (request.documentType === 'test_memo') {
+        const memo = z.object({ template: MemoTemplateSnapshotSchema }).safeParse(request.snapshot);
+        if (memo.success) {
+          const selected = [...memo.data.template.recommenders, memo.data.template.approvedBy][
+            current.seq - 1
+          ];
+          if (!selected || (selected.userId !== userId && selected.userId !== who.onBehalfOf)) {
+            throw forbidden(
+              'out_of_scope',
+              'This memo names a different person for this approval step',
+            );
+          }
+        }
+      }
       // The role mirror lags ZITADEL: a revoked role stays in app.user_roles until the sync runs. The
       // token's roles are the truth for a direct approver. A delegate acts on the delegator's mirror roles
       // (the delegator is not the caller, so there is no token to check): an accepted limit.
