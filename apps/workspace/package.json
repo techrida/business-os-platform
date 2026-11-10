@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@bos/contracts": "workspace:*",
-    "@fontsource-variable/outfit": "catalog:",
     "@bos/locale": "workspace:*",
+    "@fontsource-variable/outfit": "catalog:",
     "ioredis": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",
@@ -26,11 +26,13 @@
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
+    "@types/jsdom": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "ioredis-mock": "catalog:",
+    "jsdom": "catalog:",
     "otplib": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",

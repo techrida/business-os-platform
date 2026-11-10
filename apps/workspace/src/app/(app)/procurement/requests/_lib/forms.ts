@@ -167,7 +167,7 @@ const WORDS: Record<string, string> = {
   requiredBy: 'Choose the date it is needed by.',
   deliveryLocation: 'The delivery location can be up to 200 characters.',
   budgetCode: 'Enter the budget code, up to 64 characters.',
-  projectId: 'The selected project is invalid.',
+  projectId: 'Enter a valid project reference, or leave it blank.',
   currency: 'Choose NPR, INR or USD.',
   emergencyReason: 'Say why this emergency cannot wait. It adds a Management approval.',
   description: 'Describe what is needed, up to 500 characters.',
