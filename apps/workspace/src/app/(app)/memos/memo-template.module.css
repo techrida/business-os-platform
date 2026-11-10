@@ -1,0 +1,134 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.controls {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.paper {
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--input-border);
+  padding: clamp(20px, 4vw, 44px);
+  font: inherit;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.paper header {
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.date {
+  text-align: right;
+  margin: 24px 0;
+}
+.subject {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 24px;
+  font-weight: 600;
+}
+.body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.body p {
+  white-space: pre-wrap;
+  margin: 0 0 10px;
+}
+.closing {
+  margin: 12px 0 32px;
+  white-space: pre-wrap;
+}
+.signers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 24px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.signers p {
+  margin: 0 0 20px;
+}
+.signers strong {
+  font-weight: 600;
+}
+.note {
+  font-size: 12px;
+  margin: 28px 0 0;
+  color: var(--text-secondary);
+}
+.picker {
+  position: relative;
+}
+.popup {
+  position: absolute;
+  inset: 100% 0 auto;
+  z-index: 10;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  padding: 8px;
+  box-shadow: 0 8px 24px #0002;
+}
+.results {
+  max-height: 240px;
+  overflow: auto;
+}
+.option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.option:hover,
+.option:focus-visible {
+  background: var(--input-hover-bg, var(--input-bg));
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+.option span {
+  font-weight: 400;
+}
+.group {
+  font-size: 12px;
+  padding: 8px;
+  margin: 0;
+  font-weight: 600;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.trigger {
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  font: inherit;
+  cursor: pointer;
+}

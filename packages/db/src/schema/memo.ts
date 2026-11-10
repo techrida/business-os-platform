@@ -10,6 +10,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   text,
   timestamp,
@@ -23,6 +24,13 @@ import { appSchema, organizations, parties, tenants } from './platform.js';
 /** Mirrors MEMO_STATUSES in @bos/contracts (the db package does not depend on contracts). */
 export const MEMO_STATUSES = ['draft', 'submitted', 'approved', 'returned', 'rejected'] as const;
 
+type MemoPerson = {
+  userId: string;
+  name: string;
+  jobTitle: string | null;
+  department: string | null;
+};
+
 export const testMemos = appSchema.table(
   'test_memos',
   {
@@ -32,6 +40,17 @@ export const testMemos = appSchema.table(
       .references(() => tenants.id),
     /** The owning legal entity, never the customer (ADR 0027). */
     organizationId: uuid('organization_id').notNull(),
+    template: jsonb('template').$type<{
+      organizationId: string;
+      organizationName: string;
+      departmentId: string;
+      departmentName: string;
+      date: string;
+      closing: string;
+      preparedBy: MemoPerson;
+      recommenders: MemoPerson[];
+      approvedBy: MemoPerson;
+    }>(),
     number: text('number').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),
