@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { listTaxCodes } from '@/lib/api-tax-codes';
+import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
@@ -90,6 +91,7 @@ export default async function NewBillPage({
     let vendors: { id: string; name: string }[] = [];
     let vendorCount = 0;
     let standaloneTax: { id: string; label: string }[];
+    let standaloneWithholding: { id: string; label: string }[];
     try {
       if (poId !== '') {
         standaloneOrder = await getPoProgress(session, poId);
@@ -105,6 +107,10 @@ export default async function NewBillPage({
       standaloneTax = (await listTaxCodes(session)).map((tax) => ({
         id: tax.id,
         label: tax.label,
+      }));
+      standaloneWithholding = (await listWithholdingCodes(session)).map((code) => ({
+        id: code.id,
+        label: `${code.code} - ${code.name}`,
       }));
     } catch (err) {
       return (
@@ -176,6 +182,7 @@ export default async function NewBillPage({
                 })) ?? []
               }
               taxCodes={standaloneTax}
+              withholdingCodes={standaloneWithholding}
               cancelHref="/payables/bills"
               reloadHref={here}
               entry={{
@@ -249,8 +256,13 @@ export default async function NewBillPage({
   }
   let taxProblem: string | undefined;
   let taxCodes: { id: string; label: string }[] = [];
+  let withholdingCodes: { id: string; label: string }[] = [];
   try {
     taxCodes = (await listTaxCodes(session)).map((t) => ({ id: t.id, label: t.label }));
+    withholdingCodes = (await listWithholdingCodes(session)).map((code) => ({
+      id: code.id,
+      label: `${code.code} - ${code.name}`,
+    }));
     if (taxCodes.length === 0) taxProblem = 'No VAT codes are set up yet. Ask an administrator.';
   } catch (err) {
     taxProblem = billFailure(err, 'load').message;
@@ -331,6 +343,7 @@ export default async function NewBillPage({
               idempotencyKey={randomUUID()}
               orderLines={orderLines}
               taxCodes={taxCodes}
+              withholdingCodes={withholdingCodes}
               cancelHref={INBOX}
               reloadHref={here}
             />
