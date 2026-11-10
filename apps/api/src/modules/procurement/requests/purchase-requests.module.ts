@@ -9,6 +9,8 @@ import { AuditModule } from '../../../platform/audit/audit.module';
 import { SettingsModule } from '../../../platform/settings/settings.module';
 import { ApprovalsModule } from '../../approvals/approvals.module';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { CostCentersController } from './cost-centers.controller';
+import { CostCentersService } from './cost-centers.service';
 import { DepartmentsController } from './departments.controller';
 import { DepartmentsService } from './departments.service';
 import { PurchaseRequestSubject } from './purchase-request.subject';
@@ -18,8 +20,13 @@ import { PurchaseRequestsService } from './purchase-requests.service';
 
 @Module({
   imports: [ApprovalsModule, AuditModule, SettingsModule],
-  controllers: [PurchaseRequestsController, DepartmentsController],
-  providers: [PurchaseRequestsService, PurchaseRequestsCaller, DepartmentsService],
+  controllers: [PurchaseRequestsController, DepartmentsController, CostCentersController],
+  providers: [
+    PurchaseRequestsService,
+    PurchaseRequestsCaller,
+    DepartmentsService,
+    CostCentersService,
+  ],
   exports: [PurchaseRequestsService],
 })
 export class PurchaseRequestsModule implements OnModuleInit {

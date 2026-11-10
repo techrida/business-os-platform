@@ -7,7 +7,7 @@
 // compares their names. All eight tables are entity-owned: a FK into another entity-owned table is
 // (tenant_id, organization_id, x), a FK into a tenant-level table (users, tax_codes) is (tenant_id, x).
 // Not modelled here: the trigger purchase_request_lines_guard (it freezes the lines once the request leaves draft or
-// returned). purchase_requests.cost_center_id and project_id have no FK (no such tables yet).
+// returned). purchase_requests.project_id has no FK (no project table yet).
 import { sql } from 'drizzle-orm';
 import {
   boolean,
@@ -27,6 +27,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { approvalRequests } from './approvals.js';
+import { costCenters } from './cost-centers.js';
 import { documents } from './documents.js';
 import { departments, users } from './identity.js';
 import { appSchema, organizations, tenants } from './platform.js';
@@ -90,7 +91,6 @@ export const purchaseRequests = appSchema.table(
     requestType: text('request_type', { enum: PURCHASE_REQUEST_TYPES }).notNull(),
     departmentId: uuid('department_id').notNull(),
     requesterUserId: uuid('requester_user_id').notNull(),
-    /** No FK: there is no cost-centre table yet. */
     costCenterId: uuid('cost_center_id').notNull(),
     justification: text('justification').notNull(),
     requiredBy: date('required_by', { mode: 'string' }).notNull(),
@@ -127,6 +127,11 @@ export const purchaseRequests = appSchema.table(
       name: 'purchase_requests_department_fk',
       columns: [t.tenantId, t.organizationId, t.departmentId],
       foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    foreignKey({
+      name: 'purchase_requests_cost_center_fk',
+      columns: [t.tenantId, t.organizationId, t.costCenterId],
+      foreignColumns: [costCenters.tenantId, costCenters.organizationId, costCenters.id],
     }),
     foreignKey({
       name: 'purchase_requests_requester_user_fk',
