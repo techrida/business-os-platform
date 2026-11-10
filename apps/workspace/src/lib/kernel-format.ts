@@ -37,12 +37,29 @@ export interface SnapshotEntry {
   block: boolean;
 }
 
+/** Internal references are retained in the snapshot, but are not product display values. */
+function snapshotForDisplay(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snapshotForDisplay);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== 'id' && !/Ids?$/.test(key))
+        .map(([key, item]) => [key, snapshotForDisplay(item)]),
+    );
+  }
+  if (typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) {
+    return 'Reference unavailable';
+  }
+  return value;
+}
+
 /**
  * Turns the frozen snapshot (an unknown JSON value) into labelled rows. The snapshot is exactly
- * what the approvers saw, so nothing is dropped: money-looking and date-looking values are
- * formatted, everything else is shown as stored.
+ * what the approvers saw, with internal references omitted from display. Money-looking and date-looking values are
+ * formatted; business facts remain as stored.
  */
 export function snapshotEntries(snapshot: unknown): SnapshotEntry[] {
+  snapshot = snapshotForDisplay(snapshot);
   if (snapshot === undefined || snapshot === null) return [];
   if (typeof snapshot !== 'object' || Array.isArray(snapshot)) {
     return [
