@@ -48,6 +48,7 @@ export const BILL_STATUSES = [
   'paid',
   'voided',
   'rejected',
+  'discarded',
 ] as const;
 export const BILL_KINDS = ['bill', 'vendor_credit_note'] as const;
 export const MATCH_STATUSES = [
@@ -150,13 +151,9 @@ export const vendorBills = appSchema.table(
       t.id,
     ),
     unique('vendor_bills_tenant_org_number_unique').on(t.tenantId, t.organizationId, t.number),
-    unique('vendor_bills_tenant_org_vendor_invoice_fy_unique').on(
-      t.tenantId,
-      t.organizationId,
-      t.vendorId,
-      t.invoiceNoNorm,
-      t.fiscalYear,
-    ),
+    uniqueIndex('vendor_bills_tenant_org_vendor_invoice_fy_unique')
+      .on(t.tenantId, t.organizationId, t.vendorId, t.invoiceNoNorm, t.fiscalYear)
+      .where(sql`${t.status} <> 'discarded'`),
     foreignKey({
       name: 'vendor_bills_tenant_org_fk',
       columns: [t.tenantId, t.organizationId],
@@ -215,7 +212,7 @@ export const vendorBills = appSchema.table(
     check('vendor_bills_kind_check', sql`${t.kind} in ('bill', 'vendor_credit_note')`),
     check(
       'vendor_bills_status_check',
-      sql`${t.status} in ('draft', 'matching', 'variance', 'exception_pending', 'pending_approval', 'approved', 'partially_paid', 'paid', 'voided', 'rejected')`,
+      sql`${t.status} in ('draft', 'matching', 'variance', 'exception_pending', 'pending_approval', 'approved', 'partially_paid', 'paid', 'voided', 'rejected', 'discarded')`,
     ),
     check(
       'vendor_bills_match_status_check',
@@ -810,7 +807,7 @@ export const paymentRequestLines = appSchema.table(
 
 /**
  * Per PO line: ordered and cancelled (the line), received (confirmed receipts net of reversals; drafts left out)
- * and billed (bills not voided or rejected, credit notes negative). Derived, never stored.
+ * and billed (bills not voided, rejected or discarded, credit notes negative). Derived, never stored.
  */
 export const poLineProgress = appSchema
   .view('v_po_line_progress', {

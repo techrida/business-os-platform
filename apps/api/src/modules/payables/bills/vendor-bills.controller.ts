@@ -106,6 +106,17 @@ export class VendorBillsController {
     return this.bills.submit(id, requireIdempotencyKey(key));
   }
 
+  /** 200 with the discarded draft. 409 invalid_transition after the draft stage. */
+  @Post('bills/:id/discard')
+  @HttpCode(200)
+  @Can('payables.bill.enter')
+  discard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') key: string | undefined,
+  ): Promise<VendorBillDto> {
+    return this.bills.discard(id, requireIdempotencyKey(key));
+  }
+
   /**
    * 200 with the voided bill (a vendor debit note allocated against it). 409 invalid_transition unless approved,
    * BILL_NOT_POSTED, BILL_HAS_ALLOCATIONS.

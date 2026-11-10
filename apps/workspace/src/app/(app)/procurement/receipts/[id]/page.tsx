@@ -21,7 +21,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
-import { ConfirmDialog, ReverseDialog } from '../_components/receipt-actions';
+import { ConfirmDialog, ReverseDialog, DiscardReceiptDialog } from '../_components/receipt-actions';
 import { receiptFailure } from '../_lib/failure';
 import {
   KIND_LABEL,
@@ -239,6 +239,7 @@ export default async function ReceiptPage({
 
   const stuckDraft =
     receipt.status === 'draft' && order !== undefined && !isReceivable(order.status);
+  const canDiscard = receipt.status === 'draft' && mayHandleKind(receipt.kind, grants);
 
   return (
     <Page>
@@ -247,10 +248,13 @@ export default async function ReceiptPage({
         title={<span className={styles.long}>{receipt.number}</span>}
         status={<Badge tone={status.tone}>{status.text}</Badge>}
         actions={
-          can.confirm || can.reverse ? (
+          can.confirm || can.reverse || canDiscard ? (
             <div className={styles.headActions}>
               {can.confirm ? <ConfirmDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.reverse ? <ReverseDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {canDiscard ? (
+                <DiscardReceiptDialog {...common} idempotencyKey={randomUUID()} />
+              ) : null}
             </div>
           ) : null
         }
