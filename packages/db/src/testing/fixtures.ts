@@ -235,3 +235,32 @@ export async function createPortalUser(
   });
   return { userId };
 }
+
+/** A cost centre of one legal entity, audited under the fixture system actor. */
+export async function createCostCenter(
+  pool: FixturePool,
+  options: {
+    tenantId: string;
+    organizationId: string;
+    code?: string;
+    name?: string;
+    active?: boolean;
+  },
+): Promise<{ costCenterId: string }> {
+  const costCenterId = randomUUID();
+  await inFixtureTx(pool, options, async (client) => {
+    await client.query(
+      `INSERT INTO app.cost_centers (id, tenant_id, organization_id, code, name, active)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        costCenterId,
+        options.tenantId,
+        options.organizationId,
+        options.code ?? `CC-${suffix()}`,
+        options.name ?? 'Fixture cost centre',
+        options.active ?? true,
+      ],
+    );
+  });
+  return { costCenterId };
+}

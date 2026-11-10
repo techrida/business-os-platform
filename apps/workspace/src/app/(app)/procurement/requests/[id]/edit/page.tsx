@@ -7,7 +7,11 @@ import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
-import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procurement';
+import {
+  getPurchaseRequest,
+  listCostCenters,
+  type PurchaseRequestDto,
+} from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 
 import { updatePrAction } from '../../actions';
@@ -51,6 +55,26 @@ export default async function EditPurchaseRequestPage({
 
   const label = pr.number ?? 'Draft purchase request';
   const editable = isPrEditable(pr.status) && prGrants(session.roles).create;
+  let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];
+  if (editable) {
+    try {
+      costCenters = await listCostCenters(session);
+    } catch (err) {
+      const failure = prFailure(err, 'load');
+      return (
+        <Page width="narrow">
+          <Alert
+            tone={failure.status === 403 ? 'info' : 'error'}
+            role="alert"
+            title="Cost centres did not load"
+            actions={<a href={`${back}/edit`}>Try again</a>}
+          >
+            {failure.message}
+          </Alert>
+        </Page>
+      );
+    }
+  }
   return (
     <Page width="narrow">
       <Breadcrumb
@@ -63,6 +87,7 @@ export default async function EditPurchaseRequestPage({
       <PageHeader title={`Edit ${label}`} />
       {editable ? (
         <PrForm
+          costCenters={costCenters}
           action={updatePrAction}
           initial={valuesFromDto(pr)}
           mode="edit"
