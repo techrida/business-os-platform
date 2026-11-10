@@ -3,9 +3,10 @@
  * screen map. Pure data with no React import, so unit tests and the header title lookup can use
  * it anywhere.
  *
- * An item is "built" when it has an `href`: it renders as a link. Every other item renders
- * as a plain disabled row. The phase is internal and never shown to users. When an item ships, give it an `href`
- * and a phase in SHIPPED_PHASES; nav.test.ts keeps the two in step.
+ * An item is "built" when it has an `href`: it renders as a link. Other items render as
+ * plain disabled rows. `phase` and SHIPPED_PHASES are internal and never shown to users.
+ * When an item ships, give it an `href` and a phase in SHIPPED_PHASES; nav.test.ts keeps
+ * the two in step.
  *
  * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
  * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
@@ -44,7 +45,7 @@ export interface NavItem {
   /** Present only on built items. */
   href?: string;
   icon: NavIconName;
-  /** Internal: the phase that will enable this item. Never shown to users. */
+  /** Internal: the phase that builds this item. Never shown to users. */
   phase: Phase;
   /**
    * Optional number shown in a pill at the row's end (the Figma "Organizations 4"). Only built
