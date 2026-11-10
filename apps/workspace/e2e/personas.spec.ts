@@ -128,29 +128,39 @@ test.describe('dev persona switcher', () => {
     'needs the Workspace running under `next dev`; set BOS_E2E_NEXT_DEV=1',
   );
 
-  test('lists the personas with a login link each and never shows a password', async ({ page }) => {
+  test('lists active accounts with POST buttons and never shows a password', async ({ page }) => {
     await page.goto('/dev/personas');
     await expect(page.locator('[data-marker="BOS_DEV_PERSONA_SWITCHER"]')).toBeVisible();
-
     for (const who of personas) {
-      const link = page.getByRole('link', { name: who.label, exact: true });
-      await expect(link).toBeVisible();
-      const href = new URL((await link.getAttribute('href')) ?? '', 'https://x.invalid');
-      expect(href.pathname).toBe('/auth/login');
-      expect(href.searchParams.get('login_hint')).toBe(who.preferredLoginName);
-      expect(href.searchParams.get('prompt')).toBe('login');
+      const entry = page.getByRole('button', { name: who.label, exact: true });
+      await expect(entry).toBeVisible();
+      const form = entry.locator('..');
+      await expect(form).toHaveAttribute('method', 'post');
+      await expect(form).toHaveAttribute('action', '/dev/api/accounts');
     }
-
     const html = await page.content();
     for (const who of personas) expect(html).not.toContain(who.password);
   });
 
-  test('a switcher link starts a real login that works', async ({ page, baseURL }) => {
+  test('a switcher button completes real login without credential entry', async ({
+    page,
+    baseURL,
+  }) => {
     const sales = persona('sales');
+    const hydrationErrors: string[] = [];
+    page.on('console', (message) => {
+      if (/hydration|hydrating/i.test(message.text())) hydrationErrors.push(message.text());
+    });
     await page.goto('/dev/personas');
-    await page.getByRole('link', { name: sales.label, exact: true }).click();
-    // login_hint makes ZITADEL open the password page directly.
-    await signInOnZitadel(page, sales, new URL(baseURL ?? '').origin);
+    await page.getByRole('button', { name: sales.label, exact: true }).click();
+    await expect(page).toHaveURL(new URL('/', baseURL).toString());
     await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+    const whoami = await page.evaluate(async () => {
+      const response = await fetch('/dev/api/whoami');
+      return { status: response.status, body: (await response.json()) as { roles: string[] } };
+    });
+    expect(whoami.status).toBe(200);
+    expect(whoami.body.roles).toContain(sales.role);
+    expect(hydrationErrors).toEqual([]);
   });
 });
