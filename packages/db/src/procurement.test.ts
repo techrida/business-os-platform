@@ -23,6 +23,7 @@ import { checkAudit } from './check-audit.js';
 import { checkTenancy, describeViolations } from './check-tenancy.js';
 import { runMigrations } from './migrate.js';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -157,7 +158,7 @@ interface PrOptions {
 }
 
 /** A draft purchase request of an entity (the default entity unless told otherwise). */
-function insertPr(scope: Scope, options: PrOptions = {}): Promise<string> {
+async function insertPr(scope: Scope, options: PrOptions = {}): Promise<string> {
   const organizationId = options.organizationId ?? scope.organizationId;
   return insertReturningId(
     organizationId,
@@ -172,7 +173,7 @@ function insertPr(scope: Scope, options: PrOptions = {}): Promise<string> {
       options.number === undefined ? `PR-${randomUUID()}` : options.number,
       options.departmentId ?? scope.departmentId,
       scope.userId,
-      randomUUID(),
+      (await createCostCenter(app, { tenantId: scope.tenantId, organizationId })).costCenterId,
       options.emergency ?? false,
       options.reason ?? null,
     ],
