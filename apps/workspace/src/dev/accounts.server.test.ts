@@ -80,4 +80,81 @@ describe('development identity boundary', () => {
     await expect(switchDevelopmentAccount('456')).rejects.toThrow('Unavailable account');
     expect(beginLogin).not.toHaveBeenCalled();
   });
+  it('completes a real auth request with only a user check and exposes only callback and binding', async () => {
+    vi.stubEnv('OIDC_REDIRECT_URI', 'https://app.p1.bos.test/auth/callback');
+    vi.mocked(beginLogin).mockResolvedValue({
+      url: new URL('https://auth.p1.bos.test/oauth/v2/authorize'),
+      binding: 'browser-binding',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          result: [
+            {
+              userId: '123',
+              username: 'manual',
+              preferredLoginName: 'manual@test',
+              state: 'USER_STATE_ACTIVE',
+              human: {},
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: '/login?authRequestID=real-request' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ sessionId: 'private-id', sessionToken: 'private-token' }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          callbackUrl: 'https://app.p1.bos.test/auth/callback?code=real-code&state=real-state',
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await switchDevelopmentAccount('123');
+    expect(Object.keys(result).sort()).toEqual(['binding', 'callback']);
+    expect(result.binding).toBe('browser-binding');
+    expect(result.callback.pathname).toBe('/auth/callback');
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      body: JSON.stringify({ checks: { user: { userId: '123' } }, lifetime: '600s' }),
+    });
+    expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({
+      body: JSON.stringify({ session: { sessionId: 'private-id', sessionToken: 'private-token' } }),
+    });
+  });
+  it('rejects an authorization redirect to a different identity instance before creating a session', async () => {
+    vi.mocked(beginLogin).mockResolvedValue({
+      url: new URL('https://auth.p1.bos.test/oauth/v2/authorize'),
+      binding: 'browser-binding',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          result: [
+            {
+              userId: '123',
+              username: 'manual',
+              preferredLoginName: 'manual@test',
+              state: 'USER_STATE_ACTIVE',
+              human: {},
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://foreign.bos.test/login?authRequestID=foreign-request' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(switchDevelopmentAccount('123')).rejects.toThrow('Unexpected login origin');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
