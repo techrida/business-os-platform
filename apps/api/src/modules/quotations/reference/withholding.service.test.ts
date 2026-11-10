@@ -35,12 +35,18 @@ const service = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   state.principal = {
+    userId: 'user-a',
+    zitadelUserId: 'zitadel-user-a',
+    idpOrgId: 'staff-idp-org-a',
+    partyId: null,
+    departmentId: null,
+    roles: [],
     tenantId: 'tenant-a',
     organizationId: 'entity-a',
     orgKind: 'staff',
     status: 'active',
     grants: new Map([['payables.bill.enter', 'all']]),
-  } as Principal;
+  };
 });
 
 describe('withholding registry access', () => {
