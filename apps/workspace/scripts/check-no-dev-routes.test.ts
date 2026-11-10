@@ -171,6 +171,22 @@ describe('check-no-dev-routes', () => {
     expect(result.stderr).toContain('/dev/api/whoami/route');
   });
 
+  it('rejects a grouped whoami route alongside all shipped P1-P4 destinations', () => {
+    const nextDir = fixtureBuild({
+      manifest: {
+        ...REAL_BUILD_MANIFEST,
+        '/(app)/inbox/page': 'app/(app)/inbox/page.js',
+        '/(app)/quotations/page': 'app/(app)/quotations/page.js',
+        '/(app)/invoices/page': 'app/(app)/invoices/page.js',
+        '/(app)/procurement/orders/page': 'app/(app)/procurement/orders/page.js',
+        '/(internal)/dev/api/whoami/route': 'app/(internal)/dev/api/whoami/route.js',
+      },
+    });
+    const result = run([nextDir]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('/(internal)/dev/api/whoami/route');
+  });
+
   it('reports every problem, not just the first', () => {
     const nextDir = fixtureBuild({
       manifest: { ...REAL_BUILD_MANIFEST, '/dev/personas/page': 'app/dev/personas/page.js' },
