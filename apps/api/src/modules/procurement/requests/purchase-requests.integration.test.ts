@@ -22,6 +22,7 @@ import {
 import {
   approvalRequests,
   approvalSteps,
+  createCostCenter,
   createDepartment,
   createStaffUser,
   createTenantWithEntity,
@@ -29,7 +30,7 @@ import {
   purchaseRequests,
   runMigrations,
 } from '@bos/db';
-import { ForbiddenException, HttpException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -74,6 +75,7 @@ let service: PurchaseRequestsService;
 /** Real staff users of entity A. `req` and `other` raise requests, `head` heads `dept.headed`. */
 const U = { req: '', other: '', head: '', ops: '', mgmt: '', proc: '', admin: '' };
 /** Departments: one headed by `head`, one with no head, one headed by the requester, one in entity B. */
+const centers = { active: '', inactive: '', otherEntity: '' };
 const dept = { headed: '', headless: '', selfHeaded: '', otherEntity: '' };
 /** The fake directory's role members (the engine still checks each one is active in the entity). */
 const roles: Partial<Record<RoleKey, string[]>> = {};
@@ -205,6 +207,9 @@ beforeAll(async () => {
   U.admin = await staff('founder');
   resetRoles();
 
+  centers.active = (await createCostCenter(appPool, scopeA)).costCenterId;
+  centers.inactive = (await createCostCenter(appPool, { ...scopeA, active: false })).costCenterId;
+  centers.otherEntity = (await createCostCenter(appPool, scopeB)).costCenterId;
   dept.headed = (await createDepartment(appPool, scopeA)).departmentId;
   dept.headless = (await createDepartment(appPool, scopeA)).departmentId;
   dept.selfHeaded = (await createDepartment(appPool, scopeA)).departmentId;
@@ -276,7 +281,7 @@ const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code
 const body = (over: Partial<CreatePurchaseRequestBody> = {}): CreatePurchaseRequestBody => ({
   requestType: 'goods',
   departmentId: dept.headed,
-  costCenterId: randomUUID(),
+  costCenterId: centers.active,
   justification: 'Chairs for the new training room',
   requiredBy: '2026-12-01',
   budgetCode: 'OPS-2083',
@@ -872,5 +877,44 @@ describe('purchase request: the live RFQ', () => {
     current.scope = scopeB;
     expect((await httpErrorOf(service.get(d.id))).getStatus()).toBe(404);
     expect(await service.list({ limit: 200 })).toEqual([]);
+  });
+});
+
+describe('purchase request cost centres', () => {
+  it.each(['inactive', 'otherEntity'] as const)(
+    'refuses a %s cost centre on create',
+    async (kind) => {
+      as(U.req, 'operations_officer');
+      current.scope = null;
+      await expect(
+        service.create(body({ costCenterId: centers[kind] }), randomUUID()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    },
+  );
+});
+
+describe('editing a request with a retired cost centre', () => {
+  it('allows unrelated edits while retaining its original centre', async () => {
+    const { costCenterId } = await createCostCenter(appPool, scopeA);
+    const draft = await service.create(body({ costCenterId }), randomUUID());
+    await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx.execute(sql`UPDATE app.cost_centers SET active = false WHERE id = ${costCenterId}`),
+    );
+    const updated = await service.update(
+      draft.id,
+      body({ costCenterId, justification: 'Updated need' }),
+      draft.version,
+      randomUUID(),
+    );
+    expect(updated.costCenterId).toBe(costCenterId);
+    expect(updated.justification).toBe('Updated need');
+    await expect(
+      service.update(
+        updated.id,
+        body({ costCenterId: centers.otherEntity }),
+        updated.version,
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
