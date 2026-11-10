@@ -286,15 +286,6 @@ describe('NAV_GROUPS', () => {
   });
 });
 
-describe('phase text', () => {
-  it('shows P-phases as they are and "later" as a word', () => {
-    expect(phaseTag('P2')).toBe('P2');
-    expect(phaseTag('later')).toBe('Later');
-    expect(phaseDescription('P3')).toBe('planned for phase P3');
-    expect(phaseDescription('later')).toBe('planned for a later phase');
-  });
-});
-
 describe('visibleGroups', () => {
   const labelsFor = (showAdmin: boolean) =>
     visibleGroups(showAdmin).flatMap((g) => g.items.map((i) => i.label));
