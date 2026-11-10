@@ -171,7 +171,7 @@ beforeAll(async () => {
     await createCostCenter(appPool, { ...scopeB, name: 'Beta', code: 'B' })
   ).costCenterId;
 
-  service = new CostCentersService(db, caller, new AuditService());
+  service = new CostCentersService(db, caller, new AuditService(db));
 });
 
 afterAll(async () => {
@@ -250,7 +250,7 @@ describe('cost centre management', () => {
   it('creates, replays, renames and deactivates with one audit event per command', async () => {
     current.orgKind = 'staff';
     current.scope = scopeA;
-    const managed = new CostCentersService(db, caller, new AuditService());
+    const managed = new CostCentersService(db, caller, new AuditService(db));
     const controller = new CostCentersController(managed);
     const key = randomUUID();
     const row = await controller.create(key, { code: 'NEW', name: 'New centre' });

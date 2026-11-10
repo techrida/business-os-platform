@@ -6,7 +6,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  Optional,
 } from '@nestjs/common';
 import { asc, eq } from 'drizzle-orm';
 
@@ -22,7 +21,7 @@ export class CostCentersService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly caller: PurchaseRequestsCaller,
-    @Optional() private readonly audit: AuditService = new AuditService(),
+    private readonly audit: AuditService,
   ) {}
 
   /** The cost centres of the acting entity, ordered by name (then id, so equal names keep a stable order). */
@@ -88,7 +87,7 @@ export class CostCentersService {
 
   async update(
     id: string,
-    body: { name?: string; active?: boolean },
+    body: { name?: string | undefined; active?: boolean | undefined },
     key: string,
   ): Promise<CostCenter> {
     const { scope, actor } = this.managementCaller();
