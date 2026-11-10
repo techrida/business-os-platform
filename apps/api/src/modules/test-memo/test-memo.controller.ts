@@ -14,6 +14,12 @@ import { UpdateMemoBodySchema, type MemoDetailDto, type SubmitMemoResult } from 
 export class TestMemoController {
   constructor(private readonly memos: TestMemoService) {}
 
+  @Get('directory')
+  @Can('memo.create')
+  directory() {
+    return this.memos.directory();
+  }
+
   /** 201 with the new MemoDto (status draft, version 1, number MEMO-<fy>-NNNNN). */
   @Post()
   @Can('memo.create')

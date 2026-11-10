@@ -6,7 +6,14 @@ import { notFound } from 'next/navigation';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
-import { failureOf, getMemo, listAudit, previewRoute, type MemoDetail } from '@/lib/api-kernel';
+import {
+  failureOf,
+  getMemoDirectory,
+  getMemo,
+  listAudit,
+  previewRoute,
+  type MemoDetail,
+} from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
@@ -15,6 +22,7 @@ import { StatusBadge } from '../../kit';
 import styles from '../../kit.module.css';
 import { updateMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
+import { MemoPaper } from '../memo-paper';
 import { Attachments } from './attachments';
 import { SubmitForm } from './submit-form';
 
@@ -84,6 +92,8 @@ export default async function MemoPage({
 
   // Only a draft or a returned memo can change; the API enforces it, the page just matches.
   const editable = memo.status === 'draft' || memo.status === 'returned';
+  const directory =
+    editable && memo.template ? await getMemoDirectory(session).catch(() => undefined) : undefined;
 
   // The preview uses the same separation-of-duties list as the submit call (owner and editors),
   // so it shows the route submit will actually build, not the viewer's own.
@@ -212,12 +222,17 @@ export default async function MemoPage({
               ) : null
             }
           >
+            {memo.template ? (
+              <MemoPaper template={memo.template} title={memo.title} body={memo.body} />
+            ) : null}
             <FactList facts={facts} />
           </Panel>
 
-          {editable ? (
+          {editable && (!memo.template || directory) ? (
             <Panel title="Edit memo">
               <MemoForm
+                directory={directory}
+                template={memo.template}
                 action={updateMemoAction}
                 memoId={memo.id}
                 submitLabel="Save changes"
