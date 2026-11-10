@@ -16,7 +16,7 @@ describe('422 refusals', () => {
     ['over_receipt', /more was entered than is still open/i, true],
     [
       'over_receipt_exception_unknown',
-      /quantity received cannot exceed the quantity still open/i,
+      /over-receipt exception reference was not recognised/i,
       false,
     ],
     ['po_line_unknown', /no longer on the purchase order/i, true],
