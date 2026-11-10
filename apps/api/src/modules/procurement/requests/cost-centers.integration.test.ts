@@ -246,24 +246,38 @@ describe('0037 populated upgrade', () => {
   });
 });
 
-
 describe('cost centre management', () => {
   it('creates, replays, renames and deactivates with one audit event per command', async () => {
-    current.orgKind = 'staff'; current.scope = scopeA;
+    current.orgKind = 'staff';
+    current.scope = scopeA;
     const managed = new CostCentersService(db, caller, new AuditService());
     const controller = new CostCentersController(managed);
     const key = randomUUID();
     const row = await controller.create(key, { code: 'NEW', name: 'New centre' });
     expect(await controller.create(key, { code: 'NEW', name: 'New centre' })).toEqual(row);
     const updateKey = randomUUID();
-    expect(await controller.update(row.id, updateKey, { name: 'Renamed', active: false })).toMatchObject({ name: 'Renamed', active: false });
+    expect(
+      await controller.update(row.id, updateKey, { name: 'Renamed', active: false }),
+    ).toMatchObject({ name: 'Renamed', active: false });
     await controller.update(row.id, updateKey, { name: 'Renamed', active: false });
-    const events = await ownerPool.query('SELECT action FROM audit.audit_events WHERE entity_id = $1 AND action LIKE $2', [row.id, 'cost_center.%']);
-    expect(events.rows.map(r => r.action).sort()).toEqual(['cost_center.created', 'cost_center.updated']);
+    const events = await ownerPool.query(
+      'SELECT action FROM audit.audit_events WHERE entity_id = $1 AND action LIKE $2',
+      [row.id, 'cost_center.%'],
+    );
+    expect(events.rows.map((r) => r.action).sort()).toEqual([
+      'cost_center.created',
+      'cost_center.updated',
+    ]);
     current.scope = scopeB;
-    await expect(controller.update(row.id, randomUUID(), { active: true })).rejects.toMatchObject({ status: 404 });
+    await expect(controller.update(row.id, randomUUID(), { active: true })).rejects.toMatchObject({
+      status: 404,
+    });
     current.scope = scopeA;
-    await expect(controller.create(randomUUID(), { code: 'NEW', name: 'Duplicate' })).rejects.toMatchObject({ status: 409 });
-    await expect(controller.create(randomUUID(), { code: '', name: 'Bad' })).rejects.toMatchObject({ status: 400 });
+    await expect(
+      controller.create(randomUUID(), { code: 'NEW', name: 'Duplicate' }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(controller.create(randomUUID(), { code: '', name: 'Bad' })).rejects.toMatchObject({
+      status: 400,
+    });
   });
 });
