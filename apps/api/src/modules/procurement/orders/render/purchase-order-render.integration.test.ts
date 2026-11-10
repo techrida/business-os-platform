@@ -39,6 +39,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -392,7 +393,7 @@ async function issuedPo(opts: PoOptions = {}): Promise<IssuedPo> {
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, delivery_location, budget_code, currency)
         VALUES (${prId}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
-                ${scope === scopeA ? deptA : deptB}, ${U.req}, ${randomUUID()}, 'Solar array', '2026-12-01',
+                ${scope === scopeA ? deptA : deptB}, ${U.req}, ${(await createCostCenter(pool, scope)).costCenterId}, 'Solar array', '2026-12-01',
                 ${opts.deliveryLocation ?? 'Teku warehouse'}, 'IT-2083', ${currency})`,
   );
   await exec(
