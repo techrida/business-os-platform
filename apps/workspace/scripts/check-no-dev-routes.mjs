@@ -30,7 +30,12 @@ export const MARKER = 'BOS_DEV_PERSONA_SWITCHER';
 /** Carried by the DEV MENU widget, which lives only in the dev layer. */
 export const DEV_MENU_MARKER = 'BOS_DEV_MENU';
 
-const MARKERS = [MARKER, DEV_MENU_MARKER];
+const MARKERS = [
+  MARKER,
+  DEV_MENU_MARKER,
+  'BOS_DEV_ACCOUNT_SERVICE',
+  'BOS_DEV_LOGIN_CLIENT_TOKEN_FILE',
+];
 
 /**
  * Directories directly under `.next/` that are not part of the shipped build:
