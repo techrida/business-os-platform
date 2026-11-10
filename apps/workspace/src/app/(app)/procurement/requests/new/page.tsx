@@ -15,7 +15,7 @@ import { EMPTY_PR_VALUES } from '../_lib/forms';
 import { prFailure } from '../_lib/failure';
 import { prGrants } from '../_lib/model';
 
-export const metadata: Metadata = { title: 'New purchase request ? Business OS' };
+export const metadata: Metadata = { title: 'New purchase request · Business OS' };
 export const dynamic = 'force-dynamic';
 
 export default async function NewPurchaseRequestPage() {
