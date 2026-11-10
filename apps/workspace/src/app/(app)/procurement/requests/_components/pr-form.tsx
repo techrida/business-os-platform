@@ -16,8 +16,7 @@ import styles from '../requests.module.css';
 const WIDE = styles.wide ?? '';
 const MAX_LINES = 200;
 
-// Cost centres have no backing table or lookup yet. Keep the pre-lookup entry path on create;
-// editing preserves the stored reference without displaying its internal identifier.
+// Cost centres have no backing table or lookup yet. Keep manual reference entry in both modes.
 
 interface Row {
   /** Stable across add and remove, so a typed value never jumps to another line. */
@@ -168,29 +167,18 @@ export function PrForm({
               </Select>
             )}
           </Field>
-          <Field
-            label="Cost centre"
-            hint={mode === 'create' ? "The cost centre's id." : undefined}
-            error={err.costCenterId}
-          >
-            {(control) =>
-              mode === 'create' ? (
-                <Input
-                  name="costCenterId"
-                  value={values.costCenterId}
-                  onChange={set('costCenterId')}
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                  {...control}
-                />
-              ) : (
-                <>
-                  <input type="hidden" name="costCenterId" value={values.costCenterId} />
-                  <Input value="Cost centre name unavailable" readOnly {...control} />
-                </>
-              )
-            }
+          <Field label="Cost centre" hint="The cost centre's id." error={err.costCenterId}>
+            {(control) => (
+              <Input
+                name="costCenterId"
+                value={values.costCenterId}
+                onChange={set('costCenterId')}
+                autoComplete="off"
+                spellCheck={false}
+                required
+                {...control}
+              />
+            )}
           </Field>
           <Field label="Budget code" error={err.budgetCode}>
             {(control) => (

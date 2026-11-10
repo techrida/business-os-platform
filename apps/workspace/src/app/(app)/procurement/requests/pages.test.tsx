@@ -352,17 +352,19 @@ describe('edit and new', () => {
   });
 });
 
-it('uses named departments, preserves cost centre and allows editing the project reference', async () => {
+it('uses named departments and allows editing cost centre and project references', async () => {
   api.getPurchaseRequest.mockResolvedValue(detail({ projectId: DEPT }));
   const out = await editHtml();
   expect(out).toContain('Operations');
   expect(out).toMatch(/<select[^>]*name="departmentId"/);
-  expect(out).toContain('type="hidden" name="costCenterId"');
+  expect(out).toMatch(/<input(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
+  expect(out).not.toContain('type="hidden" name="costCenterId"');
   expect(out).toContain(`name="projectId"`);
   expect(out).not.toContain('type="hidden" name="projectId"');
-  expect(out).toContain('Cost centre name unavailable');
+  expect(out).not.toContain('Cost centre name unavailable');
   expect(out).toContain('Optional. Enter the project reference, or leave blank.');
-  expect(out).not.toMatch(/<input[^>]+(?:name="departmentId"|name="costCenterId"[^>]+type="text")/);
+  expect(out).not.toMatch(/<input[^>]+name="departmentId"/);
+  expect(out).not.toContain(`>${DEPT}<`);
 });
 
 it('preserves editing if departments cannot load, without exposing a department ID', async () => {
