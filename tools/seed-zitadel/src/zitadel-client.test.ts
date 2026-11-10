@@ -310,6 +310,30 @@ describe('ensureOrgLoginPolicy (pins the customer org policy)', () => {
     expect(calls.map((c) => c.method)).toEqual(['GET']);
   });
 
+  it.each([
+    { omitted: ['forceMfaLocalOnly'] },
+    { omitted: ['mfaInitSkipLifetime'] },
+    { omitted: ['forceMfaLocalOnly', 'mfaInitSkipLifetime'] },
+  ])('does not rewrite a custom policy when protobuf JSON omits $omitted', async ({ omitted }) => {
+    const existing = custom({});
+    const policy: Record<string, unknown> = { ...existing.policy };
+    for (const field of omitted) delete policy[field];
+    const { transport, calls } = recording({
+      [ENDPOINTS.orgLoginPolicy]: (call: Call) =>
+        call.method === 'GET'
+          ? { ...existing, policy }
+          : new ZitadelError(
+              call.path,
+              400,
+              '{"code":9,"message":"Errors.Org.LoginPolicy.NotChanged (Org-5M9vdd)"}',
+            ),
+    });
+    expect(await client(transport).ensureOrgLoginPolicy('cust-org', PORTAL_LOGIN_POLICY)).toBe(
+      false,
+    );
+    expect(calls.map((call) => call.method)).toEqual(['GET']);
+  });
+
   it('updates a custom policy whose omitted false boolean differs from a true patch', async () => {
     // Protobuf JSON omits false: forceMfa is absent here, so it is false and must be updated.
     const { forceMfa: _omit, ...rest } = inherited.policy;
