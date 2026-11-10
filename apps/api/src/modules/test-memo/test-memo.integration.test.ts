@@ -35,6 +35,7 @@ import {
   documentVersions,
   runMigrations,
   testMemos,
+  users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
@@ -967,8 +968,18 @@ describe('a memo out of scope looks like an unknown id (R23)', () => {
 describe('internal memo template', () => {
   it('returns only the active company directory and snapshots authoritative staff metadata', async () => {
     const dept = await createDepartment(appPool, scope);
+    const machine = await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId });
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx
+        .update(users)
+        .set({ email: null, displayName: 'Service account' })
+        .where(eq(users.id, machine.userId)),
+    );
     const directory = await request(baseUrl).get('/v1/test-memos/directory');
     expect(directory.status).toBe(200);
+    expect(
+      MemoDirectorySchema.parse(directory.body).people.some((p) => p.userId === machine.userId),
+    ).toBe(false);
     expect(MemoDirectorySchema.parse(directory.body).currentUserId).toBe(U.salesA);
     expect(
       MemoDirectorySchema.parse(directory.body).people.some(
