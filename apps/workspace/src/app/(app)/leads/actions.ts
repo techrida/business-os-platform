@@ -11,8 +11,8 @@ import { requireStaffSession } from '@/lib/bff';
 
 import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
 import { convertLead, createLead } from '@/components/p2/crm/crm-api';
-import { listContacts } from '@/components/p2/customers/api';
-import type { ContactChoices } from '@/components/p2/crm/convert-dialog';
+import { listContacts, listCustomers } from '@/components/p2/customers/api';
+import type { ContactChoices, CustomerChoices } from '@/components/p2/crm/convert-dialog';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
 import { parseConvert, parseLead } from '@/components/p2/crm/forms';
 import { keyOf, nextKey } from '@/components/p2/crm/idempotency';
@@ -96,5 +96,20 @@ export async function loadConvertContacts(customerId: string): Promise<ContactCh
     };
   } catch (err) {
     return { contacts: [], error: failureOf(err).message };
+  }
+}
+
+/** Reuses the tenant-scoped customer search with its existing customer.read and visibility checks. */
+export async function searchConvertCustomers(query: string): Promise<CustomerChoices> {
+  const session = await requireStaffSession('/leads');
+  const q = query.trim();
+  if (!q || q.length > 100) return { customers: [] };
+  try {
+    const result = await listCustomers(session, { q, limit: 20 });
+    return {
+      customers: result.items.map((customer) => ({ id: customer.id, name: customer.legalName })),
+    };
+  } catch (err) {
+    return { customers: [], error: failureOf(err).message };
   }
 }

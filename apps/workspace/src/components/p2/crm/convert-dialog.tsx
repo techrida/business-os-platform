@@ -46,16 +46,20 @@ function initialValues(lead: ConvertLead): Record<string, string> {
  * checks for duplicates. When it finds one, the dialog lists the candidates: "Use existing" links
  * to that record, or "Create anyway" with a reason. Typed values survive every refusal.
  */
+export type CustomerChoices = { customers: { id: string; name: string }[]; error?: string };
+
 export type ContactChoices = { contacts: { id: string; name: string }[]; error?: string };
 
 export function ConvertDialog({
   lead,
   action,
   loadContacts,
+  searchCustomers,
 }: {
   lead: ConvertLead;
   action: ConvertAction;
   loadContacts?: (customerId: string) => Promise<ContactChoices>;
+  searchCustomers?: (query: string) => Promise<CustomerChoices>;
 }) {
   const [state, formAction, pending] = useActionState<ConvertState, FormData>(action, {
     values: initialValues(lead),
@@ -86,6 +90,32 @@ export function ConvertDialog({
   }, [state, needsAttention]);
 
   const customerExisting = values['customerMode'] === 'existing';
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [customerResults, setCustomerResults] = useState<{
+    query: string;
+    result: CustomerChoices;
+  } | null>(null);
+  const choices = customerResults?.query === customerQuery ? customerResults.result : null;
+  useEffect(() => {
+    let active = true;
+    if (customerExisting && customerQuery.trim() && searchCustomers) {
+      void searchCustomers(customerQuery).then(
+        (result) => {
+          if (active) setCustomerResults({ query: customerQuery, result });
+        },
+        () => {
+          if (active)
+            setCustomerResults({
+              query: customerQuery,
+              result: { customers: [], error: 'Customers could not be loaded.' },
+            });
+        },
+      );
+    }
+    return () => {
+      active = false;
+    };
+  }, [customerExisting, customerQuery, searchCustomers]);
   const contactMode = values['contactMode'];
   const customerId = customerExisting ? (values['customerId'] ?? '') : '';
   const [loadedContacts, setContacts] = useState<{
@@ -222,27 +252,82 @@ export function ConvertDialog({
                   name="customerMode"
                   value="create"
                   checked={!customerExisting}
-                  onChange={set('customerMode')}
+                  onChange={() =>
+                    patch({
+                      customerMode: 'create',
+                      contactMode: 'create',
+                      contactId: '',
+                      contactLabel: '',
+                    })
+                  }
                 />
                 Create a new customer
               </label>
-              <p className={styles.quiet}>
-                If a matching customer is found, select it from the matching records above.
-              </p>
+              <label className={styles.choice}>
+                <input
+                  type="radio"
+                  name="customerMode"
+                  value="existing"
+                  checked={customerExisting}
+                  onChange={() =>
+                    patch({
+                      customerMode: 'existing',
+                      contactMode: 'create',
+                      contactId: '',
+                      contactLabel: '',
+                    })
+                  }
+                />
+                Link to an existing customer
+              </label>
 
-              {customerExisting ? (
-                <input type="hidden" name="customerMode" value="existing" />
-              ) : null}
               {customerExisting ? (
                 <Field label="Customer" error={err['customerId']}>
                   {(c) => (
                     <>
-                      <input type="hidden" name="customerId" value={values['customerId']} />
                       <Input
-                        value={values['customerLabel'] ?? 'Selected customer'}
-                        readOnly
-                        {...c}
+                        aria-label="Search customers by name"
+                        value={customerQuery}
+                        onChange={(e) => setCustomerQuery(e.target.value)}
+                        maxLength={100}
+                        placeholder="Search by customer name"
                       />
+                      <Select
+                        name="customerId"
+                        value={values['customerId']}
+                        onChange={(e) =>
+                          patch({
+                            customerId: e.target.value,
+                            customerLabel:
+                              choices?.customers.find((c) => c.id === e.target.value)?.name ?? '',
+                            contactMode: 'create',
+                            contactId: '',
+                            contactLabel: '',
+                            createAnyway: '',
+                          })
+                        }
+                        {...c}
+                      >
+                        <option value="">Select a customer</option>
+                        {values['customerId'] &&
+                        !choices?.customers.some((c) => c.id === values['customerId']) ? (
+                          <option value={values['customerId']}>
+                            {values['customerLabel'] || 'Selected customer'}
+                          </option>
+                        ) : null}
+                        {choices?.customers.map((customer) => (
+                          <option key={customer.id} value={customer.id}>
+                            {customer.name}
+                          </option>
+                        ))}
+                      </Select>
+                      {choices?.error ? <p role="alert">{choices.error}</p> : null}
+                      {customerQuery.trim() && !choices ? (
+                        <p role="status">Loading customers</p>
+                      ) : null}
+                      {choices && !choices.error && choices.customers.length === 0 ? (
+                        <p role="status">No customers found.</p>
+                      ) : null}
                     </>
                   )}
                 </Field>
