@@ -1,7 +1,8 @@
 # Prod overlay: use together with compose.yaml, always with --env-file .env (see the header of compose.yaml).
 #   docker compose --env-file .env -f infra/compose/compose.yaml -f infra/compose/compose.prod.yaml --profile core --profile app up -d --wait
 #
-# P0 production is the office server reached over Tailscale: BIND_ADDR is the server's Tailscale IP.
+# P0 production serves admin sign-in over HTTPS through Caddy and ZITADEL.
+# BIND_ADDR selects the server interface. Remote host administration is a separate open decision.
 # Set AUTH_HOST, APP_HOST and API_HOST in .env to the real domains. Nothing is published except Caddy.
 # Not verified until that server exists (no prod run happened in P0).
 #
@@ -49,7 +50,7 @@ services:
   caddy:
     <<: *restart
     ports:
-      - '${BIND_ADDR:?set BIND_ADDR in .env (the Tailscale IP)}:80:80'
+      - '${BIND_ADDR:?set BIND_ADDR in .env (the server interface address)}:80:80'
       - '${BIND_ADDR}:443:443'
     volumes:
       # Restricts the public auth host to OIDC sign-in paths (the Caddyfile imports /etc/caddy/auth.d/*).
