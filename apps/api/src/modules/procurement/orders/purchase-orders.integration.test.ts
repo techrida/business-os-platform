@@ -597,6 +597,17 @@ describe('versions are immutable', () => {
 // ---------------------------------------------------------------------------------------- short-close, cancel
 
 describe('short-close and cancel', () => {
+  it('cancels an issued PO after its draft receipt is discarded', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '1', true);
+    const [draft] = await receiptsService.list(po.id);
+    as(U.wh, 'warehouse');
+    await receiptsService.discard(draft!.id, randomUUID());
+    as(U.proc, 'procurement');
+    expect(
+      (await service.cancel(po.id, { reason: 'No delivery needed' }, randomUUID())).status,
+    ).toBe('cancelled');
+  });
   it('short-close cancels the open remainder and the progress shows nothing open', async () => {
     const po = await issued({ quantity: '5', unitPrice: '100.00' });
     await receive(po, '2');
