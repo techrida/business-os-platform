@@ -110,7 +110,7 @@ describe('seedKernelRows', () => {
     expect(index('INTO app.fx_rates')).toBeGreaterThan(index('INTO app.workflow_versions'));
     // grants + authz bump + 8 x (definition + version + current_version_id) + fx peg
     // + 3 tax codes + 2 payment terms + 2 withholding codes
-    expect(changed).toBe(grantCount + 1 + 8 * 3 + 1 + 3 + 2 + 2);
+    expect(changed).toBe(grantCount + 1 + 8 * 3 + 1 + 3 + 2 + 2 + 3);
   });
 
   it('rolls back and rethrows when a statement fails', async () => {
@@ -1021,5 +1021,21 @@ describe('PgTenancyStore (R5, ADR 0027 section 11)', () => {
       /no default entity for staff IdP org z-staff/,
     );
     expect(closed()).toBe(1);
+  });
+});
+
+describe('cost centre dev seed', () => {
+  it('seeds GENERAL, OPERATIONS and ADMIN in the acting entity without changing existing rows', async () => {
+    const { client, calls } = fakeClient(firstRun);
+    await seedKernelRows(client, scope);
+    const centers = calls.filter((c) => c.text.includes('INSERT INTO app.cost_centers'));
+    expect(centers.map((c) => c.values)).toEqual([
+      ['tenant-1', 'org-1', 'GENERAL', 'General'],
+      ['tenant-1', 'org-1', 'OPERATIONS', 'Operations'],
+      ['tenant-1', 'org-1', 'ADMIN', 'Administration'],
+    ]);
+    expect(
+      centers.every((c) => c.text.includes('ON CONFLICT') && c.text.includes('DO NOTHING')),
+    ).toBe(true);
   });
 });
