@@ -1,7 +1,7 @@
 import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Icon } from '@/components/ui/icon';
 import { canSeeAdmin } from '@/lib/kernel-format';
-import { isBuilt, phaseDescription, phaseTag, visibleGroups, type NavItem } from '@/lib/nav';
+import { isBuilt, visibleGroups, type NavItem } from '@/lib/nav';
 
 import { Brand } from './brand';
 import { NavLink } from './nav-link';
@@ -26,21 +26,14 @@ function initialsOf(text: string): string {
   return letters.join('') || '?';
 }
 
-/** An item whose phase has not shipped: not a link, dimmed, with its phase tag. */
+/** An item that is not built yet: not a link, dimmed, with no tag. */
 function PlannedItem({ item }: { item: NavItem }) {
-  const description = phaseDescription(item.phase);
+  const description = `${item.label}, not available yet`;
   return (
-    <span
-      className={`${styles.item} ${styles.planned}`}
-      aria-disabled="true"
-      title={`${item.label}, ${description}`}
-    >
+    <span className={`${styles.item} ${styles.planned}`} aria-disabled="true" title={description}>
       <Icon name={item.icon} className={styles.icon} />
       <span className={styles.label}>{item.label}</span>
-      <span className={styles.tag} aria-hidden="true">
-        {phaseTag(item.phase)}
-      </span>
-      <span className="sr-only">, {description}</span>
+      <span className="sr-only">, not available yet</span>
     </span>
   );
 }
