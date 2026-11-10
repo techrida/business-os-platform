@@ -236,16 +236,20 @@ export function PrForm({
               />
             )}
           </Field>
-          <Field label="Project" error={err.projectId}>
+          <Field
+            label="Project"
+            hint="Optional. Enter the project reference, or leave blank."
+            error={err.projectId}
+          >
             {(control) => (
-              <>
-                <input type="hidden" name="projectId" value={values.projectId} />
-                <Input
-                  value={values.projectId ? 'Project name unavailable' : 'No project selected'}
-                  readOnly
-                  {...control}
-                />
-              </>
+              <Input
+                name="projectId"
+                value={values.projectId}
+                onChange={set('projectId')}
+                autoComplete="off"
+                spellCheck={false}
+                {...control}
+              />
             )}
           </Field>
           <Field
