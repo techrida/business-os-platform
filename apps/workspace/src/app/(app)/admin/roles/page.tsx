@@ -64,11 +64,7 @@ export default async function RolesPage() {
       />
 
       <div className={styles.notices}>
-        <Alert tone="info">
-          This matrix is read-only. Role editing is unavailable: the API has no route to read or
-          write role permissions yet, so the table shows the built-in defaults from the shared
-          contract.
-        </Alert>
+        <Alert tone="info">This matrix is read-only and shows the built-in role permissions.</Alert>
         {!users.ok ? (
           <Alert tone="info">User counts are not shown. {users.message}</Alert>
         ) : countsPartial ? (
