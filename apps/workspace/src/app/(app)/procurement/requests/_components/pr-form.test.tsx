@@ -64,3 +64,31 @@ it('edit clears an assigned project in submitted FormData', async () => {
   await submit(mounted.container);
   expect(action).toHaveBeenCalledTimes(1);
 });
+
+it('edit submits a corrected cost centre through the real form', async () => {
+  const action = vi.fn((_prev, form: FormData) => {
+    expect(form.get('costCenterId')).toBe(NEXT_PROJECT);
+    expect(valuesFromForm(form).costCenterId).toBe(NEXT_PROJECT);
+    return Promise.resolve({ key: PROJECT, errors: {} });
+  });
+  mounted = await mountForm(
+    <PrForm
+      action={action}
+      departments={[]}
+      initial={{ ...EMPTY_PR_VALUES, costCenterId: PROJECT }}
+      mode="edit"
+      idempotencyKey={PROJECT}
+      prId={PROJECT}
+      version={3}
+      cancelHref="/"
+      reloadHref="/"
+    />,
+  );
+  const input = mounted.container.querySelector('input[name="costCenterId"]');
+  expect(input).not.toHaveProperty('readOnly', true);
+  expect(input).not.toHaveProperty('type', 'hidden');
+  expect(input).toHaveProperty('required', true);
+  await fill(input, NEXT_PROJECT);
+  await submit(mounted.container);
+  expect(action).toHaveBeenCalledTimes(1);
+});
