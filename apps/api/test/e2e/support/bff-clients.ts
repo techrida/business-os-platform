@@ -332,16 +332,16 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
   const serverOnly = createRequire(apiModule).resolve('server-only');
   vi.doMock(serverOnly, () => ({}));
   vi.doMock('server-only', () => ({}));
-  // The clients import `@/lib/api`; point that alias at the real file.
-  vi.doMock(
-    '@/lib/api',
-    async () => (await import(/* @vite-ignore */ wsUrl('lib/api.ts'))) as object,
-  );
   // The real `apiFetch` reads its base URL through `getEnv()`.
   vi.doMock(apiModule.replace(/api\.ts$/, 'env.ts'), () => ({
     getEnv: () => ({ API_INTERNAL_URL: apiBaseUrl() }),
     __resetEnvForTests: () => undefined,
   }));
+
+  // Load the shared error class once before importing clients. Concurrent imports through
+  // aliases and absolute Windows paths can otherwise create distinct ApiError constructors.
+  const api = (await import(/* @vite-ignore */ apiModule)) as Pick<BffClients, 'ApiError'>;
+  vi.doMock('@/lib/api', () => api);
 
   // api-billing.ts imports two more `@/` modules. The failure words are pure, so the real file is used. The
   // CRM idempotency helper reaches the session store, so only its `nextKey` is stubbed (no call here uses it).
@@ -376,7 +376,6 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
     billing,
     receivables,
     staffProofs,
-    api,
     portalBilling,
     portalApi,
   ] = await Promise.all([
@@ -389,7 +388,6 @@ export async function loadBffClients(apiBaseUrl: () => string): Promise<BffClien
     load<BillingClient>('lib/api-billing.ts'),
     load<ReceivablesClient>('lib/api-receivables.ts'),
     load<StaffProofClient>('app/(app)/payments/proofs/proof-upload.ts'),
-    load<Pick<BffClients, 'ApiError'>>('lib/api.ts'),
     loadPortal<PortalBillingClient>('lib/api.billing.ts'),
     loadPortal<Pick<BffClients, 'ApiError'>>('lib/api.ts'),
   ]);
