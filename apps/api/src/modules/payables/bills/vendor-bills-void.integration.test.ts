@@ -23,6 +23,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -321,7 +322,7 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
-                ${randomUUID()}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
+                ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
   );
   await exec(
     scopeA,

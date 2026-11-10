@@ -252,11 +252,13 @@ describe('vendor portal mappers', () => {
       paid: 'approved_for_payment',
       rejected: 'rejected',
       voided: null,
+      discarded: null,
     };
     for (const [s, coarse] of Object.entries(expected)) {
       expect(vendorBillStatus(s as InternalBillStatus)).toBe(coarse);
     }
     expect(toBillView(bill('voided'))).toBeUndefined();
+    expect(toBillView(bill('discarded'))).toBeUndefined();
     expect(toBillView({ ...bill(), kind: 'vendor_credit_note' })).toBeUndefined();
     expect(toBillView({ ...bill(), number: null })).toBeUndefined();
   });

@@ -34,6 +34,7 @@ describe('poFailure: cancel and short-close', () => {
     const f = poFailure(err(409, 'PO_HAS_RECEIPTS'), 'cancel');
     expect(f.message).toMatch(/already been received/i);
     expect(f.message).toMatch(/short-close/i);
+    expect(f.message).toMatch(/discard/i);
     expect(f.reload).toBe(false);
   });
 

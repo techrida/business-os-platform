@@ -22,10 +22,13 @@ import {
   receipts,
 } from './schema/procurement-orders.js';
 
-const SQL_TEXT = readFileSync(
-  new URL('../migrations/0034_procurement_orders.sql', import.meta.url),
-  'utf8',
-);
+const SQL_TEXT =
+  readFileSync(new URL('../migrations/0034_procurement_orders.sql', import.meta.url), 'utf8') +
+  '\n' +
+  readFileSync(
+    new URL('../migrations/0038_discard_procurement_drafts.sql', import.meta.url),
+    'utf8',
+  );
 
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
@@ -85,14 +88,25 @@ function parseSql(text: string): Map<string, Shape> {
       if (column) shape.columns.push(column[1] ?? '');
     }
   }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP CONSTRAINT "(\w+)";/g)) {
+    const shape = tables.get(m[1] ?? '');
+    if (!shape) continue;
+    for (const kind of ['foreignKey', 'unique', 'check', 'index'] as const) {
+      shape.names[kind] = shape.names[kind].filter(
+        (entry) => entry !== m[2] && !entry.startsWith(`${m[2]} (`),
+      );
+    }
+  }
   for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
+    if (!tables.has(m[1] ?? '')) continue;
     const kind = kindOf(m[3] ?? '');
     shapeOf(m[1] ?? '').names[kind].push(sqlEntry(kind, m[2] ?? '', m[3] ?? ''));
   }
   for (const m of text.matchAll(
     /CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)" USING btree \(([^)]*)\)/g,
   )) {
-    shapeOf(m[2] ?? '').names.index.push(`${m[1] ?? ''} (${cols(m[3] ?? '')})`);
+    if (tables.has(m[2] ?? ''))
+      shapeOf(m[2] ?? '').names.index.push(`${m[1] ?? ''} (${cols(m[3] ?? '')})`);
   }
   return tables;
 }
@@ -144,9 +158,11 @@ const DRIZZLE: Record<string, PgTable> = {
 
 /** The values of `col IN ('a', 'b')` in the SQL text, for the CHECK named `check`. */
 function checkValues(check: string): string[] {
-  const m = new RegExp(String.raw`CONSTRAINT "${check}" CHECK \("\w+" in \(([^)]*)\)\)`).exec(
-    SQL_TEXT,
-  );
+  const m = [
+    ...SQL_TEXT.matchAll(
+      new RegExp(String.raw`CONSTRAINT "${check}" CHECK \("\w+" in \(([^)]*)\)\)`, 'g'),
+    ),
+  ].at(-1);
   if (!m) throw new Error(`no IN-list check ${check}`);
   return (m[1] ?? '').split(',').map((v) => v.trim().replaceAll("'", ''));
 }

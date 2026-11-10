@@ -3,6 +3,11 @@
 import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
 
+import {
+  ActionDialog,
+  DialogCloseButton,
+  useReloadWhenClosed,
+} from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
@@ -176,49 +181,90 @@ function ContactFields({ errors }: { errors: PanelState<ContactField>['errors'] 
 // Lifecycle
 // ---------------------------------------------------------------------------------------------
 
-/** One lifecycle button, with a reason box when the move asks why. */
-export function LifecycleForm({
+/** Block and Archive ask for confirmation before submitting their reason. */
+export function LifecycleForm(props: {
+  vendorId: string;
+  option: LifecycleOption;
+  idempotencyKey: string;
+}) {
+  const { option } = props;
+  const confirm = option.command === 'block' || option.command === 'archive';
+  return confirm ? (
+    <ActionDialog
+      triggerLabel={option.label}
+      triggerVariant={option.tone}
+      title={`${option.label}?`}
+      intro={option.help}
+    >
+      <LifecycleBody {...props} confirm />
+    </ActionDialog>
+  ) : (
+    <LifecycleBody {...props} />
+  );
+}
+
+function LifecycleBody({
   vendorId,
   option,
   idempotencyKey,
+  confirm = false,
 }: {
   vendorId: string;
   option: LifecycleOption;
   idempotencyKey: string;
+  confirm?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<PanelState, FormData>(
     lifecycleAction,
     panelStart(idempotencyKey),
   );
   const [reason, setReason] = useState('');
+  const formRef = useRef<HTMLFormElement>(null);
+  useReloadWhenClosed(confirm && state.saved !== undefined, formRef);
+  useEffect(() => {
+    if (state.errors.reason) {
+      formRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+    }
+  }, [state]);
   return (
-    <form action={formAction} noValidate className={styles.lifecycle}>
+    <form ref={formRef} action={formAction} noValidate className={styles.lifecycle}>
       <input type="hidden" name="vendorId" value={vendorId} />
       <input type="hidden" name="command" value={option.command} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <Notice state={state} reloadHref={`/vendors/${vendorId}`} title="Nothing changed" />
-      {option.needsReason ? (
-        <Field label="Reason" hint={option.help} error={state.errors.reason}>
-          {(c) => (
-            <Textarea
-              name="reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              maxLength={500}
-              rows={2}
-              required
-              {...c}
-            />
-          )}
-        </Field>
+      {confirm && state.saved ? (
+        <DialogCloseButton variant="primary">Done</DialogCloseButton>
       ) : (
-        <p className={styles.note}>{option.help}</p>
+        <>
+          {option.needsReason ? (
+            <Field
+              label="Reason"
+              hint={confirm ? undefined : option.help}
+              error={state.errors.reason}
+            >
+              {(c) => (
+                <Textarea
+                  name="reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  maxLength={500}
+                  rows={2}
+                  required
+                  {...c}
+                />
+              )}
+            </Field>
+          ) : (
+            <p className={styles.note}>{option.help}</p>
+          )}
+          <div className={styles.actions}>
+            <Button type="submit" variant={option.tone} disabled={pending}>
+              {pending ? 'Working' : option.label}
+            </Button>
+            {confirm ? <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton> : null}
+          </div>
+        </>
       )}
-      <div className={styles.actions}>
-        <Button type="submit" variant={option.tone} disabled={pending}>
-          {pending ? 'Working' : option.label}
-        </Button>
-      </div>
     </form>
   );
 }

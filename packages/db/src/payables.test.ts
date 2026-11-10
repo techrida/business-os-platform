@@ -27,6 +27,7 @@ import { checkAudit } from './check-audit.js';
 import { checkTenancy, describeViolations } from './check-tenancy.js';
 import { runMigrations } from './migrate.js';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -211,7 +212,7 @@ async function orderOf(
       `PR-${randomUUID()}`,
       entity.departmentId,
       scope.userId,
-      randomUUID(),
+      (await createCostCenter(app, { tenantId: scope.tenantId, organizationId })).costCenterId,
     ],
   );
   const seq = nextSeq();

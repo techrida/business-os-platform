@@ -8,6 +8,7 @@ import {
   amendPurchaseOrder,
   cancelPurchaseOrder,
   confirmReceipt,
+  discardReceipt,
   createReceipt,
   getPoProgress,
   getPurchaseOrder,
@@ -329,6 +330,14 @@ describe('receivable orders', () => {
 });
 
 describe('receipts', () => {
+  it('discards a draft with the idempotency key and parses the terminal status', async () => {
+    answer(reply({ ...receipt, status: 'discarded' }));
+    expect((await discardReceipt(session, RECEIPT, KEY)).status).toBe('discarded');
+    expect(lastCall().url).toBe(`http://api:3001/v1/procurement/receipts/${RECEIPT}/discard`);
+    expect(lastCall().init.method).toBe('POST');
+    expect(lastCall().headers.get('idempotency-key')).toBe(KEY);
+    expect(lastCall().init.body).toBeUndefined();
+  });
   it('lists the receipts of one purchase order and nothing else (strict query)', async () => {
     answer(reply([receipt]));
     const out = await listReceipts(session, PO);

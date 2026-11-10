@@ -15,6 +15,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -270,7 +271,7 @@ async function newPo(options: { scope?: TxScope; status?: string } = {}): Promis
       `PR-${randomUUID()}`,
       scope === scopeA ? departmentA : departmentB,
       U.requester,
-      randomUUID(),
+      (await createCostCenter(appPool, scope)).costCenterId,
     ],
   );
   const [po] = await ownerRun<{ id: string }>(
@@ -392,6 +393,66 @@ const poStatus = async (po: Po) => {
 };
 
 // ---------------------------------------------------------------------------------------- tests
+
+describe('discard draft receipts', () => {
+  it('releases pending quantity, keeps its audit trail and replays once', async () => {
+    const po = await newPo();
+    const draft = await createDraft(po, [{ poLineId: po.goods, quantity: '5' }]);
+    const key = randomUUID();
+    const discarded = await service.discard(draft.id, key);
+    expect(discarded.status).toBe('discarded');
+    expect(await service.discard(draft.id, key)).toEqual(discarded);
+    expect(await service.discard(draft.id, randomUUID())).toEqual(discarded);
+    expect((await service.progress(po.id)).lines[0]).toMatchObject({ pendingQuantity: '0.0000' });
+    expect((await createDraft(po, [{ poLineId: po.goods, quantity: '5' }])).status).toBe('draft');
+    const events = await new AuditService(db).list(scopeA, { entityId: draft.id, limit: 100 });
+    expect(events.filter((e) => e.action === 'procurement.receipt.discarded')).toHaveLength(1);
+  });
+
+  it('refuses confirmed receipts, another entity and an unauthorized accountant', async () => {
+    const po = await newPo();
+    const draft = await createDraft(po, [{ poLineId: po.goods, quantity: '1' }]);
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.discard(draft.id, randomUUID()))).getStatus()).toBe(404);
+    current.scope = null;
+    as(U.accountant, 'accountant');
+    expect((await httpErrorOf(service.discard(draft.id, randomUUID()))).getStatus()).toBe(403);
+    as(U.warehouse, 'warehouse');
+    await confirm(draft.id);
+    expect(codeOf(await httpErrorOf(service.discard(draft.id, randomUUID())))).toBe(
+      'invalid_transition',
+    );
+  });
+
+  it('frees serial reservations and allows cancelling the discarded quantity', async () => {
+    const po = await newPo();
+    const draft = await createDraft(po, [
+      { poLineId: po.serialGoods, quantity: '3', serials: serials('A', 'B', 'C') },
+    ]);
+    await service.discard(draft.id, randomUUID());
+    const replacement = await createDraft(po, [
+      { poLineId: po.serialGoods, quantity: '3', serials: serials('A', 'B', 'C') },
+    ]);
+    await service.discard(replacement.id, randomUUID());
+    await ownerRun(
+      scopeA.organizationId,
+      `UPDATE app.purchase_order_lines SET cancelled_quantity = ordered_quantity WHERE id = $1`,
+      [po.serialGoods],
+    );
+  });
+
+  it('serializes confirm against discard so only one transition wins', async () => {
+    const po = await newPo();
+    const draft = await createDraft(po, [{ poLineId: po.goods, quantity: '1' }]);
+    const outcomes = await Promise.allSettled([
+      confirm(draft.id),
+      service.discard(draft.id, randomUUID()),
+    ]);
+    expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const failure = outcomes.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(codeOf(failure.reason as HttpException)).toBe('invalid_transition');
+  });
+});
 
 describe('over-receipt', () => {
   it('refuses 6 against 5 with 422 over_receipt, writes nothing and gives the GRN number back', async () => {

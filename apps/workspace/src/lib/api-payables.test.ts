@@ -13,6 +13,7 @@ import {
   rejectBillSubmission,
   submitBill,
   voidBill,
+  discardBill,
 } from './api-payables';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -190,6 +191,14 @@ describe('bill reads', () => {
 });
 
 describe('bill writes', () => {
+  it('discards a draft with the idempotency key and parses the terminal status', async () => {
+    answer(reply({ ...bill, status: 'discarded' }));
+    expect((await discardBill(session, BILL, KEY)).status).toBe('discarded');
+    expect(lastCall().url).toBe(`http://api:3001/v1/payables/bills/${BILL}/discard`);
+    expect(lastCall().init.method).toBe('POST');
+    expect(lastCall().headers.get('idempotency-key')).toBe(KEY);
+    expect(lastCall().init.body).toBeUndefined();
+  });
   it('matches and submits with the idempotency key and no body', async () => {
     answer(reply(bill));
     await matchBill(session, BILL, KEY);

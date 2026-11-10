@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
@@ -9,6 +10,7 @@ import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import {
   getPurchaseRequest,
+  listCostCenters,
   listDepartments,
   type PurchaseRequestDto,
 } from '@/lib/api-procurement';
@@ -45,7 +47,7 @@ export default async function EditPurchaseRequestPage({
           tone={f.status === 403 ? 'info' : 'error'}
           role="alert"
           title="The purchase request did not load"
-          actions={<a href={`${back}/edit`}>Try again</a>}
+          actions={<Link href={`${back}/edit`}>Try again</Link>}
         >
           {f.message}
         </Alert>
@@ -56,6 +58,26 @@ export default async function EditPurchaseRequestPage({
   const label = pr.number ?? 'Draft purchase request';
   const editable = isPrEditable(pr.status) && prGrants(session.roles).create;
   const departments = editable ? await listDepartments(session).catch(() => []) : [];
+  let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];
+  if (editable) {
+    try {
+      costCenters = await listCostCenters(session);
+    } catch (err) {
+      const failure = prFailure(err, 'load');
+      return (
+        <Page width="narrow">
+          <Alert
+            tone={failure.status === 403 ? 'info' : 'error'}
+            role="alert"
+            title="Cost centres did not load"
+            actions={<Link href={`${back}/edit`}>Try again</Link>}
+          >
+            {failure.message}
+          </Alert>
+        </Page>
+      );
+    }
+  }
   return (
     <Page width="narrow">
       <Breadcrumb
@@ -69,6 +91,7 @@ export default async function EditPurchaseRequestPage({
       {editable ? (
         <PrForm
           departments={departments}
+          costCenters={costCenters}
           action={updatePrAction}
           initial={valuesFromDto(pr)}
           mode="edit"

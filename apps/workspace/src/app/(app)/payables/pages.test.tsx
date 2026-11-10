@@ -23,6 +23,7 @@ vi.mock('./actions', () => ({
   matchBillAction: vi.fn(),
   submitBillAction: vi.fn(),
   voidBillAction: vi.fn(),
+  discardBillAction: vi.fn(),
   convertSubmissionAction: vi.fn(),
   rejectSubmissionAction: vi.fn(),
   requestExceptionAction: vi.fn(),
@@ -35,6 +36,7 @@ const api = vi.hoisted(() => ({
   getPoProgress: vi.fn(),
   getVendor: vi.fn(),
   listTaxCodes: vi.fn(),
+  listWithholdingCodes: vi.fn(),
   listVendors: vi.fn(),
 }));
 vi.mock('@/lib/api-payables', () => ({
@@ -45,6 +47,7 @@ vi.mock('@/lib/api-payables', () => ({
 vi.mock('@/lib/api-purchase-orders', () => ({ getPoProgress: api.getPoProgress }));
 vi.mock('@/lib/api-vendors', () => ({ getVendor: api.getVendor, listVendors: api.listVendors }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: api.listTaxCodes }));
+vi.mock('@/lib/api-withholding-codes', () => ({ listWithholdingCodes: api.listWithholdingCodes }));
 
 const { default: BillsPage } = await import('./bills/page');
 const { default: BillPage } = await import('./bills/[id]/page');
@@ -154,6 +157,16 @@ beforeEach(() => {
   api.getVendor.mockResolvedValue({ legalName: 'Himal Traders' });
   api.getPoProgress.mockResolvedValue(progress);
   api.listTaxCodes.mockResolvedValue([{ id: VENDOR, label: 'VAT 13%' }]);
+  api.listWithholdingCodes.mockResolvedValue([
+    {
+      id: VENDOR,
+      code: 'TDS0',
+      name: 'Pending accountant signoff',
+      rateBp: 0,
+      effectiveFrom: '2026-01-01',
+      effectiveTo: null,
+    },
+  ]);
   api.listVendors.mockResolvedValue({
     items: [{ id: VENDOR, legalName: 'Himal Traders' }],
     total: 1,
@@ -195,6 +208,21 @@ describe('bills list', () => {
 });
 
 describe('bill detail', () => {
+  it('offers discard only for an accountant viewing a draft', async () => {
+    api.getBill.mockResolvedValue({ ...header, status: 'draft', lines: [line] });
+    expect(await html(BillPage({ params: Promise.resolve({ id: BILL }) }))).toContain(
+      'Discard draft',
+    );
+    session.roles = ['finance'];
+    expect(await html(BillPage({ params: Promise.resolve({ id: BILL }) }))).not.toContain(
+      'Discard draft',
+    );
+    session.roles = ['accountant'];
+    api.getBill.mockResolvedValue({ ...header, status: 'discarded', lines: [line] });
+    const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(out).toContain('Discarded');
+    expect(out).not.toContain('Discard draft');
+  });
   it.each(['infected', 'scan_failed', 'rejected', null])(
     'offers invoice replacement for a draft with a non-clean file (%s)',
     async (fileStatus) => {
@@ -368,5 +396,21 @@ describe('inbox', () => {
     expect(await html(InboxPage())).toContain('The inbox is empty.');
     api.listBillSubmissions.mockRejectedValue(apiError(403, 'forbidden'));
     expect(await html(InboxPage())).toContain('You cannot open the inbox');
+  });
+});
+
+describe('bill-entry withholding registry', () => {
+  it('loads named withholding codes on standalone entry', async () => {
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({}) }));
+    expect(api.listWithholdingCodes).toHaveBeenCalledOnce();
+    expect(out).toContain('TDS0');
+    expect(out).toContain('Pending accountant signoff');
+    expect(out).toMatch(/<select[^>]*name="line:0:tdsCodeId"/);
+  });
+  it('blocks entry when the withholding lookup fails rather than dropping the selection', async () => {
+    api.listWithholdingCodes.mockRejectedValue(apiError(500));
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({}) }));
+    expect(out).toContain('The bill details did not load');
+    expect(out).not.toContain('name="line:0:tdsCodeId"');
   });
 });

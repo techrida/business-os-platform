@@ -17,6 +17,7 @@ import { Field, Input, Textarea } from '@/components/ui/field';
 import type { ActionState } from '../../procurement/orders/_lib/state';
 import {
   matchBillAction,
+  discardBillAction,
   rejectSubmissionAction,
   requestExceptionAction,
   submitBillAction,
@@ -160,6 +161,25 @@ export function SubmitDialog(props: Common) {
         common={props}
         submitLabel="Submit for approval"
         pendingWords="Submitting the bill"
+      />
+    </ActionDialog>
+  );
+}
+
+export function DiscardBillDialog(props: Common) {
+  return (
+    <ActionDialog
+      triggerLabel="Discard draft"
+      title={`Discard ${props.label}`}
+      intro="Discarding keeps this draft in the audit trail and releases its invoice number for a replacement bill. This cannot be undone."
+    >
+      <Form
+        action={discardBillAction}
+        idField="billId"
+        common={props}
+        submitLabel="Discard draft"
+        pendingWords="Discarding the draft bill"
+        tone="secondary"
       />
     </ActionDialog>
   );

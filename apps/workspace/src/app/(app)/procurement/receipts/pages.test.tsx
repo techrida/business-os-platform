@@ -22,6 +22,7 @@ vi.mock('./actions', () => ({
   createReceiptAction: vi.fn(),
   confirmReceiptAction: vi.fn(),
   reverseReceiptAction: vi.fn(),
+  discardReceiptAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
   listReceivableOrders: vi.fn(),
@@ -353,6 +354,17 @@ describe('the new receipt form', () => {
 });
 
 describe('one receipt', () => {
+  it('offers discard on an authorized draft even if the PO no longer takes confirmation', async () => {
+    api.getPoProgress.mockResolvedValue(progress({ status: 'short_closed' }));
+    expect(await detail()).toContain('Discard draft');
+    session.roles = ['procurement'];
+    expect(await detail()).not.toContain('Discard draft');
+    session.roles = ['warehouse'];
+    api.getReceipt.mockResolvedValue(receipt({ status: 'discarded' }));
+    const out = await detail();
+    expect(out).toContain('Discarded');
+    expect(out).not.toContain('Discard draft');
+  });
   it('shows a goods draft to the warehouse with Confirm and no Reverse, and its serials', async () => {
     const out = await detail();
     expect(out).toContain('GRN-2082/83-00001');

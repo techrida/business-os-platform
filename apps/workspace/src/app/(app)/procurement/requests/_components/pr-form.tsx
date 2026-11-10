@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES, PR_REQUEST_TYPES } from '@bos/contracts';
+import { CURRENCIES, PR_REQUEST_TYPES, type CostCenter } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -42,6 +42,7 @@ export function PrForm({
   version,
   cancelHref,
   reloadHref,
+  costCenters,
 }: {
   action: (prev: PrFormState, form: FormData) => Promise<PrFormState>;
   departments: { id: string; name: string }[];
@@ -54,6 +55,7 @@ export function PrForm({
   version?: number;
   cancelHref: string;
   reloadHref: string;
+  costCenters: CostCenter[];
 }) {
   const [state, formAction, pending] = useActionState<PrFormState, FormData>(action, {
     key: idempotencyKey,
@@ -167,17 +169,33 @@ export function PrForm({
               </Select>
             )}
           </Field>
-          <Field label="Cost centre" hint="The cost centre's id." error={err.costCenterId}>
+          <Field
+            label="Cost centre"
+            error={err.costCenterId}
+            hint={
+              costCenters.some((c) => c.active)
+                ? undefined
+                : 'No active cost centres. Ask an administrator to configure one.'
+            }
+          >
             {(control) => (
-              <Input
+              <Select
                 name="costCenterId"
                 value={values.costCenterId}
                 onChange={set('costCenterId')}
-                autoComplete="off"
-                spellCheck={false}
                 required
                 {...control}
-              />
+              >
+                <option value="">Choose a cost centre</option>
+                {costCenters
+                  .filter((c) => c.active || c.id === values.costCenterId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} {'\u00b7'} {c.name}
+                      {c.active ? '' : ' (inactive)'}
+                    </option>
+                  ))}
+              </Select>
             )}
           </Field>
           <Field label="Budget code" error={err.budgetCode}>
@@ -425,7 +443,10 @@ export function PrForm({
       </Panel>
 
       <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
+        <Button
+          type="submit"
+          disabled={pending || !costCenters.some((c) => c.active || c.id === values.costCenterId)}
+        >
           {submitLabel}
         </Button>
         <LinkButton href={cancelHref} variant="ghost">

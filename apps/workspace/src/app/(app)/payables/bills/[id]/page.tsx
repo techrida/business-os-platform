@@ -20,6 +20,7 @@ import {
   ExceptionDialog,
   MatchDialog,
   SubmitDialog,
+  DiscardBillDialog,
   VoidDialog,
 } from '../../_components/bill-actions';
 import { InvoiceReplacement } from '../../_components/invoice-replacement';
@@ -302,11 +303,14 @@ export default async function BillPage({
             : 'A vendor invoice, matched before it goes for approval.'
         }
         actions={
-          can.match || can.submit || can.void ? (
+          can.match || can.submit || can.void || (bill.status === 'draft' && grants.enter) ? (
             <div className={styles.headActions}>
               {can.match ? <MatchDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.submit ? <SubmitDialog {...common} idempotencyKey={randomUUID()} /> : null}
               {can.void ? <VoidDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {bill.status === 'draft' && grants.enter ? (
+                <DiscardBillDialog {...common} idempotencyKey={randomUUID()} />
+              ) : null}
             </div>
           ) : null
         }

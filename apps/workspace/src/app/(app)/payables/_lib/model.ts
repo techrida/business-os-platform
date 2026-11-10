@@ -13,6 +13,7 @@ import type { BadgeTone } from '../../procurement/orders/_lib/model';
 
 export const BILL_STATUS_LABEL: Record<BillStatus, { tone: BadgeTone; text: string }> = {
   draft: { tone: 'neutral', text: 'Draft' },
+  discarded: { tone: 'neutral', text: 'Discarded' },
   matching: { tone: 'info', text: 'Matching' },
   variance: { tone: 'warning', text: 'Outside tolerance' },
   exception_pending: { tone: 'warning', text: 'Exception pending' },

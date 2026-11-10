@@ -21,10 +21,11 @@ const api = vi.hoisted(() => ({
   createReceipt: vi.fn(),
   confirmReceipt: vi.fn(),
   reverseReceipt: vi.fn(),
+  discardReceipt: vi.fn(),
 }));
 vi.mock('@/lib/api-purchase-orders', () => api);
 
-const { confirmReceiptAction, createReceiptAction, reverseReceiptAction } =
+const { confirmReceiptAction, createReceiptAction, reverseReceiptAction, discardReceiptAction } =
   await import('./actions');
 
 const PO = '11111111-1111-4111-8111-111111111111';
@@ -95,6 +96,28 @@ beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   api.getPoProgress.mockResolvedValue(progress);
   api.getReceipt.mockResolvedValue(receipt());
+});
+
+describe('discard draft receipt', () => {
+  it('uses the form key and explains that reserved quantities are released', async () => {
+    api.discardReceipt.mockResolvedValue(receipt({ status: 'discarded' }));
+    const out = await discardReceiptAction(prev, form({ receiptId: RECEIPT, idempotencyKey: KEY }));
+    expect(api.discardReceipt).toHaveBeenCalledWith(expect.anything(), RECEIPT, KEY);
+    expect(out.done).toMatch(/discarded/i);
+    expect(out.done).toMatch(/quantities.*open/i);
+  });
+  it('denies an accountant for goods and retains the key after an uncertain result', async () => {
+    session.roles = ['accountant'];
+    expect(
+      (await discardReceiptAction(prev, form({ receiptId: RECEIPT, idempotencyKey: KEY }))).error,
+    ).toMatch(/warehouse/i);
+    expect(api.discardReceipt).not.toHaveBeenCalled();
+    session.roles = ['warehouse'];
+    api.discardReceipt.mockRejectedValue(apiError(503, 'unavailable'));
+    expect(
+      (await discardReceiptAction(prev, form({ receiptId: RECEIPT, idempotencyKey: KEY }))).key,
+    ).toBe(KEY);
+  });
 });
 
 describe('createReceiptAction', () => {

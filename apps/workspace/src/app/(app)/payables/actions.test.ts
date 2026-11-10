@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   matchBill: vi.fn(),
   submitBill: vi.fn(),
   voidBill: vi.fn(),
+  discardBill: vi.fn(),
   convertBillSubmission: vi.fn(),
   rejectBillSubmission: vi.fn(),
   requestBillException: vi.fn(),
@@ -32,6 +33,7 @@ const {
   rejectSubmissionAction,
   submitBillAction,
   voidBillAction,
+  discardBillAction,
   requestExceptionAction,
   createBillAction,
 } = await import('./actions');
@@ -43,6 +45,27 @@ const TAX = '44444444-4444-4444-8444-444444444444';
 const POLINE = '55555555-5555-4555-8555-555555555555';
 const KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const prev = { key: KEY };
+
+describe('discard draft bill', () => {
+  it('sends the form key and revalidates on success', async () => {
+    api.discardBill.mockResolvedValue({ status: 'discarded' });
+    const out = await discardBillAction(prev, form({ billId: BILL, idempotencyKey: KEY }));
+    expect(api.discardBill).toHaveBeenCalledWith(expect.anything(), BILL, KEY);
+    expect(out.done).toMatch(/discarded/i);
+  });
+  it('denies finance and retains the key after an uncertain result', async () => {
+    session.roles = ['finance'];
+    expect(
+      (await discardBillAction(prev, form({ billId: BILL, idempotencyKey: KEY }))).error,
+    ).toMatch(/roles/i);
+    expect(api.discardBill).not.toHaveBeenCalled();
+    session.roles = ['accountant'];
+    api.discardBill.mockRejectedValue(new ApiError(503, 'unavailable'));
+    expect((await discardBillAction(prev, form({ billId: BILL, idempotencyKey: KEY }))).key).toBe(
+      KEY,
+    );
+  });
+});
 
 describe('request a match exception', () => {
   it('sends the reason and preserves the approval link', async () => {

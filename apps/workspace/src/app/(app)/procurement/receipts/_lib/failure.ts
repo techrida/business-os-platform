@@ -10,7 +10,7 @@ import { failureWith, type ProcFailure } from '../../orders/_lib/failure-core';
  * is `invalid_transition` when the receipt or the order moved on.
  */
 
-export type ReceiptOp = 'load' | 'create' | 'confirm' | 'reverse';
+export type ReceiptOp = 'load' | 'create' | 'confirm' | 'reverse' | 'discard';
 
 /** The words for a 403 that names no better reason. Goods are the warehouse's; a service has two doors. */
 export function noPermission(kind: ReceiptKind | undefined): string {
@@ -24,6 +24,8 @@ export function noPermission(kind: ReceiptKind | undefined): string {
 }
 
 const MOVED: Record<ReceiptOp, string> = {
+  discard:
+    'This receipt can no longer be discarded. Only a draft can be. Reload to see where it stands.',
   load: 'This receipt changed since you opened it. Reload and try again.',
   create:
     'This purchase order is not open for receiving. It must be issued or partly received. Reload to see where it stands.',
