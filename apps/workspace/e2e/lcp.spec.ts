@@ -35,11 +35,11 @@ test('signed-in staff shell: LCP is under 1500 ms', async ({ page, baseURL }) =>
   // Sign in first, outside the measurement: login pages and OIDC redirects are not the shell.
   await page.goto('/');
   await signInOnZitadel(page, persona('founder'), appOrigin);
-  await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
 
   // A fresh load of `/` with the session cookie already set: this is the page being gated.
   await page.goto('/', { waitUntil: 'load' });
-  await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   await page.waitForFunction(() => (window as unknown as { __lcp: number[] }).__lcp.length > 0);
   // The browser keeps reporting new candidates until the user interacts, so a click freezes the
   // value the same way a real visitor's first input does.
