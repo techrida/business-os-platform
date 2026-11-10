@@ -11,12 +11,12 @@ This HTML is a standalone proposal, not the implemented `/memos/new` route. Its 
 ## Decisions
 
 - One font family across the app mockup and document: Arial, with generic sans-serif fallback. Production should use the existing application font token consistently; no separate serif document face.
-- Omit the editable organization input. Show the active legal entity as read-only context. Validate tenant/entity server-side.
+- Omit the editable organization input. Keep company identity in the document letterhead only; omit the redundant company block from the input form. Validate tenant/entity server-side.
 - Department: fixed-choice dropdown of the active company's departments; default from the current person's membership. Never hardcode the options in production. Missing membership requires an explicit department choice; an empty directory explains how to resolve it without inventing a department.
 - Prepared by: default to the signed-in staff member. Searchable staff selection may be offered subject to permission; attribution/audit actor remains the authenticated user. Selection does not impersonate staff or bypass approval separation of duties.
 - Recommended by: zero or more eligible staff; add/remove in explicit order. Approved by: eligible approver selection must agree with the real workflow. A printed name is not an approval or signature.
 - Directory scope: active staff memberships in the active legal entity, excluding portal users and inactive staff. Search display name, department and job title. Use stable user IDs, distinguish duplicate names with department/title and an authorized secondary identifier; never silently choose the first match.
-- `STAFF_GROUPING_THRESHOLD = 20`: above 20 eligible staff, group unfiltered results by department with an Unassigned group; alphabetical within groups. Search remains available at every size; filtered results preserve group context. This is an initial product heuristic, not an accessibility standard. Keep it in code-owned internal UI policy, without a DB/admin/super-admin setting or write API. The prototype declares it; grouped production combobox behavior is still to build.
+- `STAFF_GROUPING_THRESHOLD = 20`: above 20 eligible staff, group unfiltered results by department with an Unassigned group; alphabetical within groups. Search remains available at every size; filtered results preserve group context. This is an initial product heuristic, not an accessibility standard. Keep it in code-owned internal UI policy, without a DB/admin/super-admin setting or write API. The prototype demonstrates 8-person alphabetical and 24-person department-grouped lists; production integration is still to build.
 - Display-name and department models exist in P1 (`identity.ts`). Job title is absent: add a proper staff profile/job-title source later; permission roles are not job titles. Do not pretend a profile title is available today. Snapshot selected IDs/names/titles/entity/department into a finalized memo so profile edits do not rewrite signed history.
 - Signatures remain disabled. Snapshot and signing/approval lifecycle need a later design; no fake signature uploads or completion marks.
 
@@ -24,9 +24,9 @@ This HTML is a standalone proposal, not the implemented `/memos/new` route. Its 
 
 The first version mixed Arial-like form text with Georgia in the memo, used tiny signature metadata, repeated a heavy title/rule and added a redundant internal-memorandum footer. This weakened consistency and made the preview harder to read.
 
-Applied one sans-serif family, larger document body/sign-off text, lighter divider, more breathing room after the subject, removed redundant footer, and replaced repeated free-entry company/staff/title fields with contextual company, department choice and searchable staff names with read-only titles. Maintain restrained hierarchy with weight and spacing. Long names/titles wrap in the output. The preview is not a guaranteed one-page PDF; longer content may need pagination during production export.
+Applied one sans-serif family, larger document body/sign-off text, lighter divider, more breathing room after the subject, removed redundant footer, and replaced repeated free-entry company/staff/title fields with company letterhead, department choice and searchable combined staff name/title selectors. Maintain restrained hierarchy with weight and spacing. Long names/titles wrap in the output. The preview is not a guaranteed one-page PDF; longer content may need pagination during production export.
 
-Prototype uses the browser's native datalist for searchable people. It validates exact directory choices on change; it is not a final production combobox. Build a tested keyboard/screen-reader combobox for grouped results with Arrow keys, Enter, Escape, focus restoration, loading, empty and error states. Prevent duplicate sign-off selections and invalid user IDs in the real contract. Do not infer accessibility compliance from a screenshot.
+Prototype now uses a custom searchable staff selector with name/title hierarchy, directory IDs, group headings above 20 staff, Arrow keys, Enter, Escape, focus restoration and empty state. Full screen-reader, loading and server-error handling remain for production. Prevent duplicate sign-off selections and invalid user IDs in the real contract. Do not infer accessibility compliance from a screenshot.
 
 ## Emil skills: applicability
 
@@ -43,4 +43,24 @@ Memo motion: no animated document text, no live-preview crossfades per keystroke
 
 ## Verification and remaining work
 
-Desktop/mobile HTML render and JS parse checks only; no application server, database integration, production save or signature collection. Native datalist grouping and full keyboard/screen-reader checks remain for production implementation. This changes the approved design direction; it does not claim the P1 application now implements these fields.
+Desktop/mobile HTML render and JS parse checks only; no application server, database integration, production save or signature collection. Full keyboard/screen-reader checks remain for production implementation. This changes the approved design direction; it does not claim the P1 application now implements these fields.
+
+## Annotation refinements (2026-11-10)
+
+Kuu removed the company block from the input form, requested a company logo in the document, tighter paragraph rhythm, a larger subject-to-body gap without a divider, and one compact numbered person selector per recommender. Applied in the standalone prototype only.
+
+Typography roles: one Arial/sans-serif family, document body 14px/1.5, letterhead 15px/1.4, sign-off metadata 12px; name 600 weight, title 400 weight in a fully opaque quieter color. Subject/body separation 24px; paragraph gap 10px; closing gap 12px. Body uses real paragraphs rather than preformatted blank lines. Recommender controls use the persistent section heading plus a numbered accessible name including the selected name/title; other roles retain visible role headings. Placeholders do not replace accessible names. Titles use parentheses in the same selector, with normal wrapping. Row number and trash icon replace repeated Recommended by headings. Icon buttons retain explicit accessible removal names.
+
+Logo: no real company logo file found in the P1 checkout; outlined T is a placeholder, not an official logo. Production uses organization logo source in a 48px bounded contain-fit area, preserving aspect ratio with no crop/stretch; omit missing logo rather than a broken image. The company name remains text for print and accessibility.
+
+Both recommendation selectors start expanded solely to compare the requested small/large directory examples; production should start closed and open one at a time. Sample staff and titles are fictional. Lists are scrollable; large directory uses semantic department groups. Search matches names, titles and departments and uses stable IDs for selection. Full screen-reader/device validation and duplicate-role policy remain outside this proposal.
+
+Mechanical typography scan flagged Arial as an overused font. Retained deliberately for Kuu's one-font requirement, existing prototype continuity and offline delivery: this is an internal document, not a brand typography exploration.
+
+## Sonnet review and resolution
+
+Requested reviewer: Claude Sonnet 5.5, medium effort. Review was a static source assessment, not independent rendering or screen-reader testing. Reviewer approved the comparison direction after two blockers: inconsistent accessible picker names and collapsed single line breaks. Both addressed. Also addressed unselected signature blocks, viewport-dependent signature columns, invalid listbox empty-state placement, duplicate search labels, trigger Arrow/Escape handling, selected indicators and stronger active outlines, SVG chevrons, sticky 12px group headings, tokenized multiword search, and clearer placeholder text. Empty results are announced by a sibling live region; results remain options/groups only.
+
+Signature grid now follows available paper space with auto-fit columns; narrow paper may stack signers. Both directory comparison panels remain initially expanded intentionally. Production popup positioning, single-open state, complete screen-reader testing, contrast/token integration, duplicate-selection policy and authoritative staff data remain follow-up. Missing departments use Unassigned in prototype sorting/grouping. Names/titles are sample data, not organization records.
+
+Verification after changes: JavaScript parse and desktop/mobile HTML renders with no console errors. Attempted checks in the shared T3 browser found an older asset version, so those interaction checks did not verify the revised prototype. Keyboard and screen-reader behavior remain unverified at runtime. No production application files changed.
