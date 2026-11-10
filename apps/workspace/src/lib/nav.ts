@@ -4,10 +4,9 @@
  * it anywhere.
  *
  * An item is "built" when it has an `href` and belongs to SHIPPED_PHASES: it renders as a link.
- * Every other item renders disabled with its phase tag, and so shows the roadmap. Give it an `href`
- * as its screen becomes available. SHIPPED_PHASES lists phases with available navigation;
- * nav.test.ts keeps the linked screen list explicit, checks every P4 item has a destination,
- * and rejects links in future phases.
+ * Every other item renders as a plain disabled row. `phase` and SHIPPED_PHASES are internal
+ * data, never shown to users. Give items an `href` as their screens become available.
+ * nav.test.ts keeps the linked screen list explicit and rejects links in future phases.
  *
  * Items with `audience: 'admin'` are shown only to people who can see the admin screens. The
  * server decides that (canSeeAdmin in kernel-format.ts) and passes the answer to the sidebar:
@@ -46,7 +45,7 @@ export interface NavItem {
   /** Present only on built items. */
   href?: string;
   icon: NavIconName;
-  /** The phase that builds this item. */
+  /** Internal: the phase that will enable this item. Never shown to users. */
   phase: Phase;
   /**
    * Optional number shown in a pill at the row's end (the Figma "Organizations 4"). Only built
@@ -70,7 +69,7 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
-/** Phases whose available screens may be linked in navigation. */
+/** Internal phases whose available screens may be linked. Never shown to users. */
 export const SHIPPED_PHASES: readonly Phase[] = ['P0', 'P1', 'P2', 'P3', 'P4'];
 
 export const NAV_GROUPS: readonly NavGroup[] = [
@@ -310,7 +309,7 @@ export function isBuilt(item: NavItem): item is NavItem & { href: string } {
 }
 
 /**
- * The groups a person sees: unbuilt items stay (they show the roadmap), admin-only items go
+ * The groups a person sees: unbuilt items stay as plain disabled rows, admin-only items go
  * unless `showAdmin`, items with a `permission` go unless `can` grants any of them (no `can` means none
  * is granted), and a group left with no items goes too.
  */
@@ -329,16 +328,6 @@ export function visibleGroups(
           )),
     ),
   })).filter((group) => group.items.length > 0);
-}
-
-/** Text for the phase tag: "P2", or "Later". */
-export function phaseTag(phase: Phase): string {
-  return phase === 'later' ? 'Later' : phase;
-}
-
-/** Screen-reader text for the phase of an unbuilt item. */
-export function phaseDescription(phase: Phase): string {
-  return phase === 'later' ? 'planned for a later phase' : `planned for phase ${phase}`;
 }
 
 /** True when `pathname` is the item's page or one under it (`/inbox` owns `/inbox/abc`). */

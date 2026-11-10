@@ -10,7 +10,7 @@
   padding: 36px var(--margin-page) 48px;
 }
 
-/* Greeting block (Figma "Good morning, Amanda"): 24px semibold title, 12px line under it. */
+/* Page heading block: 24px semibold title, 12px line under it. */
 .pageHead {
   display: grid;
   gap: 1px;
@@ -29,56 +29,4 @@
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
-}
-
-.headText {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.heading {
-  font-size: var(--font-size-h2);
-  line-height: var(--line-height-h2);
-  overflow-wrap: anywhere;
-}
-
-.cardTitle {
-  font-size: var(--font-size-h3);
-  line-height: var(--line-height-h3);
-  overflow-wrap: anywhere;
-}
-
-.lede {
-  color: var(--text-secondary);
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-  gap: 16px 24px;
-  margin-top: 24px;
-}
-
-.fact {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding-top: 16px;
-  border-top: var(--border-width-thin) solid var(--border-subtle);
-}
-
-.term {
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
-}
-
-.value {
-  margin: 0;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
 }
