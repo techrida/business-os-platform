@@ -11,8 +11,9 @@ wait for Kuu to repeat the cascade request.
 
 - Discover the current branch graph and active sessions before editing. The known
   branches are `p0/ground-floor`, `p1/platform-kernel`, `p2/crm-quotations`,
-  `p3/sales-invoicing`, `p4/procurement` and `p4/on-p3`. P4 procurement is a
-  separate line from P3; preserve both, then reconcile the combined P4-on-P3 line.
+  `p3/sales-invoicing` and `p4/on-p3`. The former `p4/procurement` line was
+  consolidated into `p4/on-p3` at 77a314ea and its remote branch removed. Preserve
+  sales and procurement in the combined P4 line; do not recreate a retired branch.
 - Use coordinated, correctly bound sessions for affected phases when supported
   by the active harness. Assign one writer per checkout and coordinate overlapping
   files. Create enough sessions to cover the affected branches; do not start
