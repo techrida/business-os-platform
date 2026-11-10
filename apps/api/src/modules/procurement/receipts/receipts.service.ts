@@ -329,6 +329,46 @@ export class ReceiptsService {
     return toReceiptDto(row!, lines, serials);
   }
 
+  /** Discards a draft while holding the same PO, line and receipt locks as confirmation. */
+  async discard(id: string, idempotencyKey: string): Promise<ReceiptDto> {
+    this.assertStaffWithAccess();
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        { command: 'procurement.receipt.discard', key: idempotencyKey, body: { id } },
+        async () => {
+          const head = await this.readReceipt(tx, scope, id);
+          const po = await this.lockPo(tx, scope, head.purchaseOrderId);
+          this.assertMayReceive(head.kind, await this.requestOf(tx, scope, po));
+          await this.lockPoLines(tx, scope, po.id);
+          const receipt = await this.lockReceipt(tx, scope, id);
+          if (receipt.status === 'discarded') {
+            return { status: 200, response: await this.dtoOf(tx, scope, receipt) };
+          }
+          if (receipt.status !== 'draft') {
+            throw invalidTransition(
+              `A ${receipt.status} receipt cannot be discarded; only a draft can`,
+            );
+          }
+          const row = await updateVersioned(tx, receipts, id, receipt.version, {
+            status: 'discarded',
+            updatedAt: this.clock(),
+          });
+          await this.audit.record(tx, {
+            action: 'procurement.receipt.discarded',
+            entityType: RECEIPT_AUDIT_ENTITY,
+            entityId: id,
+            before: { status: 'draft' },
+            after: { status: 'discarded', number: receipt.number, purchaseOrderId: po.id },
+          });
+          return { status: 200, response: await this.dtoOf(tx, scope, row) };
+        },
+      );
+      return done.response;
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------- confirm
 
   /** Confirms a draft. See the controller for the answers. */
@@ -627,7 +667,7 @@ export class ReceiptsService {
   }
 
   /**
-   * Quantities received per PO line: `net` is every receipt line whatever its receipt's status (what the DB guard
+   * Quantities received per PO line: `net` is every non-discarded receipt line (what the DB guard
    * sums, so a draft reserves its units), `confirmed` those of confirmed and reversed receipts (a reversal nets
    * its original to zero) and `draft` the rest.
    */
@@ -650,6 +690,7 @@ export class ReceiptsService {
       .where(scoped(scope).where(receiptLines, eq(receiptLines.purchaseOrderId, poId)));
     const sums = new Map<string, { net: Decimal; confirmed: Decimal; draft: Decimal }>();
     for (const r of rows) {
+      if (r.status === 'discarded') continue;
       const s = sums.get(r.poLineId) ?? {
         net: new Decimal(0),
         confirmed: new Decimal(0),
@@ -729,6 +770,7 @@ export class ReceiptsService {
             and(
               eq(receiptLines.poLineId, line.poLineId),
               ne(receipts.status, 'reversed'),
+              ne(receipts.status, 'discarded'),
               inArray(receiptSerials.serialNo, serialNos),
             ),
           ),

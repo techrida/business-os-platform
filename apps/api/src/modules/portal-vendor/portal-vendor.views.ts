@@ -141,6 +141,7 @@ export type InternalBillStatus =
   | 'partially_paid'
   | 'paid'
   | 'voided'
+  | 'discarded'
   | 'rejected';
 
 const BILL_STATUS_FOR_VENDOR: Readonly<Record<InternalBillStatus, VendorPortalBillStatus | null>> =
@@ -156,6 +157,7 @@ const BILL_STATUS_FOR_VENDOR: Readonly<Record<InternalBillStatus, VendorPortalBi
     rejected: 'rejected',
     // A voided bill has no coarse status: it is not shown.
     voided: null,
+    discarded: null,
   };
 
 /** The coarse status a vendor sees, or null when the bill is not shown. */

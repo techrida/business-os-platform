@@ -10,6 +10,7 @@ import { keyOf } from '@/components/p2/crm/idempotency';
 import { isGuid } from '@/components/p2/customers/format';
 import {
   confirmReceipt,
+  discardReceipt,
   createReceipt,
   getPoProgress,
   getReceipt,
@@ -166,6 +167,20 @@ export async function confirmReceiptAction(
     r.o,
     'The receipt was confirmed. The purchase order now counts what arrived, and the quantities are final.',
   );
+}
+
+export async function discardReceiptAction(
+  prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const r = await open(prev, form);
+  if (!r.ok) return r.state;
+  try {
+    await discardReceipt(r.o.session, r.o.id, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'discard', r.o.receipt.kind);
+  }
+  return settled(r.o, 'The draft receipt was discarded. Its reserved quantities are open again.');
 }
 
 export async function reverseReceiptAction(
