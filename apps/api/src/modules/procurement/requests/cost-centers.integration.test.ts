@@ -103,7 +103,9 @@ beforeAll(async () => {
   const journal = JSON.parse(
     readFileSync(join(MIGRATIONS_FOLDER, 'meta/_journal.json'), 'utf8'),
   ) as { entries: { idx: number; tag: string }[] };
-  journal.entries = journal.entries.filter((entry) => entry.idx < 37);
+  const costCenterIndex = journal.entries.findIndex((entry) => entry.tag === '0037_cost_centers');
+  if (costCenterIndex < 0) throw new Error('Cost centre migration is missing from the journal');
+  journal.entries = journal.entries.slice(0, costCenterIndex);
   mkdirSync(join(priorFolder, 'meta'));
   writeFileSync(join(priorFolder, 'meta/_journal.json'), JSON.stringify(journal));
   for (const entry of journal.entries)
