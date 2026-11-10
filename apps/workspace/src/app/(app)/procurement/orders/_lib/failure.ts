@@ -11,7 +11,7 @@ export type PoOp = 'load' | 'issue' | 'amend' | 'shortClose' | 'cancel' | 'docum
 const MOVED = "This purchase order's status does not allow that. Reload to see where it stands.";
 
 const DRAFT_RECEIPT_HINT =
-  "This purchase order can't be closed right now. It may have changed, or a draft receipt may still be open on it. Confirm or remove the draft receipt, reload, and try again.";
+  "This purchase order can't be closed right now. It may have changed, or a draft receipt may still be open on it. Confirm or discard the draft receipt from its detail page, reload, and try again.";
 
 const CONFLICT_FALLBACK: Record<PoOp, string> = {
   load: 'This purchase order changed since you opened it. Reload and try again.',
@@ -53,7 +53,7 @@ export function poFailure(err: unknown, op: PoOp): ProcFailure {
         case 'PO_HAS_RECEIPTS':
           return {
             message:
-              'Goods or services have already been received on this order, so it can no longer be cancelled. If the rest will not arrive, short-close it instead.',
+              'A draft receipt may still be open, or goods or services have already been received on this order. Discard draft receipts from their detail pages and try cancelling again. If a receipt was confirmed and the rest will not arrive, short-close the order instead.',
             reload: false,
           };
         case 'invalid_transition':

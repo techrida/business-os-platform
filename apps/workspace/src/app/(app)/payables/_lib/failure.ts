@@ -7,9 +7,11 @@ import { failureWith, type ProcFailure } from '../../procurement/orders/_lib/fai
  */
 
 export type BillOp =
-  'load' | 'match' | 'submit' | 'void' | 'convert' | 'reject' | 'exception' | 'create';
+  'load' | 'match' | 'submit' | 'void' | 'convert' | 'reject' | 'exception' | 'create' | 'discard';
 
 const MOVED: Record<BillOp, string> = {
+  discard:
+    'This bill can no longer be discarded. Only a draft can be. Reload to see where it stands.',
   create: 'The vendor or purchase order changed. Check its current status and try again.',
   load: 'This bill changed since you opened it. Reload and try again.',
   match: 'This bill can no longer be matched. Reload to see where it stands.',
