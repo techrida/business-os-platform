@@ -266,5 +266,7 @@ export function describeStepTarget(step: StepSpec): string {
   if (step.kind === 'department_head') {
     return `department head (falls back to ${step.fallbackRole ?? DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE})`;
   }
+  if (step.kind === 'user') return 'Selected person';
+  if (step.kind === 'group') return 'Selected approval group';
   return `${step.kind}: ${step[step.kind] ?? '(missing)'}`;
 }
