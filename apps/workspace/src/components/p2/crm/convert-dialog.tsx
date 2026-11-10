@@ -90,6 +90,19 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
     };
   }, [customerId]);
 
+  async function searchCustomers() {
+    setSearching(true);
+    try {
+      const result = await searchConversionCustomers(query);
+      setCustomers(result.options);
+      setLookupError(result.error || (result.options.length === 0 ? 'No matching customers.' : ''));
+    } catch {
+      setLookupError('Customers could not be loaded. Try again.');
+    } finally {
+      setSearching(false);
+    }
+  }
+
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
   const patch = (p: Record<string, string>) => setValues((v) => ({ ...v, ...p }));
@@ -243,20 +256,8 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                     type="button"
                     variant="secondary"
                     disabled={searching}
-                    onClick={async () => {
-                      setSearching(true);
-                      try {
-                        const result = await searchConversionCustomers(query);
-                        setCustomers(result.options);
-                        setLookupError(
-                          result.error ||
-                            (result.options.length === 0 ? 'No matching customers.' : ''),
-                        );
-                      } catch {
-                        setLookupError('Customers could not be loaded. Try again.');
-                      } finally {
-                        setSearching(false);
-                      }
+                    onClick={() => {
+                      void searchCustomers();
                     }}
                   >
                     {searching ? 'Searching' : 'Search customers'}
