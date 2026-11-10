@@ -7,7 +7,11 @@ import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
-import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procurement';
+import {
+  getPurchaseRequest,
+  listDepartments,
+  type PurchaseRequestDto,
+} from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 
 import { updatePrAction } from '../../actions';
@@ -51,6 +55,7 @@ export default async function EditPurchaseRequestPage({
 
   const label = pr.number ?? 'Draft purchase request';
   const editable = isPrEditable(pr.status) && prGrants(session.roles).create;
+  const departments = editable ? await listDepartments(session).catch(() => []) : [];
   return (
     <Page width="narrow">
       <Breadcrumb
@@ -63,6 +68,7 @@ export default async function EditPurchaseRequestPage({
       <PageHeader title={`Edit ${label}`} />
       {editable ? (
         <PrForm
+          departments={departments}
           action={updatePrAction}
           initial={valuesFromDto(pr)}
           mode="edit"

@@ -161,13 +161,13 @@ export function valuesFromDto(dto: {
 
 const WORDS: Record<string, string> = {
   requestType: 'Choose goods, a service, or both.',
-  departmentId: 'Enter the department as its id (a UUID). There is no department list yet.',
-  costCenterId: 'Enter the cost centre as its id (a UUID). There is no cost centre list yet.',
+  departmentId: 'Select a department.',
+  costCenterId: 'A cost centre must be assigned to this request.',
   justification: 'Say why this is needed, up to 2000 characters.',
   requiredBy: 'Choose the date it is needed by.',
   deliveryLocation: 'The delivery location can be up to 200 characters.',
   budgetCode: 'Enter the budget code, up to 64 characters.',
-  projectId: 'The project must be an id (a UUID), or left empty.',
+  projectId: 'Enter a valid project reference, or leave it blank.',
   currency: 'Choose NPR, INR or USD.',
   emergencyReason: 'Say why this emergency cannot wait. It adds a Management approval.',
   description: 'Describe what is needed, up to 500 characters.',

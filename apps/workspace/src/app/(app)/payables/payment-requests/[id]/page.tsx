@@ -11,7 +11,11 @@ import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
-import { getPaymentRequest, type PaymentRequest } from '@/lib/api-payables';
+import {
+  getPaymentRequest,
+  listPaymentRequestItems,
+  type PaymentRequest,
+} from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 
 import { poMoney } from '../../../procurement/orders/_lib/model';
@@ -53,6 +57,10 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
       </Page>
     );
   }
+  // The same scoped lookup used by request entry. Fully claimed or paid items may be absent.
+  const items = await listPaymentRequestItems(session).catch(() => []);
+  const byOpenItem = new Map(items.map((item) => [item.openItemId, item]));
+  const canReadBill = hasPermission(session.roles, 'payables.bill.read');
   const status = PAYMENT_STATUS[request.status];
   return (
     <Page>
@@ -126,15 +134,28 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               </tr>
             </thead>
             <tbody>
-              {request.lines.map((line) => (
-                <tr key={line.id}>
-                  <Td>{line.lineNo}</Td>
-                  <Td>
-                    <span className={styles.long}>Payable item {line.lineNo}</span>
-                  </Td>
-                  <Td align="end">{poMoney(line.amount, request.currency)}</Td>
-                </tr>
-              ))}
+              {request.lines.map((line, index) => {
+                const item = byOpenItem.get(line.openItemId);
+                const reference = item
+                  ? [item.billNumber, item.vendorInvoiceNo].filter(Boolean).join(' · ')
+                  : '';
+                const label = reference || `Bill ${index + 1} of ${request.lines.length}`;
+                return (
+                  <tr key={line.id}>
+                    <Td>{line.lineNo}</Td>
+                    <Td>
+                      <span className={styles.long}>
+                        {item && reference && canReadBill ? (
+                          <Link href={`/payables/bills/${item.vendorBillId}`}>{label}</Link>
+                        ) : (
+                          label
+                        )}
+                      </span>
+                    </Td>
+                    <Td align="end">{poMoney(line.amount, request.currency)}</Td>
+                  </tr>
+                );
+              })}
             </tbody>
           </Table>
         </Panel>

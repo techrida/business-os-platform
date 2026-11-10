@@ -14,7 +14,6 @@ import { getVendor } from '@/lib/api-vendors';
 import { listPurchaseOrders, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 import type { Session } from '@/lib/session';
 
 import { poFailure } from './_lib/failure';
@@ -34,7 +33,7 @@ function href(status: PoStatus | undefined, page: number): string {
   return text === '' ? '/procurement/orders' : `/procurement/orders?${text}`;
 }
 
-/** Vendor names for the rows on this page. A vendor the person cannot read keeps its short id. */
+/** Vendor names for the rows on this page. Unreadable vendors show an explicit unavailable-name label. */
 async function vendorNames(session: Session, ids: readonly string[]): Promise<Map<string, string>> {
   const unique = [...new Set(ids)];
   const settled = await Promise.allSettled(unique.map((id) => getVendor(session, id)));
@@ -61,9 +60,7 @@ function Row({ po, vendor }: { po: PoListItem; vendor: string | undefined }) {
             vendor !== undefined ? (
               <span className={styles.long}>{vendor}</span>
             ) : (
-              <span className={styles.quiet} title={po.vendorId}>
-                Vendor {shortId(po.vendorId)}
-              </span>
+              <span className={styles.quiet}>Vendor name unavailable</span>
             )
           }
         />

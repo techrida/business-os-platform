@@ -85,6 +85,15 @@ describe('createPrAction', () => {
     );
   });
 
+  it.each(['costCenterId', 'departmentId'])(
+    'requires %s through normal validation before calling the API',
+    async (field) => {
+      const result = await createPrAction(start, form({ ...prForm, [field]: '' }));
+      expect(result.errors[field]).toBeTruthy();
+      expect(api.createPurchaseRequest).not.toHaveBeenCalled();
+    },
+  );
+
   it('refuses without procurement.pr.create and never calls the API', async () => {
     session.roles = ['finance'];
     const r = await createPrAction(start, form(prForm));

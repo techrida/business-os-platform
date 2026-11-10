@@ -164,6 +164,27 @@ describe('display helpers', () => {
       )?.value,
     ).toBe('Mina');
   });
+  it('resolves or redacts unknown P4 UUID references and nested arrays while keeping business facts', () => {
+    const billId = '11111111-1111-4111-8111-111111111111';
+    const supplierPartyId = '22222222-2222-4222-8222-222222222222';
+    const purchaseOrderId = '33333333-3333-4333-8333-333333333333';
+    const snapshot = {
+      billId,
+      supplierPartyId,
+      purchaseOrderId,
+      lines: [{ references: [billId, supplierPartyId] }],
+      taxId: 'PAN-12345',
+      sha256: 'audit-hash',
+    };
+    const rows = snapshotEntries(snapshot, new Map([[billId, 'Supplier bill 1']]));
+    const text = JSON.stringify(rows);
+    for (const id of [billId, supplierPartyId, purchaseOrderId]) expect(text).not.toContain(id);
+    expect(text).toContain('Supplier bill 1');
+    expect(text).toContain('Name unavailable');
+    expect(text).toContain('PAN-12345');
+    expect(text).toContain('audit-hash');
+    expect(snapshot.lines[0]?.references).toEqual([billId, supplierPartyId]);
+  });
   it('handles an empty or non-object snapshot', () => {
     expect(snapshotEntries(null)).toEqual([]);
     expect(snapshotEntries('text')[0]?.block).toBe(true);

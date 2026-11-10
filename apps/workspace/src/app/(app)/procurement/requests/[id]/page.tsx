@@ -16,7 +16,7 @@ import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procureme
 import { getApprovalRequest } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { humanizeKey, shortId } from '@/lib/kernel-ui';
+import { humanizeKey } from '@/lib/kernel-ui';
 
 import { canStartRfq, rfqGrants } from '../../rfqs/_lib/model';
 import { CancelForm, SubmitForm } from '../_components/command-forms';
@@ -112,12 +112,12 @@ function factsOf(pr: PurchaseRequestDto): Fact[] {
     {
       key: 'dept',
       label: 'Department',
-      value: <span className={styles.numeric}>{shortId(pr.departmentId)}</span>,
+      value: <span className={styles.numeric}>Department name unavailable</span>,
     },
     {
       key: 'cost',
       label: 'Cost centre',
-      value: <span className={styles.numeric}>{shortId(pr.costCenterId)}</span>,
+      value: <span className={styles.numeric}>Cost centre name unavailable</span>,
     },
     { key: 'budget', label: 'Budget code', value: pr.budgetCode },
     { key: 'currency', label: 'Currency', value: pr.currency },
@@ -131,7 +131,7 @@ function factsOf(pr: PurchaseRequestDto): Fact[] {
       label: 'Project',
       value:
         pr.projectId !== null ? (
-          <span className={styles.numeric}>{shortId(pr.projectId)}</span>
+          <span className={styles.numeric}>Project name unavailable</span>
         ) : (
           <span className={styles.quiet}>None</span>
         ),

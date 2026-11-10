@@ -17,7 +17,7 @@ import { getPurchaseRequest } from '@/lib/api-procurement';
 import { getComparison, getRfq, listSubmissions, type RfqDto } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { humanizeKey, shortId } from '@/lib/kernel-ui';
+import { humanizeKey } from '@/lib/kernel-ui';
 
 import styles from '../../requests/requests.module.css';
 import { CommitForm, RecommendForm, ScoreForm } from '../_components/decision-forms';
@@ -159,7 +159,8 @@ export default async function RfqPage({
       : Promise.resolve(null),
   ]);
   const names = nameIndex(vendors);
-  const vendorLabel = (vendorId: string): string => names.get(vendorId) ?? shortId(vendorId);
+  const vendorLabel = (vendorId: string): string =>
+    names.get(vendorId) ?? 'Vendor name unavailable';
   const status = RFQ_STATUS_LABEL[rfq.status];
   const prNumber = pr.value?.number ?? null;
   const decide = grants.sourcing && takesDecisions(rfq.status);
@@ -182,7 +183,7 @@ export default async function RfqPage({
           href={`/procurement/requests/${encodeURIComponent(rfq.purchaseRequestId)}`}
           className={styles.numeric}
         >
-          {prNumber ?? shortId(rfq.purchaseRequestId)}
+          {prNumber ?? 'Open purchase request'}
         </Link>
       ),
     },
@@ -206,7 +207,7 @@ export default async function RfqPage({
                   const row = comparison.value?.find((q) => q.id === rfq.recommendedQuotationId);
                   return row !== undefined
                     ? `${vendorLabel(row.vendorId)}, ${money(row.total, row.currency)}`
-                    : shortId(rfq.recommendedQuotationId);
+                    : 'Recommended quotation';
                 })()}
               </span>
             ),

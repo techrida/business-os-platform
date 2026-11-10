@@ -8,6 +8,7 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn().mockResolvedValue({ r
 vi.mock('@/components/p2/customers/permissions', () => ({ hasPermission: () => true }));
 vi.mock('../forms', () => ({ PaymentRequestCommand: () => null }));
 vi.mock('@/lib/api-payables', () => ({
+  listPaymentRequestItems: vi.fn().mockResolvedValue([]),
   getPaymentRequest: vi.fn().mockResolvedValue({
     id: '11111111-1111-4111-8111-111111111111',
     number: 'PAY-0042',
@@ -33,7 +34,7 @@ it('shows product labels while preserving the vendor link and payment references
   expect(html).toContain('href="/vendors/22222222-2222-4222-8222-222222222222"');
   expect(text).toContain('View vendor');
   expect(text).toContain('Selected paying account');
-  expect(text).toContain('Payable item 1');
+  expect(text).toContain('Bill 1 of 1');
   expect(text).toContain('PAY-0042');
   expect(text).toContain('Ending 6789');
   expect(text).not.toMatch(/22222222|33333333|open-item-id/);

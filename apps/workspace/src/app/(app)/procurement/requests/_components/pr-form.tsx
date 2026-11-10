@@ -16,6 +16,8 @@ import styles from '../requests.module.css';
 const WIDE = styles.wide ?? '';
 const MAX_LINES = 200;
 
+// Cost centres have no backing table or lookup yet. Keep manual reference entry in both modes.
+
 interface Row {
   /** Stable across add and remove, so a typed value never jumps to another line. */
   uid: number;
@@ -32,6 +34,7 @@ interface Row {
  */
 export function PrForm({
   action,
+  departments,
   initial,
   mode,
   idempotencyKey,
@@ -41,6 +44,7 @@ export function PrForm({
   reloadHref,
 }: {
   action: (prev: PrFormState, form: FormData) => Promise<PrFormState>;
+  departments: { id: string; name: string }[];
   initial: PrValues;
   mode: 'create' | 'edit';
   /** A UUID the server made for this render. */
@@ -142,22 +146,25 @@ export function PrForm({
               />
             )}
           </Field>
-          <Field
-            label="Department"
-            hint="The department's id. Its head approves this request."
-            error={err.departmentId}
-          >
+          <Field label="Department" error={err.departmentId}>
             {(control) => (
-              <Input
+              <Select
                 name="departmentId"
                 value={values.departmentId}
                 onChange={set('departmentId')}
-                autoComplete="off"
-                spellCheck={false}
-                className={styles.numeric}
                 required
                 {...control}
-              />
+              >
+                <option value="">Select a department</option>
+                {values.departmentId && !departments.some((d) => d.id === values.departmentId) ? (
+                  <option value={values.departmentId}>Department name unavailable</option>
+                ) : null}
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
             )}
           </Field>
           <Field label="Cost centre" hint="The cost centre's id." error={err.costCenterId}>
@@ -168,7 +175,6 @@ export function PrForm({
                 onChange={set('costCenterId')}
                 autoComplete="off"
                 spellCheck={false}
-                className={styles.numeric}
                 required
                 {...control}
               />
@@ -218,7 +224,11 @@ export function PrForm({
               />
             )}
           </Field>
-          <Field label="Project" hint="Optional. The project's id." error={err.projectId}>
+          <Field
+            label="Project"
+            hint="Optional. Enter the project reference, or leave blank."
+            error={err.projectId}
+          >
             {(control) => (
               <Input
                 name="projectId"
@@ -226,7 +236,6 @@ export function PrForm({
                 onChange={set('projectId')}
                 autoComplete="off"
                 spellCheck={false}
-                className={styles.numeric}
                 {...control}
               />
             )}
