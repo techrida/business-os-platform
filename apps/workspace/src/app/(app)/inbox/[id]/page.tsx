@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ApprovalRequestDto, InboxItemDto } from '@bos/contracts';
+import {
+  MemoTemplateSnapshotSchema,
+  type ApprovalRequestDto,
+  type InboxItemDto,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
@@ -19,6 +23,7 @@ import { snapshotEntries, when } from '@/lib/kernel-format';
 
 import { StatusBadge, statusText } from '../../kit';
 import { DecisionForm } from './decision-form';
+import { MemoPaper } from '../../memos/memo-paper';
 import styles from '../inbox.module.css';
 
 export const metadata: Metadata = { title: 'Approval · Business OS' };
@@ -113,7 +118,28 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           : 'unknown';
 
   const title = titleOf(request.snapshot);
-  const rows = snapshotEntries(request.snapshot);
+  const snapshot = request.snapshot;
+  const memoTemplate = MemoTemplateSnapshotSchema.safeParse(
+    request.documentType === 'test_memo' &&
+      snapshot !== null &&
+      typeof snapshot === 'object' &&
+      'template' in snapshot
+      ? snapshot.template
+      : null,
+  );
+  const memoBody =
+    snapshot !== null &&
+    typeof snapshot === 'object' &&
+    'body' in snapshot &&
+    typeof snapshot.body === 'string'
+      ? snapshot.body
+      : '';
+  const selectedSigners = memoTemplate.success
+    ? [...memoTemplate.data.recommenders, memoTemplate.data.approvedBy]
+    : [];
+  const rows = snapshotEntries(request.snapshot).filter(
+    (row) => !memoTemplate.success || row.key !== 'template',
+  );
   const inboxItem = items?.find((i) => i.requestId === request.requestId);
 
   const facts: Fact[] = rows.map((row) => ({
@@ -125,7 +151,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
   const timeline: TimelineStep[] = request.steps.map((step) => ({
     key: step.seq,
-    title: stepWho(step),
+    title: selectedSigners[step.seq - 1]?.name ?? stepWho(step),
     status: statusText(step.status),
     tone: STEP_TONE[step.status] ?? 'upcoming',
     detail: (
@@ -200,7 +226,16 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             ) : facts.length === 0 ? (
               <p className={styles.note}>The snapshot is empty.</p>
             ) : (
-              <FactList facts={facts} />
+              <>
+                {memoTemplate.success ? (
+                  <MemoPaper
+                    template={memoTemplate.data}
+                    title={title ?? request.documentNumber}
+                    body={memoBody}
+                  />
+                ) : null}
+                <FactList facts={facts} />
+              </>
             )}
           </Panel>
 
