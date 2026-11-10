@@ -21,3 +21,5 @@ Runtime owner must back up P1, preserve prior API image, build only P1 API/migra
 - Real Postgres phase-upgrade migration regression passed: missing older migration applies once, original ledger rows and seeded data stay intact, failure rolls schema and ledger back.
 - Browser save/reopen/preview/submit, runtime refresh, runtime refresh remain pending. Isolated feature-worktree production build and dev exclusion checker passed.
 - P2, P3, combined P4 memo cascade sessions remain pending P1 completion.
+
+Follow-up verification: runner rejects unknown applied hashes before applying pending migrations. Real Postgres regression passed for changed historical SQL and rollback. Memo decision authorization now requires the selected staff member (or an existing authorized delegate), in addition to all normal live role and separation-of-duties checks. The real memo integration regression proves another eligible role holder cannot approve under the selected person's printed name and the selected people can complete approval. All 35 memo tests pass with this guard.
