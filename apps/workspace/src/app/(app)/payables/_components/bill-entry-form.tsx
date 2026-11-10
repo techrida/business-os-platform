@@ -45,6 +45,7 @@ export function BillEntryForm({
   idempotencyKey,
   orderLines,
   taxCodes,
+  withholdingCodes = [],
   cancelHref,
   reloadHref,
   entry,
@@ -55,6 +56,7 @@ export function BillEntryForm({
   /** Empty for a bill without a purchase order. */
   orderLines: readonly OrderLine[];
   taxCodes: readonly TaxOption[];
+  withholdingCodes?: readonly TaxOption[];
   cancelHref: string;
   reloadHref: string;
 }) {
@@ -194,19 +196,24 @@ export function BillEntryForm({
                   )}
                 </Field>
                 <Field
-                  label="Withholding code ID (optional)"
+                  label="Withholding (optional)"
                   hint="Leave empty when no tax is withheld."
                   error={errors[`${i}.tdsCodeId`]}
                 >
                   {(control) => (
-                    <Input
+                    <Select
                       name={fieldName(i, 'tdsCodeId')}
                       value={row.tdsCodeId}
                       onChange={(e) => set(i, 'tdsCodeId', e.target.value)}
-                      autoComplete="off"
-                      spellCheck={false}
                       {...control}
-                    />
+                    >
+                      <option value="">No withholding</option>
+                      {withholdingCodes.map((code) => (
+                        <option key={code.id} value={code.id}>
+                          {code.label}
+                        </option>
+                      ))}
+                    </Select>
                   )}
                 </Field>
               </div>
