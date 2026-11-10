@@ -25,9 +25,12 @@ export function MemoPaper({
       <p className={styles.date}>Date: {template.date}</p>
       <h2 className={styles.subject}>Subject: {title || 'Untitled memo'}</h2>
       <div className={styles.body}>
-        {body.split(/\n\s*\n/).map((paragraph, i) => (
-          <p key={i}>{paragraph}</p>
-        ))}
+        {body
+          .replace(/\r\n?/g, '\n')
+          .split(/\n\s*\n/)
+          .map((paragraph, i) => (
+            <p key={i}>{paragraph}</p>
+          ))}
       </div>
       <p className={styles.closing}>{template.closing}</p>
       <div className={styles.signers}>
