@@ -68,6 +68,14 @@ export class LoginBindingError extends Error {
   }
 }
 
+/** No pending transaction remains. Never exchange the old authorization code. */
+export class LoginStateExpiredError extends Error {
+  constructor() {
+    super('oidc: unknown, expired or already used state');
+    this.name = 'LoginStateExpiredError';
+  }
+}
+
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
 }
@@ -230,7 +238,7 @@ export async function completeLogin(
 
   const redis = await whenReady(getOidcRedis());
   const raw = await redis.getdel(oidcKey(state));
-  if (raw === null) throw new Error('oidc: unknown, expired or already used state');
+  if (raw === null) throw new LoginStateExpiredError();
 
   let pending: z.infer<typeof PendingLoginSchema>;
   try {

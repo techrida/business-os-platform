@@ -37,7 +37,12 @@ const { ApiError } = vi.hoisted(() => ({
 /** The request's cookies, as `cookies().get()` sees them. Reset per test. */
 let requestCookies = new Map<string, string>();
 
+const { LoginStateExpiredError } = vi.hoisted(() => ({
+  LoginStateExpiredError: class extends Error {},
+}));
+
 vi.mock('@/lib/oidc', () => ({
+  LoginStateExpiredError,
   // Pinned to the literal here and in oidc.test.ts, so a renamed constant fails one of them.
   LOGIN_COOKIE: '__Host-bos_login',
   LOGIN_COOKIE_MAX_AGE: 600,
@@ -275,6 +280,27 @@ describe('GET /auth/callback', () => {
     expect(m.setSessionCookie).toHaveBeenCalledWith('sid-1');
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('https://app.localhost/orders');
+  });
+
+  it('restarts an expired transaction once without creating a session', async () => {
+    m.completeLogin.mockRejectedValue(new LoginStateExpiredError());
+    const res = await call('?code=stale&state=expired');
+    expect(res.headers.get('location')).toBe(`${ORIGIN}/auth/login`);
+    expect(m.createSession).not.toHaveBeenCalled();
+    expect(m.getMe).not.toHaveBeenCalled();
+    expect(m.cookieSet).toHaveBeenCalledWith('__Host-bos_login_recovery', '1', {
+      ...LOGIN_COOKIE_ATTRS,
+      maxAge: 600,
+    });
+  });
+
+  it('does not loop when the recovery attempt also expires', async () => {
+    requestCookies.set('__Host-bos_login_recovery', '1');
+    m.completeLogin.mockRejectedValue(new LoginStateExpiredError());
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await call('?code=stale&state=expired');
+    expect(res.headers.get('location')).toBe(`${ORIGIN}/auth/error?code=callback_failed`);
+    expect(m.createSession).not.toHaveBeenCalled();
   });
 
   it('hands completeLogin the registered redirect URI with only the query of the request', async () => {
