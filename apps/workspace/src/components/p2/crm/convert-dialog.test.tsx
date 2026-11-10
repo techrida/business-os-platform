@@ -10,11 +10,22 @@ vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: vi.fn(() => Promise.resolve({ accessToken: 'test', roles: ['sales'] })),
 }));
-const api = vi.hoisted(() => ({ convertLead: vi.fn(), listContacts: vi.fn() }));
+const api = vi.hoisted(() => ({
+  convertLead: vi.fn(),
+  listContacts: vi.fn(),
+  listCustomers: vi.fn(),
+}));
 vi.mock('./crm-api', () => ({ convertLead: api.convertLead }));
-vi.mock('@/components/p2/customers/api', () => ({ listContacts: api.listContacts }));
+vi.mock('@/components/p2/customers/api', () => ({
+  listContacts: api.listContacts,
+  listCustomers: api.listCustomers,
+}));
 
-import { convertLeadAction, loadConvertContacts } from '@/app/(app)/leads/actions';
+import {
+  convertLeadAction,
+  loadConvertContacts,
+  searchConvertCustomers,
+} from '@/app/(app)/leads/actions';
 import { ConvertDialog } from './convert-dialog';
 import type { DuplicateInfo } from './types';
 
@@ -124,4 +135,73 @@ it('selects a named contact with neither email nor phone for an existing custome
   );
   expect(mounted.container.textContent).not.toContain(CONTACT);
   expect(mounted.container.textContent).not.toContain('customer screens');
+});
+
+it('searches a different legal name and links the selected customer without duplicate detection', async () => {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  api.listCustomers.mockResolvedValue({
+    items: [{ id: CUSTOMER, legalName: 'Mountain Legal Ltd' }],
+  });
+  api.listContacts.mockResolvedValue({ items: [{ id: CONTACT, fullName: 'Mina' }] });
+  mounted = await mountForm(
+    <ConvertDialog
+      lead={{
+        id: LEAD,
+        version: 1,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'Trading Alias',
+        contactName: '',
+        email: '',
+        phone: '',
+      }}
+      action={async (prev, form) => {
+        submitted.push(form);
+        return convertLeadAction(prev, form);
+      }}
+      loadContacts={loadConvertContacts}
+      searchCustomers={searchConvertCustomers}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  await click(mounted.container.querySelector('input[name="customerMode"][value="existing"]'));
+  await fill(
+    mounted.container.querySelector('input[aria-label="Search customers by name"]'),
+    'Mountain',
+  );
+  expect(api.listCustomers).toHaveBeenLastCalledWith(expect.anything(), {
+    q: 'Mountain',
+    limit: 20,
+  });
+  const customers = mounted.container.querySelector('select[name="customerId"]');
+  expect(customers?.textContent).toContain('Mountain Legal Ltd');
+  await fill(customers, CUSTOMER);
+  expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
+  await click(mounted.container.querySelector('input[name="contactMode"][value="existing"]'));
+  await fill(mounted.container.querySelector('select[name="contactId"]'), CONTACT);
+  await submit(mounted.container);
+  expect(submitted[0]?.get('customerId')).toBe(CUSTOMER);
+  expect(submitted[0]?.getAll('customerMode')).toEqual(['existing']);
+  expect(api.convertLead).toHaveBeenCalledTimes(1);
+  expect(api.convertLead).toHaveBeenCalledWith(
+    expect.anything(),
+    LEAD,
+    expect.objectContaining({
+      customer: { mode: 'existing', customerId: CUSTOMER },
+      contact: { mode: 'existing', contactId: CONTACT },
+    }),
+    expect.any(String),
+  );
+  expect(mounted.container.textContent).not.toContain(CUSTOMER);
+});
+
+it('keeps refused customer searches empty and does not issue blank or oversized reads', async () => {
+  api.listCustomers.mockRejectedValue(new ApiError(403, 'forbidden'));
+  const result = await searchConvertCustomers('Mountain');
+  expect(result.customers).toEqual([]);
+  expect(result.error).toBeTruthy();
+  api.listCustomers.mockClear();
+  expect(await searchConvertCustomers('  ')).toEqual({ customers: [] });
+  expect(await searchConvertCustomers('x'.repeat(101))).toEqual({ customers: [] });
+  expect(api.listCustomers).not.toHaveBeenCalled();
 });
