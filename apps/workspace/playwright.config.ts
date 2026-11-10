@@ -88,6 +88,7 @@ export default defineConfig({
         'personas.spec.ts',
         'exit.spec.ts',
         'inbox.spec.ts',
+        'p0-shell.spec.ts',
         'p2/*.spec.ts',
         'p3/*.spec.ts',
         'p4/*.spec.ts',
