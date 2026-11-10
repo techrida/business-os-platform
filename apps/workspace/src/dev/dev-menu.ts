@@ -1,6 +1,6 @@
 // Dev menu: a floating developer/QA widget. Vanilla DOM inside a Shadow DOM host so the app's
-// CSS cannot reach it and it cannot reach the app's CSS. It only calls production endpoints
-// and adds no bypass. Loaded from src/instrumentation-client.ts behind a development-only
+// CSS cannot reach it and it cannot reach the app's CSS. Identity inspection uses the real
+// app session; Accounts uses the privileged local development login client. Loaded from src/instrumentation-client.ts behind a development-only
 // guard, so it is absent from production builds.
 import { formatWhoami, parseState, serializeState, type DevMenuState } from './dev-menu-state';
 
