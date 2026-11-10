@@ -296,11 +296,16 @@ export default async function MemoPage({
                         <div className={styles.stepHead}>
                           <span className={styles.stepWho}>
                             <span className="sr-only">Step {s.seq}: </span>
-                            {s.kind === 'role' && s.roleKey
-                              ? `Anyone with the ${s.roleKey} role`
-                              : s.kind === 'group'
-                                ? 'An approval group'
-                                : 'A named person'}
+                            {memo.template &&
+                            [...memo.template.recommenders, memo.template.approvedBy][s.seq - 1]
+                              ? [...memo.template.recommenders, memo.template.approvedBy][
+                                  s.seq - 1
+                                ]!.name
+                              : s.kind === 'role' && s.roleKey
+                                ? `Anyone with the ${s.roleKey} role`
+                                : s.kind === 'group'
+                                  ? 'An approval group'
+                                  : 'A named person'}
                           </span>
                           {s.blocked ? <StatusBadge status="blocked" /> : null}
                         </div>
