@@ -12,12 +12,24 @@
 // P2 replaces this with quotations and deletes the module; the audit rows stay.
 import {
   type CreateMemoBody,
+  type MemoDirectory,
+  type MemoTemplateSnapshot,
   type DocumentVersionDto,
   type MemoDto,
   type Money,
   type Permission,
 } from '@bos/contracts';
-import { approvalRequests, parties, scoped, testMemos } from '@bos/db';
+import {
+  approvalRequests,
+  departments,
+  idpOrgs,
+  organizations,
+  userEntities,
+  users,
+  parties,
+  scoped,
+  testMemos,
+} from '@bos/db';
 import { Dec } from '@bos/locale';
 import {
   BadRequestException,
@@ -30,7 +42,7 @@ import {
   Optional,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
@@ -102,6 +114,7 @@ function frozenAttachments(versions: DocumentVersionDto[]): FrozenAttachment[] |
 
 export function toMemoDto(row: MemoRow): MemoDto {
   return {
+    template: row.template,
     id: row.id,
     number: row.number,
     title: row.title,
@@ -182,10 +195,97 @@ export class TestMemoService implements OnModuleInit {
     });
   }
 
+  async directory(): Promise<MemoDirectory> {
+    const { scope, principal } = this.caller.current();
+    this.authz.assert('memo.create');
+    if (principal.orgKind !== 'staff' || principal.status !== 'active')
+      throw new ForbiddenException();
+    const [entity] = await this.db
+      .select()
+      .from(organizations)
+      .where(scoped(scope).where(organizations));
+    if (!entity) throw new ForbiddenException();
+    const depts = await this.db
+      .select({ id: departments.id, name: departments.name })
+      .from(departments)
+      .where(scoped(scope).where(departments));
+    const people = await this.db
+      .select({
+        userId: users.id,
+        name: users.displayName,
+        jobTitle: userEntities.jobTitle,
+        departmentId: userEntities.departmentId,
+      })
+      .from(userEntities)
+      .innerJoin(
+        users,
+        and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
+      )
+      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
+      .where(
+        and(
+          scoped(scope).where(userEntities),
+          eq(users.status, 'active'),
+          // The authoritative mirror takes email only from ZITADEL human.email; machine users have null.
+          isNotNull(users.email),
+          ne(users.email, ''),
+          eq(idpOrgs.kind, 'staff'),
+        ),
+      );
+    return {
+      organizationId: entity.id,
+      organizationName: entity.legalName,
+      currentUserId: principal.userId,
+      departmentId: principal.departmentId,
+      departments: depts,
+      people: people.flatMap((p) =>
+        p.name?.trim()
+          ? [
+              {
+                userId: p.userId,
+                name: p.name,
+                jobTitle: p.jobTitle,
+                department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
+              },
+            ]
+          : [],
+      ),
+    };
+  }
+
+  private async templateSnapshot(
+    input: NonNullable<CreateMemoBody['template']>,
+  ): Promise<MemoTemplateSnapshot> {
+    const directory = await this.directory();
+    // Prepared attribution is the actual actor. Delegated authorship needs its own permission.
+    if (input.preparedByUserId !== directory.currentUserId)
+      throw new ForbiddenException('Prepared by must be the signed-in staff member');
+    const department = directory.departments.find((d) => d.id === input.departmentId);
+    if (!department) throw new BadRequestException('Choose a department in the active company');
+    const person = (id: string) => {
+      const p = directory.people.find((p) => p.userId === id);
+      if (!p)
+        throw new BadRequestException('Selected staff member is unavailable in the active company');
+      return p;
+    };
+    return {
+      organizationId: directory.organizationId,
+      organizationName: directory.organizationName,
+      departmentId: department.id,
+      departmentName: department.name,
+      date: input.date,
+      closing: input.closing,
+      preparedBy: person(input.preparedByUserId),
+      recommenders: input.recommenderUserIds.map(person),
+      approvedBy: person(input.approvedByUserId),
+    };
+  }
+
   // ----------------------------------------------------------------------------------------------- create
 
   async create(body: CreateMemoBody): Promise<MemoDto> {
     const { scope, actor, principal } = this.caller.current();
+    const template = body.template ? await this.templateSnapshot(body.template) : undefined;
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       // The FK also refuses a vendor or foreign party, but as a 500; name the problem as a 400 instead.
@@ -219,6 +319,7 @@ export class TestMemoService implements OnModuleInit {
         .insert(testMemos)
         .values(
           scoped(scope).values({
+            template,
             number,
             title: body.title,
             body: body.body,
@@ -230,7 +331,7 @@ export class TestMemoService implements OnModuleInit {
             fxDate: snap.rateDate,
             status: 'draft' as const,
             ownerUserId: principal.userId,
-            departmentId: principal.departmentId,
+            departmentId: template?.departmentId ?? principal.departmentId,
             customerPartyId: body.customerPartyId ?? null,
             version: 1,
             createdAt: now,
@@ -262,6 +363,7 @@ export class TestMemoService implements OnModuleInit {
 
   async update(id: string, body: UpdateMemoBody): Promise<MemoDto> {
     const { scope, actor, principal } = this.caller.current();
+    const template = body.template ? await this.templateSnapshot(body.template) : undefined;
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
@@ -280,6 +382,7 @@ export class TestMemoService implements OnModuleInit {
       const [updated] = await tx
         .update(testMemos)
         .set({
+          ...(template !== undefined && { template, departmentId: template.departmentId }),
           ...(body.title !== undefined && { title: body.title }),
           ...(body.body !== undefined && { body: body.body }),
           ...(snap !== undefined && {
@@ -334,6 +437,7 @@ export class TestMemoService implements OnModuleInit {
         title: row.title,
         // Plain strings only: the engine hashes this snapshot, so it must not hold Dates or row internals.
         snapshot: {
+          template: row.template ?? null,
           number: row.number,
           title: row.title,
           body: row.body,
@@ -365,6 +469,14 @@ export class TestMemoService implements OnModuleInit {
         // engine reads it; until then the engine records the requester as the submitter.
         submittedByUserId: principal.userId,
       };
+      if (row.template) {
+        const directory = await this.directory();
+        const selected = [...row.template.recommenders, row.template.approvedBy];
+        if (selected.some((p) => !directory.people.some((active) => active.userId === p.userId))) {
+          throw new ConflictException('A selected approver is no longer active in this company');
+        }
+        input.proposedApproverIds = selected.map((p) => p.userId);
+      }
       const submitted = await this.approvals.submit(tx, input);
       await tx
         .update(testMemos)
