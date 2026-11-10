@@ -304,7 +304,7 @@ export interface ReceiptDto {
   kind: ReceiptKind;
   receivedAt: string;
   location: string | null;
-  status: 'draft' | 'confirmed' | 'reversed';
+  status: 'draft' | 'confirmed' | 'reversed' | 'discarded';
   createdBy: string;
   confirmedBy: string | null;
   confirmedAt: string | null;
