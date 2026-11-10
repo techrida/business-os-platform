@@ -83,7 +83,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
                 key: 'vendor',
                 label: 'Vendor',
                 value: (
-                  <Link href={`/vendors/${request.vendorPartyId}`}>{request.vendorPartyId}</Link>
+                  <Link href={`/vendors/${request.vendorPartyId}`}>View vendor</Link>
                 ),
               },
               {
@@ -94,7 +94,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'source',
                 label: 'Paying entity bank account',
-                value: request.fromBankAccountId,
+                value: 'Selected paying account',
               },
               {
                 key: 'total',
@@ -132,7 +132,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
                 <tr key={line.id}>
                   <Td>{line.lineNo}</Td>
                   <Td>
-                    <span className={styles.long}>{line.openItemId}</span>
+                    <span className={styles.long}>Payable item {line.lineNo}</span>
                   </Td>
                   <Td align="end">{poMoney(line.amount, request.currency)}</Td>
                 </tr>

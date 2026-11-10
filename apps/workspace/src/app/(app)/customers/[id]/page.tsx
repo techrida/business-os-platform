@@ -31,7 +31,6 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
 
@@ -196,15 +195,11 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
               {accounts.map((a) => (
                 <tr key={a.organizationId}>
                   <Td>
-                    <span className={styles.ref} title={a.organizationId}>
-                      Entity {shortId(a.organizationId)}
-                    </span>
+                    <span className={styles.ref}>Legal entity</span>
                   </Td>
                   <Td>
                     {a.paymentTermId !== null ? (
-                      <span className={styles.ref} title={a.paymentTermId}>
-                        Terms {shortId(a.paymentTermId)}
-                      </span>
+                      <span className={styles.ref}>Agreed terms</span>
                     ) : (
                       <span className={styles.quiet}>Not set</span>
                     )}
@@ -376,7 +371,7 @@ export default async function CustomerPage({
       label: 'Account owner',
       value:
         customer.ownerUserId !== null ? (
-          <span title={customer.ownerUserId}>Person {shortId(customer.ownerUserId)}</span>
+          <span>Assigned account owner</span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>
         ),
