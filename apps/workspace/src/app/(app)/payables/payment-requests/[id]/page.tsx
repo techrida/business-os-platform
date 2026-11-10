@@ -82,9 +82,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'vendor',
                 label: 'Vendor',
-                value: (
-                  <Link href={`/vendors/${request.vendorPartyId}`}>{request.vendorPartyId}</Link>
-                ),
+                value: <Link href={`/vendors/${request.vendorPartyId}`}>Open vendor</Link>,
               },
               {
                 key: 'bank',
@@ -132,7 +130,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
                 <tr key={line.id}>
                   <Td>{line.lineNo}</Td>
                   <Td>
-                    <span className={styles.long}>{line.openItemId}</span>
+                    <span className={styles.long}>Bill reference unavailable</span>
                   </Td>
                   <Td align="end">{poMoney(line.amount, request.currency)}</Td>
                 </tr>

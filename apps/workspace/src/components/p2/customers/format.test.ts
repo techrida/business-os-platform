@@ -131,12 +131,12 @@ describe('small helpers', () => {
     expect(isGuid('')).toBe(false);
   });
 
-  it('names a customer, or falls back to the short id when the name could not be read', () => {
+  it('names a customer, or falls back to an unavailable-name label when the name could not be read', () => {
     expect(customerLabel({ legalName: 'Himalayan Construction', number: 'CUS-0001' })).toBe(
       'Himalayan Construction',
     );
     expect(customerLabel(undefined, 'aaaabbbb-1111-4111-8111-1234567890ab')).toBe(
-      'Customer 567890ab',
+      'Customer name unavailable',
     );
   });
 });

@@ -16,7 +16,6 @@ import {
 import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { snapshotEntries, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { StatusBadge, statusText } from '../../kit';
 import { DecisionForm } from './decision-form';
@@ -41,8 +40,8 @@ type Step = ApprovalRequestDto['steps'][number];
 /** Who a step belongs to, in words. Names are not available to staff without admin rights. */
 function stepWho(step: Step): string {
   if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
-  if (step.kind === 'group' && step.groupId) return `Approval group ${shortId(step.groupId)}`;
-  if (step.kind === 'user' && step.userId) return `Person ${shortId(step.userId)}`;
+  if (step.kind === 'group' && step.groupId) return 'Approval group';
+  if (step.kind === 'user' && step.userId) return 'Name unavailable';
   return `Step ${step.seq}`;
 }
 
@@ -63,8 +62,8 @@ function titleOf(snapshot: unknown): string | null {
   return null;
 }
 
-function Person({ id }: { id: string }) {
-  return <span title={id}>person {shortId(id)}</span>;
+function Person(_: { id: string }) {
+  return <span>Name unavailable</span>;
 }
 
 export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {

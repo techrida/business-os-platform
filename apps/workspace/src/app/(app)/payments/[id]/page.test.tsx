@@ -143,9 +143,9 @@ describe('payment detail', () => {
     expect(html).toContain('NPR 10,00,000.00');
   });
 
-  it('falls back to a short id when the customer cannot be read', async () => {
+  it('falls back to an unavailable-name label when the customer cannot be read', async () => {
     mocks.getCustomer.mockRejectedValue(new ApiError(403, 'x'));
-    expect(await render()).toContain('Customer 33333333');
+    expect(await render()).toContain('Customer name unavailable');
   });
 
   it('says so when the allocations cannot be read, and when there are none', async () => {
@@ -252,7 +252,7 @@ describe('allocations table labels and deallocate', () => {
     asAccountant();
     const html = await render();
     expect(html).toContain('INV-SETTLED-9');
-    expect(html).not.toContain('Invoice 66666666');
+    expect(html).not.toContain('Invoice number unavailable');
     expect(mocks.getCustomerStatement).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID, {
       currency: 'NPR',
     });
@@ -262,11 +262,11 @@ describe('allocations table labels and deallocate', () => {
     });
   });
 
-  it('falls back to a short id when the statement cannot be read (no ar.read, or a failure)', async () => {
+  it('falls back to an unavailable-name label when the statement cannot be read (no ar.read, or a failure)', async () => {
     mocks.getPayment.mockResolvedValue(verifiedPayment());
     mocks.listPaymentAllocations.mockResolvedValue([allocationRow()]);
     mocks.getCustomerStatement.mockRejectedValue(new ApiError(403, 'x'));
-    expect(await render()).toContain('Invoice 66666666');
+    expect(await render()).toContain('Invoice number unavailable');
   });
 
   it('does not ask for a statement just for labels when there are no allocations', async () => {

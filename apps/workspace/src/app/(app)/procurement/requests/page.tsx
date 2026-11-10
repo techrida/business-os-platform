@@ -12,7 +12,6 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listPurchaseRequests, type PurchaseRequestListItem } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { prFailure } from './_lib/failure';
 import { PR_STATUS_LABEL, prGrants } from './_lib/model';
@@ -48,7 +47,7 @@ function Row({ pr }: { pr: PurchaseRequestListItem }) {
         />
       </Td>
       <Td nowrap>
-        <span className={styles.numeric}>{shortId(pr.departmentId)}</span>
+        <span className={styles.numeric}>Department name unavailable</span>
       </Td>
       <Td nowrap>{when(pr.requiredBy, 'date')}</Td>
       <Td nowrap>

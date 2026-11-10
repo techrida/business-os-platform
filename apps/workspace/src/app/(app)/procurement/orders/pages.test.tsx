@@ -156,10 +156,10 @@ describe('the purchase order list', () => {
     expect(await list({ status: 'cancelled' })).toContain('No cancelled purchase orders.');
   });
 
-  it('falls back to a short id when the vendor cannot be read, and keeps a long name wrapping', async () => {
+  it('falls back to an unavailable-name label when the vendor cannot be read, and keeps a long name wrapping', async () => {
     vendors.getVendor.mockRejectedValue(apiError(403));
     api.listPurchaseOrders.mockResolvedValue([order()]);
-    expect(await list()).toContain('Vendor 33333333');
+    expect(await list()).toContain('Vendor name unavailable');
   });
 
   it('shows the no-access pattern for a 403 and a retry for any other failure', async () => {
@@ -240,7 +240,7 @@ describe('the purchase order page', () => {
     expect(out).toContain('PO-2082-0001');
     expect(out).toContain('The versions did not load');
     expect(out).toContain('The receipt progress did not load');
-    expect(out).toContain('Vendor 33333333');
+    expect(out).toContain('Vendor name unavailable');
     expect(out).toContain('Approved total');
   });
 

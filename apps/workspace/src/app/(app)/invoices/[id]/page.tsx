@@ -11,7 +11,6 @@ import { failureOf } from '@/lib/api-kernel';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { DayValue, Lines, NprSnapshot, Totals } from '../_components/detail-parts';
@@ -84,7 +83,7 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       label: 'Customer',
       value: (
         <Link href={`/customers/${encodeURIComponent(invoice.customerId)}`} className={styles.wrap}>
-          {invoice.buyer?.legalName ?? `Customer ${shortId(invoice.customerId)}`}
+          {invoice.buyer?.legalName ?? 'Customer name unavailable'}
         </Link>
       ),
     },
@@ -94,9 +93,7 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       key: 'order',
       label: 'Sales order',
       value: (
-        <Link href={`/sales-orders/${encodeURIComponent(invoice.salesOrderId)}`}>
-          Order {shortId(invoice.salesOrderId)}
-        </Link>
+        <Link href={`/sales-orders/${encodeURIComponent(invoice.salesOrderId)}`}>Open order</Link>
       ),
     });
   }
@@ -106,7 +103,7 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
       label: 'Corrects',
       value: (
         <Link href={`/invoices/${encodeURIComponent(invoice.originalInvoiceId)}`}>
-          Invoice {shortId(invoice.originalInvoiceId)}
+          Open invoice
         </Link>
       ),
     });
@@ -207,7 +204,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         }
         description={
           <span className={styles.wrap}>
-            {invoice.buyer?.legalName ?? `Customer ${shortId(invoice.customerId)}`}
+            {invoice.buyer?.legalName ?? 'Customer name unavailable'}
           </span>
         }
       />

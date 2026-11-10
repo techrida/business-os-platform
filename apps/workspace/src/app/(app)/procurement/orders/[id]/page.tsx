@@ -24,7 +24,6 @@ import {
 import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { AmendDialog, IssueDialog, ReasonDialog } from '../_components/order-actions';
 import { poFailure } from '../_lib/failure';
@@ -321,9 +320,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
             {vendor.value.legalName}
           </Link>
         ) : (
-          <Link href={`/vendors/${encodeURIComponent(po.vendorId)}`}>
-            Vendor {shortId(po.vendorId)}
-          </Link>
+          <Link href={`/vendors/${encodeURIComponent(po.vendorId)}`}>Vendor name unavailable</Link>
         ),
     },
     {

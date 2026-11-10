@@ -22,7 +22,7 @@ import {
 } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
+import { formatBytes, scanLabel } from '@/lib/kernel-ui';
 
 import { actionsFor, methodLabel, paymentStatusMeta } from '../_lib/status';
 import styles from '../payments.module.css';
@@ -65,7 +65,7 @@ function ProofList({ proofs }: { proofs: Proof[] }) {
           return (
             <li key={documentId} className={styles.file}>
               <span className={styles.quiet}>
-                Proof {shortId(documentId)} could not be loaded. Reload the page to try again.
+                Proof could not be loaded. Reload the page to try again.
               </span>
             </li>
           );
@@ -141,7 +141,7 @@ function AllocationsTable({
       <tbody>
         {rows.map((row) => {
           const reversal = row.reversesAllocationId !== null;
-          const label = labels.get(row.invoiceId) ?? `Invoice ${shortId(row.invoiceId)}`;
+          const label = labels.get(row.invoiceId) ?? 'Invoice number unavailable';
           const key = live.has(row.id) ? deallocate?.keys.get(row.id) : undefined;
           return (
             <tr key={row.id}>
@@ -221,14 +221,14 @@ function facts(p: PaymentDto, customerName: string): Fact[] {
     {
       key: 'submitted',
       label: 'Recorded by',
-      value: `${shortId(p.submittedBy)} · ${p.submittedVia === 'portal' ? 'customer portal' : 'staff entry'}`,
+      value: `Name unavailable · ${p.submittedVia === 'portal' ? 'customer portal' : 'staff entry'}`,
     },
   ];
   if (p.verifiedBy !== null && p.verifiedAt !== null) {
     out.push({
       key: 'verified',
       label: 'Verified by',
-      value: `${shortId(p.verifiedBy)} · ${when(p.verifiedAt)}`,
+      value: `Name unavailable · ${when(p.verifiedAt)}`,
     });
   }
   if (p.rejectionReason !== null) {
@@ -333,7 +333,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   const meta = paymentStatusMeta(payment.status);
   const actions = actionsFor(payment.status);
-  const customerName = customer?.legalName ?? `Customer ${shortId(payment.customerId)}`;
+  const customerName = customer?.legalName ?? 'Customer name unavailable';
 
   return (
     <Page>

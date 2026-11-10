@@ -363,7 +363,7 @@ export function QuoteForm({
                         <option value="">Choose a tax code</option>
                         {unavailableTax(line.taxCodeId) ? (
                           <option value={line.taxCodeId} disabled>
-                            Unavailable tax code ({line.taxCodeId})
+                            Unavailable tax code
                           </option>
                         ) : null}
                         {(taxCodes ?? []).map((t) => (
