@@ -37,4 +37,6 @@ it('shows product labels while preserving the vendor link and payment references
   expect(text).toContain('PAY-0042');
   expect(text).toContain('Ending 6789');
   expect(text).not.toMatch(/22222222|33333333|open-item-id/);
+  const accessibleAttributes = html.match(/\b(?:title|alt|aria-[\w-]+)=(?:"[^"]*"|'[^']*')/gi);
+  expect(accessibleAttributes?.join(' ') ?? '').not.toMatch(/22222222|33333333|open-item-id/);
 });
