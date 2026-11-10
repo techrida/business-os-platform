@@ -5,6 +5,7 @@ import type { Metadata } from 'next';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { listDepartments } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 
 import { createPrAction } from '../actions';
@@ -18,6 +19,7 @@ export const dynamic = 'force-dynamic';
 export default async function NewPurchaseRequestPage() {
   const session = await requireStaffSession('/procurement/requests/new');
   const allowed = prGrants(session.roles).create;
+  const departments = allowed ? await listDepartments(session).catch(() => []) : [];
   return (
     <Page width="narrow">
       <Breadcrumb
@@ -32,6 +34,7 @@ export default async function NewPurchaseRequestPage() {
       />
       {allowed ? (
         <PrForm
+          departments={departments}
           action={createPrAction}
           initial={EMPTY_PR_VALUES}
           mode="create"
