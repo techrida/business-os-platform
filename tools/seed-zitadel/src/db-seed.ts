@@ -608,6 +608,19 @@ export async function seedKernelRows(
       documentType: 'payment_request',
       spec: paymentRequestSpec,
     });
+    for (const [code, name] of [
+      ['GENERAL', 'General'],
+      ['OPERATIONS', 'Operations'],
+      ['ADMIN', 'Administration'],
+    ]) {
+      const result = await client.query(
+        `INSERT INTO app.cost_centers (tenant_id, organization_id, code, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, organization_id, code) DO NOTHING`,
+        [scope.tenantId, scope.organizationId, code, name],
+      );
+      changed += result.rowCount ?? 0;
+    }
     changed += await seedTaxCodes(client, scope);
     changed += await seedPaymentTerms(client, scope);
     changed += await seedWithholdingCodes(client, scope);

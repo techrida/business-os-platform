@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Textarea } from '@/components/ui/field';
 
 import type { ActionState } from '../../orders/_lib/state';
-import { confirmReceiptAction, reverseReceiptAction } from '../actions';
+import { confirmReceiptAction, reverseReceiptAction, discardReceiptAction } from '../actions';
 
 /**
  * The action dialogs of the receipt page: a trigger button and a native modal dialog (focus
@@ -105,6 +105,24 @@ export function ConfirmDialog(props: Common) {
         common={props}
         submitLabel="Confirm receipt"
         pendingWords="Confirming the receipt"
+      />
+    </ActionDialog>
+  );
+}
+
+export function DiscardReceiptDialog(props: Common) {
+  return (
+    <ActionDialog
+      triggerLabel="Discard draft"
+      title={`Discard ${props.number}`}
+      intro="Discarding releases the quantities reserved by this draft so another receipt can use them. The draft stays in the audit trail. This cannot be undone."
+    >
+      <Form
+        action={discardReceiptAction}
+        common={props}
+        submitLabel="Discard draft"
+        pendingWords="Discarding the draft receipt"
+        tone="secondary"
       />
     </ActionDialog>
   );

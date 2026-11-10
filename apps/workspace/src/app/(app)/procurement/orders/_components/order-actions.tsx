@@ -135,8 +135,8 @@ export function ReasonDialog({ kind, ...common }: Common & { kind: 'shortClose' 
       title={`${cancel ? 'Cancel' : 'Short-close'} ${common.number}`}
       intro={
         cancel
-          ? 'Cancelling stops the order before anything is received. Once goods or services have arrived it is refused: short-close the order instead.'
-          : 'Short-closing accepts what has arrived and stops waiting for the rest. A draft receipt still open on the order must be confirmed or removed first.'
+          ? 'Cancelling stops the order before anything is received. Discard any draft receipt from its detail page first. Once a receipt is confirmed, short-close the order instead.'
+          : 'Short-closing accepts what has arrived and stops waiting for the rest. A draft receipt still open on the order must be confirmed or discarded from its detail page first.'
       }
     >
       <Form

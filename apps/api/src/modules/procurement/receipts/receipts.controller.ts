@@ -66,6 +66,16 @@ export class ReceiptsController {
     return this.receipts.get(id);
   }
 
+  /** 200 with the discarded draft; reserved quantity is released. 409 after confirmation. */
+  @Post(':id/discard')
+  @HttpCode(200)
+  discard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+  ): Promise<ReceiptDto> {
+    return this.receipts.discard(id, requireIdempotencyKey(idempotencyKey));
+  }
+
   /** 200 with the confirmed receipt; the PO moves to partially or fully received. 409 unless a draft. */
   @Post(':id/confirm')
   @HttpCode(200)

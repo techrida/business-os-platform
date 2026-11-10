@@ -19,7 +19,14 @@ import {
   type CreatePurchaseRequestBody,
   type Permission,
 } from '@bos/contracts';
-import { departments, purchaseRequestLines, purchaseRequests, rfqs, scoped } from '@bos/db';
+import {
+  costCenters,
+  departments,
+  purchaseRequestLines,
+  purchaseRequests,
+  rfqs,
+  scoped,
+} from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -216,6 +223,7 @@ export class PurchaseRequestsService {
     now: Date,
   ): Promise<PurchaseRequestDto> {
     await this.assertDepartment(tx, scope, body.departmentId);
+    await this.assertCostCenter(tx, scope, body.costCenterId);
     const lineRows = lineRowsOf(body.lines, body.requestType);
     const total = sumAmounts(lineRows.map((l) => l.estimatedAmount));
     const [row] = await tx
@@ -285,6 +293,9 @@ export class PurchaseRequestsService {
     now: Date,
   ): Promise<PurchaseRequestDto> {
     const pr = await this.lockEditable(tx, scope, id, expectedVersion, 'edited');
+    if (body.costCenterId !== pr.costCenterId) {
+      await this.assertCostCenter(tx, scope, body.costCenterId);
+    }
     if (body.departmentId !== pr.departmentId) {
       await this.assertDepartment(tx, scope, body.departmentId);
     }
@@ -592,6 +603,24 @@ export class PurchaseRequestsService {
         ),
       )
       .orderBy(asc(purchaseRequestLines.lineNo));
+  }
+
+  private async assertCostCenter(
+    tx: DbTransaction,
+    scope: TxScope,
+    costCenterId: string,
+  ): Promise<void> {
+    const [row] = await tx
+      .select({ id: costCenters.id })
+      .from(costCenters)
+      .where(
+        scoped(scope).where(
+          costCenters,
+          and(eq(costCenters.id, costCenterId), eq(costCenters.active, true)),
+        ),
+      )
+      .limit(1);
+    if (row === undefined) throw badRequest('Unknown or inactive cost centre');
   }
 
   /** The department must be one of the acting entity's (a cross-entity id is a 400, not an FK error). */

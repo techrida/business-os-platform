@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Permission, Scope } from '@bos/contracts';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -151,7 +152,7 @@ async function rfq(
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
-                ${scope === scopeA ? deptA : deptB}, ${staffId}, ${randomUUID()}, 'Replace switches', '2026-12-31',
+                ${scope === scopeA ? deptA : deptB}, ${staffId}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Replace switches', '2026-12-31',
                 'IT-2083', 'NPR')`,
   );
   // Lines first: they are frozen once the request leaves draft.

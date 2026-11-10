@@ -28,7 +28,14 @@ import {
   vendorBills,
 } from './schema/payables.js';
 
-const SQL_TEXT = readFileSync(new URL('../migrations/0035_payables.sql', import.meta.url), 'utf8');
+const BASE_SQL = readFileSync(new URL('../migrations/0035_payables.sql', import.meta.url), 'utf8');
+const SQL_TEXT =
+  BASE_SQL +
+  '\n' +
+  readFileSync(
+    new URL('../migrations/0038_discard_procurement_drafts.sql', import.meta.url),
+    'utf8',
+  );
 
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
@@ -83,6 +90,20 @@ function parseCreated(text: string): Map<string, Shape> {
       const column = /^\s*"(\w+)" /.exec(line);
       if (column) shape.columns.push(column[1] ?? '');
     }
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" DROP CONSTRAINT "(\w+)";/g)) {
+    const shape = tables.get(m[1] ?? '');
+    if (!shape) continue;
+    for (const kind of ['foreignKey', 'unique', 'check', 'index'] as const) {
+      shape.names[kind] = shape.names[kind].filter(
+        (entry) => entry !== m[2] && !entry.startsWith(`${m[2]} (`),
+      );
+    }
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
+    const shape = tables.get(m[1] ?? '');
+    if (shape)
+      shape.names[kindOf(m[3] ?? '')].push(sqlEntry(kindOf(m[3] ?? ''), m[2] ?? '', m[3] ?? ''));
   }
   for (const m of text.matchAll(
     /CREATE (?:UNIQUE )?INDEX "(\w+)" ON "app"\."(\w+)" USING btree \(([^)]*)\)/g,
@@ -153,9 +174,11 @@ const DRIZZLE: Record<string, PgTable> = {
 
 /** The values of `col in ('a', 'b')` in the SQL text, for the CHECK named `check`. */
 function checkValues(check: string): string[] {
-  const m = new RegExp(String.raw`CONSTRAINT "${check}" CHECK \("\w+" in \(([^)]*)\)\)`).exec(
-    SQL_TEXT,
-  );
+  const m = [
+    ...SQL_TEXT.matchAll(
+      new RegExp(String.raw`CONSTRAINT "${check}" CHECK \("\w+" in \(([^)]*)\)\)`, 'g'),
+    ),
+  ].at(-1);
   if (!m) throw new Error(`no IN-list check ${check}`);
   return (m[1] ?? '').split(',').map((v) => v.trim().replaceAll("'", ''));
 }
@@ -173,7 +196,7 @@ function viewColumns(): string[] {
 
 describe('0035_payables and src/schema/payables.ts', () => {
   const created = parseCreated(SQL_TEXT);
-  const altered = parseAltered(SQL_TEXT);
+  const altered = parseAltered(BASE_SQL);
 
   it('create the same seven tables', () => {
     expect([...created.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
@@ -223,8 +246,11 @@ describe('0035_payables and src/schema/payables.ts', () => {
   });
 
   it('dedups a bill on the normalised invoice number per vendor, entity and fiscal year', () => {
-    expect(created.get('vendor_bills')?.names.unique).toContain(
+    expect(created.get('vendor_bills')?.names.index).toContain(
       'vendor_bills_tenant_org_vendor_invoice_fy_unique (tenant_id,organization_id,vendor_id,invoice_no_norm,fiscal_year)',
+    );
+    expect(SQL_TEXT).toMatch(
+      /CREATE UNIQUE INDEX "vendor_bills_tenant_org_vendor_invoice_fy_unique"[^\n]+WHERE "status" <> 'discarded'/,
     );
     expect(SQL_TEXT).toMatch(
       /"invoice_no_norm" text GENERATED ALWAYS AS \(upper\(regexp_replace\("vendor_invoice_no", '\[\[:space:\]\/-\]', '', 'g'\)\)\) STORED/,

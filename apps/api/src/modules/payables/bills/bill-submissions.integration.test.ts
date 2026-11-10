@@ -21,6 +21,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createPortalUser,
@@ -60,6 +61,7 @@ import { MatchExceptionSubject, VendorBillSubject } from './vendor-bill.subject'
 import { BillSubmissionsController } from './bill-submissions.controller';
 import { BillSubmissionsService } from './bill-submissions.service';
 import { VendorBillsService } from './vendor-bills.service';
+import { vendorIntakeOwnerPolicy } from '../../portal-vendor/inbox/vendor-intake.policy';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -313,7 +315,7 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
-                ${randomUUID()}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
+                ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
   );
   await exec(
     scopeA,
@@ -430,6 +432,28 @@ const plainLines = () => [
 // ---------------------------------------------------------------------------------------- convert
 
 describe('convert a bill submission', () => {
+  it('returns a discarded conversion to the inbox, permits file editing and converts again', async () => {
+    const vendorId = await vendor();
+    const sub = await submission({ vendorId });
+    const bill = await service.convertSubmission(sub.id, { lines: plainLines() }, randomUUID());
+    const policy = vendorIntakeOwnerPolicy(db);
+    expect(await policy.canAttach!(scopeA, vendorId, undefined, sub.documentId)).toBe(false);
+    const key = randomUUID();
+    await service.discard(bill.id, key);
+    await service.discard(bill.id, key);
+    expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
+    expect((await inbox.list()).map((row) => row.id)).toContain(sub.id);
+    expect(await policy.canAttach!(scopeA, vendorId, undefined, sub.documentId)).toBe(true);
+    const replacement = await service.convertSubmission(sub.id, { lines: plainLines() }, randomUUID());
+    expect(replacement.id).not.toBe(bill.id);
+    expect(await rowOf(sub.id)).toMatchObject({ status: 'converted', convertedBillId: replacement.id });
+    // A late retry of the old discard must not reopen the newly converted submission.
+    await service.discard(bill.id, randomUUID());
+    expect((await rowOf(sub.id)).convertedBillId).toBe(replacement.id);
+    const audit = await ownerPool.query("SELECT count(*) FROM audit.audit_events WHERE entity_id = $1 AND action = 'payables.bill_submission.reopened'", [sub.id]);
+    expect(Number(audit.rows[0].count)).toBe(1);
+  });
+
   it('creates exactly one matched bill, marks the submission converted and replays to the same bill', async () => {
     const po = await receivedPo('1', '10000.00', '1');
     const sub = await submission({ vendorId: po.vendorId, po, invoiceNo: 'INV-PORTAL-1' });

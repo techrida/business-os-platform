@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
   listPurchaseRequests: vi.fn(),
   getPurchaseRequest: vi.fn(),
   listDepartments: vi.fn(),
+  listCostCenters: vi.fn(),
 }));
 vi.mock('@/lib/api-procurement', () => api);
 const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
@@ -104,6 +105,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
   api.listDepartments.mockResolvedValue([{ id: DEPT, name: 'Operations' }]);
+  api.listCostCenters.mockResolvedValue([
+    { id: DEPT, code: 'GENERAL', name: 'General', active: true },
+  ]);
 });
 
 describe('the list', () => {
@@ -357,7 +361,7 @@ it('uses named departments and allows editing cost centre and project references
   const out = await editHtml();
   expect(out).toContain('Operations');
   expect(out).toMatch(/<select[^>]*name="departmentId"/);
-  expect(out).toMatch(/<input(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
+  expect(out).toMatch(/<select(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
   expect(out).not.toContain('type="hidden" name="costCenterId"');
   expect(out).toContain(`name="projectId"`);
   expect(out).not.toContain('type="hidden" name="projectId"');
@@ -376,18 +380,54 @@ it('preserves editing if departments cannot load, without exposing a department 
   expect(out).not.toContain(`>${DEPT}<`);
 });
 
-it('allows create with a manually supplied cost centre until a named lookup exists', async () => {
-  const out = html(await NewPage());
-  expect(out).toMatch(/<input(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
-  expect(out).not.toContain('Cost centre selection unavailable');
-  expect(out).not.toContain('Contact your administrator');
-  expect(out).toMatch(/<button[^>]*type="submit"[^>]*>Save draft/);
-  expect(out).not.toMatch(/<button[^>]*type="submit"[^>]*disabled/);
-});
-
 it('does not read departments or expose cost centre entry without create permission', async () => {
   session.roles = ['finance'];
   const out = html(await NewPage());
   expect(api.listDepartments).not.toHaveBeenCalled();
   expect(out).not.toContain('name="costCenterId"');
+});
+
+describe('cost centre picker', () => {
+  it('loads the entity catalogue on new requests and renders a labelled select', async () => {
+    const out = html(await NewPage());
+    expect(api.listCostCenters).toHaveBeenCalledOnce();
+    expect(out).toMatch(/<select[^>]*name="costCenterId"/);
+    expect(out).toContain('GENERAL \u00b7 General');
+    expect(out).not.toContain('The cost centre&#x27;s id.');
+  });
+
+  it('loads the catalogue when editing and keeps the selected centre', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail());
+    const out = await editHtml();
+    expect(api.listCostCenters).toHaveBeenCalledOnce();
+    expect(out).toContain(`value="${DEPT}" selected=""`);
+  });
+
+  it('shows a retryable error when the catalogue cannot load', async () => {
+    api.listCostCenters.mockRejectedValue(new ApiError(502, 'unavailable'));
+    const out = html(await NewPage());
+    expect(out).toContain('Cost centres did not load');
+    expect(out).not.toContain('name="costCenterId"');
+  });
+});
+
+describe('cost centre catalogue states', () => {
+  it('keeps an existing inactive centre selected on edit, and hides inactive alternatives', async () => {
+    api.getPurchaseRequest.mockResolvedValue(detail());
+    api.listCostCenters.mockResolvedValue([
+      { id: DEPT, code: 'OLD', name: 'Legacy', active: false },
+      { id: ID, code: 'CLOSED', name: 'Other closed centre', active: false },
+    ]);
+    const out = await editHtml();
+    expect(out).toContain('Legacy (inactive)');
+    expect(out).not.toContain('Other closed centre');
+    expect(out).toContain(`value="${DEPT}" selected=""`);
+  });
+
+  it('explains an empty catalogue and disables saving', async () => {
+    api.listCostCenters.mockResolvedValue([]);
+    const out = html(await NewPage());
+    expect(out).toContain('No active cost centres');
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Save draft<\/button>/);
+  });
 });

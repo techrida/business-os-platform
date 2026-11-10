@@ -35,7 +35,7 @@ export function vendorIntakeOwnerPolicy(db: Db): DocumentOwnerPolicy {
         .from(vendorBills)
         .where(scoped(scope).where(vendorBills, eq(vendorBills.documentId, documentId)));
       const bills = tx === undefined ? await billsQuery : await billsQuery.for('share');
-      return bills.every((bill) => bill.status === 'draft');
+      return bills.every((bill) => bill.status === 'draft' || bill.status === 'discarded');
     },
     // A vendor is tenant-level, so the ref is the vendor's in the acting entity, like the vendor's own records.
     resource: async (scope, vendorPartyId) => {

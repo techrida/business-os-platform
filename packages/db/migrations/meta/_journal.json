@@ -232,6 +232,20 @@
       "when": 1783000000037,
       "tag": "0037_internal_memos",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1783000000037,
+      "tag": "0037_cost_centers",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1783000000038,
+      "tag": "0038_discard_procurement_drafts",
+      "breakpoints": true
     }
   ]
 }

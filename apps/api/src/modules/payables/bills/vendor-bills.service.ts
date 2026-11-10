@@ -999,6 +999,68 @@ export class VendorBillsService {
     }
   }
 
+  /** Retains a discarded draft and its references, releasing the active invoice-number key. */
+  async discard(id: string, idempotencyKey: string): Promise<VendorBillDto> {
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        { command: 'payables.bill.discard', key: idempotencyKey, body: { id } },
+        async () => {
+          const bill = await this.lockBill(tx, scope, id);
+          if (bill.status === 'discarded') {
+            return { status: 200, response: await this.dto(tx, scope, id) };
+          }
+          if (bill.status !== 'draft') {
+            throw conflict(
+              'invalid_transition',
+              `A ${bill.status} bill cannot be discarded; only a draft can`,
+            );
+          }
+          await tx
+            .update(vendorBills)
+            .set({
+              status: 'discarded',
+              version: sql`${vendorBills.version} + 1`,
+              updatedAt: this.clock(),
+            })
+            .where(
+              scoped(scope).where(
+                vendorBills,
+                and(eq(vendorBills.id, id), eq(vendorBills.status, 'draft')),
+              ),
+            );
+          // Conversion locks the submission before creating a bill. Lock its source row too before
+          // returning it to the inbox; a discarded bill retry must never reopen a newer conversion.
+          const sources = await tx.select().from(vendorBillSubmissions)
+            .where(scoped(scope).where(vendorBillSubmissions,
+              and(eq(vendorBillSubmissions.convertedBillId, id), eq(vendorBillSubmissions.status, 'converted'))))
+            .for('update');
+          for (const source of sources) {
+            await tx.update(vendorBillSubmissions).set({
+              status: 'received', convertedBillId: null, reviewedBy: null, reviewedAt: null,
+              version: sql`${vendorBillSubmissions.version} + 1`, updatedAt: this.clock(),
+            }).where(scoped(scope).where(vendorBillSubmissions, eq(vendorBillSubmissions.id, source.id)));
+            await this.audit.record(tx, {
+              action: 'payables.bill_submission.reopened', entityType: 'vendor_bill_submissions', entityId: source.id,
+              before: { status: 'converted', convertedBillId: id },
+              after: { status: 'received', convertedBillId: null },
+            });
+          }
+          await this.audit.record(tx, {
+            action: 'payables.bill.discarded',
+            entityType: BILL_AUDIT_ENTITY,
+            entityId: id,
+            before: { status: 'draft' },
+            after: { status: 'discarded', vendorInvoiceNo: bill.vendorInvoiceNo },
+          });
+          return { status: 200, response: await this.dto(tx, scope, id) };
+        },
+      );
+      return done.response;
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------- void
 
   /**

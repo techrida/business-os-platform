@@ -17,6 +17,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   approvalRequests,
   createDepartment,
   createParty,
@@ -289,7 +290,7 @@ async function deptApprovedPr(): Promise<{ id: string; lineId: string }> {
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency, is_emergency)
         VALUES (${id}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
-                ${randomUUID()}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR', false)`,
+                ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR', false)`,
   );
   await exec(
     scopeA,

@@ -14,6 +14,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   createDepartment,
   createParty,
   createStaffUser,
@@ -264,7 +265,7 @@ async function newPo(
       `PR-${randomUUID()}`,
       scope === scopeA ? departmentA : departmentB,
       U.requester,
-      randomUUID(),
+      (await createCostCenter(appPool, scope)).costCenterId,
     ],
   );
   const [po] = await ownerRun<{ id: string; number: string }>(

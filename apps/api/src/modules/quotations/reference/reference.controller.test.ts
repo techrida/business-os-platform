@@ -20,6 +20,7 @@ async function setup() {
   const service = {
     listTaxCodes: vi.fn().mockResolvedValue([]),
     listPaymentTerms: vi.fn().mockResolvedValue([]),
+    listWithholdingCodes: vi.fn().mockResolvedValue([]),
   };
   const moduleRef = await Test.createTestingModule({
     controllers: [ReferenceController],
@@ -32,6 +33,9 @@ describe('ReferenceController', () => {
   it('guards payment-terms with quotation.read, leaves tax-codes to the service any-of check, and leaves none unmarked', async () => {
     const { moduleRef } = await setup();
     expect(findUnmarkedRoutes(moduleRef)).toEqual([]);
+    expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.withholdingCodes)).toBe(
+      'payables.bill.enter',
+    );
     expect(Reflect.getMetadata(CAN_KEY, ReferenceController.prototype.paymentTerms)).toBe(
       'quotation.read',
     );
@@ -51,6 +55,9 @@ describe('ReferenceController', () => {
     service.listPaymentTerms.mockResolvedValue(terms);
     await expect(controller.taxCodes()).resolves.toBe(tax);
     await expect(controller.paymentTerms()).resolves.toBe(terms);
+    const withholding = [{ id: ID, code: 'TDS0', name: 'Pending signoff', rateBp: 0 }];
+    service.listWithholdingCodes.mockResolvedValue(withholding);
+    await expect(controller.withholdingCodes()).resolves.toBe(withholding);
   });
 });
 

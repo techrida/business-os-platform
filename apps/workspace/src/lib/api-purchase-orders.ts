@@ -348,6 +348,15 @@ export function confirmReceipt(
   return call(session, `${GRN}/${seg(id)}/confirm`, ReceiptSchema, post(idempotencyKey));
 }
 
+/** Discards only a draft, releasing its reserved quantity; repeats return the discarded receipt. */
+export function discardReceipt(
+  session: Session,
+  id: string,
+  idempotencyKey: string,
+): Promise<Receipt> {
+  return call(session, `${GRN}/${seg(id)}/discard`, ReceiptSchema, post(idempotencyKey));
+}
+
 /** Answers the reversal: a new confirmed receipt with negative quantities. */
 export function reverseReceipt(
   session: Session,

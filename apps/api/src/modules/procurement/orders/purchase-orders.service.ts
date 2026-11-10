@@ -509,7 +509,7 @@ export class PurchaseOrdersService {
   }
 
   /**
-   * Cancels an issued PO on which nothing was received (no receipt line at all, draft or confirmed): every line is
+   * Cancels an issued PO on which nothing was received (no non-discarded receipt line): every line is
    * cancelled in full. 409 PO_HAS_RECEIPTS otherwise, 409 unless issued.
    */
   async cancel(
@@ -548,7 +548,7 @@ export class PurchaseOrdersService {
             cancelled = lines.map((l) => ({ id: l.id, cancelledQuantity: l.orderedQuantity }));
           } else {
             if (received.hasDraft) {
-              throw conflict('A draft receipt is open on this order; confirm or remove it first');
+              throw conflict('A draft receipt is open on this order; confirm or discard it first');
             }
             cancelled = shortCloseCancelled(
               lines.map((l) => ({

@@ -15,6 +15,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   approvalRequests,
   approvalSteps,
   createDepartment,
@@ -271,7 +272,7 @@ async function deptApprovedPr(
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency, is_emergency,
           emergency_reason)
         VALUES (${id}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
-                ${scope === scopeA ? deptA : deptB}, ${opts.requester ?? U.req}, ${randomUUID()}, 'Laptops',
+                ${scope === scopeA ? deptA : deptB}, ${opts.requester ?? U.req}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops',
                 '2026-12-01', 'IT-2083', 'NPR', ${opts.emergency ?? false},
                 ${opts.emergency ? 'Server room flood' : null})`,
   );

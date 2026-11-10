@@ -153,14 +153,15 @@ export type PoApprovedBand = z.infer<typeof PoApprovedBandSchema>;
 // Receipt: draft -> confirmed -> reversed. A reversal is a new negative receipt, never an edit.
 // ---------------------------------------------------------------------------------------------
 
-export const RECEIPT_STATUSES = ['draft', 'confirmed', 'reversed'] as const;
+export const RECEIPT_STATUSES = ['draft', 'confirmed', 'reversed', 'discarded'] as const;
 export const ReceiptStatusSchema = z.enum(RECEIPT_STATUSES);
 export type ReceiptStatus = z.infer<typeof ReceiptStatusSchema>;
 
 export const RECEIPT_TRANSITIONS: Readonly<Record<ReceiptStatus, readonly ReceiptStatus[]>> = {
-  draft: ['confirmed'],
+  draft: ['confirmed', 'discarded'],
   confirmed: ['reversed'],
   reversed: [],
+  discarded: [],
 };
 export const canTransitionReceipt = (from: ReceiptStatus, to: ReceiptStatus) =>
   allowed(RECEIPT_TRANSITIONS, from, to);

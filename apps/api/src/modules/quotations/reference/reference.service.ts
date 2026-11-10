@@ -7,11 +7,12 @@
 //   bill entry, so the grant is any of the three permissions, checked before the read; a role holding only one of
 //   the procurement or payables permissions does not get quotation.read (customer quotations);
 // - "retired options stay retired": an inactive payment term is not offered (a saved quote keeps its FK).
-import type { PaymentTerm, Permission, TaxCode } from '@bos/contracts';
-import { paymentTerms } from '@bos/db';
+import type { PaymentTerm, Permission, TaxCode, WithholdingCode } from '@bos/contracts';
+import { paymentTerms, withholdingCodes } from '@bos/db';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm';
 
+import { principal } from '../../../platform/authz/principal';
 import { AuthzService } from '../../../platform/authz/authz.service';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { listTaxCodesEffectiveOn } from '../pricing/tax-codes.resolver';
@@ -41,6 +42,34 @@ export class ReferenceService {
       kathmanduDay(new Date()),
     );
     return rows.map(toTaxCodeDto);
+  }
+
+  async listWithholdingCodes(): Promise<WithholdingCode[]> {
+    const caller = principal();
+    if (caller.orgKind !== 'staff') {
+      throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden' });
+    }
+    this.authz.assert('payables.bill.enter');
+    const day = kathmanduDay(new Date());
+    return this.db
+      .select({
+        id: withholdingCodes.id,
+        code: withholdingCodes.code,
+        name: withholdingCodes.name,
+        rateBp: withholdingCodes.rateBp,
+        effectiveFrom: withholdingCodes.effectiveFrom,
+        effectiveTo: withholdingCodes.effectiveTo,
+      })
+      .from(withholdingCodes)
+      .where(
+        and(
+          eq(withholdingCodes.tenantId, this.caller.tenantId()),
+          inArray(withholdingCodes.appliesTo, ['payable', 'both']),
+          lte(withholdingCodes.effectiveFrom, day),
+          or(isNull(withholdingCodes.effectiveTo), gt(withholdingCodes.effectiveTo, day)),
+        ),
+      )
+      .orderBy(asc(withholdingCodes.code));
   }
 
   async listPaymentTerms(): Promise<PaymentTerm[]> {

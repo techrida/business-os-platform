@@ -24,6 +24,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   approvalRequests,
   approvalSteps,
   createDepartment,
@@ -307,7 +308,7 @@ async function receivedPo(quantity: string, unitPrice: string, received: string)
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
-                ${randomUUID()}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
+                ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Laptops', '2026-12-01', 'IT-2083', 'NPR')`,
   );
   await exec(
     scopeA,
@@ -449,6 +450,60 @@ async function decide(user: string, role: RoleKey, requestId: string) {
 }
 
 // ---------------------------------------------------------------------------------------- check 6
+
+describe('discard draft bills', () => {
+  it('retains the bill and releases the normalized duplicate key, with one audit on replay', async () => {
+    const documentId = await doc();
+    const bill = await billWithoutPo(documentId);
+    const key = randomUUID();
+    const discarded = await service.discard(bill.id, key);
+    expect(discarded.status).toBe('discarded');
+    expect(await service.discard(bill.id, key)).toEqual(discarded);
+    expect(await service.discard(bill.id, randomUUID())).toEqual(discarded);
+    const replacement = await service.create(
+      {
+        vendorPartyId: bill.vendorPartyId,
+        kind: 'bill',
+        vendorInvoiceNo: bill.vendorInvoiceNo,
+        invoiceDate: bill.invoiceDate,
+        currency: 'NPR',
+        documentId,
+        lines: [
+          { accountId: randomUUID(), quantity: '1', unitPrice: '1000.00', taxCodeId: vatCode },
+        ],
+      },
+      randomUUID(),
+    );
+    expect(replacement.id).not.toBe(bill.id);
+    expect((await service.get(bill.id)).status).toBe('discarded');
+    const events = await new AuditService(db).list(scopeA, { entityId: bill.id, limit: 100 });
+    expect(events.filter((e) => e.action === 'payables.bill.discarded')).toHaveLength(1);
+  });
+
+  it('returns 404 across entities and refuses a submitted bill', async () => {
+    const bill = await billWithoutPo(await doc());
+    current.scope = scopeB;
+    expect((await httpErrorOf(service.discard(bill.id, randomUUID()))).getStatus()).toBe(404);
+    current.scope = null;
+    await service.submit(bill.id, randomUUID());
+    expect(codeOf(await httpErrorOf(service.discard(bill.id, randomUUID())))).toBe(
+      'invalid_transition',
+    );
+  });
+
+  it('serializes submit against discard so only one transition wins', async () => {
+    const bill = await billWithoutPo(await doc());
+    const outcomes = await Promise.allSettled([
+      service.submit(bill.id, randomUUID()),
+      service.discard(bill.id, randomUUID()),
+    ]);
+    expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const failure = outcomes.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(['invalid_transition', 'BILL_NOT_MATCHED']).toContain(
+      codeOf(failure.reason as HttpException),
+    );
+  });
+});
 
 describe('match (check 6, AD6 defaults from settings)', () => {
   it('returns the vendor name on bill list and detail without requiring vendor.read', async () => {

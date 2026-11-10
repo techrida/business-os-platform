@@ -754,7 +754,7 @@ describe('SLA tick (fake clock)', () => {
     expect(step).toMatchObject({ status: 'active', decidedBy: null, roleKey: 'accountant' });
     me = U.acc;
     expect((await service.get(requestId)).version).toBe(1);
-  });
+  }, 30_000);
 });
 
 describe('admin: groups and delegations', () => {

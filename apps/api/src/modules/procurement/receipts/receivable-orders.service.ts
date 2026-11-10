@@ -17,7 +17,7 @@ import {
 } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { DB, type Db } from '../../../platform/db/db.module';
@@ -130,7 +130,7 @@ export class ReceivableOrdersService {
                 receiptLines.purchaseOrderId,
                 orders.map((o) => o.id),
               ),
-              ne(receipts.status, 'draft'),
+              inArray(receipts.status, ['confirmed', 'reversed']),
             ),
           ),
         )

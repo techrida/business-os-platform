@@ -13,7 +13,7 @@ import {
 } from '@bos/db';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, ne, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
 import type { DbTransaction } from '../../../platform/db/db.module';
@@ -101,7 +101,12 @@ export async function receivedOf(
         eq(receipts.id, receiptLines.receiptId),
       ),
     )
-    .where(scoped(scope).where(receiptLines, eq(receiptLines.purchaseOrderId, poId)));
+    .where(
+      scoped(scope).where(
+        receiptLines,
+        and(eq(receiptLines.purchaseOrderId, poId), ne(receipts.status, 'discarded')),
+      ),
+    );
   const all = new Map<string, Decimal>();
   const confirmed = new Map<string, Decimal>();
   for (const r of rows) {

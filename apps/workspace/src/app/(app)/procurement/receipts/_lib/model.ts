@@ -14,6 +14,7 @@ import { isReceivable, qtyText, type BadgeTone } from '../../orders/_lib/model';
 
 export const RECEIPT_STATUS_LABEL: Record<ReceiptStatus, { tone: BadgeTone; text: string }> = {
   draft: { tone: 'neutral', text: 'Draft' },
+  discarded: { tone: 'neutral', text: 'Discarded' },
   confirmed: { tone: 'success', text: 'Confirmed' },
   reversed: { tone: 'warning', text: 'Reversed' },
 };

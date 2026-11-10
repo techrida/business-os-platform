@@ -11,6 +11,7 @@ import { isGuid } from '@/components/p2/customers/format';
 import {
   convertBillSubmission,
   createBill,
+  discardBill,
   matchBill,
   rejectBillSubmission,
   requestBillException,
@@ -131,6 +132,17 @@ export async function voidBillAction(prev: ActionState, form: FormData): Promise
     r.o.id,
     'The bill was voided. A vendor debit note now cancels it in the payables ledger, and the reason is on the audit trail.',
   );
+}
+
+export async function discardBillAction(prev: ActionState, form: FormData): Promise<ActionState> {
+  const r = await open(prev, form, 'billId', billPath);
+  if (!r.ok) return r.state;
+  try {
+    await discardBill(r.o.session, r.o.id, r.o.key);
+  } catch (err) {
+    return refused(r.o.key, err, 'discard');
+  }
+  return settledBill(r.o.id, 'The draft bill was discarded. Its invoice number can be used again.');
 }
 
 export async function requestExceptionAction(

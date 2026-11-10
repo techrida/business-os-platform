@@ -92,6 +92,7 @@ export default defineConfig({
         'p2/*.spec.ts',
         'p3/*.spec.ts',
         'p4/*.spec.ts',
+        'p0-shell.spec.ts',
       ],
       use: { ...common, baseURL: devBaseURL },
     },

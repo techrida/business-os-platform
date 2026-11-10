@@ -10,6 +10,7 @@ import {
   getPurchaseRequest,
   listPurchaseRequests,
   listDepartments,
+  listCostCenters,
   submitPurchaseRequest,
   updatePurchaseRequest,
 } from './api-procurement';
@@ -232,4 +233,19 @@ it('reads named departments from the existing scoped staff lookup', async () => 
   answer(reply([{ id: ID_B, name: 'Operations' }]));
   await expect(listDepartments(session)).resolves.toEqual([{ id: ID_B, name: 'Operations' }]);
   expect(lastCall().url).toBe('http://api:3001/v1/departments');
+});
+
+describe('cost centre lookup', () => {
+  it('gets the acting entity catalogue through the authenticated BFF', async () => {
+    const centers = [{ id: ID_B, code: 'GENERAL', name: 'General', active: true }];
+    answer(reply(centers));
+    await expect(listCostCenters(session)).resolves.toEqual(centers);
+    expect(lastCall().url).toBe('http://api:3001/v1/cost-centers');
+    expect(lastCall().headers.get('authorization')).toBe(`Bearer ${session.accessToken}`);
+  });
+
+  it('rejects malformed catalogue rows', async () => {
+    answer(reply([{ id: ID_B, name: 'General' }]));
+    await expect(listCostCenters(session)).rejects.toBeInstanceOf(ApiError);
+  });
 });

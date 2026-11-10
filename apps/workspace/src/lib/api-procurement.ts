@@ -1,6 +1,7 @@
 import 'server-only';
 
 import {
+  CostCenterSchema,
   CurrencySchema,
   PrRequestTypeSchema,
   PrStatusSchema,
@@ -224,4 +225,9 @@ export function cancelPurchaseRequest(
 /** Existing staff-only, acting-entity lookup used by purchase request entry. */
 export function listDepartments(session: Session): Promise<{ id: string; name: string }[]> {
   return call(session, '/v1/departments', z.array(z.object({ id: z.guid(), name: z.string() })));
+}
+
+/** Cost centres of the acting entity, including inactive entries retained on existing requests. */
+export function listCostCenters(session: Session) {
+  return call(session, '/v1/cost-centers', z.array(CostCenterSchema));
 }

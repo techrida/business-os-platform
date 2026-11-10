@@ -17,6 +17,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import {
+  createCostCenter,
   approvalRequests,
   approvalSteps,
   createDepartment,
@@ -289,7 +290,7 @@ async function draftPo(
     sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
           requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
         VALUES (${prId}, ${scope.tenantId}, ${scope.organizationId}, 'goods',
-                ${scope === scopeA ? deptA : deptB}, ${U.req}, ${randomUUID()}, 'Laptops', '2026-12-01',
+                ${scope === scopeA ? deptA : deptB}, ${U.req}, ${(await createCostCenter(appPool, scope)).costCenterId}, 'Laptops', '2026-12-01',
                 'IT-2083', 'NPR')`,
   );
   await exec(
@@ -596,6 +597,17 @@ describe('versions are immutable', () => {
 // ---------------------------------------------------------------------------------------- short-close, cancel
 
 describe('short-close and cancel', () => {
+  it('cancels an issued PO after its draft receipt is discarded', async () => {
+    const po = await issued({ quantity: '5', unitPrice: '100.00' });
+    await receive(po, '1', true);
+    const [draft] = await receiptsService.list(po.id);
+    as(U.wh, 'warehouse');
+    await receiptsService.discard(draft!.id, randomUUID());
+    as(U.proc, 'procurement');
+    expect(
+      (await service.cancel(po.id, { reason: 'No delivery needed' }, randomUUID())).status,
+    ).toBe('cancelled');
+  });
   it('short-close cancels the open remainder and the progress shows nothing open', async () => {
     const po = await issued({ quantity: '5', unitPrice: '100.00' });
     await receive(po, '2');
