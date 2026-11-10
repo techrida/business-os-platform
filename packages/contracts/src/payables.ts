@@ -33,6 +33,7 @@ export const BILL_STATUSES = [
   'paid',
   'voided',
   'rejected',
+  'discarded',
 ] as const;
 export const BillStatusSchema = z.enum(BILL_STATUSES);
 export type BillStatus = z.infer<typeof BillStatusSchema>;
@@ -41,7 +42,7 @@ export type BillStatus = z.infer<typeof BillStatusSchema>;
 // outside tolerance goes from draft to variance, and a rejected or returned match exception puts the bill back in
 // variance. A re-run that leaves the status as it is (matching, variance) is not a move.
 export const BILL_TRANSITIONS: Readonly<Record<BillStatus, readonly BillStatus[]>> = {
-  draft: ['matching', 'variance', 'pending_approval'],
+  draft: ['matching', 'variance', 'pending_approval', 'discarded'],
   matching: ['variance', 'pending_approval'],
   variance: ['matching', 'exception_pending'],
   exception_pending: ['pending_approval', 'variance'],
@@ -51,6 +52,7 @@ export const BILL_TRANSITIONS: Readonly<Record<BillStatus, readonly BillStatus[]
   paid: [],
   voided: [],
   rejected: [],
+  discarded: [],
 };
 export const canTransitionBill = (from: BillStatus, to: BillStatus) =>
   allowed(BILL_TRANSITIONS, from, to);

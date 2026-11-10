@@ -75,7 +75,7 @@ export function billDocumentOwnerPolicy(db: Db): DocumentOwnerPolicy {
         .from(vendorBills)
         .where(scoped(scope).where(vendorBills, eq(vendorBills.documentId, documentId)));
       const bills = tx === undefined ? await query : await query.for('share');
-      return bills.every((bill) => bill.status === 'draft');
+      return bills.every((bill) => bill.status === 'draft' || bill.status === 'discarded');
     },
   };
 }

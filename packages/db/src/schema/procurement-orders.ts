@@ -50,7 +50,7 @@ export const PO_STATUSES = [
 /** The approval band a PO was committed in (AD4); an amendment needs re-approval only if the band rises (AD7). */
 export const PO_APPROVED_BANDS = ['base', 'management', 'founder'] as const;
 export const PO_LINE_KINDS = ['goods', 'service'] as const;
-export const RECEIPT_STATUSES = ['draft', 'confirmed', 'reversed'] as const;
+export const RECEIPT_STATUSES = ['draft', 'confirmed', 'reversed', 'discarded'] as const;
 export const RECEIPT_KINDS = ['goods', 'service'] as const;
 
 const money = (name: string) => numeric(name, { precision: 18, scale: 2 });
@@ -479,11 +479,14 @@ export const receipts = appSchema.table(
       .where(sql`${t.reversesReceiptId} IS NOT NULL`),
     index('receipts_tenant_org_po_idx').on(t.tenantId, t.organizationId, t.purchaseOrderId),
     check('receipts_kind_check', sql`${t.kind} in ('goods', 'service')`),
-    check('receipts_status_check', sql`${t.status} in ('draft', 'confirmed', 'reversed')`),
+    check(
+      'receipts_status_check',
+      sql`${t.status} in ('draft', 'confirmed', 'reversed', 'discarded')`,
+    ),
     check('receipts_number_seq_check', sql`${t.numberSeq} >= 1`),
     check(
       'receipts_confirmed_check',
-      sql`${t.status} = 'draft' OR (${t.confirmedBy} IS NOT NULL AND ${t.confirmedAt} IS NOT NULL)`,
+      sql`${t.status} in ('draft', 'discarded') OR (${t.confirmedBy} IS NOT NULL AND ${t.confirmedAt} IS NOT NULL)`,
     ),
     check(
       'receipts_reversal_check',

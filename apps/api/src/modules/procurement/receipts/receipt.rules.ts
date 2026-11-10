@@ -82,7 +82,7 @@ export interface PoLineFacts {
   requiresSerials: boolean;
 }
 
-/** Quantities received on one PO line: every receipt line (`net`, what the DB guard sums), the confirmed ones, drafts. */
+/** Quantities on one PO line: non-discarded lines (`net`, what the DB guard sums), confirmed ones and drafts. */
 export interface LineQuantities {
   net: string;
   confirmed: string;

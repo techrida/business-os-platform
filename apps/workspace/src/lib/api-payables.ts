@@ -265,6 +265,15 @@ export function submitBill(
   return call(session, `${BILLS}/${seg(id)}/submit`, VendorBillSchema, post(idempotencyKey));
 }
 
+/** Discards only a draft, releasing its invoice-number reservation. */
+export function discardBill(
+  session: Session,
+  id: string,
+  idempotencyKey: string,
+): Promise<VendorBill> {
+  return call(session, `${BILLS}/${seg(id)}/discard`, VendorBillSchema, post(idempotencyKey));
+}
+
 /** 409 `BILL_NOT_POSTED`, `BILL_HAS_ALLOCATIONS`, `BILL_HAS_PAYMENT_REQUEST`, or `invalid_transition` unless approved. */
 export function voidBill(
   session: Session,

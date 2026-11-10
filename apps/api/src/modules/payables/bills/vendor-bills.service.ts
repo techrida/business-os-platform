@@ -999,6 +999,51 @@ export class VendorBillsService {
     }
   }
 
+  /** Retains a discarded draft and its references, releasing the active invoice-number key. */
+  async discard(id: string, idempotencyKey: string): Promise<VendorBillDto> {
+    const { scope, actor } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const done = await withIdempotency(
+        tx,
+        { command: 'payables.bill.discard', key: idempotencyKey, body: { id } },
+        async () => {
+          const bill = await this.lockBill(tx, scope, id);
+          if (bill.status === 'discarded') {
+            return { status: 200, response: await this.dto(tx, scope, id) };
+          }
+          if (bill.status !== 'draft') {
+            throw conflict(
+              'invalid_transition',
+              `A ${bill.status} bill cannot be discarded; only a draft can`,
+            );
+          }
+          await tx
+            .update(vendorBills)
+            .set({
+              status: 'discarded',
+              version: sql`${vendorBills.version} + 1`,
+              updatedAt: this.clock(),
+            })
+            .where(
+              scoped(scope).where(
+                vendorBills,
+                and(eq(vendorBills.id, id), eq(vendorBills.status, 'draft')),
+              ),
+            );
+          await this.audit.record(tx, {
+            action: 'payables.bill.discarded',
+            entityType: BILL_AUDIT_ENTITY,
+            entityId: id,
+            before: { status: 'draft' },
+            after: { status: 'discarded', vendorInvoiceNo: bill.vendorInvoiceNo },
+          });
+          return { status: 200, response: await this.dto(tx, scope, id) };
+        },
+      );
+      return done.response;
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------- void
 
   /**

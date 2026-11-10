@@ -107,6 +107,7 @@ const showableBill = and(
   eq(vendorBills.kind, 'bill'),
   isNotNull(vendorBills.number),
   ne(vendorBills.status, 'voided'),
+  ne(vendorBills.status, 'discarded'),
 );
 
 @Injectable()
