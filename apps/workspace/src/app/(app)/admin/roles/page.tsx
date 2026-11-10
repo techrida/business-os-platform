@@ -65,7 +65,8 @@ export default async function RolesPage() {
 
       <div className={styles.notices}>
         <Alert tone="info">
-          Roles are read-only here. This table shows the default permissions and scope for each role.
+          Roles are read-only here. This table shows the default permissions and scope for each
+          role.
         </Alert>
         {!users.ok ? (
           <Alert tone="info">User counts are not shown. {users.message}</Alert>
