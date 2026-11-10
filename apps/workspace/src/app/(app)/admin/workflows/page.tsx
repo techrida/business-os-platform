@@ -107,18 +107,18 @@ export default async function WorkflowsPage() {
           label:
             u.displayName && u.email
               ? `${u.displayName} (${u.email})`
-              : (u.displayName ?? u.email ?? `User ${u.id.slice(0, 8)}`),
-          name: u.displayName ?? u.email ?? `User ${u.id.slice(0, 8)}`,
+              : (u.displayName ?? u.email ?? 'Name unavailable'),
+          name: u.displayName ?? u.email ?? 'Name unavailable',
           email: u.displayName ? u.email : null,
         }))
     : null;
   const optionOf = (id: string): UserOption | undefined => userOptions?.find((u) => u.id === id);
-  const labelOf = (id: string): string => optionOf(id)?.label ?? `User ${id.slice(0, 8)}`;
+  const labelOf = (id: string): string => optionOf(id)?.label ?? 'Name unavailable';
   const personOf = (id: string) => {
     const option = optionOf(id);
     return option
       ? { name: option.name, email: option.email, unknown: false }
-      : { name: `User ${id.slice(0, 8)}`, email: null, unknown: true };
+      : { name: 'Name unavailable', email: null, unknown: true };
   };
 
   const groupKeys = groups.ok ? groups.data.map((g) => g.key) : [];

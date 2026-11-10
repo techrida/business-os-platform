@@ -11,8 +11,9 @@
   height: 100vh;
   height: 100dvh;
   min-width: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  /* The sidebar itself never scrolls. Only .nav does, so the brand, the search field and the
+     user card stay put and the scrollbar sits between them. */
+  overflow: hidden;
   border-right: var(--border-width-thin) solid var(--border-default);
   background: var(--surface-subtle);
 }
@@ -69,9 +70,18 @@
   cursor: not-allowed;
 }
 
+/* The one scroll region. min-height: 0 lets a flex child shrink below its content so it can
+   scroll. The active bar sits at the nav's own left edge (the row's -12px offset), so the clip
+   does not cut it. */
 .nav {
   flex: 1 1 auto;
+  min-height: 0;
   padding: 0 12px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
 }
 
 /* Rows are 36px with no gap between them; a group label sits 12px above and below its text. */
@@ -171,22 +181,11 @@
   line-height: 18px;
 }
 
-/* Phase tag on a row that is not built yet: small, outlined, no fill, so the roadmap stays
-   readable without competing with the live items. */
-.tag {
-  flex: none;
-  padding: 0 6px;
-  border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-full);
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: var(--font-weight-medium);
-  line-height: 14px;
-}
-
+/* Pinned below the scrolling nav. The rule marks where the scroll region ends. */
 .footer {
   flex: none;
   padding: 12px;
+  border-top: var(--border-width-thin) solid var(--border-default);
 }
 
 .userCard {
@@ -268,8 +267,7 @@
   }
 
   .searchWrap,
-  .groupLabel,
-  .tag {
+  .groupLabel {
     display: none;
   }
 

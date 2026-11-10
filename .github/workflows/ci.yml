@@ -166,9 +166,12 @@ jobs:
       - name: Check no dev routes in the production build
         run: node apps/workspace/scripts/check-no-dev-routes.mjs
 
-      # The portal has no dev-route checker yet, so this step proves only that it builds.
+      # Both product apps must ship without dev routes or tooling.
       - name: Build the portal app (production)
         run: pnpm --filter '@bos/portal...' build
+
+      - name: Check no dev tooling in the portal production build
+        run: node apps/workspace/scripts/check-no-dev-routes.mjs apps/portal/.next
 
   # Proves the three production images still build. Nothing is pushed anywhere.
   docker:

@@ -130,7 +130,7 @@ describe('customer statement', () => {
   it('falls back to a short id when the customer name cannot be read', async () => {
     mocks.getCustomer.mockRejectedValue(new ApiError(403, 'no'));
     const html = await render();
-    expect(html).toContain('Customer 33333333');
+    expect(html).toContain('Customer details unavailable');
     expect(html).toContain('INV-2083/84-00007');
   });
 
