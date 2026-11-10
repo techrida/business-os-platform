@@ -7,10 +7,12 @@ import { Table, Td, Th } from '@/components/ui/table';
 import {
   listApprovalGroups,
   listDelegations,
-  listUsers,
+  listApprovalPeople,
   listWorkflows,
   type WorkflowVersion,
 } from '@/lib/api-admin';
+
+import { userNames } from '@/lib/business-labels';
 
 import adminStyles from '../admin.module.css';
 import { formatInstant } from '../format';
@@ -90,19 +92,21 @@ function SectionHead({ id, title, children }: { id: string; title: string; child
 export default async function WorkflowsPage() {
   const session = await requireSession('/admin/workflows');
 
-  // Four independent reads. Each can fail alone (each route needs its own permission), and the
-  // user list only feeds the pickers and the name lookups, so its failure is never fatal.
-  const [workflows, groups, delegations, users] = await Promise.all([
-    section('view workflows', () => listWorkflows(session)),
-    section('manage approval groups', () => listApprovalGroups(session)),
-    section('manage delegations', () => listDelegations(session)),
-    section('view users', () => listUsers(session, { limit: 200 })),
-  ]);
+  // Each picker uses its own management permission; a failed lookup never discards saved targets.
+  const [workflows, groups, delegations, users, groupPeople, delegationPeople, directoryNames] =
+    await Promise.all([
+      section('view workflows', () => listWorkflows(session)),
+      section('manage approval groups', () => listApprovalGroups(session)),
+      section('manage delegations', () => listDelegations(session)),
+      section('choose workflow approvers', () => listApprovalPeople(session, 'workflows')),
+      section('choose group members', () => listApprovalPeople(session, 'approval-groups')),
+      section('choose delegation people', () => listApprovalPeople(session, 'delegations')),
+      userNames(session),
+    ]);
 
-  const userOptions: UserOption[] | null = users.ok
-    ? users.data.items
-        .filter((u) => u.status !== 'inactive')
-        .map((u) => ({
+  const options = (people: typeof users): UserOption[] | null =>
+    people.ok
+      ? people.data.map((u) => ({
           id: u.id,
           label:
             u.displayName && u.email
@@ -111,14 +115,27 @@ export default async function WorkflowsPage() {
           name: u.displayName ?? u.email ?? 'Name unavailable',
           email: u.displayName ? u.email : null,
         }))
-    : null;
-  const optionOf = (id: string): UserOption | undefined => userOptions?.find((u) => u.id === id);
-  const labelOf = (id: string): string => optionOf(id)?.label ?? 'Name unavailable';
+      : null;
+  const userOptions = options(users);
+  const groupOptions = options(groupPeople);
+  const delegationOptions = options(delegationPeople);
+  const peopleOptions = [
+    ...(userOptions ?? []),
+    ...(groupOptions ?? []),
+    ...(delegationOptions ?? []),
+  ];
+  const optionOf = (id: string): UserOption | undefined => peopleOptions.find((u) => u.id === id);
+  const labelOf = (id: string): string =>
+    optionOf(id)?.label ?? directoryNames.get(id) ?? 'Name unavailable';
   const personOf = (id: string) => {
     const option = optionOf(id);
     return option
       ? { name: option.name, email: option.email, unknown: false }
-      : { name: 'Name unavailable', email: null, unknown: true };
+      : {
+          name: directoryNames.get(id) ?? 'Name unavailable',
+          email: null,
+          unknown: !directoryNames.has(id),
+        };
   };
 
   const groupKeys = groups.ok ? groups.data.map((g) => g.key) : [];
@@ -199,9 +216,10 @@ export default async function WorkflowsPage() {
                                     <div className={styles.specBody}>
                                       <SpecSummary
                                         spec={v.spec}
-                                        people={Object.fromEntries(
-                                          (userOptions ?? []).map((u) => [u.id, u.label]),
-                                        )}
+                                        people={Object.fromEntries([
+                                          ...directoryNames,
+                                          ...peopleOptions.map((u) => [u.id, u.label] as const),
+                                        ])}
                                         groups={Object.fromEntries(
                                           groups.ok ? groups.data.map((g) => [g.key, g.name]) : [],
                                         )}
@@ -354,7 +372,7 @@ export default async function WorkflowsPage() {
                         </ul>
                       )}
                       <div className={styles.addMember}>
-                        <AddMemberForm groupId={g.id} groupName={g.name} users={userOptions} />
+                        <AddMemberForm groupId={g.id} groupName={g.name} users={groupOptions} />
                       </div>
                     </Panel>
                   </li>
@@ -378,10 +396,10 @@ export default async function WorkflowsPage() {
           <SectionError message={delegations.message} />
         ) : (
           <>
-            {!users.ok ? (
+            {!delegationPeople.ok ? (
               <Notice>
-                People could not be loaded ({users.message}). Existing assignments are retained.
-                Reload or ask an administrator for access before choosing a person.
+                People could not be loaded ({delegationPeople.message}). Existing assignments are
+                retained. Reload or ask an administrator for access before choosing a person.
               </Notice>
             ) : null}
             {delegations.data.length === 0 ? (
@@ -438,7 +456,7 @@ export default async function WorkflowsPage() {
               </Table>
             )}
             <Panel title="New delegation" headingLevel={3}>
-              <DelegationForm users={userOptions} documentTypes={documentTypes} />
+              <DelegationForm users={delegationOptions} documentTypes={documentTypes} />
             </Panel>
           </>
         )}
