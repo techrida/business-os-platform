@@ -25,7 +25,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
 import { logActivityAction } from '../../activities/actions';
-import { convertLeadAction, moveLeadStageAction } from '../actions';
+import { convertLeadAction, loadConvertContacts, moveLeadStageAction } from '../actions';
 
 export const metadata: Metadata = { title: 'Lead · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -137,6 +137,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
           lead.stage === 'qualified' ? (
             <ConvertDialog
               action={convertLeadAction}
+              loadContacts={loadConvertContacts}
               lead={{
                 id: lead.id,
                 version: lead.version,
