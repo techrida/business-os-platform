@@ -29,6 +29,8 @@ import type { Principal } from '../../../platform/authz/principal';
 import type { Db } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { CostCentersService } from './cost-centers.service';
+import { CostCentersController } from './cost-centers.controller';
+import { AuditService } from '../../../platform/audit/audit.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -51,12 +53,13 @@ const current: { orgKind: Principal['orgKind']; scope: TxScope } = {
   scope: { tenantId: '', organizationId: '' },
 };
 
+let actingUserId = '';
 const caller = {
   current: () => ({
     scope: current.scope,
-    actor: { kind: 'user' as const, id: 'user-1', correlationId: 'test-corr' },
+    actor: { kind: 'user' as const, id: actingUserId, correlationId: 'test-corr' },
     principal: {
-      userId: 'user-1',
+      userId: actingUserId,
       zitadelUserId: 'z-user-1',
       ...current.scope,
       orgKind: current.orgKind,
@@ -65,7 +68,7 @@ const caller = {
       roles: [],
       departmentId: null,
       status: 'active',
-      grants: new Map(),
+      grants: new Map([['admin.settings.write', 'all']]),
     } satisfies Principal,
   }),
 };
@@ -133,6 +136,7 @@ beforeAll(async () => {
   current.scope = scopeA;
 
   const { userId } = await createStaffUser(appPool, { ...scopeA, idpOrgId: tenant.idpOrgId });
+  actingUserId = userId;
   for (const scope of [scopeA, scopeB]) {
     const { departmentId } = await createDepartment(appPool, scope);
     const prId = randomUUID();
@@ -167,7 +171,7 @@ beforeAll(async () => {
     await createCostCenter(appPool, { ...scopeB, name: 'Beta', code: 'B' })
   ).costCenterId;
 
-  service = new CostCentersService(db, caller);
+  service = new CostCentersService(db, caller, new AuditService());
 });
 
 afterAll(async () => {
@@ -239,5 +243,27 @@ describe('0037 populated upgrade', () => {
     ).rejects.toMatchObject({
       cause: { code: '23503', constraint: 'purchase_requests_cost_center_fk' },
     });
+  });
+});
+
+
+describe('cost centre management', () => {
+  it('creates, replays, renames and deactivates with one audit event per command', async () => {
+    current.orgKind = 'staff'; current.scope = scopeA;
+    const managed = new CostCentersService(db, caller, new AuditService());
+    const controller = new CostCentersController(managed);
+    const key = randomUUID();
+    const row = await controller.create(key, { code: 'NEW', name: 'New centre' });
+    expect(await controller.create(key, { code: 'NEW', name: 'New centre' })).toEqual(row);
+    const updateKey = randomUUID();
+    expect(await controller.update(row.id, updateKey, { name: 'Renamed', active: false })).toMatchObject({ name: 'Renamed', active: false });
+    await controller.update(row.id, updateKey, { name: 'Renamed', active: false });
+    const events = await ownerPool.query('SELECT action FROM audit.audit_events WHERE entity_id = $1 AND action LIKE $2', [row.id, 'cost_center.%']);
+    expect(events.rows.map(r => r.action).sort()).toEqual(['cost_center.created', 'cost_center.updated']);
+    current.scope = scopeB;
+    await expect(controller.update(row.id, randomUUID(), { active: true })).rejects.toMatchObject({ status: 404 });
+    current.scope = scopeA;
+    await expect(controller.create(randomUUID(), { code: 'NEW', name: 'Duplicate' })).rejects.toMatchObject({ status: 409 });
+    await expect(controller.create(randomUUID(), { code: '', name: 'Bad' })).rejects.toMatchObject({ status: 400 });
   });
 });
