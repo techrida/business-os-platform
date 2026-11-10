@@ -171,6 +171,50 @@ it('includes second-page users in workflow page selectors without directory read
   expect(workflows).toContain(`<option value="${second}">Second page person</option>`);
 });
 
+it('includes second-page users in workflow page selectors when the general directory is allowed', async () => {
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) => {
+    if (path.startsWith('/v1/admin/users?')) {
+      const after = new URL(path, 'http://api.test').searchParams.get('after');
+      const items = after
+        ? [person(second)]
+        : Array.from({ length: 200 }, (_, i) =>
+            person(`11111111-1111-4111-8111-${String(i + 1).padStart(12, '0')}`),
+          );
+      return Promise.resolve(
+        Response.json({
+          items: items.map((u) => ({ ...u, status: 'active', idpOrgId: group, roles: [] })),
+          nextAfter: after ? null : first,
+        }),
+      );
+    }
+    if (path === '/v1/admin/workflows') {
+      return Promise.resolve(
+        Response.json([
+          {
+            id: group,
+            key: 'memo',
+            name: 'Memo review',
+            documentType: 'test_memo',
+            currentVersionId: null,
+            versions: [
+              version({
+                documentType: 'test_memo',
+                steps: [{ id: 'review', kind: 'user', user: first, reason: 'Review' }],
+                rules: [],
+              }),
+            ],
+          },
+        ]),
+      );
+    }
+    return respond(caller, path, init);
+  });
+  const html = renderToStaticMarkup(await WorkflowsPage());
+  const workflows = html.slice(0, html.indexOf('id="groups"'));
+  expect(workflows).toContain(`<option value="${second}">Second page person</option>`);
+});
+
 it('rejects a stuck cursor instead of silently returning an incomplete picker', async () => {
   vi.mocked(apiFetch).mockImplementation(() =>
     Promise.resolve(Response.json({ items: [person(first)], nextAfter: first })),

@@ -37,36 +37,76 @@ export interface SnapshotEntry {
   block: boolean;
 }
 
-/** Internal references are retained in the snapshot, but are not product display values. */
-function snapshotForDisplay(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(snapshotForDisplay);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => key !== 'id' && !/Ids?$/.test(key))
-        .map(([key, item]) => [key, snapshotForDisplay(item)]),
-    );
-  }
+const referenceKeys = new Set([
+  'ownerUserId',
+  'customerPartyId',
+  'customerId',
+  'contactId',
+  'organizationId',
+  'documentId',
+  'versionId',
+  'documentVersionId',
+  'quotationId',
+  'quotationVersionId',
+  'invoiceId',
+  'salesOrderId',
+  'paymentTermId',
+  'taxCodeId',
+  'catalogItemId',
+  'requesterUserId',
+  'actorUserId',
+  'groupId',
+  'userId',
+]);
+
+/** Display technical references without exposing opaque keys, including nested frozen records. */
+function snapshotValue(value: unknown, references: ReadonlyMap<string, string>): unknown {
+  if (Array.isArray(value)) return value.map((item) => snapshotValue(item, references));
   if (typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) {
-    return 'Reference unavailable';
+    return references.get(value) ?? 'Name unavailable';
   }
-  return value;
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, raw]) => {
+      if (
+        referenceKeys.has(key) ||
+        (key === 'id' && typeof raw === 'string' && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(raw))
+      ) {
+        return [
+          key.replace(/(?:Ids?|_ids?)$/, '') || 'reference',
+          raw == null
+            ? 'Not assigned'
+            : typeof raw === 'string'
+              ? (references.get(raw) ?? 'Name unavailable')
+              : 'Name unavailable',
+        ];
+      }
+      return [key, snapshotValue(raw, references)];
+    }),
+  );
 }
 
 /**
  * Turns the frozen snapshot (an unknown JSON value) into labelled rows. The snapshot is exactly
- * what the approvers saw, with internal references omitted from display. Money-looking and date-looking values are
- * formatted; business facts remain as stored.
+ * what the approvers saw: business values are preserved and money and dates are formatted.
+ * Technical references use unavailable-name labels; the stored snapshot remains unchanged.
  */
-export function snapshotEntries(snapshot: unknown): SnapshotEntry[] {
-  snapshot = snapshotForDisplay(snapshot);
+export function snapshotEntries(
+  snapshot: unknown,
+  references: ReadonlyMap<string, string> = new Map(),
+): SnapshotEntry[] {
   if (snapshot === undefined || snapshot === null) return [];
   if (typeof snapshot !== 'object' || Array.isArray(snapshot)) {
     return [
-      { key: 'value', label: 'Value', value: JSON.stringify(snapshot, null, 2), block: true },
+      {
+        key: 'value',
+        label: 'Value',
+        value: JSON.stringify(snapshotValue(snapshot, references), null, 2),
+        block: true,
+      },
     ];
   }
-  const record = snapshot as Record<string, unknown>;
+  const record = snapshotValue(snapshot, references) as Record<string, unknown>;
   const currency = asCurrency(record['currency']);
   return Object.entries(record).map(([key, raw]): SnapshotEntry => {
     const label = humanizeKey(key);
