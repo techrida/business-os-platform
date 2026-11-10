@@ -461,7 +461,7 @@ describe('convert a bill submission', () => {
       "SELECT count(*) FROM audit.audit_events WHERE entity_id = $1 AND action = 'payables.bill_submission.reopened'",
       [sub.id],
     );
-    expect(Number(audit.rows[0].count)).toBe(1);
+    expect(Number(audit.rows[0]?.count)).toBe(1);
   });
 
   it('creates exactly one matched bill, marks the submission converted and replays to the same bill', async () => {

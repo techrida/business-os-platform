@@ -6,6 +6,7 @@ import 'reflect-metadata';
 import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
+import { AuditService } from '../../../platform/audit/audit.service';
 import type { Principal } from '../../../platform/authz/principal';
 import type { Db } from '../../../platform/db/db.module';
 import { CostCentersService } from './cost-centers.service';
@@ -42,7 +43,8 @@ function setup(
       principal,
     }),
   };
-  const service = new CostCentersService({ select } as unknown as Db, caller);
+  const db = { select } as unknown as Db;
+  const service = new CostCentersService(db, caller, new AuditService(db));
   return { service, select };
 }
 
