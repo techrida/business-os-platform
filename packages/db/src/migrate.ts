@@ -39,6 +39,12 @@ export async function runMigrations(
         'SELECT hash FROM drizzle.__drizzle_migrations',
       );
       const hashes = new Set(applied.rows.map((row) => row.hash));
+      const knownHashes = new Set(migrations.map((migration) => migration.hash));
+      if ([...hashes].some((hash) => !knownHashes.has(hash))) {
+        throw new Error(
+          'Migration ledger contains an unknown applied SQL hash; use the complete matching phase source and restore any modified migration files before retrying',
+        );
+      }
       // Phase branches can introduce older timestamps. A timestamp is ordering metadata,
       // not evidence that a particular SQL file was applied. Preserve all recorded hashes.
       for (const migration of migrations) {
