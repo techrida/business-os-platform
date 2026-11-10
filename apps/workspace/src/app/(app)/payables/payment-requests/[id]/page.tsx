@@ -90,7 +90,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'vendor',
                 label: 'Vendor',
-                value: <Link href={`/vendors/${request.vendorPartyId}`}>Open vendor</Link>,
+                value: <Link href={`/vendors/${request.vendorPartyId}`}>View vendor</Link>,
               },
               {
                 key: 'bank',
@@ -100,7 +100,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'source',
                 label: 'Paying entity bank account',
-                value: request.fromBankAccountId,
+                value: 'Selected paying account',
               },
               {
                 key: 'total',

@@ -216,7 +216,7 @@ function Accounts({
             {result.value.map((a) => (
               <tr key={a.organizationId}>
                 <Td>
-                  <span>Entity name unavailable</span>
+                  <span>Legal entity</span>
                 </Td>
                 <Td align="end" nowrap>
                   <span className={styles.numeric}>{a.paymentTermsDays} days</span>

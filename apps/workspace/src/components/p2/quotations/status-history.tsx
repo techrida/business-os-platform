@@ -20,7 +20,7 @@ export interface HistoryRow {
 /**
  * Turns the status history into rows for display, newest first. A change with no earlier status
  * is the creation; every other change names both ends in the same labels the badges use. The API
- * does not send names, so the actor label explicitly says when a name is unavailable.
+ * does not send names, so staff actions use a neutral label.
  */
 export function historyRows(
   history: readonly QuotationStatusHistoryDto[],
@@ -41,7 +41,7 @@ export function historyRows(
         entry.fromStatus === null
           ? `Created as ${quotationStatusMeta(entry.toStatus).label}`
           : `Changed from ${quotationStatusMeta(entry.fromStatus).label} to ${quotationStatusMeta(entry.toStatus).label}`,
-      actor: entry.actorId === null ? 'System' : 'Name unavailable',
+      actor: entry.actorId === null ? 'System' : 'Staff member',
       reason: entry.reason !== null && entry.reason !== '' ? entry.reason : null,
       at: entry.at,
     }));

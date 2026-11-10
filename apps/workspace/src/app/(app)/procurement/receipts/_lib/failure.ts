@@ -59,7 +59,7 @@ export function receiptFailure(err: unknown, op: ReceiptOp, kind?: ReceiptKind):
         case 'over_receipt':
           return 'More was entered than is still open on a line. A draft or another receipt may have used some of it since you opened this page. Reload to see what is left.';
         case 'over_receipt_exception_unknown':
-          return 'Over-receipt exceptions are not available yet, so a line cannot go above what is open.';
+          return 'The over-receipt exception reference was not recognised.';
         case 'po_line_unknown':
           return 'A line in this form is no longer on the purchase order. Reload the page and start again.';
         case 'duplicate_po_line':

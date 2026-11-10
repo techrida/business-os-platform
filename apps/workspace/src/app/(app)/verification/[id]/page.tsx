@@ -45,14 +45,8 @@ export const dynamic = 'force-dynamic';
 const SCAN_TONE = { good: 'success', wait: 'warning', bad: 'error' } as const;
 
 /** One attached file: its name, scan result and, once the scan passed, a link that opens it. */
-function AttachedFile({
-  documentId: _documentId,
-  file,
-}: {
-  documentId: string;
-  file: FileView | null | 'unavailable';
-}) {
-  const ref = <span className={styles.ref}>Attached document</span>;
+function AttachedFile({ file }: { documentId: string; file: FileView | null | 'unavailable' }) {
+  const ref = <span className={styles.ref}>Attached file</span>;
   if (file === null || file === 'unavailable') {
     return (
       <div className={styles.file}>
@@ -147,7 +141,7 @@ export default async function VerificationCasePage({
     );
   }
 
-  // The name is a courtesy: a failed lookup shows an unavailable-name label and the case still works.
+  // The name is a courtesy: a failed lookup shows the short id and the case still works.
   let customer: CustomerDto | undefined;
   try {
     customer = await getCustomer(session, c.partyId);
@@ -210,7 +204,7 @@ export default async function VerificationCasePage({
               {c.reviewedBy !== null ? (
                 <>
                   {' '}
-                  by <span>Name unavailable</span>
+                  by <span>a staff member</span>
                 </>
               ) : null}
               .

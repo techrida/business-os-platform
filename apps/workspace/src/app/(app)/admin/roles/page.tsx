@@ -64,9 +64,7 @@ export default async function RolesPage() {
       />
 
       <div className={styles.notices}>
-        <Alert tone="info">
-          This read-only matrix shows the built-in permissions for each role.
-        </Alert>
+        <Alert tone="info">This matrix is read-only and shows the built-in role permissions.</Alert>
         {!users.ok ? (
           <Alert tone="info">User counts are not shown. {users.message}</Alert>
         ) : countsPartial ? (

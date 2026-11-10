@@ -21,11 +21,8 @@ vi.mock('@/components/p2/customers/api', () => ({
   listCustomers: api.listCustomers,
 }));
 
-import {
-  convertLeadAction,
-  loadConvertContacts,
-  searchConvertCustomers,
-} from '@/app/(app)/leads/actions';
+import { convertLeadAction } from '@/app/(app)/leads/actions';
+import { searchConversionCustomers } from './record-lookups';
 import { ConvertDialog } from './convert-dialog';
 import type { DuplicateInfo } from './types';
 
@@ -74,7 +71,6 @@ async function showDuplicate(duplicate: DuplicateInfo) {
         submitted.push(form);
         return convertLeadAction(prev, form);
       }}
-      loadContacts={loadConvertContacts}
     />,
   );
   await click(mounted.container.querySelector('button'));
@@ -159,15 +155,15 @@ it('searches a different legal name and links the selected customer without dupl
         submitted.push(form);
         return convertLeadAction(prev, form);
       }}
-      loadContacts={loadConvertContacts}
-      searchCustomers={searchConvertCustomers}
     />,
   );
   await click(mounted.container.querySelector('button'));
   await click(mounted.container.querySelector('input[name="customerMode"][value="existing"]'));
-  await fill(
-    mounted.container.querySelector('input[aria-label="Search customers by name"]'),
-    'Mountain',
+  await fill(mounted.container.querySelector('input[maxlength="100"]'), 'Mountain');
+  await click(
+    [...mounted.container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Search customers',
+    ) ?? null,
   );
   expect(api.listCustomers).toHaveBeenLastCalledWith(expect.anything(), {
     q: 'Mountain',
@@ -197,11 +193,40 @@ it('searches a different legal name and links the selected customer without dupl
 
 it('keeps refused customer searches empty and does not issue blank or oversized reads', async () => {
   api.listCustomers.mockRejectedValue(new ApiError(403, 'forbidden'));
-  const result = await searchConvertCustomers('Mountain');
-  expect(result.customers).toEqual([]);
+  const result = await searchConversionCustomers('Mountain');
+  expect(result.options).toEqual([]);
   expect(result.error).toBeTruthy();
   api.listCustomers.mockClear();
-  expect(await searchConvertCustomers('  ')).toEqual({ customers: [] });
-  expect(await searchConvertCustomers('x'.repeat(101))).toEqual({ customers: [] });
+  expect(await searchConversionCustomers('  ')).toEqual({ options: [], error: '' });
+  expect(await searchConversionCustomers('x'.repeat(101))).toEqual({ options: [], error: '' });
   expect(api.listCustomers).not.toHaveBeenCalled();
+});
+
+it('creates a new customer and contact through the real action', async () => {
+  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
+  mounted = await mountForm(
+    <ConvertDialog
+      lead={{
+        id: LEAD,
+        version: 1,
+        number: 'LEAD-1',
+        title: 'Office supply',
+        companyName: 'New Supplies',
+        contactName: 'Mina',
+        email: '',
+        phone: '',
+      }}
+      action={convertLeadAction}
+    />,
+  );
+  await click(mounted.container.querySelector('button'));
+  await fill(mounted.container.querySelector('[name="line1"]'), 'Balaju');
+  await fill(mounted.container.querySelector('[name="city"]'), 'Kathmandu');
+  await submit(mounted.container);
+  expect(api.convertLead).toHaveBeenCalledTimes(1);
+  expect(api.convertLead.mock.calls[0]?.[1]).toBe(LEAD);
+  expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({
+    customer: { mode: 'create', customer: { legalName: 'New Supplies' } },
+    contact: { mode: 'create', contact: { fullName: 'Mina' } },
+  });
 });

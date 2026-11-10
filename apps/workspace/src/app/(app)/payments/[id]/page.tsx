@@ -65,7 +65,7 @@ function ProofList({ proofs }: { proofs: Proof[] }) {
           return (
             <li key={documentId} className={styles.file}>
               <span className={styles.quiet}>
-                Proof could not be loaded. Reload the page to try again.
+                Payment proof could not be loaded. Reload the page to try again.
               </span>
             </li>
           );
@@ -141,7 +141,7 @@ function AllocationsTable({
       <tbody>
         {rows.map((row) => {
           const reversal = row.reversesAllocationId !== null;
-          const label = labels.get(row.invoiceId) ?? 'Invoice number unavailable';
+          const label = labels.get(row.invoiceId) ?? 'Open invoice';
           const key = live.has(row.id) ? deallocate?.keys.get(row.id) : undefined;
           return (
             <tr key={row.id}>
@@ -221,14 +221,14 @@ function facts(p: PaymentDto, customerName: string): Fact[] {
     {
       key: 'submitted',
       label: 'Recorded by',
-      value: `Name unavailable · ${p.submittedVia === 'portal' ? 'customer portal' : 'staff entry'}`,
+      value: p.submittedVia === 'portal' ? 'Customer portal' : 'Staff entry',
     },
   ];
   if (p.verifiedBy !== null && p.verifiedAt !== null) {
     out.push({
       key: 'verified',
-      label: 'Verified by',
-      value: `Name unavailable · ${when(p.verifiedAt)}`,
+      label: 'Verified at',
+      value: when(p.verifiedAt),
     });
   }
   if (p.rejectionReason !== null) {
@@ -333,7 +333,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
 
   const meta = paymentStatusMeta(payment.status);
   const actions = actionsFor(payment.status);
-  const customerName = customer?.legalName ?? 'Customer name unavailable';
+  const customerName = customer?.legalName ?? 'Customer details unavailable';
 
   return (
     <Page>
