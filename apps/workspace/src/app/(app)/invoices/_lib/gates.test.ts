@@ -40,6 +40,18 @@ describe('invoiceGates follow canTransitionInvoice and the role', () => {
     });
   });
 
+  it.each(['draft', 'returned'] as const)(
+    'lets Finance submit and discard a %s tax invoice with its own grants',
+    (status) => {
+      expect(gates('tax_invoice', status, FINANCE)).toEqual({
+        submit: true,
+        issue: false,
+        discard: true,
+        notes: false,
+      });
+    },
+  );
+
   it('offers Issue only to Finance, and only once approved', () => {
     expect(gates('tax_invoice', 'approved', FINANCE).issue).toBe(true);
     expect(gates('tax_invoice', 'approved', ACCOUNTANT).issue).toBe(false);

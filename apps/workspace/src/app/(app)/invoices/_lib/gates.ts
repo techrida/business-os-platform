@@ -18,9 +18,9 @@ export interface InvoiceGates {
  * decides what to show; the API enforces the same rules again on every call.
  *
  * Permissions (the brief names the first, second and fourth; discard and proforma issue are choices):
- *  - submit  `invoice.submit` (Accountant)
+ *  - submit  `invoice.submit` (Accountant or Finance)
  *  - issue   `invoice.issue` (Finance), a proforma too
- *  - discard `invoice.draft` (Accountant): discarding is the end of the drafter's own work
+ *  - discard `invoice.draft` (Accountant or Finance)
  *  - notes   `invoice.credit_note` (Finance), for credit and debit notes alike (there is no
  *    separate debit permission). A proforma is not corrected by a note: it opens no open item.
  */
