@@ -185,10 +185,7 @@ export default async function SettingsPage() {
             title="Values"
             description="Each save adds a new version; the latest one is in force."
           >
-            <Alert tone="info">
-              The version history is not shown yet: the API keeps every version but has no route to
-              list them. Only the current version number is shown.
-            </Alert>
+            <Alert tone="info">Only the current version is shown.</Alert>
             <ul className={styles.rows}>
               {settings.map(({ key, result }) => {
                 const copy = SETTING_COPY[key];
