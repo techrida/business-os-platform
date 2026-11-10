@@ -62,7 +62,7 @@ describe('development identity boundary', () => {
       human: { profile: { displayName: 'Manual user' }, password: 'never-expose' },
     };
     const fetchMock = vi.fn().mockImplementation(
-      async () =>
+      () =>
         new Response(
           JSON.stringify({
             result: [
