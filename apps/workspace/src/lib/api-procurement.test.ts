@@ -9,6 +9,7 @@ import {
   createPurchaseRequest,
   getPurchaseRequest,
   listPurchaseRequests,
+  listDepartments,
   submitPurchaseRequest,
   updatePurchaseRequest,
 } from './api-procurement';
@@ -225,4 +226,10 @@ describe('writes carry the Idempotency-Key', () => {
       status: 422,
     });
   });
+});
+
+it('reads named departments from the existing scoped staff lookup', async () => {
+  answer(reply([{ id: ID_B, name: 'Operations' }]));
+  await expect(listDepartments(session)).resolves.toEqual([{ id: ID_B, name: 'Operations' }]);
+  expect(lastCall().url).toBe('http://api:3001/v1/departments');
 });

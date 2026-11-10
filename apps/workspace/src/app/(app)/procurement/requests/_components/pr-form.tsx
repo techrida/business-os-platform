@@ -32,6 +32,7 @@ interface Row {
  */
 export function PrForm({
   action,
+  departments,
   initial,
   mode,
   idempotencyKey,
@@ -41,6 +42,7 @@ export function PrForm({
   reloadHref,
 }: {
   action: (prev: PrFormState, form: FormData) => Promise<PrFormState>;
+  departments: { id: string; name: string }[];
   initial: PrValues;
   mode: 'create' | 'edit';
   /** A UUID the server made for this render. */
@@ -112,6 +114,12 @@ export function PrForm({
         </Alert>
       ) : null}
 
+      {mode === 'create' ? (
+        <Alert tone="info" role="status">
+          A cost centre must be assigned before you can save a new request. Contact your
+          administrator.
+        </Alert>
+      ) : null}
       <Panel title="Request">
         <div className={styles.grid}>
           <Field label="Type" error={err.requestType}>
@@ -142,36 +150,41 @@ export function PrForm({
               />
             )}
           </Field>
-          <Field
-            label="Department"
-            hint="The department's id. Its head approves this request."
-            error={err.departmentId}
-          >
+          <Field label="Department" error={err.departmentId}>
             {(control) => (
-              <Input
+              <Select
                 name="departmentId"
                 value={values.departmentId}
                 onChange={set('departmentId')}
-                autoComplete="off"
-                spellCheck={false}
-                className={styles.numeric}
                 required
                 {...control}
-              />
+              >
+                <option value="">Select a department</option>
+                {values.departmentId && !departments.some((d) => d.id === values.departmentId) ? (
+                  <option value={values.departmentId}>Department name unavailable</option>
+                ) : null}
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
             )}
           </Field>
-          <Field label="Cost centre" hint="The cost centre's id." error={err.costCenterId}>
+          <Field label="Cost centre" error={err.costCenterId}>
             {(control) => (
-              <Input
-                name="costCenterId"
-                value={values.costCenterId}
-                onChange={set('costCenterId')}
-                autoComplete="off"
-                spellCheck={false}
-                className={styles.numeric}
-                required
-                {...control}
-              />
+              <>
+                <input type="hidden" name="costCenterId" value={values.costCenterId} />
+                <Input
+                  value={
+                    values.costCenterId
+                      ? 'Cost centre name unavailable'
+                      : 'Cost centre selection unavailable'
+                  }
+                  readOnly
+                  {...control}
+                />
+              </>
             )}
           </Field>
           <Field label="Budget code" error={err.budgetCode}>
@@ -218,17 +231,16 @@ export function PrForm({
               />
             )}
           </Field>
-          <Field label="Project" hint="Optional. The project's id." error={err.projectId}>
+          <Field label="Project" error={err.projectId}>
             {(control) => (
-              <Input
-                name="projectId"
-                value={values.projectId}
-                onChange={set('projectId')}
-                autoComplete="off"
-                spellCheck={false}
-                className={styles.numeric}
-                {...control}
-              />
+              <>
+                <input type="hidden" name="projectId" value={values.projectId} />
+                <Input
+                  value={values.projectId ? 'Project name unavailable' : 'No project selected'}
+                  readOnly
+                  {...control}
+                />
+              </>
             )}
           </Field>
           <Field
@@ -416,7 +428,7 @@ export function PrForm({
       </Panel>
 
       <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || !values.costCenterId || !values.departmentId}>
           {submitLabel}
         </Button>
         <LinkButton href={cancelHref} variant="ghost">
