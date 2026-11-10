@@ -65,9 +65,7 @@ export default async function RolesPage() {
 
       <div className={styles.notices}>
         <Alert tone="info">
-          This matrix is read-only. Changes need the P2 roles editor: the API has no route to read
-          or write role permissions yet, so the table shows the built-in defaults from the shared
-          contract.
+          Roles are read-only here. This table shows the default permissions and scope for each role.
         </Alert>
         {!users.ok ? (
           <Alert tone="info">User counts are not shown. {users.message}</Alert>
