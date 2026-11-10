@@ -289,13 +289,19 @@ describe('P4 exit Journey 11: department request to approved payment request ove
     s.vat13 = codes.find((c) => c.code === 'VAT13')!.id;
     expect(s.vat13, 'production seed VAT13').toBeTruthy();
     const requester = await auth('requester');
+    const costCenters = await get<{ id: string; code: string; active: boolean }[]>(
+      '/v1/cost-centers',
+      requester,
+    );
+    const general = costCenters.find((center) => center.code === 'GENERAL' && center.active);
+    expect(general, 'production seed GENERAL cost centre readable by the requester').toBeDefined();
     s.pr = await post<PurchaseRequestDto>(
       PR,
       requester,
       {
         requestType: 'goods',
         departmentId: world.departmentId,
-        costCenterId: randomUUID(),
+        costCenterId: general!.id,
         justification: 'Replace the workstation and router for the IT department',
         requiredBy: day(14),
         budgetCode: 'J11-IT',
