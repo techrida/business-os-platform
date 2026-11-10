@@ -63,7 +63,7 @@ const caller = {
       partyId: current.orgKind === 'staff' ? null : randomUUID(),
       idpOrgId: 'unused',
       roles: [],
-      costCenterId: null,
+      departmentId: null,
       status: 'active',
       grants: new Map(),
     } satisfies Principal,
