@@ -444,13 +444,23 @@ describe('convert a bill submission', () => {
     expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
     expect((await inbox.list()).map((row) => row.id)).toContain(sub.id);
     expect(await policy.canAttach!(scopeA, vendorId, undefined, sub.documentId)).toBe(true);
-    const replacement = await service.convertSubmission(sub.id, { lines: plainLines() }, randomUUID());
+    const replacement = await service.convertSubmission(
+      sub.id,
+      { lines: plainLines() },
+      randomUUID(),
+    );
     expect(replacement.id).not.toBe(bill.id);
-    expect(await rowOf(sub.id)).toMatchObject({ status: 'converted', convertedBillId: replacement.id });
+    expect(await rowOf(sub.id)).toMatchObject({
+      status: 'converted',
+      convertedBillId: replacement.id,
+    });
     // A late retry of the old discard must not reopen the newly converted submission.
     await service.discard(bill.id, randomUUID());
     expect((await rowOf(sub.id)).convertedBillId).toBe(replacement.id);
-    const audit = await ownerPool.query("SELECT count(*) FROM audit.audit_events WHERE entity_id = $1 AND action = 'payables.bill_submission.reopened'", [sub.id]);
+    const audit = await ownerPool.query<{ count: string }>(
+      "SELECT count(*) FROM audit.audit_events WHERE entity_id = $1 AND action = 'payables.bill_submission.reopened'",
+      [sub.id],
+    );
     expect(Number(audit.rows[0].count)).toBe(1);
   });
 

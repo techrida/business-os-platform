@@ -260,7 +260,7 @@ describe('cost centre management', () => {
       await controller.update(row.id, updateKey, { name: 'Renamed', active: false }),
     ).toMatchObject({ name: 'Renamed', active: false });
     await controller.update(row.id, updateKey, { name: 'Renamed', active: false });
-    const events = await ownerPool.query(
+    const events = await ownerPool.query<{ action: string }>(
       'SELECT action FROM audit.audit_events WHERE entity_id = $1 AND action LIKE $2',
       [row.id, 'cost_center.%'],
     );
