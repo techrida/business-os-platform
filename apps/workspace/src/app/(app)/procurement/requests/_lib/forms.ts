@@ -162,7 +162,7 @@ export function valuesFromDto(dto: {
 const WORDS: Record<string, string> = {
   requestType: 'Choose goods, a service, or both.',
   departmentId: 'Enter the department as its id (a UUID). There is no department list yet.',
-  costCenterId: 'Enter the cost centre as its id (a UUID). There is no cost centre list yet.',
+  costCenterId: 'Choose a cost centre from the list.',
   justification: 'Say why this is needed, up to 2000 characters.',
   requiredBy: 'Choose the date it is needed by.',
   deliveryLocation: 'The delivery location can be up to 200 characters.',
