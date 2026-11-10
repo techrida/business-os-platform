@@ -198,7 +198,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
               {customerExisting ? (
                 <Field
                   label="Customer id"
-                  hint="Paste the id from the customer's page. A customer picker comes with the customer screens."
+                  hint="Choose a matching record above, or enter the customer reference."
                   error={err['customerId']}
                 >
                   {(c) => (
