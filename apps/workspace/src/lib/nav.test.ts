@@ -1,14 +1,7 @@
 import { DEFAULT_ROLE_PERMISSIONS, type Permission } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import {
-  NAV_GROUPS,
-  SHIPPED_PHASES,
-  isBuilt,
-  ownsPath,
-  titleForPath,
-  visibleGroups,
-} from './nav';
+import { NAV_GROUPS, SHIPPED_PHASES, isBuilt, ownsPath, titleForPath, visibleGroups } from './nav';
 
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
