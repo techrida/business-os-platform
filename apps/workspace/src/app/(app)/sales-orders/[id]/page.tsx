@@ -16,7 +16,6 @@ import { getSalesOrder } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { DraftInvoiceForm } from '../_components/draft-invoice-form';
 import { MarkBillableDialog, type EvidenceOption } from '../_components/mark-billable-dialog';
@@ -247,9 +246,7 @@ function Schedule({
                   <Td>
                     {line.billableEvidenceDocumentId !== null ? (
                       <span className={local.step}>
-                        <span className={local.id} title={line.billableEvidenceDocumentId}>
-                          Document {shortId(line.billableEvidenceDocumentId)}
-                        </span>
+                        <span className={local.id}>Supporting document</span>
                         {line.billableMarkedAt !== null ? (
                           <span className={local.meta}>
                             Marked {when(line.billableMarkedAt, 'date')}
@@ -309,10 +306,10 @@ function Evidence({ items }: { items: SalesOrderDetail['evidence'] }) {
         <p className={detail.note}>No evidence is attached to this order.</p>
       ) : (
         <ul className={local.evidence}>
-          {items.map((item) => (
+          {items.map((item, index) => (
             <li key={item.documentId} className={local.evidenceItem}>
               <span className={local.evidenceKind}>{evidenceKindLabel(item.kind)}</span>
-              <span className={`${local.id} ${local.meta}`}>{item.documentId}</span>
+              <span className={`${local.id} ${local.meta}`}>Document {index + 1}</span>
             </li>
           ))}
         </ul>
@@ -363,9 +360,9 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
     mark: hasPermission(session.roles, 'sales_order.mark_billable'),
     draft: hasPermission(session.roles, 'invoice.draft'),
   };
-  const evidence: EvidenceOption[] = data.evidence.map((item) => ({
+  const evidence: EvidenceOption[] = data.evidence.map((item, index) => ({
     documentId: item.documentId,
-    label: `${evidenceKindLabel(item.kind)} (ends ${shortId(item.documentId)})`,
+    label: `${evidenceKindLabel(item.kind)} · Document ${index + 1}`,
   }));
 
   return (

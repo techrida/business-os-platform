@@ -32,7 +32,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { formatBytes, scanLabel, shortId } from '@/lib/kernel-ui';
+import { formatBytes, scanLabel } from '@/lib/kernel-ui';
 
 import { AttachForm, type AttachOption } from './attach-form';
 import { ReviewForm } from './review-form';
@@ -45,18 +45,8 @@ export const dynamic = 'force-dynamic';
 const SCAN_TONE = { good: 'success', wait: 'warning', bad: 'error' } as const;
 
 /** One attached file: its name, scan result and, once the scan passed, a link that opens it. */
-function AttachedFile({
-  documentId,
-  file,
-}: {
-  documentId: string;
-  file: FileView | null | 'unavailable';
-}) {
-  const ref = (
-    <span className={styles.ref} title={documentId}>
-      Attached, ref {shortId(documentId)}
-    </span>
-  );
+function AttachedFile({ file }: { documentId: string; file: FileView | null | 'unavailable' }) {
+  const ref = <span className={styles.ref}>Attached file</span>;
   if (file === null || file === 'unavailable') {
     return (
       <div className={styles.file}>
@@ -214,7 +204,7 @@ export default async function VerificationCasePage({
               {c.reviewedBy !== null ? (
                 <>
                   {' '}
-                  by <span title={c.reviewedBy}>person {shortId(c.reviewedBy)}</span>
+                  by <span>a staff member</span>
                 </>
               ) : null}
               .

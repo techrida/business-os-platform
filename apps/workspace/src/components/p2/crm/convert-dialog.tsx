@@ -4,10 +4,11 @@ import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 
 import styles from './crm.module.css';
 import type { ConvertAction, ConvertState } from './types';
+import { loadConversionContacts, searchConversionCustomers } from './record-lookups';
 
 export interface ConvertLead {
   id: string;
@@ -58,6 +59,49 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
   const titleId = useId();
   const err = state.fieldErrors;
   const dupes = state.duplicates ?? [];
+
+  const [query, setQuery] = useState('');
+  const [customers, setCustomers] = useState<{ id: string; label: string }[]>([]);
+  const [lookupError, setLookupError] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [contacts, setContacts] = useState<{
+    customerId: string;
+    options: { id: string; label: string }[];
+    error: string;
+  } | null>(null);
+  const customerId = values['customerId'] ?? '';
+  useEffect(() => {
+    if (!customerId) return;
+    let active = true;
+    void loadConversionContacts(customerId)
+      .then((result) => {
+        if (active) setContacts({ customerId, ...result });
+      })
+      .catch(() => {
+        if (active)
+          setContacts({
+            customerId,
+            options: [],
+            error: 'Contacts could not be loaded. Try again.',
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [customerId]);
+
+  async function searchCustomers() {
+    setSearching(true);
+    try {
+      const result = await searchConversionCustomers(query);
+      setCustomers(result.options);
+      setLookupError(result.error || (result.options.length === 0 ? 'No matching customers.' : ''));
+    } catch {
+      setLookupError('Customers could not be loaded. Try again.');
+    } finally {
+      setSearching(false);
+    }
+  }
 
   const set = (name: string) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [name]: e.target.value }));
@@ -153,6 +197,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                             ? patch({
                                 customerMode: 'existing',
                                 customerId: d.id,
+                                contactId: '',
                                 createAnyway: '',
                               })
                             : patch({
@@ -196,21 +241,52 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
               </label>
 
               {customerExisting ? (
-                <Field
-                  label="Customer id"
-                  hint="Paste the id from the customer's page. A customer picker comes with the customer screens."
-                  error={err['customerId']}
-                >
-                  {(c) => (
-                    <Input
-                      name="customerId"
-                      value={values['customerId']}
-                      onChange={set('customerId')}
-                      autoComplete="off"
-                      {...c}
-                    />
-                  )}
-                </Field>
+                <>
+                  <Field label="Find a customer" hint="Search by name, customer number or PAN/VAT.">
+                    {(c) => (
+                      <Input
+                        {...c}
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        maxLength={100}
+                      />
+                    )}
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={searching}
+                    onClick={() => {
+                      void searchCustomers();
+                    }}
+                  >
+                    {searching ? 'Searching' : 'Search customers'}
+                  </Button>
+                  {lookupError ? <p role="status">{lookupError}</p> : null}
+                  <Field label="Customer" error={err['customerId']}>
+                    {(c) => (
+                      <Select
+                        {...c}
+                        name="customerId"
+                        value={customerId}
+                        onChange={(e) => patch({ customerId: e.target.value, contactId: '' })}
+                      >
+                        <option value="">Choose a customer</option>
+                        {customerId && !customers.some((c) => c.id === customerId) ? (
+                          <option value={customerId}>
+                            {dupes.find((d) => d.kind === 'customer' && d.id === customerId)
+                              ?.label ?? 'Selected customer'}
+                          </option>
+                        ) : null}
+                        {customers.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                </>
               ) : (
                 <div className={styles.formGrid}>
                   <Field label="Legal name" error={err['legalName']}>
@@ -353,15 +429,39 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 </div>
               ) : null}
               {contactMode === 'existing' ? (
-                <Field label="Contact id" error={err['contactId']}>
+                <Field
+                  label="Contact"
+                  hint={
+                    contacts?.customerId === customerId
+                      ? contacts.error || undefined
+                      : 'Choose a customer to load contacts.'
+                  }
+                  error={err['contactId']}
+                >
                   {(c) => (
-                    <Input
-                      name="contactId"
-                      value={values['contactId']}
-                      onChange={set('contactId')}
-                      autoComplete="off"
+                    <Select
                       {...c}
-                    />
+                      name="contactId"
+                      value={values['contactId'] ?? ''}
+                      onChange={set('contactId')}
+                    >
+                      <option value="">Choose a contact</option>
+                      {values['contactId'] &&
+                      !(
+                        contacts?.customerId === customerId &&
+                        contacts.options.some((c) => c.id === values['contactId'])
+                      ) ? (
+                        <option value={values['contactId']}>
+                          {dupes.find((d) => d.kind === 'contact' && d.id === values['contactId'])
+                            ?.label ?? 'Selected contact'}
+                        </option>
+                      ) : null}
+                      {(contacts?.customerId === customerId ? contacts.options : []).map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </Select>
                   )}
                 </Field>
               ) : null}

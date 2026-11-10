@@ -70,7 +70,7 @@ test.describe('persona sign-in and sign-out', () => {
       await test.step('lands where the organisation kind says', async () => {
         if (who.orgKind === 'staff') {
           await expect(page).toHaveURL(`${appOrigin}/`);
-          await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toBeVisible();
+          await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
           // The header shows the org kind badge and the roles that came from the token.
           const header = page.getByRole('banner');
           await expect(header).toContainText('staff');
@@ -130,7 +130,7 @@ test.describe('persona sign-in and sign-out', () => {
           await page.getByRole('button', { name: new RegExp(name, 'i') }).click();
         }
         await expectZitadelCredentialForm(page);
-        await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toHaveCount(0);
+        await expect(page.getByRole('heading', { name: 'Welcome back' })).toHaveCount(0);
       });
     });
   }
@@ -168,6 +168,39 @@ test.describe('dev persona switcher', () => {
     await page.getByRole('link', { name: sales.label, exact: true }).click();
     // login_hint makes ZITADEL open the password page directly.
     await signInOnZitadel(page, sales, new URL(baseURL ?? '').origin);
-    await expect(page.getByRole('heading', { name: 'P0: platform ready' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   });
+});
+
+// Missing server state and an expired browser binding are what a delayed MFA callback sees.
+// Replace only the first callback's state and expire its cookie; all authentication and the
+// subsequent recovery use the real identity provider and workspace, with no mocked responses.
+test('recovers from expired login state without visiting the error page', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const appOrigin = new URL(baseURL!).origin;
+  const visited: string[] = [];
+  page.on('request', (req) => {
+    if (req.isNavigationRequest()) visited.push(new URL(req.url()).pathname);
+  });
+  let expired = false;
+  await page.route(`${appOrigin}/auth/callback?**`, async (route) => {
+    if (expired) return route.continue();
+    expired = true;
+    await context.clearCookies({ name: '__Host-bos_login' });
+    const url = new URL(route.request().url());
+    url.searchParams.set('state', 'expired-login-state-for-regression-test');
+    await route.continue({ url: url.toString() });
+  });
+  await page.goto('/');
+  await signInOnZitadel(page, persona('sales'), appOrigin);
+  await expect(page).toHaveURL(`${appOrigin}/`);
+  expect(expired).toBe(true);
+  expect(visited).not.toContain('/auth/error');
+  expect(visited.filter((p) => p === '/auth/login')).toHaveLength(2);
+  const cookies = await context.cookies(appOrigin);
+  expect(cookies.some((c) => c.name === SESSION_COOKIE)).toBe(true);
+  expect(cookies.some((c) => c.name === '__Host-bos_login_recovery')).toBe(false);
 });
