@@ -8,8 +8,6 @@ import {
   type VerificationStatus,
 } from '@bos/contracts';
 
-import { shortId } from '@/lib/kernel-ui';
-
 /**
  * Pure helpers for the customer and KYB screens. Server-side use (it imports the contracts'
  * runtime); Client Components get the answers as props.
@@ -124,11 +122,11 @@ export function parseDecision(raw: {
   return parsed.success ? { ok: true, data: parsed.data } : { ok: false, formError: true };
 }
 
-/** A customer's name for a table or a heading; the short id when the customer could not be read. */
+/** A customer's name for a table or a heading; a neutral label when the customer could not be read. */
 export function customerLabel(
   customer: { legalName: string; number: string } | undefined,
-  partyId?: string,
+  _partyId?: string,
 ): string {
   if (customer !== undefined) return customer.legalName;
-  return partyId !== undefined ? `Customer ${shortId(partyId)}` : 'Unknown customer';
+  return 'Unknown customer';
 }

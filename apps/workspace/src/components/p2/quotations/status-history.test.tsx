@@ -69,11 +69,11 @@ describe('historyRows', () => {
     expect(rows.map((r) => r.revision)).toEqual([null, 'Rev 2']);
   });
 
-  it('says "System" when no person did it, and a short person id otherwise', () => {
+  it('says "System" when no person did it, and a staff label otherwise', () => {
     const [system] = historyRows([entry({ actorId: null })], revisions);
     expect(system?.actor).toBe('System');
     const [person] = historyRows([entry()], revisions);
-    expect(person?.actor).toBe('person aaaa1234');
+    expect(person?.actor).toBe('Staff member');
   });
 });
 

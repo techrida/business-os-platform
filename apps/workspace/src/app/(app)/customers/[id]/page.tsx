@@ -31,7 +31,6 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
 
@@ -175,8 +174,8 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
       description="Payment terms and credit limits are agreed with each legal entity separately."
     >
       {accounts === undefined ? (
-        <EmptyState title="Terms are not available yet." icon="building" headingLevel={3}>
-          The platform did not send this customer&apos;s terms. They will show here when it does.
+        <EmptyState title="Terms could not be loaded." icon="building" headingLevel={3}>
+          This customer&apos;s terms could not be loaded.
         </EmptyState>
       ) : accounts.length === 0 ? (
         <EmptyState title="No terms set yet." icon="building" headingLevel={3}>
@@ -193,18 +192,14 @@ function Accounts({ customer }: { customer: CustomerDetail }) {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a) => (
+              {accounts.map((a, index) => (
                 <tr key={a.organizationId}>
                   <Td>
-                    <span className={styles.ref} title={a.organizationId}>
-                      Entity {shortId(a.organizationId)}
-                    </span>
+                    <span className={styles.ref}>Legal entity {index + 1}</span>
                   </Td>
                   <Td>
                     {a.paymentTermId !== null ? (
-                      <span className={styles.ref} title={a.paymentTermId}>
-                        Terms {shortId(a.paymentTermId)}
-                      </span>
+                      <span className={styles.ref}>Terms assigned</span>
                     ) : (
                       <span className={styles.quiet}>Not set</span>
                     )}
@@ -376,7 +371,7 @@ export default async function CustomerPage({
       label: 'Account owner',
       value:
         customer.ownerUserId !== null ? (
-          <span title={customer.ownerUserId}>Person {shortId(customer.ownerUserId)}</span>
+          <span>Name unavailable</span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>
         ),
@@ -459,11 +454,6 @@ export default async function CustomerPage({
               mayWrite && !merged ? { customerId: customer.id, idempotencyKey: randomUUID() } : null
             }
           />
-          <Panel title="Activity" as="aside">
-            <EmptyState title="The timeline is not connected yet." headingLevel={3}>
-              Calls, notes and changes to this customer will be listed here.
-            </EmptyState>
-          </Panel>
         </div>
       </div>
     </Page>

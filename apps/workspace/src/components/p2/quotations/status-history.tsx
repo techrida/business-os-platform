@@ -2,7 +2,6 @@ import type { QuotationStatusHistoryDto } from '@bos/contracts';
 
 import { Panel } from '@/components/ui/panel';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import styles from './detail.module.css';
 import { quotationStatusMeta } from './status';
@@ -21,7 +20,7 @@ export interface HistoryRow {
 /**
  * Turns the status history into rows for display, newest first. A change with no earlier status
  * is the creation; every other change names both ends in the same labels the badges use. The API
- * sends names for no one, so a person shows as a short id (the inbox does the same).
+ * does not send names, so staff actions use a neutral label.
  */
 export function historyRows(
   history: readonly QuotationStatusHistoryDto[],
@@ -42,7 +41,7 @@ export function historyRows(
         entry.fromStatus === null
           ? `Created as ${quotationStatusMeta(entry.toStatus).label}`
           : `Changed from ${quotationStatusMeta(entry.fromStatus).label} to ${quotationStatusMeta(entry.toStatus).label}`,
-      actor: entry.actorId === null ? 'System' : `person ${shortId(entry.actorId)}`,
+      actor: entry.actorId === null ? 'System' : 'Staff member',
       reason: entry.reason !== null && entry.reason !== '' ? entry.reason : null,
       at: entry.at,
     }));
