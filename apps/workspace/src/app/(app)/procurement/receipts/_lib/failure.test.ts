@@ -14,7 +14,11 @@ const apiError = (status: number, code: string, extra: Record<string, unknown> =
 describe('422 refusals', () => {
   it.each([
     ['over_receipt', /more was entered than is still open/i, true],
-    ['over_receipt_exception_unknown', /exceptions are not available/i, false],
+    [
+      'over_receipt_exception_unknown',
+      /over-receipt exception reference was not recognised/i,
+      false,
+    ],
     ['po_line_unknown', /no longer on the purchase order/i, true],
     ['duplicate_po_line', /appears twice/i, false],
     ['receipt_kind_mismatch', /goods receipt takes only goods/i, false],

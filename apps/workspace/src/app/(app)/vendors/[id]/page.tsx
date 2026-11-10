@@ -32,7 +32,6 @@ import {
 } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import {
   BankDecision,
@@ -217,7 +216,7 @@ function Accounts({
             {result.value.map((a) => (
               <tr key={a.organizationId}>
                 <Td>
-                  <span title={a.organizationId}>Entity {shortId(a.organizationId)}</span>
+                  <span>Legal entity</span>
                 </Td>
                 <Td align="end" nowrap>
                   <span className={styles.numeric}>{a.paymentTermsDays} days</span>

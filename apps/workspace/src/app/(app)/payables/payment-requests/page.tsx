@@ -130,7 +130,7 @@ export default async function PaymentRequestsPage({
                     </Link>
                   </Td>
                   <Td>
-                    <Link href={`/vendors/${row.vendorPartyId}`}>{row.vendorPartyId}</Link>
+                    <Link href={`/vendors/${row.vendorPartyId}`}>View vendor</Link>
                   </Td>
                   <Td>
                     <Badge tone={PAYMENT_STATUS[row.status].tone}>
