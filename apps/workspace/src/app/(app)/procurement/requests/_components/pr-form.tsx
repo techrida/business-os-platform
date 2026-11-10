@@ -16,6 +16,9 @@ import styles from '../requests.module.css';
 const WIDE = styles.wide ?? '';
 const MAX_LINES = 200;
 
+// Cost centres have no backing table or lookup yet. Keep the pre-lookup entry path on create;
+// editing preserves the stored reference without displaying its internal identifier.
+
 interface Row {
   /** Stable across add and remove, so a typed value never jumps to another line. */
   uid: number;
@@ -114,12 +117,6 @@ export function PrForm({
         </Alert>
       ) : null}
 
-      {mode === 'create' ? (
-        <Alert tone="info" role="status">
-          A cost centre must be assigned before you can save a new request. Contact your
-          administrator.
-        </Alert>
-      ) : null}
       <Panel title="Request">
         <div className={styles.grid}>
           <Field label="Type" error={err.requestType}>
@@ -171,21 +168,29 @@ export function PrForm({
               </Select>
             )}
           </Field>
-          <Field label="Cost centre" error={err.costCenterId}>
-            {(control) => (
-              <>
-                <input type="hidden" name="costCenterId" value={values.costCenterId} />
+          <Field
+            label="Cost centre"
+            hint={mode === 'create' ? "The cost centre's id." : undefined}
+            error={err.costCenterId}
+          >
+            {(control) =>
+              mode === 'create' ? (
                 <Input
-                  value={
-                    values.costCenterId
-                      ? 'Cost centre name unavailable'
-                      : 'Cost centre selection unavailable'
-                  }
-                  readOnly
+                  name="costCenterId"
+                  value={values.costCenterId}
+                  onChange={set('costCenterId')}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
                   {...control}
                 />
-              </>
-            )}
+              ) : (
+                <>
+                  <input type="hidden" name="costCenterId" value={values.costCenterId} />
+                  <Input value="Cost centre name unavailable" readOnly {...control} />
+                </>
+              )
+            }
           </Field>
           <Field label="Budget code" error={err.budgetCode}>
             {(control) => (
@@ -428,7 +433,7 @@ export function PrForm({
       </Panel>
 
       <div className={styles.actions}>
-        <Button type="submit" disabled={pending || !values.costCenterId || !values.departmentId}>
+        <Button type="submit" disabled={pending}>
           {submitLabel}
         </Button>
         <LinkButton href={cancelHref} variant="ghost">

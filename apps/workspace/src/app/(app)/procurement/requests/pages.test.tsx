@@ -373,8 +373,18 @@ it('preserves editing if departments cannot load, without exposing a department 
   expect(out).not.toContain(`>${DEPT}<`);
 });
 
-it('explains the missing cost centre selection and disables new-request saving', async () => {
+it('allows create with a manually supplied cost centre until a named lookup exists', async () => {
   const out = html(await NewPage());
-  expect(out).toContain('A cost centre must be assigned');
-  expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Save draft/);
+  expect(out).toMatch(/<input(?=[^>]*name="costCenterId")(?=[^>]*required="")[^>]*>/);
+  expect(out).not.toContain('Cost centre selection unavailable');
+  expect(out).not.toContain('Contact your administrator');
+  expect(out).toMatch(/<button[^>]*type="submit"[^>]*>Save draft/);
+  expect(out).not.toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+});
+
+it('does not read departments or expose cost centre entry without create permission', async () => {
+  session.roles = ['finance'];
+  const out = html(await NewPage());
+  expect(api.listDepartments).not.toHaveBeenCalled();
+  expect(out).not.toContain('name="costCenterId"');
 });
