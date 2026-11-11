@@ -66,7 +66,7 @@ test('sales cannot open payment request entry', async ({ browser, baseURL }) => 
   const signed = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
   try {
     await signed.page.goto('/payables/payment-requests/new');
-    await expect(signed.page.getByRole('alert')).toContainText(
+    await expect(signed.page.getByRole('main').getByRole('alert')).toContainText(
       'Your roles do not include payment requests.',
     );
     await expect(signed.page.getByRole('button', { name: 'Create draft request' })).toHaveCount(0);
