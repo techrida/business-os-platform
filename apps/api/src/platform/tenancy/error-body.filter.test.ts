@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
+import { LedgerError } from '../../modules/ledger/ledger.service';
 import { StepUpRequiredException } from '../auth/step-up';
 import { ErrorBodyFilter, codeForStatus } from './error-body.filter';
 import { runWithRequestStore } from './request-context';
@@ -603,5 +604,23 @@ describe('ErrorBodyFilter', () => {
     const wrongStatus = filter(new ConflictException({ code, message: 'm' }));
     expect(wrongStatus.status).toBe(409);
     expect(ErrorBodySchema.parse(wrongStatus.body).error.code).toBe('conflict');
+  });
+});
+
+describe('ledger errors on the HTTP boundary', () => {
+  it.each([
+    ['OVER_ALLOCATION', 409],
+    ['MISMATCHED_ITEMS', 422],
+  ] as const)('preserves %s only at its domain status', (code, status) => {
+    const out = filter(new LedgerError(code, 'Allocation refused', { amount: '1000.01' }));
+    expect(out.status).toBe(status);
+    expect(ErrorBodySchema.parse(out.body).error).toMatchObject({
+      code,
+      message: 'Allocation refused',
+      details: { amount: '1000.01' },
+    });
+    const wrongStatus = status === 409 ? 422 : 409;
+    const wrong = filter(new HttpException({ code, message: 'Refused' }, wrongStatus));
+    expect(ErrorBodySchema.parse(wrong.body).error.code).toBe(codeForStatus(wrongStatus));
   });
 });

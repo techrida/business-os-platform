@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { signInAs, type Signed } from '../helpers/memo-flow';
+import { minimalPdf, signInAs, type Signed } from '../helpers/memo-flow';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
@@ -11,7 +11,7 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
  *     says so in words.
  * (2) A payment id that does not exist shows "Payment not found", not a blank page.
  * (3) A payment the signed-in person recorded cannot be verified by them: the refusal is shown in
- *     the dialog in plain words. Fixme until a seeded submitted payment exists for a persona.
+ *     the dialog in plain words. Creates a disposable Finance-recorded payment with a scanned PDF proof.
  */
 
 test('the payments list loads and its status filter keeps the choice', async ({
@@ -64,7 +64,9 @@ test('an unknown payment shows words, not a blank page', async ({ browser, baseU
     opened.push(finance);
 
     await finance.page.goto('/payments/00000000-0000-4000-8000-000000000000');
-    await expect(finance.page.getByRole('alert')).toContainText(/Payment not found|did not load/);
+    await expect(
+      finance.page.getByRole('alert').filter({ hasText: /Payment not found|did not load/ }),
+    ).toBeVisible();
     await finance.page.goto('/payments/not-an-id');
     await expect(finance.page.getByText('That is not a payment')).toBeVisible();
   } finally {
@@ -72,8 +74,54 @@ test('an unknown payment shows words, not a blank page', async ({ browser, baseU
   }
 });
 
-test.fixme('the person who recorded a payment cannot verify it', () => {
-  // Needs a seeded submitted payment recorded by the signed-in persona. Steps: open the payment,
-  // choose Verify payment, confirm; expect the dialog alert to say "You recorded this payment, so
-  // someone else in Finance must verify it" and the status to stay "Awaiting verification".
+test('the person who recorded a payment cannot verify it', async ({ browser, baseURL }) => {
+  const customer = process.env['BOS_E2E_PAYMENT_CUSTOMER'];
+  test.skip(!customer, 'needs a disposable customer for a Finance-recorded payment');
+  test.setTimeout(180_000);
+  const finance = await signInAs(browser, baseURL ?? 'https://app.localhost', 'finance');
+  try {
+    const page = finance.page;
+    await page.goto('/payments/new');
+    const select = page.getByLabel('Customer', { exact: true });
+    const value = await select
+      .locator('option', { hasText: customer ?? '' })
+      .first()
+      .getAttribute('value');
+    expect(value).toBeTruthy();
+    await select.selectOption(value ?? '');
+    await page.getByLabel('Amount received').fill('2.00');
+    await page.getByLabel('Bank reference').fill('E2E-self-verification-' + Date.now());
+    await page.getByLabel('Add proof files').setInputFiles({
+      name: 'self-verification.pdf',
+      mimeType: 'application/pdf',
+      buffer: minimalPdf('Self verification refusal fixture'),
+    });
+    await expect(
+      page.getByRole('list', { name: 'Uploaded proof' }).getByText('self-verification.pdf'),
+    ).toBeVisible({ timeout: 60_000 });
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await page.getByRole('button', { name: 'Record payment', exact: true }).click();
+      if (
+        await page
+          .waitForURL(/\/payments\/[0-9a-f-]{36}$/, { timeout: 10_000 })
+          .then(() => true)
+          .catch(() => false)
+      )
+        break;
+      await expect(page.getByText(/A proof file is not ready yet/)).toBeVisible();
+      await page.waitForTimeout(5_000);
+    }
+    await expect(page).toHaveURL(/\/payments\/[0-9a-f-]{36}$/);
+    await page.getByRole('button', { name: 'Verify payment', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Verify this payment', exact: true });
+    await dialog.getByRole('button', { name: 'Verify payment', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText(
+      'You recorded this payment, so someone else in Finance must verify it',
+    );
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByText('Awaiting verification', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).not.toContainText('RCPT-');
+  } finally {
+    await finance.context.close();
+  }
 });

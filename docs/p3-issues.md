@@ -2,7 +2,8 @@
 
 ## Status and features
 
-Consolidated on `p3-main` on 2026-11-10, starting from
+Consolidated on `p3-main` on 2026-11-10 and verified on Linux on 2026-11-11,
+starting from
 `origin/p3/sales-invoicing` at `ea7aa5c6`. Inherited records are
 [p0-issues.md](p0-issues.md), [p1-issues.md](p1-issues.md) and
 [p2-issues.md](p2-issues.md).
@@ -32,122 +33,136 @@ Consolidated on `p3-main` on 2026-11-10, starting from
   PDF links; payment submission, payment lists and proof upload/scanning. Portal
   identity and entity boundaries remain enforced by the API.
 
-## Integration record
+## Linux integration and fixes (2026-11-11)
 
-| Source           | Source head | Integration commit |
-| ---------------- | ----------- | ------------------ |
-| `origin/p2-main` | `6f79a26a`  | `f15672bc`         |
-| `cascade/c-p3`   | `79a4be01`  | `76ec9eb2`         |
+P2 explicitly released the shared ext4 checkout and runtime before this work.
+Merged real remote `github/p2-main` at
+`c703bcb50a7ec0545bf6f0150fadb29fd3161afa` into `p3-main` with
+`b7775b18`. This includes `b48db344` (Linux policy, format and browser fixes,
+CI phase filters) and `c703bcb5` (API Docker money-rules packaging).
+The real remote in this clone is `github`; `origin` is a local Windows mirror.
 
-The P2 merge combines frozen memo paper and selected signer names with P3's
-existing people/group name resolution in the approval inbox. The development
-browser project includes the P0 shell regression and both P2/P3 spec groups,
-without a duplicate shell entry. The migration journal retains P3 migrations
-`0019` through `0024` and appends `0037_internal_memos`; existing SQL is unchanged.
-The hash-aware runner preserves applied migration history and rejects unknown
-applied hashes.
+The original ancestry-preserving integrations remain: P2 `6f79a26a` through
+`f15672bc`, and `cascade/c-p3` `79a4be01` through `76ec9eb2`.
+A fresh remote inspection found no additional recent unmerged P3 branch;
+the local cascade tip `4a7f0447` is already an ancestor. No published history
+was rewritten and no full-phase PR was merged.
 
-The P3 cascade's obsolete login-link and incomplete developer-menu variants were
-resolved in favor of the newer instant account switcher. Production checks still
-cover developer-menu and credential markers, including P3 billing output. P3
-navigation and read permissions remain intact. The exit test now drives bounded
-render-sweeper passes while awaiting its invoice PDF, so earlier shared-database
-backlog does not leave it waiting for an unrelated timer.
+Real production-mode browser acceptance exposed and fixed four integration
+problems that isolated component/service tests did not establish:
 
-Fetched origin and inspected local/remote refs and active sessions before
-editing. The only other P3 tip in the preceding 12 hours was
-`origin/p3/sales-invoicing`, already the starting head. Older P3 feature branches
-were not blindly remerged. This assignment owns `p3-main`; higher-phase
-consolidation remains with its owner. No full-phase PR was merged or created.
+1. **Manual invoice customer picker:** requested 200 customers while the API
+   allows at most 100, leaving the form without a usable customer. Commit
+   `53227f89` uses 100; a regression validates the page query against the
+   actual API query schema.
+2. **Issued invoice credit-note actions:** the server component called
+   `creditSource` exported by a client component, crashing Finance's issued
+   invoice page. Commit `a8959105` projects the serializable line data on
+   the server; a boundary regression rejects calls into that client helper.
+3. **Portal invoice-linked payment absence:** invalid, unknown, draft and
+   foreign invoice references reached a generic framework 404. Commit
+   `94a11254` gives that route the same safe invoice-not-found boundary and
+   exercises all four cases through the real portal.
+4. **Ledger errors at the HTTP boundary:** allocation caps correctly refused
+   the command, but the response filter discarded `OVER_ALLOCATION` (409)
+   and `MISMATCHED_ITEMS` (422). The screen consequently reported a stale
+   payment. Commit `e48c13a5` preserves these narrowly allowed codes only at
+   their domain status; the workspace handles mismatch at 422. Regressions
+   use real `LedgerError` instances, validate the shared response schema
+   and reject wrong-status code claims.
 
-## Known limitations and deferred verification
+The staff browser checks now use precise error/panel locators instead of
+matching Next's hidden route announcer or a nested scroll region. Previously
+deferred coverage is implemented for Sales receivables denial, over-allocation,
+reasoned allocation reversal and payment self-verification refusal. Financial
+write tests require explicit disposable fixture identifiers rather than choosing
+an arbitrary existing payment.
 
-- No `.env`, `.dev`, seeded identity configuration or application server was
-  present in this Windows checkout. Installed dependencies are retained, but
-  authenticated workspace/portal demo flows require an isolated P3 runtime.
-  Existing runtime configuration, containers and seeded data were not changed.
-- Browser acceptance needs the real identity provider, trusted local CA, API,
-  database and seeded personas. P0 shell browser tests additionally require
-  `next dev` and `BOS_E2E_NEXT_DEV=1`. No authenticated browser acceptance is
-  claimed for this consolidation.
-- The P3 HTTP exit journey uses the real app, worker, database and queue but a
-  test identity issuer, fake PDF renderer and fake virus scanner. Portal login
-  and milestone evidence are seeded directly; render sweepers are driven
-  explicitly. It does not prove live identity provisioning, real scanner/renderer
-  integration or interactive customer login. There is no dedicated sales-order
-  evidence-upload route in that journey.
-- The 200-step seeded money-model test exercises valid and refused commands
-  and checks balances after every step. Its payment proofs are seeded clean;
-  upload/scanning is exercised separately by the exit journey. A passing model
-  is bounded test evidence, not an exhaustive proof of every financial workflow.
-- Carry memo migration `0037` with the complete P3 source and hash-aware runner;
-  do not alter existing SQL or run lower-phase source against a higher-phase
-  database. This task does not apply migrations to a persistent runtime.
-- Recurring invoices and payment-method administration remain unbuilt navigation
-  items. See inherited notes for memo screen-reader acceptance and the standalone
-  icon-motion prototype.
-- CI push filters cover `main` and `p*/**`; `p3-main` does not match that phase
-  filter. A successful push alone does not establish hosted CI success.
-- Windows Defender removed harmless EICAR antivirus fixtures from this run's
-  `bos-docs-it-*`, `bos-docs-generated-*` and `bos-e2e-files-*` temporary quarantine directories;
-  fresh threat detections show successful remediation (threat ID `2147519003`).
-  The HTTP suite's sole failure is `approvals.e2e.test.ts`: its EICAR upload
-  receives HTTP 500 instead of 200 before the fake scanner can process it.
-  Host protections were not disabled or excluded to make tests pass.
-- The inherited document implementation, scanner client and relevant tests are
-  unchanged from initial P3 head `ea7aa5c6`. Six package-test failures reproduce:
-  three EICAR cases (two in `documents.integration.test.ts`, one in
-  `documents.generated.integration.test.ts`) and three socket-limit cases.
-  `clamd.client.test.ts` receives `read ECONNRESET` instead of a definite
-  size-limit reply (two assertions fail), while the oversized Content-Length
-  upload test receives `ECONNRESET` instead of observable HTTP 413. The same
-  failures are recorded in P2. Linux parity and a definitive socket root cause
-  remain unverified; these results do not establish a clean overall test gate.
-- Repository-wide Prettier fails on four inherited files:
-  `apps/workspace/src/dev/accounts.server.ts`, `design/memos/deliverable.html`,
-  `previews/p1-icon-motion/deliverable.html` and its `README.md`. Scoped
-  merge-resolution formatting passes. No unrelated formatting was applied.
-- Tests emit pg concurrent-query deprecation, Vite config-loader and
-  EventEmitter-listener warnings; these were not suppressed.
+## Decisions and retained limits
 
-## Consolidation verification
+Kuu authorized the recommended existing defaults for unanswered blocking
+choices. Retained the subledger design, prorated VAT with final-slice
+reconciliation, zero-rate demo withholding pending accountant signoff,
+distinct Accountant then Finance approval, permission-gated Finance draft
+actions, evidence requirements and customer portal visibility. These defaults
+are documented assumptions; local acceptance does not certify accounting policy
+or execute a payout.
 
-Environment: Windows, Node `24.18.0`, pnpm `11.28.11`, Docker Engine `29.8.2`.
-Application source candidate: `76ec9eb2`; the issues-document commit changes no
-application code. Inherited results are not counted as fresh verification.
+Recurring invoices and payment-method administration remain unbuilt navigation
+items. The inherited standalone icon-motion prototype and memo screen-reader
+acceptance are outside this P3 financial verification. Locale's ten existing
+translation-related skips remain reported.
 
-| Check                                                       | Result                                  |
-| ----------------------------------------------------------- | --------------------------------------- |
-| Frozen-lockfile dependency installation                     | Passed                                  |
-| Recursive typecheck                                         | Passed, all eight packages              |
-| Root ESLint with zero warnings                              | Passed                                  |
-| Merge-resolution formatting                                 | Passed                                  |
-| Container image pin check                                   | Passed, 28 references                   |
-| All package tests                                           | 4,850 passed, 6 failed, 10 skipped      |
-| API HTTP end-to-end tests                                   | 106 passed, 1 failed (EICAR fixture)    |
-| Workspace/portal production builds and dev exclusion checks | Passed for both apps                    |
-| Authenticated browser workflows                             | Not run: no configured identity/runtime |
+The HTTP exit journey uses a test identity issuer, fake renderer and fake scanner;
+the 200-step money model is bounded randomized evidence, not an exhaustive proof.
+The additional real browser journeys use ZITADEL, trusted local TLS, ClamAV,
+Gotenberg, API, worker and persistent database. Dedicated sales-order evidence
+upload and full interactive credit/debit-note lifecycles were not separately
+repeated in the browser; their API/integration coverage passes.
 
-Heavy checks run through the machine-wide shared queue. Package tests use
-`pnpm --workspace-concurrency=1 -r --no-bail --if-present run test --maxWorkers=2`.
-Package totals: contracts 337 passed; database 433 passed; locale 18 passed and
-10 skipped; seed tooling 141 passed; portal 281 passed; workspace 1,291 passed;
-money rules 171 passed; API 2,178 passed and 6 failed.
+## Linux verification
 
-The separate HTTP suite (`pnpm --filter @bos/api test:e2e`) passes both the P3
-quote-to-cash exit journey and the 200-step money-model test, plus the BFF
-(backend for frontend) client contract checks. Its only failed file is the
-approval EICAR negative case described above. Production builds use
-`pnpm --filter @bos/workspace... build` and
-`pnpm --filter @bos/portal... build`, followed by
-`node apps/workspace/scripts/check-no-dev-routes.mjs` and the same checker with
-`apps/portal/.next`. No `next dev` process used either build directory.
+All project tools execute under Ubuntu WSL on ext4:
+Linux `6.18.33.2-microsoft-standard-WSL2`, native Node `24.22.2`,
+pnpm `11.28.11`. Heavy jobs use the shared resource queue with WSL payloads.
 
-Self-review confirmed both source heads are ancestors of the candidate, all
-26 journal entries have SQL files and sequential unique indices, P3's prior
-journal entries and migration SQL remain unchanged, and the final integration
-diff has no whitespace errors. Docker image builds, full-history secret scans
-and authenticated browser workflows were not run locally.
+The complete package baseline at `54a6edf5` passed **4,856 tests**, with
+**10 existing locale skips**. API was **2,184/2,184**. API HTTP was
+**107/107** across eight files, including quote-to-cash and the 200-step money
+model. After browser-driven fixes, all affected suites and production builds
+were rerun. Final application/test source is `22efe257`; final results are listed below.
 
-The checkout and dependencies stay available for follow-up work; no application
-server is claimed to be running.
+| Check                                     | Result                                                            |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| Frozen-lockfile install                   | Passed                                                            |
+| Recursive typecheck                       | Passed, all eight packages                                        |
+| Root ESLint, zero warnings                | Passed                                                            |
+| Full repository formatting                | Passed                                                            |
+| Pinned container image check              | Passed, 28 references                                             |
+| Complete package baseline                 | 4,856 passed, 10 existing locale skips                            |
+| Final affected API package suite          | 2,186 passed                                                      |
+| Final API HTTP suite                      | 107 passed                                                        |
+| Final workspace unit suite                | 1,293 passed                                                      |
+| Portal unit suite after route fix         | 281 passed                                                        |
+| All-package production builds             | Passed; affected API/workspace/portal outputs rebuilt after fixes |
+| Production dev-route/credential exclusion | Passed for both apps                                              |
+| Staff P3 browser suite                    | 15 passed across staged runs; no P3 fixmes remain                 |
+| Customer portal P3 browser suite          | 5 passed, real customer sign-in and proof submission              |
+
+The earlier Windows record is superseded for acceptance. Its six package and
+one HTTP failures all pass unchanged on Linux; no scanner rewrite, antivirus
+exception or weakened size/security check was introduced. P2 also cleared the
+inherited formatting debt and enabled CI push filters for `p[1-4]-main`.
+
+Warnings from pg concurrent queries, the Vite config loader and listener-count
+checks remain visible. Hosted CI is checked separately from local results;
+a successful push alone is not a hosted CI or deployment claim.
+
+## Persistent runtime and handoff
+
+See [p3-linux-runtime.md](p3-linux-runtime.md) for exact safe startup, fixture
+and credential-file references. P3 reused `bos-qa-p2-4`; the incompatible legacy
+`bos` database and its original volumes remain preserved and stopped.
+The compatible database advanced from migration ledger 20 to 26 using existing
+SQL only; previous hashes were retained and tenancy checks passed. Protected
+pre-P3 backup: `/var/tmp/agents-bosqa-p3/p3-before-upgrade.dump`.
+No migration SQL, applied hash or historical ledger row was rewritten.
+
+Seed preparation preserved every pre-existing grant, identity, membership and
+financial record. It added P3 grants/workflows and minimal customer master data.
+New invoices were drafted, approved by distinct Accountant/Finance users, issued,
+rendered and scanned through actual application commands. Payment proof uploads,
+verification and allocation/reversal likewise use application commands.
+These local demo records are retained; acceptance is intentionally consumable.
+
+The local API allowlist now includes the specifically registered portal client,
+in addition to the workspace client. This fixes portal callback 401 without
+relaxing token verification. Protected credentials and browser storage remain
+outside Git. T3 preview rejected the local CA with
+`ERR_CERT_AUTHORITY_INVALID`; the authorized Linux Playwright fallback
+validates the explicit CA and keeps `ignoreHTTPSErrors: false`.
+
+P4 owns the next integration and final higher-phase browser checks only after
+explicit P3 release. Application processes must be stopped before P4 changes
+source; core services, volumes, backups and private startup scripts remain
+available. Keep a foreground WSL session alive while using the shared runtime.

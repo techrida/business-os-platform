@@ -19,7 +19,7 @@ export const metadata: Metadata = { title: 'New invoice · Business OS' };
 export const dynamic = 'force-dynamic';
 
 /** How many customers the picker holds. A longer list says so instead of silently cutting. */
-const CUSTOMER_LIMIT = 200;
+const CUSTOMER_LIMIT = 100;
 
 export default async function NewInvoicePage() {
   const session = await requireStaffSession('/invoices/new');

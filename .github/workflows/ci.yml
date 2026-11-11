@@ -13,6 +13,7 @@ on:
     branches:
       - main
       - 'p*/**'
+      - 'p[1-4]-main'
   pull_request:
 
 # The least privilege that lets the jobs read the code. No job here writes to the repo,

@@ -99,7 +99,7 @@ test('a payment from a foreign or draft invoice id shows the invoice not-found p
   page,
 }) => {
   test.skip(!draftId || !foreignId, 'PORTAL_E2E_DRAFT_ID and PORTAL_E2E_FOREIGN_ID are not set');
-  for (const id of [draftId, foreignId]) {
+  for (const id of [draftId, foreignId, 'not-an-id', '00000000-0000-4000-8000-000000000000']) {
     await page.goto(`/payments/new?invoice=${id}`);
     await expect(page.getByRole('heading', { level: 1, name: 'Invoice not found' })).toBeVisible();
   }
