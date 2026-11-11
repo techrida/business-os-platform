@@ -3,6 +3,26 @@
 These instructions apply to every checkout and phase branch of this repository.
 The user's current instructions take precedence.
 
+## Linux-only execution and shared runtime ownership
+
+Kuu's explicit instruction (2026-11-11): run all Business OS installs,
+typechecks, lint, tests, builds, services, Docker and Playwright inside Ubuntu
+WSL with Linux Node 24 and pnpm. Never use native Windows Node/pnpm or other
+Windows project execution tools. Prefer the existing ext4 checkout at
+`/home/kuu/src/business-os-platform`. The Windows resource queue may wrap a WSL
+command; its project-command payload must execute entirely inside Linux.
+
+- Share the checkout and containers sequentially, with one source/runtime owner.
+  The current verification order is P2 -> P3 -> P4. Obtain explicit release from
+  the current owner before switching source or changing containers or data.
+- Preserve `.env`, `.dev`, seeded identities, volumes and existing data. Inspect
+  active work and dirty changes before reuse. Do not create duplicate full
+  stacks when the existing runtime can be reused safely.
+- A phase handoff records exact source heads, runner/start commands, override
+  locations, auth/fixture prerequisites, schema upgrades and preserved backups.
+  Never print or commit credentials. A Windows test failure is not evidence of
+  a Linux regression; verify with the required Linux runtime.
+
 ## Phase changes must cascade
 
 Kuu's standing instruction (2026-11-10): when a change lands on a lower phase,

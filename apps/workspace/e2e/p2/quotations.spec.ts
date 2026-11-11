@@ -89,9 +89,9 @@ test('Send is off, with its reason in words, while the PDF is not clean', async 
     const send = page.getByRole('button', { name: 'Send to customer' });
     await expect(send).toHaveAttribute('aria-disabled', 'true');
     await expect(send).toHaveAccessibleDescription(/PDF is still being/);
-    // Reachable by keyboard, so the reason is announced; a click opens nothing.
+    // Reachable by keyboard, so the reason is announced; Enter opens nothing.
     await send.focus();
-    await send.click();
+    await send.press('Enter');
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 });
@@ -167,7 +167,7 @@ test('Record outcome needs evidence to accept and a comment to reject', async ({
       timeout: 30_000,
     });
     await dialog.getByRole('button', { name: 'Done' }).click();
-    await expect(page.getByText('Rejected', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Rejected by customer', { exact: true }).first()).toBeVisible();
   });
 });
 

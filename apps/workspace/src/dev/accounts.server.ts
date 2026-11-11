@@ -111,13 +111,11 @@ export async function switchDevelopmentAccount(
   const session = z
     .object({ sessionId: z.string(), sessionToken: z.string() })
     .parse(await api('/v2/sessions', { checks: { user: { userId: id } }, lifetime: '600s' }));
-  const result = z
-    .object({ callbackUrl: z.string() })
-    .parse(
-      await api(`/v2/oidc/auth_requests/${encodeURIComponent(requestId)}`, {
-        session: { sessionId: session.sessionId, sessionToken: session.sessionToken },
-      }),
-    );
+  const result = z.object({ callbackUrl: z.string() }).parse(
+    await api(`/v2/oidc/auth_requests/${encodeURIComponent(requestId)}`, {
+      session: { sessionId: session.sessionId, sessionToken: session.sessionToken },
+    }),
+  );
   const callback = new URL(result.callbackUrl);
   const expected = new URL(process.env.OIDC_REDIRECT_URI!);
   if (

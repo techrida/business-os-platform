@@ -24,9 +24,11 @@ WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/workspace/package.json apps/workspace/package.json
+COPY apps/portal/package.json apps/portal/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/locale/package.json packages/locale/package.json
+COPY packages/money-rules/package.json packages/money-rules/package.json
 COPY tools/seed-zitadel/package.json tools/seed-zitadel/package.json
 # `@bos/api...` = the API and the workspace packages it depends on, nothing else (no Next.js).
 RUN --mount=type=cache,id=bos-pnpm-store,target=/pnpm-store \
@@ -37,8 +39,9 @@ COPY tsconfig.base.json ./
 COPY packages/contracts packages/contracts
 COPY packages/db packages/db
 COPY packages/locale packages/locale
+COPY packages/money-rules packages/money-rules
 COPY apps/api apps/api
-RUN pnpm --filter @bos/contracts --filter @bos/db --filter @bos/locale run build \
+RUN pnpm --filter @bos/contracts --filter @bos/db --filter @bos/locale --filter @bos/money-rules run build \
  && pnpm --filter @bos/api run build \
  # Tests are compiled too; they import vitest, which is not in the production image.
  && find apps/api/dist -name '*.test.js*' -delete
@@ -53,7 +56,8 @@ RUN test -f apps/api/dist/main.js \
  && test -f apps/api/dist/worker.js \
  && test -f /out/node_modules/@bos/db/dist/index.js \
  && test -f /out/node_modules/@bos/contracts/dist/index.js \
- && test -f /out/node_modules/@bos/locale/dist/index.js
+ && test -f /out/node_modules/@bos/locale/dist/index.js \
+ && test -f /out/node_modules/@bos/money-rules/dist/index.js
 
 # ---------------------------------------------------------------- runtime
 FROM ${NODE_IMAGE} AS runtime
