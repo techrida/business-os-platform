@@ -12,11 +12,17 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
  * (1) On a verified payment the panel lists open invoices by number, and an amount that is not a
  *     positive number with up to 2 decimals is refused in place, naming the invoice.
  * (2) An amount larger than the invoice has open is refused by the server in words, and the form
- *     keeps what was typed. Fixme until a seeded pair exists.
- * (3) Allocating then deallocating with a reason adds a reversal row. Fixme for the same reason.
+ *     keeps what was typed. Uses an explicit disposable fixture pair.
+ * (3) Allocating then deallocating with a reason adds a reversal row. Uses that same explicit pair.
  */
 
 async function openFirstVerifiedPayment(finance: Signed): Promise<boolean> {
+  const configured = process.env['BOS_E2E_PAYMENT_VERIFIED'];
+  if (configured) {
+    await finance.page.goto('/payments/' + configured);
+    await expect(finance.page.getByRole('heading', { level: 1, name: /RCPT-/ })).toBeVisible();
+    return true;
+  }
   await finance.page.goto('/payments?status=verified');
   const first = finance.page.getByRole('link', { name: /RCPT-/ }).first();
   if ((await first.count()) === 0) return false;
@@ -40,7 +46,7 @@ test('a verified payment offers the allocate panel and refuses a bad amount in p
     const found = await openFirstVerifiedPayment(finance);
     test.skip(!found, 'needs a seeded verified payment');
 
-    const panel = finance.page.getByRole('region', { name: 'Allocate this payment' });
+    const panel = finance.page.getByRole('region', { name: 'Allocate this payment', exact: true });
     await expect(panel).toBeVisible();
     await expect(panel.getByText('Left on this payment')).toBeVisible();
     await expect(panel.getByText(/Customer advance in [A-Z]{3}/)).toBeVisible();
@@ -66,18 +72,81 @@ test('a verified payment offers the allocate panel and refuses a bad amount in p
   }
 });
 
-test.fixme('the server refuses more than an invoice has open, in words', () => {
-  // Needs a seeded verified payment and an open invoice of the same customer and currency. Steps:
-  // open the payment, type an amount above the invoice's open amount (or above what the payment has
-  // left), choose Allocate payment; expect the alert to say "Nothing was allocated" with the
-  // over-allocation wording, the typed amount to stay in the field, and the allocations table to be
-  // unchanged. Then choose an invoice of another currency's customer (MISMATCHED_ITEMS) if seeded.
+test('the server refuses more than an invoice has open, in words', async ({ browser, baseURL }) => {
+  test.skip(
+    !process.env['BOS_E2E_PAYMENT_VERIFIED'] || !process.env['BOS_E2E_INVOICE_ISSUED'],
+    'needs an explicit disposable verified payment and open invoice pair',
+  );
+  test.setTimeout(120_000);
+  const finance = await signInAs(browser, baseURL ?? 'https://app.localhost', 'finance');
+  try {
+    await openFirstVerifiedPayment(finance);
+    const panel = finance.page.getByRole('region', { name: 'Allocate this payment', exact: true });
+    const amount = panel.locator(
+      'input[name="amount:' + process.env['BOS_E2E_INVOICE_ISSUED'] + '"]',
+    );
+    const allocations = finance.page.getByRole('region', { name: 'Allocations', exact: true });
+    const before = await allocations.innerText();
+    await amount.fill('999999.00');
+    await panel.getByRole('button', { name: 'Allocate payment', exact: true }).click();
+    await expect(panel.getByRole('alert')).toContainText('Nothing was allocated');
+    await expect(panel.getByRole('alert')).toContainText('more than');
+    await expect(amount).toHaveValue('999999.00');
+    await expect(allocations).toHaveText(before, { useInnerText: true });
+  } finally {
+    await finance.context.close();
+  }
 });
 
-test.fixme('allocating then deallocating with a reason adds a reversal row', () => {
-  // Needs the same seed. Steps: allocate part of the payment to one invoice; expect the success note
-  // and a new row in the allocations table labelled with the invoice number; choose "Deallocate
-  // <number>", leave the reason empty and submit (the browser stops it: the field is required), then
-  // type a reason and submit; close the dialog; expect a second, negative row reading "Reversed:
-  // <reason>" and no Deallocate button left on either row.
+test('allocating then deallocating with a reason adds a reversal row', async ({
+  browser,
+  baseURL,
+}) => {
+  test.skip(
+    !process.env['BOS_E2E_PAYMENT_VERIFIED'] || !process.env['BOS_E2E_INVOICE_ISSUED'],
+    'needs an explicit disposable verified payment and open invoice pair',
+  );
+  test.setTimeout(120_000);
+  const finance = await signInAs(browser, baseURL ?? 'https://app.localhost', 'finance');
+  try {
+    await openFirstVerifiedPayment(finance);
+    const panel = finance.page.getByRole('region', { name: 'Allocate this payment', exact: true });
+    const amount = panel.locator(
+      'input[name="amount:' + process.env['BOS_E2E_INVOICE_ISSUED'] + '"]',
+    );
+    const invoice = await amount.getAttribute('aria-label');
+    const number = invoice?.replace('Amount to allocate to ', '') ?? '';
+    expect(number).toMatch(/^INV-/);
+    const allocations = finance.page.getByRole('region', { name: 'Allocations', exact: true });
+    const before = await allocations.getByRole('row').count();
+    await amount.fill('1.00');
+    await panel.getByRole('button', { name: 'Allocate payment', exact: true }).click();
+    const undo = allocations.getByRole('button', { name: 'Deallocate ' + number, exact: true });
+    await expect(undo).toBeVisible();
+    await expect(allocations.getByRole('row')).toHaveCount(before === 0 ? 2 : before + 1);
+    await undo.click();
+    const dialog = finance.page.getByRole('dialog', { name: 'Deallocate ' + number, exact: true });
+    const reason = dialog.getByLabel('Reason for deallocating', { exact: true });
+    await expect(reason).toHaveAttribute('required', '');
+    await dialog.getByRole('button', { name: 'Deallocate', exact: true }).click();
+    await expect(reason).toBeFocused();
+    const note = 'Linux P3 browser reversal ' + Date.now();
+    await reason.fill(note);
+    await dialog.getByRole('button', { name: 'Deallocate', exact: true }).click();
+    // Server revalidation may replace the successful dialog with the updated page immediately.
+    await expect(allocations.getByText('Reversed: ' + note, { exact: true })).toBeVisible();
+    await expect(allocations.getByRole('row')).toHaveCount(before === 0 ? 3 : before + 2);
+    await expect(
+      allocations.getByRole('button', { name: 'Deallocate ' + number, exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      allocations
+        .getByRole('row')
+        .filter({ hasText: 'Reversed: ' + note })
+        .getByRole('cell')
+        .nth(1),
+    ).toHaveText('NPR -1.00');
+  } finally {
+    await finance.context.close();
+  }
 });
