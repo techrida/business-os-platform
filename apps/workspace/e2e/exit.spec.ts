@@ -105,8 +105,8 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
       await test.step('the preview shows 2 steps with reasons, then sales submits', async () => {
         const steps = await readPreviewSteps(sales);
         expect(steps, 'two-step route for NPR 50,000').toHaveLength(2);
-        expect(steps[0]?.who).toContain('Anyone with the accountant role');
-        expect(steps[1]?.who).toContain('Anyone with the finance role');
+        expect(steps[0]?.who).toContain('Dev Accountant');
+        expect(steps[1]?.who).toContain('Dev Finance');
         return steps;
       });
     const stepOneReason = preview[0]?.reason ?? '';

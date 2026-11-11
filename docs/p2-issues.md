@@ -1,5 +1,94 @@
 # Phase 2 Issues and Notes
 
+## Linux verification follow-up (2026-11-11)
+
+This section supersedes the Windows-run caveats below. Kuu authorized Linux-only
+execution, recommended defaults for unanswered decisions, and exclusive reuse
+of the existing WSL checkout and containers in order P2 -> P3 -> P4. The standing
+execution policy is now recorded in repository `AGENTS.md`.
+
+- All eight package suites pass on Ubuntu WSL: **3,743 passed, 10 existing locale
+  skips**, including all six document/scanner cases that failed on Windows.
+  No scanner or upload-security behavior was weakened or changed.
+- API HTTP end-to-end: **81/81 passed**, including the EICAR refusal and P2
+  lead-to-accepted-quotation journey.
+- Recursive typecheck, zero-warning lint, full repository formatting, all eight
+  package builds, workspace production dev-route/credential exclusion and all
+  28 container image pins passed on Linux Node 24.22.2 / pnpm 11.28.11.
+- Cleared inherited formatting debt in the development account service and
+  memo/icon review artifacts. These edits preserve behavior and content.
+- Added consolidated phase branch names to the CI push filter; a push remains
+  distinct from a verified hosted CI result.
+- Fixed Playwright project selection in worker processes: workers reload the
+  config without CLI flags, so a prod-only run previously probed development
+  TLS. Carrying the selection into workers fixes that boundary. Production
+  browser checks: **2 passed**; signed-in production LCP **1 skipped** because
+  that separate production runtime was not configured.
+- Updated the memo exit spec to expect its selected named approvers. The real
+  scan/approval/email/audit exit workflow passed. All 12 persona/login/switch/
+  expired-login-recovery checks passed; shell, inbox, CRM, customer/KYB and the
+  quotation-builder workflow also passed. Builder selectors now target the exact
+  milestone input, the form alert and the intended saved-status display.
+- The PDF-not-ready check now uses keyboard activation of its focusable disabled
+  Send control instead of waiting for Playwright to click an enabled control.
+  It passed without opening a dialog. Outcome status copy now matches the
+  disambiguated customer-rejection label; its final five-test lifecycle rerun passed.
+
+### Final browser results
+
+Development coverage was run in staged, stateful groups: **26 passed**, with one
+existing no-customer-access `fixme` left unimplemented. The P1 exit, shell,
+inbox, CRM, customer/KYB, builder, six quotation cases and all 12 persona/login
+checks passed. This is combined coverage of those groups, not a claim that one
+fresh 27-test invocation ran without fixture setup. No missing-quotation-fixture
+skip is counted as a pass. Production browser checks: **2 passed, 1 LCP skip**.
+
+The temporary preparation spec was removed after using real user approvals and
+render/scan jobs to prepare the quotation states. No permanent test was skipped
+or weakened to hide an observed failure. Source selectors were corrected for
+the named-approver UI, unambiguous controls, route-announcer separation,
+keyboard behavior of an aria-disabled control and customer-rejection wording.
+
+### Reused runtime and data preservation
+
+Source: `/home/kuu/src/business-os-platform` on ext4. Runtime project:
+`bos-qa-p2-4`, reusing its existing data and identity volumes. Configuration:
+`/var/tmp/agents-p2-runtime/compose.p2.yaml` and `env.sh`; credentials remain
+outside Git. Auth is real ZITADEL, with the existing protected personas file
+and a dedicated local development login client. The API, queue worker, SMTP
+sink, ClamAV scanner and Gotenberg renderer are real services.
+
+The legacy `bos` project was stopped and preserved after its database ledger
+reported six unknown historical SQL hashes. Migration refusal rolled back;
+no historical SQL or ledger was rewritten. Its Valkey AOF had a corrupt 614-byte
+tail; recovery was attempted on a copy only. Original data and a snapshot are
+retained. This legacy project is not the P2 browser database.
+
+The compatible P2 database was backed up before adding only
+`0037_internal_memos.sql` (ledger 19 -> 20). Tenancy validation passed. Backup:
+`/var/tmp/agents-p2-runtime/p2-before-upgrade.dump`. No database was reset.
+
+The demo runtime initially had no department. A General department was added
+and assigned only to seeded staff whose membership department was null. Manual
+memberships were preserved. Uniquely named P2 customer/opportunity and a
+submitted verification-case fixture were added for browser checks; these are
+fixture setup, not evidence that a user submitted KYB documents. P3/P4 fixture
+creation remains with their respective owners. The task quotation was approved
+through real accountant, finance and management browser decisions. A missing
+issuer address prevented the first render, as designed; an explicitly local
+demo address was added only where no setting existed. The normal retry then
+rendered the PDF with Gotenberg and ClamAV scanned it. Real PDF download, portal-
+link email without attachment and revision creation passed. The final outcome
+lifecycle rerun passed. No issuer tax number was fabricated.
+
+Current requirements and decisions live under
+`F:/Projects/Life/life-kb/Techrida/projects/business-os/docs/platform/`:
+`P2-BUILD-PLAN.md` and `OPEN-DECISIONS.md`. Kuu's latest authorization takes
+precedence over earlier reserved operational choices. No external payouts,
+custody changes or production credentials were introduced.
+
+## Earlier consolidation record (2026-11-10)
+
 ## Status and features
 
 Consolidated on `p2-main` on 2026-11-10, starting from
