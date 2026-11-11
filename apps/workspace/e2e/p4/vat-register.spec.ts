@@ -20,7 +20,9 @@ test('the VAT register validates its date range before offering an export', asyn
     await signed.page.getByLabel('From (AD)', { exact: true }).fill('2026-11-30');
     await signed.page.getByLabel('To (AD)', { exact: true }).fill('2026-11-01');
     await signed.page.getByRole('button', { name: 'Show register' }).click();
-    await expect(signed.page.getByRole('alert')).toContainText('the end on or after the start');
+    await expect(signed.page.getByRole('main').getByRole('alert')).toContainText(
+      'the end on or after the start',
+    );
     await expect(signed.page.getByRole('link', { name: 'Export CSV' })).toHaveCount(0);
   } finally {
     await signed.context.close();
@@ -69,7 +71,7 @@ test('sales cannot read or export the purchase VAT register', async ({ browser, 
   const signed = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
   try {
     await signed.page.goto('/payables/vat-register?from=2026-11-01&to=2026-11-30');
-    await expect(signed.page.getByRole('alert')).toContainText(
+    await expect(signed.page.getByRole('main').getByRole('alert')).toContainText(
       'Your roles do not include the purchase VAT register.',
     );
     await expect(signed.page.getByRole('link', { name: 'Export CSV' })).toHaveCount(0);
