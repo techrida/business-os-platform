@@ -11,8 +11,7 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
  *     state; a customer link opens that customer's statement.
  * (2) A statement for an id that is not a customer says so in words, and an unknown customer shows
  *     "Customer not found", not a blank page.
- * (3) A role without `ar.read` is told so and sees no figures. Fixme until a persona without the
- *     grant is seeded.
+ * (3) Sales has no `ar.read` grant: the page explains the refusal and shows no figures.
  */
 
 test('the aging report loads and its customers open a statement', async ({ browser, baseURL }) => {
@@ -71,7 +70,18 @@ test('an unknown customer shows words, not a blank page', async ({ browser, base
   }
 });
 
-test.fixme('a role without ar.read is told so and sees no figures', () => {
-  // Needs a seeded persona without the grant (for example a sales user). Steps: open
-  // /receivables/aging; expect the alert "Your roles do not include receivables" and no table.
+test('a role without ar.read is told so and sees no figures', async ({ browser, baseURL }) => {
+  test.setTimeout(120_000);
+  const sales = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
+  try {
+    await sales.page.goto('/receivables/aging');
+    await expect(sales.page.getByRole('alert')).toContainText(
+      'Your roles do not include receivables',
+    );
+    await expect(sales.page.getByRole('table')).toHaveCount(0);
+    await expect(sales.page.locator('a[href^="/receivables/customers/"]')).toHaveCount(0);
+    await expect(sales.page.getByRole('link', { name: 'Receivables', exact: true })).toHaveCount(0);
+  } finally {
+    await sales.context.close();
+  }
 });
