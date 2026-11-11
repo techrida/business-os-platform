@@ -4,7 +4,7 @@ import type { Currency, InvoiceDto, InvoiceLineDto, TaxCode } from '@bos/contrac
 
 import type { InvoiceGates } from '../../_lib/gates';
 
-import { CreditNoteDialog, creditSource, DebitNoteDialog } from './note-dialogs';
+import { CreditNoteDialog, DebitNoteDialog } from './note-dialogs';
 
 /**
  * The "Credit note" and "Debit note" buttons for the detail page's note slot, only where
@@ -27,6 +27,13 @@ export function InvoiceNoteActions({
   gates: InvoiceGates;
 }) {
   if (!gates.notes) return null;
+  // Project data on the server; functions from a client module cannot be called here.
+  const creditLines = lines.map(({ lineNo, description, uom, quantity }) => ({
+    lineNo,
+    description,
+    uom,
+    quantity,
+  }));
   const ids = {
     originalInvoiceId: invoice.id,
     name: invoice.number ?? 'this invoice',
@@ -34,7 +41,7 @@ export function InvoiceNoteActions({
   };
   return (
     <>
-      <CreditNoteDialog {...ids} lines={lines.map(creditSource)} idempotencyKey={randomUUID()} />
+      <CreditNoteDialog {...ids} lines={creditLines} idempotencyKey={randomUUID()} />
       <DebitNoteDialog
         {...ids}
         currency={invoice.currency}
