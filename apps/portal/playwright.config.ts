@@ -10,7 +10,7 @@ const caFile = path.resolve(__dirname, process.env.BOS_E2E_CA_FILE ?? '../../.de
 // HTTPS request.get() checks also require this CA in Node's trust store (NODE_EXTRA_CA_CERTS).
 // Without an explicitly configured stack the fixture-gated specs can still be listed/skipped.
 const origins = [
-  ...(baseURL ? [baseURL] : []),
+  ...(baseURL ? [baseURL, process.env.BOS_E2E_AUTH_ORIGIN ?? 'https://auth.localhost'] : []),
   ...(workspace ? [workspace, process.env.BOS_E2E_AUTH_ORIGIN ?? 'https://auth.localhost'] : []),
 ];
 

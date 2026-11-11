@@ -44,11 +44,11 @@ test('build, save, price on the server, and submit a quotation', async ({ browse
 
   await test.step('a schedule that is not 100% blocks Submit', async () => {
     await page.getByRole('button', { name: 'Add milestone' }).click();
-    await page.getByLabel('Milestone 1').fill('Advance');
+    await page.getByLabel('Milestone 1', { exact: true }).fill('Advance');
     await page.getByLabel('Percent').fill('60');
     await expect(page.getByText(/must add up to 100%/).first()).toBeVisible();
     await page.getByRole('button', { name: 'Save draft' }).first().click();
-    await expect(page.getByRole('alert')).toContainText('100%');
+    await expect(page.getByRole('main').getByRole('alert')).toContainText('100%');
     await expect(page.getByRole('button', { name: 'Submit for approval' }).first()).toBeDisabled();
   });
 
@@ -61,7 +61,12 @@ test('build, save, price on the server, and submit a quotation', async ({ browse
 
   await test.step('save, then submit with confirmation', async () => {
     await page.getByRole('button', { name: 'Save draft' }).first().click();
-    await expect(page.getByText('All changes saved')).toBeVisible();
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: /^All changes saved$/ })
+        .first(),
+    ).toBeVisible();
     await page.getByRole('button', { name: 'Submit for approval' }).first().click();
     await page.getByRole('button', { name: 'Yes, submit' }).click();
     await expect(page.getByText('Submitted for approval')).toBeVisible();

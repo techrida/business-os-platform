@@ -6,13 +6,13 @@ an assistant, 2026-11-10. Base: `055a150f` on `kuu/p1-icon-motion` (includes P1 
 
 Inventory: installed `emil/0.2.0/skills` directories, including skills omitted from the session catalog. This is a rundown, not a claim that every skill was executed.
 
-| Purpose | Skills and use |
-| --- | --- |
-| Discover and specify | `find-animation-opportunities`: find justified additions; `animation-vocabulary`: name effects; `prototype`: explore an interaction |
-| Implement motion | `animate`: web motion; `apple-design`: physical gestures and sheets; `animate-expo`: native Expo motion |
-| Component craft | `emil-design-eng`: component engineering; `make-interfaces-feel-better`: spacing and interaction polish; `pick-ui-library`: choose accessible component foundations; `ask-sonner`: toast implementation |
-| Audit and simplify | `review-animations`: review a motion change; `improve-animations`: codebase audit; `remove-animations`: subtract unhelpful movement; `animation-performance`: frame-budget work |
-| Platform and resilience | `mobile-native`: mobile web behavior; `write-swift`: Swift implementation; `break-ui`: worst-case content checks |
+| Purpose                 | Skills and use                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discover and specify    | `find-animation-opportunities`: find justified additions; `animation-vocabulary`: name effects; `prototype`: explore an interaction                                                                     |
+| Implement motion        | `animate`: web motion; `apple-design`: physical gestures and sheets; `animate-expo`: native Expo motion                                                                                                 |
+| Component craft         | `emil-design-eng`: component engineering; `make-interfaces-feel-better`: spacing and interaction polish; `pick-ui-library`: choose accessible component foundations; `ask-sonner`: toast implementation |
+| Audit and simplify      | `review-animations`: review a motion change; `improve-animations`: codebase audit; `remove-animations`: subtract unhelpful movement; `animation-performance`: frame-budget work                         |
+| Platform and resilience | `mobile-native`: mobile web behavior; `write-swift`: Swift implementation; `break-ui`: worst-case content checks                                                                                        |
 
 Passes applied: `find-animation-opportunities` → Disney `micro-interactions` (advisory principles) → Emil `animate` (implementation) → standalone preview checks. No downstream agents.
 
@@ -27,14 +27,15 @@ Passes applied: `find-animation-opportunities` → Disney `micro-interactions` (
 
 ## Opportunities (bounded to these controls)
 
-| # | Location | Today | Purpose | Frequency assumption | Recommendation |
-| --- | --- | --- | --- | --- | --- |
-| 1 | bell button and shell iconButton | Surface feedback only | Feedback | Tens/day | Pointer press scale .97, 120ms cubic-bezier(.23,1,.32,1); transition transform only. Keyboard and reduced motion instant. Preview proposes this ease locally; app has no shared ease-out token yet. |
-| 2 | bell expanded state | Same outline as closed | State indication | Tens/day | Instant solid bell body only while expanded; static unread dot retained. Hamburger gets open surface fill, never a filled path (open strokes have no meaningful fill). |
+| #   | Location                         | Today                  | Purpose          | Frequency assumption | Recommendation                                                                                                                                                                                      |
+| --- | -------------------------------- | ---------------------- | ---------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | bell button and shell iconButton | Surface feedback only  | Feedback         | Tens/day             | Pointer press scale .97, 120ms cubic-bezier(.23,1,.32,1); transition transform only. Keyboard and reduced motion instant. Preview proposes this ease locally; app has no shared ease-out token yet. |
+| 2   | bell expanded state              | Same outline as closed | State indication | Tens/day             | Instant solid bell body only while expanded; static unread dot retained. Hamburger gets open surface fill, never a filled path (open strokes have no meaningful fill).                              |
 
 Highest leverage is distinguishing bell open state without changing read semantics. Hover is gated to fine hover pointers and changes surface instantly; press surface is distinct. Preview targets are 44px, a proposed improvement over current 36px buttons.
 
 Rejected candidates:
+
 - Bell ringing and unread dot pulse: distraction on repeated polling; no comprehension benefit.
 - Hamburger-to-X morph: real hamburger is behind an inert main area during drawer open; the separate close control already supplies the action.
 - Panel slide/scale and row stagger: delays repeated keyboard access and moves functional reading content. Preview panels open instantly.

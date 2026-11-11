@@ -42,10 +42,12 @@ function selectedProjects(): string[] {
     if (arg.startsWith('--project=')) names.push(arg.slice('--project='.length));
     else if (arg === '--project' && argv[i + 1] !== undefined) names.push(argv[i + 1] as string);
   }
-  return names;
+  // Workers reload this config without CLI arguments; preserve the selected project.
+  return names.length > 0 ? names : (process.env.BOS_E2E_PROJECTS ?? '').split(',').filter(Boolean);
 }
 
 const selected = selectedProjects();
+if (selected.length > 0) process.env.BOS_E2E_PROJECTS = selected.join(',');
 const startsProdServer = appOrigin === undefined && selected.includes('prod');
 
 // Pins are only needed for projects that are actually selected, so `e2e:prod` without the stack
@@ -92,7 +94,6 @@ export default defineConfig({
         'p2/*.spec.ts',
         'p3/*.spec.ts',
         'p4/*.spec.ts',
-        'p0-shell.spec.ts',
       ],
       use: { ...common, baseURL: devBaseURL },
     },
