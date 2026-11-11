@@ -60,9 +60,11 @@ test('an unknown customer shows words, not a blank page', async ({ browser, base
     opened.push(finance);
 
     await finance.page.goto('/receivables/customers/00000000-0000-4000-8000-000000000000');
-    await expect(finance.page.getByRole('alert')).toContainText(
-      /Customer not found|did not load|do not include receivables/,
-    );
+    await expect(
+      finance.page.getByRole('alert').filter({
+        hasText: /Customer not found|did not load|do not include receivables/,
+      }),
+    ).toBeVisible();
     await finance.page.goto('/receivables/customers/not-an-id');
     await expect(finance.page.getByText('That is not a customer')).toBeVisible();
   } finally {
@@ -75,9 +77,9 @@ test('a role without ar.read is told so and sees no figures', async ({ browser, 
   const sales = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
   try {
     await sales.page.goto('/receivables/aging');
-    await expect(sales.page.getByRole('alert')).toContainText(
-      'Your roles do not include receivables',
-    );
+    await expect(
+      sales.page.getByRole('alert').filter({ hasText: 'Your roles do not include receivables' }),
+    ).toBeVisible();
     await expect(sales.page.getByRole('table')).toHaveCount(0);
     await expect(sales.page.locator('a[href^="/receivables/customers/"]')).toHaveCount(0);
     await expect(sales.page.getByRole('link', { name: 'Receivables', exact: true })).toHaveCount(0);
