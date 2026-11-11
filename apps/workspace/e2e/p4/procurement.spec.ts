@@ -5,8 +5,8 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
 /**
  * The P4 purchase request screens, against the real stack. Not run by the unit that wrote it: it
  * needs the purchase request API, the P4 permission grants, a seeded department and cost centre
- * (their ids in BOS_E2E_DEPARTMENT_ID and BOS_E2E_COST_CENTER_ID, because the form takes ids until
- * the API has lookup routes) and the seeded founder persona. Written for the lead to run; it skips
+ * (their catalogue values in BOS_E2E_DEPARTMENT_ID and BOS_E2E_COST_CENTER_ID)
+ * and the seeded founder persona. Written for the lead to run; it skips
  * unless BOS_E2E_P4=1 and both ids are set.
  *
  * (1) The list loads and a status filter with no match says so.
@@ -58,8 +58,8 @@ test('a draft is saved with a server total, then cancelled and read-only', async
     await test.step('the form saves a draft', async () => {
       await page.goto('/procurement/requests/new');
       await page.getByLabel('Needed by').fill('2026-12-31');
-      await page.getByLabel('Department').fill(DEPARTMENT);
-      await page.getByLabel('Cost centre').fill(COST_CENTER);
+      await page.getByLabel('Department').selectOption(DEPARTMENT);
+      await page.getByLabel('Cost centre').selectOption(COST_CENTER);
       await page.getByLabel('Budget code').fill('E2E-26');
       await page.getByLabel('Why is this needed?').fill(`E2E request ${Date.now()}`);
       await page.getByLabel('Description').fill('Office chair');
