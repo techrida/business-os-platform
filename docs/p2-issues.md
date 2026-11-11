@@ -34,6 +34,19 @@ execution policy is now recorded in repository `AGENTS.md`.
   It passed without opening a dialog. Outcome status copy now matches the
   disambiguated customer-rejection label; its final five-test lifecycle rerun passed.
 
+### Image-build follow-up
+
+Enabling CI for `p2-main` exposed an API Docker packaging defect: the Dockerfile
+omitted `@bos/money-rules`, so production deployment failed with
+`ERR_PNPM_WORKSPACE_PKG_NOT_FOUND`. The image now copies every workspace manifest,
+builds and packages money-rules, and checks its production entry point exists.
+A fresh Linux Docker build passed, and importing quotation pricing and the worker
+module inside the resulting runtime image passed. No application rules changed.
+
+The first hosted run passed full-history gitleaks and workspace/portal production
+web checks; its Docker failure is retained as historical evidence, not called
+green. The follow-up push starts a new run whose outcome must be checked separately.
+
 ### Final browser results
 
 Development coverage was run in staged, stateful groups: **26 passed**, with one

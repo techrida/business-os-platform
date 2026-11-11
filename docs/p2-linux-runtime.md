@@ -80,8 +80,12 @@ METRICS_PORT=9464 node apps/api/dist/main.js
 # Separate terminal, with the same environment loader:
 METRICS_PORT=9465 node apps/api/dist/worker.js
 # Separate terminal, with the same environment loader:
-pnpm --filter @bos/workspace dev --hostname 0.0.0.0 --port 3000
+pnpm --filter @bos/workspace dev --hostname 0.0.0.0 --port 3000 > /var/tmp/agents-p2-runtime/workspace.log 2>&1
 ```
+
+Keep development-server stdout in a protected local log. Do not paste raw
+auth callback query strings or server-action payloads into handoffs or tool
+output; use sanitized verification summaries.
 
 Set metrics ports explicitly: the reused legacy `.env` contains 9464, which
 would otherwise make API and worker collide. For the portal, also source
