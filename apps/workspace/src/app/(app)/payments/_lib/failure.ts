@@ -97,13 +97,15 @@ export function describePaymentFailure(err: unknown): PaymentFailure {
   if (status === 409) {
     // Domain codes first: they are definite answers about the request itself, not about versions.
     if (f.code === 'OVER_ALLOCATION') return make('over_allocation', OVER_ALLOCATION_MESSAGE);
-    if (f.code === 'MISMATCHED_ITEMS') return make('mismatched_items', MISMATCHED_ITEMS_MESSAGE);
     if (isInProgress(f)) {
       return make('in_progress', 'Still saving. Wait a moment and try again.', {
         definite: false,
       });
     }
     return make('stale', STALE_MESSAGE, { reload: true });
+  }
+  if (status === 422 && f.code === 'MISMATCHED_ITEMS') {
+    return make('mismatched_items', MISMATCHED_ITEMS_MESSAGE);
   }
   if (status === 400) {
     return make(

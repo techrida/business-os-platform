@@ -27,7 +27,7 @@ describe('describePaymentFailure', () => {
     expect(over.kind).toBe('over_allocation');
     expect(over.reload).toBe(false);
     expect(over.message).toMatch(/nothing was allocated/i);
-    const mismatch = describePaymentFailure(coded(409, 'MISMATCHED_ITEMS'));
+    const mismatch = describePaymentFailure(coded(422, 'MISMATCHED_ITEMS'));
     expect(mismatch.kind).toBe('mismatched_items');
     expect(mismatch.reload).toBe(false);
     expect(mismatch.message).toMatch(/customer or currency/i);
