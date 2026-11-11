@@ -47,6 +47,8 @@ export type ErrorCode =
   | 'SCHEDULE_LINE_TAKEN'
   | 'NOT_APPROVED'
   | 'CREDIT_EXCEEDS_INVOICE'
+  | 'OVER_ALLOCATION'
+  | 'MISMATCHED_ITEMS'
   | 'payment_not_submitted'
   | 'payment_not_verified'
   | 'proof_not_clean'
@@ -110,6 +112,8 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   SCHEDULE_LINE_TAKEN: 'This billing schedule line already has an invoice',
   NOT_APPROVED: 'This invoice is issued only after it has been approved',
   CREDIT_EXCEEDS_INVOICE: 'The credit notes of this invoice would total more than the invoice',
+  OVER_ALLOCATION: 'The allocation exceeds an open amount',
+  MISMATCHED_ITEMS: 'The allocation items do not match',
   payment_not_submitted: 'This payment is not waiting for verification',
   payment_not_verified: 'Only a verified payment can be reversed',
   proof_not_clean: 'Every proof must pass the virus scan first',
@@ -193,6 +197,8 @@ const CONFLICT_CODES: readonly ErrorCode[] = [
   'NOT_APPROVED',
   // U12 credit notes: drafting or issuing one would credit more than the invoice total (done check 7).
   'CREDIT_EXCEEDS_INVOICE',
+  // The ledger refuses amounts above either open balance.
+  'OVER_ALLOCATION',
   // U7 payments: verify and reject need a submitted payment, reverse a verified one, verify needs clean proofs.
   'payment_not_submitted',
   'payment_not_verified',
@@ -213,6 +219,8 @@ function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
  * policy asks for, or an answer dated after today in Kathmandu.
  */
 const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
+  // The ledger refuses allocations across parties/currencies or closed items.
+  'MISMATCHED_ITEMS',
   'NO_ELIGIBLE_APPROVER',
   'evidence_policy_unmet',
   'decided_on_in_future',

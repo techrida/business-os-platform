@@ -126,7 +126,9 @@ describe('allocateAction', () => {
   });
 
   it('shows the mismatched-items wording and takes a new key', async () => {
-    mocks.apiFetch.mockImplementation(() => conflict('MISMATCHED_ITEMS'));
+    mocks.apiFetch.mockImplementation(() =>
+      answer(422, { error: { code: 'MISMATCHED_ITEMS', message: 'x', correlationId: 'c' } }),
+    );
     const state = await allocateAction(prev, form(one));
     expect(state.error).toBe(MISMATCHED_ITEMS_MESSAGE);
     expect(state.key).not.toBe(KEY);
