@@ -1,5 +1,82 @@
 # Phase 4 Issues and Consolidated Limitations
 
+## Linux follow-up — 2026-11-11 (current evidence)
+
+P3 explicitly released the shared Ubuntu checkout and runtime to P4. The real
+GitHub `p3-main` head `66c9efef04de9b975855bae4f410122180d2a809` was merged
+with `7334b0b6`; P2 `c703bcb5` is included through P3. P3 invoice picker limits,
+server/client credit boundary, portal not-found handling, allocation refusal
+status codes and browser safeguards are preserved. Saved P4 picker fixes were
+committed as `f5b5fe34`. `2bca61d2` reconciles the overlapping over-allocation
+message; `b81553c3` and `c1acf04a` scope browser assertions to the application
+alert rather than Next's route announcer. No scanner protection or assertion
+was weakened.
+
+All project execution in this follow-up used Ubuntu/WSL, Linux Node 24.22.2
+and pnpm 11.28.11. The complete automated candidate `2bca61d2` passed:
+
+| Check                                           | Result                                                                                              |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Frozen install, all eight typechecks, root lint | Passed, zero lint warnings                                                                          |
+| Full formatting and image pins                  | Passed; 28 image references across nine files                                                       |
+| Package tests                                   | **6,868 passed**, zero failed; 10 conditional locale skips                                          |
+| Package breakdown                               | contracts 428; database 578; locale 18; seed 176; portal 525; workspace 2,024; money 208; API 2,911 |
+| API HTTP tests                                  | **117/117 passed**, including P3 and P4 exit journeys                                               |
+| All package builds                              | Passed                                                                                              |
+| Real workspace and portal production exclusions | Both passed                                                                                         |
+| Migration/tenancy                               | Existing database upgraded normally from ledger 26 to 35; tenancy check passed                      |
+
+These Linux results supersede the historical Windows test failures below.
+The infected-file, quarantine, oversized request and scanner socket cases all
+pass in the supported Linux environment. A Windows-specific socket root cause
+was not separately proven. Windows Node/tests/builds/services were stopped;
+no host security setting was changed.
+
+Real production-mode browser acceptance uses actual ZITADEL logins, trusted
+local CA (`ignoreHTTPSErrors: false`), the existing PostgreSQL/Valkey runtime,
+Gotenberg and ClamAV. The embedded preview returned a Chrome error page;
+authorized Linux Playwright provided the acceptance evidence instead.
+
+- 19 unique repository staff checks passed across staged runs: procurement,
+  order detail and PDF, receiving validation, bills/payment-request entry,
+  role refusals, RFQ sourcing, VAT validation/export and vendor management.
+- 16 repository vendor checks passed: RFQ/quote entry, real PDF upload,
+  validation, bill submission, bank-change masking, foreign-Origin refusals
+  and onboarding visibility.
+- Additional resumable private fixtures created a real purchase request,
+  obtained independent department-head approval, submitted a vendor quote,
+  converted it, used the supported fewer-quote exception, obtained separate
+  Accountant/Finance/Management/Founder commitment approvals, issued the PO
+  and downloaded its rendered/scanned PDF. Warehouse confirmed two serialized
+  units and the vendor submitted a PO-linked invoice through the portal. The
+  bill was entered from that submission, three-way matched, and independently
+  approved by Accountant then Finance; the payable remains open for the demo.
+  Final staff bill detail and vendor order/bill detail checks also passed.
+
+This live scenario uses the one approved seeded vendor and a high-value
+NPR 2,018,180 quotation. It does not claim the exact three-vendor NPR 120,000
+browser Journey 11 fixture passed. Fixture-gated tests for a pending vendor,
+a second vendor and the exact golden journey remain unrun/skipped. The HTTP
+Journey 11 passes with its documented test doubles. P3 browser evidence is
+inherited from the owning P3 handoff, not counted as a fresh P4 browser run.
+
+Unanswered decisions retain the repository's recommended defaults, including
+manual bill Account ID entry until a chart of accounts exists, and payment
+requests authorizing a request only (no bank payout). No real payout occurred.
+The issued-order table can squeeze long descriptions between numeric columns;
+readability remains a UI follow-up. There is no complete accessibility or
+all-role/all-route browser audit. Docker image build and secret-history scan
+were not rerun for this P4 follow-up; package builds and live services were.
+
+The existing runtime/data were deliberately reused after release, with a
+protected pre-upgrade dump and configuration backup. Normal seed added missing
+P4 personas and intentionally retired six obsolete receiver grants under D03;
+all other prior grants were retained. ZITADEL refused automatic Actions webhook
+registration with its URL denylist, so the existing ten-minute reconciliation
+fallback remains. Newly seeded identities were mirrored by the normal seed.
+See [Linux runtime handoff](p4-linux-runtime.md) for safe startup, backups,
+fixture boundaries and exact protected configuration pointers.
+
 ## Status and features
 
 Consolidated on `p4-main` on 2026-11-10 from `origin/p4/on-p3`
@@ -49,13 +126,13 @@ remain alongside older-phase backfill, rollback and idempotence coverage.
 
 Integration follow-ups align form interaction fixtures with the new catalogue,
 type audit query rows, and use the current database-backed audit dependency and
-strict optional-field types. No unrelated UI redesign or migration was applied
-to a persistent environment. Only `p4-main` is this task's push destination;
+strict optional-field types. No unrelated UI redesign was applied. The later authorized Linux follow-up
+performed the normal persistent migration described above. Only `p4-main` is this task's push destination;
 `main`, legacy phase branches and full-phase PRs are unchanged by this task.
 
 ## Full-cascade limitations and open issues
 
-### Runtime and demo acceptance
+### Original runtime and demo acceptance prerequisites (now provisioned above)
 
 This checkout initially had no dependencies, `.env`, `.dev`, seeded identity
 configuration or listening app runtime. Dependencies are installed here for
@@ -151,7 +228,7 @@ Docker access is available on this Windows machine; the old build machine's
 socket-permission failure is historical. No Tailscale, cleanup or deployment
 work is performed here.
 
-## Consolidation verification
+## Historical Windows consolidation verification — superseded by Linux follow-up
 
 Environment: Windows, Node 24.18.0, pnpm 11.28.11, Docker Engine 29.8.2.
 Application source candidate: `bf47262f`. Later documentation changes do not
