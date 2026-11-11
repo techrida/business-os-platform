@@ -1,6 +1,6 @@
 'use client';
 
-import type { InvoiceLineDto, TaxCode } from '@bos/contracts';
+import type { TaxCode } from '@bos/contracts';
 import { useActionState, useRef, useState, type ReactNode } from 'react';
 
 import {
@@ -126,14 +126,6 @@ export interface CreditLineSource {
   uom: string;
   quantity: string;
 }
-
-/** The slice of an original line the credit form needs. */
-export const creditSource = (l: InvoiceLineDto): CreditLineSource => ({
-  lineNo: l.lineNo,
-  description: l.description,
-  uom: l.uom,
-  quantity: l.quantity,
-});
 
 /**
  * Credit note: the person says how much of each original line to credit and why. There is no price
