@@ -716,6 +716,30 @@ describe('SLA tick (fake clock)', () => {
   });
 });
 
+describe('SLA tick for an explicit route (internal memo)', () => {
+  it('reminds the named user of the active step, not a role holder', async () => {
+    const { requestId } = await submit({
+      facts: {},
+      explicitSteps: [{ userId: U.deputy, reason: 'Selected approver' }],
+    });
+    await sla.tick(new Date(new Date('2026-11-08T04:00:00Z').getTime() + 24 * 3_600_000));
+    expect(await countActions(requestId, 'remind')).toBe(1);
+    expect(notify.notifyUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: U.deputy,
+        dedupeKey: `approval:${requestId}:1:reminder`,
+      }),
+    );
+    // No accountant or finance holder was asked about this request.
+    const reminded = notify.notifyUser.mock.calls
+      .map((c) => c[1] as unknown as { userId: string; dedupeKey: string })
+      .filter((m) => m.dedupeKey === `approval:${requestId}:1:reminder`)
+      .map((m) => m.userId);
+    expect(reminded).toEqual([U.deputy]);
+  });
+});
+
 describe('admin: groups and delegations', () => {
   it('manages a group, routes a group step to its members, and refuses unknown groups on publish', async () => {
     me = U.founder;
