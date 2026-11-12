@@ -12,7 +12,7 @@ vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ accessToken: 'test-token', roles: ['accountant'] }),
 }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
-vi.mock('@/components/p2/quote-builder/api', () => ({ listTaxCodes: () => Promise.resolve([]) }));
+vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: () => Promise.resolve([]) }));
 vi.mock('./actions', () => ({ createManualInvoiceAction: vi.fn() }));
 vi.mock('./manual-invoice-form', () => ({
   ManualInvoiceForm: ({ customers }: { customers: readonly { label: string }[] }) => (
