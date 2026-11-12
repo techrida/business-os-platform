@@ -87,14 +87,21 @@ export async function createDraftMemo(
   const amountNpr = Number(input.amount.replace(/[,\s]/g, ''));
   if (amountNpr > 100000) signers.push('Dev Management');
   if (amountNpr > 1000000) signers.push('Dev Founder');
+  // A new memo starts with two blank "Recommended by" rows and an "Approved by" box; each is an editable combobox
+  // (click it, type, pick). Rows beyond the first two are added; a blank row is ignored when the memo is saved.
   for (let i = 0; i < signers.length; i++) {
-    const label = i === signers.length - 1 ? 'Approved by' : `Recommender ${i + 1}`;
-    if (i < signers.length - 1)
+    const approver = i === signers.length - 1;
+    if (!approver && i >= 2) {
       await page.getByRole('button', { name: 'Add recommender', exact: true }).click();
-    await page.getByRole('button', { name: new RegExp(`^${label}:`) }).click();
-    const popup = page.getByRole('dialog', { name: `Choose ${label}`, exact: true });
-    await popup.getByRole('textbox', { name: `Search ${label}`, exact: true }).fill(signers[i]!);
-    await popup.getByRole('button', { name: new RegExp(`^${signers[i]}(?: |$)`) }).click();
+    }
+    const box = page.getByRole('combobox', {
+      name: approver ? 'Approved by' : `Recommended by ${i + 1}`,
+      exact: true,
+    });
+    await box.click();
+    await box.fill(signers[i]!);
+    await page.getByRole('option', { name: new RegExp(`^${signers[i]}(?: |$)`) }).click();
+    await expect(box).toHaveValue(signers[i]!);
   }
 
   await page.getByRole('button', { name: 'Save draft' }).click();

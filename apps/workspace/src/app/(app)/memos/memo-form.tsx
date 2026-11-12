@@ -1,8 +1,8 @@
 'use client';
 import type { MemoDirectory, MemoTemplateSnapshot } from '@bos/contracts';
-import { MemoPaper } from './memo-paper';
-import { TrashIcon } from './memo-icons';
-import { StaffPicker } from './staff-picker';
+import { MemoPreview } from './memo-preview';
+import { SignerSection } from './signer-section';
+import { initialRecommenders, recommenderPayload } from './signer-rows';
 import templateStyles from './memo-template.module.css';
 
 import { useActionState, useEffect, useRef, useState } from 'react';
@@ -67,12 +67,15 @@ export function MemoForm({
   );
   const [date, setDate] = useState(template?.date ?? new Date().toISOString().slice(0, 10));
   const [closing, setClosing] = useState(template?.closing ?? 'Submitted for your approval.');
-  const [recommenders, setRecommenders] = useState<string[]>(
-    template?.recommenders.map((p) => p.userId) ?? [],
+  // A new memo starts with two blank "Recommended by" rows; an edit keeps exactly what was saved.
+  const [recommenders, setRecommenders] = useState(() =>
+    initialRecommenders(template?.recommenders.map((p) => p.userId)),
   );
   const [approvedBy, setApprovedBy] = useState(template?.approvedBy.userId ?? '');
-  const [openPicker, setOpenPicker] = useState<string | null>(null);
-  const preparedBy = template?.preparedBy.userId ?? directory?.currentUserId ?? '';
+  // Prepared by is always the signed-in author: the API refuses any other person for it.
+  const preparedBy = directory?.currentUserId ?? template?.preparedBy.userId ?? '';
+  // Blank rows are "not used yet": they never reach the preview or the API.
+  const chosenRecommenders = recommenderPayload(recommenders);
   const person = (id: string) =>
     directory?.people.find((p) => p.userId === id) ?? {
       userId: id,
@@ -89,7 +92,7 @@ export function MemoForm({
         date,
         closing,
         preparedBy: person(preparedBy),
-        recommenders: recommenders.map(person),
+        recommenders: chosenRecommenders.map(person),
         approvedBy: person(approvedBy),
       }
     : null;
@@ -98,7 +101,7 @@ export function MemoForm({
     date,
     closing,
     preparedByUserId: preparedBy,
-    recommenderUserIds: recommenders,
+    recommenderUserIds: chosenRecommenders,
     approvedByUserId: approvedBy,
   };
   const err = state.fieldErrors;
@@ -191,60 +194,14 @@ export function MemoForm({
                 />
               )}
             </Field>
-            <Field label="Prepared by">
-              {(control) => (
-                <Input
-                  {...control}
-                  readOnly
-                  value={`${person(preparedBy).name}${person(preparedBy).jobTitle ? ` (${person(preparedBy).jobTitle})` : ''}`}
-                />
-              )}
-            </Field>
-            <h3>Recommended by</h3>
-            {recommenders.map((id, i) => (
-              <div className={templateStyles.row} key={i}>
-                <StaffPicker
-                  label={`Recommender ${i + 1}`}
-                  people={directory.people}
-                  value={id}
-                  onChange={(value) =>
-                    setRecommenders((prev) => prev.map((p, j) => (j === i ? value : p)))
-                  }
-                  open={openPicker === `r${i}`}
-                  onOpen={(open) => setOpenPicker(open ? `r${i}` : null)}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  aria-label={`Remove recommender ${i + 1}`}
-                  onClick={() => {
-                    setRecommenders((prev) => prev.filter((_, j) => j !== i));
-                    setOpenPicker(null);
-                  }}
-                >
-                  <TrashIcon />
-                </Button>
-              </div>
-            ))}
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setRecommenders((prev) => [...prev, ''])}
-            >
-              Add recommender
-            </Button>
-            <StaffPicker
-              label="Approved by"
+            <SignerSection
               people={directory.people}
-              value={approvedBy}
-              onChange={setApprovedBy}
-              open={openPicker === 'approved'}
-              onOpen={(open) => setOpenPicker(open ? 'approved' : null)}
+              currentUserId={directory.currentUserId}
+              recommenders={recommenders}
+              onRecommenders={setRecommenders}
+              approvedBy={approvedBy}
+              onApprovedBy={setApprovedBy}
             />
-            <p>
-              Choose people in approval-route order. Saving names does not approve or sign this
-              memo.
-            </p>
           </>
         ) : null}
         <div className={styles.amountRow}>
@@ -286,10 +243,28 @@ export function MemoForm({
           </Field>
         </div>
 
+        {!memoId ? (
+          <p className={styles.note}>
+            Attachments such as a PDF are added once the draft is saved. Choose{' '}
+            <strong>Save and add attachments</strong> to go straight to the upload step.
+          </p>
+        ) : null}
+
         <div className={styles.formActions}>
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" name="intent" value="save" disabled={pending}>
             {pending ? 'Saving' : submitLabel}
           </Button>
+          {!memoId && directory ? (
+            <Button
+              type="submit"
+              name="intent"
+              value="attach"
+              variant="secondary"
+              disabled={pending}
+            >
+              Save and add attachments
+            </Button>
+          ) : null}
           {cancelHref ? (
             <LinkButton href={cancelHref} variant="secondary">
               Cancel
@@ -297,7 +272,16 @@ export function MemoForm({
           ) : null}
         </div>
       </form>
-      {preview ? <MemoPaper template={preview} title={values.title} body={values.body} /> : null}
+      {preview ? (
+        <MemoPreview
+          template={preview}
+          title={values.title}
+          body={values.body}
+          source="current"
+          sticky
+          noun="preview"
+        />
+      ) : null}
     </div>
   );
 }

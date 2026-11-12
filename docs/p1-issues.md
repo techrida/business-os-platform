@@ -24,6 +24,36 @@ its notes are retained in [p0-issues.md](p0-issues.md).
   items without phase labels, and navigation-only sidebar scrolling. Added the
   cascade's shell browser regression to the development Playwright suite.
 
+## Memo workflow refinement
+
+Added on `t3/7725dac5` after the consolidation above; details, the P2 removal
+map and acceptance points are in [the memo delivery record](../design/memos/DELIVERY.md).
+
+- **Memos list:** `/memos` is a real list (`GET /v1/test-memos`, scoped by the
+  caller's `memo.read` grant, keyset-paginated) with loading, empty, error and
+  forbidden states. The paste-an-id lookup is gone.
+- **Staff fields:** one reusable inline combobox for Prepared by, Recommended by
+  and Approved by. Up to 20 staff are listed flat, more than 20 grouped by their
+  real directory department. Two blank recommender rows, at most 20, blank rows
+  never sent. Prepared by is only the signed-in author; server authorization is
+  unchanged.
+- **Preview, PDF and print:** sticky paper on wide screens, stacked on phones,
+  icon-only Download PDF (real PDF via `pdfkit`, Noto Sans and Noto Sans
+  Devanagari fonts, SIL OFL) and Print (the paper only).
+- **P1 boundary:** the amount, currency and PDF upload controls exist in P1 to
+  exercise the kernel workflow. P2 removes them from the internal memo UI and
+  keeps the memo, list, export and signers. The removal map is in the delivery
+  record.
+- **Runtime follow-up:** the new list route needs the P1 **API image rebuilt and
+  the API container recreated**; the workspace needs a rebuild/restart for the new
+  pages and the `pdfkit` dependency (`pnpm install`). No migration is involved.
+- **Limits:** PDF fonts cover Latin, Latin Extended, Vietnamese, Greek, Cyrillic
+  and Devanagari; other scripts print as `?` and the download says so. A memo
+  edited by someone other than its author is now recorded under the editor as
+  preparer (previously the server refused that save). The authenticated browser
+  flow, the Playwright suite and screen-reader testing were not run for this
+  refinement.
+
 ## Integration record
 
 | Source                      | Source head | Integration commit |
