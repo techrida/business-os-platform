@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { minimalPdf } from '../../../workspace/e2e/helpers/memo-flow';
+import { minimalPdf } from '../../../workspace/e2e/helpers/pdf-fixture';
 
 /**
  * Vendor portal requests for quotation, end to end: the list, one request, and a quotation sent

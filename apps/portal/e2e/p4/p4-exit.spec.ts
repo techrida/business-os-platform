@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-import { minimalPdf, signInAs, type Signed } from '../../../workspace/e2e/helpers/memo-flow';
+import { minimalPdf } from '../../../workspace/e2e/helpers/pdf-fixture';
+import { signInAs, type Signed } from '../../../workspace/e2e/helpers/memo-flow';
 
 /**
  * Journey 11 portal checkpoints on a disposable real stack, explicitly enabled by
