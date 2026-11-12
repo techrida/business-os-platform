@@ -73,16 +73,58 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
 });
 
 test('opportunities never offer Won or Quotation Sent as a move', async ({ browser, baseURL }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const appBase = baseURL ?? 'https://app.localhost';
   const { context, page } = await signInAs(browser, appBase, 'sales');
+  // The board draws its columns only when at least one opportunity exists; a fresh stack shows "No
+  // opportunities yet" instead. So this test makes its own: a qualified lead, converted through the UI.
+  // The company name is unique per run because Convert refuses a customer with the same normalised name.
+  const stamp = Date.now();
+  const title = `CRM e2e opportunity ${stamp}`;
   try {
-    await page.goto('/opportunities?view=board');
-    await expect(page.getByRole('heading', { level: 1, name: 'Opportunities' })).toBeVisible();
-    await expect(page.getByRole('region', { name: 'Won' })).toContainText('Set by the system');
-    // No Move select anywhere lists Won or Quotation Sent.
-    const options = await page.locator('select[name="stage"] option').allTextContents();
-    expect(options.some((o) => /^(Won|Quotation Sent)/.test(o))).toBe(false);
+    await test.step('convert a qualified lead into an opportunity', async () => {
+      await page.goto('/leads/new');
+      await page.waitForLoadState('networkidle');
+      await page.getByLabel('Title').fill(title);
+      await page.getByLabel('Source').selectOption('referral');
+      await page.getByLabel('Company').fill(`Board Test ${stamp} Pvt. Ltd.`);
+      await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
+      await page.getByRole('button', { name: 'Save lead' }).click();
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+      await page.waitForLoadState('networkidle');
+
+      // A lead must be Qualified before it can be converted: New, Contacted, Qualified.
+      await page.getByLabel('Move to').selectOption('contacted');
+      await page.getByRole('button', { name: 'Move', exact: true }).click();
+      await expect(page.getByText('Moved to Contacted.')).toBeVisible();
+      await page.getByLabel('Move to').selectOption('qualified');
+      await page.getByRole('button', { name: 'Move', exact: true }).click();
+      await expect(page.getByText('Moved to Qualified.')).toBeVisible();
+
+      await page.getByRole('button', { name: 'Convert to opportunity' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });
+      // The dialog starts from the lead's company and contact; the address is the one thing it cannot know.
+      await dialog.getByLabel('Address', { exact: true }).fill('1 Durbar Marg');
+      await dialog.getByLabel('City', { exact: true }).fill('Kathmandu');
+      await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
+      await page.waitForURL(/\/opportunities\/[0-9a-f-]{36}$/, { timeout: 30_000 });
+    });
+
+    await test.step('the board draws every stage and offers no move to a system-set stage', async () => {
+      await page.goto('/opportunities?view=board');
+      await expect(page.getByRole('heading', { level: 1, name: 'Opportunities' })).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Won' })).toContainText('Set by the system');
+      await expect(page.getByRole('region', { name: 'Quotation Sent' })).toContainText(
+        'Set by the system',
+      );
+      // The new opportunity is on the board, so at least one Move select exists to inspect.
+      await expect(page.getByRole('link', { name: title })).toBeVisible();
+      const selects = page.locator('select[name="stage"]');
+      expect(await selects.count()).toBeGreaterThan(0);
+      // No Move select anywhere lists Won or Quotation Sent.
+      const options = await page.locator('select[name="stage"] option').allTextContents();
+      expect(options.some((o) => /^(Won|Quotation Sent)/.test(o))).toBe(false);
+    });
   } finally {
     await context.close();
   }
