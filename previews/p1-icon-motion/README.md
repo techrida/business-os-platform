@@ -25,30 +25,47 @@ Passes applied: `find-animation-opportunities` → Disney `micro-interactions` (
 - Bell stylesheet: hover and expanded currently share a surface, with outline bell in both; unread dot is independent. Escape restores focus; outside pointer and focus departure dismiss the disclosure.
 - Icons use inline 24-unit stroke drawings; no icon library or motion dependency is needed. Existing semantic tokens include `--icon-default`, `--interactive-hover`, `--interactive-pressed`, `--action-primary`, `--radius-lg`. Preview uses isolated light fallbacks; application integration must use the actual token sheet, including dark overrides.
 
-## Opportunities (bounded to these controls)
+## Revision 2 (an assistant, 2026-11-12): expressive bell and menu
 
-| # | Location | Today | Purpose | Frequency assumption | Recommendation |
-| --- | --- | --- | --- | --- | --- |
-| 1 | bell button and shell iconButton | Surface feedback only | Feedback | Tens/day | Pointer press scale .97, 120ms cubic-bezier(.23,1,.32,1); transition transform only. Keyboard and reduced motion instant. Preview proposes this ease locally; app has no shared ease-out token yet. |
-| 2 | bell expanded state | Same outline as closed | State indication | Tens/day | Instant solid bell body only while expanded; static unread dot retained. Hamburger gets open surface fill, never a filled path (open strokes have no meaningful fill). |
+Kuu reviewed revision 1 and kept the press scaling and hover/press surfaces, but asked for more character, modelled on Marcel Kargul's notification micro-animation (x.com/marcelkargul/status/2119542301655806090). The earlier "reject bell ringing" and "reject hamburger morph" decisions are reversed by that instruction.
 
-Highest leverage is distinguishing bell open state without changing read semantics. Hover is gated to fine hover pointers and changes surface instantly; press surface is distinct. Preview targets are 44px, a proposed improvement over current 36px buttons.
+### Reference, read frame by frame (60 fps source, 6.5 s)
 
-Rejected candidates:
-- Bell ringing and unread dot pulse: distraction on repeated polling; no comprehension benefit.
-- Hamburger-to-X morph: real hamburger is behind an inert main area during drawer open; the separate close control already supplies the action.
-- Panel slide/scale and row stagger: delays repeated keyboard access and moves functional reading content. Preview panels open instantly.
-- Sidebar width animation: layout work on a frequent control; outside the bounded icon review.
-- Destructive hold and gesture spring: no destructive or drag action exists here.
+1. Badge grows from a dot with an overshoot to about 115%, then settles (about 200 ms).
+2. A ring in the surface colour separates the badge from the bell (cut-out).
+3. As the badge lands, the bell swings from a pivot at its top: about +20°, then -10°, +4°, back to rest, in about 700 ms.
+4. The clapper lags the bell and swings further (follow-through).
 
-## Principles and implementation decisions
+### Bell, as built in the preview
 
-Disney staging: open fill, unread dot and focus ring carry separate meanings. Timing: brief press feedback; no anticipation delay. Pose-to-pose state change: instant outline/solid switch. Solid drawing: preserve original bell silhouette; only close the bell body path to make fill valid. Reject bounce, squash, ringing and overshoot for this daily business interface.
+| Event | Motion | Why |
+| --- | --- | --- |
+| Count rises from 0 | Badge pops (scale .35 to 1.18 to 1, 320 ms, strong ease-out); bell swing starts 110 ms later | Cause, then effect, as in the reference |
+| Count rises while badge shown | Number rolls up (200 ms), badge pulses to 1.15, bell swings | Shows that something new arrived, not a repeat |
+| Pointer click to open | Smaller swing (15°, 520 ms) and the bell fills in the primary colour while open | Feedback; fill means "open" |
+| Keyboard open | Instant fill, no swing | Emil rule: no flourish on keyboard actions |
+| Item read or Mark all read | Number rolls down, or badge shrinks out (150 ms); no swing | Opening never marks anything read |
+| Page load or poll with no rise | No motion | Mirrors the real bell's `quiet` first read and announce-only-on-rise logic |
+| Reduced motion | No swing, roll or pulse; badge fades | Keeps meaning without movement |
 
-Emil implementation: CSS transition retargets rapid presses without timers or queued keyframes. No movement on keyboard interaction; native buttons provide Enter/Space activation and focus-visible rings. Reduced motion removes transforms and transitions without losing state. Touch does not acquire sticky hover styling. No external library needed for this isolated inline disclosure demonstration; it is not a production drawer implementation.
+Swing: a damped sine, angle(t) = A·e^(-t/τ)·sin(2πt/P), sampled at 60 fps into Web Animations API keyframes, pivot (12, 2.5) in the 24-unit icon. Arrival A 28, P 340 ms, τ 210 ms; click A 15, P 300 ms, τ 160 ms. Clapper = 1.35 × the bell angle delayed 55 ms, relative to the bell. A new trigger starts from the current angle, so rapid arrivals or clicks never snap. Measured arrival angles in Chromium: 0, 3, 18, -1, -8, -2, 3, 1, -1, -1, 0.
 
-Supported in preview: toggle disclosures, Escape/focus return, outside pointer dismissal, focus departure dismissal, explicit sample read/reset, accessible unread name, static dot, open-only bell fill, pointer press feedback. Proposed for application: all new visual treatments and 44px targets. Existing application behavior was inspected in source, not exercised against a running service. Preview does not model auth, polling, notification navigation, mark-all failures, desktop rail, modal drawer or production focus trapping.
+Proposed change to the real bell: show the count in the badge (cap "9+") instead of the 9px dot, matching the reference. The count already exists in `notifications-bell.tsx`; this is a visual change only.
 
-Verification results are recorded with the delivery. Application source is unchanged; no application build is needed for this isolated HTML artifact. Before app integration, verify real drawer inertness and focus return, unread persistence across reload, read-request failure behavior, dark tokens, and touch layout against live application tests.
+### Hamburger, three options for Kuu to choose
 
-Verified locally: headless Chromium loaded the file directly. Assertions passed for opening without read, explicit read/reset, Escape returning focus, Enter/Space, ten rapid toggles, outside click, reduced-motion transition removal, and no horizontal overflow at 390px. Initial reset check found an inline-layout shift when pointerdown dismissal hid the panel before click; preview now dismisses on outside click after target activation. This differs from the real absolutely positioned panel's pointerdown dismissal. Render inspected at 728px, no console messages. Manual touch hardware, assistive technology and live application workflows remain unverified. `git diff --check` passed.
+The real drawer's close button is in the drawer's top-right corner, not where the hamburger is, and the page behind (including the hamburger) is blocked while the drawer is open. That limits what the hamburger can usefully do.
+
+- **A. Pull-through (recommended).** Bars slide 10px right and fade, 35 ms apart, as the drawer slides in (260 ms, iOS drawer curve). The drawer's X turns in from -90°. Reverses on close. CSS transitions, so rapid taps retarget. No layout change.
+- **B. Squeeze and spring.** Pointer down gathers the bars (top down 3px, middle to 75% width, bottom up 3px, 90 ms); release springs them apart with an 18% overshoot (CSS `linear()` spring, 420 ms). No layout change.
+- **C. Morph to X.** The hamburger turns into an X (240 ms strong ease-in-out) and stays above the drawer as the close control. Needs a layout change: drop the drawer's separate close button and leave the header button usable while the rest of the page is blocked.
+
+All three keep Escape, scrim tap, focus to the close control on open (A, B) and focus back to the hamburger on close. Reduced motion keeps only opacity changes. The drawer slide itself is new (today it appears instantly).
+
+### Verified (headless Chromium 1.65 Playwright, file opened directly)
+
+Passed: quiet load does not animate; arrival changes the accessible name and swings; swing settles to `transform: none`; pointer open swings without marking read; Escape closes and returns focus; keyboard Enter opens with no swing; reading one item and Mark all read update the name and hide the badge; a burst of 3 arrivals plus 8 rapid clicks ends with one badge number "3" and the bell at rest; for each hamburger option, open blocks the page, focus moves correctly, Escape or the X closes, and rapid taps leave the state consistent; reduced motion removes the swing but still updates the count; no horizontal overflow at 390px; no console errors. A 4x slow-motion filmstrip was checked against the reference.
+
+Found and fixed during testing: option C's X was painted under the drawer because the header formed its own stacking layer.
+
+Not verified: feel on a real phone, screen readers, and the live application. Application code is unchanged; these are proposals until Kuu picks a hamburger option.
