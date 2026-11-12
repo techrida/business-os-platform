@@ -8,7 +8,7 @@ import { createMemo, failureOf, submitMemo, updateMemo } from '@/lib/api-kernel'
 import { requireStaffSession } from '@/lib/bff';
 
 /**
- * Server actions for the test memo: create, edit, submit and "open by id". Every one validates
+ * Server actions for the test memo: create, edit and submit. Every one validates
  * on the server (the browser's checks are a courtesy) and asks `requireStaffSession` first, so an
  * expired session goes to sign-in and comes back to the right page.
  */
@@ -149,18 +149,4 @@ export async function submitMemoAction(_prev: SubmitState, form: FormData): Prom
   }
   revalidatePath(`/memos/${memoId}`);
   redirect(`/memos/${memoId}?submitted=${status}`);
-}
-
-export interface OpenState {
-  error?: string;
-}
-
-/** There is no memo list route yet, so a memo is opened by its id (notification links carry it). */
-export async function openMemoAction(_prev: OpenState, form: FormData): Promise<OpenState> {
-  await requireStaffSession('/memos');
-  const id = text(form, 'memoId').trim();
-  if (!UUID.test(id)) {
-    return { error: 'That is not a memo id. It looks like 3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e.' };
-  }
-  redirect(`/memos/${id}`);
 }

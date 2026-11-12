@@ -11,6 +11,7 @@ import {
   getUnreadCount,
   issueDocumentLink,
   listAudit,
+  listMemos,
   listNotifications,
   markNotificationRead,
   openSignedFile,
@@ -295,6 +296,41 @@ describe('memos', () => {
     expect(detail.attachments[0]?.filename).toBe('quote.pdf');
     expect(detail.approval?.status).toBe('pending');
     expect(lastCall().url).toBe(`http://api:3001/v1/test-memos/${ID_A}`);
+  });
+
+  it('lists one page of memos and forwards only limit, cursor and status', async () => {
+    fetchMock.mockResolvedValue(
+      reply({
+        items: [
+          {
+            id: ID_A,
+            number: memo.number,
+            title: memo.title,
+            status: 'draft',
+            amount: memo.amount,
+            currency: 'USD',
+            ownerUserId: ID_B,
+            ownerName: 'Sushil Shrestha',
+            departmentName: null,
+            createdAt: WHEN,
+            updatedAt: WHEN,
+          },
+        ],
+        nextCursor: 'abc_-123',
+      }),
+    );
+    const page = await listMemos(session, { limit: 20, cursor: 'prev', status: 'draft' });
+    expect(page.items[0]?.ownerName).toBe('Sushil Shrestha');
+    expect(page.nextCursor).toBe('abc_-123');
+    expect(lastCall().url).toBe('http://api:3001/v1/test-memos?limit=20&cursor=prev&status=draft');
+    fetchMock.mockResolvedValue(reply({ items: [], nextCursor: null }));
+    await listMemos(session);
+    expect(lastCall().url).toBe('http://api:3001/v1/test-memos');
+  });
+
+  it('refuses a list body that breaks the contract instead of rendering undefined', async () => {
+    fetchMock.mockResolvedValue(reply({ items: [{ id: 'not-a-guid' }], nextCursor: null }));
+    await expect(listMemos(session)).rejects.toMatchObject({ status: 502 });
   });
 
   it('submits and returns the request id', async () => {
