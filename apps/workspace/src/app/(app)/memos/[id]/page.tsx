@@ -22,14 +22,18 @@ import { StatusBadge } from '../../kit';
 import styles from '../../kit.module.css';
 import { updateMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
-import { MemoPaper } from '../memo-paper';
+import { MemoPreview } from '../memo-preview';
 import { Attachments } from './attachments';
 import { SubmitForm } from './submit-form';
 
 export const metadata: Metadata = { title: 'Memo · Business OS' };
 export const dynamic = 'force-dynamic';
 
-type SearchParams = Promise<{ saved?: string | string[]; submitted?: string | string[] }>;
+type SearchParams = Promise<{
+  saved?: string | string[];
+  submitted?: string | string[];
+  attach?: string | string[];
+}>;
 
 /** `test_memos.update` becomes `Test memos update`: the audit action names are dotted identifiers. */
 const auditLabel = (action: string): string => humanizeKey(action);
@@ -66,6 +70,7 @@ export default async function MemoPage({
   const session = await requireStaffSession(path);
   const query = await searchParams;
   const saved = query.saved === '1';
+  const attachHint = query.attach === '1';
   const submitted =
     query.submitted === 'pending' || query.submitted === 'blocked' ? query.submitted : null;
 
@@ -192,7 +197,12 @@ export default async function MemoPage({
         }
       />
 
-      {saved ? (
+      {attachHint ? (
+        <Alert tone="success" role="status" title="Draft saved.">
+          Attach your files below. Each one is scanned before anyone can download it, and the memo
+          can be submitted once they are clean.
+        </Alert>
+      ) : saved ? (
         <Alert tone="success" role="status">
           Your changes were saved.
         </Alert>
@@ -223,7 +233,13 @@ export default async function MemoPage({
             }
           >
             {memo.template ? (
-              <MemoPaper template={memo.template} title={memo.title} body={memo.body} />
+              <MemoPreview
+                template={memo.template}
+                title={memo.title}
+                body={memo.body}
+                source={{ kind: 'saved', memoId: memo.id }}
+                noun="memo"
+              />
             ) : null}
             <FactList facts={facts} />
           </Panel>
@@ -246,7 +262,7 @@ export default async function MemoPage({
             </Panel>
           ) : null}
 
-          <Panel title="Attachments">
+          <Panel title="Attachments" id="attachments">
             <Attachments
               memoId={memo.id}
               initial={attachments}

@@ -94,7 +94,11 @@ export async function createMemoAction(
     return { values, fieldErrors: {}, error: failureOf(err).message };
   }
   revalidatePath('/memos');
-  redirect(`/memos/${id}`);
+  // "Save and add attachments": the memo must exist before a file can be attached to it, so save first
+  // and land on the upload step. `attach=1` shows the banner, `#attachments` scrolls to the panel.
+  redirect(
+    text(form, 'intent') === 'attach' ? `/memos/${id}?attach=1#attachments` : `/memos/${id}`,
+  );
 }
 
 export async function updateMemoAction(
