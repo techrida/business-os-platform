@@ -87,3 +87,51 @@ Run on this branch: API integration (real Postgres, 44 memo tests including nine
 4. Scroll the form on a wide screen: the paper stays put; a long body scrolls inside the paper block; at 390 px the paper sits under the form with no horizontal scroll.
 5. Download PDF from the unsaved form and from a saved memo (open the file: letterhead, signers, Devanagari names); Print shows only the paper in the browser's print preview.
 6. "Save and add attachments" lands on Attachments; upload a PDF; see quarantined, polling, clean, download; Submit unlocks only when clean.
+
+## P2 removal (2026-11-12)
+
+The P1 test controls are gone from the internal memo; the correspondence feature stays. Branch `p2-main` (P2 plus P1 release `731907f4`).
+
+### What was removed, and why
+
+Amount, currency, the PDF upload panel (with scan polling and the "Save and add attachments" step), the Amount column of the list, and the scan-based submit blocker. They existed to exercise the kernel (FX freeze, amount thresholds, quarantine). A memo is correspondence: it has no money and no files. The `/api/memos/[id]/attachments` route and `attachments.tsx` are deleted; `/api/documents/...` and the documents service are untouched. The Memos list, inline signer comboboxes, sticky preview, PDF download, print, save/edit/submit, approval route and audit stay.
+
+### Explicit signer route
+
+A template memo (`row.template` set) no longer routes through the seeded `test_memo` workflow's accountant, finance and amount-threshold steps. On submit the author's selections become the route: each recommender in order, then the approver, as `user` steps with the reasons "Selected recommender N" and "Selected approver". Any count from 1 to 21 signers works, whatever roles they hold as long as each can decide approvals (see "Signer eligibility"), and no management or founder step is ever added.
+
+- `ApprovalsService.submit` takes an optional `explicitSteps`. The published `test_memo` definition and version are still recorded (so are its SLA and `distinctApprovers`), but the planner runs a synthetic spec with those steps and no rules, so separation of duties, the active-staff check and blocked handling are the engine's. If the plan is blocked (the owner, an editor, the person pressing submit or an uploader is a signer, or a signer is inactive) submit answers 409 and creates nothing. `proposedApproverIds` still applies to other callers.
+- The request's `facts` carry `routing: "explicit"` and no `amountNpr`; the snapshot has no amount, currency or FX fields. Attachments are still frozen and `allClean` still applies, so a legacy memo with files behaves as before.
+- Decision time (`act`, `inbox`, `reroute`) rebuilds the spec from the stored user steps when that marker is present and every step is a user step. Requests submitted before this change, and every non-template memo, route from the frozen spec exactly as before. `loadDirectory` now omits `activeUserIds` when no user is named (an empty set would have blocked a user step nobody listed).
+- The selected-signer guard in `act` (`documentType === 'test_memo'` with a template snapshot) is unchanged.
+- `GET /v1/test-memos/:id/route` (`memo.update`) previews the route from the same people and the same separation-of-duties list as submit: the selected people for a template memo, the role steps for a legacy memo.
+
+### NPR 0 compatibility value
+
+`test_memos.amount/currency/amount_npr/fx_*` are NOT NULL with CHECKs and no migration was added (it would cascade journal indexes into P3 and P4). A template memo created without money stores NPR 0.00 at the identity rate through the normal `MoneyService` snapshot; nothing routes on it and no screen shows it as a figure. `CreateMemoBodySchema` makes amount and currency optional only when a template is present; a memo without a template still requires them. Update re-freezes money only when amount or currency is sent.
+
+### Historical records
+
+Existing memos keep their stored values. The detail page shows a nonzero stored amount read-only as "Recorded P1 test amount", and lists existing attachments read-only (clean files get a download link; there is no upload and no polling). The list shows no amount.
+
+### Corrections to the map above
+
+- Money is not "replaced by the quotation model". Quotations have their own money model; memos simply have none.
+- The memo's selected people are the route. The map said to keep "selected-signer authorization" only; the route itself also had to change, because the old plan dictated signer count and roles from the amount.
+- `lib/kernel-ui.ts` upload helpers stay: verification uses them. Only the memo-only rules of `kit.module.css` (amount row, upload and dropzone) were removed; the `.file*` rules remain for the read-only list.
+- Decision time needed the explicit-route rebuild above; the map did not mention it.
+
+### Signer eligibility (follow-up, 2026-11-12)
+
+A named signer must be able to decide, and no role grant was widened to make that so. Default roles such as sales, operations_head, procurement and receiver hold `approvals.requests.read: own` but not `approvals.requests.act`, so the decide and inbox routes (`@Can('approvals.requests.act')`) would refuse them.
+
+- **Rule.** A recommender or approver must hold a live `approvals.requests.act` grant. "Live" means: the person's roles in the acting entity (the `user_roles` mirror, narrowed by the membership's `role_keys`, as the tenancy interceptor narrows a token's roles) looked up in the tenant's `role_permissions` rows through `RoleCache`, the same table the route check reads. Nothing is hard-coded by role name, and an administrator who removes the grant from a role changes the answer at the next cache reload.
+- **Directory.** `GET /v1/test-memos/directory` marks each person `canApprove`. The Recommended and Approved comboboxes list only people with it (a person already saved in a field stays listed so a saved memo shows its names). Prepared by stays the signed-in author. With no approver at all the fields say so and point to an administrator. `canApprove` is a directory fact, never stored in the memo's template snapshot.
+- **Preview.** `GET :id/route` marks a signer without the right as a blocked step, with the reason "<name> cannot decide approvals; choose someone with approval rights.", and names the person (not an id) when separation of duties blocks a step.
+- **Submit.** A signer without the right is refused with 409 and that same message, before the engine plans the route. Nothing is created.
+- **Step-up.** A user step is not a founder role step, so a named founder decides without the recent-sign-in step-up that a founder role step requires. Acceptable for correspondence with no financial threshold; say so if it should change.
+
+### Open items for the lead
+
+- `sla.processor.ts` now loads the named user of an explicit step (so the reminder goes to that person, and not to one who left); a test in `approvals.integration.test.ts` covers it. Escalation still notifies the escalation role (founder) by role, as for any request.
+- The Playwright specs `exit.spec.ts` and `inbox.spec.ts` and `helpers/memo-flow.ts` were rewritten to the new flow (named signers, no amount, no upload) and have not been run against a live stack. The upload and scan path stays covered at the API layer (`apps/api/test/e2e`), which still drives a legacy memo as owner; no upload UI was added.
