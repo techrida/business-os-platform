@@ -34,7 +34,7 @@ test('the payments list loads and its status filter keeps the choice', async ({
         finance.page
           .getByRole('region', { name: /Payments/ })
           .or(finance.page.getByText('No payments yet.'))
-          .or(finance.page.getByRole('alert')),
+          .or(finance.page.getByRole('alert').filter({ hasText: /\S/ })),
       ).toBeVisible();
     });
 

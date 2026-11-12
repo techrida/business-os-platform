@@ -33,7 +33,7 @@ test('the aging report loads and its customers open a statement', async ({ brows
         page
           .getByRole('region', { name: /Receivables aging as of/ })
           .or(page.getByText('No open receivables.'))
-          .or(page.getByRole('alert')),
+          .or(page.getByRole('alert').filter({ hasText: /\S/ })),
       ).toBeVisible();
     });
 
