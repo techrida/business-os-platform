@@ -2,8 +2,23 @@
 // NFR "authorization is deny-by-default": each route names its permission with @Can (route level: does the
 // role hold it at all), and the service then checks the record itself with authz.assert (record level: own,
 // department, ...), so a Sales user cannot read or edit a colleague's memo by guessing its id.
-import { CreateMemoBodySchema, type MemoDto } from '@bos/contracts';
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  CreateMemoBodySchema,
+  MemoListQuerySchema,
+  type MemoDto,
+  type MemoList,
+} from '@bos/contracts';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 
 import { Can } from '../../platform/authz/decorators';
 import { parseOr400 } from '../approvals/approvals.controller';
@@ -13,6 +28,16 @@ import { UpdateMemoBodySchema, type MemoDetailDto, type SubmitMemoResult } from 
 @Controller('v1/test-memos')
 export class TestMemoController {
   constructor(private readonly memos: TestMemoService) {}
+
+  /**
+   * 200 with one page of the memos the caller may open, newest first. Scope comes from the caller's `memo.read`
+   * grant (own, department, entity), never from the query. Pass `nextCursor` back as `cursor` for the next page.
+   */
+  @Get()
+  @Can('memo.read')
+  list(@Query() query: unknown): Promise<MemoList> {
+    return this.memos.list(parseOr400(MemoListQuerySchema, query));
+  }
 
   @Get('directory')
   @Can('memo.create')

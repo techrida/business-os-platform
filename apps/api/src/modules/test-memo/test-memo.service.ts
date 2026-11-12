@@ -13,6 +13,8 @@
 import {
   type CreateMemoBody,
   type MemoDirectory,
+  type MemoList,
+  type MemoListQuery,
   type MemoTemplateSnapshot,
   type DocumentVersionDto,
   type MemoDto,
@@ -42,7 +44,7 @@ import {
   Optional,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
@@ -74,6 +76,34 @@ const MEMO_SERIES = 'MEMO';
 const EDITABLE: readonly MemoRow['status'][] = ['draft', 'returned'];
 
 const iso = (d: Date): string => d.toISOString();
+
+interface ListCursor {
+  createdAt: string;
+  id: string;
+}
+const CURSOR_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const encodeCursor = (c: ListCursor): string =>
+  Buffer.from(JSON.stringify([c.createdAt, c.id])).toString('base64url');
+/** An unreadable or forged cursor is the caller's mistake: 400, never a database error. */
+function decodeCursor(raw: string): ListCursor {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === 'string' &&
+      typeof parsed[1] === 'string' &&
+      CURSOR_TIME.test(parsed[0]) &&
+      CURSOR_ID.test(parsed[1])
+    ) {
+      return { createdAt: parsed[0], id: parsed[1] };
+    }
+  } catch {
+    // fall through to the 400 below
+  }
+  throw new BadRequestException({ code: 'bad_request', message: 'cursor is not valid' });
+}
 
 const memoNotFound = () => new NotFoundException({ code: 'not_found', message: 'Memo not found' });
 const notAllClean = () =>
@@ -357,6 +387,72 @@ export class TestMemoService implements OnModuleInit {
       id,
     );
     return { ...toMemoDto(row), attachments, approval: await this.latestApproval(scope, id) };
+  }
+
+  // --------------------------------------------------------------------------------------------------- list
+
+  /**
+   * The memos the caller may open, newest first. The visibility filter is AuthzService.scopeWhere, the SQL twin
+   * of the record check `get` runs, so a row appears here exactly when its id would open: own memos for Sales,
+   * the department's for a department lead, the entity's for `all`, never another tenant's or entity's. Keyset
+   * pagination on (created_at, id): the order is total, so a page edge neither skips nor repeats a memo, and
+   * a page costs the same however deep it is.
+   */
+  async list(query: MemoListQuery): Promise<MemoList> {
+    this.authz.assert('memo.read');
+    const cursor = query.cursor === undefined ? undefined : decodeCursor(query.cursor);
+    // The cursor carries the timestamp as Postgres printed it (microseconds), not as a JS Date (milliseconds).
+    const createdKey = sql<string>`to_char(${testMemos.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+    const filters: SQL[] = [this.authz.scopeWhere(testMemos, 'memo.read')];
+    if (query.status !== undefined) filters.push(eq(testMemos.status, query.status));
+    if (cursor !== undefined) {
+      filters.push(
+        sql`(${testMemos.createdAt}, ${testMemos.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
+      );
+    }
+    const rows = await this.db
+      .select({
+        memo: testMemos,
+        createdKey,
+        ownerName: users.displayName,
+        departmentName: departments.name,
+      })
+      .from(testMemos)
+      .leftJoin(
+        users,
+        and(eq(users.tenantId, testMemos.tenantId), eq(users.id, testMemos.ownerUserId)),
+      )
+      .leftJoin(
+        departments,
+        and(
+          eq(departments.tenantId, testMemos.tenantId),
+          eq(departments.id, testMemos.departmentId),
+        ),
+      )
+      .where(and(...filters))
+      .orderBy(desc(testMemos.createdAt), desc(testMemos.id))
+      .limit(query.limit + 1);
+    const page = rows.slice(0, query.limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map(({ memo, ownerName, departmentName }) => ({
+        id: memo.id,
+        number: memo.number,
+        title: memo.title,
+        status: memo.status,
+        amount: memo.amount,
+        currency: memo.currency as MemoDto['currency'],
+        ownerUserId: memo.ownerUserId,
+        ownerName: ownerName?.trim() ? ownerName : null,
+        departmentName: departmentName ?? null,
+        createdAt: iso(memo.createdAt),
+        updatedAt: iso(memo.updatedAt),
+      })),
+      nextCursor:
+        rows.length > query.limit && last !== undefined
+          ? encodeCursor({ createdAt: last.createdKey, id: last.memo.id })
+          : null,
+    };
   }
 
   // ------------------------------------------------------------------------------------------------ update

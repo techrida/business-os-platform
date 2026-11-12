@@ -13,13 +13,15 @@ export const MemoPersonSchema = z.object({
   jobTitle: z.string().nullable(),
   department: z.string().nullable(),
 });
+/** How many "Recommended by" signers a memo can name. The form and the API both read this one number. */
+export const MEMO_MAX_RECOMMENDERS = 20;
 export const MemoTemplateInputSchema = z
   .object({
     departmentId: z.guid(),
     date: z.iso.date(),
     closing: z.string().trim().max(1000),
     preparedByUserId: z.guid(),
-    recommenderUserIds: z.array(z.guid()).max(20),
+    recommenderUserIds: z.array(z.guid()).max(MEMO_MAX_RECOMMENDERS),
     approvedByUserId: z.guid(),
   })
   .superRefine((v, ctx) => {
@@ -87,3 +89,47 @@ export const MemoDtoSchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }),
 });
 export type MemoDto = z.infer<typeof MemoDtoSchema>;
+
+/** Rows per page of the memo list: small default, hard ceiling, so a page is always cheap to build. */
+export const MEMO_LIST_DEFAULT_LIMIT = 20;
+export const MEMO_LIST_MAX_LIMIT = 50;
+
+/**
+ * Query of `GET /v1/test-memos`. Rows come newest first, ties broken by id, so a page boundary never skips or
+ * repeats a memo. `cursor` is the opaque `nextCursor` of the previous page; a made-up one is a 400.
+ */
+export const MemoListQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(MEMO_LIST_MAX_LIMIT).default(MEMO_LIST_DEFAULT_LIMIT),
+  cursor: z
+    .string()
+    .min(1)
+    .max(300)
+    .regex(/^[A-Za-z0-9_-]+$/, 'cursor is not valid')
+    .optional(),
+  status: MemoStatusSchema.optional(),
+});
+export type MemoListQuery = z.infer<typeof MemoListQuerySchema>;
+
+/** One row of the memo list: enough to find a memo and open it, never its body or signers. */
+export const MemoListItemSchema = z.object({
+  id: z.guid(),
+  number: z.string(),
+  title: z.string(),
+  status: MemoStatusSchema,
+  amount: DecimalString,
+  currency: CurrencySchema,
+  ownerUserId: z.guid(),
+  /** Display name of the creator; null when the directory has none. */
+  ownerName: z.string().nullable(),
+  departmentName: z.string().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+});
+export type MemoListItem = z.infer<typeof MemoListItemSchema>;
+
+export const MemoListSchema = z.object({
+  items: z.array(MemoListItemSchema),
+  /** Pass as `cursor` for the next page; null on the last page. */
+  nextCursor: z.string().nullable(),
+});
+export type MemoList = z.infer<typeof MemoListSchema>;

@@ -2,6 +2,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 24px;
+  /* The preview cell spans the editor's height; the sticky preview inside it is shorter and sticks within it. */
   align-items: start;
 }
 .controls {
@@ -63,72 +64,174 @@
   margin: 28px 0 0;
   color: var(--text-secondary);
 }
-.picker {
-  position: relative;
-}
-.popup {
-  position: absolute;
-  inset: 100% 0 auto;
-  z-index: 10;
-  background: var(--input-bg);
-  border: 1px solid var(--input-border);
-  padding: 8px;
-  box-shadow: 0 8px 24px #0002;
-}
-.results {
-  max-height: 240px;
-  overflow: auto;
-}
-.option {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 10px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.option:hover,
-.option:focus-visible {
-  background: var(--input-hover-bg, var(--input-bg));
-  outline: 2px solid currentColor;
-  outline-offset: -2px;
-}
-.option span {
-  font-weight: 400;
-}
-.group {
-  font-size: 12px;
-  padding: 8px;
-  margin: 0;
-  font-weight: 600;
-}
-.row {
+
+/* ---- Preview: the paper plus its icon actions ---- */
+
+.preview {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: center;
-}
-.row > :first-child {
-  flex: 1;
   min-width: 0;
 }
+
+.previewBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.iconAction {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: var(--border-width-thin) solid var(--button-secondary-border);
+  border-radius: var(--radius-lg);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-text);
+  cursor: pointer;
+}
+
+.iconAction:hover:not(:disabled) {
+  background: var(--button-secondary-bg-hover);
+}
+
+.iconAction:active:not(:disabled) {
+  background: var(--button-secondary-bg-active);
+}
+
+.iconAction:disabled {
+  color: var(--button-secondary-disabled-text);
+  cursor: progress;
+}
+
+.previewStatus,
+.previewError {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.previewStatus {
+  color: var(--text-secondary);
+}
+
+.previewError {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
+.previewScroll {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Wide screens: the preview stays under the app header while the editor scrolls. The block is no taller than the
+   space below the header, and the paper scrolls inside it, so a long memo is still fully reachable. */
+@media (min-width: 901px) {
+  .sticky {
+    position: sticky;
+    top: calc(var(--bos-header-height) + 16px);
+    align-self: start;
+    max-height: calc(100dvh - var(--bos-header-height) - 32px);
+  }
+
+  .sticky .previewScroll {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: var(--radius-lg);
+  }
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.trigger {
-  width: 100%;
-  min-height: 40px;
-  padding: 10px 12px;
-  text-align: left;
-  background: var(--input-bg);
-  color: var(--input-text);
-  border: 1px solid var(--input-border);
+/* ---- Signers: one label style and one row layout for Prepared, Recommended and Approved ---- */
+
+.signerSection {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.signerGroup {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.signerLabel {
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+}
+
+.signerHint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+p.signerHint {
+  margin: 0;
+}
+
+.signerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.signerRow > :not(.signerIndex):not(.remove) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.signerIndex {
+  flex: none;
+  min-width: 2ch;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+/* Delete is a danger action: the status-error palette, never the primary look. 40px square for touch. */
+.remove {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: var(--border-width-thin) solid color-mix(in srgb, var(--status-error) 40%, transparent);
   border-radius: var(--radius-lg);
-  font: inherit;
+  background: var(--status-error-subtle);
+  color: var(--status-error);
   cursor: pointer;
+}
+
+.remove:hover {
+  border-color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 16%, var(--status-error-subtle));
+}
+
+.remove:active {
+  background: color-mix(in srgb, var(--status-error) 28%, var(--status-error-subtle));
+}
+
+.addRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
 }

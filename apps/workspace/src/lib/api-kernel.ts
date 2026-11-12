@@ -13,6 +13,8 @@ import {
   ErrorBodySchema,
   type InboxItemDto,
   InboxItemDtoSchema,
+  type MemoList,
+  MemoListSchema,
   MemoDtoSchema,
   MemoDirectorySchema,
   type NotificationDto,
@@ -191,6 +193,22 @@ export function previewRoute(
 
 export function createMemo(session: Session, body: CreateMemoBody): Promise<Memo> {
   return call(session, '/v1/test-memos', MemoDtoSchema, json('POST', body));
+}
+
+/**
+ * `GET /v1/test-memos`: one page of the memos the caller may open, newest first. Scope is decided by the API from
+ * the caller's grants; nothing here narrows or widens it. Pass `nextCursor` back as `cursor` for the next page.
+ */
+export function listMemos(
+  session: Session,
+  opts: { limit?: number; cursor?: string; status?: string } = {},
+): Promise<MemoList> {
+  const query = new URLSearchParams();
+  if (opts.limit !== undefined) query.set('limit', String(opts.limit));
+  if (opts.cursor !== undefined) query.set('cursor', opts.cursor);
+  if (opts.status !== undefined) query.set('status', opts.status);
+  const qs = query.toString();
+  return call(session, `/v1/test-memos${qs === '' ? '' : `?${qs}`}`, MemoListSchema);
 }
 
 export function getMemo(session: Session, id: string): Promise<MemoDetail> {
