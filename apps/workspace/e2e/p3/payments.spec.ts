@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-import { minimalPdf, signInAs, type Signed } from '../helpers/memo-flow';
+import { signInAs, type Signed } from '../helpers/memo-flow';
+import { minimalPdf } from '../helpers/pdf-fixture';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
