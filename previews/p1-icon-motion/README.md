@@ -101,7 +101,7 @@ Pressing gathers the bars (top down 4 units, middle to 75% width, bottom up 4 un
 
 ### Emil review applied (Opus reviewer: review-animations, make-interfaces-feel-better, animate)
 
-1. **The drawer covered the hamburger** about 17 ms into opening, so the spring and the pull-through were never visible in the phone frame. Fix: the drawer and scrim now start below the 56 px header. **This is a proposed layout change for the real app**, where the drawer covers the full height today.
+1. **The drawer covered the hamburger** about 17 ms into opening, so the spring and the pull-through were never visible in the phone frame. Revision 3 moved the drawer below the 56 px header. **Kuu declined that layout change (revision 4)**: the drawer keeps covering the full height, so the pull-through plays under it and is seen as the bars slide back on close. If the layout changes later, the motion shows without further work.
 2. A badge arriving in the middle of a spring snapped from 1.2 to 1.0, and an arrival during the read-exit restarted from 0. Fix: retarget from the current scale, velocity and opacity.
 3. Swing and clapper moved from SVG `<g>` transforms to stacked HTML wrappers (`transform-origin: 50% 10.4167%`), so the browser can run them off the main thread during hydration or polling.
 4. The scrim uses the drawer's curve and timing (enter 260 ms, exit 200 ms).
@@ -126,3 +126,13 @@ All revision 2 behaviour checks pass again, with timings updated for the longer 
 - No console errors.
 
 Not verified: feel on a real phone (including iOS `:active` on touch), a performance trace under load, and screen readers. Application code is unchanged.
+
+## Revision 4: ported into the app
+
+Kuu approved the motion and declined the layout change. The preview drawer covers the full height again, and the motion is in the app on `p1-main`:
+
+- `apps/workspace/src/components/ui/bell-ring.ts`: the fitted bell, clapper and dot springs (the same constants as the preview), sampled into Web Animations keyframes.
+- `apps/workspace/src/app/(app)/notifications-bell.tsx` and its CSS: the bell is drawn in two layers. When a poll finds the unread count rising, the dot pops in and the bell rings 215 ms later (100 ms when the dot was already showing). Opening the panel with a pointer rings it. Page load, polls with no rise and keyboard opening stay still, and opening never marks anything read.
+- `apps/workspace/src/components/shell/shell-state.tsx`, `shell.module.css`, `sidebar.module.css`: the hamburger squeeze and pull-through, the close X blur-in, and drawer and scrim timing of 260 ms in and 200 ms out on the drawer curve.
+
+Not ported, still proposals: the count badge (the app keeps its unread dot; the dot uses the badge's pop spring), the number roll and the badge exit.
