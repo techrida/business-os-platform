@@ -29,7 +29,6 @@ button{font:inherit;color:inherit;cursor:pointer}
 .plain:active{background:var(--interactive-pressed)}
 .plain:disabled{opacity:.5;cursor:default}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-fieldset{border:0;padding:0;margin:0}legend{font-weight:600;margin-bottom:6px}
 label.opt{display:flex;gap:8px;align-items:flex-start;padding:6px 0}
 label.opt input{margin-top:4px}
 
@@ -46,12 +45,14 @@ label.opt input{margin-top:4px}
 .ib svg{overflow:visible;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 @media (hover:hover) and (pointer:fine){.ib:hover{background:var(--interactive-hover)}}
 .ib:active{background:var(--interactive-pressed)}
-.pointer .ib:active{transform:scale(.97)}
+.pointer .ib:not(.menu):active{transform:scale(.97)}
 
 /* ---------- bell ---------- */
 .bell-wrap{position:relative}
-.bell svg{width:18px;height:18px}
-.swing,.clapper{transform-box:view-box;transform-origin:12px 2.5px}
+.bell .swing{position:relative;display:block;width:18px;height:18px}
+.bell .clapper{position:absolute;inset:0;display:block}
+.swing,.clapper{transform-origin:50% 10.4167%} /* (12, 2.5) in the 24-unit icon: top of the dome */
+.bell .swing svg{position:absolute;inset:0;width:100%;height:100%}
 .bell-body{fill:transparent;transition:fill calc(150ms*var(--slow)) ease}
 .bell[aria-expanded=true]{background:var(--interactive-hover);color:var(--action-primary)}
 .bell[aria-expanded=true] .bell-body{fill:currentColor}
@@ -62,15 +63,15 @@ label.opt input{margin-top:4px}
 .badge .n{grid-area:1/1}
 .panel{position:absolute;top:calc(100% + 8px);right:-6px;z-index:5;width:min(300px,calc(100vw - 48px));background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);
   box-shadow:0 12px 32px rgba(16,24,40,.14);transform-origin:calc(100% - 24px) 0;
-  transition:opacity calc(160ms*var(--slow)) var(--ease-out),transform calc(160ms*var(--slow)) var(--ease-out),visibility 0s linear calc(160ms*var(--slow))}
+  transition:opacity calc(120ms*var(--slow)) var(--ease-out),transform calc(120ms*var(--slow)) var(--ease-out),visibility 0s linear calc(120ms*var(--slow))}
 .panel:not(.open){opacity:0;transform:scale(.97) translateY(-4px);visibility:hidden}
-.panel.open{transition-delay:0s}
+.panel.open{transition:opacity calc(160ms*var(--slow)) var(--ease-out),transform calc(160ms*var(--slow)) var(--ease-out),visibility 0s}
 .panel .ph{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px}
 .panel .act{border:0;background:none;color:var(--action-primary);font-size:13px;padding:4px}
 .panel .act:disabled{color:var(--muted);cursor:default}
 .panel ul{list-style:none;margin:0;padding:4px;max-height:260px;overflow:auto}
 .panel li button{display:flex;gap:10px;width:100%;text-align:left;padding:8px;border:0;border-radius:8px;background:none;font-size:13px}
-@media (hover:hover){.panel li button:hover{background:var(--interactive-hover)}}
+@media (hover:hover) and (pointer:fine){.panel li button:hover{background:var(--interactive-hover)}}
 .panel .mk{flex:none;width:8px;height:8px;margin-top:6px;border-radius:50%;background:var(--action-primary)}
 .panel li.read .mk{background:transparent}
 .panel .empty{padding:16px 12px;color:var(--muted);font-size:13px}
@@ -79,65 +80,58 @@ label.opt input{margin-top:4px}
 .closeup{display:flex;gap:28px;align-items:center;justify-content:center;padding:18px 0 6px}
 .closeup .ib{width:96px;height:96px;border-radius:20px;cursor:default;pointer-events:none}
 .closeup .ib svg{width:48px;height:48px;stroke-width:1.8}
+.closeup .bell .swing{width:48px;height:48px}
 .closeup .badge{top:6px;right:4px;min-width:36px;height:36px;font-size:20px;padding:0 9px;box-shadow:0 0 0 5px var(--surface)}
 .closeup .ib.menu svg{width:52px;height:52px}
 
 /* ---------- hamburger ---------- */
 .menu svg{width:20px;height:20px}
-.menu .b{transform-box:fill-box;transform-origin:center}
-/* A. pull-through: bars are drawn off to the right as the drawer arrives */
-[data-v=pull] .menu .b{transition:transform calc(180ms*var(--slow)) var(--ease-out),opacity calc(180ms*var(--slow)) var(--ease-out)}
-[data-v=pull] .menu .b2{transition-delay:calc(35ms*var(--slow))}
-[data-v=pull] .menu .b3{transition-delay:calc(70ms*var(--slow))}
-[data-v=pull] .menu[aria-expanded=true] .b{transform:translateX(10px);opacity:0}
-/* B. squeeze: press gathers the bars (anticipation); release springs them apart (follow-through) */
-[data-v=squeeze] .menu .b{transition:transform calc(420ms*var(--slow)) var(--spring)}
-[data-v=squeeze] .menu .b2{transition-delay:calc(30ms*var(--slow))}
-[data-v=squeeze] .menu.press .b{transition:transform calc(90ms*var(--slow)) var(--ease-out)}
-[data-v=squeeze] .menu.press .b1{transform:translateY(3px)}
-[data-v=squeeze] .menu.press .b2{transform:scaleX(.75)}
-[data-v=squeeze] .menu.press .b3{transform:translateY(-3px)}
-/* C. morph: the hamburger itself becomes the close control */
-[data-v=morph] .hdr{z-index:auto}
-[data-v=morph] .menu{z-index:30}
-[data-v=morph] .menu .b{transition:transform calc(240ms*var(--slow)) var(--ease-in-out),opacity calc(120ms*var(--slow)) ease}
-[data-v=morph] .menu[aria-expanded=true] .b1{transform:translateY(6px) rotate(45deg)}
-[data-v=morph] .menu[aria-expanded=true] .b2{transform:scaleX(0);opacity:0}
-[data-v=morph] .menu[aria-expanded=true] .b3{transform:translateY(-6px) rotate(-45deg)}
+.menu .pull,.menu .b{transform-box:fill-box;transform-origin:center}
+/* Press: the bars gather (anticipation). Release: they spring apart (follow-through)... */
+.menu .b{transition:transform calc(420ms*var(--slow)) var(--spring)}
+.menu .b2{transition-delay:calc(30ms*var(--slow))}
+.menu.press .b{transition:transform calc(90ms*var(--slow)) var(--ease-out);transition-delay:0s}
+.menu.press .b1{transform:translateY(4px)}
+.menu.press .b2{transform:scaleX(.75)}
+.menu.press .b3{transform:translateY(-4px)}
+/* ...while being pulled out to the right, one after another, as the drawer arrives. */
+.menu .pull{transition:transform calc(200ms*var(--slow)) var(--ease-out),opacity calc(200ms*var(--slow)) var(--ease-out)}
+.menu .p2{transition-delay:calc(35ms*var(--slow))}
+.menu .p3{transition-delay:calc(70ms*var(--slow))}
+.menu[aria-expanded=true] .pull{transform:translateX(10px);opacity:0}
 
 /* ---------- drawer ---------- */
-.scrim{position:absolute;inset:0;z-index:10;border:0;padding:0;background:var(--scrim);opacity:0;visibility:hidden;
-  transition:opacity calc(200ms*var(--slow)) ease,visibility 0s linear calc(200ms*var(--slow))}
-.drawer{position:absolute;inset:0 auto 0 0;z-index:20;width:78%;background:var(--surface);border-right:1px solid var(--border);transform:translateX(-101%);visibility:hidden;
-  transition:transform calc(260ms*var(--slow)) var(--ease-drawer),visibility 0s linear calc(260ms*var(--slow))}
-.phone.drawer-open .scrim{opacity:1;visibility:visible;transition-delay:0s}
-.phone.drawer-open .drawer{transform:none;visibility:visible;transition-delay:0s}
+/* Drawer and scrim start below the header (proposed layout change): the header stays visible, so the
+   hamburger's pull-through and release spring can be seen instead of playing under the drawer. */
+.scrim{position:absolute;inset:56px 0 0 0;z-index:10;border:0;padding:0;background:var(--scrim);opacity:0;visibility:hidden;
+  transition:opacity calc(200ms*var(--slow)) var(--ease-drawer),visibility 0s linear calc(200ms*var(--slow))}
+.drawer{position:absolute;inset:56px auto 0 0;z-index:20;width:78%;background:var(--surface);border-right:1px solid var(--border);transform:translateX(-101%);visibility:hidden;
+  transition:transform calc(200ms*var(--slow)) var(--ease-drawer),visibility 0s linear calc(200ms*var(--slow))}
+.phone.drawer-open .scrim{opacity:1;visibility:visible;transition:opacity calc(260ms*var(--slow)) var(--ease-drawer),visibility 0s}
+.phone.drawer-open .drawer{transform:none;visibility:visible;transition:transform calc(260ms*var(--slow)) var(--ease-drawer),visibility 0s}
 .dtop{display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 10px 0 16px;border-bottom:1px solid var(--border);font-weight:700}
-[data-v=morph] .dtop{padding-left:56px}
-[data-v=morph] .dclose{visibility:hidden}
 .dclose svg{width:18px;height:18px}
-.dclose svg{transition:transform calc(220ms*var(--slow)) var(--ease-out) calc(90ms*var(--slow)),opacity calc(160ms*var(--slow)) ease calc(90ms*var(--slow))}
-.phone:not(.drawer-open) .dclose svg{transform:rotate(-90deg) scale(.6);opacity:0;transition-delay:0s}
+.dclose svg{transition:transform calc(220ms*var(--slow)) cubic-bezier(.2,0,0,1) calc(60ms*var(--slow)),opacity calc(220ms*var(--slow)) cubic-bezier(.2,0,0,1) calc(60ms*var(--slow)),filter calc(220ms*var(--slow)) cubic-bezier(.2,0,0,1) calc(60ms*var(--slow))}
+.phone:not(.drawer-open) .dclose svg{transform:scale(.25);opacity:0;filter:blur(4px);transition-delay:0s}
 .drawer nav a{display:block;padding:9px 16px;color:var(--text);text-decoration:none;font-size:14px}
 .drawer nav a[aria-current]{font-weight:600;color:var(--action-primary)}
 
 /* ---------- reduced motion: keep state changes, drop movement ---------- */
 @media (prefers-reduced-motion:reduce){
   .ib,.pointer .ib:active{transform:none!important}
-  .menu .b{transition:opacity calc(120ms*var(--slow)) ease!important;transform:none!important}
-  [data-v=morph] .menu[aria-expanded=true] .b{transform:none!important}
+  .menu .b,.menu .pull{transition:opacity calc(120ms*var(--slow)) ease!important;transform:none!important}
   .drawer{transition:opacity calc(160ms*var(--slow)) ease,visibility 0s linear calc(160ms*var(--slow));transform:none;opacity:0}
   .phone.drawer-open .drawer{opacity:1}
   .panel,.panel:not(.open){transform:none}
-  .dclose svg,.phone:not(.drawer-open) .dclose svg{transform:none}
+  .dclose svg,.phone:not(.drawer-open) .dclose svg{transform:none;filter:none}
 }
 .rm .ib,.rm.pointer .ib:active{transform:none!important}
-.rm .menu .b{transition:opacity calc(120ms*var(--slow)) ease!important;transform:none!important}
-.rm [data-v=pull] .menu[aria-expanded=true] .b{opacity:0}
+.rm .menu .b,.rm .menu .pull{transition:opacity calc(120ms*var(--slow)) ease!important;transform:none!important}
+.rm .menu[aria-expanded=true] .pull{opacity:0}
 .rm .drawer{transition:opacity calc(160ms*var(--slow)) ease,visibility 0s linear calc(160ms*var(--slow));transform:none;opacity:0}
 .rm .phone.drawer-open .drawer{opacity:1}
 .rm .panel,.rm .panel:not(.open){transform:none}
-.rm .dclose svg,.rm .phone:not(.drawer-open) .dclose svg{transform:none}
+.rm .dclose svg,.rm .phone:not(.drawer-open) .dclose svg{transform:none;filter:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 </head>
@@ -148,10 +142,10 @@ label.opt input{margin-top:4px}
 
   <div class="layout">
     <div class="stack">
-      <div class="phone" id="phone" data-v="pull">
+      <div class="phone" id="phone">
         <header class="hdr" id="hdr">
           <button type="button" class="ib menu" id="menu" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path class="b b1" d="M4 6h16"/><path class="b b2" d="M4 12h16"/><path class="b b3" d="M4 18h16"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><g class="pull p1"><path class="b b1" d="M4 6h16"/></g><g class="pull p2"><path class="b b2" d="M4 12h16"/></g><g class="pull p3"><path class="b b3" d="M4 18h16"/></g></svg>
           </button>
           <p class="roles" id="roles">Approver, Finance</p>
           <div class="bell-wrap" id="bellwrap">
@@ -180,7 +174,7 @@ label.opt input{margin-top:4px}
         <p class="small muted">Same code at 48px so you can see the clapper and the badge cut-out. Decorative mirror; not focusable.</p>
         <div class="closeup" aria-hidden="true">
           <div class="ib bell" id="bellBig"></div>
-          <div class="ib menu" id="menuBig"><svg viewBox="0 0 24 24"><path class="b b1" d="M4 6h16"/><path class="b b2" d="M4 12h16"/><path class="b b3" d="M4 18h16"/></svg></div>
+          <div class="ib menu" id="menuBig"><svg viewBox="0 0 24 24"><g class="pull p1"><path class="b b1" d="M4 6h16"/></g><g class="pull p2"><path class="b b2" d="M4 12h16"/></g><g class="pull p3"><path class="b b3" d="M4 18h16"/></g></svg></div>
         </div>
       </div>
     </div>
@@ -200,19 +194,11 @@ label.opt input{margin-top:4px}
         </div>
       </section>
 
-      <section class="card">
-        <fieldset>
-          <legend>Hamburger option</legend>
-          <label class="opt"><input type="radio" name="v" value="pull" checked> <span><strong>A. Pull-through</strong> (recommended). The bars slide right and fade, one after another, as the drawer slides in, so the menu appears to come out of the icon. The drawer’s close X turns into place. Reverses on close. Works with today’s layout.</span></label>
-          <label class="opt"><input type="radio" name="v" value="squeeze"> <span><strong>B. Squeeze and spring.</strong> Pressing gathers the bars together; releasing springs them apart with a small overshoot. Same physical feel as the bell. Works with today’s layout.</span></label>
-          <label class="opt"><input type="radio" name="v" value="morph"> <span><strong>C. Morph to X.</strong> The hamburger turns into the close control and stays above the drawer. Needs a layout change: the drawer’s separate close button goes, and the header button must stay usable while the page behind is blocked.</span></label>
-        </fieldset>
-      </section>
 
       <section class="card small">
         <h2>What each motion means</h2>
-        <p><strong>New notification:</strong> the badge pops in (or its number rolls up), and its landing knocks the bell into a swing that dies away. The clapper trails behind the bell. About 0.8s.</p>
-        <p><strong>Bell click:</strong> a smaller, quicker swing, and the bell fills in while its list is open. Opening never marks anything read; only clicking an item or “Mark all read” does, and the badge then shrinks away or counts down without a swing.</p>
+        <p><strong>New notification:</strong> the badge springs in from nothing (or its number rolls up). It overshoots and dips before settling. 215 ms after it starts, the bell is kicked into a ringing swing (+11.6°, −7.8°, +5.1°…), with the clapper trailing 50 ms behind. Every value is fitted to the reference video.</p>
+        <p><strong>Bell click:</strong> the same kick and ring, and the bell fills in while its list is open. Opening never marks anything read; only clicking an item or “Mark all read” does, and the badge then shrinks away or counts down without a swing.</p>
         <p><strong>Keyboard:</strong> Enter or Space opens instantly with no swing. <strong>Reduced motion:</strong> no swing, roll or slide; the badge, fill and drawer fade instead.</p>
       </section>
     </div>
@@ -221,7 +207,7 @@ label.opt input{margin-top:4px}
 
 <script>
 (() => {
-  const BELL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><g class="swing"><path class="bell-body" d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326Z"/><g class="clapper"><path d="M10.268 21a2 2 0 0 0 3.464 0"/></g></g></svg><span class="badge" hidden><span class="n"></span></span>';
+  const BELL_SVG = '<span class="swing" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="bell-body" d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326Z"/></svg><span class="clapper"><svg viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/></svg></span></span><span class="badge" hidden><span class="n"></span></span>';
   const $ = (s) => document.querySelector(s);
   const phone = $('#phone'), menu = $('#menu'), bell = $('#bell'), panel = $('#bellpanel'), drawer = $('#drawer');
   const announce = $('#announce');
@@ -229,7 +215,7 @@ label.opt input{margin-top:4px}
   const reduced = () => reducedQuery.matches || document.body.classList.contains('rm');
   const slow = () => (document.documentElement.style.getPropertyValue('--slow') === '4' ? 4 : 1);
 
-  // Spring easing for option B, generated once as CSS linear() (damping 0.45, ~18% overshoot).
+  // Spring easing for the hamburger release, generated once as CSS linear() (damping 0.45, ~18% overshoot).
   (() => {
     const z = 0.45, w = 2 * Math.PI * 1.6, wd = w * Math.sqrt(1 - z * z), pts = [];
     for (let i = 0; i <= 40; i++) { const t = i / 40; pts.push((1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t))).toFixed(3)); }
@@ -237,88 +223,130 @@ label.opt input{margin-top:4px}
     document.documentElement.style.setProperty('--spring', `linear(${pts.join(',')})`);
   })();
 
-  // ---------- Bell: damped pendulum, pivot at the top of the bell ----------
-  // angle(t) = A * e^(-t/tau) * sin(2πt/P), faded to exactly 0 at T. Positive = bottom swings left,
-  // i.e. away from the badge that just landed on the top right (matches the reference).
-  const SWINGS = {
-    arrive: { A: 28, P: 340, tau: 210, T: 800 },
-    click:  { A: 15, P: 300, tau: 160, T: 520 },
-  };
-  const LAG = 55, CLAP_GAIN = 1.35, STEP = 1000 / 60;
+  // ---------- Motion measured from the reference video (60 fps, fitted frame by frame) ----------
+  // Bell: a damped spring kicked from rest, pivot (12, 2.5) = top of the dome. Positive = clockwise.
+  //   zeta 0.1279, w0 15.486 rad/s (stiffness 239.8, damping 3.96, mass 1), kick 212 deg/s.
+  //   Gives +11.6, -7.8, +5.1, -3.7, +2.3, -1.5 deg at ~205 ms intervals. Fit RMS 0.37 deg.
+  // Clapper: same pivot, 1.257 x the bell angle, 49.7 ms behind it. Fit RMS 0.40 deg.
+  // Badge: scale spring from 0, zeta 0.492, w0 16.85 (stiffness 283.8, damping 16.56), v0 8.33/s,
+  //   peaks 1.198 at 176 ms, dips to 0.963, settles; opacity 0 -> 1 linear over 173 ms. Fit RMS 0.006.
+  //   The bell is kicked 215 ms after the badge starts.
+  const BELL = { z: 0.1279, w0: 15.486, kick: 212, maxAmp: 13.8 };
+  const CLAP = { gain: 1.257, lag: 49.7 };
+  const BADGE = { z: 0.492, w0: 16.85, v0: 8.33, fade: 173, bellDelay: 215, bump: 2.5 };
+  const REST = 0.3, STEP = 1000 / 60;
+  const now = () => performance.now() / slow(); // model clock, so slow motion stretches every spring
+
+  // Closed-form damped spring: displacement and velocity at t seconds from (x0, v0).
+  function springAt(z, w0, x0, v0, t) {
+    const wd = w0 * Math.sqrt(1 - z * z), e = Math.exp(-z * w0 * t), B = (v0 + z * w0 * x0) / wd;
+    const c = Math.cos(wd * t), s = Math.sin(wd * t), x = e * (x0 * c + B * s);
+    return [x, -z * w0 * x + e * wd * (B * c - x0 * s)];
+  }
 
   function makeBell(host) {
     host.innerHTML = BELL_SVG;
     const swing = host.querySelector('.swing'), clap = host.querySelector('.clapper');
     const badge = host.querySelector('.badge');
-    let run = null; // { start, fn, anims }
+    let segs = [], anims = [], token = 0;
 
-    const angleNow = () => {
-      if (!run) return 0;
-      const t = (performance.now() - run.start) / slow();
-      return t >= run.T ? 0 : run.fn(t);
-    };
-    const clapNow = () => (run ? run.cfn((performance.now() - run.start) / slow()) : 0);
-
-    function ring(kind, delay = 0) {
-      if (reduced()) return;
-      const { A, P, tau, T } = SWINGS[kind];
-      // Retarget: start from wherever a running swing is, so rapid triggers never snap.
-      const from = angleNow(), cfrom = clapNow();
-      const base = (t) => (t <= 0 || t >= T ? 0 : A * Math.exp(-t / tau) * Math.sin((2 * Math.PI * t) / P) * (1 - (t / T) ** 3));
-      const fn = (t) => base(t - delay) + from * Math.exp(-Math.max(t, 0) / 70);
-      const cfn = (t) => CLAP_GAIN * base(t - delay - LAG) - base(t - delay) + cfrom * Math.exp(-Math.max(t, 0) / 70);
-      const total = T + delay + LAG + 40;
-      const k1 = [], k2 = [];
-      for (let t = 0; t <= total; t += STEP) {
-        const offset = Math.min(t / total, 1);
-        k1.push({ offset, transform: `rotate(${fn(t).toFixed(2)}deg)` });
-        k2.push({ offset, transform: `rotate(${cfn(t).toFixed(2)}deg)` });
+    const bellAt = (T) => {
+      for (let i = segs.length - 1; i >= 0; i--) {
+        const s = segs[i];
+        if (T >= s.t0) return springAt(BELL.z, BELL.w0, s.x0, s.v0, (T - s.t0) / 1000);
       }
-      k1.push({ offset: 1, transform: 'rotate(0deg)' }); k2.push({ offset: 1, transform: 'rotate(0deg)' });
-      if (run) run.anims.forEach((a) => a.cancel());
-      const opts = { duration: total * slow(), easing: 'linear' };
-      run = { start: performance.now(), fn, cfn, T: total, anims: [swing.animate(k1, opts), clap.animate(k2, opts)] };
-      run.anims[0].onfinish = () => { run = null; };
+      return [0, 0];
+    };
+
+    // Kick the bell `delay` ms from now. A kick while it is still swinging adds the same impulse to the
+    // current motion (no snap), capped so repeats never swing wider than the reference's first peak.
+    function kick(delay = 0) {
+      if (reduced()) return;
+      const start = now(), t0 = start + delay, wd = BELL.w0 * Math.sqrt(1 - BELL.z ** 2);
+      const [x, v] = bellAt(t0);
+      let B = (v + BELL.kick + BELL.z * BELL.w0 * x) / wd;
+      const room = Math.sqrt(Math.max(0, BELL.maxAmp ** 2 - x * x));
+      if (Math.abs(B) > room) B = Math.sign(B) * room;
+      segs = segs.filter((s) => s.t0 < t0);
+      segs.push({ t0, x0: x, v0: B * wd - BELL.z * BELL.w0 * x });
+      const env = Math.hypot(x, B), settle = t0 + (1000 * Math.log(Math.max(env, REST) / REST)) / (BELL.z * BELL.w0);
+      const win = (T) => { const r = (settle - T) / 150; return r >= 1 ? 1 : r <= 0 ? 0 : r * r * (3 - 2 * r); };
+      const dur = settle + CLAP.lag + STEP - start, k1 = [], k2 = [];
+      for (let T = start; ; T += STEP) {
+        const done = T >= start + dur, at = done ? start + dur : T;
+        const th = bellAt(at)[0] * win(at), ph = CLAP.gain * bellAt(at - CLAP.lag)[0] * win(at - CLAP.lag);
+        const offset = (at - start) / dur;
+        k1.push({ offset, transform: `rotate(${th.toFixed(3)}deg)` });
+        k2.push({ offset, transform: `rotate(${(ph - th).toFixed(3)}deg)` });
+        if (done) break;
+      }
+      anims.forEach((a) => a.cancel());
+      const opts = { duration: dur * slow(), easing: 'linear' }, mine = ++token;
+      anims = [swing.animate(k1, opts), clap.animate(k2, opts)];
+      anims[0].onfinish = () => { if (mine === token) segs = []; };
+    }
+
+    // Badge scale spring sampled into keyframes, from scale (1 + x0) with velocity v0.
+    // Current badge state, so an interruption continues from where the badge is (no snap).
+    let bstate = null; // { t0 (model ms), x0, v0 }
+    function badgeNow() {
+      const m = new DOMMatrix(getComputedStyle(badge).transform);
+      const x = Math.hypot(m.a, m.b) - 1, o = +getComputedStyle(badge).opacity;
+      const v = bstate ? springAt(BADGE.z, BADGE.w0, bstate.x0, bstate.v0, (now() - bstate.t0) / 1000)[1] : 0;
+      return { x: badge.hidden ? -1 : x, v, o: badge.hidden ? 0 : o };
+    }
+    function badgeSpring(x0, v0, fromOpacity) {
+      const k = [], end = 1000 * Math.log(500) / (BADGE.z * BADGE.w0);
+      bstate = { t0: now(), x0, v0 };
+      for (let t = 0; ; t += STEP) {
+        const done = t >= end, at = done ? end : t;
+        const f = { offset: at / end, transform: `scale(${Math.max(0, 1 + springAt(BADGE.z, BADGE.w0, x0, v0, at / 1000)[0]).toFixed(4)})` };
+        if (fromOpacity < 1) f.opacity = Math.min(1, fromOpacity + (at / BADGE.fade));
+        if (done) { f.transform = 'scale(1)'; k.push(f); break; }
+        k.push(f);
+      }
+      badge.getAnimations().forEach((a) => a.cancel());
+      const a = badge.animate(k, { duration: end * slow(), easing: 'linear' });
+      a.onfinish = () => { bstate = null; };
     }
 
     const label = (n) => (n > 9 ? '9+' : String(n));
     function setBadge(n, prev, mode) {
-      // mode: 'quiet' (page load), 'up' (arrival), 'down' (read)
+      // mode: 'quiet' (page load or a poll with no rise), 'up' (arrival), 'down' (read)
       const num = badge.querySelector('.n:last-child');
       if (n === 0) {
         if (badge.hidden) return;
-        if (mode === 'quiet') { badge.hidden = true; badge.dataset.count = '0'; return; }
-        const a = badge.animate(reduced() ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(.6)', opacity: 0 }],
-          { duration: 150 * slow(), easing: 'cubic-bezier(.23,1,.32,1)' });
-        a.onfinish = () => { if (badge.dataset.count === '0') badge.hidden = true; };
         badge.dataset.count = '0';
+        if (mode === 'quiet') { badge.hidden = true; return; }
+        badge.getAnimations().forEach((a) => a.cancel());
+        badge.animate(reduced() ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(.6)', opacity: 0 }],
+          { duration: 150 * slow(), easing: 'cubic-bezier(.23,1,.32,1)', fill: 'forwards' }).onfinish = () => { if (badge.dataset.count === '0') badge.hidden = true; };
         return;
       }
       badge.dataset.count = String(n);
       if (badge.hidden || prev === 0) {
+        const cur = badgeNow(); // may be mid-exit after "Mark all read"
         badge.querySelectorAll('.n').forEach((e, i) => { if (i) e.remove(); });
         badge.querySelector('.n').textContent = label(n);
         badge.hidden = false;
         if (mode === 'quiet') return;
-        badge.getAnimations().forEach((a) => a.cancel());
-        badge.animate(reduced()
-          ? [{ opacity: 0 }, { opacity: 1 }]
-          : [{ transform: 'scale(.35)', opacity: 0 }, { transform: 'scale(1.18)', opacity: 1, offset: 0.55 }, { transform: 'scale(1)' }],
-          { duration: (reduced() ? 150 : 320) * slow(), easing: 'cubic-bezier(.23,1,.32,1)' });
+        if (reduced()) { badge.getAnimations().forEach((a) => a.cancel()); badge.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 * slow() }); return; }
+        if (cur.x <= -1) badgeSpring(-1, BADGE.v0, 0);
+        else badgeSpring(cur.x, cur.v + BADGE.bump, cur.o);
         return;
       }
       if (label(n) === num.textContent) return;
       if (mode === 'quiet' || reduced()) { badge.querySelectorAll('.n').forEach((e, i, all) => { if (i < all.length - 1) e.remove(); }); badge.querySelector('.n').textContent = label(n); return; }
-      // Number roll: old value leaves in the direction of travel, new one enters from the other side.
+      // Number roll: the old value leaves in the direction of travel, the new one enters from the other side.
       const dir = n > prev ? 1 : -1;
       const next = document.createElement('span'); next.className = 'n'; next.textContent = label(n);
       badge.append(next);
       const d = 200 * slow(), e = 'cubic-bezier(.23,1,.32,1)';
       num.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: `translateY(${-80 * dir}%)`, opacity: 0 }], { duration: d, easing: e, fill: 'forwards' }).onfinish = () => num.remove();
       next.animate([{ transform: `translateY(${80 * dir}%)`, opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], { duration: d, easing: e });
-      if (dir > 0) badge.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.15)', offset: 0.45 }, { transform: 'scale(1)' }], { duration: 280 * slow(), easing: e });
+      if (dir > 0) { const cur = badgeNow(); badgeSpring(cur.x, cur.v + BADGE.bump, cur.o); }
     }
-    return { ring, setBadge };
+    return { kick, setBadge };
   }
 
   const bells = [makeBell(bell), makeBell($('#bellBig'))];
@@ -349,8 +377,8 @@ label.opt input{margin-top:4px}
     items.unshift({ id: ++seq, text: SAMPLES[seq % SAMPLES.length], read: false });
     render(prev, 'up');
     announce.textContent = `${unread()} unread notification${unread() === 1 ? '' : 's'}`;
-    // The badge lands first; the bell reacts ~110ms later, when the badge is near its biggest.
-    bells.forEach((b) => b.ring('arrive', prev === 0 ? 110 : 60));
+    // As in the reference: the badge lands first and the bell is kicked 215 ms after it starts.
+    bells.forEach((b) => b.kick(prev === 0 ? BADGE.bellDelay : 100));
   }
   function loadQuiet(n) {
     const prev = unread();
@@ -373,36 +401,34 @@ label.opt input{margin-top:4px}
     panel.classList.toggle('open', open);
     $('#bellBig').setAttribute('aria-expanded', String(open));
   }
-  bell.addEventListener('click', () => {
+  bell.addEventListener('click', (e) => {
     const open = bell.getAttribute('aria-expanded') !== 'true';
     setBellOpen(open);
-    if (open && viaPointer) bells.forEach((b) => b.ring('click'));
+    // detail is 0 for keyboard and assistive-technology activation: no flourish there.
+    if (open && e.detail > 0) bells.forEach((b) => b.kick(0));
   });
   $('#bellwrap').addEventListener('focusout', (e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setBellOpen(false); });
   document.addEventListener('pointerdown', (e) => { if (!$('#bellwrap').contains(e.target)) setBellOpen(false); });
 
   // ---------- menu / drawer ----------
-  const variant = () => phone.dataset.v;
-  const inertWhileOpen = () => [$('#content'), $('#roles'), $('#bellwrap')].concat(variant() === 'morph' ? [] : [menu]);
+  const behind = [$('#content'), $('#roles'), $('#bellwrap'), menu];
   function setDrawer(open, { focus = true } = {}) {
     phone.classList.toggle('drawer-open', open);
     menu.setAttribute('aria-expanded', String(open));
     $('#menuBig').setAttribute('aria-expanded', String(open));
-    [$('#content'), $('#roles'), $('#bellwrap'), menu].forEach((el) => { el.inert = false; });
     drawer.inert = !open;
-    if (open) { setBellOpen(false); inertWhileOpen().forEach((el) => { el.inert = true; }); }
-    if (variant() === 'morph') menu.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    behind.forEach((el) => { el.inert = open; });
+    if (open) setBellOpen(false);
     if (!focus) return;
-    if (open && variant() !== 'morph') $('#dclose').focus();
-    if (!open) menu.focus();
+    if (open) $('#dclose').focus(); else menu.focus();
   }
   drawer.inert = true;
   menu.addEventListener('click', () => setDrawer(menu.getAttribute('aria-expanded') !== 'true'));
   $('#dclose').onclick = () => setDrawer(false);
   $('#scrim').onclick = () => setDrawer(false);
 
-  // Option B press: gather on pointer down, spring apart on release or cancel.
-  const press = (on) => { if (variant() === 'squeeze' && !reduced()) { menu.classList.toggle('press', on); $('#menuBig').classList.toggle('press', on); } };
+  // Press gathers the bars; release (or cancel) springs them apart while the click pulls them out.
+  const press = (on) => { if (!reduced()) { menu.classList.toggle('press', on); $('#menuBig').classList.toggle('press', on); } };
   menu.addEventListener('pointerdown', () => press(true));
   ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => menu.addEventListener(t, () => press(false)));
 
@@ -413,13 +439,6 @@ label.opt input{margin-top:4px}
   });
 
   // ---------- review controls ----------
-  document.querySelectorAll('input[name=v]').forEach((r) => r.addEventListener('change', () => {
-    setDrawer(false, { focus: false });
-    phone.dataset.v = r.value;
-    $('.closeup').dataset.v = r.value;
-    menu.setAttribute('aria-label', 'Open menu');
-  }));
-  $('.closeup').dataset.v = 'pull';
   $('#slow').onchange = (e) => document.documentElement.style.setProperty('--slow', e.target.checked ? '4' : '1');
   $('#rmsim').onchange = (e) => document.body.classList.toggle('rm', e.target.checked);
 
