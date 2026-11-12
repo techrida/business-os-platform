@@ -72,7 +72,13 @@ export async function createDraftMemo(
     });
     await box.click();
     await box.fill(signers[i]!);
-    await page.getByRole('option', { name: new RegExp(`^${signers[i]}(?: |$)`) }).click();
+    // Match the option's own name line, whole. A prefix match also picks "Dev Management Two" when
+    // "Dev Management" is asked for. The line is the person's name, or "Name (title)" when two people share a name.
+    const name = signers[i]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await page
+      .getByRole('option')
+      .filter({ has: page.getByText(new RegExp(`^${name}(?: \\(.+\\))?$`)) })
+      .click();
     await expect(box).toHaveValue(signers[i]!);
   }
 
