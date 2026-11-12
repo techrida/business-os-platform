@@ -15,9 +15,13 @@ import {
   type RecommenderRows,
 } from './signer-rows';
 import styles from './memo-template.module.css';
-import { StaffPicker } from './staff-picker';
+import { approverChoices, StaffPicker } from './staff-picker';
 
 type Person = MemoDirectory['people'][number];
+
+/** Said when nobody in the company holds approval rights, so there is no one to name. */
+const NO_APPROVERS =
+  'No staff member has approval rights yet. Ask an administrator to give someone an approver role.';
 
 /** One signer block: the same small label above the same picker layout for Prepared, Recommended and Approved. */
 function SignerGroup({
@@ -82,6 +86,7 @@ export function SignerSection({
     () => new Set([currentUserId, approvedBy, ...recommenders].filter((id) => id !== '')),
     [currentUserId, approvedBy, recommenders],
   );
+  const noApprovers = !people.some((p) => p.canApprove);
   const without = (own: string): ReadonlySet<string> => {
     const next = new Set(taken);
     if (own !== '') next.delete(own);
@@ -119,7 +124,11 @@ export function SignerSection({
 
       <SignerGroup
         label="Recommended by"
-        hint="Optional. Choose people in approval-route order; empty rows are ignored."
+        hint={
+          noApprovers
+            ? NO_APPROVERS
+            : 'Optional. Only people who can decide approvals are listed. Choose them in approval-route order; empty rows are ignored.'
+        }
       >
         {recommenders.map((id, i) => (
           // Rows are positional (a blank row has no identity), so the index is the key.
@@ -129,7 +138,8 @@ export function SignerSection({
             </span>
             <StaffPicker
               label={`Recommended by ${i + 1}`}
-              people={people}
+              people={approverChoices(people, id)}
+              emptyText={NO_APPROVERS}
               value={id}
               onChange={(userId) => onRecommenders(setRecommender(recommenders, i, userId))}
               open={exclusive.isOpen(`r${i}`)}
@@ -179,11 +189,15 @@ export function SignerSection({
         </div>
       </SignerGroup>
 
-      <SignerGroup label="Approved by">
+      <SignerGroup
+        label="Approved by"
+        hint={noApprovers ? NO_APPROVERS : 'Only people who can decide approvals are listed.'}
+      >
         <div className={styles.signerRow}>
           <StaffPicker
             label="Approved by"
-            people={people}
+            people={approverChoices(people, approvedBy)}
+            emptyText={NO_APPROVERS}
             value={approvedBy}
             onChange={onApprovedBy}
             open={exclusive.isOpen('approved')}
