@@ -18,6 +18,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
   ErrorBodySchema,
   MemoDtoSchema,
+  MemoDirectorySchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -27,12 +28,14 @@ import {
   approvalSteps,
   checkTenancy,
   createParty,
+  createDepartment,
   createPortalUser,
   createStaffUser,
   createTenantWithEntity,
   documentVersions,
   runMigrations,
   testMemos,
+  users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
@@ -262,7 +265,7 @@ beforeAll(async () => {
   p2 = await customer();
   vendorPartyId = (await createParty(appPool, { tenantId: tenant.tenantId, kind: 'vendor' }))
     .partyId;
-  for (const key of ['salesA', 'salesB', 'boss'] as const) {
+  for (const key of ['salesA', 'salesB', 'boss', 'acc', 'fin', 'mgmt', 'founder'] as const) {
     U[key] = (await createStaffUser(appPool, { ...scope, idpOrgId: tenant.idpOrgId })).userId;
   }
 
@@ -959,5 +962,140 @@ describe('a memo out of scope looks like an unknown id (R23)', () => {
       version: 1,
       title: 'Office chairs',
     });
+  });
+});
+
+describe('internal memo template', () => {
+  it('returns only the active company directory and snapshots authoritative staff metadata', async () => {
+    const dept = await createDepartment(appPool, scope);
+    const machine = await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId });
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx
+        .update(users)
+        .set({ email: null, displayName: 'Service account' })
+        .where(eq(users.id, machine.userId)),
+    );
+    const directory = await request(baseUrl).get('/v1/test-memos/directory');
+    expect(directory.status).toBe(200);
+    expect(
+      MemoDirectorySchema.parse(directory.body).people.some((p) => p.userId === machine.userId),
+    ).toBe(false);
+    expect(MemoDirectorySchema.parse(directory.body).currentUserId).toBe(U.salesA);
+    expect(
+      MemoDirectorySchema.parse(directory.body).people.some(
+        (p: { userId: string }) => p.userId === p1.userId,
+      ),
+    ).toBe(false);
+    const template = {
+      departmentId: dept.departmentId,
+      date: '2026-11-10',
+      closing: 'Submitted for approval.',
+      preparedByUserId: U.salesA,
+      recommenderUserIds: [U.acc],
+      approvedByUserId: U.fin,
+    };
+    const created = await request(baseUrl).post('/v1/test-memos').send(draftBody({ template }));
+    expect(created.status).toBe(201);
+    expect(MemoDtoSchema.parse(created.body).template).toMatchObject({
+      departmentId: dept.departmentId,
+      preparedBy: { userId: U.salesA },
+      approvedBy: { userId: U.fin },
+    });
+    expect(MemoDtoSchema.parse(created.body).template!.preparedBy.jobTitle).toBeNull();
+    const reopened = await request(baseUrl).get(
+      `/v1/test-memos/${MemoDtoSchema.parse(created.body).id}`,
+    );
+    expect(MemoDtoSchema.parse(reopened.body).template).toEqual(
+      MemoDtoSchema.parse(created.body).template,
+    );
+    const submitted = await submitMemo(MemoDtoSchema.parse(created.body).id);
+    expect(submitted.status).toBe(200);
+    const rows = await ownerPool.query<{ snapshot: { template: unknown } }>(
+      'SELECT snapshot FROM app.approval_requests WHERE id = $1',
+      [(submitted.body as { requestId: string }).requestId],
+    );
+    expect(rows.rows[0]!.snapshot.template).toEqual(MemoDtoSchema.parse(created.body).template);
+    const requestId = (submitted.body as { requestId: string }).requestId;
+    roles.accountant = [U.acc, U.boss];
+    as(U.boss, 'founder');
+    await expect(
+      approvals.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID()),
+    ).rejects.toThrow('different person');
+    as(U.acc, 'founder');
+    const first = await approvals.act(
+      requestId,
+      { action: 'approve', expectedVersion: 1 },
+      randomUUID(),
+    );
+    as(U.fin, 'founder');
+    await approvals.act(
+      requestId,
+      { action: 'approve', expectedVersion: first.version },
+      randomUUID(),
+    );
+    as(U.salesA, 'sales');
+    expect(
+      MemoDtoSchema.parse(
+        (await request(baseUrl).get(`/v1/test-memos/${MemoDtoSchema.parse(created.body).id}`)).body,
+      ).status,
+    ).toBe('approved');
+  });
+
+  it('rejects spoofed prepared attribution, foreign staff IDs, and duplicate signers', async () => {
+    const dept = await createDepartment(appPool, scope);
+    const template = {
+      departmentId: dept.departmentId,
+      date: '2026-11-10',
+      closing: '',
+      preparedByUserId: U.salesA,
+      recommenderUserIds: [U.acc],
+      approvedByUserId: U.fin,
+    };
+    expect(
+      (
+        await request(baseUrl)
+          .post('/v1/test-memos')
+          .send(draftBody({ template: { ...template, preparedByUserId: U.salesB } }))
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(baseUrl)
+          .post('/v1/test-memos')
+          .send(draftBody({ template: { ...template, approvedByUserId: p1.userId } }))
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(baseUrl)
+          .post('/v1/test-memos')
+          .send(draftBody({ template: { ...template, approvedByUserId: U.acc } }))
+      ).status,
+    ).toBe(400);
+  });
+
+  it('refuses a printed approver who does not match the workflow step', async () => {
+    const dept = await createDepartment(appPool, scope);
+    const created = await request(baseUrl)
+      .post('/v1/test-memos')
+      .send(
+        draftBody({
+          template: {
+            departmentId: dept.departmentId,
+            date: '2026-11-10',
+            closing: '',
+            preparedByUserId: U.salesA,
+            recommenderUserIds: [U.fin],
+            approvedByUserId: U.acc,
+          },
+        }),
+      );
+    expect(created.status).toBe(201);
+    expect((await submitMemo(MemoDtoSchema.parse(created.body).id)).status).toBe(409);
+    expect(
+      MemoDtoSchema.parse(
+        (await request(baseUrl).get(`/v1/test-memos/${MemoDtoSchema.parse(created.body).id}`)).body,
+      ).status,
+    ).toBe('draft');
   });
 });
