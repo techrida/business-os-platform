@@ -1,28 +1,17 @@
 /* Layout and small pieces that belong to the memo screens only. Everything else comes from
    components/ui. Colours, type sizes and radii are Figma tokens from styles/tokens.css. */
 
-/* ---- Forms: the memo form, the open-by-id form, the upload form ---- */
+/* ---- Forms: the memo form ---- */
 
 .form {
   display: grid;
   gap: 20px;
 }
 
-.amountRow {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
-  gap: 20px;
-  align-items: start;
-}
-
 .formActions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;
-}
-
-.numeric {
-  font-variant-numeric: tabular-nums;
 }
 
 /* A memo id is data, so it is set in the monospace face. */
@@ -177,12 +166,7 @@
   width: 100%;
 }
 
-/* ---- Attachments ---- */
-
-.attachments {
-  display: grid;
-  gap: 16px;
-}
+/* ---- Attachments (read-only, from P1) ---- */
 
 .files {
   margin: 0;
@@ -242,44 +226,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-}
-
-.upload {
-  display: grid;
-  gap: 12px;
-}
-
-.dropzone {
-  padding: 16px;
-  border: var(--border-width-thin) dashed var(--attachment-border);
-  border-radius: var(--radius-lg);
-  background: var(--attachment-bg);
-}
-
-/* The native file input, with its button drawn like the secondary Button. */
-.fileInput {
-  width: 100%;
-  color: var(--text-primary);
-  font-size: var(--font-size-body-small);
-}
-
-.fileInput::file-selector-button {
-  min-height: 34px;
-  margin-right: 12px;
-  padding: 0 12px;
-  border: var(--border-width-thin) solid var(--button-primary-border);
-  border-radius: var(--radius-lg);
-  background: var(--button-secondary-bg);
-  color: var(--button-primary-border);
-  font: inherit;
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-}
-
-.fileInput:disabled::file-selector-button {
-  border-color: var(--border-default);
-  color: var(--text-disabled);
-  cursor: not-allowed;
 }
 
 /* ---- Audit timeline ---- */

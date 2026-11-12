@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf, listMemos } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { money, when } from '@/lib/kernel-format';
+import { when } from '@/lib/kernel-format';
 import { memoRowNote, MEMO_PAGE_SIZE, MEMO_STATUS_FILTERS } from '@/lib/memo-list-view';
 
 import { StatusBadge } from '../kit';
@@ -97,12 +97,11 @@ export async function MemoList({
 
   return (
     <>
-      <Table caption="Memos, newest first" minWidth={680}>
+      <Table caption="Memos, newest first" minWidth={520}>
         <thead>
           <tr>
             <Th>Memo</Th>
             <Th>Status</Th>
-            <Th align="end">Amount</Th>
             <Th>Created</Th>
           </tr>
         </thead>
@@ -148,9 +147,6 @@ function MemoRow({ memo }: { memo: MemoListItem }) {
       </Td>
       <Td nowrap>
         <StatusBadge status={memo.status} />
-      </Td>
-      <Td align="end" nowrap>
-        <span className={styles.amount}>{money(memo.amount, memo.currency)}</span>
       </Td>
       <Td nowrap>
         <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>

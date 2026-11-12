@@ -1,4 +1,4 @@
-import { ALLOWED_MIME, type AuditEventDto, MAX_UPLOAD_BYTES, type RoutePlan } from '@bos/contracts';
+import type { AuditEventDto, RoutePlan } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -10,8 +10,8 @@ import {
   failureOf,
   getMemoDirectory,
   getMemo,
+  getMemoRoute,
   listAudit,
-  previewRoute,
   type MemoDetail,
 } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
@@ -23,7 +23,7 @@ import styles from '../../kit.module.css';
 import { updateMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
 import { MemoPreview } from '../memo-preview';
-import { Attachments } from './attachments';
+import { HistoricalAttachments } from './historical-attachments';
 import { SubmitForm } from './submit-form';
 
 export const metadata: Metadata = { title: 'Memo · Business OS' };
@@ -32,7 +32,6 @@ export const dynamic = 'force-dynamic';
 type SearchParams = Promise<{
   saved?: string | string[];
   submitted?: string | string[];
-  attach?: string | string[];
 }>;
 
 /** `test_memos.update` becomes `Test memos update`: the audit action names are dotted identifiers. */
@@ -70,7 +69,6 @@ export default async function MemoPage({
   const session = await requireStaffSession(path);
   const query = await searchParams;
   const saved = query.saved === '1';
-  const attachHint = query.attach === '1';
   const submitted =
     query.submitted === 'pending' || query.submitted === 'blocked' ? query.submitted : null;
 
@@ -100,17 +98,11 @@ export default async function MemoPage({
   const directory =
     editable && memo.template ? await getMemoDirectory(session).catch(() => undefined) : undefined;
 
-  // The preview uses the same separation-of-duties list as the submit call (owner and editors),
-  // so it shows the route submit will actually build, not the viewer's own.
+  // The API builds this route with the same people and the same separation-of-duties list as submit, so
+  // it shows what submit will create: for an internal memo, the people the author selected, in order.
   const entityIds = [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])];
   const [previewResult, ...auditResults] = await Promise.allSettled([
-    editable
-      ? previewRoute(session, {
-          documentType: 'test_memo',
-          facts: { amountNpr: memo.amountNpr },
-          sodUserIds: [memo.ownerUserId, ...memo.editorUserIds],
-        })
-      : Promise.resolve(null as RoutePlan | null),
+    editable ? getMemoRoute(session, memo.id) : Promise.resolve(null as RoutePlan | null),
     ...entityIds.map((entityId) => listAudit(session, { entityId, limit: 50 })),
   ]);
 
@@ -137,34 +129,31 @@ export default async function MemoPage({
         b.id.localeCompare(a.id),
     );
 
+  // Internal memos take no uploads. A memo from P1 may still carry files: shown read-only, never scanned here.
   const attachments = memo.attachments.map(toAttachmentView);
-  const notClean = attachments.filter((a) => a.status !== 'clean');
-  const scanning = notClean.filter(
-    (a) => a.status === 'quarantined' || a.status === 'awaiting_content',
-  );
-  const submitBlocker =
-    scanning.length > 0
-      ? `Waiting for ${scanning.length} attachment${scanning.length === 1 ? '' : 's'} to finish scanning. This page updates by itself.`
-      : notClean.length > 0
-        ? 'An attachment did not pass the scan, so this memo cannot be submitted.'
-        : null;
+  // The amount columns hold NPR 0.00 for an internal memo. A nonzero value is a P1 test amount, shown as a record.
+  const recordedAmount = Number(memo.amount) !== 0 || Number(memo.amountNpr) !== 0;
+  const routePeople = memo.template
+    ? [...memo.template.recommenders, memo.template.approvedBy]
+    : [];
 
   const facts: Fact[] = [
-    {
-      key: 'amount',
-      label: 'Amount',
-      value: <span className={styles.amount}>{money(memo.amount, memo.currency)}</span>,
-    },
-    ...(memo.currency !== 'NPR'
+    ...(recordedAmount
       ? [
           {
-            key: 'npr',
-            label: 'In NPR',
+            key: 'amount',
+            label: 'Recorded P1 test amount',
             value: (
               <>
-                <span className={styles.amount}>{money(memo.amountNpr, 'NPR')}</span>
+                <span className={styles.amount}>{money(memo.amount, memo.currency)}</span>
+                {memo.currency !== 'NPR' ? (
+                  <span className={styles.caption}>
+                    {money(memo.amountNpr, 'NPR')} at {memo.fxRate} ({memo.fxSource},{' '}
+                    {when(memo.fxDate, 'date')})
+                  </span>
+                ) : null}
                 <span className={styles.caption}>
-                  at {memo.fxRate} ({memo.fxSource}, {when(memo.fxDate, 'date')})
+                  Kept from the Phase 1 test memo. Nothing routes on it.
                 </span>
               </>
             ),
@@ -197,12 +186,7 @@ export default async function MemoPage({
         }
       />
 
-      {attachHint ? (
-        <Alert tone="success" role="status" title="Draft saved.">
-          Attach your files below. Each one is scanned before anyone can download it, and the memo
-          can be submitted once they are clean.
-        </Alert>
-      ) : saved ? (
+      {saved ? (
         <Alert tone="success" role="status">
           Your changes were saved.
         </Alert>
@@ -252,25 +236,20 @@ export default async function MemoPage({
                 action={updateMemoAction}
                 memoId={memo.id}
                 submitLabel="Save changes"
-                initial={{
-                  title: memo.title,
-                  body: memo.body,
-                  amount: memo.amount,
-                  currency: memo.currency,
-                }}
+                initial={{ title: memo.title, body: memo.body }}
               />
             </Panel>
           ) : null}
 
-          <Panel title="Attachments" id="attachments">
-            <Attachments
-              memoId={memo.id}
-              initial={attachments}
-              canUpload={editable}
-              maxBytes={MAX_UPLOAD_BYTES}
-              allowedMime={[...ALLOWED_MIME]}
-            />
-          </Panel>
+          {attachments.length > 0 ? (
+            <Panel
+              title="Attachments"
+              description="Files attached in Phase 1. New files cannot be added to a memo."
+              id="attachments"
+            >
+              <HistoricalAttachments files={attachments} />
+            </Panel>
+          ) : null}
 
           <Panel title="Audit timeline" description="Times are Kathmandu time.">
             {auditDenied && events.length === 0 ? (
@@ -312,11 +291,9 @@ export default async function MemoPage({
                         <div className={styles.stepHead}>
                           <span className={styles.stepWho}>
                             <span className="sr-only">Step {s.seq}: </span>
-                            {memo.template &&
-                            [...memo.template.recommenders, memo.template.approvedBy][s.seq - 1]
-                              ? [...memo.template.recommenders, memo.template.approvedBy][
-                                  s.seq - 1
-                                ]!.name
+                            {s.kind === 'user' &&
+                            routePeople.find((p) => p.userId === s.userId) !== undefined
+                              ? routePeople.find((p) => p.userId === s.userId)!.name
                               : s.kind === 'role' && s.roleKey
                                 ? `Anyone with the ${s.roleKey} role`
                                 : s.kind === 'group'
@@ -338,17 +315,27 @@ export default async function MemoPage({
                 </Alert>
               )}
               {plan?.blocked ? (
-                <Alert
-                  tone="warning"
-                  title={`No one can approve step ${plan.steps.find((s) => s.blocked)?.seq ?? ''} yet.`}
-                >
-                  {plan.blockReason ??
-                    'Everyone eligible prepared this memo, so they cannot approve it.'}{' '}
-                  You can still submit; it will wait as blocked until an administrator fixes the
-                  route.
-                </Alert>
+                memo.template ? (
+                  <Alert
+                    tone="warning"
+                    title={`Step ${plan.steps.find((s) => s.blocked)?.seq ?? ''} cannot approve this memo.`}
+                  >
+                    {plan.blockReason ?? 'A person you selected cannot approve this memo.'} Edit the
+                    memo and choose different people; it cannot be submitted until then.
+                  </Alert>
+                ) : (
+                  <Alert
+                    tone="warning"
+                    title={`No one can approve step ${plan.steps.find((s) => s.blocked)?.seq ?? ''} yet.`}
+                  >
+                    {plan.blockReason ??
+                      'Everyone eligible prepared this memo, so they cannot approve it.'}{' '}
+                    You can still submit; it will wait as blocked until an administrator fixes the
+                    route.
+                  </Alert>
+                )
               ) : null}
-              <SubmitForm memoId={memo.id} blocker={submitBlocker} />
+              <SubmitForm memoId={memo.id} blocked={Boolean(memo.template && plan?.blocked)} />
             </div>
           ) : (
             <p className={styles.note}>
