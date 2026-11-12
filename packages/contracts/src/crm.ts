@@ -26,6 +26,9 @@ export const EmailSchema = z.email().max(254);
 // Customers and contacts
 // ---------------------------------------------------------------------------------------------
 
+/** The most customers one GET /v1/customers page returns. The API rejects a larger `limit`; screens size their pickers by it. */
+export const CUSTOMER_LIST_MAX_LIMIT = 100;
+
 export const CUSTOMER_RELATIONSHIPS = ['prospect', 'active', 'inactive'] as const;
 export const CustomerRelationshipSchema = z.enum(CUSTOMER_RELATIONSHIPS);
 export type CustomerRelationship = z.infer<typeof CustomerRelationshipSchema>;
