@@ -101,11 +101,11 @@ label.opt input{margin-top:4px}
 .menu[aria-expanded=true] .pull{transform:translateX(10px);opacity:0}
 
 /* ---------- drawer ---------- */
-/* Drawer and scrim start below the header (proposed layout change): the header stays visible, so the
-   hamburger's pull-through and release spring can be seen instead of playing under the drawer. */
-.scrim{position:absolute;inset:56px 0 0 0;z-index:10;border:0;padding:0;background:var(--scrim);opacity:0;visibility:hidden;
+/* Drawer and scrim cover the full height, header included, as in the app. The hamburger's
+   pull-through plays under the arriving drawer and is seen as the bars slide back on close. */
+.scrim{position:absolute;inset:0;z-index:10;border:0;padding:0;background:var(--scrim);opacity:0;visibility:hidden;
   transition:opacity calc(200ms*var(--slow)) var(--ease-drawer),visibility 0s linear calc(200ms*var(--slow))}
-.drawer{position:absolute;inset:56px auto 0 0;z-index:20;width:78%;background:var(--surface);border-right:1px solid var(--border);transform:translateX(-101%);visibility:hidden;
+.drawer{position:absolute;inset:0 auto 0 0;z-index:20;width:78%;background:var(--surface);border-right:1px solid var(--border);transform:translateX(-101%);visibility:hidden;
   transition:transform calc(200ms*var(--slow)) var(--ease-drawer),visibility 0s linear calc(200ms*var(--slow))}
 .phone.drawer-open .scrim{opacity:1;visibility:visible;transition:opacity calc(260ms*var(--slow)) var(--ease-drawer),visibility 0s}
 .phone.drawer-open .drawer{transform:none;visibility:visible;transition:transform calc(260ms*var(--slow)) var(--ease-drawer),visibility 0s}
