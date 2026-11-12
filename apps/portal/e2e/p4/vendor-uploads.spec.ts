@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { minimalPdf } from '../../../workspace/e2e/helpers/memo-flow';
+import { minimalPdf } from '../../../workspace/e2e/helpers/pdf-fixture';
 
 /**
  * Vendor portal uploads, end to end: a KYC document, a bill, and a bank-account change request.

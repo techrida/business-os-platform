@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-import { minimalPdf, signInAs, type Signed } from '../helpers/memo-flow';
+import { minimalPdf } from '../helpers/pdf-fixture';
+import { signInAs, type Signed } from '../helpers/memo-flow';
 
 /**
  * The P4 vendor screens, against the real stack. Not run by the unit that wrote it: it needs the
