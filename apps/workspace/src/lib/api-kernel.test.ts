@@ -9,6 +9,7 @@ import {
   getApprovalRequest,
   getInbox,
   getMemo,
+  getMemoRoute,
   getUnreadCount,
   issueDocumentLink,
   listAudit,
@@ -405,6 +406,55 @@ describe('memos', () => {
     await expect(listMemos(session)).rejects.toMatchObject({ status: 502 });
   });
 
+  it('creates an internal memo without an amount or a currency', async () => {
+    fetchMock.mockResolvedValue(
+      reply({ ...memo, amount: '0.00', currency: 'NPR', amountNpr: '0.00', fxRate: '1' }, 201),
+    );
+    const body = {
+      title: 'Leave policy',
+      body: '',
+      template: {
+        departmentId: ID_A,
+        date: '2026-11-12',
+        closing: '',
+        preparedByUserId: ID_B,
+        recommenderUserIds: [],
+        approvedByUserId: ID_A,
+      },
+    };
+    await createMemo(session, body);
+    expect(lastCall().init.method).toBe('POST');
+    const sent = JSON.parse(lastCall().init.body as string) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty('amount');
+    expect(sent).not.toHaveProperty('currency');
+  });
+
+  it('reads the route a memo would take, named people included', async () => {
+    fetchMock.mockResolvedValue(
+      reply({
+        steps: [
+          {
+            seq: 1,
+            kind: 'user',
+            userId: ID_B,
+            reason: 'Selected approver',
+            eligibleUserIds: [],
+            blocked: false,
+          },
+        ],
+        blocked: false,
+      }),
+    );
+    const plan = await getMemoRoute(session, ID_A);
+    expect(plan.steps[0]).toMatchObject({
+      kind: 'user',
+      userId: ID_B,
+      reason: 'Selected approver',
+    });
+    expect(lastCall().url).toBe(`http://api:3001/v1/test-memos/${ID_A}/route`);
+    expect(lastCall().init.method ?? 'GET').toBe('GET');
+  });
+
   it('submits and returns the request id', async () => {
     fetchMock.mockResolvedValue(reply({ requestId: ID_B, status: 'blocked' }));
     const out = await submitMemo(session, ID_A);
@@ -591,6 +641,7 @@ describe('x-bos-id-token stays on decisions only (K7)', () => {
         }),
     ],
     ['getMemo', () => getMemo(session, ID_A)],
+    ['getMemoRoute', () => getMemoRoute(session, ID_A)],
     ['updateMemo', () => updateMemo(session, ID_A, { title: 't' })],
     ['submitMemo', () => submitMemo(session, ID_A)],
     [

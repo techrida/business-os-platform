@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { layoutOptions } from '@/components/ui/combobox-model';
 
-import { staffOptions, STAFF_GROUPING_THRESHOLD } from './staff-picker';
+import { approverChoices, staffOptions, STAFF_GROUPING_THRESHOLD } from './staff-picker';
 
 type Person = MemoDirectory['people'][number];
 const guid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -12,6 +12,7 @@ const person = (n: number, over: Partial<Person> = {}): Person => ({
   name: `Staff ${String(n).padStart(2, '0')}`,
   jobTitle: n % 2 ? 'Accountant' : null,
   department: n % 3 === 0 ? 'Finance' : 'Operations',
+  canApprove: true,
   ...over,
 });
 const team = (count: number) => Array.from({ length: count }, (_, i) => person(i + 1));
@@ -59,5 +60,28 @@ describe('staffOptions', () => {
     const grouped = layoutOptions(staffOptions(team(21)), '', STAFF_GROUPING_THRESHOLD);
     expect(grouped.grouped).toBe(true);
     expect(grouped.groups.map((g) => g.label)).toEqual(['Finance', 'Operations']);
+  });
+});
+
+describe('approverChoices', () => {
+  const people = [
+    person(1, { name: 'Approver', canApprove: true }),
+    person(2, { name: 'Sales', canApprove: false }),
+    person(3, { name: 'Saved but lost the right', canApprove: false }),
+  ];
+
+  it('offers only people who can decide approvals', () => {
+    expect(approverChoices(people, '').map((p) => p.name)).toEqual(['Approver']);
+  });
+
+  it('keeps the person already in the field so a saved memo still shows their name', () => {
+    expect(approverChoices(people, guid(3)).map((p) => p.name)).toEqual([
+      'Approver',
+      'Saved but lost the right',
+    ]);
+  });
+
+  it('is empty when nobody holds approval rights, so the field can say so', () => {
+    expect(approverChoices(people.slice(1, 2), '')).toEqual([]);
   });
 });
