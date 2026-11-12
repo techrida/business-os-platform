@@ -1,8 +1,22 @@
 'use client';
 
-import { useCallback, useEffect, useId, useRef, useState, type FocusEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type MouseEvent,
+} from 'react';
 
-import { Icon } from '@/components/ui/icon';
+import {
+  BELL_AFTER_DOT_MS,
+  createBellRing,
+  popDot,
+  type BellRing,
+} from '@/components/ui/bell-ring';
 import { safeLocalPath } from '@/lib/kernel-ui';
 
 import styles from './notifications-bell.module.css';
@@ -16,6 +30,10 @@ import styles from './notifications-bell.module.css';
  * It is a disclosure, not a menu: a button that shows or hides a region of links, so Tab walks
  * through the rows. Escape closes it and returns focus to the bell; so does tabbing out or a
  * click outside.
+ *
+ * Motion (components/ui/bell-ring.ts): when the count rises, the dot pops in and the bell rings;
+ * opening the panel with a pointer rings it too. Page load, polls with no rise and keyboard opening
+ * stay still. Opening never marks anything read.
  */
 
 const POLL_MS = 15_000;
@@ -41,6 +59,15 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const lastCount = useRef(initialCount);
   const panelId = useId();
+  const swingRef = useRef<HTMLSpanElement>(null);
+  const clapperRef = useRef<HTMLSpanElement>(null);
+  const dotRef = useRef<HTMLSpanElement>(null);
+  const ring = useRef<BellRing | null>(null);
+  // Bumped when the unread count rises, so the layout effect below plays the arrival.
+  const [arrival, setArrival] = useState<{ seq: number; fromZero: boolean }>({
+    seq: 0,
+    fromZero: false,
+  });
 
   const refreshCount = useCallback(async (quiet = false) => {
     if (document.hidden) return;
@@ -60,6 +87,8 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
       // Tell screen readers only about new items, not on every poll or on page load.
       if (!quiet && data.count > lastCount.current) {
         setAnnounce(`${data.count} unread notification${data.count === 1 ? '' : 's'}`);
+        const fromZero = lastCount.current === 0;
+        setArrival((a) => ({ seq: a.seq + 1, fromZero }));
       }
       lastCount.current = data.count;
     } catch {
@@ -95,6 +124,21 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
     };
   }, [refreshCount]);
 
+  useEffect(() => {
+    if (!swingRef.current || !clapperRef.current) return;
+    const bellRing = createBellRing(swingRef.current, clapperRef.current);
+    ring.current = bellRing;
+    return () => bellRing.cancel();
+  }, []);
+
+  // A layout effect, so a newly mounted dot never paints at full size before its pop starts.
+  useLayoutEffect(() => {
+    if (arrival.seq === 0) return;
+    if (arrival.fromZero && dotRef.current) popDot(dotRef.current);
+    // As in the reference: the dot lands first and the bell rings after it.
+    ring.current?.kick(arrival.fromZero ? BELL_AFTER_DOT_MS : 100);
+  }, [arrival]);
+
   // Close on Escape (and give focus back to the bell) or on a click outside.
   useEffect(() => {
     if (!open) return;
@@ -122,10 +166,12 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
     if (open && next instanceof Node && !e.currentTarget.contains(next)) setOpen(false);
   };
 
-  const toggle = () => {
+  const toggle = (e: MouseEvent<HTMLButtonElement>) => {
     const next = !open;
     setOpen(next);
     if (next) void loadItems();
+    // detail is 0 for keyboard and assistive-technology activation: no flourish there.
+    if (next && e.detail > 0) ring.current?.kick(0);
   };
 
   /** `keepalive` lets the request finish even when the click navigates away. */
@@ -173,8 +219,20 @@ export function NotificationsBell({ initialCount = 0 }: { initialCount?: number 
         aria-label={count > 0 ? `Notifications, ${count} unread` : 'Notifications'}
         onClick={toggle}
       >
-        <Icon name="bell" size={18} />
-        {count > 0 ? <span className={styles.dot} aria-hidden="true" /> : null}
+        {/* The bell drawn in two layers so the clapper can swing inside the body. */}
+        <span className={styles.bell} aria-hidden="true">
+          <span className={styles.swing} ref={swingRef}>
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+            </svg>
+            <span className={styles.clapper} ref={clapperRef}>
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M10.268 21a2 2 0 0 0 3.464 0" />
+              </svg>
+            </span>
+          </span>
+        </span>
+        {count > 0 ? <span className={styles.dot} ref={dotRef} aria-hidden="true" /> : null}
       </button>
       {/* Announces only when the count rises. */}
       <span role="status" aria-live="polite" className="sr-only">
