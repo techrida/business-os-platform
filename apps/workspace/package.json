@@ -19,6 +19,7 @@
     "ioredis": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",
+    "pdfkit": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "server-only": "catalog:",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
+    "@types/pdfkit": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitest/coverage-v8": "catalog:",

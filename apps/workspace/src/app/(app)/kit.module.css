@@ -319,3 +319,45 @@
   line-height: var(--line-height-caption);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Memos list: status filter links, pager and loading rows ---- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.filter:hover {
+  background: var(--input-hover-bg, var(--input-bg));
+}
+
+.filter[aria-current='page'] {
+  border-color: var(--text-primary);
+  background: var(--input-bg);
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: flex-end;
+}
+
+.listSkeleton {
+  display: grid;
+  gap: 12px;
+}

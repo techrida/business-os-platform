@@ -96,3 +96,6 @@ catalog:
   '@types/react-dom': ^19.3.0
   '@fontsource-variable/outfit': ^5.2.0
   openid-client: ^6.8.9
+  # Memo PDF export (server-side, real PDF bytes): needs fontkit shaping for Devanagari names.
+  pdfkit: ^0.20.2
+  '@types/pdfkit': ^0.17.7
