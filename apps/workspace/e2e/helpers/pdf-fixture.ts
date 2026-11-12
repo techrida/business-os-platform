@@ -24,4 +24,3 @@ export function minimalPdf(text: string): Buffer {
   out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(out, 'latin1');
 }
-
