@@ -312,14 +312,17 @@
     width: var(--bos-sidebar-width);
     visibility: hidden;
     transform: translateX(-100%);
+    /* Closes in 200ms and opens in 260ms: exits are quicker than entries. */
     transition:
-      transform 200ms ease,
+      transform 200ms cubic-bezier(0.32, 0.72, 0, 1),
       visibility 0s linear 200ms;
   }
 
   :global([data-shell-drawer='open']) .sidebar {
     visibility: visible;
     transform: none;
-    transition-delay: 0s;
+    transition:
+      transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
+      visibility 0s;
   }
 }
