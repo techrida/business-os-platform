@@ -32,6 +32,11 @@ const nextConfig: NextConfig = {
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
 
+  // `next build` type-checks only the app. The full tsconfig.json also covers e2e/ and the
+  // test configs; the e2e specs import apps/workspace/e2e helpers, whose dependencies the
+  // filtered Docker install does not provide. `pnpm typecheck` still uses tsconfig.json.
+  typescript: { tsconfigPath: 'tsconfig.build.json' },
+
   headers() {
     return Promise.resolve([
       {
