@@ -49,8 +49,8 @@ map and acceptance points are in [the memo delivery record](../design/memos/DELI
   pages and the `pdfkit` dependency (`pnpm install`). No migration is involved.
 - **Limits:** PDF fonts cover Latin, Latin Extended, Vietnamese, Greek, Cyrillic
   and Devanagari; other scripts print as `?` and the download says so. A memo
-  edited by someone other than its author is now recorded under the editor as
-  preparer (previously the server refused that save). The authenticated browser
+  edited by someone other than its author retains the saved preparer. The server
+  continues to refuse saving under another person’s attribution; no silent reassignment. The authenticated browser
   flow, the Playwright suite and screen-reader testing were not run for this
   refinement.
 

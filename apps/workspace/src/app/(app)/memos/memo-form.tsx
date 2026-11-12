@@ -72,8 +72,8 @@ export function MemoForm({
     initialRecommenders(template?.recommenders.map((p) => p.userId)),
   );
   const [approvedBy, setApprovedBy] = useState(template?.approvedBy.userId ?? '');
-  // Prepared by is always the signed-in author: the API refuses any other person for it.
-  const preparedBy = directory?.currentUserId ?? template?.preparedBy.userId ?? '';
+  // Preserve saved attribution; a different editor must not silently become the preparer.
+  const preparedBy = template?.preparedBy.userId ?? directory?.currentUserId ?? '';
   // Blank rows are "not used yet": they never reach the preview or the API.
   const chosenRecommenders = recommenderPayload(recommenders);
   const person = (id: string) =>
@@ -196,7 +196,7 @@ export function MemoForm({
             </Field>
             <SignerSection
               people={directory.people}
-              currentUserId={directory.currentUserId}
+              currentUserId={preparedBy}
               recommenders={recommenders}
               onRecommenders={setRecommenders}
               approvedBy={approvedBy}
