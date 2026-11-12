@@ -1,3 +1,4 @@
+import { getMemoDirectory } from '@/lib/api-kernel';
 import type { Metadata } from 'next';
 
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -10,9 +11,10 @@ import { MemoForm } from '../memo-form';
 export const metadata: Metadata = { title: 'New memo · Business OS' };
 
 export default async function NewMemoPage() {
-  await requireStaffSession('/memos/new');
+  const session = await requireStaffSession('/memos/new');
+  const directory = await getMemoDirectory(session);
   return (
-    <Page width="narrow">
+    <Page>
       <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: 'New memo' }]} />
       <PageHeader
         title="New memo"
@@ -20,6 +22,7 @@ export default async function NewMemoPage() {
       />
       <Panel title="Memo details">
         <MemoForm
+          directory={directory}
           action={createMemoAction}
           initial={{ title: '', body: '', amount: '', currency: 'NPR' }}
           submitLabel="Save draft"
