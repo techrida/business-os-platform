@@ -44,15 +44,19 @@ map and acceptance points are in [the memo delivery record](../design/memos/DELI
   exercise the kernel workflow. P2 removes them from the internal memo UI and
   keeps the memo, list, export and signers. The removal map is in the delivery
   record.
-- **Runtime follow-up:** the new list route needs the P1 **API image rebuilt and
-  the API container recreated**; the workspace needs a rebuild/restart for the new
-  pages and the `pdfkit` dependency (`pnpm install`). No migration is involved.
+- **Runtime refreshed (Nov12):** API/worker image rebuilt and containers recreated,
+  workspace dependencies and contracts built, Next dev restarted on3101 with its
+  cache retained. No migration or seed reset. P0 untouched.
 - **Limits:** PDF fonts cover Latin, Latin Extended, Vietnamese, Greek, Cyrillic
   and Devanagari; other scripts print as `?` and the download says so. A memo
   edited by someone other than its author retains the saved preparer. The server
-  continues to refuse saving under another person’s attribution; no silent reassignment. The authenticated browser
-  flow, the Playwright suite and screen-reader testing were not run for this
-  refinement.
+  continues to refuse saving under another person’s attribution; no silent reassignment.
+- **Live acceptance:** full P1 exit Playwright passed (PDF scan, real sign-in,
+  selected Accountant/Finance decisions, self-approval refusal, Mailpit and audit
+  timeline). Separate live controls check passed: blank row save, attach redirect,
+  current/saved real PDF bytes, paper-only print interception, list and390px
+  overflow/hydration checks. Native print dialog, physical printer and
+  screen-reader testing remain unrun. See the canonical KB P1 test guide.
 
 ## Integration record
 
