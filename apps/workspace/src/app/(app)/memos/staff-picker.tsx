@@ -11,6 +11,15 @@ export const STAFF_GROUPING_THRESHOLD = 20;
 type Person = MemoDirectory['people'][number];
 
 /**
+ * The people a Recommended or Approved field may offer: those who can decide approvals (the server worked out
+ * `canApprove` from their live roles). The person already in this field stays listed, so a saved memo keeps showing
+ * its names; the server refuses to submit one who has since lost the right.
+ */
+export function approverChoices(people: readonly Person[], own: string): readonly Person[] {
+  return people.filter((p) => p.canApprove || p.userId === own);
+}
+
+/**
  * Turns the directory into combobox options. Two people can share a name, so a duplicate shows its title (or, with
  * none, a short reference) in the box once chosen, and is never told apart by name alone.
  */
@@ -53,6 +62,7 @@ export function StaffPicker({
   inputRef,
   describedBy,
   invalid,
+  emptyText = 'No staff members are available in this company.',
 }: {
   /** The input's accessible name, for example "Recommended by 1". */
   label: string;
@@ -67,6 +77,8 @@ export function StaffPicker({
   inputRef?: Ref<HTMLInputElement>;
   describedBy?: string | undefined;
   invalid?: boolean;
+  /** Shown when the list has no one at all (for approvers: no one holds approval rights). */
+  emptyText?: string;
 }) {
   const options = useMemo(
     () => staffOptions(people, disabledIds ? { disabledIds } : {}),
@@ -82,7 +94,7 @@ export function StaffPicker({
       onOpenChange={onOpenChange}
       placeholder="Enter Name"
       groupThreshold={STAFF_GROUPING_THRESHOLD}
-      emptyText="No staff members are available in this company."
+      emptyText={emptyText}
       noMatchText="No matching staff members."
       {...(onBlurEmpty ? { onBlurEmpty } : {})}
       {...(inputRef ? { inputRef } : {})}
