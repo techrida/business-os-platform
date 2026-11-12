@@ -13,13 +13,15 @@ export const MemoPersonSchema = z.object({
   jobTitle: z.string().nullable(),
   department: z.string().nullable(),
 });
+/** How many "Recommended by" signers a memo can name. The form and the API both read this one number. */
+export const MEMO_MAX_RECOMMENDERS = 20;
 export const MemoTemplateInputSchema = z
   .object({
     departmentId: z.guid(),
     date: z.iso.date(),
     closing: z.string().trim().max(1000),
     preparedByUserId: z.guid(),
-    recommenderUserIds: z.array(z.guid()).max(20),
+    recommenderUserIds: z.array(z.guid()).max(MEMO_MAX_RECOMMENDERS),
     approvedByUserId: z.guid(),
   })
   .superRefine((v, ctx) => {
