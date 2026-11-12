@@ -19,6 +19,7 @@ import {
   ErrorBodySchema,
   MemoDtoSchema,
   MemoDirectorySchema,
+  MemoListSchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -51,7 +52,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { configureApp } from '../../app.setup';
 import { CAN_KEY } from '../../platform/authz/decorators';
 import { can } from '../../platform/authz/can';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { scopeWhereFor, type AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
@@ -152,12 +153,14 @@ const current: {
   orgKind: Principal['orgKind'];
   partyId: string | null;
   idpOrgId: string | null;
+  departmentId: string | null;
 } = {
   userId: U.salesA,
   grants: grantsOf('sales'),
   orgKind: 'staff',
   partyId: null,
   idpOrgId: null,
+  departmentId: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
@@ -165,6 +168,7 @@ const as = (userId: string, role: RoleKey) => {
   current.orgKind = 'staff';
   current.partyId = null;
   current.idpOrgId = null;
+  current.departmentId = null;
 };
 /** customer_user has no default grants, so the portal caller gets `memo.read` at `customer_org` here. */
 const asCustomer = (party: { partyId: string; idpOrgId: string; userId: string }) => {
@@ -173,6 +177,7 @@ const asCustomer = (party: { partyId: string; idpOrgId: string; userId: string }
   current.orgKind = 'customer';
   current.partyId = party.partyId;
   current.idpOrgId = party.idpOrgId;
+  current.departmentId = null;
 };
 
 /** The token's roles match the mirror's (the fake directory): act() checks a role step against the token. */
@@ -187,7 +192,7 @@ const principalNow = (): Principal => ({
   partyId: current.partyId,
   idpOrgId: current.idpOrgId ?? staffIdpOrgId,
   roles: rolesOf(current.userId),
-  departmentId: null,
+  departmentId: current.departmentId,
   status: 'active',
   grants: current.grants,
 });
@@ -199,6 +204,9 @@ const caller = {
   }),
 };
 const authz = {
+  // The real SQL twin of can(): the list test proves the memo list and the record check agree.
+  scopeWhere: (table: Parameters<typeof scopeWhereFor>[1], action: Permission) =>
+    scopeWhereFor(principalNow(), table, action),
   assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
     const d = can(principalNow(), action, ref);
     if (!d.allowed) {
@@ -1097,5 +1105,192 @@ describe('internal memo template', () => {
         (await request(baseUrl).get(`/v1/test-memos/${MemoDtoSchema.parse(created.body).id}`)).body,
       ).status,
     ).toBe('draft');
+  });
+});
+
+describe('GET /v1/test-memos (the Memos list)', () => {
+  const at = (iso: string) => {
+    now = new Date(iso);
+  };
+  /** A staff user of the entity who is not part of any other test, so "own" lists exactly what this test made. */
+  const freshStaff = async () =>
+    (await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId })).userId;
+  const list = (query = '') => request(baseUrl).get(`/v1/test-memos${query}`);
+  const parsed = async (query = '') => {
+    const res = await list(query);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return MemoListSchema.parse(res.body);
+  };
+
+  it('shows a Sales user only their own memos, newest first, with the listing fields', async () => {
+    const mine = await freshStaff();
+    const other = await freshStaff();
+    as(mine, 'sales');
+    at('2026-11-01T04:00:00Z');
+    const first = await createMemo({ title: 'First' });
+    at('2026-11-02T04:00:00Z');
+    const second = await createMemo({ title: 'Second' });
+    as(other, 'sales');
+    await createMemo({ title: 'Someone else' });
+    as(mine, 'sales');
+
+    const page = await parsed();
+    expect(page.items.map((m) => m.id)).toEqual([second.id, first.id]);
+    expect(page.nextCursor).toBeNull();
+    expect(page.items[0]).toMatchObject({
+      title: 'Second',
+      status: 'draft',
+      amount: '50000.00',
+      currency: 'NPR',
+      ownerUserId: mine,
+    });
+    // The list never carries a body or signers: it only finds memos.
+    expect(page.items[0]).not.toHaveProperty('body');
+    expect(page.items[0]).not.toHaveProperty('template');
+  });
+
+  it('shows the whole entity to a role with scope all, in the order the database defines', async () => {
+    as(U.boss, 'founder');
+    const rows = await db
+      .select({ id: testMemos.id })
+      .from(testMemos)
+      .where(eq(testMemos.organizationId, scope.organizationId))
+      .orderBy(sql`created_at DESC, id DESC`)
+      .limit(50);
+    const page = await parsed('?limit=50');
+    expect(page.items.map((m) => m.id)).toEqual(rows.map((r) => r.id));
+    expect(page.items.length).toBeGreaterThan(2);
+  });
+
+  it('never lists another tenant memo, even to a role with scope all', async () => {
+    const foreign = await createTenantWithEntity(appPool);
+    const foreignScope = { tenantId: foreign.tenantId, organizationId: foreign.organizationId };
+    const foreignOwner = await createStaffUser(appPool, {
+      ...foreignScope,
+      idpOrgId: foreign.idpOrgId,
+    });
+    const foreignId = randomUUID();
+    await withTx(db, foreignScope, systemActor('test'), (tx) =>
+      tx.insert(testMemos).values({
+        ...foreignScope,
+        id: foreignId,
+        number: `FOREIGN-${randomUUID()}`,
+        title: 'Foreign tenant memo',
+        body: '',
+        amount: '1.00',
+        currency: 'NPR',
+        amountNpr: '1.00',
+        fxRate: '1',
+        fxSource: 'identity',
+        fxDate: '2026-11-08',
+        status: 'draft',
+        ownerUserId: foreignOwner.userId,
+        version: 1,
+      }),
+    );
+    as(U.boss, 'founder');
+    const ids = (await parsed('?limit=50')).items.map((m) => m.id);
+    expect(ids).not.toContain(foreignId);
+    // And its id does not open either: the list and the record check give the same answer.
+    expect((await request(baseUrl).get(`/v1/test-memos/${foreignId}`)).status).toBe(404);
+  });
+
+  it('limits a department scope to that department and shows nothing without a department', async () => {
+    const dept = await createDepartment(appPool, scope);
+    const otherDept = await createDepartment(appPool, scope);
+    const lead = await freshStaff();
+    const template = (departmentId: string) => ({
+      departmentId,
+      date: '2026-11-10',
+      closing: '',
+      preparedByUserId: lead,
+      recommenderUserIds: [] as string[],
+      approvedByUserId: U.fin,
+    });
+    as(lead, 'sales');
+    const inside = await createMemo({
+      title: 'In my department',
+      template: template(dept.departmentId),
+    });
+    const outside = await createMemo({
+      title: 'Other department',
+      template: template(otherDept.departmentId),
+    });
+
+    current.grants = new Map<Permission, Scope>([['memo.read', 'department']]);
+    current.departmentId = dept.departmentId;
+    const page = await parsed();
+    expect(page.items.map((m) => m.id)).toEqual([inside.id]);
+    expect(page.items[0]?.departmentName).toBeTruthy();
+    expect((await request(baseUrl).get(`/v1/test-memos/${outside.id}`)).status).toBe(404);
+
+    current.departmentId = null;
+    expect((await parsed()).items).toEqual([]);
+  });
+
+  it('shows a portal customer only the memos that name their party, like the record check', async () => {
+    as(U.salesA, 'sales');
+    const forP1 = await createMemo({ title: 'For P1', customerPartyId: p1.partyId });
+    const forP2 = await createMemo({ title: 'For P2', customerPartyId: p2.partyId });
+    const internal = await createMemo({ title: 'Internal' });
+    asCustomer(p1);
+    const ids = (await parsed('?limit=50')).items.map((m) => m.id);
+    expect(ids).toContain(forP1.id);
+    expect(ids).not.toContain(forP2.id);
+    expect(ids).not.toContain(internal.id);
+    // Every row the customer sees names their party: the same rule `get` applies to one id.
+    for (const id of ids) expect((await statusOf(id)).customerPartyId).toBe(p1.partyId);
+  });
+
+  it('answers 403 to a role without memo.read', async () => {
+    current.grants = new Map<Permission, Scope>();
+    expect((await list()).status).toBe(403);
+  });
+
+  it('pages without skipping or repeating, even when memos share a timestamp', async () => {
+    const mine = await freshStaff();
+    as(mine, 'sales');
+    at('2026-11-05T04:00:00Z');
+    const tied = [];
+    for (let i = 0; i < 4; i += 1) tied.push((await createMemo({ title: `Tied ${i}` })).id);
+    at('2026-11-06T04:00:00Z');
+    const newest = (await createMemo({ title: 'Newest' })).id;
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await parsed(`?limit=2${cursor ? `&cursor=${cursor}` : ''}`);
+      seen.push(...page.items.map((m) => m.id));
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor !== null && pages < 10);
+    expect(pages).toBe(3);
+    expect(new Set(seen).size).toBe(5);
+    expect(seen[0]).toBe(newest);
+    expect([...seen.slice(1)].sort()).toEqual([...tied].sort());
+    // Ties break on id descending, the same as the database orders them.
+    expect(seen.slice(1)).toEqual([...tied].sort().reverse());
+  });
+
+  it('filters by status', async () => {
+    const mine = await freshStaff();
+    as(mine, 'sales');
+    await createMemo({ title: 'Stays draft' });
+    expect((await parsed('?status=approved')).items).toEqual([]);
+    expect((await parsed('?status=draft')).items).toHaveLength(1);
+  });
+
+  it('answers 400, not a database error, for a forged cursor, an out-of-range limit or an unknown parameter', async () => {
+    expect((await list('?cursor=not-a-real-cursor')).status).toBe(400);
+    const forged = Buffer.from(JSON.stringify(["1'; DROP TABLE x;--", randomUUID()])).toString(
+      'base64url',
+    );
+    expect((await list(`?cursor=${forged}`)).status).toBe(400);
+    expect((await list('?limit=0')).status).toBe(400);
+    expect((await list('?limit=51')).status).toBe(400);
+    expect((await list('?limit=abc')).status).toBe(400);
+    expect((await list('?ownerUserId=' + U.boss)).status).toBe(400);
+    expect((await list('?status=weird')).status).toBe(400);
   });
 });
