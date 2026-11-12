@@ -1,95 +1,149 @@
-# P4 Linux runtime handoff — 2026-11-11
+# P4 Linux runtime handoff — 2026-11-12
 
-P4 owns `/home/kuu/src/business-os-platform` in Ubuntu following explicit
-P2 → P3 → P4 release. All project execution must remain Linux/WSL only.
-Do not switch the shared checkout or modify its containers while another phase
-owns it. No duplicate stack was created. P0/P1 and legacy `bos` remain separate.
+All project execution is Linux only: Ubuntu WSL, Node 24 and pnpm, after
+`source infra/scripts/env.sh`. Never run project tooling on native Windows.
+The Windows resource queue may wrap a WSL command, but the payload runs entirely
+inside Linux. Evidence and results are in [p4-issues.md](p4-issues.md).
 
-## Source and protected state
+## What changed on 2026-11-12
 
-- Branch `p4-main`, based on the published P3 head `66c9efef`; P2 `c703bcb5`
-  is ancestral. Read `git status`/`git rev-parse HEAD` before another handoff.
-- Reused core compose project `bos-qa-p2-4`, protected compose file
-  `/var/tmp/agents-p2-runtime/compose.p2.yaml` and protected stack config
-  `/var/tmp/agents-bosqa-p2/stack.env`. Preserve volumes and `.env`/`.dev`.
-- Pre-P4 database dump: `/var/tmp/agents-bosqa-p4/p4-before-upgrade.dump`
-  (ledger 26); configuration backup: `/var/tmp/agents-bosqa-p4/dev-before-p4`.
-  Prior P2/P3 dumps remain preserved. Current normal migration ledger is 35;
-  existing SQL hashes were preserved and tenancy verification passed.
-- Persona credentials: `/var/tmp/agents-bosqa-p2/.dev/personas.json` (private).
-  Normal P4 seed adds procurement, warehouse, depthead and management2.
-  Six retired receiver grants were intentionally removed under D03; all other
-  original grants are retained. No financial ledger was directly seeded by QA.
-- API loader `/var/tmp/agents-bosqa-p4/env.sh` retains the P3 loader's explicitly
-  registered portal OIDC client in `OIDC_ALLOWED_AZP`. Removing it breaks the
-  portal callback with 401. Portal has its own OIDC client and key ID.
-- Trusted CA: `/var/tmp/agents-p2-runtime/p2-root.crt`. The inherited repository
-  `.dev/caddy-root.crt` can be stale. Never disable certificate verification.
-- Seed's ZITADEL Actions registration received denylist 400; normal seed
-  mirrored the new identities and ten-minute reconciliation remains enabled.
+The earlier P4 runtime is gone. The hourly WSL scratch cleaner removed
+`/var/tmp/agents-bosqa-p4` (including the pre-P4 database dump
+`p4-before-upgrade.dump`, the loaders, the run scripts and
+`progress-fixtures.json`) and the config of the old compose project
+`bos-qa-p2-4` on 2026-11-12. Treat all of these as lost:
 
-Do not publish credentials, storage state, configuration backups or database
-backups. Private files under `/var/tmp/agents-bosqa-p4` remain for active QA;
-cleanup is deferred while the user needs this shared runtime and evidence.
+- Do not follow older notes that point at `/var/tmp/agents-*` paths.
+- `bos-qa-p2-4` cannot start. Its Docker volumes are kept and untouched; removing
+  them needs Kuu's explicit approval. Do not point new code at them: their
+  database already carries P4 migrations.
+- Keep every runtime under `~/bos-runtimes`, which the cleaner does not touch.
 
-## Running and restarting
+## The isolated P4 stack: `bos-p4v`
 
-Currently checked production outputs serve workspace `https://app.localhost`
-(port 3000), API `https://api.localhost` (3001) and vendor portal
-`https://portal.localhost` (3002), behind the existing Caddy. API/worker metrics
-use 9464/9465. Core includes PostgreSQL, both Valkey services, ZITADEL API/login,
-ClamAV, Mailpit, Gotenberg and backup scheduler. Inspect live listeners and
-queue leases before restarting; do not kill unrelated services.
+| Item            | Value                                                                                                                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source          | Detached WSL worktree `~/bos-runtimes/p4v`, created from the shared clone `~/src/business-os-platform` at the tested head (`764f2abf` plus any later documentation-only commits) |
+| Compose project | `bos-p4v` (every compose command needs `COMPOSE_PROJECT_NAME=bos-p4v`)                                                                                                           |
+| Images          | `bos-p4v/api:dev`, `bos-p4v/workspace:dev`, `bos-p4v/portal:dev` (production builds); override `~/bos-runtimes/p4v-images.yaml`                                                  |
+| URLs            | `https://app.localhost` (staff), `https://api.localhost`, `https://portal.localhost` (vendor portal)                                                                             |
+| Trusted CA      | `~/bos-runtimes/p4v/.dev/caddy-root.crt`, copied from the stack's Caddy; use it, never disable certificate verification                                                          |
+| Personas        | `~/bos-runtimes/p4v/.dev/personas.json` (private); eleven seeded personas                                                                                                        |
+| Stack secrets   | `~/bos-runtimes/p4v/.env` and `.dev/` (mode 600); never copy another stack's secrets                                                                                             |
+| Browser state   | `~/bos-runtimes/p4v-browser` (mode 700): fixtures, `progress.json`, `fixtures.env`, storage state, logs, screenshots                                                             |
 
-Every heavy command must use the host shared resource queue. Example wrapper
-(all code inside the command runs on Linux):
+Never publish, print or commit credentials, the personas file, storage state,
+`fixtures.env` or database backups.
 
-```powershell
-& "$env:USERPROFILE\.agents\bin\heavy.ps1" -Kind devserver -GB 1 `
-  -Cwd 'C:\Users\kuu\.t3\worktrees\business-os-platform\p4-main' `
-  -Command 'wsl.exe -d Ubuntu -- bash /var/tmp/agents-bosqa-p4/workspace-serve.sh'
+The helper scripts live outside Git, in
+`C:\Users\kuu\.codex\handoffs\business-os-p4-consolidation\r2\` (WSL path
+`/mnt/c/Users/kuu/.codex/handoffs/business-os-p4-consolidation/r2/`). They share
+`p4v-common.sh`, which defines `R=$HOME/bos-runtimes/p4v`, the `dc` compose helper
+and the `svc` container lookup. To use the same helper in a shell:
+
+```bash
+source /mnt/c/Users/kuu/.codex/handoffs/business-os-p4-consolidation/r2/p4v-common.sh
+cd ~/bos-runtimes/p4v && source infra/scripts/env.sh
+dc --profile core --profile files --profile app ps
 ```
 
-Equivalent existing scripts: `core-start.sh` (docker kind), `api-serve.sh`
-(API and worker), `workspace-serve.sh`, `portal-serve.sh`. They do not migrate or
-seed. Keep a foreground WSL session alive to avoid idle shutdown. Stop only
-owned app processes before changing source, migrations or production builds.
-Never build into `.next` while a dev or production server is using that output.
-For account-switcher checks, use a separate stopped-build/`next dev` turn;
-production correctly excludes the development tooling.
+## Starting from zero
 
-Before future upgrades, take a protected database/configuration backup, source
-`infra/scripts/env.sh` and the P4 loader, then follow the repository's normal
-migration/tenancy/seed commands. Use the shared queue for builds/checks, and
-rebuild complete dependency outputs before serving a new source revision.
+Run each heavy step through the host queue (see the wrapper below). Do not start
+this stack while another stack holds ports 80, 443, 5432, 6379, 1025 or 3310.
 
-## Acceptance evidence and fixtures
+1. **Core setup** — `p4v-a-setup.sh <git ref>`: writes the image override, creates
+   or moves the detached worktree to `<git ref>`, `pnpm install --frozen-lockfile`,
+   `make-dev-env.sh` (only if there is no `.env`), starts the `core` and `files`
+   profiles, copies Caddy's root CA to `.dev/caddy-root.crt`, runs
+   `migrate-dev.sh` (includes the tenancy check) and the ZITADEL seed. The known
+   seed warning is the Actions webhook DeniedURL, covered by the ten-minute
+   reconcile.
+2. **App images and services** — `p4v-b-app.sh`: builds the API, workspace and
+   portal images and brings up `api worker workspace portal gotenberg`, recreates
+   Caddy and checks the three health endpoints. To rebuild only the portal at the
+   shared clone's current head, use `p4v-portal.sh`.
+3. **Demo data** — `p4v-fx-sql.sh`: adds a "General" department in one audited
+   transaction (as system actor `p4-qa-fixture-general-department`) and assigns it
+   only to memberships with no department, and adds the `entity.address` demo
+   setting that P3 invoice issuing needs (system actor
+   `p4-qa-fixture-demo-issuer`). The seed does not provide `entity.address`.
+4. **Portal OIDC client** — `portal-client.sh`: **required**. The seed does not
+   create the vendor/customer portal OIDC client, so portal sign-in fails with
+   "redirect_uri is missing in the client configuration" without it. The script
+   copies `portal-client.mjs` into the seed container, which creates a separate
+   public OIDC app `portal`, writes `.dev/zitadel-portal.env`, appends the client
+   id to `OIDC_ALLOWED_AZP` in `.dev/zitadel.env` and recreates api, worker and
+   portal. It refuses to run unless the isolation guards pass (compose project
+   `bos-p4v`, database `bos` on host `postgres`, `/repo` working directory), so it
+   cannot touch another stack. The lasting fix belongs in `tools/seed-zitadel` at
+   the lowest affected phase (see p4-issues.md); until then, repeat this step after
+   every re-seed. Removing the client id from `OIDC_ALLOWED_AZP` breaks the portal
+   callback with 401.
+5. **Fixtures and browser checks** (below).
 
-Sanitized screenshots and the final handoff are in the Windows task handoff
-folder `C:\Users\kuu\.codex\handoffs\business-os-p4-consolidation`.
-Protected acceptance scripts, storage states, progress and logs are in
-`/var/tmp/agents-bosqa-p4`.
+Heavy-queue wrapper (all code inside the command runs on Linux):
 
-- `checks-summary.txt`, `packages.log`, `api-e2e.log` record the Linux gates.
-- `browser-run.sh` runs staff Playwright with the trusted CA and real personas.
-- `portal-run.sh` runs portal checks with actual vendor storage state.
-- `progress-fixtures.json` identifies the specific disposable PR/RFQ/PO,
-  receipt and bill created through UI. It records progress to prevent replay.
-- `fixture.spec.ts`, `journey-fixture.spec.ts`, `receipt-bill-fixture.spec.ts`
-  are task-local acceptance helpers, not a replacement for repository tests.
+```powershell
+& "$env:USERPROFILE\.agents\bin\heavy.ps1" -Kind docker -GB 4 `
+  -Cwd 'C:\Users\kuu\.t3\worktrees\business-os-platform\p4-main' `
+  -Command 'wsl.exe -d Ubuntu -- bash /mnt/c/Users/kuu/.codex/handoffs/business-os-p4-consolidation/r2/p4v-b-app.sh'
+```
 
-The RFQ is already recommended/committed, PO issued, and serialized receipt
-confirmed. Do not blindly replay RFQ creation, quotation conversion, receipt
-confirmation or invoice submission. Read progress first. Financial records
-were created through normal UI commands; database reads only located/status
-checked those records. New data is deliberately retained as demo evidence.
-No real bank payout was performed.
+Use `-Kind docker` for the core and image steps, `-Kind browser` for the
+Playwright runs and `-Kind devserver` for long-lived processes. Keep a
+foreground WSL process alive while the stack runs; WSL idle shutdown has stopped
+stacks before.
 
-P3's original safe allocation/refusal/reversal fixtures remain separate under
-`/var/tmp/agents-bosqa-p3`. Do not substitute arbitrary payments or rerun its
-invoice-preparation fixture blindly. See `docs/p3-linux-runtime.md` for details.
+## Stopping
 
-Run browser suites after Testcontainers finish; network changes during temporary
-container teardown caused one navigation error before app assertions began.
-Ten conditional locale skips and fixture-gated browser checks are disclosed in
-`docs/p4-issues.md`. Local green gates do not certify hosted CI.
+`p4v-stop.sh` stops the `core`, `files`, `app` and `tools` profiles with volumes
+kept, then prints the number of running containers. Stop this stack before
+another phase uses the shared ports. Stop only containers this stack owns.
+
+## Fixtures and browser checks
+
+- `r2/fx/run.sh [--reset]` runs the 15-stage fixture driver through the real UI
+  (ZITADEL password and TOTP personas, real ClamAV and Gotenberg). It is
+  resumable from `~/bos-runtimes/p4v-browser/progress.json`; use `--reset` only
+  after re-seeding, otherwise it points at old ids. It copies its spec into the
+  worktree for the run and removes it afterwards. Do not blindly replay creation,
+  quote conversion, receipt confirmation or invoice submission: read progress
+  first.
+- `r2/fx/consumers.sh [--exit]` runs the repository's own P4 browser specs against
+  those fixtures (staff `apps/workspace` then portal `apps/portal`). The plain run
+  consumes the open RFQ and creates rows; `--exit` also runs the Journey 11 specs,
+  which write rows too. Run once per fixture set.
+- `r2/gates.sh` runs install, typecheck, lint, format, image pins, builds, the
+  two production dev-route exclusion checks, package tests and API HTTP e2e in the
+  shared clone and refuses to start if a `next dev` process is running. Its
+  summary is `r2/gates-summary.txt`.
+- Staff checks use the `dev` Playwright project against the production workspace
+  image, which returns 404 for `/dev/*`, so they sign in through real ZITADEL.
+  `BASE_URL=https://app.localhost`, `PORTAL_E2E_BASE_URL=https://portal.localhost`,
+  `BOS_E2E_CA_FILE` and `NODE_EXTRA_CA_CERTS` point at `.dev/caddy-root.crt`.
+- The P0 shell spec needs `next dev` and `BOS_E2E_NEXT_DEV=1`; it was not run.
+  The account switcher exists only under `next dev`; production correctly
+  excludes it.
+- **Never build into an active `next dev` `.next`.** Use an isolated scratch
+  build for production checks, and run `gates.sh` only when no dev server holds
+  the checkout.
+- Run browser suites after any Testcontainers run finishes; network changes
+  during temporary container teardown caused a navigation error before.
+
+Financial records in the fixtures were created through normal UI commands and are
+kept as demo evidence. The payment request is left as a draft: no bank payout was
+performed or is possible from this stack.
+
+## Upgrading or re-seeding
+
+Before changing source, migrations or images: take a protected database dump and
+copy `.env` and `.dev` somewhere under `~/bos-runtimes` (not `/var/tmp`), move the
+worktree to the new ref with `p4v-a-setup.sh <ref>`, rebuild complete dependency
+outputs and images, then repeat the demo-data and portal-client steps above.
+Existing applied SQL hashes must stay intact; the hash-aware migration runner
+rejects unknown applied hashes.
+
+Local green gates do not certify hosted CI, which is blocked by the GitHub billing
+limit. Plans and decision defaults for P3 are listed in
+[p3-linux-runtime.md](p3-linux-runtime.md).

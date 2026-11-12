@@ -1,6 +1,162 @@
 # Phase 4 Issues and Consolidated Limitations
 
-## Linux follow-up — 2026-11-11 (current evidence)
+## P1→P2→P3 cascade integration (2026-11-12)
+
+The lower-phase READY heads were carried into `p4-main` by a normal merge, then
+verified on Linux (Ubuntu WSL, Node 24, pnpm) and on a fresh isolated stack.
+Runtime details: [Linux runtime handoff](p4-linux-runtime.md). The older sections
+below stay as history; where this section contradicts them, this section wins.
+
+### Source chain
+
+| Phase | READY head | What it brought                                                                                                                                       |
+| ----- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1    | `731907f4` | Memo refinement                                                                                                                                       |
+| P2    | `13fb0c1a` | Removes the P1-only amount/currency/upload/scan test controls from internal memos; keeps correspondence list, signers, PDF and print (via `b2d5ff02`) |
+| P3    | `11166e20` | Includes P2 through `ee6b988a`; final P3 application source is `a7f9901f`                                                                             |
+
+`p4-main` was `cb7e5990` before the merge. Merge commit `c7d0b533` is a normal,
+ancestry-preserving merge of exactly `11166e20`. P3 added no migrations, so there
+is no migration collision with P4's `0030`–`0038`. Sales/billing (P3) and
+procurement (P4) source are both preserved.
+
+### Conflict resolutions
+
+- `apps/api/src/modules/approvals/requests.service.ts`: kept P4's `department_head`
+  routing and `retarget()`, and kept P3/P2's explicit-route request handling
+  (`routingSpecOf()` and `extraUserIds`). `activeUserIds` is undefined when nobody
+  is named, which means no restriction; `departmentHeads` is still returned.
+- `pnpm-workspace.yaml` catalog: kept `jsdom`/`@types/jsdom` (P4) together with
+  `pdfkit`/`@types/pdfkit` (P3 memo PDF).
+
+### Follow-up commits on `p4-main`
+
+| Commit     | Change                                                                                                                                        | Why                                                                                                                                                                                                                                                                                       |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `220a6d19` | e2e imports `minimalPdf` from `e2e/helpers/pdf-fixture.ts`                                                                                    | P3 moved the helper                                                                                                                                                                                                                                                                       |
+| `c844b71e` | Workspace new-invoice page test mocks `@/lib/api-tax-codes`                                                                                   | P4 moved `listTaxCodes`                                                                                                                                                                                                                                                                   |
+| `fa2b3b64` | Memo routing tests assert P4's service-level approval authorization; signer role labels corrected (management/founder, not `operations_head`) | P4 `0ce3ad41` made approvals inbox/act `@AnyAuthenticated` so an assigned purchase-request department head can act. The service refuses instead: no act permission is NotFound; permitted but not the named step person is Forbidden; no assignment inbox is Forbidden                    |
+| `997ec00e` | `next build` for the portal uses `apps/portal/tsconfig.build.json`, which excludes e2e                                                        | The portal Docker image failed to build (pre-existing in P4): portal e2e imports workspace e2e helpers whose dependencies are not in the filtered image install. Host typecheck still covers e2e. This is the only product-affecting change; it alters build configuration, not behaviour |
+| `ed97c4b5` | e2e matches the memo signer option by its whole name                                                                                          | The P4 seed adds "Dev Management Two", which made the partial-name match ambiguous                                                                                                                                                                                                        |
+| `a3aace62` | e2e `PERSONA_KEYS` is the eleven seeded personas (adds `depthead`, `management2`, `procurement`, `warehouse`)                                 | The persona list had drifted from what the P4 seed writes                                                                                                                                                                                                                                 |
+| `764f2abf` | The CRM board e2e creates an opportunity before checking the board                                                                            | An empty stack shows "No opportunities yet", which is intended                                                                                                                                                                                                                            |
+
+No product behaviour changed apart from the portal build configuration.
+
+### Linux verification
+
+| Check                                                                | Result                                                                                                                                                                    |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First gate batch at `c844b71e`                                       | Install, typecheck, lint, format, image pins, all builds, workspace and portal production dev-route exclusion, API HTTP e2e: pass. Package tests 2,936 pass / 2 fail      |
+| The 2 failures                                                       | The memo routing tests, fixed by `fa2b3b64`                                                                                                                               |
+| `fa2b3b64`: API `src/modules/test-memo` + `src/modules/approvals`    | 7 files, 241 tests pass                                                                                                                                                   |
+| `997ec00e`: portal typecheck, build, no-dev-routes, prettier, eslint | Pass; portal Docker image builds and runs (health 200)                                                                                                                    |
+| Fresh stack `bos-p4v`                                                | Production images `bos-p4v/api`, `workspace`, `portal` (`:dev`); migrations applied, `check-tenancy` ok, seed 73 changes. Seed warning: ZITADEL Actions webhook DeniedURL |
+
+Final gate batch at 764f2abf: <PENDING>
+
+The seed warning is the known one: ZITADEL refuses the Actions webhook URL, so
+the ten-minute reconcile fallback stays in effect.
+
+### Fresh-stack browser results (real ZITADEL password plus TOTP, trusted local CA)
+
+| Run                                                                       | Result                                                                                                                                                      |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Staff, `dev` project, at `764f2abf`: personas, exit (memo), inbox, p2 crm | **18 passed, 5 skipped**                                                                                                                                    |
+| Earlier staff run (p0-shell, p2 and p3 specs included)                    | 19 passed, 25 skipped, 5 failed. The five: memo signer ambiguity (2), persona list drift (1), CRM empty board (1), plus the p0-shell run needing `next dev` |
+| Production project: `lcp` and `prod-no-switcher`                          | **3/3 passed**; the account switcher and other `/dev` paths return 404                                                                                      |
+| Repo consumer suites on the fixtures below: staff `e2e/p4`                | 20 passed, 3 skipped                                                                                                                                        |
+| Portal `e2e/p4`                                                           | 18 passed, 8 skipped                                                                                                                                        |
+| Staff `p4-exit`                                                           | 1 passed, 2 skipped                                                                                                                                         |
+| Portal `p4-exit`                                                          | 2 passed, 2 skipped                                                                                                                                         |
+
+The four failures other than p0-shell were test-side and were fixed and rerun
+to pass (`ed97c4b5`, `a3aace62`, `764f2abf`). The p0-shell spec needs `next dev`
+with `BOS_E2E_NEXT_DEV=1` by design and was not run. Consumer suites had zero
+failures.
+
+**Fixture driver** (outside Git, in
+`C:\Users\kuu\.codex\handoffs\business-os-p4-consolidation\r2\fx\`): 15 of 15
+stages passed through the real UI with real ZITADEL password and TOTP personas,
+real ClamAV and real Gotenberg:
+
+1. Purchase request PR-2083/84-00001, department-head approval.
+2. RFQ to VEND-DEV; the vendor submits a quote through the portal (NPR 1,20,000,
+   VAT exempt); convert, fewer-quotes exception, recommend.
+3. Commitment approvals by Accountant, Finance and Management (the route adds
+   Management above NPR 100,000).
+4. PO-2083/84-00001 issued; its PDF is clean.
+5. Warehouse receipt confirms two serials; the PO becomes `fully_received`.
+6. The vendor submits an order-linked invoice through the portal; the founder
+   keys the bill from the submission; three-way matched.
+7. Accountant, then Finance, approve the bill; Finance drafts a payment request
+   and leaves it as a draft (no payout).
+8. Chain B: PO-2083/84-00002 (NPR 50,000; Accountant and Finance) issued and
+   unreceived; PR-2083/84-00003 department-approved with no RFQ;
+   PR-2083/84-00004 with an open RFQ.
+
+### Skipped or not run, and why
+
+- Staff `p4-exit`: "three vendors are invited" and "completed Journey 11 remains
+  connected". They need three approved vendors on the RFQ; only VEND-DEV was
+  offered because `extra-vendors.sql` was not effective.
+- Portal: "another approved vendor cannot open…", "vendor awaiting KYC…" and the
+  four "vendor still in onboarding" blocks. They need a second or pending vendor
+  portal user, and ZITADEL invite acceptance with TOTP enrolment is not
+  automated.
+- Portal foreign-id tests use a random UUID. They prove an unknown id is refused,
+  not that another vendor's real id is refused.
+- p0-shell: needs `next dev`; not run.
+- The staff `e2e/p4` (3) and portal `e2e/p4` (8) skips are fixture-gated as above.
+  A skip is not a pass.
+- Native print dialog and screen-reader behaviour are untested.
+- Hosted CI is blocked (below).
+
+### Inherited runtime gaps found on the fresh stack
+
+1. **Portal OIDC client missing from the seed.** The compose file says the seed
+   creates it; it does not. On a fresh stack portal sign-in fails with
+   "redirect_uri is missing in the client configuration". Worked around with the
+   task-local `r2/portal-client.mjs` (run via `portal-client.sh`), which creates
+   the separate public OIDC app `portal`, writes `.dev/zitadel-portal.env`,
+   appends the client id to `OIDC_ALLOWED_AZP` and recreates api, worker and
+   portal. **The root fix belongs in `tools/seed-zitadel` at the lowest affected
+   phase (P2 introduced the portal service) and must cascade upward.** This task
+   did not make it.
+2. **Scratch cleaner loss.** The hourly WSL scratch cleaner deleted
+   `/var/tmp/agents-bosqa-p4` on 2026-11-12 at 12:09Z, including
+   `p4-before-upgrade.dump`, the run scripts, `progress-fixtures.json` and the P3
+   loader. The old `bos-qa-p2-4` stack cannot start (its config was deleted on
+   2026-11-11); its volumes remain, untouched. All runtimes now live under
+   `~/bos-runtimes`, which the cleaner does not touch.
+3. **`entity.address` demo setting.** P3 invoice issuing needs it; a fresh stack
+   has none. `p4v-fx-sql.sh` adds a demo address as a system actor. The P4 seed
+   already provides the Operations department (head `depthead`), cost centres
+   GENERAL/OPERATIONS/ADMIN, VEND-DEV and the tax codes.
+
+### Known design note
+
+A `department_head` step stores the resolved head user. SLA reminders and the
+inbox add `step.userId` to `extraUserIds` only for steps of kind `user`. If the
+department head changes before a reroute, the former head drops out of the
+active-approver check. This is pre-existing P4 behaviour, not introduced by the
+cascade and not changed here.
+
+### Hosted CI
+
+GitHub's billing/spending limit blocks hosted runs (as recorded in
+[p3-issues.md](p3-issues.md)): no job starts. Hosted CI is not certified by any
+local result here.
+
+## Linux follow-up — 2026-11-11 (historical evidence)
+
+> **Superseded in part (2026-11-12).** The paths below under
+> `/var/tmp/agents-bosqa-p4` (the pre-upgrade dump, configuration backup, loader
+> and fixture progress) were deleted by the scratch cleaner, and the
+> `bos-qa-p2-4` runtime cannot start. Treat those as lost, not as available
+> backups. The statement that Docker image builds were not rerun is superseded
+> by the portal/API/workspace image builds above. The counts below describe
+> `2bca61d2`, not the `764f2abf` head.
 
 P3 explicitly released the shared Ubuntu checkout and runtime to P4. The real
 GitHub `p3-main` head `66c9efef04de9b975855bae4f410122180d2a809` was merged
