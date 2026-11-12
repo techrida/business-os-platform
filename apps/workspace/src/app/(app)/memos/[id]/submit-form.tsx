@@ -9,10 +9,10 @@ import styles from '../../kit.module.css';
 import { submitMemoAction, type SubmitState } from '../actions';
 
 /**
- * The Submit button. The page decides whether submitting is possible (`blocker`); this component
- * only shows a refusal from the API in place, such as "an attachment is not clean yet".
+ * The Submit button. The page decides whether submitting is possible (`blocked`: a selected signer cannot
+ * approve, so the API would refuse); this component also shows any refusal from the API in place.
  */
-export function SubmitForm({ memoId, blocker }: { memoId: string; blocker: string | null }) {
+export function SubmitForm({ memoId, blocked }: { memoId: string; blocked: boolean }) {
   const [state, formAction, pending] = useActionState<SubmitState, FormData>(submitMemoAction, {});
   return (
     <form action={formAction} className={styles.submit}>
@@ -24,14 +24,14 @@ export function SubmitForm({ memoId, blocker }: { memoId: string; blocker: strin
       ) : null}
       <Button
         type="submit"
-        disabled={pending || blocker !== null}
-        aria-describedby={blocker !== null ? 'submit-blocker' : undefined}
+        disabled={pending || blocked}
+        aria-describedby={blocked ? 'submit-blocker' : undefined}
       >
         {pending ? 'Submitting' : 'Submit for approval'}
       </Button>
-      {blocker !== null ? (
+      {blocked ? (
         <p id="submit-blocker" className={styles.note}>
-          {blocker}
+          Choose different people for the blocked step before submitting.
         </p>
       ) : null}
     </form>

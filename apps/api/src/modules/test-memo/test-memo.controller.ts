@@ -2,8 +2,24 @@
 // NFR "authorization is deny-by-default": each route names its permission with @Can (route level: does the
 // role hold it at all), and the service then checks the record itself with authz.assert (record level: own,
 // department, ...), so a Sales user cannot read or edit a colleague's memo by guessing its id.
-import { CreateMemoBodySchema, type MemoDto } from '@bos/contracts';
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  CreateMemoBodySchema,
+  MemoListQuerySchema,
+  type MemoDto,
+  type MemoList,
+  type RoutePlan,
+} from '@bos/contracts';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 
 import { Can } from '../../platform/authz/decorators';
 import { parseOr400 } from '../approvals/approvals.controller';
@@ -13,6 +29,16 @@ import { UpdateMemoBodySchema, type MemoDetailDto, type SubmitMemoResult } from 
 @Controller('v1/test-memos')
 export class TestMemoController {
   constructor(private readonly memos: TestMemoService) {}
+
+  /**
+   * 200 with one page of the memos the caller may open, newest first. Scope comes from the caller's `memo.read`
+   * grant (own, department, entity), never from the query. Pass `nextCursor` back as `cursor` for the next page.
+   */
+  @Get()
+  @Can('memo.read')
+  list(@Query() query: unknown): Promise<MemoList> {
+    return this.memos.list(parseOr400(MemoListQuerySchema, query));
+  }
 
   @Get('directory')
   @Can('memo.create')
@@ -32,6 +58,16 @@ export class TestMemoController {
   @Can('memo.read')
   get(@Param('id', ParseUUIDPipe) id: string): Promise<MemoDetailDto> {
     return this.memos.get(id);
+  }
+
+  /**
+   * 200 with the approval route submit would build now (a RoutePlan), without writing anything. Same permission as
+   * submit; 404 for a record outside the caller's scope. For a template memo it is the selected people, in order.
+   */
+  @Get(':id/route')
+  @Can('memo.update')
+  route(@Param('id', ParseUUIDPipe) id: string): Promise<RoutePlan> {
+    return this.memos.routePreview(id);
   }
 
   /** 200 with the updated MemoDto. 404 for a record outside the caller's scope, 409 unless draft or returned. */

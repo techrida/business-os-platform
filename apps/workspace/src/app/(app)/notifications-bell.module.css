@@ -29,6 +29,32 @@
   background: var(--interactive-pressed);
 }
 
+/* The bell icon (18px, Lucide drawing) in two layers. Both pivot at the top of the dome,
+   (12, 2.5) on the 24 grid; bell-ring.ts animates their transforms. */
+.bell {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+
+.swing,
+.clapper {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 10.4167%;
+}
+
+.bell svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* Unread dot: the count is in the button's name and in the panel; the dot is the glance. */
 .dot {
   position: absolute;

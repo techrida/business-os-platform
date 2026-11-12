@@ -24,6 +24,40 @@ its notes are retained in [p0-issues.md](p0-issues.md).
   items without phase labels, and navigation-only sidebar scrolling. Added the
   cascade's shell browser regression to the development Playwright suite.
 
+## Memo workflow refinement
+
+Added on `t3/7725dac5` after the consolidation above; details, the P2 removal
+map and acceptance points are in [the memo delivery record](../design/memos/DELIVERY.md).
+
+- **Memos list:** `/memos` is a real list (`GET /v1/test-memos`, scoped by the
+  caller's `memo.read` grant, keyset-paginated) with loading, empty, error and
+  forbidden states. The paste-an-id lookup is gone.
+- **Staff fields:** one reusable inline combobox for Prepared by, Recommended by
+  and Approved by. Up to 20 staff are listed flat, more than 20 grouped by their
+  real directory department. Two blank recommender rows, at most 20, blank rows
+  never sent. Prepared by is only the signed-in author; server authorization is
+  unchanged.
+- **Preview, PDF and print:** sticky paper on wide screens, stacked on phones,
+  icon-only Download PDF (real PDF via `pdfkit`, Noto Sans and Noto Sans
+  Devanagari fonts, SIL OFL) and Print (the paper only).
+- **P1 boundary:** the amount, currency and PDF upload controls exist in P1 to
+  exercise the kernel workflow. P2 removes them from the internal memo UI and
+  keeps the memo, list, export and signers. The removal map is in the delivery
+  record.
+- **Runtime refreshed (Nov12):** API/worker image rebuilt and containers recreated,
+  workspace dependencies and contracts built, Next dev restarted on3101 with its
+  cache retained. No migration or seed reset. P0 untouched.
+- **Limits:** PDF fonts cover Latin, Latin Extended, Vietnamese, Greek, Cyrillic
+  and Devanagari; other scripts print as `?` and the download says so. A memo
+  edited by someone other than its author retains the saved preparer. The server
+  continues to refuse saving under another person’s attribution; no silent reassignment.
+- **Live acceptance:** full P1 exit Playwright passed (PDF scan, real sign-in,
+  selected Accountant/Finance decisions, self-approval refusal, Mailpit and audit
+  timeline). Separate live controls check passed: blank row save, attach redirect,
+  current/saved real PDF bytes, paper-only print interception, list and390px
+  overflow/hydration checks. Native print dialog, physical printer and
+  screen-reader testing remain unrun. See the canonical KB P1 test guide.
+
 ## Integration record
 
 | Source                      | Source head | Integration commit |

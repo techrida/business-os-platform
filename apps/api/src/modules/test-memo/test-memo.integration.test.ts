@@ -19,8 +19,10 @@ import {
   ErrorBodySchema,
   MemoDtoSchema,
   MemoDirectorySchema,
+  MemoListSchema,
   type Permission,
   type RoleKey,
+  RoutePlanSchema,
   type Scope,
 } from '@bos/contracts';
 import {
@@ -33,6 +35,7 @@ import {
   createStaffUser,
   createTenantWithEntity,
   documentVersions,
+  rolePermissions,
   runMigrations,
   testMemos,
   users,
@@ -51,18 +54,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { configureApp } from '../../app.setup';
 import { CAN_KEY } from '../../platform/authz/decorators';
 import { can } from '../../platform/authz/can';
-import type { AuthzService } from '../../platform/authz/authz.service';
+import { scopeWhereFor, type AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SignedLinks } from '../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { MoneyService } from '../../platform/settings/money.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ApprovalsAdminService } from '../approvals/admin.service';
+import { ApprovalsController } from '../approvals/approvals.controller';
 import { ApprovalsService } from '../approvals/requests.service';
 import { TestMemoController } from './test-memo.controller';
 import { TestMemoService } from './test-memo.service';
@@ -112,6 +117,7 @@ let baseUrl: string;
 let storageRoot: string;
 let service: TestMemoService;
 let documents: DocumentsService;
+let roleCache: RoleCache;
 let approvals: ApprovalsService;
 let scope: { tenantId: string; organizationId: string };
 /** The staff IdP org of the tenant: every staff principal below logs in through it. */
@@ -153,12 +159,14 @@ const current: {
   orgKind: Principal['orgKind'];
   partyId: string | null;
   idpOrgId: string | null;
+  departmentId: string | null;
 } = {
   userId: U.salesA,
   grants: grantsOf('sales'),
   orgKind: 'staff',
   partyId: null,
   idpOrgId: null,
+  departmentId: null,
 };
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
@@ -166,6 +174,7 @@ const as = (userId: string, role: RoleKey) => {
   current.orgKind = 'staff';
   current.partyId = null;
   current.idpOrgId = null;
+  current.departmentId = null;
 };
 /** customer_user has no default grants, so the portal caller gets `memo.read` at `customer_org` here. */
 const asCustomer = (party: { partyId: string; idpOrgId: string; userId: string }) => {
@@ -174,6 +183,7 @@ const asCustomer = (party: { partyId: string; idpOrgId: string; userId: string }
   current.orgKind = 'customer';
   current.partyId = party.partyId;
   current.idpOrgId = party.idpOrgId;
+  current.departmentId = null;
 };
 
 /** The token's roles match the mirror's (the fake directory): act() checks a role step against the token. */
@@ -188,7 +198,7 @@ const principalNow = (): Principal => ({
   partyId: current.partyId,
   idpOrgId: current.idpOrgId ?? staffIdpOrgId,
   roles: rolesOf(current.userId),
-  departmentId: null,
+  departmentId: current.departmentId,
   status: 'active',
   grants: current.grants,
 });
@@ -200,6 +210,9 @@ const caller = {
   }),
 };
 const authz = {
+  // The real SQL twin of can(): the list test proves the memo list and the record check agree.
+  scopeWhere: (table: Parameters<typeof scopeWhereFor>[1], action: Permission) =>
+    scopeWhereFor(principalNow(), table, action),
   assert: (action: Permission, ref?: Parameters<typeof can>[2]) => {
     const d = can(principalNow(), action, ref);
     if (!d.allowed) {
@@ -266,8 +279,25 @@ beforeAll(async () => {
   p2 = await customer();
   vendorPartyId = (await createParty(appPool, { tenantId: tenant.tenantId, kind: 'vendor' }))
     .partyId;
-  for (const key of ['salesA', 'salesB', 'boss', 'acc', 'fin', 'mgmt', 'founder'] as const) {
-    U[key] = (await createStaffUser(appPool, { ...scope, idpOrgId: tenant.idpOrgId })).userId;
+  // The user_roles mirror gives each user the roles the signer-eligibility check reads (the fake directory above
+  // is only for the approvals engine's role steps).
+  const mirror: Record<keyof typeof U, RoleKey[]> = {
+    salesA: ['sales'],
+    salesB: ['sales'],
+    boss: ['founder'],
+    acc: ['accountant'],
+    fin: ['finance'],
+    mgmt: ['management'],
+    founder: ['founder'],
+  };
+  for (const key of Object.keys(mirror) as (keyof typeof U)[]) {
+    U[key] = (
+      await createStaffUser(appPool, {
+        ...scope,
+        idpOrgId: tenant.idpOrgId,
+        roleKeys: mirror[key],
+      })
+    ).userId;
   }
 
   storageRoot = await mkdtemp(join(tmpdir(), 'bos-memo-it-'));
@@ -281,6 +311,8 @@ beforeAll(async () => {
   );
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
   const money = new MoneyService(db, new SettingsService(db));
+  // The real cache over the real role_permissions table (empty here, so the defaults), as the route guard reads it.
+  roleCache = new RoleCache(db);
   service = new TestMemoService(
     db,
     new NumberingService(),
@@ -288,6 +320,7 @@ beforeAll(async () => {
     documents,
     approvals,
     authz as unknown as AuthzService,
+    roleCache,
     caller,
     () => now,
     notify as never,
@@ -337,6 +370,17 @@ const draftBody = (over: Record<string, unknown> = {}) => ({
   body: 'Twelve chairs for the new desk row',
   amount: '50000.00',
   currency: 'NPR',
+  ...over,
+});
+
+/** A template memo body the way the Workspace sends it from P2: no amount, no currency. */
+const templateMemoBody = (
+  template: Record<string, unknown>,
+  over: Record<string, unknown> = {},
+) => ({
+  title: 'Office chairs',
+  body: 'Twelve chairs for the new desk row',
+  template,
   ...over,
 });
 
@@ -390,6 +434,12 @@ async function attach(memoId: string, status: 'quarantined' | 'clean' | 'infecte
     },
   );
 }
+
+/** The users of a request's steps, in order (explicit-route requests name a user on every step). */
+const userStepsOf = async (requestId: string) =>
+  (await db.select().from(approvalSteps).where(eq(approvalSteps.requestId, requestId)))
+    .sort((a, b) => a.seq - b.seq)
+    .map((s) => s.userId);
 
 const statusOf = async (id: string) => {
   const [row] = await db.select().from(testMemos).where(eq(testMemos.id, id));
@@ -995,8 +1045,16 @@ describe('internal memo template', () => {
       recommenderUserIds: [U.acc],
       approvedByUserId: U.fin,
     };
-    const created = await request(baseUrl).post('/v1/test-memos').send(draftBody({ template }));
-    expect(created.status).toBe(201);
+    const created = await request(baseUrl).post('/v1/test-memos').send(templateMemoBody(template));
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    // No money was sent, so the table's NOT NULL columns hold the NPR 0.00 compatibility value.
+    expect(created.body).toMatchObject({
+      amount: '0.00',
+      currency: 'NPR',
+      fxRate: '1',
+      fxSource: 'NPR',
+    });
+    expect(Number((created.body as { amountNpr: string }).amountNpr)).toBe(0);
     expect(MemoDtoSchema.parse(created.body).template).toMatchObject({
       departmentId: dept.departmentId,
       preparedBy: { userId: U.salesA },
@@ -1017,11 +1075,11 @@ describe('internal memo template', () => {
     );
     expect(rows.rows[0]!.snapshot.template).toEqual(MemoDtoSchema.parse(created.body).template);
     const requestId = (submitted.body as { requestId: string }).requestId;
-    roles.accountant = [U.acc, U.boss];
+    // Someone who is not the named person for the active step is refused, whatever role they hold.
     as(U.boss, 'founder');
     await expect(
       approvals.act(requestId, { action: 'approve', expectedVersion: 1 }, randomUUID()),
-    ).rejects.toThrow('different person');
+    ).rejects.toBeInstanceOf(ForbiddenException);
     as(U.acc, 'founder');
     const first = await approvals.act(
       requestId,
@@ -1075,28 +1133,574 @@ describe('internal memo template', () => {
     ).toBe(400);
   });
 
-  it('refuses a printed approver who does not match the workflow step', async () => {
+  it('no longer ties the signers to the workflow roles: finance may recommend and the accountant approve', async () => {
     const dept = await createDepartment(appPool, scope);
     const created = await request(baseUrl)
       .post('/v1/test-memos')
       .send(
-        draftBody({
-          template: {
-            departmentId: dept.departmentId,
-            date: '2026-11-10',
-            closing: '',
-            preparedByUserId: U.salesA,
-            recommenderUserIds: [U.fin],
-            approvedByUserId: U.acc,
-          },
+        templateMemoBody({
+          departmentId: dept.departmentId,
+          date: '2026-11-10',
+          closing: '',
+          preparedByUserId: U.salesA,
+          recommenderUserIds: [U.fin],
+          approvedByUserId: U.acc,
         }),
       );
-    expect(created.status).toBe(201);
-    expect((await submitMemo(MemoDtoSchema.parse(created.body).id)).status).toBe(409);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = MemoDtoSchema.parse(created.body).id;
+    const submitted = await submitMemo(id);
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(200);
+    expect(await userStepsOf((submitted.body as { requestId: string }).requestId)).toEqual([
+      U.fin,
+      U.acc,
+    ]);
+    expect((await statusOf(id)).status).toBe('submitted');
+  });
+});
+
+// ------------------------------------------------------------------------ explicit route (P2 removal)
+
+describe('a template memo routes through exactly the people the author named', () => {
+  let ops: { a: string; b: string; c: string; sales: string };
+  let deptId: string;
+
+  beforeAll(async () => {
+    const staff = async (roleKeys: RoleKey[]) =>
+      (await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId, roleKeys })).userId;
+    // Approver-capable but not finance: management and founder hold approvals.requests.act in the default
+    // role grants and no accountant or finance role. `sales` does not, so it must never be named.
+    ops = {
+      a: await staff(['management']),
+      b: await staff(['founder']),
+      c: await staff(['management']),
+      sales: await staff(['sales']),
+    };
+    deptId = (await createDepartment(appPool, scope)).departmentId;
+  });
+
+  const nameOf = async (userId: string) =>
+    (await db.select({ n: users.displayName }).from(users).where(eq(users.id, userId)))[0]!.n!;
+
+  const template = (recommenders: string[], approver: string, preparer = current.userId) => ({
+    departmentId: deptId,
+    date: '2026-11-12',
+    closing: 'Submitted for your approval.',
+    preparedByUserId: preparer,
+    recommenderUserIds: recommenders,
+    approvedByUserId: approver,
+  });
+
+  async function createTemplateMemo(
+    recommenders: string[],
+    approver: string,
+    over: Record<string, unknown> = {},
+  ): Promise<{ id: string }> {
+    const res = await request(baseUrl)
+      .post('/v1/test-memos')
+      .send(templateMemoBody(template(recommenders, approver), over));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return res.body as { id: string };
+  }
+
+  const routeOf = (id: string) => request(baseUrl).get(`/v1/test-memos/${id}/route`);
+  const stepRows = async (requestId: string) =>
+    (await db.select().from(approvalSteps).where(eq(approvalSteps.requestId, requestId))).sort(
+      (a, b) => a.seq - b.seq,
+    );
+  const requestsOf = (memoId: string) =>
+    db.select().from(approvalRequests).where(eq(approvalRequests.documentId, memoId));
+
+  const signerCases: { label: string; recommenders: ('a' | 'b')[]; approver: 'a' | 'b' | 'c' }[] = [
+    { label: '1 signer', recommenders: [], approver: 'a' },
+    { label: '2 signers', recommenders: ['a'], approver: 'b' },
+    { label: '3 signers', recommenders: ['a', 'b'], approver: 'c' },
+  ];
+  it.each(signerCases)(
+    'submits a memo with $label to exactly the selected users, in order, with no threshold step',
+    async ({ recommenders, approver }) => {
+      const recommenderIds = recommenders.map((k) => ops[k]);
+      const approverId = ops[approver];
+      // A money amount sent with a template must not matter: nothing routes on it.
+      const { id } = await createTemplateMemo(recommenderIds, approverId, {
+        amount: '5000000.00',
+        currency: 'NPR',
+      });
+      const res = await submitMemo(id);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body).toMatchObject({ status: 'pending' });
+      const { requestId } = res.body as { requestId: string };
+
+      const steps = await stepRows(requestId);
+      expect(steps.map((s) => s.userId)).toEqual([...recommenderIds, approverId]);
+      expect(steps.every((s) => s.kind === 'user' && s.roleKey === null)).toBe(true);
+      expect(steps.map((s) => s.reason)).toEqual([
+        ...recommenderIds.map((_, i) => `Selected recommender ${i + 1}`),
+        'Selected approver',
+      ]);
+      expect(steps.map((s) => s.status)).toEqual([
+        'active',
+        ...steps.slice(1).map(() => 'waiting'),
+      ]);
+
+      // Frozen with the published definition, but with no money facts and no amount in the snapshot.
+      const row = await requestRow(requestId);
+      expect(row.facts).toEqual({ routing: 'explicit' });
+      expect(Object.keys(row.snapshot as object).sort()).toEqual([
+        'attachments',
+        'body',
+        'customerPartyId',
+        'memoVersion',
+        'number',
+        'ownerUserId',
+        'template',
+        'title',
+      ]);
+      expect(await statusOf(id)).toMatchObject({ status: 'submitted', version: 2 });
+    },
+  );
+
+  it('keeps the compatibility value when the memo is submitted without money', async () => {
+    const { id } = await createTemplateMemo([], ops.a);
+    await submitMemo(id);
+    const row = await statusOf(id);
+    expect(row.currency).toBe('NPR');
+    expect([Number(row.amount), Number(row.amountNpr), Number(row.fxRate)]).toEqual([0, 0, 1]);
+  });
+
+  it('shows a preview that equals the submitted route', async () => {
+    const { id } = await createTemplateMemo([ops.a, ops.b], ops.c);
+    const preview = RoutePlanSchema.parse((await routeOf(id)).body);
+    expect(preview.blocked).toBe(false);
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    const steps = await stepRows(requestId);
+    const shape = (s: {
+      seq: number;
+      kind: string;
+      userId?: string | null | undefined;
+      reason: string;
+    }) => ({ seq: s.seq, kind: s.kind, userId: s.userId ?? null, reason: s.reason });
+    expect(preview.steps.map(shape)).toEqual(steps.map(shape));
+  });
+
+  it('refuses to submit when the author who owns the memo is named as a signer', async () => {
+    // The author is a founder (an approver-capable role), so only separation of duties can refuse them.
+    as(U.founder, 'founder');
+    const { id } = await createTemplateMemo([ops.a], ops.c);
+    // A colleague takes over the preparer line and names the owner as the approver.
+    as(U.boss, 'founder');
+    const edited = await request(baseUrl)
+      .patch(`/v1/test-memos/${id}`)
+      .send({ template: template([ops.a], U.founder, U.boss) });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    as(U.founder, 'founder');
+    const plan = RoutePlanSchema.parse((await routeOf(id)).body);
+    expect(plan.blocked).toBe(true);
+    expect(plan.blockReason).toMatch(/prepared or edited/);
+    const res = await submitMemo(id);
+    expect(res.status).toBe(409);
+    expect(ErrorBodySchema.parse(res.body).error.message).toMatch(/cannot approve/);
+    expect((await statusOf(id)).status).toBe('draft');
+    expect(await requestsOf(id)).toHaveLength(0);
+  });
+
+  it('refuses to submit when an editor or the person pressing submit is named as a signer', async () => {
+    const { id } = await createTemplateMemo([U.boss], ops.b);
+    as(U.boss, 'founder');
     expect(
-      MemoDtoSchema.parse(
-        (await request(baseUrl).get(`/v1/test-memos/${MemoDtoSchema.parse(created.body).id}`)).body,
-      ).status,
-    ).toBe('draft');
+      (await request(baseUrl).patch(`/v1/test-memos/${id}`).send({ body: 'edited' })).status,
+    ).toBe(200);
+    as(U.salesA, 'sales');
+    expect((await submitMemo(id)).status).toBe(409);
+
+    // A founder submitting a colleague's memo cannot also be its approver.
+    const second = await createTemplateMemo([], U.boss);
+    as(U.boss, 'founder');
+    expect((await submitMemo(second.id)).status).toBe(409);
+    expect((await statusOf(second.id)).status).toBe('draft');
+    expect(await requestsOf(second.id)).toHaveLength(0);
+  });
+
+  it('refuses to submit when a selected signer is no longer active', async () => {
+    const gone = (
+      await createStaffUser(appPool, {
+        ...scope,
+        idpOrgId: staffIdpOrgId,
+        roleKeys: ['management'],
+      })
+    ).userId;
+    const { id } = await createTemplateMemo([], gone);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.update(users).set({ status: 'inactive' }).where(eq(users.id, gone)),
+    );
+    const res = await submitMemo(id);
+    expect(res.status).toBe(409);
+    expect((await statusOf(id)).status).toBe('draft');
+    expect(await requestsOf(id)).toHaveLength(0);
+  });
+
+  it('lets only the selected person decide each step, then approves the memo', async () => {
+    const { id } = await createTemplateMemo([ops.a, ops.b], ops.c);
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    const approve = (version: number) =>
+      approvals.act(requestId, { action: 'approve', expectedVersion: version }, randomUUID());
+
+    // Nobody but the first signer may decide step 1: not a later signer, not a founder.
+    as(ops.b, 'operations_head');
+    await expect(approve(1)).rejects.toBeInstanceOf(ForbiddenException);
+    as(U.boss, 'founder');
+    await expect(approve(1)).rejects.toBeInstanceOf(ForbiddenException);
+    // Only the active step's person has it in their inbox.
+    as(ops.b, 'operations_head');
+    expect((await approvals.inbox()).map((i) => i.requestId)).not.toContain(requestId);
+    as(ops.a, 'operations_head');
+    expect((await approvals.inbox()).map((i) => i.requestId)).toContain(requestId);
+    expect((await approvals.inbox()).find((i) => i.requestId === requestId)?.amountNpr).toBeNull();
+
+    const first = await approve(1);
+    expect(first).toMatchObject({ status: 'pending', currentSeq: 2 });
+    as(ops.a, 'operations_head');
+    // The first signer has decided; step 2 belongs to someone else.
+    await expect(approve(first.version)).rejects.toBeInstanceOf(ForbiddenException);
+    as(ops.b, 'operations_head');
+    const second = await approve(first.version);
+    expect(second).toMatchObject({ status: 'pending', currentSeq: 3 });
+    as(ops.c, 'operations_head');
+    const third = await approve(second.version);
+    expect(third.status).toBe('approved');
+    expect((await statusOf(id)).status).toBe('approved');
+  });
+
+  it('routes a management-only memo with no accountant or finance step, whatever amount is sent', async () => {
+    const { id } = await createTemplateMemo([], ops.a, { amount: '9000000.00', currency: 'NPR' });
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    const steps = await stepRows(requestId);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ kind: 'user', userId: ops.a, roleKey: null });
+    expect((await requestRow(requestId)).facts).toEqual({ routing: 'explicit' });
+  });
+
+  it('refuses a signer who cannot decide approvals, by name, at submit and in the route preview', async () => {
+    const who = await nameOf(ops.sales);
+    const message = `${who} cannot decide approvals; choose someone with approval rights.`;
+    const cases: [string[], string][] = [
+      [[ops.sales], ops.a],
+      [[ops.a], ops.sales],
+    ];
+    for (const [recommenders, approver] of cases) {
+      const { id } = await createTemplateMemo(recommenders, approver);
+      const plan = RoutePlanSchema.parse((await routeOf(id)).body);
+      expect(plan.blocked).toBe(true);
+      expect(plan.blockReason).toBe(message);
+      expect(plan.steps.filter((s) => s.blocked)).toHaveLength(1);
+      const res = await submitMemo(id);
+      expect(res.status).toBe(409);
+      expect(ErrorBodySchema.parse(res.body).error.message).toBe(message);
+      expect((await statusOf(id)).status).toBe('draft');
+      expect(await requestsOf(id)).toHaveLength(0);
+    }
+  });
+
+  it('follows the live role_permissions rows, not a fixed list of roles', async () => {
+    const who = await nameOf(ops.a);
+    const { id } = await createTemplateMemo([], ops.a);
+    expect((await submitMemo(id)).status).toBe(200);
+    // Take the grant away from management for this tenant (rows replace the defaults), then reload the cache.
+    const rows = Object.entries(DEFAULT_ROLE_PERMISSIONS).flatMap(([role, grants]) =>
+      Object.entries(grants).flatMap(([permission, grantScope]) =>
+        role === 'management' && permission === 'approvals.requests.act'
+          ? []
+          : [{ tenantId: scope.tenantId, roleKey: role, permission, scope: grantScope }],
+      ),
+    );
+    const setRows = (values: typeof rows) =>
+      withTx(db, scope, systemActor('test'), async (tx) => {
+        await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, scope.tenantId));
+        if (values.length > 0) await tx.insert(rolePermissions).values(values);
+      });
+    await setRows(rows);
+    roleCache.forget(scope.tenantId, scope.organizationId);
+    try {
+      const second = await createTemplateMemo([], ops.a);
+      const res = await submitMemo(second.id);
+      expect(res.status).toBe(409);
+      expect(ErrorBodySchema.parse(res.body).error.message).toBe(
+        `${who} cannot decide approvals; choose someone with approval rights.`,
+      );
+    } finally {
+      await setRows([]);
+      roleCache.forget(scope.tenantId, scope.organizationId);
+    }
+  });
+
+  it('marks who can approve in the directory, so the pickers can offer only those people', async () => {
+    const directory = MemoDirectorySchema.parse(
+      (await request(baseUrl).get('/v1/test-memos/directory')).body,
+    );
+    const mark = (id: string) => directory.people.find((p) => p.userId === id)?.canApprove;
+    expect([ops.a, ops.b, U.acc, U.fin, U.founder].map(mark)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect([ops.sales, U.salesA, U.salesB].map(mark)).toEqual([false, false, false]);
+  });
+
+  it('lets a named signer reach the inbox and the decide route through the permission check', async () => {
+    // The route guard reads the @Can marker and asks can() with the caller's grants from the real RoleCache.
+    const needed = (handler: 'act' | 'inbox') =>
+      Reflect.getMetadata(CAN_KEY, ApprovalsController.prototype[handler]) as Permission;
+    const mayReach = async (roleKeys: RoleKey[], handler: 'act' | 'inbox') => {
+      const grants = await roleCache.grantsFor(scope.tenantId, scope.organizationId, roleKeys);
+      return can({ ...principalNow(), roles: roleKeys, grants }, needed(handler)).allowed;
+    };
+    expect(needed('act')).toBe('approvals.requests.act');
+    expect(needed('inbox')).toBe('approvals.requests.act');
+    for (const roleKeys of [['management'], ['founder']] as RoleKey[][]) {
+      expect(await mayReach(roleKeys, 'act')).toBe(true);
+      expect(await mayReach(roleKeys, 'inbox')).toBe(true);
+    }
+    expect(await mayReach(['sales'], 'act')).toBe(false);
+
+    const { id } = await createTemplateMemo([ops.a], ops.b);
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    as(ops.a, 'management');
+    expect((await approvals.inbox()).map((i) => i.requestId)).toContain(requestId);
+  });
+
+  it('keeps the attachment rules: unscanned files block submit and clean ones are frozen', async () => {
+    const { id } = await createTemplateMemo([], ops.a);
+    await attach(id, 'quarantined');
+    const blocked = await submitMemo(id);
+    expect(blocked.status).toBe(409);
+    expect(ErrorBodySchema.parse(blocked.body).error.message).toBe('attachments are not all clean');
+
+    const clean = await createTemplateMemo([], ops.a);
+    const file = await attach(clean.id, 'clean');
+    const { requestId } = (await submitMemo(clean.id)).body as { requestId: string };
+    const snapshot = (await requestRow(requestId)).snapshot as {
+      attachments: { documentId: string; versionId: string }[];
+    };
+    expect(snapshot.attachments.map((a) => a.versionId)).toEqual([file.versionId]);
+  });
+
+  it('still reads and routes a legacy memo with an amount and an attachment as before', async () => {
+    const { id } = await createMemo({ amount: '250000.00' });
+    const file = await attach(id, 'clean');
+    const detail = await request(baseUrl).get(`/v1/test-memos/${id}`);
+    expect(detail.body).toMatchObject({ amount: '250000.00', currency: 'NPR', template: null });
+    expect((detail.body as { attachments: { id: string }[] }).attachments.map((a) => a.id)).toEqual(
+      [file.versionId],
+    );
+
+    // The preview and the submit still take the role steps and the management threshold from the amount.
+    const preview = RoutePlanSchema.parse((await routeOf(id)).body);
+    expect(preview.steps.map((s) => s.roleKey)).toEqual(['accountant', 'finance', 'management']);
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    expect((await stepRows(requestId)).map((s) => s.roleKey)).toEqual([
+      'accountant',
+      'finance',
+      'management',
+    ]);
+    const row = await requestRow(requestId);
+    expect(row.facts).toEqual({ amountNpr: '250000.00' });
+    expect((row.snapshot as { attachments: unknown[] }).attachments).toHaveLength(1);
+  });
+
+  it('answers 400 for a legacy memo without money and 404 for a route preview outside scope', async () => {
+    const res = await request(baseUrl).post('/v1/test-memos').send({ title: 'No money', body: '' });
+    expect(res.status).toBe(400);
+    const { id } = await createTemplateMemo([], ops.a);
+    as(U.salesB, 'sales');
+    expect((await routeOf(id)).status).toBe(404);
+  });
+});
+
+describe('GET /v1/test-memos (the Memos list)', () => {
+  const at = (iso: string) => {
+    now = new Date(iso);
+  };
+  /** A staff user of the entity who is not part of any other test, so "own" lists exactly what this test made. */
+  const freshStaff = async () =>
+    (await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId })).userId;
+  const list = (query = '') => request(baseUrl).get(`/v1/test-memos${query}`);
+  const parsed = async (query = '') => {
+    const res = await list(query);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return MemoListSchema.parse(res.body);
+  };
+
+  it('shows a Sales user only their own memos, newest first, with the listing fields', async () => {
+    const mine = await freshStaff();
+    const other = await freshStaff();
+    as(mine, 'sales');
+    at('2026-11-01T04:00:00Z');
+    const first = await createMemo({ title: 'First' });
+    at('2026-11-02T04:00:00Z');
+    const second = await createMemo({ title: 'Second' });
+    as(other, 'sales');
+    await createMemo({ title: 'Someone else' });
+    as(mine, 'sales');
+
+    const page = await parsed();
+    expect(page.items.map((m) => m.id)).toEqual([second.id, first.id]);
+    expect(page.nextCursor).toBeNull();
+    expect(page.items[0]).toMatchObject({
+      title: 'Second',
+      status: 'draft',
+      amount: '50000.00',
+      currency: 'NPR',
+      ownerUserId: mine,
+    });
+    // The list never carries a body or signers: it only finds memos.
+    expect(page.items[0]).not.toHaveProperty('body');
+    expect(page.items[0]).not.toHaveProperty('template');
+  });
+
+  it('shows the whole entity to a role with scope all, in the order the database defines', async () => {
+    as(U.boss, 'founder');
+    const rows = await db
+      .select({ id: testMemos.id })
+      .from(testMemos)
+      .where(eq(testMemos.organizationId, scope.organizationId))
+      .orderBy(sql`created_at DESC, id DESC`)
+      .limit(50);
+    const page = await parsed('?limit=50');
+    expect(page.items.map((m) => m.id)).toEqual(rows.map((r) => r.id));
+    expect(page.items.length).toBeGreaterThan(2);
+  });
+
+  it('never lists another tenant memo, even to a role with scope all', async () => {
+    const foreign = await createTenantWithEntity(appPool);
+    const foreignScope = { tenantId: foreign.tenantId, organizationId: foreign.organizationId };
+    const foreignOwner = await createStaffUser(appPool, {
+      ...foreignScope,
+      idpOrgId: foreign.idpOrgId,
+    });
+    const foreignId = randomUUID();
+    await withTx(db, foreignScope, systemActor('test'), (tx) =>
+      tx.insert(testMemos).values({
+        ...foreignScope,
+        id: foreignId,
+        number: `FOREIGN-${randomUUID()}`,
+        title: 'Foreign tenant memo',
+        body: '',
+        amount: '1.00',
+        currency: 'NPR',
+        amountNpr: '1.00',
+        fxRate: '1',
+        fxSource: 'identity',
+        fxDate: '2026-11-08',
+        status: 'draft',
+        ownerUserId: foreignOwner.userId,
+        version: 1,
+      }),
+    );
+    as(U.boss, 'founder');
+    const ids = (await parsed('?limit=50')).items.map((m) => m.id);
+    expect(ids).not.toContain(foreignId);
+    // And its id does not open either: the list and the record check give the same answer.
+    expect((await request(baseUrl).get(`/v1/test-memos/${foreignId}`)).status).toBe(404);
+  });
+
+  it('limits a department scope to that department and shows nothing without a department', async () => {
+    const dept = await createDepartment(appPool, scope);
+    const otherDept = await createDepartment(appPool, scope);
+    const lead = await freshStaff();
+    const template = (departmentId: string) => ({
+      departmentId,
+      date: '2026-11-10',
+      closing: '',
+      preparedByUserId: lead,
+      recommenderUserIds: [] as string[],
+      approvedByUserId: U.fin,
+    });
+    as(lead, 'sales');
+    const inside = await createMemo({
+      title: 'In my department',
+      template: template(dept.departmentId),
+    });
+    const outside = await createMemo({
+      title: 'Other department',
+      template: template(otherDept.departmentId),
+    });
+
+    current.grants = new Map<Permission, Scope>([['memo.read', 'department']]);
+    current.departmentId = dept.departmentId;
+    const page = await parsed();
+    expect(page.items.map((m) => m.id)).toEqual([inside.id]);
+    expect(page.items[0]?.departmentName).toBeTruthy();
+    expect((await request(baseUrl).get(`/v1/test-memos/${outside.id}`)).status).toBe(404);
+
+    current.departmentId = null;
+    expect((await parsed()).items).toEqual([]);
+  });
+
+  it('shows a portal customer only the memos that name their party, like the record check', async () => {
+    as(U.salesA, 'sales');
+    const forP1 = await createMemo({ title: 'For P1', customerPartyId: p1.partyId });
+    const forP2 = await createMemo({ title: 'For P2', customerPartyId: p2.partyId });
+    const internal = await createMemo({ title: 'Internal' });
+    asCustomer(p1);
+    const ids = (await parsed('?limit=50')).items.map((m) => m.id);
+    expect(ids).toContain(forP1.id);
+    expect(ids).not.toContain(forP2.id);
+    expect(ids).not.toContain(internal.id);
+    // Every row the customer sees names their party: the same rule `get` applies to one id.
+    for (const id of ids) expect((await statusOf(id)).customerPartyId).toBe(p1.partyId);
+  });
+
+  it('answers 403 to a role without memo.read', async () => {
+    current.grants = new Map<Permission, Scope>();
+    expect((await list()).status).toBe(403);
+  });
+
+  it('pages without skipping or repeating, even when memos share a timestamp', async () => {
+    const mine = await freshStaff();
+    as(mine, 'sales');
+    at('2026-11-05T04:00:00Z');
+    const tied = [];
+    for (let i = 0; i < 4; i += 1) tied.push((await createMemo({ title: `Tied ${i}` })).id);
+    at('2026-11-06T04:00:00Z');
+    const newest = (await createMemo({ title: 'Newest' })).id;
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await parsed(`?limit=2${cursor ? `&cursor=${cursor}` : ''}`);
+      seen.push(...page.items.map((m) => m.id));
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor !== null && pages < 10);
+    expect(pages).toBe(3);
+    expect(new Set(seen).size).toBe(5);
+    expect(seen[0]).toBe(newest);
+    expect([...seen.slice(1)].sort()).toEqual([...tied].sort());
+    // Ties break on id descending, the same as the database orders them.
+    expect(seen.slice(1)).toEqual([...tied].sort().reverse());
+  });
+
+  it('filters by status', async () => {
+    const mine = await freshStaff();
+    as(mine, 'sales');
+    await createMemo({ title: 'Stays draft' });
+    expect((await parsed('?status=approved')).items).toEqual([]);
+    expect((await parsed('?status=draft')).items).toHaveLength(1);
+  });
+
+  it('answers 400, not a database error, for a forged cursor, an out-of-range limit or an unknown parameter', async () => {
+    expect((await list('?cursor=not-a-real-cursor')).status).toBe(400);
+    const forged = Buffer.from(JSON.stringify(["1'; DROP TABLE x;--", randomUUID()])).toString(
+      'base64url',
+    );
+    expect((await list(`?cursor=${forged}`)).status).toBe(400);
+    expect((await list('?limit=0')).status).toBe(400);
+    expect((await list('?limit=51')).status).toBe(400);
+    expect((await list('?limit=abc')).status).toBe(400);
+    expect((await list('?ownerUserId=' + U.boss)).status).toBe(400);
+    expect((await list('?status=weird')).status).toBe(400);
   });
 });
