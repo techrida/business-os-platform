@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 
-import { minimalPdf, signInAs, type Signed } from '../helpers/memo-flow';
+import { signInAs, type Signed } from '../helpers/memo-flow';
+import { minimalPdf } from '../helpers/pdf-fixture';
 
 /**
  * The staff Record payment form, against the real stack. Not run by the unit that wrote it: it needs

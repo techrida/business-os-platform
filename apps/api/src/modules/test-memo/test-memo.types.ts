@@ -1,17 +1,20 @@
 // Request and response shapes that only the test memo routes use. The create body and MemoDto live in
 // @bos/contracts (memo.ts); the update body and the GET response are local because the e2e and k6 units are the
-// only other readers and P2 deletes this module with the memo. Serves the NFR "inputs are validated at the edge".
-import { CreateMemoBodySchema, type DocumentVersionDto, type MemoDto } from '@bos/contracts';
+// only other readers. Serves the NFR "inputs are validated at the edge".
+import { MemoBodyFieldsSchema, type DocumentVersionDto, type MemoDto } from '@bos/contracts';
 import { z } from 'zod';
 
-/** PATCH body: any subset of the create fields, at least one, nothing else (a typo is a 400, not a silent no-op). */
+/**
+ * PATCH body: any subset of the create fields, at least one, nothing else (a typo is a 400, not a silent no-op).
+ * `amount` and `currency` are legacy: sending either re-freezes the NPR value, leaving them out keeps what is stored.
+ */
 export const UpdateMemoBodySchema = z
   .strictObject({
-    template: CreateMemoBodySchema.shape.template,
-    title: CreateMemoBodySchema.shape.title.optional(),
-    body: CreateMemoBodySchema.shape.body.optional(),
-    amount: CreateMemoBodySchema.shape.amount.optional(),
-    currency: CreateMemoBodySchema.shape.currency.optional(),
+    template: MemoBodyFieldsSchema.shape.template,
+    title: MemoBodyFieldsSchema.shape.title.optional(),
+    body: MemoBodyFieldsSchema.shape.body.optional(),
+    amount: MemoBodyFieldsSchema.shape.amount,
+    currency: MemoBodyFieldsSchema.shape.currency,
   })
   .refine((b) => Object.values(b).some((v) => v !== undefined), 'at least one field is required');
 export type UpdateMemoBody = z.infer<typeof UpdateMemoBodySchema>;

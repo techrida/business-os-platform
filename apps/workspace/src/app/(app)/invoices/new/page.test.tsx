@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 
-import { ListCustomersQuerySchema } from '../../../../../../api/src/modules/customers/customers.types';
+import { CUSTOMER_LIST_MAX_LIMIT } from '@bos/contracts';
 import { ApiError } from '@/lib/api';
 
 import NewInvoicePage from './page';
@@ -24,10 +24,17 @@ vi.mock('./manual-invoice-form', () => ({
 
 it('loads the manual invoice picker using a query accepted by the real customer API', async () => {
   mocks.listCustomers.mockImplementation((_session, query: { limit: number }) => {
-    // Pass the page's actual request through the API's public query validator. A
-    // permissive list mock previously hid the rejected 200-customer request.
-    const parsed = ListCustomersQuerySchema.safeParse({ limit: String(query.limit) });
-    if (!parsed.success) return Promise.reject(new ApiError(400, 'Invalid customer page size'));
+    // Hold the page's actual request to the API's shared page-size limit (the API schema and
+    // its tests use the same contract constant). A permissive list mock previously hid the
+    // rejected 200-customer request. The workspace must not import API source: the workspace
+    // image installs only its own dependencies and type-checks this file during `next build`.
+    if (
+      !Number.isInteger(query.limit) ||
+      query.limit < 1 ||
+      query.limit > CUSTOMER_LIST_MAX_LIMIT
+    ) {
+      return Promise.reject(new ApiError(400, 'Invalid customer page size'));
+    }
     return Promise.resolve({
       items: [
         {

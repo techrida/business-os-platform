@@ -1,7 +1,7 @@
 // Request and response shapes that only the customers routes use. The bodies and DTOs live in
 // @bos/contracts (crm.ts); the list query, the detail response and the header rule are local. Serves the NFR
 // "inputs are validated at the edge" and "no double effects" (Idempotency-Key on every create).
-import { type CustomerDto, type PartyAccountDto } from '@bos/contracts';
+import { CUSTOMER_LIST_MAX_LIMIT, type CustomerDto, type PartyAccountDto } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 import { z } from 'zod';
 
@@ -15,7 +15,7 @@ const digits = (max: number) =>
 /** GET /v1/customers?q&limit&offset. Query values arrive as strings; a repeated key (an array) is a 400. */
 export const ListCustomersQuerySchema = z.strictObject({
   q: z.string().trim().max(100).optional(),
-  limit: digits(100)
+  limit: digits(CUSTOMER_LIST_MAX_LIMIT)
     .refine((n) => n >= 1, 'must be at least 1')
     .optional(),
   offset: digits(1_000_000).optional(),

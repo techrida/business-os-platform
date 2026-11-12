@@ -1,5 +1,6 @@
-// The throwaway "test memo" document that exercises every kernel service end to end.
-// P2 replaces it with quotations; fields follow app.test_memos in section 4.
+// The internal memo ("test memo") document. P1 used it to exercise every kernel service end to end, with an
+// amount, a currency and attachments; from P2 a template memo is correspondence with no money (see
+// design/memos/DELIVERY.md, "P2 removal"). Fields follow app.test_memos in section 4.
 import { z } from 'zod';
 
 import { CurrencySchema, DecimalString, RateString } from './money.js';
@@ -13,13 +14,16 @@ export const MemoPersonSchema = z.object({
   jobTitle: z.string().nullable(),
   department: z.string().nullable(),
 });
+export type MemoPerson = z.infer<typeof MemoPersonSchema>;
+/** How many "Recommended by" signers a memo can name. The form and the API both read this one number. */
+export const MEMO_MAX_RECOMMENDERS = 20;
 export const MemoTemplateInputSchema = z
   .object({
     departmentId: z.guid(),
     date: z.iso.date(),
     closing: z.string().trim().max(1000),
     preparedByUserId: z.guid(),
-    recommenderUserIds: z.array(z.guid()).max(20),
+    recommenderUserIds: z.array(z.guid()).max(MEMO_MAX_RECOMMENDERS),
     approvedByUserId: z.guid(),
   })
   .superRefine((v, ctx) => {
@@ -39,28 +43,57 @@ export const MemoTemplateSnapshotSchema = z.object({
   approvedBy: MemoPersonSchema,
 });
 export type MemoTemplateSnapshot = z.infer<typeof MemoTemplateSnapshotSchema>;
+/**
+ * A person of the memo directory. `canApprove` says whether their roles hold a live `approvals.requests.act` grant
+ * (the role_permissions rows, as the approval routes check them): only such people can decide a memo, so only they
+ * may be named as a recommender or approver. It is a directory fact, never stored on a memo.
+ */
+export const MemoDirectoryPersonSchema = MemoPersonSchema.extend({ canApprove: z.boolean() });
+export type MemoDirectoryPerson = z.infer<typeof MemoDirectoryPersonSchema>;
 export const MemoDirectorySchema = z.object({
   organizationId: z.guid(),
   organizationName: z.string(),
   currentUserId: z.guid(),
   departmentId: z.guid().nullable(),
   departments: z.array(z.object({ id: z.guid(), name: z.string() })),
-  people: z.array(MemoPersonSchema),
+  people: z.array(MemoDirectoryPersonSchema),
 });
 export type MemoDirectory = z.infer<typeof MemoDirectorySchema>;
 
-export const CreateMemoBodySchema = z.object({
+/**
+ * The memo fields before the legacy money rule below. Kept unrefined so callers can read `.shape` (the PATCH body)
+ * or validate a field subset (the Workspace edit form) without tripping over a refined object.
+ */
+export const MemoBodyFieldsSchema = z.object({
   template: MemoTemplateInputSchema.optional(),
   title: z.string().trim().min(1).max(200),
   body: z.string().max(10_000),
-  /** The table has CHECK (amount >= 0), so a negative amount is refused here with a clear message. */
-  amount: DecimalString.refine((v) => !v.startsWith('-'), 'must not be negative'),
-  currency: CurrencySchema,
+  /**
+   * Legacy P1 test value; internal correspondence has no money. The table has CHECK (amount >= 0), so a negative
+   * amount is refused here with a clear message. Optional only together with `template` (see CreateMemoBodySchema).
+   */
+  amount: DecimalString.refine((v) => !v.startsWith('-'), 'must not be negative').optional(),
+  currency: CurrencySchema.optional(),
   /**
    * The customer party a portal would show this memo to (ADR 0027 §5); omit or null for an internal memo. The
    * database checks that it is a customer party of the tenant (test_memos_customer_party_fk).
    */
   customerPartyId: z.guid().nullable().optional(),
+});
+
+/**
+ * Create body. A template memo is internal correspondence: it carries no amount or currency, and the API stores the
+ * compatibility value NPR 0.00 (the columns are NOT NULL). A memo without a template is the legacy P1 test memo, so
+ * it still has to say how much it is for.
+ */
+export const CreateMemoBodySchema = MemoBodyFieldsSchema.superRefine((v, ctx) => {
+  if (v.template !== undefined) return;
+  if (v.amount === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['amount'], message: 'amount is required' });
+  }
+  if (v.currency === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['currency'], message: 'currency is required' });
+  }
 });
 export type CreateMemoBody = z.infer<typeof CreateMemoBodySchema>;
 
@@ -87,3 +120,47 @@ export const MemoDtoSchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }),
 });
 export type MemoDto = z.infer<typeof MemoDtoSchema>;
+
+/** Rows per page of the memo list: small default, hard ceiling, so a page is always cheap to build. */
+export const MEMO_LIST_DEFAULT_LIMIT = 20;
+export const MEMO_LIST_MAX_LIMIT = 50;
+
+/**
+ * Query of `GET /v1/test-memos`. Rows come newest first, ties broken by id, so a page boundary never skips or
+ * repeats a memo. `cursor` is the opaque `nextCursor` of the previous page; a made-up one is a 400.
+ */
+export const MemoListQuerySchema = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(MEMO_LIST_MAX_LIMIT).default(MEMO_LIST_DEFAULT_LIMIT),
+  cursor: z
+    .string()
+    .min(1)
+    .max(300)
+    .regex(/^[A-Za-z0-9_-]+$/, 'cursor is not valid')
+    .optional(),
+  status: MemoStatusSchema.optional(),
+});
+export type MemoListQuery = z.infer<typeof MemoListQuerySchema>;
+
+/** One row of the memo list: enough to find a memo and open it, never its body or signers. */
+export const MemoListItemSchema = z.object({
+  id: z.guid(),
+  number: z.string(),
+  title: z.string(),
+  status: MemoStatusSchema,
+  amount: DecimalString,
+  currency: CurrencySchema,
+  ownerUserId: z.guid(),
+  /** Display name of the creator; null when the directory has none. */
+  ownerName: z.string().nullable(),
+  departmentName: z.string().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+});
+export type MemoListItem = z.infer<typeof MemoListItemSchema>;
+
+export const MemoListSchema = z.object({
+  items: z.array(MemoListItemSchema),
+  /** Pass as `cursor` for the next page; null on the last page. */
+  nextCursor: z.string().nullable(),
+});
+export type MemoList = z.infer<typeof MemoListSchema>;

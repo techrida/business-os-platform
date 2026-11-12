@@ -111,6 +111,48 @@ export interface SubmitInput {
   sodUserIds: string[];
   /** Proposed printed signers, checked against the authoritative plan inside the submit transaction. */
   proposedApproverIds?: string[];
+  /**
+   * Optional: route the document through exactly these named people, in order, instead of the published
+   * workflow's role steps and amount rules. Used by internal correspondence, where the author names every
+   * signer and no financial threshold applies. The published definition and version are still recorded on
+   * the request (its SLA and distinctApprovers apply); only the steps are replaced. The plan still runs
+   * through the router, so separation of duties and blocked handling are the engine's. A blocked plan is
+   * refused with 409 rather than stored, because a named person who cannot sign is a mistake to fix, not a
+   * route for an administrator to repair.
+   */
+  explicitSteps?: ExplicitRouteStep[];
+}
+
+/** One named signer of an explicit route. `reason` is shown to the approver and kept in the audit trail. */
+export interface ExplicitRouteStep {
+  userId: string;
+  reason: string;
+}
+
+/**
+ * Marker stored in `approval_requests.facts` of an explicit-route request (jsonb, no migration). Decision time
+ * (act, inbox, reroute) rebuilds the spec from the stored user steps when it is present, so it must never be
+ * set on a request whose stored steps are not all user steps. Requests submitted before it existed lack it
+ * and keep routing from the frozen workflow spec exactly as before.
+ */
+export const EXPLICIT_ROUTE_FACT = 'routing';
+export const EXPLICIT_ROUTE_VALUE = 'explicit';
+
+/** The published spec with its steps replaced by named people and its amount rules dropped. */
+export function explicitSpecOf(
+  published: WorkflowSpec,
+  steps: readonly ExplicitRouteStep[],
+): WorkflowSpec {
+  return {
+    ...published,
+    steps: steps.map((s, i) => ({
+      id: `selected-${i + 1}`,
+      kind: 'user' as const,
+      user: s.userId,
+      reason: s.reason,
+    })),
+    rules: [],
+  };
 }
 
 type Q = Db | DbTransaction;
@@ -168,8 +210,11 @@ export class ApprovalsService {
     documentType: string,
     facts: Record<string, unknown>,
     sodUserIds: string[],
+    explicitSteps?: readonly ExplicitRouteStep[],
   ): Promise<RoutePlan> {
-    const { spec } = await this.publishedSpec(this.db, scope, documentType);
+    const published = await this.publishedSpec(this.db, scope, documentType);
+    const spec =
+      explicitSteps === undefined ? published.spec : explicitSpecOf(published.spec, explicitSteps);
     const data = await this.loadDirectory(this.db, scope, spec);
     const plan = this.plan(spec, facts, data, sodUserIds);
     // Who can approve is the approvers' business: a requester (read only) sees the steps and whether
@@ -187,9 +232,25 @@ export class ApprovalsService {
     }
     const scope = await scopeOf(tx);
     const now = this.clock();
-    const { definitionId, versionId, spec } = await this.publishedSpec(tx, scope, i.documentType);
+    const published = await this.publishedSpec(tx, scope, i.documentType);
+    const { definitionId, versionId } = published;
+    const spec =
+      i.explicitSteps === undefined
+        ? published.spec
+        : explicitSpecOf(published.spec, i.explicitSteps);
+    // What is stored on the request: for an explicit route, the marker decision time keys on.
+    const facts =
+      i.explicitSteps === undefined
+        ? i.facts
+        : { ...i.facts, [EXPLICIT_ROUTE_FACT]: EXPLICIT_ROUTE_VALUE };
     const data = await this.loadDirectory(tx, scope, spec);
-    const plan = this.plan(spec, i.facts, data, i.sodUserIds);
+    const plan = this.plan(spec, facts, data, i.sodUserIds);
+    if (i.explicitSteps !== undefined && plan.blocked) {
+      const seq = plan.steps.find((s) => s.blocked)?.seq;
+      throw new ConflictException(
+        `${seq === undefined ? 'A selected signer' : `Selected signer ${seq}`} cannot approve this document: they prepared or edited it, or are no longer active. Choose different people and submit again.`,
+      );
+    }
     for (const s of plan.steps) {
       if (s.kind === 'group' && s.groupId === undefined) {
         throw new ConflictException('The workflow names an approval group that does not exist');
@@ -222,7 +283,7 @@ export class ApprovalsService {
           title: i.title,
           snapshot: i.snapshot,
           snapshotSha256: canonicalSha256(i.snapshot),
-          facts: i.facts,
+          facts,
           requesterUserId: i.requesterUserId,
           sodUserIds: [...new Set(i.sodUserIds)],
           status,
@@ -346,7 +407,12 @@ export class ApprovalsService {
       const steps = await this.stepsOf(tx, requestId);
       const current = steps.find((s) => s.seq === request.currentSeq);
       if (current === undefined) throw new ConflictException('The request has no current step');
-      const spec = await this.frozenSpec(tx, request.workflowVersionId);
+      // An explicit-route request is routed by its stored user steps, not by the published role steps.
+      const spec = routingSpecOf(
+        request.facts,
+        await this.frozenSpec(tx, request.workflowVersionId),
+        steps,
+      );
       const data = await this.loadDirectory(tx, scope, spec);
       if (
         !can(principal, 'approvals.requests.act').allowed &&
@@ -714,13 +780,21 @@ export class ApprovalsService {
       }
     }
 
+    // Explicit-route requests name their approvers on the step rows, not in the frozen spec, so the active
+    // check needs those users too (one load per version, for every listed request).
+    const stepUserIds = rows.flatMap(({ step }) =>
+      step.kind === 'user' && step.userId !== null ? [step.userId] : [],
+    );
     const specs = new Map<string, { spec: WorkflowSpec; data: DirectoryData }>();
     const items: InboxItemDto[] = [];
     for (const { request, step } of rows) {
       let entry = specs.get(request.workflowVersionId);
       if (entry === undefined) {
         const spec = await this.frozenSpec(this.db, request.workflowVersionId);
-        entry = { spec, data: await this.loadDirectory(this.db, scope, spec) };
+        entry = {
+          spec,
+          data: await this.loadDirectory(this.db, scope, spec, stepUserIds),
+        };
         specs.set(request.workflowVersionId, entry);
       }
       if (
@@ -983,9 +1057,13 @@ export class ApprovalsService {
           `The request is ${request.status}; only open requests can be rerouted`,
         );
       }
-      const spec = await this.frozenSpec(tx, request.workflowVersionId);
-      const data = await this.loadDirectory(tx, scope, spec);
       const steps = await this.stepsOf(tx, requestId);
+      const spec = routingSpecOf(
+        request.facts,
+        await this.frozenSpec(tx, request.workflowVersionId),
+        steps,
+      );
+      const data = await this.loadDirectory(tx, scope, spec);
       // The decisions so far go into routing: under distinctApprovers whoever decided an earlier step
       // cannot decide a later one, so a later step with only them left is blocked, not pending forever.
       const plan = this.plan(
@@ -1098,7 +1176,13 @@ export class ApprovalsService {
   }
 
   /** Loads the people the spec can route to: role holders, group members and delegations. */
-  async loadDirectory(q: Q, scope: TxScope, spec: WorkflowSpec): Promise<DirectoryData> {
+  async loadDirectory(
+    q: Q,
+    scope: TxScope,
+    spec: WorkflowSpec,
+    /** Users named by stored steps rather than by `spec` (an explicit route read through the frozen spec). */
+    extraUserIds: readonly string[] = [],
+  ): Promise<DirectoryData> {
     const all = [...spec.steps, ...spec.rules.map((r) => r.add)];
     const roles = [
       ...new Set(
@@ -1196,12 +1280,21 @@ export class ApprovalsService {
       ...new Set([
         ...all.flatMap((s) => (s.kind === 'user' && s.user !== undefined ? [s.user] : [])),
         ...departmentHeads.values(),
+        ...extraUserIds,
       ]),
     ];
-    const activeUserIds = new Set(
-      named.length === 0 ? [] : await this.activeUserIds(q, scope, named),
-    );
-    return { roleMembers, groups, delegations: delegationRows, activeUserIds, departmentHeads };
+    // No named user: leave the set out (undefined). An empty set would mean "nobody is active", which would
+    // silently block a user step the caller did not list (the SLA tick reads an explicit route through the
+    // frozen spec, which names no one); the router only consults the set for user and department-head steps.
+    const activeUserIds =
+      named.length === 0 ? undefined : new Set(await this.activeUserIds(q, scope, named));
+    return {
+      roleMembers,
+      groups,
+      delegations: delegationRows,
+      ...(activeUserIds === undefined ? {} : { activeUserIds }),
+      departmentHeads,
+    };
   }
 
   /** The ids among `ids` of active staff users of this tenant with a membership in the entity. */
@@ -1528,6 +1621,28 @@ function retarget(
   const userId = planned.userId ?? null;
   const roleKey = planned.roleKey ?? null;
   return row.userId === userId && row.roleKey === roleKey ? {} : { userId, roleKey };
+}
+
+/**
+ * The spec an open request routes by. An explicit-route request (marked in its facts, and made only of user
+ * steps) is rebuilt from its stored step rows; every other request, including all submitted before the marker
+ * existed, routes by the frozen workflow spec unchanged.
+ */
+function routingSpecOf(
+  facts: unknown,
+  frozen: WorkflowSpec,
+  steps: readonly StepRow[],
+): WorkflowSpec {
+  const marked =
+    facts !== null &&
+    typeof facts === 'object' &&
+    (facts as Record<string, unknown>)[EXPLICIT_ROUTE_FACT] === EXPLICIT_ROUTE_VALUE;
+  const allNamed = steps.length > 0 && steps.every((s) => s.kind === 'user' && s.userId !== null);
+  if (!marked || !allNamed) return frozen;
+  return explicitSpecOf(
+    frozen,
+    steps.map((s) => ({ userId: s.userId!, reason: s.reason })),
+  );
 }
 
 /** Rebuilds the routing view of a stored step (group id back to its key) for the directory. */

@@ -18,13 +18,13 @@ export default async function NewMemoPage() {
       <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: 'New memo' }]} />
       <PageHeader
         title="New memo"
-        description="Save it as a draft first. You can attach files and see the approval route before you submit."
+        description="Save it as a draft first. You can see who will be asked to approve it before you submit."
       />
       <Panel title="Memo details">
         <MemoForm
           directory={directory}
           action={createMemoAction}
-          initial={{ title: '', body: '', amount: '', currency: 'NPR' }}
+          initial={{ title: '', body: '' }}
           submitLabel="Save draft"
           cancelHref="/memos"
         />

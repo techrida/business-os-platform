@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-import { minimalPdf, signInAs, type Signed } from '../helpers/memo-flow';
+import { signInAs, type Signed } from '../helpers/memo-flow';
+import { minimalPdf } from '../helpers/pdf-fixture';
 
 /**
  * The P3 payments screens (list and detail), against the real stack. Not run by the unit that wrote
@@ -33,7 +34,7 @@ test('the payments list loads and its status filter keeps the choice', async ({
         finance.page
           .getByRole('region', { name: /Payments/ })
           .or(finance.page.getByText('No payments yet.'))
-          .or(finance.page.getByRole('alert')),
+          .or(finance.page.getByRole('alert').filter({ hasText: /\S/ })),
       ).toBeVisible();
     });
 
