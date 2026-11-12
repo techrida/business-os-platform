@@ -69,3 +69,60 @@ Passed: quiet load does not animate; arrival changes the accessible name and swi
 Found and fixed during testing: option C's X was painted under the drawer because the header formed its own stacking layer.
 
 Not verified: feel on a real phone, screen readers, and the live application. Application code is unchanged; these are proposals until Kuu picks a hamburger option.
+
+## Revision 3 (Claude Opus 5.5, 2026-11-12): bell measured from the reference; hamburger A plus B
+
+This supersedes the revision 2 bell values and the three hamburger options. Kuu said the revision 2 bell did not match the reference. Kuu chose the squeeze (B) together with pull-through (A), and asked for an Emil refinement pass.
+
+### How the bell was measured
+
+The 60 fps source (2160×1440, 6.5 s) was downloaded with yt-dlp, the bell region was cropped, and every frame was analysed (numpy/scipy, scratch only):
+- **Bell:** the resting bell is a template. In each frame it was fitted for rotation and translation, masking the badge and its cut-out ring. A least-squares solve over the fitted translations puts the pivot 3 px below the top of an 84 px tall bell, which is (12, 2.5) in the 24-unit icon. The motion is pure rotation (translation stays under 1 px apart from what the rotation causes).
+- **Clapper:** tracked as its own blob, then converted to an angle about the same pivot.
+- **Badge:** size from its filled area, opacity from its colour strength.
+
+| Part | Model | Fitted values | Fit error |
+| --- | --- | --- | --- |
+| Bell | Damped spring kicked from rest: θ(t) = A·e^(−ζω₀t)·sin(ω_d t) | ζ 0.1279, ω₀ 15.486 rad/s (stiffness 239.8, damping 3.96, mass 1), kick 212 °/s, A 13.8° | RMS 0.37° |
+| Clapper | Same pivot, φ(t) = 1.257·θ(t − 49.7 ms) | gain 1.257, lag 49.7 ms | RMS 0.40° |
+| Badge scale | Spring from scale 0 | ζ 0.492, ω₀ 16.85 (stiffness 283.8, damping 16.56), v₀ 8.33/s; peak 1.198 at 176 ms, dip 0.963, settles about 0.75 s | RMS 0.006 |
+| Badge opacity | Linear | 0 → 1 over 173 ms | |
+| Sequence | Bell kicked 215 ms after the badge starts | | |
+
+Measured bell peaks: +11.6°, −7.8°, +5.1°, −3.7°, +2.3°, −1.5° at about 205 ms intervals, with visible motion ending about 1.6 s after the kick. Positive means clockwise (the bottom swings away from the badge).
+
+The preview samples these closed-form springs at 60 fps into Web Animations API keyframes. Recorded in Chromium against the video frames, aligned at the start of the badge: bell RMS 0.40° (worst 1.9°, at the instant of the kick), clapper RMS 0.43°, badge peak 1.197 at 180 ms, dip 0.967. A new kick, such as a second notification or a click while ringing, adds the measured impulse to the current motion, capped at the reference's 13.8° envelope, so there is never a snap. Clicking with a pointer gives the same kick; keyboard and assistive-technology activation (`click.detail === 0`) give none. Reduced motion: no swing; the badge fades.
+
+Deliberate departures from Emil's rules, at Kuu's request to mirror the reference: the ring runs about 1.8 s (the rule is under 300 ms), and the badge grows from scale 0 (the rule is never from 0).
+
+### Hamburger: squeeze plus pull-through
+
+Pressing gathers the bars (top down 4 units, middle to 75% width, bottom up 4 units, 90 ms). Release springs them apart (CSS `linear()` spring, damping 0.45, 420 ms, middle bar 30 ms later). At the same time, outer wrappers pull each bar 10 px right and fade it (200 ms, 35 ms stagger) as the drawer opens. Closing reverses. Keyboard activation skips the squeeze.
+
+### Emil review applied (Opus reviewer: review-animations, make-interfaces-feel-better, animate)
+
+1. **The drawer covered the hamburger** about 17 ms into opening, so the spring and the pull-through were never visible in the phone frame. Fix: the drawer and scrim now start below the 56 px header. **This is a proposed layout change for the real app**, where the drawer covers the full height today.
+2. A badge arriving in the middle of a spring snapped from 1.2 to 1.0, and an arrival during the read-exit restarted from 0. Fix: retarget from the current scale, velocity and opacity.
+3. Swing and clapper moved from SVG `<g>` transforms to stacked HTML wrappers (`transform-origin: 50% 10.4167%`), so the browser can run them off the main thread during hydration or polling.
+4. The scrim uses the drawer's curve and timing (enter 260 ms, exit 200 ms).
+5. Exits are shorter than entries: drawer 200 ms out / 260 ms in, notification panel 120 ms out / 160 ms in.
+6. The drawer's X appears with scale .25 → 1, blur 4px → 0 and a fade (220 ms, 60 ms delay), with no rotation.
+7. Keyboard detection uses `event.detail` instead of a global pointer flag.
+8. The badge exit holds its final frame (`fill: forwards`).
+9. The hamburger drops the .97 press scale; the squeeze is its press feedback.
+10. Squeeze distance raised from 3 to 4 units so the release overshoot can be seen.
+11. Panel row hover is gated to fine pointers.
+
+### Verified, revision 3 (headless Chromium, Playwright 1.65, file opened directly)
+
+All revision 2 behaviour checks pass again, with timings updated for the longer ring. New checks:
+- The press adds the squeeze; opening pulls out the bars and moves focus to the close X.
+- Escape brings the bars back and returns focus.
+- Keyboard Enter gives no squeeze.
+- Nine rapid taps leave a consistent state.
+- In a 3-notification burst the badge changes smoothly (largest per-frame change 0.177, which is the normal pop growth).
+- An arrival during the read-exit continues from scale 0.709.
+- A mid-open screenshot shows the staggered bars above the drawer.
+- No console errors.
+
+Not verified: feel on a real phone (including iOS `:active` on touch), a performance trace under load, and screen readers. Application code is unchanged.
