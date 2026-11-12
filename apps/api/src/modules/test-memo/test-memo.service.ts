@@ -1,18 +1,25 @@
-// TestMemoService: the first document type that flows through the whole kernel. Serves the NFRs:
+// TestMemoService: the internal memo, the first document type that flowed through the whole kernel. Serves the NFRs:
 // - "no gaps in a numbered series": the number is taken inside the memo's own transaction, so a failed
 //   create hands the number back;
-// - "amounts are exact and traceable": the NPR value is frozen on the row with its rate, source and date,
-//   and re-frozen when the amount or currency is edited, because approval routing compares amountNpr;
 // - "separation of duties": everyone who touched the memo (owner, editors, uploaders of its attachments and
 //   the submitter) goes to the approval request, which refuses their approval;
-// - "what was approved is what was seen": the attachments are frozen into the hashed snapshot at submit, and
-//   the owner policy refuses new uploads until the memo is editable again;
+// - "what was approved is what was seen": the attachments (normally none) are frozen into the hashed snapshot
+//   at submit, and the owner policy refuses new uploads until the memo is editable again;
 // - "no double decisions": submit and update lock the memo row (FOR UPDATE), so a second click waits and then
 //   sees the new status.
-// P2 replaces this with quotations and deletes the module; the audit rows stay.
+// Two kinds of memo share the table:
+// - a TEMPLATE memo (row.template is set) is internal correspondence. It carries no money: the amount columns hold
+//   the compatibility value NPR 0.00 and nothing routes on them. Its approval route is exactly the people the author
+//   named (each recommender in order, then the approver), planned by the engine so separation of duties applies;
+// - a legacy memo (no template) is the P1 test memo. It still has an amount, an FX-frozen NPR value and the
+//   workflow's role steps with amount thresholds, so historical records read and route as they did.
+// From P2 the Workspace creates only template memos. The module stays: its audit rows and old memos are history.
 import {
   type CreateMemoBody,
   type MemoDirectory,
+  type MemoPerson,
+  ROLE_KEYS,
+  type RoleKey,
   type MemoList,
   type MemoListQuery,
   type MemoTemplateSnapshot,
@@ -20,6 +27,7 @@ import {
   type MemoDto,
   type Money,
   type Permission,
+  type RoutePlan,
 } from '@bos/contracts';
 import {
   approvalRequests,
@@ -31,6 +39,7 @@ import {
   parties,
   scoped,
   testMemos,
+  userRoles,
 } from '@bos/db';
 import { Dec } from '@bos/locale';
 import {
@@ -44,12 +53,17 @@ import {
   Optional,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
-import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
+import {
+  ApprovalsService,
+  type ExplicitRouteStep,
+  type SubmitInput,
+} from '../approvals/requests.service';
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
@@ -76,6 +90,13 @@ const MEMO_SERIES = 'MEMO';
 const EDITABLE: readonly MemoRow['status'][] = ['draft', 'returned'];
 
 const iso = (d: Date): string => d.toISOString();
+
+/**
+ * What the NOT NULL money columns hold for a memo that carries no money (internal correspondence): NPR 0.00 at
+ * the identity rate, taken through MoneyService like any other amount. Nothing routes on it or shows it as a
+ * figure; it exists only so the table's constraints stay satisfied without a migration.
+ */
+const NO_MONEY: Money = { amount: '0.00', currency: 'NPR' };
 
 interface ListCursor {
   createdAt: string;
@@ -142,6 +163,20 @@ function frozenAttachments(versions: DocumentVersionDto[]): FrozenAttachment[] |
     }));
 }
 
+/**
+ * The approval route of a template memo: each recommender in the order the author listed them, then the approver.
+ * One function for submit and for the route preview, so what the author sees before submitting is what submit builds.
+ */
+export function explicitRouteOf(template: MemoTemplateSnapshot): ExplicitRouteStep[] {
+  return [
+    ...template.recommenders.map((p, i) => ({
+      userId: p.userId,
+      reason: `Selected recommender ${i + 1}`,
+    })),
+    { userId: template.approvedBy.userId, reason: 'Selected approver' },
+  ];
+}
+
 export function toMemoDto(row: MemoRow): MemoDto {
   return {
     template: row.template,
@@ -189,6 +224,7 @@ export class TestMemoService implements OnModuleInit {
     private readonly documents: DocumentsService,
     private readonly approvals: ApprovalsService,
     private readonly authz: AuthzService,
+    private readonly roleCache: RoleCache,
     private readonly caller: TestMemoCaller,
     @Inject(APPROVALS_CLOCK) private readonly clock: Clock,
     // Optional: a missing notify module only slows delivery (the 5 s drain still sends), it never fails a submit.
@@ -262,25 +298,63 @@ export class TestMemoService implements OnModuleInit {
           eq(idpOrgs.kind, 'staff'),
         ),
       );
+    const named = people.filter((p) => p.name?.trim());
+    const approvers = await this.approverIds(
+      scope,
+      named.map((p) => p.userId),
+    );
     return {
       organizationId: entity.id,
       organizationName: entity.legalName,
       currentUserId: principal.userId,
       departmentId: principal.departmentId,
       departments: depts,
-      people: people.flatMap((p) =>
-        p.name?.trim()
-          ? [
-              {
-                userId: p.userId,
-                name: p.name,
-                jobTitle: p.jobTitle,
-                department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
-              },
-            ]
-          : [],
-      ),
+      people: named.map((p) => ({
+        userId: p.userId,
+        name: p.name as string,
+        jobTitle: p.jobTitle,
+        department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
+        canApprove: approvers.has(p.userId),
+      })),
     };
+  }
+
+  /**
+   * The users among `ids` who may decide approvals right now: their roles in this entity (the user_roles mirror,
+   * narrowed by the membership's role_keys exactly as the tenancy interceptor narrows a token's roles) hold an
+   * `approvals.requests.act` grant in the live role_permissions rows (RoleCache). That is the check the decide
+   * route's @Can runs, so a person named here can actually reach the decision.
+   */
+  private async approverIds(scope: TxScope, ids: readonly string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const rows = await this.db
+      .select({
+        userId: userRoles.userId,
+        roleKey: userRoles.roleKey,
+        allowed: userEntities.roleKeys,
+      })
+      .from(userRoles)
+      .innerJoin(
+        userEntities,
+        and(
+          eq(userEntities.tenantId, userRoles.tenantId),
+          eq(userEntities.userId, userRoles.userId),
+          eq(userEntities.organizationId, scope.organizationId),
+        ),
+      )
+      .where(and(eq(userRoles.tenantId, scope.tenantId), inArray(userRoles.userId, [...ids])));
+    const rolesOf = new Map<string, RoleKey[]>();
+    for (const r of rows) {
+      if (r.allowed !== null && !r.allowed.includes(r.roleKey)) continue;
+      if (!(ROLE_KEYS as readonly string[]).includes(r.roleKey)) continue;
+      rolesOf.set(r.userId, [...(rolesOf.get(r.userId) ?? []), r.roleKey as RoleKey]);
+    }
+    const out = new Set<string>();
+    for (const [userId, roles] of rolesOf) {
+      const grants = await this.roleCache.grantsFor(scope.tenantId, scope.organizationId, roles);
+      if (grants.has('approvals.requests.act')) out.add(userId);
+    }
+    return out;
   }
 
   private async templateSnapshot(
@@ -292,11 +366,12 @@ export class TestMemoService implements OnModuleInit {
       throw new ForbiddenException('Prepared by must be the signed-in staff member');
     const department = directory.departments.find((d) => d.id === input.departmentId);
     if (!department) throw new BadRequestException('Choose a department in the active company');
-    const person = (id: string) => {
+    // Only the printed fields go into the snapshot: `canApprove` is a live directory fact, not part of the memo.
+    const person = (id: string): MemoPerson => {
       const p = directory.people.find((p) => p.userId === id);
       if (!p)
         throw new BadRequestException('Selected staff member is unavailable in the active company');
-      return p;
+      return { userId: p.userId, name: p.name, jobTitle: p.jobTitle, department: p.department };
     };
     return {
       organizationId: directory.organizationId,
@@ -315,6 +390,13 @@ export class TestMemoService implements OnModuleInit {
 
   async create(body: CreateMemoBody): Promise<MemoDto> {
     const { scope, actor, principal } = this.caller.current();
+    // The contract already refuses this at the edge; repeated here so a direct service call cannot store a
+    // legacy memo with an invented amount.
+    if (body.template === undefined && (body.amount === undefined || body.currency === undefined)) {
+      throw new BadRequestException(
+        'amount and currency are required for a memo without a template',
+      );
+    }
     const template = body.template ? await this.templateSnapshot(body.template) : undefined;
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
@@ -339,12 +421,13 @@ export class TestMemoService implements OnModuleInit {
         }
       }
       const number = await this.numbering.next(tx, MEMO_SERIES, now);
-      const snap = await this.money.toNprSnapshot(
-        tx,
-        scope,
-        { amount: body.amount, currency: body.currency },
-        now,
-      );
+      // A template memo may omit the money (the contract allows it only then): store NPR 0.00. A legacy memo
+      // always sends both; the contract refuses it otherwise.
+      const money: Money = {
+        amount: body.amount ?? NO_MONEY.amount,
+        currency: body.currency ?? NO_MONEY.currency,
+      };
+      const snap = await this.money.toNprSnapshot(tx, scope, money, now);
       const [row] = await tx
         .insert(testMemos)
         .values(
@@ -353,8 +436,8 @@ export class TestMemoService implements OnModuleInit {
             number,
             title: body.title,
             body: body.body,
-            amount: body.amount,
-            currency: body.currency,
+            amount: money.amount,
+            currency: money.currency,
             amountNpr: snap.amountNpr,
             fxRate: snap.rate,
             fxSource: snap.rateSource,
@@ -517,23 +600,71 @@ export class TestMemoService implements OnModuleInit {
       const attachments = frozenAttachments(versions);
       if (attachments === undefined) throw notAllClean();
 
-      // Route on the rate of the submit day, not the draft day: a draft kept for a week must not dodge the
-      // management step because the rate moved. Inside the lock, so the stored value is the one routed on.
+      const base = {
+        documentType: MEMO_OWNER_TYPE,
+        documentId: row.id,
+        documentNumber: row.number,
+        title: row.title,
+        requesterUserId: row.ownerUserId,
+        sodUserIds: this.sodUserIds(row, principal.userId, versions),
+        // The actor of the submit action; the engine records it apart from the requester.
+        submittedByUserId: principal.userId,
+      } satisfies Partial<SubmitInput>;
+
+      if (row.template) {
+        // Internal correspondence: no money, no thresholds. The route is the people the author named.
+        const directory = await this.directory();
+        const selected = [...row.template.recommenders, row.template.approvedBy];
+        if (selected.some((p) => !directory.people.some((active) => active.userId === p.userId))) {
+          throw new ConflictException('A selected approver is no longer active in this company');
+        }
+        // A signer who cannot decide approvals could never act on the step: refuse by name rather than
+        // strand the memo (and no role grant is widened to make it work).
+        const lacking = selected.find(
+          (p) => directory.people.find((d) => d.userId === p.userId)?.canApprove !== true,
+        );
+        if (lacking) {
+          throw new ConflictException(
+            `${lacking.name} cannot decide approvals; choose someone with approval rights.`,
+          );
+        }
+        const submitted = await this.approvals.submit(tx, {
+          ...base,
+          // Plain strings only: the engine hashes this snapshot, so it must not hold Dates or row internals.
+          // No amount, currency or FX fields: a template memo has no money to freeze or to show approvers.
+          snapshot: {
+            template: row.template,
+            number: row.number,
+            title: row.title,
+            body: row.body,
+            ownerUserId: row.ownerUserId,
+            customerPartyId: row.customerPartyId,
+            memoVersion: row.version,
+            attachments,
+          },
+          facts: {},
+          explicitSteps: explicitRouteOf(row.template),
+        });
+        await tx
+          .update(testMemos)
+          .set({ status: 'submitted', version: row.version + 1, updatedAt: now })
+          .where(scoped(scope).where(testMemos, eq(testMemos.id, id)));
+        return submitted;
+      }
+
+      // Legacy P1 memo: route on the rate of the submit day, not the draft day: a draft kept for a week must
+      // not dodge the management step because the rate moved. Inside the lock, so the stored value is the one
+      // routed on.
       const snap = await this.money.toNprSnapshot(
         tx,
         scope,
         { amount: row.amount, currency: row.currency as Money['currency'] },
         now,
       );
-
-      const input: SubmitInput & { submittedByUserId: string } = {
-        documentType: MEMO_OWNER_TYPE,
-        documentId: row.id,
-        documentNumber: row.number,
-        title: row.title,
-        // Plain strings only: the engine hashes this snapshot, so it must not hold Dates or row internals.
+      const submitted = await this.approvals.submit(tx, {
+        ...base,
         snapshot: {
-          template: row.template ?? null,
+          template: null,
           number: row.number,
           title: row.title,
           body: row.body,
@@ -550,30 +681,7 @@ export class TestMemoService implements OnModuleInit {
         },
         // The router compares this decimal string with decimal.js (never a float).
         facts: { amountNpr: snap.amountNpr },
-        requesterUserId: row.ownerUserId,
-        // Whoever shaped what the approvers see: the owner, every editor, everyone who uploaded a version
-        // (even a rejected one), and the person pressing submit (a founder may submit a colleague's memo).
-        sodUserIds: [
-          ...new Set([
-            row.ownerUserId,
-            ...row.editorUserIds,
-            principal.userId,
-            ...versions.flatMap((v) => (v.uploadedBy === null ? [] : [v.uploadedBy])),
-          ]),
-        ],
-        // The actor of the submit action. Declared as an extra field so this compiles before the approvals
-        // engine reads it; until then the engine records the requester as the submitter.
-        submittedByUserId: principal.userId,
-      };
-      if (row.template) {
-        const directory = await this.directory();
-        const selected = [...row.template.recommenders, row.template.approvedBy];
-        if (selected.some((p) => !directory.people.some((active) => active.userId === p.userId))) {
-          throw new ConflictException('A selected approver is no longer active in this company');
-        }
-        input.proposedApproverIds = selected.map((p) => p.userId);
-      }
-      const submitted = await this.approvals.submit(tx, input);
+      });
       await tx
         .update(testMemos)
         .set({
@@ -591,6 +699,86 @@ export class TestMemoService implements OnModuleInit {
     // After COMMIT, never inside: the drainer runs on its own connection and would find no outbox row yet.
     await this.notify?.nudge();
     return result;
+  }
+
+  // ------------------------------------------------------------------------------------------ route preview
+
+  /**
+   * The route submit would build now, without writing anything (the memo page's "Approval route" panel). Built
+   * from the same people and the same separation-of-duties list as submit, so the two agree: for a template memo
+   * the selected signers in order, for a legacy memo the workflow's role steps on the stored NPR value. Needs the
+   * same permission as submit. A requester who may not approve sees the steps but not the eligible people.
+   */
+  async routePreview(id: string): Promise<RoutePlan> {
+    const { scope, principal } = this.caller.current();
+    const row = await this.find(this.db, scope, id);
+    if (row === undefined) throw memoNotFound();
+    this.assertVisible('memo.update', row);
+    const versions = await this.documents.listForOwner(scope, MEMO_OWNER_TYPE, id);
+    const sod = this.sodUserIds(row, principal.userId, versions);
+    if (row.template) {
+      const plan = await this.approvals.preview(
+        scope,
+        MEMO_OWNER_TYPE,
+        {},
+        sod,
+        explicitRouteOf(row.template),
+      );
+      return this.explainTemplatePlan(scope, row.template, plan);
+    }
+    return this.approvals.preview(scope, MEMO_OWNER_TYPE, { amountNpr: row.amountNpr }, sod);
+  }
+
+  /**
+   * The engine's plan for a template memo, plus the one thing it cannot know: whether each signer holds the
+   * approval permission. A signer without it is shown as a blocked step (submit would refuse the same memo), and the
+   * block reason names the person instead of an id.
+   */
+  private async explainTemplatePlan(
+    scope: TxScope,
+    template: MemoTemplateSnapshot,
+    plan: RoutePlan,
+  ): Promise<RoutePlan> {
+    const people = [...template.recommenders, template.approvedBy];
+    const approvers = await this.approverIds(
+      scope,
+      people.map((p) => p.userId),
+    );
+    const steps = plan.steps.map((s, i) => {
+      const person = people[i];
+      return person !== undefined && !approvers.has(person.userId)
+        ? { ...s, blocked: true, eligibleUserIds: [] }
+        : s;
+    });
+    const first = steps.findIndex((s) => s.blocked);
+    const who = first === -1 ? undefined : people[first];
+    if (who === undefined) return { ...plan, steps };
+    return {
+      steps,
+      blocked: true,
+      blockReason: !approvers.has(who.userId)
+        ? `${who.name} cannot decide approvals; choose someone with approval rights.`
+        : `${who.name} prepared or edited this memo, or is no longer active, so cannot approve it; choose someone else.`,
+    };
+  }
+
+  /**
+   * Whoever shaped what the approvers see: the owner, every editor, everyone who uploaded a version (even a
+   * rejected one), and the person pressing submit (a founder may submit a colleague's memo).
+   */
+  private sodUserIds(
+    row: MemoRow,
+    actingUserId: string,
+    versions: readonly DocumentVersionDto[],
+  ): string[] {
+    return [
+      ...new Set([
+        row.ownerUserId,
+        ...row.editorUserIds,
+        actingUserId,
+        ...versions.flatMap((v) => (v.uploadedBy === null ? [] : [v.uploadedBy])),
+      ]),
+    ];
   }
 
   // -------------------------------------------------------------------------------------------- onDecided

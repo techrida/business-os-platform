@@ -7,6 +7,7 @@ import {
   MemoListQuerySchema,
   type MemoDto,
   type MemoList,
+  type RoutePlan,
 } from '@bos/contracts';
 import {
   Body,
@@ -57,6 +58,16 @@ export class TestMemoController {
   @Can('memo.read')
   get(@Param('id', ParseUUIDPipe) id: string): Promise<MemoDetailDto> {
     return this.memos.get(id);
+  }
+
+  /**
+   * 200 with the approval route submit would build now (a RoutePlan), without writing anything. Same permission as
+   * submit; 404 for a record outside the caller's scope. For a template memo it is the selected people, in order.
+   */
+  @Get(':id/route')
+  @Can('memo.update')
+  route(@Param('id', ParseUUIDPipe) id: string): Promise<RoutePlan> {
+    return this.memos.routePreview(id);
   }
 
   /** 200 with the updated MemoDto. 404 for a record outside the caller's scope, 409 unless draft or returned. */
