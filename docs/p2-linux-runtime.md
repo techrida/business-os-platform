@@ -151,3 +151,20 @@ Current plans and decision records live at:
 Use Kuu's latest authorization and reasonable recommended defaults. Historical
 Prisma-era decision logs in the separate old Business-OS tree are not the current
 phase authority. Keep real roles, scopes, evidence rules and distinct approvers.
+
+## Runtime update (2026-11-12)
+
+The scheduled WSL scratch cleaner deleted the protected P2 runtime folders on
+2026-11-11: `/var/tmp/agents-bosqa-p2` and `/var/tmp/agents-p2-runtime`. Their
+stack env, override, CA and loader are gone. The `bos-qa-p2-4` volumes remain,
+but their database now carries P4 migrations. Do not point P2 code at them.
+
+P2 verification now uses an isolated Compose project, `bos-p2v`. Its source is
+the detached WSL worktree `~/bos-runtimes/p2v`, which has its own `.env` and
+`.dev`. It runs production images tagged `bos-p2v/api:dev` and
+`bos-p2v/workspace:dev`. The image override is
+`~/bos-runtimes/p2v-images.yaml`. Keep runtimes under `~/bos-runtimes`, not
+`/var/tmp/agents-*`. Every compose command needs
+`COMPOSE_PROJECT_NAME=bos-p2v` and the override file. Stop it with `docker
+compose ... stop` before another phase uses ports 80, 443, 5432, 6379, 1025
+and 3310.
