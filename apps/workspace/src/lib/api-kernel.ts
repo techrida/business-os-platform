@@ -223,6 +223,15 @@ export function updateMemo(
   return call(session, `/v1/test-memos/${seg(id)}`, MemoDtoSchema, json('PATCH', body));
 }
 
+/**
+ * `GET /v1/test-memos/:id/route`: the approval route submit would build for this memo now. For an internal
+ * memo it is the people the author selected, in order; for a historical memo with an amount it is the
+ * workflow's role steps. The page shows it before the author submits.
+ */
+export function getMemoRoute(session: Session, id: string): Promise<RoutePlan> {
+  return call(session, `/v1/test-memos/${seg(id)}/route`, RoutePlanSchema);
+}
+
 export function submitMemo(session: Session, id: string): Promise<SubmitMemoResult> {
   return call(
     session,

@@ -14,12 +14,6 @@ import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import styles from '../kit.module.css';
 import type { MemoFormState, MemoValues } from './actions';
 
-const CURRENCY_OPTIONS = [
-  { value: 'NPR', label: 'NPR (Nepalese rupee)' },
-  { value: 'INR', label: 'INR (Indian rupee)' },
-  { value: 'USD', label: 'USD (US dollar)' },
-];
-
 /**
  * The memo create and edit form. One component for both, because they share fields and rules; the
  * server action passed in decides what happens on submit. Inputs are controlled so a refusal does
@@ -50,7 +44,6 @@ export function MemoForm({
   const [values, setValues] = useState<MemoValues>(initial);
   const summaryRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
-  const amountRef = useRef<HTMLInputElement>(null);
 
   const set = (key: keyof MemoValues) => (e: { target: { value: string } }) =>
     setValues((v) => ({ ...v, [key]: e.target.value }));
@@ -59,7 +52,6 @@ export function MemoForm({
   useEffect(() => {
     if (state.error) summaryRef.current?.focus();
     else if (state.fieldErrors.title) titleRef.current?.focus();
-    else if (state.fieldErrors.amount) amountRef.current?.focus();
   }, [state]);
 
   const [departmentId, setDepartment] = useState(
@@ -204,67 +196,10 @@ export function MemoForm({
             />
           </>
         ) : null}
-        <div className={styles.amountRow}>
-          <Field
-            label="Amount"
-            hint="For example 1250.50. The NPR value is frozen when you save, using that day's rate."
-            error={err.amount}
-          >
-            {(control) => (
-              <Input
-                ref={amountRef}
-                name="amount"
-                inputMode="decimal"
-                autoComplete="off"
-                value={values.amount}
-                onChange={set('amount')}
-                required
-                className={styles.numeric}
-                {...control}
-              />
-            )}
-          </Field>
-
-          <Field label="Currency" error={err.currency}>
-            {(control) => (
-              <Select
-                name="currency"
-                value={values.currency}
-                onChange={set('currency')}
-                {...control}
-              >
-                {CURRENCY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
-
-        {!memoId ? (
-          <p className={styles.note}>
-            Attachments such as a PDF are added once the draft is saved. Choose{' '}
-            <strong>Save and add attachments</strong> to go straight to the upload step.
-          </p>
-        ) : null}
-
         <div className={styles.formActions}>
-          <Button type="submit" name="intent" value="save" disabled={pending}>
+          <Button type="submit" disabled={pending}>
             {pending ? 'Saving' : submitLabel}
           </Button>
-          {!memoId && directory ? (
-            <Button
-              type="submit"
-              name="intent"
-              value="attach"
-              variant="secondary"
-              disabled={pending}
-            >
-              Save and add attachments
-            </Button>
-          ) : null}
           {cancelHref ? (
             <LinkButton href={cancelHref} variant="secondary">
               Cancel
