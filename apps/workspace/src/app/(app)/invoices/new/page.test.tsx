@@ -28,7 +28,11 @@ it('loads the manual invoice picker using a query accepted by the real customer 
     // its tests use the same contract constant). A permissive list mock previously hid the
     // rejected 200-customer request. The workspace must not import API source: the workspace
     // image installs only its own dependencies and type-checks this file during `next build`.
-    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > CUSTOMER_LIST_MAX_LIMIT) {
+    if (
+      !Number.isInteger(query.limit) ||
+      query.limit < 1 ||
+      query.limit > CUSTOMER_LIST_MAX_LIMIT
+    ) {
       return Promise.reject(new ApiError(400, 'Invalid customer page size'));
     }
     return Promise.resolve({
