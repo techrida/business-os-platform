@@ -53,7 +53,11 @@ No product behaviour changed apart from the portal build configuration.
 | `997ec00e`: portal typecheck, build, no-dev-routes, prettier, eslint | Pass; portal Docker image builds and runs (health 200)                                                                                                                    |
 | Fresh stack `bos-p4v`                                                | Production images `bos-p4v/api`, `workspace`, `portal` (`:dev`); migrations applied, `check-tenancy` ok, seed 73 changes. Seed warning: ZITADEL Actions webhook DeniedURL |
 
-Final gate batch at 764f2abf: <PENDING>
+Final gate batch at 764f2abf (Linux, clean shared checkout): install, typecheck, lint, format,
+image pins, all package builds, workspace and portal production dev-route exclusion all pass;
+package tests 6,955 passed and 10 locale tests skipped (contracts 432, database 578, locale 18
+passed/10 skipped, seed 176, portal 525, workspace 2,080, money rules 208, API 2,938); API HTTP
+e2e 117/117. Commits after 764f2abf change docs only.
 
 The seed warning is the known one: ZITADEL refuses the Actions webhook URL, so
 the ten-minute reconcile fallback stays in effect.
