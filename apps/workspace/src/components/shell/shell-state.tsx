@@ -133,9 +133,16 @@ export function CollapseToggle() {
   );
 }
 
-/** Phones: the menu button in the header that opens the drawer. */
+/**
+ * Phones: the menu button in the header that opens the drawer. Pressing squeezes the three bars
+ * together; releasing springs them apart, and as the drawer opens they slide out to the right one
+ * after another (they come back the same way when it closes). CSS does the motion from
+ * `data-pressed` and `aria-expanded`.
+ */
 export function MenuButton() {
   const { drawerOpen, openDrawer } = useShell();
+  const [pressed, setPressed] = useState(false);
+  const release = () => setPressed(false);
   return (
     <button
       type="button"
@@ -144,9 +151,34 @@ export function MenuButton() {
       aria-label="Open menu"
       aria-expanded={drawerOpen}
       aria-controls={SIDEBAR_ID}
+      data-pressed={pressed ? 'true' : undefined}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onPointerLeave={release}
       onClick={openDrawer}
     >
-      <Icon name="menu" size={20} />
+      <svg
+        width={20}
+        height={20}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <g className={`${styles.menuPull} ${styles.menuPull1}`}>
+          <path className={`${styles.menuBar} ${styles.menuBar1}`} d="M4 6h16" />
+        </g>
+        <g className={`${styles.menuPull} ${styles.menuPull2}`}>
+          <path className={`${styles.menuBar} ${styles.menuBar2}`} d="M4 12h16" />
+        </g>
+        <g className={`${styles.menuPull} ${styles.menuPull3}`}>
+          <path className={`${styles.menuBar} ${styles.menuBar3}`} d="M4 18h16" />
+        </g>
+      </svg>
     </button>
   );
 }
@@ -162,7 +194,7 @@ export function DrawerCloseButton() {
       aria-label="Close menu"
       onClick={closeDrawer}
     >
-      <Icon name="x" size={18} />
+      <Icon name="x" size={18} className={styles.drawerCloseIcon} />
     </button>
   );
 }
