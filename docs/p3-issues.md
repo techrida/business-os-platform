@@ -167,6 +167,19 @@ portal OIDC client env or customer master for the seeded portal party, and no
 portal image was built), screen reader, physical print, and hosted CI. The
 earlier portal browser evidence (5 passed, 2026-11-11) predates this merge.
 
+### Hosted CI and secret scan
+
+Hosted CI did not run for `fc2cdbf1`: every job stopped before its first step
+with GitHub's "recent account payments have failed or your spending limit needs
+to be increased" annotation. This is an account billing block, not a test result.
+The previous P3 run (`66c9efef`, 2026-11-11) had two real failures. The docker job
+failed on the workspace image's import of API source, fixed by `f06ea428` and
+confirmed by the local image build. The secrets job found one gitleaks match: a
+made-up example UUID assigned to `KEY` in the portal payment-form test
+(`2beaa749`). `a7f9901f` allowlists only that literal. Locally, gitleaks 8.30.1
+(the CI-pinned build, checksum-verified) scanned the full history with the repo
+config: no leaks. Typecheck also passed again at `fc2cdbf1`.
+
 ### Runtime loss
 
 The scheduled WSL scratch cleaner removed `/var/tmp/agents-bosqa-p3` (startup
