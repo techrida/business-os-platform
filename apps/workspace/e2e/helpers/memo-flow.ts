@@ -5,9 +5,9 @@ import { signInOnZitadel } from './zitadel-login';
 
 /**
  * The browser steps exit.spec.ts and inbox.spec.ts share: sign in as a persona in its own browser
- * context, create and submit a memo, and open an inbox item. Every selector is a role or a label
- * the pages expose (checked against apps/workspace/src/app/(app) on 2026-11-08); when a screen's
- * wording changes, this is the one file to fix.
+ * context, create and submit an internal memo (named signers, no money, no files), and open an inbox
+ * item. Every selector is a role or a label the pages expose (checked against
+ * apps/workspace/src/app/(app) on 2026-11-12); when a screen's wording changes, this is the one file to fix.
  */
 
 const authOrigin = process.env.BOS_E2E_AUTH_ORIGIN ?? 'https://auth.localhost';
@@ -31,62 +31,33 @@ export async function signInAs(browser: Browser, baseURL: string, key: string): 
   return { context, page };
 }
 
-/**
- * A minimal but valid one-page PDF built from a template, so no fixture file sits on disk. Offsets
- * in the xref table are computed, because a reader (and ClamAV's PDF parser) rejects wrong ones.
- */
-export function minimalPdf(text: string): Buffer {
-  const content = `BT /F1 18 Tf 20 100 Td (${text.replace(/[()\\]/g, '')}) Tj ET`;
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R ' +
-      '/Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ];
-  let out = '%PDF-1.4\n';
-  const offsets: number[] = [];
-  objects.forEach((body, i) => {
-    offsets.push(out.length);
-    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
-  });
-  const xref = out.length;
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) out += `${String(offset).padStart(10, '0')} 00000 n \n`;
-  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(out, 'latin1');
-}
-
 export interface DraftMemo {
   memoId: string;
   /** For example `MEMO-2082/83-00001`; it appears in every email subject about this memo. */
   memoNumber: string;
 }
 
-/** Fills the New memo form and saves a draft; ends on the memo's own page. */
+/**
+ * Fills the New memo form and saves a draft; ends on the memo's own page. An internal memo has no amount and no
+ * files: the author names the signers, and those people are the approval route, in this order. Every name must be
+ * a seeded person who can decide approvals (the pickers offer no one else), for example "Dev Management".
+ */
 export async function createDraftMemo(
   page: Page,
-  input: { title: string; amount: string },
+  input: { title: string; recommenders: string[]; approver: string },
 ): Promise<DraftMemo> {
   await page.goto('/memos/new');
   // The form's inputs are controlled: text typed before React hydrates is wiped. Wait for the
   // page's own requests to settle, then confirm the values stuck.
   await page.waitForLoadState('networkidle');
   const title = page.getByLabel('Subject', { exact: true });
-  const amount = page.getByLabel('Amount', { exact: true });
   await title.fill(input.title);
   await page.getByLabel('Body', { exact: true }).fill('Created by the Playwright exit spec.');
-  await amount.fill(input.amount);
   await expect(title).toHaveValue(input.title);
-  await expect(amount).toHaveValue(input.amount);
   const department = page.getByLabel('Department', { exact: true });
   if (!(await department.inputValue())) await department.selectOption({ index: 1 });
   // These are real seeded directory names, never synthetic entries injected into the form.
-  const signers = ['Dev Accountant', 'Dev Finance'];
-  const amountNpr = Number(input.amount.replace(/[,\s]/g, ''));
-  if (amountNpr > 100000) signers.push('Dev Management');
-  if (amountNpr > 1000000) signers.push('Dev Founder');
+  const signers = [...input.recommenders, input.approver];
   // A new memo starts with two blank "Recommended by" rows and an "Approved by" box; each is an editable combobox
   // (click it, type, pick). Rows beyond the first two are added; a blank row is ignored when the memo is saved.
   for (let i = 0; i < signers.length; i++) {
