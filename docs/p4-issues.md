@@ -59,6 +59,20 @@ package tests 6,955 passed and 10 locale tests skipped (contracts 432, database 
 passed/10 skipped, seed 176, portal 525, workspace 2,080, money rules 208, API 2,938); API HTTP
 e2e 117/117. Commits after 764f2abf change docs only.
 
+Inherited P3 sales/billing in the browser on the merged build: P3's fixture driver (adapted outside
+Git, `r2/p3fx/`) passed 7/7 on `bos-p4v` (Founder drafts, Accountant then Finance approve, Finance
+issues with a clean PDF, Accountant records payment RCPT-2083/84-00001 with a proof, Finance
+verifies), then `e2e/p3` passed 15/15 with those fixtures, including over-allocation refusal,
+deallocation reversal and "the person who recorded a payment cannot verify it".
+
+Image revisions: the browser specs ran from a checkout at `764f2abf`, against API/worker and
+workspace images built from `c844b71e` and a portal image built from `997ec00e`. Every commit after
+`c844b71e` changes tests, docs or the portal build configuration only, so the product code under
+test is identical.
+
+Hosted CI for `420e50bf`: run 43237801460 shows all five jobs failed with zero steps; GitHub did not
+start them because of the account billing/spending limit. Nothing is certified by hosted CI.
+
 The seed warning is the known one: ZITADEL refuses the Actions webhook URL, so
 the ten-minute reconcile fallback stays in effect.
 
