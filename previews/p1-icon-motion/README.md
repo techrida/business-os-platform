@@ -6,13 +6,13 @@ an assistant, 2026-11-10. Base: `055a150f` on `kuu/p1-icon-motion` (includes P1 
 
 Inventory: installed `emil/0.2.0/skills` directories, including skills omitted from the session catalog. This is a rundown, not a claim that every skill was executed.
 
-| Purpose | Skills and use |
-| --- | --- |
-| Discover and specify | `find-animation-opportunities`: find justified additions; `animation-vocabulary`: name effects; `prototype`: explore an interaction |
-| Implement motion | `animate`: web motion; `apple-design`: physical gestures and sheets; `animate-expo`: native Expo motion |
-| Component craft | `emil-design-eng`: component engineering; `make-interfaces-feel-better`: spacing and interaction polish; `pick-ui-library`: choose accessible component foundations; `ask-sonner`: toast implementation |
-| Audit and simplify | `review-animations`: review a motion change; `improve-animations`: codebase audit; `remove-animations`: subtract unhelpful movement; `animation-performance`: frame-budget work |
-| Platform and resilience | `mobile-native`: mobile web behavior; `write-swift`: Swift implementation; `break-ui`: worst-case content checks |
+| Purpose                 | Skills and use                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discover and specify    | `find-animation-opportunities`: find justified additions; `animation-vocabulary`: name effects; `prototype`: explore an interaction                                                                     |
+| Implement motion        | `animate`: web motion; `apple-design`: physical gestures and sheets; `animate-expo`: native Expo motion                                                                                                 |
+| Component craft         | `emil-design-eng`: component engineering; `make-interfaces-feel-better`: spacing and interaction polish; `pick-ui-library`: choose accessible component foundations; `ask-sonner`: toast implementation |
+| Audit and simplify      | `review-animations`: review a motion change; `improve-animations`: codebase audit; `remove-animations`: subtract unhelpful movement; `animation-performance`: frame-budget work                         |
+| Platform and resilience | `mobile-native`: mobile web behavior; `write-swift`: Swift implementation; `break-ui`: worst-case content checks                                                                                        |
 
 Passes applied: `find-animation-opportunities` → Disney `micro-interactions` (advisory principles) → Emil `animate` (implementation) → standalone preview checks. No downstream agents.
 
@@ -38,15 +38,15 @@ Kuu reviewed revision 1 and kept the press scaling and hover/press surfaces, but
 
 ### Bell, as built in the preview
 
-| Event | Motion | Why |
-| --- | --- | --- |
-| Count rises from 0 | Badge pops (scale .35 to 1.18 to 1, 320 ms, strong ease-out); bell swing starts 110 ms later | Cause, then effect, as in the reference |
-| Count rises while badge shown | Number rolls up (200 ms), badge pulses to 1.15, bell swings | Shows that something new arrived, not a repeat |
-| Pointer click to open | Smaller swing (15°, 520 ms) and the bell fills in the primary colour while open | Feedback; fill means "open" |
-| Keyboard open | Instant fill, no swing | Emil rule: no flourish on keyboard actions |
-| Item read or Mark all read | Number rolls down, or badge shrinks out (150 ms); no swing | Opening never marks anything read |
-| Page load or poll with no rise | No motion | Mirrors the real bell's `quiet` first read and announce-only-on-rise logic |
-| Reduced motion | No swing, roll or pulse; badge fades | Keeps meaning without movement |
+| Event                          | Motion                                                                                       | Why                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Count rises from 0             | Badge pops (scale .35 to 1.18 to 1, 320 ms, strong ease-out); bell swing starts 110 ms later | Cause, then effect, as in the reference                                    |
+| Count rises while badge shown  | Number rolls up (200 ms), badge pulses to 1.15, bell swings                                  | Shows that something new arrived, not a repeat                             |
+| Pointer click to open          | Smaller swing (15°, 520 ms) and the bell fills in the primary colour while open              | Feedback; fill means "open"                                                |
+| Keyboard open                  | Instant fill, no swing                                                                       | Emil rule: no flourish on keyboard actions                                 |
+| Item read or Mark all read     | Number rolls down, or badge shrinks out (150 ms); no swing                                   | Opening never marks anything read                                          |
+| Page load or poll with no rise | No motion                                                                                    | Mirrors the real bell's `quiet` first read and announce-only-on-rise logic |
+| Reduced motion                 | No swing, roll or pulse; badge fades                                                         | Keeps meaning without movement                                             |
 
 Swing: a damped sine, angle(t) = A·e^(-t/τ)·sin(2πt/P), sampled at 60 fps into Web Animations API keyframes, pivot (12, 2.5) in the 24-unit icon. Arrival A 28, P 340 ms, τ 210 ms; click A 15, P 300 ms, τ 160 ms. Clapper = 1.35 × the bell angle delayed 55 ms, relative to the bell. A new trigger starts from the current angle, so rapid arrivals or clicks never snap. Measured arrival angles in Chromium: 0, 3, 18, -1, -8, -2, 3, 1, -1, -1, 0.
 
@@ -77,17 +77,18 @@ This supersedes the revision 2 bell values and the three hamburger options. Kuu 
 ### How the bell was measured
 
 The 60 fps source (2160×1440, 6.5 s) was downloaded with yt-dlp, the bell region was cropped, and every frame was analysed (numpy/scipy, scratch only):
+
 - **Bell:** the resting bell is a template. In each frame it was fitted for rotation and translation, masking the badge and its cut-out ring. A least-squares solve over the fitted translations puts the pivot 3 px below the top of an 84 px tall bell, which is (12, 2.5) in the 24-unit icon. The motion is pure rotation (translation stays under 1 px apart from what the rotation causes).
 - **Clapper:** tracked as its own blob, then converted to an angle about the same pivot.
 - **Badge:** size from its filled area, opacity from its colour strength.
 
-| Part | Model | Fitted values | Fit error |
-| --- | --- | --- | --- |
-| Bell | Damped spring kicked from rest: θ(t) = A·e^(−ζω₀t)·sin(ω_d t) | ζ 0.1279, ω₀ 15.486 rad/s (stiffness 239.8, damping 3.96, mass 1), kick 212 °/s, A 13.8° | RMS 0.37° |
-| Clapper | Same pivot, φ(t) = 1.257·θ(t − 49.7 ms) | gain 1.257, lag 49.7 ms | RMS 0.40° |
-| Badge scale | Spring from scale 0 | ζ 0.492, ω₀ 16.85 (stiffness 283.8, damping 16.56), v₀ 8.33/s; peak 1.198 at 176 ms, dip 0.963, settles about 0.75 s | RMS 0.006 |
-| Badge opacity | Linear | 0 → 1 over 173 ms | |
-| Sequence | Bell kicked 215 ms after the badge starts | | |
+| Part          | Model                                                         | Fitted values                                                                                                        | Fit error |
+| ------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------- |
+| Bell          | Damped spring kicked from rest: θ(t) = A·e^(−ζω₀t)·sin(ω_d t) | ζ 0.1279, ω₀ 15.486 rad/s (stiffness 239.8, damping 3.96, mass 1), kick 212 °/s, A 13.8°                             | RMS 0.37° |
+| Clapper       | Same pivot, φ(t) = 1.257·θ(t − 49.7 ms)                       | gain 1.257, lag 49.7 ms                                                                                              | RMS 0.40° |
+| Badge scale   | Spring from scale 0                                           | ζ 0.492, ω₀ 16.85 (stiffness 283.8, damping 16.56), v₀ 8.33/s; peak 1.198 at 176 ms, dip 0.963, settles about 0.75 s | RMS 0.006 |
+| Badge opacity | Linear                                                        | 0 → 1 over 173 ms                                                                                                    |           |
+| Sequence      | Bell kicked 215 ms after the badge starts                     |                                                                                                                      |           |
 
 Measured bell peaks: +11.6°, −7.8°, +5.1°, −3.7°, +2.3°, −1.5° at about 205 ms intervals, with visible motion ending about 1.6 s after the kick. Positive means clockwise (the bottom swings away from the badge).
 
@@ -116,6 +117,7 @@ Pressing gathers the bars (top down 4 units, middle to 75% width, bottom up 4 un
 ### Verified, revision 3 (headless Chromium, Playwright 1.65, file opened directly)
 
 All revision 2 behaviour checks pass again, with timings updated for the longer ring. New checks:
+
 - The press adds the squeeze; opening pulls out the bars and moves focus to the close X.
 - Escape brings the bars back and returns focus.
 - Keyboard Enter gives no squeeze.
