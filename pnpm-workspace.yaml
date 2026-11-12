@@ -98,3 +98,6 @@ catalog:
   openid-client: ^6.8.9
   jsdom: ^31.0.0
   '@types/jsdom': ^30.0.0
+  # Memo PDF export (server-side, real PDF bytes): needs fontkit shaping for Devanagari names.
+  pdfkit: ^0.20.2
+  '@types/pdfkit': ^0.17.7

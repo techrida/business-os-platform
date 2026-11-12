@@ -25,4 +25,7 @@ regexes = [
   '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
   # `api:3001` is the compose service name and port of the API, not user:password credentials.
   '''api:3001/''',
+  # A made-up idempotency key (a widely published example v4 UUID) in the portal payment-form test,
+  # assigned to `KEY`, which the generic-api-key rule reads as a credential. Committed in 2beaa749.
+  '''7c9e6679-7425-40de-944b-e07fc1f90ae7''',
 ]

@@ -12,7 +12,7 @@ import {
 
 /**
  * The inbox screen on its own, against the real stack: (1) an approver's inbox row shows WHY the
- * item is theirs, the same reason the route preview gave; (2) a person without approval rights
+ * item is theirs, the same reason the route preview gave (for an internal memo, the person the author selected); (2) a person without approval rights
  * gets the 403 in plain words, not a blank page or a raw error; (3) rejecting needs a comment, and
  * a rejected item leaves the inbox. It rejects at the end so it leaves no pending request behind.
  * The full two-approval story is in exit.spec.ts.
@@ -31,12 +31,17 @@ test('the inbox shows the reason for each item, and a 403 is explained in words'
     const sales = await signInAs(browser, appBase, 'sales');
     opened.push(sales);
 
-    const reason = await test.step('sales submits a memo (no attachment)', async () => {
-      await createDraftMemo(sales.page, { title, amount: '50000' });
-      const steps = await readPreviewSteps(sales.page);
-      await submitMemo(sales.page);
-      return steps[0]?.reason ?? '';
-    });
+    const reason =
+      await test.step('sales submits a memo naming Management as its approver', async () => {
+        await createDraftMemo(sales.page, {
+          title,
+          recommenders: [],
+          approver: 'Dev Management',
+        });
+        const steps = await readPreviewSteps(sales.page);
+        await submitMemo(sales.page);
+        return steps[0]?.reason ?? '';
+      });
     expect(reason.length).toBeGreaterThan(0);
 
     await test.step('a 403 on the inbox reads as words for sales', async () => {
@@ -49,11 +54,11 @@ test('the inbox shows the reason for each item, and a 403 is explained in words'
       ).toBeVisible();
     });
 
-    const accountant = await signInAs(browser, appBase, 'accountant');
-    opened.push(accountant);
+    const management = await signInAs(browser, appBase, 'management');
+    opened.push(management);
 
-    await test.step('the accountant sees the reason, and rejecting needs a comment', async () => {
-      const page = accountant.page;
+    await test.step('the named approver sees the reason, and rejecting needs a comment', async () => {
+      const page = management.page;
       await openFromInbox(page, title, reason);
 
       // Reject without a comment: refused in place, with the field named.

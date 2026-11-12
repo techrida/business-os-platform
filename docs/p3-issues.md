@@ -78,6 +78,116 @@ reasoned allocation reversal and payment self-verification refusal. Financial
 write tests require explicit disposable fixture identifiers rather than choosing
 an arbitrary existing payment.
 
+## P2 READY integration (2026-11-12)
+
+P2 released `p2-main` at `13fb0c1a8000fc5d727cee7f63a88dce4ba8b2cf` (verified
+remote head). It carries P1 release `731907f4` through P2's merge `b2d5ff02`
+and P2's removal of the P1-only money, currency, upload and attach test
+controls from internal memos. Template memos now route to their named signers
+as explicit user steps with no amount rules. No migration or journal change.
+P1 was not merged directly into P3.
+
+Merged with a normal merge as `ee6b988a`. The only conflict was
+`memos/page.tsx`, resolved to P2's version (scoped memo list and status filter).
+The approval engine changes (`explicitSteps`, `activeUserIds` undefined unless a
+user is named, named-user loading in SLA) were checked against P3 callers:
+invoice and credit/debit-note approvals use role steps and pass no
+`explicitSteps`, so their routing is unchanged; the suites below confirm it.
+
+Follow-up commits found by running the gates:
+
+1. `d8798d58`, `6ada221e`: P2 removed `minimalPdf` from the memo e2e helper;
+   the P3 payment specs still upload a PDF proof. It now lives in
+   `e2e/helpers/pdf-fixture.ts`.
+2. `f06ea428`, `eb6b48ae`: the manual-invoice picker regression (from
+   `53227f89`) imported the API's customer query schema from `apps/api` source.
+   The workspace production image installs only workspace dependencies and
+   type-checks tests during `next build`, so the image failed to build. The
+   page-size limit is now `CUSTOMER_LIST_MAX_LIMIT` in `@bos/contracts`, used by
+   both the API schema and the invoice page. This affected only image builds,
+   not host builds.
+3. `dea5b5a8`: P3's `ae6a61cc` shows historical `test_memos.*` audit actions as
+   "Memo ..." but the memo exit spec still expected "Test memos insert". The
+   drift surfaced when the memo journey first ran against P3.
+4. `ed601763`: the aging and payments list checks matched Next's empty route
+   announcer (also `role=alert`) when a list was empty.
+
+### Linux verification at the final application source
+
+All execution ran in Ubuntu WSL with Linux Node 24 and pnpm through the host
+resource queue. Results at `ee6b988a` unless noted; the later commits change
+only tests, a shared constant and formatting, and the affected gates were rerun.
+
+| Check                                              | Result                                                                                  |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Frozen-lockfile install                            | Passed                                                                                  |
+| Recursive typecheck, root ESLint (zero warnings)   | Passed at `eb6b48ae` (failed at `ee6b988a`, fixed)                                      |
+| Full repository formatting                         | Passed at `eb6b48ae`                                                                    |
+| Pinned container image check                       | Passed                                                                                  |
+| Complete package suites                            | 4,947 passed, 10 existing locale skips                                                  |
+| API package (includes invoice approval tests)      | 2,213 passed                                                                            |
+| API HTTP suite (includes `p3-exit`, `p3-model`)    | 107 passed (8 files)                                                                    |
+| Workspace unit suite                               | 1,349 passed at `d8798d58`                                                              |
+| All-package production builds                      | Passed at `d8798d58`                                                                    |
+| Production dev-route exclusion, workspace + portal | Passed                                                                                  |
+| After the contracts change (`f06ea428`)            | invoices/new 31, API customers 59, contracts 341 passed; API and workspace images built |
+
+Browser checks ran against production images on a fresh isolated stack
+(`bos-p3v`, see [p3-linux-runtime.md](p3-linux-runtime.md)) with real ZITADEL
+password and TOTP sign-ins, ClamAV, Gotenberg, API and worker:
+
+- Persona sign-in and sign-out for all seven personas, and expired-login
+  recovery: passed. The two development switcher tests skip on production
+  images by design.
+- Production checks (`/dev/personas` and other `/dev` paths 404, LCP): 3 passed.
+- Memo exit journey after P2's change (named signers, two approvals, emails,
+  audit timeline) and the inbox spec: passed.
+- P3 fixtures were created through the real UI only: a customer, a manual NPR
+  tax invoice drafted and submitted by Founder, approved by Accountant then
+  Finance, issued as `INV-2083/84-00001` with a clean rendered PDF; an NPR 500.00
+  payment recorded by Accountant with a scanned PDF proof and verified by
+  Finance as `RCPT-2083/84-00001`.
+- With those records, the full staff P3 browser suite and inbox passed 16 of 16:
+  invoice list, detail totals and note buttons, manual form validation, record
+  payment with proof, payment list and unknown-payment words, self-verification
+  refusal, allocate panel, over-allocation refusal, allocate then deallocate
+  with a reasoned reversal row, aging and statement, unknown customer, and
+  Sales receivables denial.
+
+Fresh-stack prerequisites added for this run, both through audited system-actor
+transactions in the isolated database only: a "General" department (memos need
+one) and a clearly labelled demo `entity.address` (issuing needs a seller
+address; P2 used the same demo value). Without the address, Issue returns 422
+"The issuing entity has no address set", but the workspace shows the generic
+"The platform did not accept this. Check what you entered" message. That
+wording is misleading for a configuration gap and is recorded as a follow-up.
+
+Not run this round: the customer portal browser suite (a fresh seed has no
+portal OIDC client env or customer master for the seeded portal party, and no
+portal image was built), screen reader, physical print, and hosted CI. The
+earlier portal browser evidence (5 passed, 2026-11-11) predates this merge.
+
+### Hosted CI and secret scan
+
+Hosted CI did not run for `fc2cdbf1`: every job stopped before its first step
+with GitHub's "recent account payments have failed or your spending limit needs
+to be increased" annotation. This is an account billing block, not a test result.
+The previous P3 run (`66c9efef`, 2026-11-11) had two real failures. The docker job
+failed on the workspace image's import of API source, fixed by `f06ea428` and
+confirmed by the local image build. The secrets job found one gitleaks match: a
+made-up example UUID assigned to `KEY` in the portal payment-form test
+(`2beaa749`). `a7f9901f` allowlists only that literal. Locally, gitleaks 8.30.1
+(the CI-pinned build, checksum-verified) scanned the full history with the repo
+config: no leaks. Typecheck also passed again at `fc2cdbf1`.
+
+### Runtime loss
+
+The scheduled WSL scratch cleaner removed `/var/tmp/agents-bosqa-p3` (startup
+scripts, loaders, fixture inputs and the `p3-before-upgrade.dump` backup;
+confirmed absent on 2026-11-12) and P2's runtime folders. The `bos-qa-p2-4`
+database is no longer usable for P3. P3 now uses its own `bos-p3v` stack under
+`~/bos-runtimes`; the 2026-11-11 runtime notes below are historical.
+
 ## Decisions and retained limits
 
 Kuu authorized the recommended existing defaults for unanswered blocking

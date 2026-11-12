@@ -252,3 +252,41 @@ HTTP suite: `pnpm --filter @bos/api test:e2e`. Production builds:
 The checkout and installed dependencies are retained for follow-up work. No
 application server is claimed to be running. Configure a dedicated P2 runtime
 before using the workspace's `dev` or stack commands; do not borrow P0/P1 data.
+
+## 2026-11-12: P1 memo release and memo test-control removal
+
+Merged P1 release `731907f4` (normal merge `b2d5ff02`). The P2 internal memo no
+longer has the P1 test controls (amount, currency, upload, scan). A template
+memo routes to exactly its named signers as user steps, with no amount rule.
+Signers must hold `approvals.requests.act`, and the author cannot sign. New
+memos store a hidden NPR 0.00 because the columns are NOT NULL; no migration was
+added. Historical amounts and attachments are shown read-only. Details are in
+`design/memos/DELIVERY.md`.
+
+Linux results at `575f78a6`:
+
+- Package tests: 3,830 passed, plus the 10 existing locale skips.
+- HTTP end-to-end: 81 of 81 passed.
+- Typecheck, zero-warning lint, full format check, all package builds,
+  dev-route exclusion and image pins all passed.
+
+Browser results on a fresh isolated stack (`bos-p2v`, production images):
+
+- Persona sign-in and sign-out: 10 passed.
+- Production checks (no switcher, `/dev` 404s, LCP): 3 passed.
+- Memo exit and inbox specs: 2 passed.
+- Ad hoc memo UI check: 1 passed. It confirmed no money or upload controls,
+  approver-only pickers, PDF download and the list without an amount column.
+
+That stack needed one fixture, a General department, because a fresh seed
+creates none.
+
+Not run in this pass:
+
+- the quotation lifecycle browser specs (unchanged code, consumable fixtures);
+- a screen reader;
+- a physical printer;
+- hosted CI (its branch filter does not match `p2-main`).
+
+A founder named as a memo signer decides without the founder step-up, which
+applies only to founder role steps.

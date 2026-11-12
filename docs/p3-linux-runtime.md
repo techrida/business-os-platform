@@ -1,116 +1,94 @@
 # Phase 3 Linux runtime handoff
 
-Run all project commands in Ubuntu WSL at
-`/home/kuu/src/business-os-platform`, after `source infra/scripts/env.sh`.
-Use Linux Node 24 and pnpm. The Windows host resource queue may wrap a WSL
-payload; native Windows project execution is not supported.
+Run all project commands in Ubuntu WSL with Linux Node 24 and pnpm, after
+`source infra/scripts/env.sh`. The Windows host resource queue may wrap a WSL
+payload; native Windows project execution is not supported. The shared verification
+order is P2 -> P3 -> P4: obtain the current owner's explicit release before
+switching the shared source or starting a stack on the shared ports.
 
-## Ownership and preserved data
+## What changed on 2026-11-12
 
-The shared verification order is P2 -> P3 -> P4. Obtain explicit release before
-switching source or changing containers/data. Inspect the current head, dirty
-files and exact process ownership. Preserve the existing environment, identities,
-volumes and demo records. Do not use the force-reset branch option of
-`infra/scripts/w.sh`.
+The scheduled WSL scratch cleaner removed every `/var/tmp/agents-*` runtime
+folder, including the earlier P3 scripts, loaders, fixture inputs and the
+`p3-before-upgrade.dump` backup under `/var/tmp/agents-bosqa-p3` (confirmed absent).
+The `bos-qa-p2-4` volumes remain, but their secrets are gone and their database
+now carries P4 migrations; do not point P3 code at them. Keep runtimes under
+`~/bos-runtimes`, which the cleaner does not touch.
 
-P3 reuses the existing `bos-qa-p2-4` project and protected configuration described
-in [p2-linux-runtime.md](p2-linux-runtime.md). The incompatible legacy `bos`
-database remains preserved and stopped. No duplicate full stack was created.
+## Isolated P3 stack: `bos-p3v`
 
-The compatible QA migration ledger advanced from 20 to 26 using existing P3
-migrations 0019 through 0024. Previous hashes and entries were retained and the
-tenancy check passed. The protected pre-P3 dump is
-`/var/tmp/agents-bosqa-p3/p3-before-upgrade.dump`.
-
-P3 seeding checked that every existing grant remained unchanged. It added the
-P3 grants, workflows and zero-rate demo withholding codes. Master-data preparation
-reused the seeded customer portal party, added its missing customer master only
-if needed, and created a unique foreign QA customer. It did not seed invoices,
-payments or ledger rows. Financial fixtures use real application commands and
-independent approvals. Repeating preparation creates new consumable demo records.
-
-## Safe service startup
-
-Keep a foreground WSL session active. Docker's systemd services alone did not
-prevent this machine's idle shutdown. The task-owned keepalive uses a foreground
-`tail -f /dev/null`; app terminals also keep WSL active. Do not stop unrelated
-processes.
-
-The following private scripts enter the ext4 checkout and load existing
-protected runtime configuration. Run each heavy job through the shared host
-resource queue with a WSL payload:
+- Source: detached WSL worktree `~/bos-runtimes/p3v` (from the shared clone
+  `/home/kuu/src/business-os-platform`), with its own `.env` from
+  `infra/scripts/make-dev-env.sh` and its own `.dev` seed output. Never copy
+  another stack's secrets.
+- Images: `bos-p3v/api:dev` and `bos-p3v/workspace:dev` (production builds);
+  override file `~/bos-runtimes/p3v-images.yaml`.
+- Compose project `bos-p3v`. Every command needs `COMPOSE_PROJECT_NAME=bos-p3v`
+  and the override:
 
 ```bash
-bash /var/tmp/agents-bosqa-p3/core-start.sh
-bash /var/tmp/agents-bosqa-p3/api-serve.sh
-bash /var/tmp/agents-bosqa-p3/workspace-serve.sh
-bash /var/tmp/agents-bosqa-p3/portal-serve.sh
+export COMPOSE_PROJECT_NAME=bos-p3v
+cd ~/bos-runtimes/p3v && source infra/scripts/env.sh
+dc() { docker compose --env-file .env -f infra/compose/compose.yaml \
+  -f infra/compose/compose.dev.yaml -f ~/bos-runtimes/p3v-images.yaml "$@"; }
 ```
 
-The core script starts the same core/files/PDF services and preserves volumes.
-It does not repeat migrations or seeding. API and worker use metrics ports 9464
-and 9465. Both workspace (port 3000) and portal (port 3002) serve checked production
-builds for this acceptance run. The portal uses its dedicated OIDC client,
-callback and session-key ID. Credentials stay in protected files and server
-processes; never print or commit them. The API runner uses the P3 loader
-`/var/tmp/agents-bosqa-p3/env.sh`, which retains the P2 loader and explicitly
-adds the registered portal client to `OIDC_ALLOWED_AZP`. Without that entry
-portal authentication reaches the API but receives 401. This adds no wildcard
-and does not relax token signature, issuer, audience or client checks.
+Bring-up from zero (each heavy step through the host queue):
 
-Browser origins are `https://app.localhost`, `https://portal.localhost`,
-`https://auth.localhost` and `https://api.localhost`. Stop only recorded task-owned
-app processes before changing phase source or production-building either app.
-Never production-build into an output directory used by active development.
-Build the complete higher-phase source before applying further migrations;
-never relabel an applied hash.
+1. `git worktree add --detach ~/bos-runtimes/p3v <p3-main sha>`;
+   `pnpm install --frozen-lockfile`; `bash infra/scripts/make-dev-env.sh`;
+   create an empty `.dev/caddy-root.crt` placeholder.
+2. `dc --profile core --profile files up -d --wait`, then copy the Caddy root CA
+   from the caddy container to `.dev/caddy-root.crt`
+   (`infra/scripts/export-dev-ca.sh` hard-codes project `bos`).
+3. `bash infra/scripts/migrate-dev.sh` (includes the tenancy check);
+   `pnpm --filter ./tools/seed-zitadel build`;
+   `dc --profile tools run --rm seed-zitadel > .dev/seed.log`. The seed's
+   only manual note is the known "Actions webhook DeniedURL" caveat.
+4. Build both images, then with
+   `WORKSPACE_UPSTREAM=workspace:3000 API_UPSTREAM=api:3001` run
+   `dc --profile core --profile files --profile app up -d --wait api worker workspace gotenberg`
+   and recreate caddy (`dc --profile core up -d --force-recreate --no-deps caddy`).
+5. A fresh seed has no department, and memos need one. Add a "General"
+   department in one audited transaction as system actor
+   `p3-qa-fixture-general-department` and assign it only to memberships with no
+   department (same SQL as P2's `bos-p2v` note in
+   [p2-linux-runtime.md](p2-linux-runtime.md)).
 
-## Checks and browser fixtures
+The production workspace image returns 404 for `/dev/*`, so the browser checks
+sign in through real ZITADEL password plus TOTP from `.dev/personas.json`.
+The portal image was not built or started in this round (see p3-issues.md).
 
-The Linux runners are `/var/tmp/agents-bosqa-p3/checks.sh` and
-`/var/tmp/agents-bosqa-p3/builds.sh`. Tested heads, results and caveats are recorded
-in [p3-issues.md](p3-issues.md); detailed logs stay with the task handoff.
-
-Staff browser checks use
-`/var/tmp/agents-bosqa-p3/browser-run.sh`, the existing protected P2 personas and
-P3 fixture inputs from protected `/var/tmp/agents-bosqa-p3/fixtures.env`.
-The P3 suite does not use the development account switcher and was run against
-production-mode Next servers. P0 shell switcher coverage needs a separate
-development-mode server and is not part of these P3 commands. Run the staff suite with:
+Browser checks run from `~/bos-runtimes/p3v/apps/workspace`:
 
 ```bash
-bash /var/tmp/agents-bosqa-p3/browser-run.sh p3 --max-failures=1
-bash /var/tmp/agents-bosqa-p3/portal-run.sh p3/billing.spec.ts --max-failures=1
+BASE_URL=https://app.localhost pnpm exec playwright test --project=dev \
+  exit.spec.ts inbox.spec.ts personas.spec.ts p3/ --reporter=line \
+  --output=$HOME/bos-runtimes/p3v-browser/<run>
+BASE_URL=https://app.localhost pnpm exec playwright test --project=prod --reporter=line
 ```
 
-These browser commands create disposable payment submissions. The allocation
-tests require the explicit `BOS_E2E_PAYMENT_VERIFIED` and
-`BOS_E2E_INVOICE_ISSUED` pair, allocate NPR 1.00 and append a reasoned reversal;
-they never choose an arbitrary payment for financial writes. They can be
-repeated while that fixture pair is still open. Portal storage state expires:
-renew it through the real customer login using
-`browser-run.sh --config=/var/tmp/agents-bosqa-p3/fixture.config.ts portal-fixture.spec.ts`.
-That login helper reads existing invoice identifiers; it does not issue invoices.
-The protected `invoice-fixtures.json` and `payment-fixtures.json` retain the
-record identifiers. Do not run the full invoice preparation blindly: the
-existing real financial records are intentionally retained.
+P3 specs that need records read `BOS_E2E_INVOICES_READY`,
+`BOS_E2E_INVOICE_ISSUED`, `BOS_E2E_PAYMENT_VERIFIED` and
+`BOS_E2E_PAYMENT_CUSTOMER`; without them they skip, and a skip is not a pass.
+Create those records only through real application commands with distinct
+approvers. Financial writes in specs use explicit disposable identifiers.
 
-The portal Playwright config reuses the local-CA verification
-helper, keeps HTTPS validation enabled and disables traces/videos. Customer
-storage state and all persona credentials remain outside Git.
+Keep a foreground WSL process alive while the stack runs; WSL idle shutdown has
+stopped stacks before. Stop with `dc --profile core --profile files --profile app stop`
+(volumes kept) before another phase uses ports 80, 443, 5432, 6379, 1025 and 3310.
 
-The T3 browser rejected the local certificate with
-`ERR_CERT_AUTHORITY_INVALID`. Linux Playwright uses the explicit trusted CA;
-no blanket certificate-error bypass or Windows trust-store change was made.
+Credentials stay in `~/bos-runtimes/p3v/.env` and `.dev` (mode 600) and in
+server processes; never print or commit them.
 
-Current plans and assumed defaults:
+## Plans and decision defaults
 
 ```text
-/mnt/f/Projects/Life/life-kb/Techrida/projects/business-os/docs/platform/P3-BUILD-PLAN.md
-/mnt/f/Projects/Life/life-kb/Techrida/projects/business-os/docs/platform/OPEN-DECISIONS.md
+/mnt/f/Projects/Life/life-kb/Techrida/Yes/business-os/docs/platform/P3-BUILD-PLAN.md
+/mnt/f/Projects/Life/life-kb/Techrida/Yes/business-os/docs/platform/OPEN-DECISIONS.md
 ```
 
-Kuu authorized recommended defaults for unanswered blocking decisions. Retain the
-existing subledger, VAT-slice reconciliation, permission-gated Finance drafts,
-portal visibility, evidence requirements and distinct approvers. Local demo
+Kuu authorized recommended defaults for unanswered blocking decisions: keep the
+subledger, VAT-slice reconciliation, permission-gated Finance drafts, portal
+visibility, evidence requirements and distinct approvers. Local demo
 configuration does not establish accountant certification or authorize payouts.

@@ -12,6 +12,9 @@ import {
   DecimalString,
   ErrorBodySchema,
   MAX_UPLOAD_BYTES,
+  MemoBodyFieldsSchema,
+  MemoDirectorySchema,
+  MemoPersonSchema,
   NprSnapshotSchema,
   PERMISSIONS,
   ROLE_KEYS,
@@ -284,6 +287,54 @@ describe('documents and memo bodies', () => {
     expect(CreateMemoBodySchema.safeParse({ ...memo, amount: '-1' }).success).toBe(false);
     expect(CreateMemoBodySchema.safeParse({ ...memo, amount: 1250.5 }).success).toBe(false);
     expect(CreateMemoBodySchema.safeParse({ ...memo, currency: 'EUR' }).success).toBe(false);
+  });
+
+  it('requires amount and currency for a legacy memo but not for a template memo', () => {
+    const user = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+    const template = {
+      departmentId: '3f2504e0-4f89-41d3-9a0c-0305e82c3302',
+      date: '2026-11-12',
+      closing: '',
+      preparedByUserId: user,
+      recommenderUserIds: [],
+      approvedByUserId: '3f2504e0-4f89-41d3-9a0c-0305e82c3303',
+    };
+    const legacy = { title: 'Laptop', body: '' };
+    expect(CreateMemoBodySchema.safeParse(legacy).success).toBe(false);
+    expect(CreateMemoBodySchema.safeParse({ ...legacy, amount: '1.00' }).success).toBe(false);
+    expect(CreateMemoBodySchema.safeParse({ ...legacy, currency: 'NPR' }).success).toBe(false);
+    expect(CreateMemoBodySchema.safeParse({ ...legacy, template }).success).toBe(true);
+    // A negative or malformed amount is still refused when it is sent with a template.
+    expect(CreateMemoBodySchema.safeParse({ ...legacy, template, amount: '-1' }).success).toBe(
+      false,
+    );
+    expect(MemoBodyFieldsSchema.safeParse(legacy).success).toBe(true);
+  });
+});
+
+describe('MemoDirectorySchema', () => {
+  const guid = (n: number) => `3f2504e0-4f89-41d3-9a0c-0305e82c33${String(n).padStart(2, '0')}`;
+  const directory = (canApprove: unknown) => ({
+    organizationId: guid(1),
+    organizationName: 'Dev Co',
+    currentUserId: guid(2),
+    departmentId: null,
+    departments: [],
+    people: [{ userId: guid(2), name: 'Dev Sales', jobTitle: null, department: null, canApprove }],
+  });
+
+  it('says per person whether they can decide approvals', () => {
+    expect(MemoDirectorySchema.parse(directory(false)).people[0]?.canApprove).toBe(false);
+    expect(MemoDirectorySchema.parse(directory(true)).people[0]?.canApprove).toBe(true);
+  });
+
+  it('refuses a person without the flag, so a client never guesses it', () => {
+    expect(MemoDirectorySchema.safeParse(directory(undefined)).success).toBe(false);
+  });
+
+  it('keeps the printed person of a saved memo free of the live flag', () => {
+    const person = { userId: guid(2), name: 'Dev Sales', jobTitle: null, department: null };
+    expect(MemoPersonSchema.parse({ ...person, canApprove: true })).toEqual(person);
   });
 });
 

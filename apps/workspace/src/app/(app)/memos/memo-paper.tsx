@@ -1,14 +1,19 @@
 import type { MemoTemplateSnapshot } from '@bos/contracts';
+import { NOT_SELECTED, PAPER_NOTE } from '@/lib/memo-pdf-input';
+
 import styles from './memo-template.module.css';
 
 export function MemoPaper({
   template,
   title,
   body,
+  id,
 }: {
   template: MemoTemplateSnapshot;
   title: string;
   body: string;
+  /** Lets the Print action find exactly this paper and nothing else on the page. */
+  id?: string;
 }) {
   const people = [
     { label: 'Prepared by', person: template.preparedBy },
@@ -16,7 +21,7 @@ export function MemoPaper({
     { label: 'Approved by', person: template.approvedBy },
   ];
   return (
-    <article className={styles.paper} aria-label="Memo preview">
+    <article id={id} data-memo-paper="" className={styles.paper} aria-label="Memo preview">
       <header>
         <strong>{template.organizationName}</strong>
         <div>{template.departmentName}</div>
@@ -37,14 +42,12 @@ export function MemoPaper({
         {people.map(({ label, person }) => (
           <section key={label}>
             <p>{label}</p>
-            <strong>{person.name || 'Not selected'}</strong>
+            <strong>{person.name || NOT_SELECTED}</strong>
             {person.jobTitle ? <div>{person.jobTitle}</div> : null}
           </section>
         ))}
       </div>
-      <p className={styles.note}>
-        Names indicate the proposed approval route. Signatures are disabled.
-      </p>
+      <p className={styles.note}>{PAPER_NOTE}</p>
     </article>
   );
 }

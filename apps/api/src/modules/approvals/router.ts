@@ -262,7 +262,8 @@ export interface DirectoryData {
   delegations: readonly DelegationRow[];
   /**
    * Active users among the ones user steps name. When given, a named user outside it has no approver.
-   * Optional so pure routing tests can leave it out; the service always loads it.
+   * Optional: pure routing tests leave it out, and the service omits it when no user is named (undefined
+   * means no restriction, for user and department-head steps alike).
    */
   activeUserIds?: ReadonlySet<string>;
   /**

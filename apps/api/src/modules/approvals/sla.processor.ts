@@ -128,7 +128,14 @@ export class ApprovalsSlaService {
           entityId: request.id,
           meta: { seq: step.seq },
         });
-        const data = await this.approvals.loadDirectory(tx, scope, spec);
+        // An explicit-route request (internal memo) names its approver on the step row, not in the frozen spec:
+        // load that user too, so the reminder goes to the named person (and not to a user who left).
+        const data = await this.approvals.loadDirectory(
+          tx,
+          scope,
+          spec,
+          step.kind === 'user' && step.userId !== null ? [step.userId] : [],
+        );
         const eligible = this.approvals
           .directory(data, now, request.documentType, request.sodUserIds)
           .eligible(stepSpecOf(step, data));
