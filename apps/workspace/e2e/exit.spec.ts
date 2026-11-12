@@ -4,7 +4,6 @@ import { statusWithoutToken } from './helpers/api';
 import {
   createDraftMemo,
   inboxRow,
-  minimalPdf,
   openFromInbox,
   readPreviewSteps,
   signInAs,
@@ -15,40 +14,39 @@ import { sentTo, waitForMessage } from './helpers/mailpit';
 import { persona } from './helpers/personas';
 
 /**
- * THE P1 EXIT TEST, full stack. model.js: "A test document goes through a two-step approval with
- * no self-approval, an email, a scanned upload and a full audit trail." The same story runs at the
- * API layer in apps/api/test/e2e/approvals.e2e.test.ts with fakes; here nothing is faked: real
- * ZITADEL with a TOTP second factor, real ClamAV, real Mailpit, the real API and worker, and the
- * real Workspace, driven only through the browser's accessible controls.
+ * THE MEMO EXIT TEST, full stack. An internal memo goes through the approval route its author named, with no
+ * self-approval, an email and a full audit trail. (Phase 1 ran this story on a memo with an amount and a scanned
+ * upload; from P2 a memo is correspondence: no amount, no files, and no financial threshold. The upload and scan
+ * path is covered at the API layer in apps/api/test/e2e.) Nothing is faked: real ZITADEL with a TOTP second
+ * factor, real Mailpit, the real API and worker, and the real Workspace, driven only through the browser's
+ * accessible controls.
  *
  * What it proves, in order (one test, one `test.step` each, separate browser contexts per persona):
- *  1. Sales signs in with password + TOTP and saves an NPR 50,000 memo.
- *  2. A real PDF uploaded from a buffer is scanned by ClamAV and shows "Scan passed" with a
- *     Download link (the scan finishes asynchronously, so this waits up to 60 s).
- *  3. Before submitting, the route preview shows exactly 2 steps (accountant, then finance), each
- *     with a reason. Sales submits, and the memo becomes "Submitted".
- *  4. No self-approval: Sales's inbox says in plain words that its roles do not include approvals,
- *     and the request's own page (opened by URL) offers Sales no Approve button.
- *  5. The Accountant signs in, sees the memo in the inbox with the same reason the preview gave,
- *     and approves (banner "Your approval was recorded.").
- *  6. Finance signs in, sees it (step 2 is now active), and approves. The memo page shows
- *     "Approved".
- *  7. Mailpit holds the "Approval needed" email to the accountant and to finance, and the decided
- *     email to Sales.
- *  8. Finance's Audit timeline on the memo page lists the memo being created and changed, the
- *     submit, and two approvals; Sales (no audit permission) is told the trail is hidden.
+ *  1. Sales signs in with password + TOTP and saves a memo that names Management as the recommender and the
+ *     Accountant as the approver (only people who can decide approvals are offered).
+ *  2. Before submitting, the route preview shows exactly those two people in that order, each with a reason.
+ *     Sales submits, and the memo becomes "Submitted".
+ *  3. No self-approval: Sales's inbox says in plain words that its roles do not include approvals, and the
+ *     request's own page (opened by URL) offers Sales no Approve button.
+ *  4. Management signs in, sees the memo in the inbox with the same reason the preview gave, and approves
+ *     (banner "Your approval was recorded.").
+ *  5. The Accountant signs in, sees it (step 2 is now active), and approves. The memo page shows "Approved".
+ *  6. Mailpit holds the "Approval needed" email to Management and to the Accountant, and the decided email to
+ *     Sales.
+ *  7. Finance's Audit timeline on the memo page lists the memo being created and changed, the submit, and two
+ *     approvals; Sales (no audit permission) is told the trail is hidden.
  *
  * What it does NOT prove: the audit hash chain (`GET /v1/audit/verify`). That route needs a
  * bearer token and the Workspace never exposes one to the browser, and there is no Workspace
  * route that calls it, so the spec only checks (softly) that the route refuses an anonymous call.
  * `approvals.e2e.test.ts` verifies the chain at the API layer.
  *
- * Requires: `pnpm stack:up:files` (ClamAV), `pnpm seed` (personas with TOTP), the API and worker
- * running with SMTP pointed at Mailpit, and BASE_URL or the default https://app.localhost.
+ * Requires: `pnpm seed` (personas with TOTP), the API and worker running with SMTP pointed at
+ * Mailpit, and BASE_URL or the default https://app.localhost.
  */
 
-// Real ClamAV scans take a few seconds, mail goes through BullMQ: allow generous waits.
-const SCAN_TIMEOUT_MS = 60_000;
+// Mail goes through BullMQ: allow a generous wait.
+const MAIL_TIMEOUT_MS = 60_000;
 
 /** Approves from an inbox detail page and checks the confirmation banner on the inbox. */
 async function approve(page: Page, comment: string): Promise<void> {
@@ -58,7 +56,7 @@ async function approve(page: Page, comment: string): Promise<void> {
   await expect(page.getByText('Your approval was recorded.')).toBeVisible();
 }
 
-test('P1 exit: a memo with a scanned upload goes through two approvals, emails and an audit trail', async ({
+test('memo exit: a memo goes through the two approvals its author named, with emails and an audit trail', async ({
   browser,
   baseURL,
 }) => {
@@ -75,38 +73,23 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
   try {
     // ---------------------------------------------------------------- 1. sales creates the memo
     const sales = await signIn('sales');
-    const { memoId, memoNumber } = await test.step('sales creates an NPR 50,000 memo', async () => {
-      // 50,000 is what routes the memo through the accountant AND finance (two steps).
-      return createDraftMemo(sales, { title, amount: '50000' });
-    });
-
-    // ------------------------------------------------------- 2. upload; ClamAV marks it clean
-    await test.step('sales uploads a PDF and the real ClamAV scan passes', async () => {
-      await sales.waitForLoadState('networkidle');
-      await sales.getByLabel('Attach a file', { exact: true }).setInputFiles({
-        name: 'exit-quote.pdf',
-        mimeType: 'application/pdf',
-        buffer: minimalPdf('Exit e2e quote'),
+    const { memoId, memoNumber } =
+      await test.step('sales saves a memo naming two signers', async () => {
+        // Management recommends, the Accountant approves: neither order nor people come from an amount.
+        return createDraftMemo(sales, {
+          title,
+          recommenders: ['Dev Management'],
+          approver: 'Dev Accountant',
+        });
       });
-      await sales.getByRole('button', { name: 'Upload', exact: true }).click();
 
-      const file = sales
-        .getByRole('list', { name: 'Attachments' })
-        .getByRole('listitem')
-        .filter({ hasText: 'exit-quote.pdf' });
-      await expect(file).toBeVisible({ timeout: 30_000 });
-      // The panel polls every 3 s while the file is "Scanning" and refreshes the page when done.
-      await expect(file).toContainText('Scan passed', { timeout: SCAN_TIMEOUT_MS });
-      await expect(sales.getByRole('link', { name: 'Download exit-quote.pdf' })).toBeVisible();
-    });
-
-    // ------------------------------------------------------ 3. preview, then submit for approval
+    // ------------------------------------------------------ 2. preview, then submit for approval
     const preview =
-      await test.step('the preview shows 2 steps with reasons, then sales submits', async () => {
+      await test.step('the preview shows the two selected people in order, then sales submits', async () => {
         const steps = await readPreviewSteps(sales);
-        expect(steps, 'two-step route for NPR 50,000').toHaveLength(2);
-        expect(steps[0]?.who).toContain('Dev Accountant');
-        expect(steps[1]?.who).toContain('Dev Finance');
+        expect(steps, 'one step per named signer').toHaveLength(2);
+        expect(steps[0]?.who).toContain('Dev Management');
+        expect(steps[1]?.who).toContain('Dev Accountant');
         return steps;
       });
     const stepOneReason = preview[0]?.reason ?? '';
@@ -123,7 +106,7 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
       return id;
     });
 
-    // ------------------------------------------------------------------ 4. no self-approval
+    // ------------------------------------------------------------------ 3. no self-approval
     await test.step('sales cannot approve their own memo: inbox says so, and the request has no Approve button', async () => {
       // `GET /v1/approvals/inbox` needs approvals.requests.act, which sales lacks: a 403 that the
       // page turns into words.
@@ -145,39 +128,39 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
       await expect(sales.getByRole('button', { name: 'Reject' })).toHaveCount(0);
     });
 
-    // ------------------------------------------------------------------ 5. accountant approves
-    const accountant = await signIn('accountant');
-    await test.step('the accountant sees the reason in the inbox and approves step 1', async () => {
-      const found = await openFromInbox(accountant, title, stepOneReason);
+    // ------------------------------------------------------------------ 4. management approves
+    const management = await signIn('management');
+    await test.step('the named recommender sees the reason in the inbox and approves step 1', async () => {
+      const found = await openFromInbox(management, title, stepOneReason);
       expect(found.requestId).toBe(requestId);
-      await approve(accountant, 'Looks right. Step 1 approved by the exit spec.');
+      await approve(management, 'Looks right. Step 1 approved by the exit spec.');
       // Decided: it leaves this person's inbox.
-      await expect(inboxRow(accountant, title)).toHaveCount(0);
+      await expect(inboxRow(management, title)).toHaveCount(0);
     });
 
-    // --------------------------------------------------------------------- 6. finance approves
-    const finance = await signIn('finance');
-    await test.step('finance sees step 2 and approves; the memo is approved', async () => {
-      const found = await openFromInbox(finance, title, stepTwoReason);
+    // --------------------------------------------------------------------- 5. accountant approves
+    const accountant = await signIn('accountant');
+    await test.step('the named approver sees step 2 and approves; the memo is approved', async () => {
+      const found = await openFromInbox(accountant, title, stepTwoReason);
       expect(found.requestId).toBe(requestId);
-      await approve(finance, 'Budget available. Step 2 approved by the exit spec.');
+      await approve(accountant, 'Agreed. Step 2 approved by the exit spec.');
 
       // The memo status follows the request's decision; allow a moment, then reload to read it.
-      await finance.goto(`/memos/${memoId}`);
+      await accountant.goto(`/memos/${memoId}`);
       await expect(async () => {
-        await finance.reload();
-        await expect(finance.getByText('Approved', { exact: true })).toBeVisible({
+        await accountant.reload();
+        await expect(accountant.getByText('Approved', { exact: true })).toBeVisible({
           timeout: 3_000,
         });
       }).toPass({ timeout: 30_000 });
-      await expect(finance.getByText('This memo was approved.')).toBeVisible();
+      await expect(accountant.getByText('This memo was approved.')).toBeVisible();
     });
 
-    // -------------------------------------------------------------------------- 7. the emails
+    // -------------------------------------------------------------------------- 6. the emails
     await test.step('Mailpit holds the pending emails and the decided email', async () => {
       const forThisMemo = (subject: string): boolean => subject.includes(memoNumber);
+      const managementEmail = persona('management').username;
       const accountantEmail = persona('accountant').username;
-      const financeEmail = persona('finance').username;
       const salesEmail = persona('sales').username;
 
       // approval.pending: "Approval needed: <type> <number>", one per step as it activates.
@@ -185,17 +168,17 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
         (m) =>
           forThisMemo(m.Subject) &&
           m.Subject.startsWith('Approval needed') &&
-          sentTo(m, accountantEmail),
-        `the "Approval needed" email to ${accountantEmail} for ${memoNumber}`,
-        SCAN_TIMEOUT_MS,
+          sentTo(m, managementEmail),
+        `the "Approval needed" email to ${managementEmail} for ${memoNumber}`,
+        MAIL_TIMEOUT_MS,
       );
       await waitForMessage(
         (m) =>
           forThisMemo(m.Subject) &&
           m.Subject.startsWith('Approval needed') &&
-          sentTo(m, financeEmail),
-        `the "Approval needed" email to ${financeEmail} for ${memoNumber}`,
-        SCAN_TIMEOUT_MS,
+          sentTo(m, accountantEmail),
+        `the "Approval needed" email to ${accountantEmail} for ${memoNumber}`,
+        MAIL_TIMEOUT_MS,
       );
       // approval.decided goes to the requester: "<type> <number>: <decision>".
       const decided = await waitForMessage(
@@ -204,13 +187,15 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
           !m.Subject.startsWith('Approval needed') &&
           sentTo(m, salesEmail),
         `the decision email to ${salesEmail} for ${memoNumber}`,
-        SCAN_TIMEOUT_MS,
+        MAIL_TIMEOUT_MS,
       );
       expect(decided.Subject).toMatch(/approved/i);
     });
 
-    // ------------------------------------------------------------------------ 8. the audit trail
+    // ------------------------------------------------------------------------ 7. the audit trail
     await test.step('the audit timeline shows the whole story to finance and is hidden from sales', async () => {
+      // Finance is not a signer here; it holds audit.read, which is all this step needs.
+      const finance = await signIn('finance');
       await finance.goto(`/memos/${memoId}`);
       const timeline = finance.getByRole('region', { name: 'Audit timeline' });
       await expect(timeline).toBeVisible();

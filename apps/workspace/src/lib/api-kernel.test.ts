@@ -9,9 +9,11 @@ import {
   getApprovalRequest,
   getInbox,
   getMemo,
+  getMemoRoute,
   getUnreadCount,
   issueDocumentLink,
   listAudit,
+  listMemos,
   listNotifications,
   markNotificationRead,
   openSignedFile,
@@ -369,6 +371,90 @@ describe('memos', () => {
     expect(lastCall().url).toBe(`http://api:3001/v1/test-memos/${ID_A}`);
   });
 
+  it('lists one page of memos and forwards only limit, cursor and status', async () => {
+    fetchMock.mockResolvedValue(
+      reply({
+        items: [
+          {
+            id: ID_A,
+            number: memo.number,
+            title: memo.title,
+            status: 'draft',
+            amount: memo.amount,
+            currency: 'USD',
+            ownerUserId: ID_B,
+            ownerName: 'Sushil Shrestha',
+            departmentName: null,
+            createdAt: WHEN,
+            updatedAt: WHEN,
+          },
+        ],
+        nextCursor: 'abc_-123',
+      }),
+    );
+    const page = await listMemos(session, { limit: 20, cursor: 'prev', status: 'draft' });
+    expect(page.items[0]?.ownerName).toBe('Sushil Shrestha');
+    expect(page.nextCursor).toBe('abc_-123');
+    expect(lastCall().url).toBe('http://api:3001/v1/test-memos?limit=20&cursor=prev&status=draft');
+    fetchMock.mockResolvedValue(reply({ items: [], nextCursor: null }));
+    await listMemos(session);
+    expect(lastCall().url).toBe('http://api:3001/v1/test-memos');
+  });
+
+  it('refuses a list body that breaks the contract instead of rendering undefined', async () => {
+    fetchMock.mockResolvedValue(reply({ items: [{ id: 'not-a-guid' }], nextCursor: null }));
+    await expect(listMemos(session)).rejects.toMatchObject({ status: 502 });
+  });
+
+  it('creates an internal memo without an amount or a currency', async () => {
+    fetchMock.mockResolvedValue(
+      reply({ ...memo, amount: '0.00', currency: 'NPR', amountNpr: '0.00', fxRate: '1' }, 201),
+    );
+    const body = {
+      title: 'Leave policy',
+      body: '',
+      template: {
+        departmentId: ID_A,
+        date: '2026-11-12',
+        closing: '',
+        preparedByUserId: ID_B,
+        recommenderUserIds: [],
+        approvedByUserId: ID_A,
+      },
+    };
+    await createMemo(session, body);
+    expect(lastCall().init.method).toBe('POST');
+    const sent = JSON.parse(lastCall().init.body as string) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty('amount');
+    expect(sent).not.toHaveProperty('currency');
+  });
+
+  it('reads the route a memo would take, named people included', async () => {
+    fetchMock.mockResolvedValue(
+      reply({
+        steps: [
+          {
+            seq: 1,
+            kind: 'user',
+            userId: ID_B,
+            reason: 'Selected approver',
+            eligibleUserIds: [],
+            blocked: false,
+          },
+        ],
+        blocked: false,
+      }),
+    );
+    const plan = await getMemoRoute(session, ID_A);
+    expect(plan.steps[0]).toMatchObject({
+      kind: 'user',
+      userId: ID_B,
+      reason: 'Selected approver',
+    });
+    expect(lastCall().url).toBe(`http://api:3001/v1/test-memos/${ID_A}/route`);
+    expect(lastCall().init.method ?? 'GET').toBe('GET');
+  });
+
   it('submits and returns the request id', async () => {
     fetchMock.mockResolvedValue(reply({ requestId: ID_B, status: 'blocked' }));
     const out = await submitMemo(session, ID_A);
@@ -555,6 +641,7 @@ describe('x-bos-id-token stays on decisions only (K7)', () => {
         }),
     ],
     ['getMemo', () => getMemo(session, ID_A)],
+    ['getMemoRoute', () => getMemoRoute(session, ID_A)],
     ['updateMemo', () => updateMemo(session, ID_A, { title: 't' })],
     ['submitMemo', () => submitMemo(session, ID_A)],
     [

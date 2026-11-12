@@ -32,6 +32,15 @@ const nextConfig: NextConfig = {
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
 
+  // The memo PDF (src/lib/memo-pdf.ts) uses pdfkit, which reads its own data files at runtime, so it stays an
+  // external package instead of being bundled. The fonts it embeds are read from assets/fonts at request time,
+  // so the standalone trace is told to carry them into the image.
+  serverExternalPackages: ['pdfkit'],
+  outputFileTracingIncludes: {
+    '/api/memos/pdf': ['./assets/fonts/**/*'],
+    '/api/memos/[id]/pdf': ['./assets/fonts/**/*'],
+  },
+
   // Dev-only page extensions let `*.dev.tsx` files (the persona switcher) exist in development.
   // The docs only describe pageExtensions for the Pages Router, so this switch may have no
   // effect on the App Router in Next 16. Do not rely on it: the real protection is the
