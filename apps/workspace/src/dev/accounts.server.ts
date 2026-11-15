@@ -5,14 +5,33 @@ import { z } from 'zod';
 import { beginLogin } from '@/lib/oidc';
 
 // BOS_DEV_ACCOUNT_SERVICE: privileged local test entry, never imported by production routes.
+// Only operator-configured exact HTTPS origins extend the local development boundary.
+// This is not a wildcard trust of a tailnet or of all *.ts.net hosts.
+function trustedDevelopmentOrigin(value: string): URL {
+  const url = new URL(value);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('Invalid development origin');
+  const local =
+    url.hostname === 'localhost' ||
+    url.hostname.endsWith('.localhost') ||
+    url.hostname.endsWith('.bos.test');
+  const configured = (process.env.BOS_DEV_TRUSTED_ORIGINS ?? '').split(',').map((v) => v.trim());
+  if (!local && !configured.includes(url.origin)) throw new Error('Untrusted development origin');
+  return url;
+}
+
 export function localDevelopmentRequest(req: Request, mutation = false): boolean {
   if (process.env.NODE_ENV !== 'development') return false;
   try {
-    const configured = new URL(process.env.WORKSPACE_PUBLIC_URL ?? '');
-    const local = (host: string) =>
-      host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.bos.test');
-    if (!local(configured.hostname) || !local(new URL(process.env.OIDC_ISSUER ?? '').hostname))
-      return false;
+    const configured = trustedDevelopmentOrigin(process.env.WORKSPACE_PUBLIC_URL ?? '');
+    trustedDevelopmentOrigin(process.env.OIDC_ISSUER ?? '');
     const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host');
     if (host !== configured.host) return false;
     if (mutation && req.headers.get('origin') !== configured.origin) return false;
@@ -25,8 +44,13 @@ export function localDevelopmentRequest(req: Request, mutation = false): boolean
 
 async function api(path: string, body?: unknown): Promise<unknown> {
   if (process.env.NODE_ENV !== 'development') throw new Error('Development only');
+  // Privileged login-client calls stay on the private identity API even when browser OIDC
+  // is exposed through a restricted HTTPS bridge. No credentials go to the public bridge.
+  const base = trustedDevelopmentOrigin(
+    process.env.BOS_DEV_IDENTITY_API_URL ?? process.env.OIDC_ISSUER ?? '',
+  );
   const token = (await readFile(process.env.BOS_DEV_LOGIN_CLIENT_TOKEN_FILE ?? '', 'utf8')).trim();
-  const response = await fetch(new URL(path, process.env.OIDC_ISSUER), {
+  const response = await fetch(new URL(path, base), {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
       authorization: `Bearer ${token}`,
@@ -111,13 +135,11 @@ export async function switchDevelopmentAccount(
   const session = z
     .object({ sessionId: z.string(), sessionToken: z.string() })
     .parse(await api('/v2/sessions', { checks: { user: { userId: id } }, lifetime: '600s' }));
-  const result = z
-    .object({ callbackUrl: z.string() })
-    .parse(
-      await api(`/v2/oidc/auth_requests/${encodeURIComponent(requestId)}`, {
-        session: { sessionId: session.sessionId, sessionToken: session.sessionToken },
-      }),
-    );
+  const result = z.object({ callbackUrl: z.string() }).parse(
+    await api(`/v2/oidc/auth_requests/${encodeURIComponent(requestId)}`, {
+      session: { sessionId: session.sessionId, sessionToken: session.sessionToken },
+    }),
+  );
   const callback = new URL(result.callbackUrl);
   const expected = new URL(process.env.OIDC_REDIRECT_URI!);
   if (

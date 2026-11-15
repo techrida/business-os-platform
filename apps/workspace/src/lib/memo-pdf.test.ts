@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { inflateSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -10,7 +11,7 @@ import { memoPdfFileName, renderMemoPdf, segmentRuns } from './memo-pdf';
 import { loadMemoFonts } from './memo-pdf-fonts';
 import { MemoPdfInputSchema, memoPdfInputOf, type MemoPdfInput } from './memo-pdf-input';
 
-const FONT_DIR = new URL('../../assets/fonts', import.meta.url).pathname;
+const FONT_DIR = fileURLToPath(new URL('../../assets/fonts', import.meta.url));
 const fonts = () => loadMemoFonts((file) => readFile(`${FONT_DIR}/${file}`));
 
 const person = (name: string, jobTitle: string | null = null) => ({ name, jobTitle });

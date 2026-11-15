@@ -128,3 +128,19 @@ scan. No deployment or runtime demo readiness is claimed from these source check
 To start local development after provisioning an isolated P1 environment, use
 `pnpm --filter @bos/workspace dev --port 3101` with the P1 API, identity service,
 Valkey and proxy configured. Run heavy jobs through the shared resource queue.
+
+## Private tailnet development access (Nov15)
+
+Kuu requested private remote-PC/phone access as a development default. The dev-only
+account service now accepts additional exact HTTPS origins only when explicitly
+listed in BOS_DEV_TRUSTED_ORIGINS. Host, port, Origin and Fetch Metadata checks
+remain enforced; production routes remain excluded and the production guard refuses.
+BOS_DEV_IDENTITY_API_URL separates privileged server-side identity calls from a
+restricted browser OIDC bridge. No browser receives the login-client token.
+Runtime configuration belongs to the isolated P1 checkout; it uses a canonical
+identity issuer, two registered app callbacks and separate Next dev cache directories.
+Cookies are not port-isolated: future same-host phase apps need distinct cookie
+names or service hostnames. Host Serve configuration is owned by Config Omarchy.
+This is a later development convenience request, not an original PRD main feature.
+Verification: 448 workspace tests and typecheck/lint passed; live/prod verification
+is in progress and must be recorded before calling the remote login ready.
