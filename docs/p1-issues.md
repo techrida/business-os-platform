@@ -142,5 +142,24 @@ identity issuer, two registered app callbacks and separate Next dev cache direct
 Cookies are not port-isolated: future same-host phase apps need distinct cookie
 names or service hostnames. Host Serve configuration is owned by the dev machine config.
 This is a later development convenience request, not an original PRD main feature.
-Verification: 448 workspace tests and typecheck/lint passed; live/prod verification
-is in progress and must be recorded before calling the remote login ready.
+Verification: 448 workspace tests, typecheck/lint, isolated production webpack
+build and dev-route exclusion passed. Private network full P1 browser exit passed with
+real password/TOTP login, clean PDF scan, named approvals, no self-approval, mail
+and audit. One-click Sales/Finance switching passed on both local and private network
+origins; remote memo PDF/list/print-content/mobile checks passed. External auth
+console/admin/management/privileged APIs and invalid switch origins returned404.
+The original local process needed one additional restart after a transient
+login-store/reload failure; the final compatibility rerun passed. No cache deletion.
+Physical remote-device browser and native print-dialog tests remain unrun here.
+
+The API container cannot directly hairpin into tailscaled’s interface-bound
+listener. the dev machine config supplies a firewall-scoped raw TLS relay at the P1
+Docker gateway; only API/worker resolve the canonical hostname to that gateway.
+Issuer, URL, SNI and certificate verification stay unchanged. Existing Login V2
+baseUri also had to be updated through the authenticated internal Feature API;
+changing deployment defaults alone did not update the persisted instance setting.
+Both databases/configs were backed up first; no schema migration or data reset.
+Shared host Serve/helper configuration is documented by its owning session.
+The separate runtime overlay and Next wrappers remain ignored local settings.
+Higher-phase source cascade awaits delivery because T3 rejects the cross-machine
+message with runtime_mode_escalation_denied; no downstream completion is claimed.
