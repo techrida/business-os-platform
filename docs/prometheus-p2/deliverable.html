@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>P2 Prometheus study guide</title>
+<style>body{max-width:850px;margin:48px auto;padding:0 24px;font:17px/1.6 system-ui;color:#20252a;background:#faf9f6}h1,h2{line-height:1.2}code,pre{background:#eeede8}pre{padding:16px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:10px;border-bottom:1px solid #ccc}.status{border-left:4px solid #b35416;padding:12px 18px;background:#fff0df}a{color:#155d83}</style>
+<h1>P2 · Prometheus study guide</h1>
+<p>Prometheus collects measurements from running services and lets you query and graph them. This guide belongs to P2 CRM and quotations.</p>
+<p class="status"><strong>Configured, not running — 16 November 2026.</strong> No preserved P2 containers, database volume, runtime environment or identity state were found on this host. Neither the viewer nor target health has been verified. No sibling phase measurements are substituted.</p>
+<h2>Intended viewer</h2>
+<p>Local: <code>http://127.0.0.1:19092/</code>. Private HTTPS preference: <code>https://host.example.net:8512/</code>. The HTTPS port is reserved with dev-share, but no viewer route is active. These are planned addresses, not live links. A viewer registration requires its actual running service or process lease.</p>
+<table><caption>Static scrape configuration within Compose project bos-p2</caption><thead><tr><th>Job</th><th>Real P2 target</th><th>Observed status</th></tr></thead><tbody><tr><td>bos-api</td><td>api:9464/metrics</td><td>Not running; UP unverified</td></tr><tr><td>bos-worker</td><td>worker:9465/metrics</td><td>Not running; UP unverified</td></tr></tbody></table>
+<h2>Resume only after restoring real P2 prerequisites</h2>
+<p>Use P2-compatible preserved database and identity configuration, built P2 API and worker images, their real dependency services, and the development CA. The old WSL handoff is historical; its former shared database advanced to P4 and must not be reused by P2. Do not reseed, reset data, or use sibling images or networks.</p>
+<p>From the P2 checkout, load the protected runtime environment first and the nonsecret phase settings second:</p>
+<pre>docker compose --env-file /absolute/protected/p2.env \
+  --env-file infra/prometheus/p2.env \
+  -f infra/compose/compose.yaml -f infra/compose/compose.dev.yaml \
+  --profile obs up -d --no-deps prometheus</pre>
+<p>This starts only the viewer once prerequisites are restored; it does not start exporters. Ensure the real P2 API and worker share <code>bos-p2_backend</code>. All host listeners must remain loopback-bound. Production Compose has no viewer port publication.</p>
+<h2>Study and acceptance</h2>
+<ol><li>Open the viewer's Targets page. Both jobs must show UP and point to the actual P2 services.</li><li>In the query page, evaluate <code>up{job=~"bos-api|bos-worker"}</code>. Both values must equal 1.</li><li>Switch to graph view and run the same query over time. A gap means no samples were collected; 0 means a scrape failed.</li><li>Register the running viewer with standard dev-share, stateless, HTTPS port 8512 and its actual unit or PID lease. Check the HTTPS query page and this served guide. Never register an unrelated process to satisfy the lease.</li></ol>
+<p>No application authentication, schemas, seeded records, or sibling services were changed. Grafana is outside this task.</p>
+</html>
