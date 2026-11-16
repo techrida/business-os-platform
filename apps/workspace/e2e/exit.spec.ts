@@ -276,7 +276,11 @@ test('immediate picker/drop upload, removal recovery and submitted attachment lo
     // Selecting through the actual button's file chooser starts upload: no second click.
     for (let index = 0; index < 2; index++) {
       const chooser = page.waitForEvent('filechooser');
-      await upload.click();
+      if (index === 0) await upload.click();
+      else {
+        await upload.focus();
+        await page.keyboard.press('Enter');
+      }
       await (
         await chooser
       ).setFiles({
@@ -289,6 +293,10 @@ test('immediate picker/drop upload, removal recovery and submitted attachment lo
     }
     await expect(row('repeat.pdf').first()).toContainText('Scan passed', { timeout: 60_000 });
     await expect(row('repeat.pdf').last()).toContainText('Scan passed', { timeout: 60_000 });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
 
     // Server refusal must not optimistically hide a file.
     const deleteRoute = '**/api/documents/*';
