@@ -250,36 +250,104 @@
 }
 
 .dropzone {
-  padding: 16px;
-  border: var(--border-width-thin) dashed var(--attachment-border);
+  display: grid;
+  gap: 10px;
+  padding: 20px;
+  border: var(--border-width-medium) dashed var(--input-border);
   border-radius: var(--radius-lg);
   background: var(--attachment-bg);
-}
-
-/* The native file input, with its button drawn like the secondary Button. */
-.fileInput {
-  width: 100%;
-  color: var(--text-primary);
-  font-size: var(--font-size-body-small);
-}
-
-.fileInput::file-selector-button {
-  min-height: 34px;
-  margin-right: 12px;
-  padding: 0 12px;
-  border: var(--border-width-thin) solid var(--button-primary-border);
-  border-radius: var(--radius-lg);
-  background: var(--button-secondary-bg);
-  color: var(--button-primary-border);
-  font: inherit;
-  font-weight: var(--font-weight-medium);
   cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
 }
 
-.fileInput:disabled::file-selector-button {
+.dropzone:hover:not(.dropzoneDisabled) {
+  border-color: var(--input-hover-border);
+  background: var(--interactive-hover);
+}
+
+.dropzoneActive:not(.dropzoneDisabled) {
+  border-color: var(--border-focus);
+  background: var(--interactive-selected);
+}
+
+.dropzoneDisabled {
+  opacity: 0.72;
+  cursor: progress;
+}
+
+.dropzoneRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.dropzonePrompt {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.dropzoneHint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* Destructive icon-only attachment removal: 40px touch target, error palette with AA contrast. */
+.removeAttachment {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: var(--border-width-thin) solid color-mix(in srgb, var(--status-error) 45%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--status-error-subtle);
+  color: var(--error-700);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+:global([data-theme='dark']) .removeAttachment {
+  color: var(--error-300);
+}
+
+.removeAttachment:hover:not(:disabled) {
+  border-color: var(--status-error);
+  background: var(--error-100);
+  color: var(--error-800);
+}
+
+:global([data-theme='dark']) .removeAttachment:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-error) 22%, var(--status-error-subtle));
+  color: var(--error-200);
+}
+
+.removeAttachment:active:not(:disabled) {
+  background: var(--error-200);
+  color: var(--error-900);
+}
+
+:global([data-theme='dark']) .removeAttachment:active:not(:disabled) {
+  background: color-mix(in srgb, var(--status-error) 34%, var(--status-error-subtle));
+  color: var(--error-100);
+}
+
+.removeAttachment:disabled {
   border-color: var(--border-default);
-  color: var(--text-disabled);
+  background: var(--surface-muted);
+  color: var(--button-icon-disabled);
   cursor: not-allowed;
+}
+
+.removeAttachment[aria-busy='true']:disabled {
+  cursor: progress;
 }
 
 /* ---- Audit timeline ---- */
