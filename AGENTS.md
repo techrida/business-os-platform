@@ -3,6 +3,18 @@
 These instructions apply to every checkout and phase branch of this repository.
 The user's current instructions take precedence.
 
+## Git and PR attribution
+
+Kuu's instruction (2026-11-16): commits use only Kuu's verified GitHub identity
+(currently `Kuu44`) as author and committer. Do not add AI, provider, agent or
+model names, `Co-Authored-By` trailers, generated-by footers or AI credits to
+commit messages or pull request titles/descriptions. This applies to every
+phase, merge commit, delegated session and subagent; pass it in delegation briefs
+and inspect incoming commit messages before integrating their work. Provider
+defaults do not override this rule. Preserve legitimate third-party history and
+required license notices. Do not rewrite published history without Kuu's
+explicit authorization.
+
 ## Phase changes must cascade
 
 Kuu's standing instruction (2026-11-10): when a change lands on a lower phase,
