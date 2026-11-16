@@ -163,3 +163,25 @@ Shared host Serve/helper configuration is documented by its owning session.
 The separate runtime overlay and Next wrappers remain ignored local settings.
 Higher-phase source cascade awaits delivery because T3 rejects the cross-machine
 message with runtime_mode_escalation_denied; no downstream completion is claimed.
+
+## Memo attachment interaction follow-up (Nov16)
+
+Kuu requested direct upload (picker selection or one-file drop, no second Upload
+click) and an icon-only red removal control on editable attachments. The workspace
+now forwards authenticated same-origin removal to the existing audited document
+DELETE API. Refusal keeps the row visible; successful removal refreshes submission
+readiness. Submitted snapshots remain locked by the backend. No migration or API
+rebuild is needed. This is a later UI preference, not an original PRD requirement.
+
+Verification: 473 workspace tests, workspace typecheck, touched-file lint and an
+isolated production webpack build with no-dev-routes check passed. The live P1
+exit passed (password/TOTP, scan, named approvals, mail/audit). The added live
+attachment regression passed picker/repeated selection, drop, infected-file
+removal/recovery, refusal without hiding, missing/foreign Origin refusal and the
+post-submit API/UI lock. Physical mobile device and screen-reader testing were
+not performed. Canonical personal preferences live in life-kb, not this repo.
+
+Higher-phase merge resolution must retain P2's removal of financial test memo
+fields, attachment UI and scan workflow. Keep the generic document removal BFF
+where applicable; omit the P1-only attachment component/actions/tests and the
+P1-only attachment exit scenario from P2+ instead of reviving them on merge.
