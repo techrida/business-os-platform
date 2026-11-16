@@ -83,12 +83,15 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
     // ------------------------------------------------------- 2. upload; ClamAV marks it clean
     await test.step('sales uploads a PDF and the real ClamAV scan passes', async () => {
       await sales.waitForLoadState('networkidle');
-      await sales.getByLabel('Attach a file', { exact: true }).setInputFiles({
+      const chooser = sales.waitForEvent('filechooser');
+      await sales.getByRole('button', { name: 'Upload file', exact: true }).click();
+      await (
+        await chooser
+      ).setFiles({
         name: 'exit-quote.pdf',
         mimeType: 'application/pdf',
         buffer: minimalPdf('Exit e2e quote'),
       });
-      await sales.getByRole('button', { name: 'Upload', exact: true }).click();
 
       const file = sales
         .getByRole('list', { name: 'Attachments' })

@@ -350,6 +350,19 @@
   cursor: progress;
 }
 
+.dropzone:focus-within,
+.removeAttachment:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropzone,
+  .removeAttachment {
+    transition: none;
+  }
+}
+
 /* ---- Audit timeline ---- */
 
 .history {
