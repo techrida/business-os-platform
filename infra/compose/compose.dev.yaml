@@ -81,3 +81,8 @@ services:
       # IP, so a persona e2e run trips it. The app refuses this unless WORKSPACE_PUBLIC_URL is localhost or
       # *.localhost. Never copy it to compose.yaml or compose.prod.yaml.
       BOS_DEV_LOGIN_RATE_LIMIT: ${BOS_DEV_LOGIN_RATE_LIMIT:-200}
+
+  prometheus:
+    ports:
+      - '${PROMETHEUS_BIND_ADDR:-127.0.0.1}:${PROMETHEUS_PORT:-19090}:9090'
+    networks: [backend, edge]
