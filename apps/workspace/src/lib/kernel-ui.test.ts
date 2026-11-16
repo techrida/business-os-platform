@@ -39,6 +39,13 @@ describe('describeFailure', () => {
     );
     expect(describeFailure({ status: 500, detail: 'secret' }).message).not.toContain('secret');
   });
+
+  it('asks for reload on a 409 during attachment removal', () => {
+    const f = describeFailure({ status: 409 }, 'remove');
+    expect(f.reload).toBe(true);
+    expect(f.definite).toBe(true);
+    expect(f.message).toContain('draft or returned');
+  });
 });
 
 describe('safeLocalPath', () => {

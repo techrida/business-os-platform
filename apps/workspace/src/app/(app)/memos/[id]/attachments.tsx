@@ -1,34 +1,45 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field } from '@/components/ui/field';
-import {
-  type AttachmentView,
-  formatBytes,
-  guessMime,
-  needsPolling,
-  scanLabel,
-} from '@/lib/kernel-ui';
+import { type AttachmentView, formatBytes, needsPolling, scanLabel } from '@/lib/kernel-ui';
 
 import styles from '../../kit.module.css';
-import { DownloadIcon, PaperclipIcon, UploadIcon } from '../memo-icons';
+import { DownloadIcon, PaperclipIcon, TrashIcon, UploadIcon } from '../memo-icons';
+import {
+  applyRemovedAttachment,
+  applyUploadedAttachment,
+  focusAfterAttachmentRemoval,
+  hasDraggedFiles,
+  performAttachmentRemoval,
+  performAttachmentUpload,
+  selectDroppedFile,
+  type AttachmentFlightLock,
+  type AttachmentMessage,
+  type FocusTarget,
+} from './attachment-actions';
 
 const POLL_MS = 3000;
-
-type Message = { tone: 'ok' | 'bad'; text: string } | null;
+const ACCEPTED_EXTENSIONS = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.pptx,.csv';
 
 const BADGE_TONE = { good: 'success', wait: 'warning', bad: 'error' } as const;
 
+function navigateToLogin(memoId: string): void {
+  // /auth/login is a Route Handler, not a page: it needs a real navigation.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+  window.location.assign(`/auth/login?returnTo=${encodeURIComponent(`/memos/${memoId}`)}`);
+}
+
 /**
- * The attachments panel: list with scan status, upload, download. While any file is still being
- * scanned it polls the BFF every 3 s; when the last scan finishes it asks the server to re-render
- * the page, so the Submit button (a server-rendered part) unlocks without a manual reload.
- * Serves the NFR "no unscanned file is ever served": only `clean` files get a Download link.
+ * The attachments panel: list with scan status, instant upload (drop or picker), download, and
+ * soft removal while the memo is editable. While any file is still being scanned it polls the BFF
+ * every 3 s; when the last scan finishes it asks the server to re-render the page, so the Submit
+ * button (a server-rendered part) unlocks without a manual reload. Serves the NFR "no unscanned
+ * file is ever served": only `clean` files get a Download link.
  */
 export function Attachments({
   memoId,
@@ -44,11 +55,19 @@ export function Attachments({
   allowedMime: string[];
 }) {
   const router = useRouter();
+  const hintId = useId();
   const [files, setFiles] = useState<AttachmentView[]>(initial);
   const [uploading, setUploading] = useState(false);
-  const [message, setMessage] = useState<Message>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [message, setMessage] = useState<AttachmentMessage>(null);
   const [announce, setAnnounce] = useState('');
+
   const inputRef = useRef<HTMLInputElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
+  const removeButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const pendingFocus = useRef<FocusTarget | null>(null);
+  const flightLock = useRef<AttachmentFlightLock>({ busy: false });
   const filesRef = useRef(files);
   useEffect(() => {
     filesRef.current = files;
@@ -61,6 +80,17 @@ export function Attachments({
     setSeenInitial(initial);
     setFiles(initial);
   }
+
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    if (target.type === 'upload') {
+      uploadButtonRef.current?.focus();
+    } else {
+      removeButtonRefs.current.get(target.documentId)?.focus();
+    }
+  }, [files]);
 
   const poll = useCallback(async () => {
     try {
@@ -91,71 +121,115 @@ export function Attachments({
     return () => window.clearInterval(timer);
   }, [waiting, poll]);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const file = inputRef.current?.files?.[0];
-    if (!file) {
-      setMessage({ tone: 'bad', text: 'Choose a file to attach first.' });
-      inputRef.current?.focus();
+  const busy = uploading || removingId !== null;
+
+  async function startUpload(file: File) {
+    const outcome = await performAttachmentUpload({
+      lock: flightLock.current,
+      memoId,
+      file,
+      maxBytes,
+      allowedMime,
+      onStart: () => {
+        setUploading(true);
+        setMessage(null);
+      },
+    });
+    if (outcome.kind === 'skipped') return;
+    setUploading(false);
+
+    if (outcome.kind === 'unauthenticated') {
+      navigateToLogin(memoId);
       return;
     }
-    if (file.size === 0) return setMessage({ tone: 'bad', text: 'That file is empty.' });
-    if (file.size > maxBytes) {
-      return setMessage({
-        tone: 'bad',
-        text: `That file is ${formatBytes(file.size)}. The limit is ${formatBytes(maxBytes)}.`,
-      });
+    if (outcome.kind === 'error') {
+      setMessage({ tone: 'bad', text: outcome.message });
+      return;
     }
-    const mime = guessMime(file.name, file.type);
-    if (!allowedMime.includes(mime)) {
-      return setMessage({
-        tone: 'bad',
-        text: 'That file type is not accepted. Use PDF, PNG, JPEG, WebP, Word, Excel, PowerPoint or CSV.',
-      });
-    }
+    setFiles((prev) => applyUploadedAttachment(prev, outcome.item));
+    setMessage({
+      tone: 'ok',
+      text: `${outcome.item.filename} uploaded. It is being scanned for viruses.`,
+    });
+    router.refresh();
+  }
 
-    setUploading(true);
-    setMessage(null);
-    try {
-      // The raw file is the body (the browser adds Content-Length); its name travels in a header.
-      const res = await fetch(`/api/memos/${encodeURIComponent(memoId)}/attachments`, {
-        method: 'POST',
-        headers: { 'content-type': mime, 'x-file-name': encodeURIComponent(file.name) },
-        body: file,
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        item?: AttachmentView;
-        error?: { message?: string };
-      };
-      if (res.status === 401) {
-        // /auth/login is a Route Handler, not a page: it needs a real navigation.
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.href = `/auth/login?returnTo=${encodeURIComponent(`/memos/${memoId}`)}`;
-        return;
-      }
-      if (!res.ok || !data.item) {
-        setMessage({
-          tone: 'bad',
-          text: data.error?.message ?? 'The upload did not finish. Try again.',
-        });
-        return;
-      }
-      const item = data.item;
-      setFiles((prev) => [...prev.filter((f) => f.id !== item.id), item]);
-      setMessage({
-        tone: 'ok',
-        text: `${item.filename} uploaded. It is being scanned for viruses.`,
-      });
-      if (inputRef.current) inputRef.current.value = '';
-      router.refresh();
-    } catch {
-      setMessage({
-        tone: 'bad',
-        text: 'The upload was interrupted. Check your connection and try again.',
-      });
-    } finally {
-      setUploading(false);
+  async function handleRemove(item: AttachmentView, index: number) {
+    const outcome = await performAttachmentRemoval({
+      lock: flightLock.current,
+      documentId: item.documentId,
+      onStart: () => {
+        setRemovingId(item.documentId);
+        setMessage(null);
+      },
+    });
+    if (outcome.kind === 'skipped') return;
+    setRemovingId(null);
+
+    if (outcome.kind === 'unauthenticated') {
+      navigateToLogin(memoId);
+      return;
     }
+    if (outcome.kind === 'error') {
+      setMessage({ tone: 'bad', text: outcome.message });
+      if (outcome.reload) router.refresh();
+      return;
+    }
+    const remaining = applyRemovedAttachment(filesRef.current, item.documentId);
+    pendingFocus.current = focusAfterAttachmentRemoval(index, remaining);
+    setFiles(remaining);
+    setMessage({ tone: 'ok', text: `${item.filename} removed.` });
+    router.refresh();
+  }
+
+  function openPicker() {
+    if (busy || flightLock.current.busy) return;
+    inputRef.current?.click();
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.currentTarget.files?.[0];
+    // Reset immediately so choosing the same file again after upload, error, or removal still fires.
+    e.currentTarget.value = '';
+    if (!file) return;
+    void startUpload(file);
+  }
+
+  function onDragEnter(e: React.DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    if (!busy) setDragActive(true);
+  }
+
+  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = busy ? 'none' : 'copy';
+    if (!busy && !dragActive) setDragActive(true);
+  }
+
+  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDragActive(false);
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (busy || flightLock.current.busy) return;
+    if (!hasDraggedFiles(e.dataTransfer) && e.dataTransfer.files.length === 0) return;
+    const picked = selectDroppedFile(e.dataTransfer.files);
+    if (!picked.ok) {
+      setMessage({ tone: 'bad', text: picked.message });
+      return;
+    }
+    void startUpload(picked.file);
+  }
+
+  function onDropzoneClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.target instanceof Element && e.target.closest('button, input, a')) return;
+    openPicker();
   }
 
   return (
@@ -164,8 +238,9 @@ export function Attachments({
         <p className={styles.note}>No attachments yet.</p>
       ) : (
         <ul className={styles.files} aria-label="Attachments">
-          {files.map((f) => {
+          {files.map((f, index) => {
             const scan = scanLabel(f.status);
+            const removingThis = removingId === f.documentId;
             return (
               <li key={f.id} className={styles.file}>
                 <span className={styles.fileIcon}>
@@ -188,6 +263,23 @@ export function Attachments({
                       Download
                     </LinkButton>
                   ) : null}
+                  {canUpload ? (
+                    <button
+                      ref={(el) => {
+                        if (el) removeButtonRefs.current.set(f.documentId, el);
+                        else removeButtonRefs.current.delete(f.documentId);
+                      }}
+                      type="button"
+                      className={styles.removeAttachment}
+                      aria-label={`Remove ${f.filename}`}
+                      title={`Remove ${f.filename}`}
+                      disabled={busy}
+                      aria-busy={removingThis || undefined}
+                      onClick={() => void handleRemove(f, index)}
+                    >
+                      <TrashIcon size={16} />
+                    </button>
+                  ) : null}
                 </div>
               </li>
             );
@@ -201,35 +293,61 @@ export function Attachments({
       </p>
 
       {canUpload ? (
-        <form onSubmit={(e) => void onSubmit(e)} noValidate className={styles.upload}>
-          <div className={styles.dropzone}>
-            <Field
-              label="Attach a file"
-              hint={`PDF, image, Word, Excel, PowerPoint or CSV, up to ${formatBytes(maxBytes)}. Every file is scanned before anyone can download it.`}
-            >
-              {(control) => (
-                <input
-                  ref={inputRef}
-                  name="file"
-                  type="file"
-                  className={styles.fileInput}
-                  accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.pptx,.csv"
-                  disabled={uploading}
-                  {...control}
-                />
-              )}
-            </Field>
+        <div className={styles.upload}>
+          <input
+            ref={inputRef}
+            name="file"
+            type="file"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            accept={ACCEPTED_EXTENSIONS}
+            disabled={busy}
+            onChange={onFileChange}
+          />
+          <div
+            className={[
+              styles.dropzone,
+              dragActive ? styles.dropzoneActive : undefined,
+              busy ? styles.dropzoneDisabled : undefined,
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            data-dragging={dragActive ? 'true' : undefined}
+            onDragEnter={onDragEnter}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            onClick={onDropzoneClick}
+          >
+            <div className={styles.dropzoneRow}>
+              <Button
+                ref={uploadButtonRef}
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                aria-describedby={hintId}
+                onClick={openPicker}
+              >
+                <UploadIcon />
+                {uploading ? 'Uploading…' : 'Upload file'}
+              </Button>
+              <span className={styles.dropzonePrompt}>
+                {dragActive
+                  ? 'Drop the file to start uploading.'
+                  : 'Or drag and drop a single file here.'}
+              </span>
+            </div>
+            <p id={hintId} className={styles.dropzoneHint}>
+              PDF, image, Word, Excel, PowerPoint or CSV, up to {formatBytes(maxBytes)}. Selecting
+              or dropping a file starts the upload immediately, and every file is scanned before
+              anyone can download it.
+            </p>
           </div>
-          <div className={styles.formActions}>
-            <Button type="submit" variant="secondary" disabled={uploading}>
-              <UploadIcon />
-              {uploading ? 'Uploading' : 'Upload'}
-            </Button>
-          </div>
-        </form>
+        </div>
       ) : (
         <p className={styles.note}>
-          Files can only be added while the memo is a draft or returned.
+          Files can only be added or removed while the memo is a draft or returned.
         </p>
       )}
 

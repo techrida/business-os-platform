@@ -17,7 +17,7 @@ export interface Failure {
   definite: boolean;
 }
 
-export type FailureContext = 'approval' | 'submit' | 'upload' | 'generic';
+export type FailureContext = 'approval' | 'submit' | 'upload' | 'remove' | 'generic';
 
 export interface FailureInput {
   status: number;
@@ -59,6 +59,10 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
         'Every attachment must finish its virus scan and come back clean before you can submit. Wait for the scan to finish, then try again.';
     } else if (context === 'upload') {
       message = 'This memo can no longer take attachments because it is not a draft.';
+    } else if (context === 'remove') {
+      message =
+        'Attachments can no longer be removed because this memo is no longer a draft or returned.';
+      reload = true;
     } else {
       message = 'This item changed since you opened it. Reload and try again.';
       reload = true;

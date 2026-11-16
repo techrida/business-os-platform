@@ -16,6 +16,7 @@ import {
   markNotificationRead,
   openSignedFile,
   previewRoute,
+  removeDocument,
   submitMemo,
   uploadDocumentContent,
 } from './api-kernel';
@@ -421,6 +422,21 @@ describe('documents', () => {
     await expect(
       openSignedFile(session, { url: '/v1/files/tok', expiresAt: WHEN }),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('soft-removes a document via DELETE /v1/documents/:id on 204', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(removeDocument(session, ID_A)).resolves.toBeUndefined();
+    expect(lastCall().url).toBe(`http://api:3001/v1/documents/${ID_A}`);
+    expect(lastCall().init.method).toBe('DELETE');
+  });
+
+  it('encodes documentId and surfaces API errors on removeDocument', async () => {
+    fetchMock.mockResolvedValueOnce(
+      reply({ error: { code: 'conflict', message: 'locked', correlationId: 'req-12345678' } }, 409),
+    );
+    await expect(removeDocument(session, '../x')).rejects.toMatchObject({ status: 409 });
+    expect(lastCall().url).toBe('http://api:3001/v1/documents/..%2Fx');
   });
 });
 
