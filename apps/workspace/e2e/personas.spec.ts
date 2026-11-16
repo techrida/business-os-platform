@@ -8,7 +8,7 @@ import { expectZitadelCredentialForm, signInOnZitadel } from './helpers/zitadel-
  * TOTP code from the seed's secret) and the Workspace's real OIDC code flow. Nothing is stubbed: no token, header or cookie is faked anywhere.
  */
 
-const SESSION_COOKIE = '__Host-bos_session';
+const SESSION_COOKIE = process.env.BOS_E2E_SESSION_COOKIE ?? '__Host-bos_session';
 const authOrigin = process.env.BOS_E2E_AUTH_ORIGIN ?? 'https://auth.localhost';
 
 // A login answered with 429 (CR-03) makes a sign-in look broken for no reason in the app. Name it

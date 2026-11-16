@@ -6,6 +6,7 @@ import { Redis } from 'ioredis';
 import * as client from 'openid-client';
 import { z } from 'zod';
 
+import { cookieName } from './cookie-name';
 import { getEnv } from './env';
 import { safeReturnTo, VALKEY_CLIENT_OPTIONS, whenReady } from './session';
 
@@ -42,7 +43,7 @@ const PROMPTS = new Set(['login', 'none', 'consent', 'select_account']);
  * Browser binding for a login in progress. `__Host-` makes the browser insist on Secure, Path=/
  * and no Domain. Set by /auth/login for LOGIN_STATE_TTL_SECONDS, read and cleared by the callback.
  */
-export const LOGIN_COOKIE = '__Host-bos_login';
+export const LOGIN_COOKIE = cookieName('login');
 /** Max-Age of LOGIN_COOKIE: the same 10 minutes as the stored state. */
 export const LOGIN_COOKIE_MAX_AGE = LOGIN_STATE_TTL_SECONDS;
 const LOGIN_BINDING_BYTES = 32;
