@@ -103,6 +103,12 @@ export const documentVersions = appSchema.table(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t): PgTableExtraConfigValue[] => [
+    unique('document_versions_review_identity_unique').on(
+      t.tenantId,
+      t.organizationId,
+      t.documentId,
+      t.id,
+    ),
     unique('document_versions_tenant_document_version_unique').on(
       t.tenantId,
       t.documentId,

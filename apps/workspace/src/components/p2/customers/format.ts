@@ -79,12 +79,18 @@ export function approvalFile(
   );
 }
 
-/** Pre-decision readiness. Acceptance is the result of approval, not its prerequisite. */
+/** Customer document review requires explicit decisions before final case approval. */
 export function approveBlockedReason(
-  c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
   files: ApprovalFiles = new Map(),
 ): string | null {
+  if (c.approvalBlockedReason !== undefined) return c.approvalBlockedReason;
   if (c.status !== 'submitted') return 'Only a case awaiting review can be approved.';
+  if (
+    c.reviewPolicy === 'document_review_v1' &&
+    c.checklist.some((i) => i.documentId && i.status !== 'accepted')
+  )
+    return 'Approve or reject every supplied document before approving the case.';
   const required = c.checklist.filter((i) => i.required);
   if (required.length === 0) return 'Approval requires at least one required document.';
   for (const item of required) {
@@ -108,7 +114,7 @@ export function approveBlockedReason(
 }
 
 export function canApprove(
-  c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
   files: ApprovalFiles = new Map(),
 ): boolean {
   return approveBlockedReason(c, files) === null;
