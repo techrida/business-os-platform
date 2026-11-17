@@ -40,3 +40,14 @@ the existing accessible EmptyState and navigation components.
 Acceptance excludes live rollout: no live services, data, .next, credentials or
 served guide touched. Browser-facing origin acceptance remains for the runtime
 owner after source refresh. No production build was run.
+
+Local verification on Linux Node 24.22.2 (disposable Testcontainers only):
+- P2 customers/verification: 104 passed, then 23 verification tests passed after
+  adding the additional unreadable-create regression (105 focused tests total).
+- P3 customers/verification: 105 passed; workspace focused suites: 174 passed.
+- P4 customers/verification/vendors (including bank and vendor KYB): 182 passed;
+  workspace focused suites: 179 passed.
+- API and workspace typechecks passed on each phase.
+- Browser journey, live rollout, production build/exclusion sweep: not run.
+  No auth/dev-switcher code changed. The missing-page component is typechecked;
+  its browser-facing behavior still needs the runtime owner's acceptance.
