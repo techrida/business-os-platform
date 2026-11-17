@@ -13,6 +13,8 @@ beforeEach(() => {
   vi.stubEnv('WORKSPACE_PUBLIC_URL', 'https://app.p1.bos.test');
   vi.stubEnv('OIDC_ISSUER', 'https://auth.p1.bos.test');
   vi.stubEnv('BOS_DEV_LOGIN_CLIENT_TOKEN_FILE', '/private/token');
+  vi.stubEnv('BOS_DEV_TRUSTED_ORIGINS', '');
+  vi.stubEnv('BOS_DEV_IDENTITY_API_URL', undefined);
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -33,6 +35,85 @@ describe('development identity boundary', () => {
     vi.stubEnv('NODE_ENV', 'production');
     expect(localDevelopmentRequest(request(), true)).toBe(false);
   });
+  it.each([
+    ['https://omarchy.tail1c04d9.ts.net:8443', 'https://omarchy.tail1c04d9.ts.net:8444'],
+    ['https://192.168.1.74', 'https://192.168.1.74'],
+    ['https://192.168.1.74:8443', 'https://192.168.1.74:8444'],
+  ])('requires exact explicit HTTPS trust for %s', (app, issuer) => {
+    vi.stubEnv('WORKSPACE_PUBLIC_URL', app);
+    vi.stubEnv('OIDC_ISSUER', issuer);
+    const req = (origin = app, host = new URL(app).host) => request(origin, host);
+    expect(localDevelopmentRequest(req(), true)).toBe(false);
+    vi.stubEnv('BOS_DEV_TRUSTED_ORIGINS', `${app},${issuer}`);
+    expect(localDevelopmentRequest(req(), true)).toBe(true);
+    if (issuer !== app) expect(localDevelopmentRequest(req(issuer), true)).toBe(false);
+    expect(localDevelopmentRequest(req(app, `${new URL(app).hostname}:9443`), true)).toBe(false);
+    expect(localDevelopmentRequest(req('https://192.168.1.75'), true)).toBe(false);
+    expect(localDevelopmentRequest(req(app, '192.168.1.75'), true)).toBe(false);
+    expect(localDevelopmentRequest(req(`https://${new URL(app).hostname}:9443`), true)).toBe(false);
+    expect(localDevelopmentRequest(req(app.replace('https:', 'http:')), true)).toBe(false);
+    expect(
+      localDevelopmentRequest(
+        new Request(app, {
+          headers: { host: new URL(app).host, origin: app, 'x-forwarded-host': '192.168.1.75' },
+        }),
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      localDevelopmentRequest(new Request(app, { headers: { host: new URL(app).host } }), true),
+    ).toBe(false);
+    expect(
+      localDevelopmentRequest(
+        new Request(app, {
+          headers: { host: new URL(app).host, origin: app, 'sec-fetch-site': 'cross-site' },
+        }),
+        true,
+      ),
+    ).toBe(false);
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(localDevelopmentRequest(req(), true)).toBe(false);
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('WORKSPACE_PUBLIC_URL', app.replace('https:', 'http:'));
+    expect(localDevelopmentRequest(req(), true)).toBe(false);
+  });
+
+  it.each(['https://omarchy.tail1c04d9.ts.net:8444', 'https://192.168.1.74'])(
+    'keeps privileged identity calls private when browser issuer is %s',
+    async (issuer) => {
+      vi.stubEnv('BOS_DEV_IDENTITY_API_URL', 'https://auth.p1.bos.test');
+      vi.stubEnv('OIDC_ISSUER', issuer);
+      vi.stubEnv('BOS_DEV_TRUSTED_ORIGINS', issuer);
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ result: [] }));
+      vi.stubGlobal('fetch', fetchMock);
+      await developmentAccounts();
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL('https://auth.p1.bos.test/zitadel.user.v2.UserService/ListUsers'),
+        expect.objectContaining({
+          redirect: 'error',
+          headers: {
+            authorization: 'Bearer private-login-token',
+            'content-type': 'application/json',
+            'Connect-Protocol-Version': '1',
+          },
+        }),
+      );
+      const otherPort = new URL(issuer);
+      otherPort.port = '9443';
+      for (const unexpected of [
+        'https://untrusted.example',
+        'https://192.168.1.75',
+        otherPort.origin,
+      ]) {
+        vi.stubEnv('BOS_DEV_IDENTITY_API_URL', unexpected);
+        await expect(developmentAccounts()).rejects.toThrow('Untrusted development origin');
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      vi.stubEnv('NODE_ENV', 'production');
+      await expect(developmentAccounts()).rejects.toThrow('Development only');
+    },
+  );
+
   it('rejects missing origin and cross-site fetches', () => {
     expect(
       localDevelopmentRequest(
