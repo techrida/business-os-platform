@@ -212,6 +212,13 @@ export class VerificationService implements OnModuleInit {
           customerPartyId: customer.id,
           sodUserIds: [],
         });
+        this.authz.assert('verification.read', {
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          ownerUserId: customer.ownerUserId,
+          customerPartyId: customer.id,
+          sodUserIds: [],
+        });
       } catch (error) {
         hideOutOfScope(error, 'Customer');
       }
