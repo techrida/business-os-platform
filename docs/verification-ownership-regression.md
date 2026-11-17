@@ -48,3 +48,13 @@ while integrating p2/kyb-ui (before 253fa28). It described another owner's custo
 not the omitted-owner normal form failure. This is an assistant report of an open
 question, not proof that Kuu accepted the behavior. Position 108 records typechecks
 and 105 UI tests passing despite the known mismatch.
+Local verification on Linux Node 24.22.2 (disposable Testcontainers only):
+- P2 customers/verification: 104 passed, then 23 verification tests passed after
+  adding the additional unreadable-create regression (105 focused tests total).
+- P3 customers/verification: 105 passed; workspace focused suites: 174 passed.
+- P4 customers/verification/vendors (including bank and vendor KYB): 182 passed;
+  workspace focused suites: 179 passed.
+- API and workspace typechecks passed on each phase.
+- Browser journey, live rollout, production build/exclusion sweep: not run.
+  No auth/dev-switcher code changed. The missing-page component is typechecked;
+  its browser-facing behavior still needs the runtime owner's acceptance.
