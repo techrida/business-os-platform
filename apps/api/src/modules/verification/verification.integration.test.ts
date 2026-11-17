@@ -363,17 +363,18 @@ describe('POST /v1/verification-cases', () => {
       {
         legalName: 'Normal form customer',
         relationship: 'prospect',
-        address: JSON.parse(ADDRESS),
+        address: { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' },
       },
       randomUUID(),
     );
     const opened = await api().post('/v1/verification-cases').send({ partyId: customer.id });
     expect(opened.status).toBe(201);
-    expect((await api().get(`/v1/verification-cases/${opened.body.id}`)).status).toBe(200);
+    const openedCase = VerificationCaseDtoSchema.parse(opened.body);
+    expect((await api().get(`/v1/verification-cases/${openedCase.id}`)).status).toBe(200);
     const list = await api().get('/v1/verification-cases');
-    expect(JSON.stringify(list.body)).toContain(opened.body.id);
+    expect(JSON.stringify(list.body)).toContain(openedCase.id);
     as(U.salesB, 'sales');
-    expect((await api().get(`/v1/verification-cases/${opened.body.id}`)).status).toBe(404);
+    expect((await api().get(`/v1/verification-cases/${openedCase.id}`)).status).toBe(404);
   });
 
   it('refuses starting unreadable unowned or differently owned cases without changing ownership', async () => {
