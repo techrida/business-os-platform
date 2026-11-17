@@ -42,6 +42,9 @@ import { Pool } from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CustomersService } from '../customers/customers.service';
+import { NumberingService } from '../../platform/settings/numbering.service';
+
 import { configureApp } from '../../app.setup';
 import { AuditService } from '../../platform/audit/audit.service';
 import { can } from '../../platform/authz/can';
@@ -348,6 +351,44 @@ const rawCase = async (id: string) => {
 // -------------------------------------------------------------------------------------------------- tests
 
 describe('POST /v1/verification-cases', () => {
+  it('follows a normal Sales customer create without optional ownership through case detail and list', async () => {
+    as(U.salesA, 'sales');
+    const customers = new CustomersService(
+      db,
+      new NumberingService(),
+      authz as unknown as AuthzService,
+      caller,
+    );
+    const customer = await customers.create(
+      {
+        legalName: 'Normal form customer',
+        relationship: 'prospect',
+        address: JSON.parse(ADDRESS),
+      },
+      randomUUID(),
+    );
+    const opened = await api().post('/v1/verification-cases').send({ partyId: customer.id });
+    expect(opened.status).toBe(201);
+    expect((await api().get(`/v1/verification-cases/${opened.body.id}`)).status).toBe(200);
+    const list = await api().get('/v1/verification-cases');
+    expect(JSON.stringify(list.body)).toContain(opened.body.id);
+    as(U.salesB, 'sales');
+    expect((await api().get(`/v1/verification-cases/${opened.body.id}`)).status).toBe(404);
+  });
+
+  it('refuses starting unreadable unowned or differently owned cases without changing ownership', async () => {
+    for (const owner of [null, U.salesB]) {
+      const partyId = await newCustomer(scope, owner);
+      as(U.salesA, 'sales');
+      expect((await api().post('/v1/verification-cases').send({ partyId })).status).toBe(404);
+      as(U.founder, 'founder');
+      const opened = await api().post('/v1/verification-cases').send({ partyId });
+      expect(opened.status).toBe(201);
+      as(U.salesA, 'sales');
+      expect((await api().post('/v1/verification-cases').send({ partyId })).status).toBe(404);
+    }
+  });
+
   it('creates a draft case with the default checklist (201) and returns the same case for the same customer (200)', async () => {
     const partyId = await newCustomer();
     const first = await api().post('/v1/verification-cases').send({ partyId });
