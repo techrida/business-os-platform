@@ -99,7 +99,7 @@ export default async function MemoPage({
   }
 
   // Only a draft or a returned memo can change; the API enforces it, the page just matches.
-  const editable = memo.status === 'draft' || memo.status === 'returned';
+  const editable = memo.canUpdate;
   const directory =
     editable && memo.template ? await getMemoDirectory(session).catch(() => undefined) : undefined;
 
