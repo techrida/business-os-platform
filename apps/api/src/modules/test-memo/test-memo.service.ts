@@ -44,11 +44,12 @@ import {
   Optional,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, ne, or, notInArray, sql, type SQL } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
+import { can } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
@@ -207,7 +208,7 @@ export class TestMemoService implements OnModuleInit {
       ownerType: MEMO_OWNER_TYPE,
       resource: async (scope, ownerId) => {
         const row = await this.find(this.db, scope, ownerId);
-        return row === undefined ? null : memoRef(row);
+        return row === undefined || !this.currentContentVisible(row) ? null : memoRef(row);
       },
       // A submitted memo is frozen for the approvers, files included: the snapshot names the exact versions,
       // so an upload after submit would sit on the memo unseen by anyone who approved it.
@@ -384,7 +385,13 @@ export class TestMemoService implements OnModuleInit {
       MEMO_OWNER_TYPE,
       id,
     );
-    return { ...toMemoDto(row), attachments, approval: await this.latestApproval(scope, id) };
+    return {
+      ...toMemoDto(row),
+      canUpdate:
+        EDITABLE.includes(row.status) && can(principal, 'memo.update', memoRef(row)).allowed,
+      attachments,
+      approval: await this.latestApproval(scope, id),
+    };
   }
 
   // --------------------------------------------------------------------------------------------------- list
@@ -401,7 +408,14 @@ export class TestMemoService implements OnModuleInit {
     const cursor = query.cursor === undefined ? undefined : decodeCursor(query.cursor);
     // The cursor carries the timestamp as Postgres printed it (microseconds), not as a JS Date (milliseconds).
     const createdKey = sql<string>`to_char(${testMemos.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-    const filters: SQL[] = [this.authz.scopeWhere(testMemos, 'memo.read')];
+    const { principal } = this.caller.current();
+    const filters: SQL[] = [
+      this.authz.scopeWhere(testMemos, 'memo.read'),
+      or(
+        notInArray(testMemos.status, ['draft', 'returned']),
+        eq(testMemos.ownerUserId, principal.userId),
+      )!,
+    ];
     if (query.status !== undefined) filters.push(eq(testMemos.status, query.status));
     if (cursor !== undefined) {
       filters.push(
@@ -632,7 +646,16 @@ export class TestMemoService implements OnModuleInit {
    * that a guessed id exists. Other denials (no grant at all, inactive user) say nothing about the record, so
    * they stay 403.
    */
+  private currentContentVisible(row: MemoRow): boolean {
+    // editorUserIds is separation-of-duties history, never a collaboration ACL.
+    // No explicit private-draft collaboration/admin capability exists in this kernel.
+    return (
+      !EDITABLE.includes(row.status) || row.ownerUserId === this.caller.current().principal.userId
+    );
+  }
+
   private assertVisible(action: Permission, row: MemoRow): void {
+    if (!this.currentContentVisible(row)) throw memoNotFound();
     try {
       this.authz.assert(action, memoRef(row));
     } catch (error) {
