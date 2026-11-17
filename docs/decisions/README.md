@@ -2,7 +2,7 @@
 
 [Open the questionnaire](deliverable.html). [Read the canonical register](register.json). [Recorded D01-D12 answers](confirmed-history.md).
 
-The register contains all 74 original deck decisions, unique later cascade/operational items and selected outstanding Business OS owner questions. Original IDs stay stable. Phase tags come from the source blocking-work references; Shared means not safely assignable to one phase. Original references are retained per question. This is a consolidation of reviewed evidence, not a claim that every future P0-P4 choice is already discovered.
+The register contains all 74 original deck decisions, unique later cascade/operational items and selected outstanding Business OS owner questions. Original IDs stay stable. `reviewPhase` is the single owning study phase; the questionnaire filters by it and defaults to current P1. `phases` records affected implementation phases, not when Kuu must answer. Deployment and post-P4 items stay in their own queues. Original references are retained per question. This is a consolidation of reviewed evidence, not a claim that every future P0-P4 choice is already discovered.
 
 Confirmed answers, testing defaults, unresolved choices and historical engineering follow-ups have different statuses. Implementation and merge status are independent from decision approval. Recommendations are never preselected answers. The stale historical Q29 account-switcher question is superseded by the explicit approval recorded in repository AGENTS.md; O-P0-1 records that approval. Other historical UI items need current-code review before treating them as unfinished work.
 
@@ -20,3 +20,7 @@ The HTML works offline. Select a choice or enter your own answer and notes. Answ
 6. Sync the latest decision artifacts and confirmed answers to life-kb, and update the original owner-question queue when an answer closes it. Do not restart any runtime to edit these documents.
 
 The PR checklist prompts this process; no automatic merge reconciler or enforced CI gate was added. Original legacy decision decks are historical evidence. This main-branch register is the maintained working copy going forward; life-kb is its shared mirror.
+
+## Phase-by-phase study, 2026-11-17
+
+P0 study is complete; P1 is next. Ask a newly discovered P0 study follow-up immediately. Put later-phase follow-ups in the owning `docs/p1-issues.md` through `docs/p4-issues.md`, or `docs/post-p4-issues.md`, and link their stable decision IDs. Do not ask later-phase questions merely because an earlier phase is affected. Deployment readiness is a separate review, not a reason to reopen P0 study. Confirmed policy, clarification, deferral and retired scheduling questions retain distinct statuses.

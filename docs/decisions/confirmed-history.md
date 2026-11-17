@@ -18,3 +18,18 @@ This file records the answers from the decision deck (74 questions in all). Each
 | D10 | Performance, recovery and uptime targets | A: the team's targets | ADR 0011 gates stand. |
 | D11 | ZITADEL self-registration | A: closed, invite only | `PORTAL_LOGIN_POLICY.allowRegister=false`, already built. |
 | D12 | Job queue | A: keep BullMQ on Valkey | No change. |
+
+## 2026-11-17: phase-by-phase study and D13-D21
+
+Source: Kuu's exported answers and explicit instruction to apply them.
+
+- D13: defer ledger-scope review to P4 only if still relevant; keep current implementation in earlier phases.
+- D14: confirmed C, staff-only vendors in Stage 1.
+- D15: confirmed A, sales orders with billing schedule.
+- D16: retire obsolete proposed 12-week schedule question.
+- D17: clarification requested, not a confirmed A/B choice. Discuss planned tenant/entity/party model in P2 and future vendor identity in P4.
+- D18: confirmed D, signed quote as default Won evidence.
+- D19: clarification requested about existing invoice route; no option or new threshold selected. Track P3.
+- D20: confirmed A, Finance-only for matched PO-bill payments; retain non-PO bands.
+- D21: confirmed fewer than three finance-capable people can exist; approved Founder-only one-member-organisation approval exception. Other understaffed cases deferred until after P4. Implementation remains tracked separately.
+- P0 study complete. P1 study next. Questions are reviewed in their owning phase; impacted phases remain separate metadata.
