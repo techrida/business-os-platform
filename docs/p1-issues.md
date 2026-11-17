@@ -185,3 +185,23 @@ Higher-phase merge resolution must retain P2's removal of financial test memo
 fields, attachment UI and scan workflow. Keep the generic document removal BFF
 where applicable; omit the P1-only attachment component/actions/tests and the
 P1-only attachment exit scenario from P2+ instead of reviving them on merge.
+
+## Explicit IP development origins (Nov17)
+
+The existing exact-origin policy also supports a numeric HTTPS origin such as
+`https://192.168.1.74`. Set `WORKSPACE_PUBLIC_URL` to the browser origin and list
+that exact origin in `BOS_DEV_TRUSTED_ORIGINS`. The `OIDC_ISSUER` origin must also
+be trusted; a shared app/identity HTTPS origin needs only one allow-list entry.
+Nondefault ports are part of the origin. There is no automatic LAN subnet trust.
+
+Keep `BOS_DEV_IDENTITY_API_URL` explicitly pointed at the private HTTPS identity
+API when privileged calls must avoid the browser-facing proxy. This is an origin,
+not a path prefix. Unlisted origins and redirects are rejected before credentials
+can be forwarded. These settings do not enable development routes in production.
+
+Source regression tests cover numeric origins, exact Host/Origin/port matching,
+missing opt-in, cross-site requests, production refusal and private API targeting.
+Runtime cutover still requires trusted TLS on the client, supported identity path
+routing, coordinated issuer/callback/API issuer configuration and browser login,
+account-switch and unsaved-form retention checks through the advertised origin.
+Source checks alone do not establish working IP access.
