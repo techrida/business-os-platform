@@ -9,11 +9,14 @@ import {
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { getDocument } from '@/components/p2/crm/verification-api';
+import { getVerificationReviewHistory, getDocument } from '@/components/p2/crm/verification-api';
 import { downloadHref, fileOf, type FileView } from '@/components/p2/crm/verification-file';
 import { getCustomer, getVerificationCase } from '@/components/p2/customers/api';
 import {
   canApprove,
+  type ApprovalFile,
+  approvalFile,
+  approveBlockedReason,
   canReject,
   CHECKLIST_LABEL,
   CHECKLIST_STATUS,
@@ -37,6 +40,7 @@ import { formatBytes, scanLabel } from '@/lib/kernel-ui';
 
 import { AttachForm, type AttachOption } from './attach-form';
 import { ReviewForm } from './review-form';
+import { ItemReview, ItemForm, RemoveLoose } from './item-review';
 import { SubmitForm } from '../submit-form';
 import styles from '../verification.module.css';
 
@@ -84,14 +88,6 @@ function AttachedFile({
   );
 }
 
-function approveBlockedReason(c: VerificationCaseDto): string | null {
-  if (canApprove(c)) return null;
-  if (c.status !== 'submitted') return null;
-  const p = checklistProgress(c.checklist);
-  if (p.required === 0) return 'Approve opens when the case has a required document.';
-  return `Approve opens when every required document is accepted (${p.accepted} of ${p.required} so far). You can still reject.`;
-}
-
 /** Why Submit is closed: the required items that still have no file. Null when it may go. */
 function submitBlockedReason(c: VerificationCaseDto): string | null {
   const missing = c.checklist.filter((i) => i.required && i.documentId === null);
@@ -118,10 +114,10 @@ export default async function VerificationCasePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ submitted?: string | string[] }>;
+  searchParams: Promise<{ before?: string; submitted?: string | string[] }>;
 }) {
   const { id } = await params;
-  const { submitted } = await searchParams;
+  const { submitted, before } = await searchParams;
   // An id that is not a GUID cannot be a case, so it never reaches the API.
   if (!isGuid(id)) notFound();
   const path = `/verification/${id}`;
@@ -161,12 +157,26 @@ export default async function VerificationCasePage({
   const documentIds = c.checklist.flatMap((i) => (i.documentId !== null ? [i.documentId] : []));
   const lookups = await Promise.allSettled(documentIds.map((d) => getDocument(session, d)));
   const files = new Map<string, FileView | null | 'unavailable'>();
+  const approvalFiles = new Map<string, ApprovalFile>();
   lookups.forEach((r, i) => {
     const documentId = documentIds[i];
     if (documentId === undefined) return;
-    files.set(documentId, r.status === 'fulfilled' ? fileOf(r.value) : 'unavailable');
+    approvalFiles.set(
+      documentId,
+      r.status === 'fulfilled' ? approvalFile(r.value.versions) : 'unavailable',
+    );
+    files.set(
+      documentId,
+      r.status === 'fulfilled'
+        ? fileOf(
+            r.value,
+            c.checklist.find((item) => item.documentId === documentId)?.evidence?.documentVersionId,
+          )
+        : 'unavailable',
+    );
   });
   const people = await userNames(session);
+  const history = await getVerificationReviewHistory(session, id, before).catch(() => null);
   const name = customerLabel(customer, c.partyId);
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
@@ -222,6 +232,41 @@ export default async function VerificationCasePage({
         </Alert>
       ) : null}
 
+      {c.status === 'submitted' && c.checklist.some((i) => i.status === 'rejected') ? (
+        <Alert tone="warning">
+          The case remains submitted. The reviewer must reject the case before Sales can replace or
+          remove rejected files.
+        </Alert>
+      ) : null}
+      {c.reviewPolicy === 'case_review_v0' && c.status === 'approved' ? (
+        <Alert tone="info">
+          Approved under case-level review. No per-document reviewer was recorded.
+        </Alert>
+      ) : null}
+      {c.reviewBlockedReason ? <Alert tone="info">{c.reviewBlockedReason}</Alert> : null}
+      <Panel title="Review history">
+        {history ? (
+          <>
+            {history.items.map((entry) => (
+              <div key={entry.id}>
+                <p>
+                  {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'}: {entry.decision}.{' '}
+                  {when(entry.reviewedAt)}.{' '}
+                  {people.get(entry.reviewedBy) ?? 'Reviewer name unavailable'}
+                </p>
+                {entry.comment ? <p>{entry.comment}</p> : null}
+              </div>
+            ))}
+            {history.nextCursor ? (
+              <a href={`${path}?before=${encodeURIComponent(history.nextCursor)}`}>
+                Earlier decisions
+              </a>
+            ) : null}
+          </>
+        ) : (
+          <p>Review history could not be loaded. Reload this case.</p>
+        )}
+      </Panel>
       <div className={styles.columns}>
         <div className={styles.main}>
           <Panel
@@ -240,11 +285,13 @@ export default async function VerificationCasePage({
                   <Th>Status</Th>
                   <Th>File</Th>
                   <Th>Expires</Th>
+                  <Th>Review</Th>
                 </tr>
               </thead>
               <tbody>
                 {c.checklist.map((item) => {
                   const s = CHECKLIST_STATUS[item.status];
+                  const itemFile = files.get(item.documentId ?? '');
                   return (
                     <tr key={item.key}>
                       <Td>
@@ -271,6 +318,53 @@ export default async function VerificationCasePage({
                           <span className={styles.quiet}>No expiry</span>
                         )}
                       </Td>
+                      <Td>
+                        {item.review ? (
+                          <>
+                            <p>
+                              {item.review.decision === 'approve' ? 'Approved' : 'Rejected'} by{' '}
+                              {people.get(item.review.reviewedBy) ?? 'Reviewer name unavailable'} on{' '}
+                              {when(item.review.reviewedAt)}
+                            </p>
+                            {item.review.comment ? <p>{item.review.comment}</p> : null}
+                          </>
+                        ) : null}
+                        {c.reviewPolicy === 'document_review_v1' &&
+                        c.status === 'submitted' &&
+                        item.status === 'provided' &&
+                        mayReview &&
+                        !c.reviewBlockedReason ? (
+                          <ItemReview
+                            caseId={c.id}
+                            itemKey={item.key}
+                            label={CHECKLIST_LABEL[item.key]}
+                            version={c.version}
+                            approveKey={randomUUID()}
+                            rejectKey={randomUUID()}
+                            canApprove={Boolean(
+                              itemFile &&
+                              itemFile !== 'unavailable' &&
+                              itemFile.status === 'clean' &&
+                              (!item.expiresOn ||
+                                item.expiresOn > new Date().toISOString().slice(0, 10)),
+                            )}
+                          />
+                        ) : null}
+                        {mayAttach && item.documentId ? (
+                          <ItemForm
+                            intent="detach"
+                            label={
+                              itemFile && itemFile !== 'unavailable'
+                                ? itemFile.filename
+                                : CHECKLIST_LABEL[item.key]
+                            }
+                            caseId={c.id}
+                            itemKey={item.key}
+                            version={c.version}
+                            retryKey={randomUUID()}
+                          />
+                        ) : null}
+                      </Td>
                     </tr>
                   );
                 })}
@@ -278,6 +372,27 @@ export default async function VerificationCasePage({
             </Table>
           </Panel>
 
+          {c.looseEvidence?.length ? (
+            <Panel
+              title="Other case attachments"
+              description="All active attachments must pass scanning. Remove unwanted files while the case is editable."
+            >
+              {c.looseEvidence.map((file) => (
+                <div key={file.documentId}>
+                  <p>
+                    {file.filename}: {scanLabel(file.status).text}
+                  </p>
+                  {mayAttach ? (
+                    <RemoveLoose
+                      caseId={c.id}
+                      documentId={file.documentId}
+                      filename={file.filename}
+                    />
+                  ) : null}
+                </div>
+              ))}
+            </Panel>
+          ) : null}
           {mayAttach ? (
             <Panel
               title="Attach a document"
@@ -306,6 +421,7 @@ export default async function VerificationCasePage({
           {c.status === 'draft' && mayEdit ? (
             <SubmitForm
               caseId={c.id}
+              version={c.version}
               // One key per render of this page, like the decision form's.
               idempotencyKey={randomUUID()}
               blockedReason={submitBlockedReason(c)}
@@ -331,9 +447,9 @@ export default async function VerificationCasePage({
               // One key per render of this page: a double click or a retry after a network
               // error sends the same key, so the decision is applied once.
               idempotencyKey={randomUUID()}
-              canApprove={canApprove(c)}
+              canApprove={canApprove(c, approvalFiles)}
               canReject={canReject(c)}
-              approveBlockedReason={approveBlockedReason(c)}
+              approveBlockedReason={approveBlockedReason(c, approvalFiles)}
               reloadHref={path}
             />
           )}

@@ -3,6 +3,7 @@ import {
   ReviewVerificationBodySchema,
   VERIFICATION_STATUSES,
   type ChecklistItem,
+  type DocumentVersionDto,
   type ReviewVerificationBody,
   type VerificationCaseDto,
   type VerificationStatus,
@@ -55,7 +56,7 @@ export interface ChecklistProgress {
   complete: boolean;
 }
 
-/** How many required items are accepted, and whether the case could be approved on its checklist. */
+/** How many required items are accepted, and whether acceptance is complete. */
 export function checklistProgress(items: readonly ChecklistItem[]): ChecklistProgress {
   const required = items.filter((i) => i.required);
   return {
@@ -65,9 +66,58 @@ export function checklistProgress(items: readonly ChecklistItem[]): ChecklistPro
   };
 }
 
-/** Approve is open only on a submitted case whose required items are all accepted. */
-export function canApprove(c: Pick<VerificationCaseDto, 'status' | 'checklist'>): boolean {
-  return c.status === 'submitted' && isChecklistComplete(c.checklist);
+/** Scan evidence is read server-side; unavailable evidence must never enable approval. */
+export type ApprovalFile = { status: DocumentVersionDto['status'] } | null | 'unavailable';
+export type ApprovalFiles = ReadonlyMap<string, ApprovalFile>;
+
+/** Match the API: newest non-rejected version, even when currentVersionId points at an older clean file. */
+export function approvalFile(
+  versions: readonly Pick<DocumentVersionDto, 'version' | 'status'>[],
+): ApprovalFile {
+  return (
+    versions.filter((v) => v.status !== 'rejected').sort((a, b) => b.version - a.version)[0] ?? null
+  );
+}
+
+/** Customer document review requires explicit decisions before final case approval. */
+export function approveBlockedReason(
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
+  files: ApprovalFiles = new Map(),
+): string | null {
+  if (c.approvalBlockedReason !== undefined) return c.approvalBlockedReason;
+  if (c.status !== 'submitted') return 'Only a case awaiting review can be approved.';
+  if (
+    c.reviewPolicy === 'document_review_v1' &&
+    c.checklist.some((i) => i.documentId && i.status !== 'accepted')
+  )
+    return 'Approve or reject every supplied document before approving the case.';
+  const required = c.checklist.filter((i) => i.required);
+  if (required.length === 0) return 'Approval requires at least one required document.';
+  for (const item of required) {
+    const label = CHECKLIST_LABEL[item.key];
+    if (item.documentId === null || !['provided', 'accepted'].includes(item.status)) {
+      return `${label}: a required document is missing or rejected. Reject the case to request a replacement.`;
+    }
+  }
+  // Include optional attachments: the API also requires all case attachments to be clean.
+  for (const item of c.checklist.filter((i) => i.documentId !== null)) {
+    const file = files.get(item.documentId!);
+    const label = CHECKLIST_LABEL[item.key];
+    if (file === undefined || file === null || file === 'unavailable') {
+      return `${label}: file or scan details are unavailable. Reload to check again.`;
+    }
+    if (file.status !== 'clean') {
+      return `${label}: scan status is ${file.status}. Approval requires clean documents. Reload after scanning, or reject to request a replacement.`;
+    }
+  }
+  return null;
+}
+
+export function canApprove(
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
+  files: ApprovalFiles = new Map(),
+): boolean {
+  return approveBlockedReason(c, files) === null;
 }
 
 /** A submitted case can always be rejected, whatever its checklist says. */

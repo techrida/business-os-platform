@@ -3,6 +3,7 @@
 // stages move only along the transition table, Won is set by the system alone, and money is a string.
 import { z } from 'zod';
 
+import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -576,6 +577,44 @@ export const ChecklistItemKeySchema = z.enum(CHECKLIST_ITEM_KEYS);
 export const CHECKLIST_ITEM_STATUSES = ['missing', 'provided', 'accepted', 'rejected'] as const;
 export const ChecklistItemStatusSchema = z.enum(CHECKLIST_ITEM_STATUSES);
 
+export const VerificationEvidenceSchema = z.object({
+  documentId: z.guid(),
+  documentVersionId: z.guid(),
+  versionNumber: z.number().int().positive(),
+  expiresOn: isoDate.nullable(),
+});
+export const VerificationReviewSchema = z.object({
+  id: z.guid(),
+  decision: z.enum(['approve', 'reject']),
+  comment: z.string().nullable(),
+  reviewedBy: z.guid(),
+  reviewedAt: isoDateTime,
+  round: z.number().int().nonnegative(),
+  evidence: VerificationEvidenceSchema.nullable(),
+});
+export const ReviewVerificationItemBodySchema = z.discriminatedUnion('decision', [
+  z.strictObject({ decision: z.literal('approve'), expectedVersion: z.number().int().positive() }),
+  z.strictObject({
+    decision: z.literal('reject'),
+    comment: z.string().trim().min(1).max(2000),
+    expectedVersion: z.number().int().positive(),
+  }),
+]);
+export type ReviewVerificationItemBody = z.infer<typeof ReviewVerificationItemBodySchema>;
+export const VerificationVersionBodySchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+});
+export const VerificationReviewHistorySchema = z.object({
+  items: z.array(
+    VerificationReviewSchema.extend({
+      itemKey: ChecklistItemKeySchema.nullable(),
+      kind: z.enum(['item_decided', 'case_decided', 'legacy_case_decided']),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+});
+export type VerificationReviewHistory = z.infer<typeof VerificationReviewHistorySchema>;
+
 export const ChecklistItemSchema = z
   .object({
     key: ChecklistItemKeySchema,
@@ -584,6 +623,8 @@ export const ChecklistItemSchema = z
     /** The kernel document that backs the item; null exactly while the item is missing. */
     documentId: z.guid().nullable(),
     expiresOn: isoDate.nullable(),
+    evidence: VerificationEvidenceSchema.nullable().optional(),
+    review: VerificationReviewSchema.nullable().optional(),
   })
   .refine((i) => (i.status === 'missing') === (i.documentId === null), {
     path: ['documentId'],
@@ -600,6 +641,12 @@ export function isChecklistComplete(
 }
 
 export const VerificationCaseDtoSchema = z.object({
+  looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
+  reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),
+  approvalBlockedReason: z.string().nullable().optional(),
+  reviewBlockedReason: z.string().nullable().optional(),
+  reviewRound: z.number().int().nonnegative().optional(),
+  submittedBy: z.guid().nullable().optional(),
   id: z.guid(),
   partyId: z.guid(),
   status: VerificationStatusSchema,

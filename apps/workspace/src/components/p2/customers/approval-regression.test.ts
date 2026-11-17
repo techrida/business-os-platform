@@ -1,0 +1,83 @@
+import type { DocumentVersionDto } from '@bos/contracts';
+import { describe, expect, it } from 'vitest';
+import {
+  DEFAULT_CHECKLIST,
+  attachDocument,
+  acceptProvided,
+  missingRequired,
+  documentProblems,
+} from '../../../../../api/src/modules/verification/verification.rules';
+import { approvalFile, approveBlockedReason, canApprove, checklistProgress } from './format';
+
+// Use the API's real upload producer: required items become provided, never pre-accepted.
+const checklist = DEFAULT_CHECKLIST.reduce(
+  (items, item, index) =>
+    item.required
+      ? attachDocument(
+          items,
+          item.key,
+          `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+          null,
+        )
+      : items,
+  [...DEFAULT_CHECKLIST],
+);
+const submitted = { status: 'submitted' as const, checklist };
+const clean = new Map<string, { status: DocumentVersionDto['status'] }>(
+  checklist.flatMap((i) =>
+    i.documentId ? [[i.documentId, { status: 'clean' as const }] as const] : [],
+  ),
+);
+
+describe('approval from upload producer state', () => {
+  it('opens approval with zero accepted items and accepts only after deciding', () => {
+    expect(checklistProgress(checklist)).toEqual({ accepted: 0, required: 3, complete: false });
+    expect(missingRequired(checklist)).toEqual([]);
+    expect(canApprove(submitted, clean)).toBe(true);
+    expect(approveBlockedReason(submitted, clean)).toBeNull();
+    expect(
+      documentProblems(
+        checklist,
+        [...clean].map(([documentId, v]) => ({ documentId, version: 1, ...v })),
+      ),
+    ).toEqual([]);
+    expect(checklistProgress(acceptProvided(checklist)).complete).toBe(true);
+  });
+
+  it.each(['awaiting_content', 'scan_failed', 'quarantined', 'infected', 'rejected'] as const)(
+    'blocks %s scans with visible feedback',
+    (status) => {
+      const files = new Map(clean);
+      const id = checklist[0]!.documentId!;
+      expect(canApprove(submitted, new Map([...files, [id, { status }]]))).toBe(false);
+      expect(approveBlockedReason(submitted, new Map([...files, [id, { status }]]))).toContain(
+        status,
+      );
+    },
+  );
+
+  it('blocks absent files, unavailable lookups, missing checklist items and decided cases', () => {
+    expect(approveBlockedReason(submitted)).toContain('unavailable');
+    expect(
+      approveBlockedReason({ ...submitted, checklist: [...DEFAULT_CHECKLIST] }, clean),
+    ).toContain('missing');
+    for (const status of ['draft', 'approved', 'rejected', 'expired'] as const)
+      expect(canApprove({ ...submitted, status }, clean)).toBe(false);
+  });
+});
+
+it('uses the newest non-rejected scan and refuses rejected-only evidence', () => {
+  expect(
+    approvalFile([
+      { version: 1, status: 'clean' },
+      { version: 2, status: 'quarantined' },
+    ]),
+  ).toEqual({ version: 2, status: 'quarantined' });
+  expect(
+    approvalFile([
+      { version: 1, status: 'clean' },
+      { version: 2, status: 'rejected' },
+    ]),
+  ).toEqual({ version: 1, status: 'clean' });
+  expect(approvalFile([{ version: 1, status: 'rejected' }])).toBeNull();
+});

@@ -66,6 +66,7 @@ export const TENANT_SCOPED: readonly string[] = [
   'app.customers',
   'app.customer_contacts',
   'app.verification_cases',
+  'app.verification_review_events',
   'app.tax_codes',
   'app.payment_terms',
   // P3 (U0-A, migration 0019): withholding (TDS) codes, effective-dated like tax_codes.
