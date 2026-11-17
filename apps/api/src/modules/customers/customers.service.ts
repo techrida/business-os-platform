@@ -275,7 +275,7 @@ export class CustomersService {
           panVatNo: pan,
           industry: body.industry ?? null,
           relationship: body.relationship,
-          ownerUserId: body.ownerUserId ?? null,
+          ownerUserId: body.ownerUserId ?? this.caller.current().principal.userId,
           defaultCurrency: body.defaultCurrency ?? null,
           address: body.address,
           version: 1,
