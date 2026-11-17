@@ -83,3 +83,21 @@ describe('reviewAction idempotency key', () => {
     expect(api.decideVerification).not.toHaveBeenCalled();
   });
 });
+
+it('forwards a clean provided-case approval with the reviewed version, preserving API refusals', async () => {
+  api.decideVerification.mockResolvedValueOnce({ id: CASE });
+  await expect(
+    reviewAction({ key: KEY }, form({ intent: 'approve', comment: 'Documents checked.' })),
+  ).rejects.toThrow('NEXT_REDIRECT /verification?decided=approve');
+  expect(api.decideVerification).toHaveBeenCalledWith(
+    expect.anything(),
+    CASE,
+    { decision: 'approve', comment: 'Documents checked.', expectedVersion: 3 },
+    KEY,
+  );
+  for (const status of [403, 409]) {
+    api.decideVerification.mockRejectedValueOnce(new ApiError(status, 'Decision refused'));
+    const result = await reviewAction({ key: KEY }, form({ intent: 'approve' }));
+    expect(result.error).toBeTruthy();
+  }
+});

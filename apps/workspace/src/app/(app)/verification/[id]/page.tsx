@@ -14,6 +14,9 @@ import { downloadHref, fileOf, type FileView } from '@/components/p2/crm/verific
 import { getCustomer, getVerificationCase } from '@/components/p2/customers/api';
 import {
   canApprove,
+  type ApprovalFile,
+  approvalFile,
+  approveBlockedReason,
   canReject,
   CHECKLIST_LABEL,
   CHECKLIST_STATUS,
@@ -75,14 +78,6 @@ function AttachedFile({ file }: { documentId: string; file: FileView | null | 'u
       ) : null}
     </div>
   );
-}
-
-function approveBlockedReason(c: VerificationCaseDto): string | null {
-  if (canApprove(c)) return null;
-  if (c.status !== 'submitted') return null;
-  const p = checklistProgress(c.checklist);
-  if (p.required === 0) return 'Approve opens when the case has a required document.';
-  return `Approve opens when every required document is accepted (${p.accepted} of ${p.required} so far). You can still reject.`;
 }
 
 /** Why Submit is closed: the required items that still have no file. Null when it may go. */
@@ -154,9 +149,14 @@ export default async function VerificationCasePage({
   const documentIds = c.checklist.flatMap((i) => (i.documentId !== null ? [i.documentId] : []));
   const lookups = await Promise.allSettled(documentIds.map((d) => getDocument(session, d)));
   const files = new Map<string, FileView | null | 'unavailable'>();
+  const approvalFiles = new Map<string, ApprovalFile>();
   lookups.forEach((r, i) => {
     const documentId = documentIds[i];
     if (documentId === undefined) return;
+    approvalFiles.set(
+      documentId,
+      r.status === 'fulfilled' ? approvalFile(r.value.versions) : 'unavailable',
+    );
     files.set(documentId, r.status === 'fulfilled' ? fileOf(r.value) : 'unavailable');
   });
   const name = customerLabel(customer, c.partyId);
@@ -323,9 +323,9 @@ export default async function VerificationCasePage({
               // One key per render of this page: a double click or a retry after a network
               // error sends the same key, so the decision is applied once.
               idempotencyKey={randomUUID()}
-              canApprove={canApprove(c)}
+              canApprove={canApprove(c, approvalFiles)}
               canReject={canReject(c)}
-              approveBlockedReason={approveBlockedReason(c)}
+              approveBlockedReason={approveBlockedReason(c, approvalFiles)}
               reloadHref={path}
             />
           )}

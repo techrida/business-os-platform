@@ -53,7 +53,9 @@ describe('checklistProgress', () => {
 
 describe('who may decide', () => {
   it('approves only a submitted case whose required items are all accepted', () => {
-    expect(canApprove(verificationCase('submitted'))).toBe(true);
+    expect(canApprove(verificationCase('submitted'), new Map([[ID, { status: 'clean' }]]))).toBe(
+      true,
+    );
     expect(canApprove(verificationCase('submitted', [item('other', true, 'provided')]))).toBe(
       false,
     );
