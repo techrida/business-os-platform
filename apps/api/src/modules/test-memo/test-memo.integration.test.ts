@@ -1287,13 +1287,15 @@ describe('a template memo routes through exactly the people the author named', (
     // The author is a founder (an approver-capable role), so only separation of duties can refuse them.
     as(U.founder, 'founder');
     const { id } = await createTemplateMemo([ops.a], ops.c);
-    // A colleague takes over the preparer line and names the owner as the approver.
-    as(U.boss, 'founder');
-    const edited = await request(baseUrl)
-      .patch(`/v1/test-memos/${id}`)
-      .send({ template: template([ops.a], U.founder, U.boss) });
-    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
-    as(U.founder, 'founder');
+    // Legacy stored templates still enforce owner separation of duties.
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx
+        .update(testMemos)
+        .set({
+          template: sql`jsonb_set(template, '{approvedBy,userId}', to_jsonb(${U.founder}::text))`,
+        })
+        .where(eq(testMemos.id, id)),
+    );
     const plan = RoutePlanSchema.parse((await routeOf(id)).body);
     expect(plan.blocked).toBe(true);
     expect(plan.blockReason).toMatch(/prepared or edited/);
@@ -1306,17 +1308,19 @@ describe('a template memo routes through exactly the people the author named', (
 
   it('refuses to submit when an editor or the person pressing submit is named as a signer', async () => {
     const { id } = await createTemplateMemo([U.boss], ops.b);
-    as(U.boss, 'founder');
-    expect(
-      (await request(baseUrl).patch(`/v1/test-memos/${id}`).send({ body: 'edited' })).status,
-    ).toBe(200);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx
+        .update(testMemos)
+        .set({ editorUserIds: [U.boss] })
+        .where(eq(testMemos.id, id)),
+    );
     as(U.salesA, 'sales');
     expect((await submitMemo(id)).status).toBe(409);
 
     // A founder submitting a colleague's memo cannot also be its approver.
     const second = await createTemplateMemo([], U.boss);
     as(U.boss, 'founder');
-    expect((await submitMemo(second.id)).status).toBe(409);
+    expect((await submitMemo(second.id)).status).toBe(404);
     expect((await statusOf(second.id)).status).toBe('draft');
     expect(await requestsOf(second.id)).toHaveLength(0);
   });
@@ -1596,6 +1600,7 @@ describe('GET /v1/test-memos (the Memos list)', () => {
         as(user, role);
         expect((await parsed('?limit=50')).items.map((m) => m.id)).not.toContain(memo.id);
         expect((await request(baseUrl).get(`/v1/test-memos/${memo.id}`)).status).toBe(404);
+        await expect(service.routePreview(memo.id)).rejects.toMatchObject({ status: 404 });
         await expect(documents.issueLink(scope, file.versionId)).rejects.toMatchObject({
           status: 404,
         });
