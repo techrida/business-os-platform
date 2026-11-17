@@ -249,6 +249,13 @@ export class VerificationService implements OnModuleInit {
           ...port.counterparty(found.id),
           sodUserIds: [],
         });
+        this.authz.assert('verification.read', {
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          ownerUserId: found.ownerUserId,
+          ...port.counterparty(found.id),
+          sodUserIds: [],
+        });
       } catch (error) {
         hideOutOfScope(error, port.label);
       }
