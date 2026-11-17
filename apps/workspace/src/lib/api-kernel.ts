@@ -46,6 +46,7 @@ import type { Session } from './session';
 // ---------------------------------------------------------------------------------------------
 
 export const MemoDetailSchema = MemoDtoSchema.extend({
+  canUpdate: z.boolean().default(false),
   attachments: z.array(DocumentVersionDtoSchema),
   approval: z.object({ requestId: z.string(), status: ApprovalRequestStatusSchema }).nullable(),
 });
