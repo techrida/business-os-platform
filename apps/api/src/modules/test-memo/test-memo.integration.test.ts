@@ -582,8 +582,8 @@ describe('GET /v1/test-memos/:id', () => {
     as(U.boss, 'founder');
     expect((await request(baseUrl).get(`/v1/test-memos/${randomUUID()}`)).status).toBe(404);
     expect((await request(baseUrl).get('/v1/test-memos/not-a-uuid')).status).toBe(400);
-    // Founder holds memo.read with scope all, so the same memo opens.
-    expect((await request(baseUrl).get(`/v1/test-memos/${id}`)).status).toBe(200);
+    // Broad read scope does not reveal a private draft.
+    expect((await request(baseUrl).get(`/v1/test-memos/${id}`)).status).toBe(404);
   });
 });
 
@@ -640,6 +640,8 @@ describe('the customer of a memo is a party (ADR 0027 section 5)', () => {
       return row!;
     });
 
+    await submitMemo(forP1.id);
+    await submitMemo(forP2.id);
     asCustomer(p1);
     const own = await request(baseUrl).get(`/v1/test-memos/${forP1.id}`);
     expect(own.status, JSON.stringify(own.body)).toBe(200);
@@ -788,10 +790,12 @@ describe('POST /v1/test-memos/:id/submit', () => {
   it('keeps an editor out of the approvers (editors join the owner in sod_user_ids)', async () => {
     roles.accountant = [U.boss];
     const { id } = await createMemo();
-    as(U.boss, 'founder');
-    expect(
-      (await request(baseUrl).patch(`/v1/test-memos/${id}`).send({ body: 'edited' })).status,
-    ).toBe(200);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx
+        .update(testMemos)
+        .set({ editorUserIds: [U.boss] })
+        .where(eq(testMemos.id, id)),
+    );
     const res = await submitMemo(id);
     expect(res.body).toMatchObject({ status: 'blocked' });
   });
@@ -919,26 +923,22 @@ describe('submitter and uploaders join separation of duties (R9)', () => {
   };
   const sodRefusal = { status: 403, response: { reason: 'separation_of_duties' } };
 
-  it('refuses the founder who submitted a sales memo of NPR 20,00,000 without editing it', async () => {
-    roles.founder = [U.boss, U.founder];
-    const { id } = await createMemo({ amount: '2000000.00' });
+  it('refuses a broad-scope founder submitting another account’s draft', async () => {
+    const { id } = await createMemo();
     as(U.boss, 'founder');
-    const res = await submitMemo(id);
-    expect(res.body).toMatchObject({ status: 'pending' });
-    const { requestId } = res.body as { requestId: string };
-    expect((await requestRow(requestId)).sodUserIds).toContain(U.boss);
-    let version = 1;
-    for (const user of [U.acc, U.fin, U.mgmt]) {
-      version = (await approveAs(user, requestId, version)).version;
-    }
-    await expect(approveAs(U.boss, requestId, version)).rejects.toMatchObject(sodRefusal);
+    expect((await submitMemo(id)).status).toBe(404);
   });
 
   it('refuses the founder who uploaded a file to the sales draft that sales then submitted', async () => {
     roles.accountant = [U.boss, U.acc];
     const { id } = await createMemo();
-    as(U.boss, 'founder');
-    await attach(id, 'clean');
+    const attachment = await attach(id, 'clean');
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx
+        .update(documentVersions)
+        .set({ uploadedBy: U.boss })
+        .where(eq(documentVersions.id, attachment.versionId)),
+    );
     as(U.salesA, 'sales');
     const res = await submitMemo(id);
     expect(res.body).toMatchObject({ status: 'pending' });
@@ -1565,6 +1565,51 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     return MemoListSchema.parse(res.body);
   };
 
+  it('keeps draft and returned current content private despite broad grants or historical editing', async () => {
+    as(U.salesA, 'sales');
+    const dept = await createDepartment(appPool, scope);
+    const memo = await createMemo({
+      title: 'Private draft',
+      template: {
+        departmentId: dept.departmentId,
+        date: '2026-11-10',
+        closing: '',
+        preparedByUserId: U.salesA,
+        recommenderUserIds: [U.acc],
+        approvedByUserId: U.fin,
+      },
+    });
+    const file = await attach(memo.id, 'clean');
+    for (const status of ['draft', 'returned'] as const) {
+      await withTx(db, scope, systemActor('test'), (tx) =>
+        tx
+          .update(testMemos)
+          .set({ status, editorUserIds: [U.acc] })
+          .where(eq(testMemos.id, memo.id)),
+      );
+      for (const [user, role] of [
+        [U.acc, 'accountant'],
+        [U.fin, 'finance'],
+        [U.salesB, 'sales'],
+        [U.boss, 'founder'],
+      ] as const) {
+        as(user, role);
+        expect((await parsed('?limit=50')).items.map((m) => m.id)).not.toContain(memo.id);
+        expect((await request(baseUrl).get(`/v1/test-memos/${memo.id}`)).status).toBe(404);
+        await expect(documents.issueLink(scope, file.versionId)).rejects.toMatchObject({
+          status: 404,
+        });
+        expect(
+          (await request(baseUrl).patch(`/v1/test-memos/${memo.id}`).send({ title: 'No' })).status,
+        ).toBe(404);
+        expect((await submitMemo(memo.id)).status).toBe(404);
+      }
+      as(U.salesA, 'sales');
+      expect((await request(baseUrl).get(`/v1/test-memos/${memo.id}`)).status).toBe(200);
+      expect((await parsed('?limit=50')).items.map((m) => m.id)).toContain(memo.id);
+    }
+  });
+
   it('shows a Sales user only their own memos, newest first, with the listing fields', async () => {
     const mine = await freshStaff();
     const other = await freshStaff();
@@ -1597,12 +1642,13 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     const rows = await db
       .select({ id: testMemos.id })
       .from(testMemos)
-      .where(eq(testMemos.organizationId, scope.organizationId))
+      .where(
+        sql`${testMemos.organizationId} = ${scope.organizationId} AND (${testMemos.status} NOT IN ('draft', 'returned') OR ${testMemos.ownerUserId} = ${U.boss})`,
+      )
       .orderBy(sql`created_at DESC, id DESC`)
       .limit(50);
     const page = await parsed('?limit=50');
     expect(page.items.map((m) => m.id)).toEqual(rows.map((r) => r.id));
-    expect(page.items.length).toBeGreaterThan(2);
   });
 
   it('never lists another tenant memo, even to a role with scope all', async () => {
@@ -1676,6 +1722,8 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     const forP1 = await createMemo({ title: 'For P1', customerPartyId: p1.partyId });
     const forP2 = await createMemo({ title: 'For P2', customerPartyId: p2.partyId });
     const internal = await createMemo({ title: 'Internal' });
+    await submitMemo(forP1.id);
+    await submitMemo(forP2.id);
     asCustomer(p1);
     const ids = (await parsed('?limit=50')).items.map((m) => m.id);
     expect(ids).toContain(forP1.id);

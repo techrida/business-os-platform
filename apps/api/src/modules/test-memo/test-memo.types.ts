@@ -29,6 +29,7 @@ export interface MemoApprovalSummary {
 
 /** GET /v1/test-memos/:id */
 export type MemoDetailDto = MemoDto & {
+  canUpdate: boolean;
   attachments: DocumentVersionDto[];
   approval: MemoApprovalSummary | null;
 };
