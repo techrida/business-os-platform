@@ -1,5 +1,7 @@
 # Verification approval gate handoff — 2026-11-17
 
+This handoff records the earlier case-only correction. Customer document review supersedes that readiness policy. See [Customer document review](../../customer-document-review.md).
+
 The workspace required its own postcondition. Git -S and blame identify
 ba41a0341feb9946dce1eb1ddd78e04841cb32fd (format helper and preaccepted test).
 4595a574 added the page/control and misleading accepted-count helper.

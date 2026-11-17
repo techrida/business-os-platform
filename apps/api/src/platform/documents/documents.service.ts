@@ -337,40 +337,48 @@ export class DocumentsService {
     opts: { who?: { scope: TxScope; actor: Actor } } = {},
   ): Promise<void> {
     const who = opts.who ?? requestTx();
-    const s = scoped(who.scope);
-    const unclean = await withTx(this.db, who.scope, who.actor, async (tx) => {
-      const doc = await this.loadDocument(tx, who.scope, documentId, true);
-      await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
-      await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx);
-      const versions = await tx
-        .select()
-        .from(documentVersions)
-        .where(s.where(documentVersions, eq(documentVersions.documentId, documentId)))
-        .orderBy(asc(documentVersions.version));
-      const now = new Date();
-      await tx
-        .update(documents)
-        .set({ removedAt: now, updatedAt: now })
-        .where(s.where(documents, eq(documents.id, documentId)));
-      await this.audit.record(tx, {
-        action: 'document.removed',
-        entityType: 'document',
-        entityId: documentId,
-        meta: {
-          ownerType: doc.ownerType,
-          ownerId: doc.ownerId,
-          versions: versions.map((v) => ({ id: v.id, version: v.version, status: v.status })),
-        },
-      });
-      return versions.filter((v) => v.status === 'quarantined' || v.status === 'scan_failed');
+    const unclean = await withTx(this.db, who.scope, who.actor, (tx) =>
+      this.removeInTransaction(tx, who.scope, documentId),
+    );
+    await this.cleanupRemoved(unclean);
+  }
+
+  async removeInTransaction(tx: DbTransaction, scope: TxScope, documentId: string) {
+    const s = scoped(scope);
+    const doc = await this.loadDocument(tx, scope, documentId, true);
+    await this.assertOwner(scope, doc.ownerType, doc.ownerId, 'documents.upload');
+    await this.assertCanAttach(scope, doc.ownerType, doc.ownerId, tx);
+    const versions = await tx
+      .select()
+      .from(documentVersions)
+      .where(s.where(documentVersions, eq(documentVersions.documentId, documentId)))
+      .orderBy(asc(documentVersions.version));
+    const now = new Date();
+    await tx
+      .update(documents)
+      .set({ removedAt: now, updatedAt: now })
+      .where(s.where(documents, eq(documents.id, documentId)));
+    await this.audit.record(tx, {
+      action: 'document.removed',
+      entityType: 'document',
+      entityId: documentId,
+      meta: {
+        ownerType: doc.ownerType,
+        ownerId: doc.ownerId,
+        versions: versions.map((v) => ({ id: v.id, version: v.version, status: v.status })),
+      },
     });
+    return versions.filter((v) => v.status === 'quarantined' || v.status === 'scan_failed');
+  }
+
+  async cleanupRemoved(unclean: (typeof documentVersions.$inferSelect)[]): Promise<void> {
     // After the commit, like the scan queueing: a failed delete leaves an unreachable file, never a live row.
     for (const v of unclean) {
       try {
         await this.storage.removeQuarantine(v.storageKey);
       } catch (error) {
         this.logger.warn(
-          `removed document ${documentId}: could not delete the file of ${v.id}: ${describe(error)}`,
+          `removed document ${v.documentId}: could not delete the file of ${v.id}: ${describe(error)}`,
         );
       }
     }
@@ -534,9 +542,10 @@ export class DocumentsService {
     scope: TxScope,
     ownerType: string,
     ownerId: string,
+    q: Db | DbTransaction = this.db,
   ): Promise<DocumentVersionDto[]> {
     const s = scoped(scope);
-    const rows = await this.db
+    const rows = await q
       .select({ v: documentVersions })
       .from(documentVersions)
       .innerJoin(documents, eq(documents.id, documentVersions.documentId))
@@ -560,8 +569,13 @@ export class DocumentsService {
    * block. An infected, failed or still-scanning one does, until it is removed or a newer version replaces it.
    * Removed documents are not looked at.
    */
-  async allClean(scope: TxScope, ownerType: string, ownerId: string): Promise<boolean> {
-    const versions = await this.listForOwner(scope, ownerType, ownerId);
+  async allClean(
+    scope: TxScope,
+    ownerType: string,
+    ownerId: string,
+    q: Db | DbTransaction = this.db,
+  ): Promise<boolean> {
+    const versions = await this.listForOwner(scope, ownerType, ownerId, q);
     const latest = new Map<string, DocumentVersionDto>();
     for (const v of versions) {
       if (v.status === 'rejected') continue;

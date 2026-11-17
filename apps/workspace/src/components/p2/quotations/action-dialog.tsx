@@ -102,7 +102,9 @@ export function ErrorSummary({
   reload,
   reloadHref,
   summaryRef,
+  reloadLabel = 'Reload this quotation',
 }: {
+  reloadLabel?: string;
   error: string | undefined;
   reload: boolean | undefined;
   reloadHref: string;
@@ -115,7 +117,7 @@ export function ErrorSummary({
       tabIndex={-1}
       tone="error"
       role="alert"
-      actions={reload ? <a href={reloadHref}>Reload this quotation</a> : null}
+      actions={reload ? <a href={reloadHref}>{reloadLabel}</a> : null}
     >
       {error}
     </Alert>
