@@ -40,6 +40,7 @@ no claim that earlier warnings never existed. Git source establishes introductio
 ## Selective runtime copy
 
 Copy only these two runtime files from the delivered P4 head:
+
 - apps/workspace/src/components/p2/customers/format.ts
 - apps/workspace/src/app/(app)/verification/[id]/page.tsx
 
