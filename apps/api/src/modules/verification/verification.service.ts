@@ -16,14 +16,19 @@
 import {
   ChecklistItemSchema,
   VERIFICATION_PARTY_KINDS,
+  VerificationEvidenceSchema,
+  VerificationReviewHistorySchema,
+  type ReviewVerificationItemBody,
+  type VerificationReviewHistory,
   type AttachVerificationDocumentBody,
   type ChecklistItem,
   type Permission,
   type VerificationCaseDto,
   type VerificationPartyKind,
 } from '@bos/contracts';
-import { parties, verificationCases } from '@bos/db';
+import { parties, verificationCases, verificationReviewEvents } from '@bos/db';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -32,7 +37,7 @@ import {
   UnprocessableEntityException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, lt, or } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -41,7 +46,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
-import { DocumentsService } from '../../platform/documents/documents.service';
+import { DocumentsService, newestNonRejected } from '../../platform/documents/documents.service';
 import { CustomerPartyOwner } from './customer-party-owner';
 import { PartyOwnerRegistry, type PartyOwnerPort, type PartyQuery } from './party-owner.port';
 import { VerificationCaller } from './verification.caller';
@@ -93,6 +98,10 @@ const checklistOf = (row: CaseRow): ChecklistItem[] =>
 
 export function toVerificationCaseDto(row: CaseRow): VerificationCaseDto {
   return {
+    partyKind: row.partyKind,
+    reviewPolicy: row.reviewPolicy,
+    reviewRound: row.reviewRound,
+    submittedBy: row.submittedByUserId,
     id: row.id,
     partyId: row.partyId,
     status: row.status,
@@ -212,7 +221,60 @@ export class VerificationService implements OnModuleInit {
     const l = await this.load(this.db, scope.tenantId, id);
     if (l === undefined) throw notFound('Verification case');
     this.assertVisible('verification.read', scope, l);
-    return toVerificationCaseDto(l.row);
+    if (l.row.partyKind === 'vendor') return toVerificationCaseDto(l.row);
+    const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
+    const used = new Set(checklistOf(l.row).map((i) => i.documentId));
+    const latest = new Map<string, (typeof versions)[number]>();
+    for (const v of versions)
+      if (
+        !used.has(v.documentId) &&
+        (!latest.has(v.documentId) || latest.get(v.documentId)!.version < v.version)
+      )
+        latest.set(v.documentId, v);
+    const items = checklistOf(l.row);
+    const eligible = versions.filter((v) => v.status !== 'rejected');
+    const evidenceReady = items
+      .filter((i) => i.documentId)
+      .every((i) => {
+        const v = newestNonRejected(versions.filter((v) => v.documentId === i.documentId));
+        return (
+          v?.id === i.evidence?.documentVersionId &&
+          v?.status === 'clean' &&
+          v.sha256 &&
+          v.scannedAt &&
+          (!i.expiresOn || i.expiresOn > this.now().toISOString().slice(0, 10))
+        );
+      });
+    const clean = eligible.every(
+      (v) =>
+        eligible.some((newer) => newer.documentId === v.documentId && newer.version > v.version) ||
+        v.status === 'clean',
+    );
+    const approvalBlockedReason =
+      l.row.reviewPolicy !== 'document_review_v1'
+        ? 'Customer case requires document review activation'
+        : l.row.status !== 'submitted'
+          ? 'Only a submitted case can be approved'
+          : !items.some((i) => i.required) ||
+              items.some((i) => i.required && !i.documentId) ||
+              items.some(
+                (i) =>
+                  i.documentId &&
+                  (i.status !== 'accepted' || i.review?.round !== l.row.reviewRound),
+              )
+            ? 'Every supplied document needs explicit approval'
+            : !evidenceReady || !clean
+              ? 'All active evidence must be readable, clean, unchanged and unexpired'
+              : null;
+    return {
+      ...toVerificationCaseDto(l.row),
+      approvalBlockedReason,
+      looseEvidence: [...latest.values()],
+      reviewBlockedReason:
+        l.row.submittedByUserId === this.caller.current().principal.userId
+          ? 'The submitter cannot review this case.'
+          : null,
+    };
   }
 
   // ------------------------------------------------------------------------------------------------ create
@@ -267,6 +329,7 @@ export class VerificationService implements OnModuleInit {
           partyId: body.partyId,
           partyKind: kind,
           status: 'draft',
+          reviewPolicy: kind === 'customer' ? 'document_review_v1' : 'case_review_v0',
           checklist: [...defaultChecklistFor(kind)],
           createdAt: now,
           updatedAt: now,
@@ -298,8 +361,10 @@ export class VerificationService implements OnModuleInit {
       const l = await this.lock(tx, scope.tenantId, existing!.id);
       if (l.row.status !== 'expired') return { case: toVerificationCaseDto(l.row), created: false };
 
+      await this.preserveLegacyDecision(tx, l.row);
       const reopened = await updateVersioned(tx, verificationCases, l.row.id, l.row.version, {
         status: 'draft',
+        reviewPolicy: l.row.partyKind === 'customer' ? 'document_review_v1' : 'case_review_v0',
         checklist: reopenChecklist(checklistOf(l.row), now.toISOString().slice(0, 10)),
         reviewerUserId: null,
         decidedAt: null,
@@ -331,7 +396,8 @@ export class VerificationService implements OnModuleInit {
     const { scope, actor } = this.caller.current();
     this.assertKybWriter();
     const now = this.now();
-    return withTx(this.db, scope, actor, async (tx) => {
+    const cleanup: Awaited<ReturnType<DocumentsService['removeInTransaction']>> = [];
+    const result = await withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
       this.assertVisible(l.port.writePermission, scope, l);
       if (!isEditable(l.row.status)) {
@@ -351,7 +417,7 @@ export class VerificationService implements OnModuleInit {
           message: `${body.key} needs expiresOn`,
         });
       }
-      const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
+      const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id, tx);
       if (!versions.some((v) => v.documentId === body.documentId)) {
         throw new UnprocessableEntityException({
           code: 'unprocessable',
@@ -359,7 +425,22 @@ export class VerificationService implements OnModuleInit {
         });
       }
       const before = checklistOf(l.row);
+      await this.preserveLegacyDecision(tx, l.row);
       const after = attachDocument(before, body.key, body.documentId, body.expiresOn ?? null);
+      const slot = after.find((i) => i.key === body.key)!;
+      if (l.row.reviewPolicy === 'document_review_v1') {
+        slot.evidence = null;
+        slot.review = null;
+      }
+      const old = before.find((i) => i.key === body.key)?.documentId;
+      if (
+        l.row.reviewPolicy === 'document_review_v1' &&
+        old &&
+        old !== body.documentId &&
+        !after.some((i) => i.documentId === old)
+      ) {
+        cleanup.push(...(await this.documents.removeInTransaction(tx, scope, old)));
+      }
       const reopen = l.row.status === 'rejected';
       const updated = await updateVersioned(tx, verificationCases, id, body.expectedVersion, {
         checklist: after,
@@ -381,42 +462,127 @@ export class VerificationService implements OnModuleInit {
       });
       return toVerificationCaseDto(updated);
     });
+    await this.documents.cleanupRemoved(cleanup);
+    return result;
   }
 
   // -------------------------------------------------------------------------------------------------- submit
 
   /** Draft to submitted. Every required item must have a document; whether the scan passed is the reviewer's gate. */
-  async submit(id: string): Promise<VerificationCaseDto> {
+  async submit(
+    id: string,
+    body?: { expectedVersion: number },
+    idempotencyKey?: string,
+  ): Promise<VerificationCaseDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertKybWriter();
-    const now = this.now();
     return withTx(this.db, scope, actor, async (tx) => {
       const l = await this.lock(tx, scope.tenantId, id);
       this.assertVisible(l.port.writePermission, scope, l);
-      if (l.row.status !== 'draft') {
-        throw conflict(`A case in status ${l.row.status} cannot be submitted`);
+      if (l.row.partyKind === 'vendor') {
+        if (l.row.status !== 'draft') {
+          throw conflict(`A case in status ${l.row.status} cannot be submitted`);
+        }
+        const missing = missingRequired(checklistOf(l.row));
+        if (missing.length > 0) {
+          throw conflict(`Required documents are missing: ${missing.join(', ')}`);
+        }
+        const updated = await updateVersioned(tx, verificationCases, id, l.row.version, {
+          status: 'submitted',
+          submittedByUserId: principal.userId,
+          submittedAt: this.now(),
+          reviewerUserId: null,
+          decidedAt: null,
+          reason: null,
+          updatedAt: this.now(),
+        });
+        await this.audit.record(tx, {
+          action: 'verification.submitted',
+          entityType: 'verification_case',
+          entityId: id,
+          before: { status: 'draft', version: l.row.version },
+          after: { status: 'submitted', version: updated.version, submittedBy: principal.userId },
+        });
+        return toVerificationCaseDto(updated);
       }
-      const missing = missingRequired(checklistOf(l.row));
-      if (missing.length > 0) {
-        throw conflict(`Required documents are missing: ${missing.join(', ')}`);
-      }
-      const updated = await updateVersioned(tx, verificationCases, id, l.row.version, {
-        status: 'submitted',
-        submittedByUserId: principal.userId,
-        submittedAt: now,
-        reviewerUserId: null,
-        decidedAt: null,
-        reason: null,
-        updatedAt: now,
-      });
-      await this.audit.record(tx, {
-        action: 'verification.submitted',
-        entityType: 'verification_case',
-        entityId: id,
-        before: { status: 'draft', version: l.row.version },
-        after: { status: 'submitted', version: updated.version, submittedBy: principal.userId },
-      });
-      return toVerificationCaseDto(updated);
+      const run = async () => {
+        if (!idempotencyKey)
+          throw new BadRequestException('Idempotency-Key is required for customer submission');
+        if (l.row.reviewPolicy !== 'document_review_v1')
+          throw conflict('Customer case requires document review activation');
+        if (!body)
+          throw new BadRequestException('expectedVersion is required for customer submission');
+        if (l.row.version !== body.expectedVersion) throw this.stale();
+        if (l.row.status !== 'draft') throw conflict('Only a draft can be submitted');
+        const items = checklistOf(l.row);
+        if (
+          missingRequired(
+            items.map((i) => (i.documentId ? { ...i, status: 'provided' as const } : i)),
+          ).length
+        )
+          throw conflict('Required documents are missing');
+        const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id, tx);
+        const rejected = await tx
+          .select()
+          .from(verificationReviewEvents)
+          .where(
+            and(
+              eq(verificationReviewEvents.tenantId, scope.tenantId),
+              eq(verificationReviewEvents.caseId, id),
+              eq(verificationReviewEvents.kind, 'item_decided'),
+              eq(verificationReviewEvents.decision, 'reject'),
+            ),
+          );
+        for (const item of items) {
+          item.review = null;
+          item.evidence = null;
+          if (!item.documentId) continue;
+          const v = newestNonRejected(versions.filter((v) => v.documentId === item.documentId));
+          if (!v) throw conflict('Evidence is unavailable; replace or remove it');
+          if (
+            rejected.some(
+              (r) => VerificationEvidenceSchema.parse(r.evidence).documentVersionId === v.id,
+            )
+          )
+            throw conflict('Rejected evidence must be replaced with a new file version');
+          if (item.expiresOn && item.expiresOn <= this.now().toISOString().slice(0, 10))
+            throw conflict('Evidence has expired');
+          item.status = 'provided';
+          item.evidence = {
+            documentId: v.documentId,
+            documentVersionId: v.id,
+            versionNumber: v.version,
+            expiresOn: item.expiresOn,
+          };
+        }
+        const updated = await updateVersioned(tx, verificationCases, id, body.expectedVersion, {
+          status: 'submitted',
+          checklist: items,
+          reviewRound: l.row.reviewRound + 1,
+          submittedByUserId: principal.userId,
+          submittedAt: this.now(),
+          reviewerUserId: null,
+          decidedAt: null,
+          reason: null,
+          updatedAt: this.now(),
+        });
+        await this.audit.record(tx, {
+          action: 'verification.submitted',
+          entityType: 'verification_case',
+          entityId: id,
+          after: { version: updated.version },
+        });
+        return { status: 200, response: toVerificationCaseDto(updated) };
+      };
+      return idempotencyKey
+        ? (
+            await withIdempotency(
+              tx,
+              { command: 'verification.submit', key: idempotencyKey, body: { id, ...body } },
+              run,
+            )
+          ).response
+        : (await run()).response;
     });
   }
 
@@ -447,15 +613,53 @@ export class VerificationService implements OnModuleInit {
       if (l.row.submittedByUserId === principal.userId) throw separationOfDuties();
 
       const items = checklistOf(l.row);
+      const documentReview = l.row.partyKind === 'customer';
+      if (documentReview && l.row.reviewPolicy !== 'document_review_v1')
+        throw conflict('Customer case requires document review activation');
       const approve = body.decision === 'approve';
       if (approve) {
+        if (documentReview) {
+          if (
+            !items.some((i) => i.required) ||
+            items.some((i) => i.required && !i.documentId) ||
+            items.some(
+              (i) =>
+                i.documentId && (i.status !== 'accepted' || i.review?.round !== l.row.reviewRound),
+            )
+          )
+            throw conflict('Every supplied document needs explicit approval');
+          for (const item of items.filter((i) => i.documentId)) {
+            await this.assertEvidence(tx, scope, l.row, item, true);
+            const [review] = await tx
+              .select()
+              .from(verificationReviewEvents)
+              .where(
+                and(
+                  eq(verificationReviewEvents.tenantId, scope.tenantId),
+                  eq(verificationReviewEvents.caseId, id),
+                  eq(verificationReviewEvents.id, item.review!.id),
+                  eq(verificationReviewEvents.round, l.row.reviewRound),
+                  eq(verificationReviewEvents.itemKey, item.key),
+                  eq(verificationReviewEvents.decision, 'approve'),
+                ),
+              );
+            if (
+              !review ||
+              review.documentVersionId !== item.evidence?.documentVersionId ||
+              VerificationEvidenceSchema.parse(review.evidence).expiresOn !== item.expiresOn
+            )
+              throw conflict(
+                'Every supplied document needs an immutable approval for this evidence',
+              );
+          }
+        }
         const missing = missingRequired(items);
         if (missing.length > 0) {
           throw conflict(`Required documents are missing: ${missing.join(', ')}`);
         }
-        const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
+        const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id, tx);
         const unusable = documentProblems(items, versions);
-        const allClean = await this.documents.allClean(scope, VERIFICATION_OWNER_TYPE, id);
+        const allClean = await this.documents.allClean(scope, VERIFICATION_OWNER_TYPE, id, tx);
         if (unusable.length > 0 || !allClean) {
           throw conflict(
             `Documents are not all clean${unusable.length > 0 ? `: ${unusable.join(', ')}` : ''}`,
@@ -468,9 +672,11 @@ export class VerificationService implements OnModuleInit {
         reviewerUserId: principal.userId,
         decidedAt: now,
         reason: body.comment ?? null,
-        checklist: approve ? acceptProvided(items) : items,
+        checklist: approve && !documentReview ? acceptProvided(items) : items,
         updatedAt: now,
       });
+      if (documentReview)
+        await this.journal(tx, updated, null, body.decision, body.comment ?? null);
       await this.audit.record(tx, {
         action: approve ? 'verification.approved' : 'verification.rejected',
         entityType: 'verification_case',
@@ -483,6 +689,9 @@ export class VerificationService implements OnModuleInit {
     };
 
     return withTx(this.db, scope, actor, async (tx) => {
+      const visible = await this.lock(tx, scope.tenantId, id);
+      this.assertVisible('verification.review', scope, visible);
+      if (visible.row.submittedByUserId === principal.userId) throw separationOfDuties();
       if (idempotencyKey === undefined) return (await run(tx)).response;
       const result = await withIdempotency(
         tx,
@@ -492,6 +701,254 @@ export class VerificationService implements OnModuleInit {
       );
       return result.response;
     });
+  }
+
+  async reviewItem(
+    id: string,
+    key: ChecklistItem['key'],
+    body: ReviewVerificationItemBody,
+    retryKey: string,
+  ): Promise<VerificationCaseDto> {
+    const { scope, actor, principal } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const l = await this.lock(tx, scope.tenantId, id);
+      this.assertVisible('verification.review', scope, l);
+      if (l.row.submittedByUserId === principal.userId) throw separationOfDuties();
+      return (
+        await withIdempotency(
+          tx,
+          { command: 'verification.item_decision', key: retryKey, body: { id, key, ...body } },
+          async () => {
+            if (l.row.version !== body.expectedVersion) throw this.stale();
+            if (l.row.reviewPolicy !== 'document_review_v1' || l.row.status !== 'submitted')
+              throw conflict('Only submitted document-review cases can be reviewed');
+            const items = checklistOf(l.row),
+              item = items.find((i) => i.key === key);
+            if (!item || item.status !== 'provided')
+              throw conflict('This document is missing or already decided');
+            await this.assertEvidence(tx, scope, l.row, item, body.decision === 'approve');
+            item.status = body.decision === 'approve' ? 'accepted' : 'rejected';
+            const event = await this.journal(
+              tx,
+              { ...l.row, version: l.row.version + 1 },
+              item,
+              body.decision,
+              body.decision === 'reject' ? body.comment : null,
+            );
+            item.review = event;
+            const updated = await updateVersioned(tx, verificationCases, id, body.expectedVersion, {
+              checklist: items,
+              updatedAt: this.now(),
+            });
+            await this.audit.record(tx, {
+              action:
+                body.decision === 'approve'
+                  ? 'verification.item_approved'
+                  : 'verification.item_rejected',
+              entityType: 'verification_case',
+              entityId: id,
+              meta: { key, reviewId: event.id },
+            });
+            return { status: 200, response: toVerificationCaseDto(updated) };
+          },
+        )
+      ).response;
+    });
+  }
+
+  async detachItem(
+    id: string,
+    key: ChecklistItem['key'],
+    body: { expectedVersion: number },
+    retryKey: string,
+  ): Promise<VerificationCaseDto> {
+    const { scope, actor } = this.caller.current();
+    const cleanup: Awaited<ReturnType<DocumentsService['removeInTransaction']>> = [];
+    const result = await withTx(this.db, scope, actor, async (tx) => {
+      const l = await this.lock(tx, scope.tenantId, id);
+      this.assertVisible('customer.write', scope, l);
+      if (l.row.partyKind !== 'customer' || l.row.reviewPolicy !== 'document_review_v1')
+        throw conflict('Document detach requires a customer document-review case');
+      return (
+        await withIdempotency(
+          tx,
+          { command: 'verification.detach', key: retryKey, body: { id, key, ...body } },
+          async () => {
+            if (l.row.version !== body.expectedVersion) throw this.stale();
+            if (!isEditable(l.row.status))
+              throw conflict('Reject the case before correcting evidence');
+            const items = checklistOf(l.row),
+              item = items.find((i) => i.key === key);
+            if (!item?.documentId) throw conflict('No document attached');
+            await this.preserveLegacyDecision(tx, l.row);
+            const old = item.documentId;
+            item.documentId = null;
+            item.status = 'missing';
+            item.expiresOn = null;
+            item.evidence = null;
+            item.review = null;
+            if (!items.some((i) => i.documentId === old))
+              cleanup.push(...(await this.documents.removeInTransaction(tx, scope, old)));
+            const updated = await updateVersioned(tx, verificationCases, id, body.expectedVersion, {
+              status: 'draft',
+              checklist: items,
+              reviewerUserId: null,
+              decidedAt: null,
+              reason: null,
+              updatedAt: this.now(),
+            });
+            await this.audit.record(tx, {
+              action: 'verification.checklist_detached',
+              entityType: 'verification_case',
+              entityId: id,
+              meta: { key },
+            });
+            return { status: 200, response: toVerificationCaseDto(updated) };
+          },
+        )
+      ).response;
+    });
+    await this.documents.cleanupRemoved(cleanup);
+    return result;
+  }
+
+  async reviewHistory(
+    id: string,
+    query: { before?: { at: string; id: string } | undefined; limit: number },
+  ): Promise<VerificationReviewHistory> {
+    const { scope } = this.caller.current();
+    const l = await this.load(this.db, scope.tenantId, id);
+    if (!l) throw notFound('Verification case');
+    this.assertVisible('verification.read', scope, l);
+    const rows = await this.db
+      .select()
+      .from(verificationReviewEvents)
+      .where(
+        and(
+          eq(verificationReviewEvents.tenantId, scope.tenantId),
+          eq(verificationReviewEvents.caseId, id),
+          query.before
+            ? or(
+                lt(verificationReviewEvents.occurredAt, new Date(query.before.at)),
+                and(
+                  eq(verificationReviewEvents.occurredAt, new Date(query.before.at)),
+                  lt(verificationReviewEvents.id, query.before.id),
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(verificationReviewEvents.occurredAt), desc(verificationReviewEvents.id))
+      .limit(query.limit + 1);
+    return VerificationReviewHistorySchema.parse({
+      items: rows.slice(0, query.limit).map((r) => ({
+        ...r,
+        itemKey: r.itemKey,
+        reviewedBy: r.actorUserId,
+        reviewedAt: r.occurredAt.toISOString(),
+      })),
+      nextCursor:
+        rows.length > query.limit
+          ? Buffer.from(
+              JSON.stringify({
+                at: rows[query.limit - 1]!.occurredAt.toISOString(),
+                id: rows[query.limit - 1]!.id,
+              }),
+            ).toString('base64url')
+          : null,
+    });
+  }
+
+  private async assertEvidence(
+    tx: DbTransaction,
+    scope: TxScope,
+    row: CaseRow,
+    item: ChecklistItem,
+    approve: boolean,
+  ): Promise<void> {
+    const binding = item.evidence;
+    if (!binding || binding.documentId !== item.documentId || binding.expiresOn !== item.expiresOn)
+      throw conflict('Evidence is unavailable; correct and resubmit');
+    const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, row.id, tx);
+    const latest = newestNonRejected(versions.filter((v) => v.documentId === item.documentId));
+    if (!latest || latest.id !== binding.documentVersionId)
+      throw conflict('Bound evidence is unavailable or has changed');
+    if (
+      approve &&
+      (latest.status !== 'clean' ||
+        !latest.sha256 ||
+        !latest.scannedAt ||
+        (item.expiresOn !== null && item.expiresOn <= this.now().toISOString().slice(0, 10)))
+    )
+      throw conflict('Evidence must be clean and unexpired');
+  }
+
+  private async journal(
+    tx: DbTransaction,
+    row: CaseRow,
+    item: ChecklistItem | null,
+    decision: 'approve' | 'reject',
+    comment: string | null,
+    legacy = false,
+  ) {
+    const { principal, scope } = this.caller.current();
+    const [entry] = await tx
+      .insert(verificationReviewEvents)
+      .values({
+        tenantId: row.tenantId,
+        caseId: row.id,
+        caseVersion: row.version,
+        round: row.reviewRound,
+        kind: legacy ? 'legacy_case_decided' : item ? 'item_decided' : 'case_decided',
+        itemKey: item?.key ?? null,
+        decision,
+        comment,
+        actorUserId: legacy ? row.reviewerUserId! : principal.userId,
+        occurredAt: legacy ? row.decidedAt! : this.now(),
+        evidence: item?.evidence ?? null,
+        evidenceOrganizationId: item ? scope.organizationId : null,
+        documentId: item?.evidence?.documentId ?? null,
+        documentVersionId: item?.evidence?.documentVersionId ?? null,
+      })
+      .returning();
+    return {
+      id: entry!.id,
+      decision,
+      comment,
+      reviewedBy: entry!.actorUserId,
+      reviewedAt: entry!.occurredAt.toISOString(),
+      round: row.reviewRound,
+      evidence: item?.evidence ?? null,
+    };
+  }
+
+  private async preserveLegacyDecision(tx: DbTransaction, row: CaseRow): Promise<void> {
+    if (
+      row.partyKind !== 'customer' ||
+      row.reviewPolicy !== 'case_review_v0' ||
+      !row.reviewerUserId ||
+      !row.decidedAt
+    )
+      return;
+    const [existing] = await tx
+      .select()
+      .from(verificationReviewEvents)
+      .where(
+        and(
+          eq(verificationReviewEvents.tenantId, row.tenantId),
+          eq(verificationReviewEvents.caseId, row.id),
+          eq(verificationReviewEvents.caseVersion, row.version),
+        ),
+      );
+    if (!existing)
+      await this.journal(
+        tx,
+        row,
+        null,
+        row.status === 'rejected' ? 'reject' : 'approve',
+        row.reason,
+        true,
+      );
   }
 
   // ----------------------------------------------------------------------------------------------- helpers

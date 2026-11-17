@@ -169,6 +169,15 @@ const DRIZZLE: Record<string, PgTable> = {
 describe('0015_crm and src/schema/crm.ts', () => {
   const parsed = parseSql(SQL_TEXT);
   applyAlters(parsed, ALTER_TEXT);
+  const reviewSql = readFileSync(
+    new URL('../migrations/0040_verification_document_review.sql', import.meta.url),
+    'utf8',
+  );
+  for (const column of reviewSql.matchAll(/ALTER TABLE app\.(\w+) ADD COLUMN (\w+) /g)) {
+    const shape = parsed.get(column[1]!);
+    if (!shape) throw new Error('Review migration alters an unknown CRM table');
+    shape.columns.push(column[2]!);
+  }
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());

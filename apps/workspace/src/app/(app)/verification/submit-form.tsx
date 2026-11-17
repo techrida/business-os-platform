@@ -15,11 +15,13 @@ import styles from './verification.module.css';
  */
 export function SubmitForm({
   caseId,
+  version,
   idempotencyKey,
   blockedReason,
   reloadHref,
 }: {
   caseId: string;
+  version: number;
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
   blockedReason: string | null;
@@ -37,6 +39,7 @@ export function SubmitForm({
   return (
     <form action={formAction} className={styles.decision}>
       <input type="hidden" name="caseId" value={caseId} />
+      <input type="hidden" name="expectedVersion" value={version} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
 
       {state.error ? (

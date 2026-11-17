@@ -246,6 +246,13 @@
       "when": 1783000000038,
       "tag": "0038_discard_procurement_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1783000000040,
+      "tag": "0040_verification_document_review",
+      "breakpoints": true
     }
   ]
 }

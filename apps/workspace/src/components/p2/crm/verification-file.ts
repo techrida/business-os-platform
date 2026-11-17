@@ -28,10 +28,11 @@ export interface FileView {
  * The version a reviewer should open: the document's current version, or when the API names none
  * the newest one that was not rejected. Null when the document has no usable version.
  */
-export function fileOf(doc: DocumentDetail): FileView | null {
-  const current =
-    doc.versions.find((v) => v.id === doc.currentVersionId) ??
-    doc.versions.filter((v) => v.status !== 'rejected').sort((a, b) => b.version - a.version)[0];
+export function fileOf(doc: DocumentDetail, boundVersionId?: string): FileView | null {
+  const current = boundVersionId
+    ? doc.versions.find((v) => v.id === boundVersionId)
+    : (doc.versions.find((v) => v.id === doc.currentVersionId) ??
+      doc.versions.filter((v) => v.status !== 'rejected').sort((a, b) => b.version - a.version)[0]);
   if (current === undefined) return null;
   return {
     documentId: doc.id,

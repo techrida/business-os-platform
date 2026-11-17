@@ -135,12 +135,13 @@ const fxRates = (extra = '') => `
   );`;
 
 describe('tenant-scoped tables (ADR 0027 §6)', () => {
-  it('lists the ADR tables, the P2 tenant-level tables, P3 withholding codes and the P4 vendor tables', () => {
+  it('lists the tenant-level phase tables and verification review journal', () => {
     expect([...TENANT_SCOPED].sort()).toEqual(
       [
         'app.customers',
         'app.customer_contacts',
         'app.verification_cases',
+        'app.verification_review_events',
         'app.tax_codes',
         'app.payment_terms',
         'app.withholding_codes',
