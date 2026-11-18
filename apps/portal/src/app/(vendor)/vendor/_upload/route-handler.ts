@@ -1,7 +1,8 @@
 import { ApiError } from '@/lib/api';
 import { uploadVendorFile, type VendorUploadKind } from '@/lib/api.vendor-writes';
 import { getEnv } from '@/lib/env';
-import { getSession } from '@/lib/session';
+import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
+import { getSession, type Session } from '@/lib/session';
 
 import { fileProblem } from './rules';
 
@@ -26,7 +27,16 @@ export async function handleVendorUpload(req: Request, kind: VendorUploadKind): 
   if (req.headers.get('origin') !== new URL(getEnv().PORTAL_PUBLIC_URL).origin) {
     return reply({ error: 'Forbidden' }, 403);
   }
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    // A session store outage is retryable: answer 503 rather than a 500 or a sign-in prompt.
+    if (!(err instanceof SessionUnavailableError)) throw err;
+    const response = reply({ error: SESSION_UNAVAILABLE_MESSAGE }, 503);
+    response.headers.set('retry-after', '1');
+    return response;
+  }
   if (!session) return reply({ error: 'Sign in to upload a file.' }, 401);
   if (session.orgKind !== 'vendor') return reply({ error: 'Forbidden' }, 403);
 
