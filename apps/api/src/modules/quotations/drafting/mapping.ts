@@ -13,6 +13,7 @@ import {
   type QuotationDetail,
   type QuotationDto,
   type QuotationLineDto,
+  type QuotationCapabilities,
   type QuotationListItem,
   type QuotationStatus,
   type QuotationStatusHistoryDto,
@@ -195,11 +196,14 @@ export function toQuotationDto(q: QuotationRow, currentStatus: QuotationStatus):
   };
 }
 
-/** One row of the list: the parent plus its current version's figures and the two names the list shows. */
+/**
+ * One row of the list: the parent plus its current version's figures, the two names the list shows
+ * and whether the caller may edit it now (decided by the service).
+ */
 export function toQuotationListItem(
   q: QuotationRow,
   current: QuotationVersionRow,
-  names: { customerName: string; ownerName: string | null },
+  names: { customerName: string; ownerName: string | null; canEdit: boolean },
 ): QuotationListItem {
   return {
     ...toQuotationDto(q, current.status),
@@ -208,6 +212,7 @@ export function toQuotationListItem(
     total: current.total,
     validUntil: current.validUntil,
     ownerName: names.ownerName,
+    canEdit: names.canEdit,
   };
 }
 
@@ -234,6 +239,8 @@ export interface QuotationDetailParts {
   statusHistory: readonly QuotationStatusHistoryRow[];
   customerName: string;
   contacts: readonly QuotationContactRow[];
+  /** What the caller may do now, decided by the service from the current version and its grants. */
+  capabilities: QuotationCapabilities;
 }
 
 /** `GET /v1/quotations/:id`. Versions run oldest first, history in the order it happened. */
@@ -255,5 +262,6 @@ export function toQuotationDetail(parts: QuotationDetailParts): QuotationDetail 
       .map(toStatusHistoryDto),
     customerName: parts.customerName,
     contacts: parts.contacts.map(toContact),
+    capabilities: { ...parts.capabilities },
   };
 }
