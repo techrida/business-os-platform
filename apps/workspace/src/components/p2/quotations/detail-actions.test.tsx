@@ -1,4 +1,5 @@
 import type { QuotationContact, QuotationStatus, QuotationVersionDto } from '@bos/contracts';
+import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +10,16 @@ vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+
+// Open the real dialog and render its portal inline to inspect the contents in the Node renderer.
+vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
+  const radix = await importOriginal<typeof import('@radix-ui/react-dialog')>();
+  return {
+    ...radix,
+    Root: (props: ComponentProps<typeof radix.Root>) => <radix.Root {...props} defaultOpen />,
+    Portal: ({ children }: ComponentProps<typeof radix.Portal>) => children,
+  };
+});
 
 const Q = '11111111-1111-4111-8111-111111111111';
 const V = '22222222-2222-4222-8222-222222222222';
@@ -76,6 +87,25 @@ describe('which actions a status offers', () => {
   it('renders nothing at all when no action applies, so the slot stays empty', () => {
     expect(render({ status: 'accepted' })).toBe('');
   });
+});
+
+it.each([
+  ['approved', 'Send to customer'],
+  ['sent', 'Record outcome'],
+  ['rejected', 'Start revision'],
+] as const)('links the %s action footer to the matching form', (status, label) => {
+  const html = render({ status, rejectionSource: status === 'rejected' ? 'customer' : null });
+  const footers = [...html.matchAll(/<footer[^>]*>(.*?)<\/footer>/g)].map((match) => match[1]);
+  const footer = footers.find((content) => content?.includes(`>${label}</button>`));
+  const formId = /<button[^>]*type="submit"[^>]*form="([^"]+)"/.exec(footer ?? '')?.[1];
+  expect(formId).toBeTruthy();
+  const form = [...html.matchAll(/<form[^>]*>.*?<\/form>/g)].find((match) =>
+    match[0].includes(`id="${formId}"`),
+  )?.[0];
+  expect(form).toContain(`name="quotationId" value="${Q}"`);
+  expect(form).toContain(`name="versionId" value="${V}"`);
+  expect(form).toContain('name="expectedVersion" value="7"');
+  expect(form).not.toContain(`>${label}</button>`);
 });
 
 describe('Send', () => {
