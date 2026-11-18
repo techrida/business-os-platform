@@ -121,7 +121,13 @@ describe('openCaseAction', () => {
 
 const submitForm = (extra: Record<string, string> = {}): FormData => {
   const f = new FormData();
-  for (const [k, v] of Object.entries({ caseId: CASE, idempotencyKey: KEY, ...extra })) f.set(k, v);
+  for (const [k, v] of Object.entries({
+    caseId: CASE,
+    idempotencyKey: KEY,
+    expectedVersion: '3',
+    ...extra,
+  }))
+    f.set(k, v);
   return f;
 };
 
@@ -131,7 +137,7 @@ describe('submitCaseAction', () => {
     const result = await submitCaseAction({ key: KEY }, submitForm());
     expect(result.error).toBeUndefined();
     expect(revalidatePath).toHaveBeenCalledWith(`/verification/${CASE}`);
-    expect(api.submitVerificationCase).toHaveBeenCalledWith(expect.anything(), CASE, KEY);
+    expect(api.submitVerificationCase).toHaveBeenCalledWith(expect.anything(), CASE, KEY, 3);
   });
 
   it('refuses a form without a case id before any call', async () => {
