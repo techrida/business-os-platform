@@ -1,24 +1,23 @@
 'use client';
 
-import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, type ReactNode, type RefObject } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Icon } from '@/components/ui/icon';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 
 import styles from './actions.module.css';
-import detail from './detail.module.css';
 
-/**
- * The frame shared by Send, Record outcome and Revise: a trigger button and a native modal dialog,
- * as in the revisions dialog. The browser traps focus inside, closes on Esc and puts focus back on
- * the trigger. Cancel and Done inside it use `DialogCloseButton`.
- */
+/** The quotation action dialogs share a fixed submit footer and refresh after a confirmed change. */
 export function ActionDialog({
   triggerLabel,
   triggerVariant = 'secondary',
   title,
   intro,
+  formId,
+  submitLabel,
+  pending,
+  done,
   children,
 }: {
   triggerLabel: string;
@@ -26,73 +25,42 @@ export function ActionDialog({
   title: string;
   /** Said once under the title, before any field. */
   intro: ReactNode;
+  formId: string;
+  submitLabel: string;
+  pending: boolean;
+  done?: boolean | undefined;
   children: ReactNode;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
-  const introId = useId();
-  const open = () => dialogRef.current?.showModal();
-  const close = () => dialogRef.current?.close();
-  // The dialog has no padding, so only a click on the dim area reports the dialog as its target.
-  const closeOnBackdrop = (event: MouseEvent<HTMLDialogElement>) => {
-    if (event.target === event.currentTarget) close();
-  };
-
   return (
-    <>
-      <Button variant={triggerVariant} onClick={open}>
-        {triggerLabel}
-      </Button>
-      <dialog
-        ref={dialogRef}
-        className={`${detail.dialog} ${styles.dialogNarrow}`}
-        aria-labelledby={titleId}
-        aria-describedby={introId}
-        onClick={closeOnBackdrop}
-      >
-        <div className={detail.dialogBox}>
-          <div className={detail.dialogHead}>
-            <div className={detail.dialogTitle}>
-              <h2 id={titleId}>{title}</h2>
-              <p id={introId} className={detail.dialogSub}>
-                {intro}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="small"
-              className={detail.dialogClose ?? ''}
-              onClick={close}
-              aria-label="Close"
-            >
-              <Icon name="x" size={18} />
+    <Dialog
+      trigger={<Button variant={triggerVariant}>{triggerLabel}</Button>}
+      title={title}
+      description={intro}
+      locked={pending}
+      onOpenChange={(open) => {
+        if (!open && done) window.location.reload();
+      }}
+      footer={
+        done ? (
+          <DialogClose asChild>
+            <Button>Done</Button>
+          </DialogClose>
+        ) : (
+          <>
+            <DialogClose asChild>
+              <Button variant="secondary" disabled={pending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
+              {submitLabel}
             </Button>
-          </div>
-          <div className={detail.dialogBody}>{children}</div>
-        </div>
-      </dialog>
-    </>
-  );
-}
-
-/** A button that closes the dialog it sits in. Reads the dialog from the DOM, so it needs no ref. */
-export function DialogCloseButton({
-  variant = 'secondary',
-  disabled,
-  children,
-}: {
-  variant?: 'primary' | 'secondary';
-  disabled?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Button
-      variant={variant}
-      disabled={disabled}
-      onClick={(e) => e.currentTarget.closest('dialog')?.close()}
+          </>
+        )
+      }
     >
       {children}
-    </Button>
+    </Dialog>
   );
 }
 
@@ -141,24 +109,7 @@ export function useFocusOnProblem(
   }, [state, wrapRef, summaryRef]);
 }
 
-/**
- * Once the API has accepted the request, the dialog says so; closing it (Done, the X or Esc) then
- * reloads the page, so it shows the new status. A full reload is what guarantees the new version.
- */
-export function useReloadWhenClosed(
-  done: boolean | undefined,
-  wrapRef: RefObject<HTMLElement | null>,
-) {
-  useEffect(() => {
-    if (done !== true) return;
-    const dialog = wrapRef.current?.closest('dialog');
-    const reload = () => window.location.reload();
-    dialog?.addEventListener('close', reload);
-    return () => dialog?.removeEventListener('close', reload);
-  }, [done, wrapRef]);
-}
-
-/** The line under the buttons that tells a screen reader the request is on its way. */
+/** Announces the pending request while the footer actions are disabled. */
 export function PendingLine({ pending, words }: { pending: boolean; words: string }) {
   return (
     <p className={styles.status} role="status">

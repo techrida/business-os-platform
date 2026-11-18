@@ -3,17 +3,9 @@
 import { useActionState, useId, useRef, useState, type ReactNode } from 'react';
 
 import { outcomeAction, type ActionState } from '@/app/(app)/quotations/[id]/actions';
-import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';
 
-import {
-  ActionDialog,
-  DialogCloseButton,
-  ErrorSummary,
-  PendingLine,
-  useFocusOnProblem,
-  useReloadWhenClosed,
-} from './action-dialog';
+import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './action-dialog';
 import styles from './actions.module.css';
 import { EVIDENCE_LABELS, EVIDENCE_ORDER } from './eligibility';
 
@@ -71,26 +63,16 @@ function Choices({
 }
 
 /** Record outcome: the customer accepted or rejected the sent quotation. */
-export function OutcomeDialog({ number, ...rest }: OutcomeDialogProps) {
-  return (
-    <ActionDialog
-      triggerLabel="Record outcome"
-      title={`Record the outcome of ${number}`}
-      intro="Write down what the customer answered. Accepting needs at least one kind of evidence. Rejecting needs a comment."
-    >
-      <OutcomeBody {...rest} />
-    </ActionDialog>
-  );
-}
-
-function OutcomeBody({
+export function OutcomeDialog({
+  number,
   quotationId,
   versionId,
   version,
   today,
   idempotencyKey,
   reloadHref,
-}: Omit<OutcomeDialogProps, 'number'>) {
+}: OutcomeDialogProps) {
+  const formId = useId();
   const [state, formAction, pending] = useActionState<ActionState, FormData>(outcomeAction, {
     key: idempotencyKey,
   });
@@ -99,122 +81,121 @@ function OutcomeBody({
   const [decidedOn, setDecidedOn] = useState(today);
   const [evidence, setEvidence] = useState<readonly string[]>([]);
   const [comment, setComment] = useState('');
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
-  useFocusOnProblem(state, wrapRef, summaryRef);
-  useReloadWhenClosed(state.done, wrapRef);
+  useFocusOnProblem(state, formRef, summaryRef);
 
   return (
-    <div ref={wrapRef}>
+    <ActionDialog
+      triggerLabel="Record outcome"
+      title={`Record the outcome of ${number}`}
+      intro="Write down what the customer answered. Accepting needs at least one kind of evidence. Rejecting needs a comment."
+      formId={formId}
+      submitLabel="Record outcome"
+      pending={pending}
+      done={state.done}
+    >
       {state.done === true ? (
         <div className={styles.form}>
           <p role="status">
             Recorded as {outcome === 'accepted' ? 'accepted' : 'rejected'}. Close this to see the
             new status.
           </p>
-          <div className={styles.buttons}>
-            <DialogCloseButton variant="primary">Done</DialogCloseButton>
-          </div>
         </div>
       ) : (
-        <form action={formAction} className={styles.form}>
+        <form id={formId} ref={formRef} action={formAction}>
           <input type="hidden" name="quotationId" value={quotationId} />
           <input type="hidden" name="versionId" value={versionId} />
           <input type="hidden" name="expectedVersion" value={version} />
           <input type="hidden" name="idempotencyKey" value={state.key} />
 
-          <ErrorSummary
-            error={state.error}
-            reload={state.reload}
-            reloadHref={reloadHref}
-            summaryRef={summaryRef}
-          />
+          <fieldset className={styles.form} disabled={pending}>
+            <ErrorSummary
+              error={state.error}
+              reload={state.reload && !pending}
+              reloadHref={reloadHref}
+              summaryRef={summaryRef}
+            />
 
-          <Choices legend="What did the customer say?" error={state.errors?.outcome}>
-            {(['accepted', 'rejected'] as const).map((value) => (
-              <label key={value} className={styles.choice}>
-                <input
-                  type="radio"
-                  name="outcome"
-                  value={value}
-                  checked={outcome === value}
-                  onChange={() => setOutcome(value)}
+            <Choices legend="What did the customer say?" error={state.errors?.outcome}>
+              {(['accepted', 'rejected'] as const).map((value) => (
+                <label key={value} className={styles.choice}>
+                  <input
+                    type="radio"
+                    name="outcome"
+                    value={value}
+                    checked={outcome === value}
+                    onChange={() => setOutcome(value)}
+                  />
+                  {value === 'accepted' ? 'Accepted' : 'Rejected'}
+                </label>
+              ))}
+            </Choices>
+
+            <Field label="Date the customer answered" error={state.errors?.decidedOn}>
+              {(control) => (
+                <Input
+                  type="date"
+                  name="decidedOn"
+                  value={decidedOn}
+                  max={today}
+                  onChange={(e) => setDecidedOn(e.target.value)}
+                  {...control}
                 />
-                {value === 'accepted' ? 'Accepted' : 'Rejected'}
-              </label>
-            ))}
-          </Choices>
+              )}
+            </Field>
 
-          <Field label="Date the customer answered" error={state.errors?.decidedOn}>
-            {(control) => (
-              <Input
-                type="date"
-                name="decidedOn"
-                value={decidedOn}
-                max={today}
-                onChange={(e) => setDecidedOn(e.target.value)}
-                {...control}
-              />
-            )}
-          </Field>
+            <Choices
+              legend="Evidence the customer gave"
+              hint={
+                outcome === 'rejected'
+                  ? 'Optional when the customer rejected.'
+                  : 'Required to record an accepted quotation.'
+              }
+              error={state.errors?.evidence}
+            >
+              {EVIDENCE_ORDER.map((kind) => (
+                <label key={kind} className={styles.choice}>
+                  <input
+                    type="checkbox"
+                    name="evidenceKinds"
+                    value={kind}
+                    checked={evidence.includes(kind)}
+                    onChange={(e) =>
+                      setEvidence((prev) =>
+                        e.target.checked ? [...prev, kind] : prev.filter((k) => k !== kind),
+                      )
+                    }
+                  />
+                  {EVIDENCE_LABELS[kind]}
+                </label>
+              ))}
+            </Choices>
 
-          <Choices
-            legend="Evidence the customer gave"
-            hint={
-              outcome === 'rejected'
-                ? 'Optional when the customer rejected.'
-                : 'Required to record an accepted quotation.'
-            }
-            error={state.errors?.evidence}
-          >
-            {EVIDENCE_ORDER.map((kind) => (
-              <label key={kind} className={styles.choice}>
-                <input
-                  type="checkbox"
-                  name="evidenceKinds"
-                  value={kind}
-                  checked={evidence.includes(kind)}
-                  onChange={(e) =>
-                    setEvidence((prev) =>
-                      e.target.checked ? [...prev, kind] : prev.filter((k) => k !== kind),
-                    )
-                  }
+            <Field
+              label="Comment"
+              hint={
+                outcome === 'accepted'
+                  ? 'Optional when the customer accepted.'
+                  : 'Required when the customer rejected.'
+              }
+              error={state.errors?.comment}
+            >
+              {(control) => (
+                <Textarea
+                  name="comment"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  rows={4}
+                  maxLength={2000}
+                  {...control}
                 />
-                {EVIDENCE_LABELS[kind]}
-              </label>
-            ))}
-          </Choices>
-
-          <Field
-            label="Comment"
-            hint={
-              outcome === 'accepted'
-                ? 'Optional when the customer accepted.'
-                : 'Required when the customer rejected.'
-            }
-            error={state.errors?.comment}
-          >
-            {(control) => (
-              <Textarea
-                name="comment"
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                rows={4}
-                maxLength={2000}
-                {...control}
-              />
-            )}
-          </Field>
-
-          <div className={styles.buttons}>
-            <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-            <Button type="submit" disabled={pending}>
-              Record outcome
-            </Button>
-          </div>
+              )}
+            </Field>
+          </fieldset>
           <PendingLine pending={pending} words="Recording the outcome" />
         </form>
       )}
-    </div>
+    </ActionDialog>
   );
 }
