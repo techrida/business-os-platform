@@ -1,5 +1,7 @@
 'use client';
 
+import { useTransition } from 'react';
+
 import { NoticeCard } from '@/components/shell/notice-card';
 import { Button } from '@/components/ui/button';
 import { CenteredPage } from '@/components/ui/centered-page';
@@ -10,11 +12,17 @@ import { CenteredPage } from '@/components/ui/centered-page';
  * page from the server (a fresh GET); it never repeats a form submission or server action.
  */
 export function SessionUnavailableNotice({ retry }: { retry: () => void }) {
+  const [retrying, startRetry] = useTransition();
+
   return (
     <CenteredPage>
       <NoticeCard
         title="Session check temporarily unavailable"
-        actions={<Button onClick={() => retry()}>Retry</Button>}
+        actions={
+          <Button aria-busy={retrying} disabled={retrying} onClick={() => startRetry(retry)}>
+            {retrying ? 'Retrying…' : 'Retry'}
+          </Button>
+        }
       >
         <p role="alert">We could not confirm your sign-in just now. Retry in a moment.</p>
       </NoticeCard>
