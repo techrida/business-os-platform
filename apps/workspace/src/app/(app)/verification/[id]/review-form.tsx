@@ -107,6 +107,7 @@ export function ReviewForm({
         Approve customer
       </HeaderAction>
       <Dialog
+        size="small"
         title={rejecting ? 'Reject this case?' : 'Approve this customer?'}
         description={
           rejecting
@@ -140,6 +141,11 @@ export function ReviewForm({
         }
       >
         <form id={formId} onSubmit={(event) => void decide(event)} className={styles.decision}>
+          <Alert tone={rejecting ? 'error' : 'info'}>
+            {rejecting
+              ? 'Sales will see your reason and can update the documents.'
+              : 'The reason is kept with the verification decision.'}
+          </Alert>
           {state.error ? (
             <Alert
               ref={summaryRef}
@@ -156,11 +162,7 @@ export function ReviewForm({
               {approvalProblems.join(' ')}
             </Alert>
           ) : null}
-          <Field
-            label="Reason"
-            hint="Required. The reason is kept with the decision."
-            error={state.commentError}
-          >
+          <Field label="Reason" hint="Required." error={state.commentError}>
             {(control) => (
               <Textarea
                 ref={commentRef}

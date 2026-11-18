@@ -2,11 +2,12 @@
 
 import { useActionState, useEffect, useRef, useState } from 'react';
 
+import styles from '@/app/(app)/activities/activities.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
 
-import styles from './crm.module.css';
 import type { FormAction, FormState } from './types';
 
 const EMPTY: Record<string, string> = { kind: 'call', subject: '', body: '', dueAt: '' };
@@ -54,10 +55,11 @@ export function ActivityForm({
   }
   useEffect(() => {
     if (state.error) summary.current?.focus();
+    if (state.ok) toast.success('Activity logged.');
   }, [state]);
 
   return (
-    <form action={submit} noValidate className={styles.form}>
+    <form action={submit} noValidate className={styles.activityForm}>
       <input type="hidden" name="subjectKind" value={subjectKind} />
       <input type="hidden" name="subjectId" value={subjectId} />
 
@@ -65,13 +67,22 @@ export function ActivityForm({
         <Alert ref={summary} tabIndex={-1} tone="error" role="alert">
           {state.error}
         </Alert>
-      ) : state.ok ? (
-        <p role="status" className={styles.moved}>
-          Activity logged.
-        </p>
       ) : null}
 
-      <div className={styles.formGrid}>
+      <Field label="What it was about" error={err['subject']}>
+        {(c) => (
+          <Input
+            name="subject"
+            value={values['subject']}
+            onChange={set('subject')}
+            maxLength={200}
+            required
+            {...c}
+          />
+        )}
+      </Field>
+
+      <div className={styles.activityFields}>
         <Field label="Type" error={err['kind']}>
           {(c) => (
             <Select name="kind" value={values['kind']} onChange={set('kind')} {...c}>
@@ -83,18 +94,19 @@ export function ActivityForm({
             </Select>
           )}
         </Field>
-        <Field label="What it was about" error={err['subject']}>
-          {(c) => (
-            <Input
-              name="subject"
-              value={values['subject']}
-              onChange={set('subject')}
-              maxLength={200}
-              required
-              {...c}
-            />
-          )}
-        </Field>
+        {values['kind'] === 'task' ? (
+          <Field label="Due" hint="Kathmandu time. Optional." error={err['dueAt']}>
+            {(c) => (
+              <Input
+                name="dueAt"
+                type="datetime-local"
+                value={values['dueAt']}
+                onChange={set('dueAt')}
+                {...c}
+              />
+            )}
+          </Field>
+        ) : null}
       </div>
 
       <Field label="Details" hint="Optional." error={err['body']}>
@@ -110,21 +122,7 @@ export function ActivityForm({
         )}
       </Field>
 
-      {values['kind'] === 'task' ? (
-        <Field label="Due" hint="Kathmandu time. Optional." error={err['dueAt']}>
-          {(c) => (
-            <Input
-              name="dueAt"
-              type="datetime-local"
-              value={values['dueAt']}
-              onChange={set('dueAt')}
-              {...c}
-            />
-          )}
-        </Field>
-      ) : null}
-
-      <div>
+      <div className={styles.formFooter}>
         <Button type="submit" disabled={pending}>
           {pending ? 'Saving' : 'Log activity'}
         </Button>
