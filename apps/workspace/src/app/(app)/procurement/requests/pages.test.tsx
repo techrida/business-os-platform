@@ -120,7 +120,7 @@ describe('the list', () => {
     expect(out).toContain('Chairs for the new office');
     expect(out).toContain('45,00,000.00');
     expect(out).toContain('Emergency');
-    expect(out).toContain('Waiting for approval');
+    expect(out).toContain('Awaiting approval');
     expect(out).toContain('New purchase request');
   });
 
