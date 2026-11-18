@@ -15,14 +15,13 @@ RUN git apply --check /tmp/dependencies.patch \
     && pnpm --filter @zitadel/client build
 
 FROM dependencies AS overlay
-COPY infra/login/patches/login.patch infra/login/patches/otp.patch /tmp/
+COPY infra/login/patches/login.patch infra/login/patches/otp.patch infra/login/patches/design.patch /tmp/
 RUN git apply --check /tmp/login.patch /tmp/otp.patch \
-    && git apply /tmp/login.patch /tmp/otp.patch
+    && git apply /tmp/login.patch /tmp/otp.patch \
+    && git apply --check /tmp/design.patch \
+    && git apply /tmp/design.patch
 COPY infra/login/overlay/ apps/login/
 COPY apps/workspace/src/styles/tokens.css apps/workspace/src/styles/token-overrides.css apps/login/src/styles/
-COPY apps/workspace/src/components/shell/brand.tsx apps/workspace/src/components/shell/brand.module.css apps/login/src/components/shell/
-COPY apps/workspace/src/components/ui/icon.tsx apps/login/src/components/ui/
-COPY apps/workspace/src/lib/nav.ts apps/login/src/lib/
 
 FROM overlay AS test
 # The upstream API tests generate a temporary RSA fixture using the OpenSSL CLI.
