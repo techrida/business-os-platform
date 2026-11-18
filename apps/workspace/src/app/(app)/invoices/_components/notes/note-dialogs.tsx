@@ -14,7 +14,7 @@ import {
   DialogCloseButton,
   PendingLine,
   useFocusOnProblem,
-} from '@/components/p2/quotations/action-dialog';
+} from '@/components/ui/transaction-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';

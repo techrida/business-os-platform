@@ -11,13 +11,19 @@
   min-width: 0;
 }
 .paper {
+  /* The whole sheet is drawn: its own border box, its own padding, no clipping ancestor. Long words wrap. */
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: var(--input-bg);
   color: var(--text-primary);
   border: 1px solid var(--input-border);
-  padding: clamp(20px, 4vw, 44px);
+  border-radius: var(--radius-lg);
+  padding: clamp(16px, 4vw, 44px);
   font: inherit;
   overflow-wrap: anywhere;
-  min-width: 0;
+  word-break: break-word;
 }
 .paper header {
   text-align: center;
@@ -107,44 +113,13 @@
   cursor: progress;
 }
 
-.previewStatus,
-.previewError {
-  margin: 0;
-  min-width: 0;
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
-  overflow-wrap: anywhere;
-}
-
-.previewStatus {
-  color: var(--text-secondary);
-}
-
-.previewError {
-  color: var(--status-error);
-  font-weight: var(--font-weight-medium);
-}
-
-.previewScroll {
-  min-width: 0;
-  min-height: 0;
-}
-
-/* Wide screens: the preview stays under the app header while the editor scrolls. The block is no taller than the
-   space below the header, and the paper scrolls inside it, so a long memo is still fully reachable. */
+/* Wide screens: a paper that fits stays under the app header while the editor scrolls (MemoPreview decides, by
+   measuring). There is no max-height and no overflow here: nothing scrolls inside the preview. */
 @media (min-width: 901px) {
   .sticky {
     position: sticky;
     top: calc(var(--bos-header-height) + 16px);
     align-self: start;
-    max-height: calc(100dvh - var(--bos-header-height) - 32px);
-  }
-
-  .sticky .previewScroll {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    border-radius: var(--radius-lg);
   }
 }
 
@@ -152,6 +127,80 @@
   .layout {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ---- Form footer: delete, download, print on the left; save state and the next step on the right ---- */
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.footerIcons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footerEnd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-inline-start: auto;
+  min-width: 0;
+}
+
+/* Delete is a danger action: the status-error palette, like the signer remove button. */
+.iconDanger {
+  color: var(--status-error);
+  border-color: color-mix(in srgb, var(--status-error) 40%, transparent);
+  background: var(--status-error-subtle);
+}
+
+.iconDanger:hover:not(:disabled) {
+  border-color: var(--status-error);
+  background: color-mix(in srgb, var(--status-error) 16%, var(--status-error-subtle));
+}
+
+.iconDanger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--status-error) 28%, var(--status-error-subtle));
+}
+
+/* The save state: an icon and one word. It is a polite live region, so a screen reader hears "Saved". */
+.saveState {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.saveState[data-tone='good'] {
+  color: var(--status-success);
+}
+
+.saveState[data-tone='bad'] {
+  color: var(--status-error);
+  font-weight: var(--font-weight-medium);
+}
+
+.conflictChoices {
+  display: grid;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.conflictChoices p {
+  margin: 0;
 }
 
 /* ---- Signers: one label style and one row layout for Prepared, Recommended and Approved ---- */

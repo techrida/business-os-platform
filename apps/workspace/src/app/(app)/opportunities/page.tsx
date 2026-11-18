@@ -1,4 +1,4 @@
-import { OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
+import { OPPORTUNITY_STAGES, type OpportunityDto, type OpportunityStage } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -7,11 +7,10 @@ import { listOpportunities } from '@/components/p2/crm/crm-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge, ViewSwitch } from '@/components/p2/crm/server-bits';
 import styles from '@/components/p2/crm/crm.module.css';
+import { OpportunityFilters } from '@/components/p2/crm/stage-filter';
 import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
-import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
@@ -29,11 +28,26 @@ type Search = { view?: string | string[]; q?: string | string[]; stage?: string 
 const one = (v: string | string[] | undefined): string | undefined =>
   typeof v === 'string' ? v : undefined;
 
-function href(params: { view?: string; q?: string; stage?: string }): string {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
-  return q.size > 0 ? `/opportunities?${q.toString()}` : '/opportunities';
+function href({
+  view,
+  q,
+  stages = [],
+}: {
+  view?: 'table' | 'board';
+  q?: string | undefined;
+  stages?: readonly OpportunityStage[];
+}) {
+  const params = new URLSearchParams();
+  if (view === 'board') params.set('view', view);
+  if (q) params.set('q', q);
+  for (const stage of stages) params.append('stage', stage);
+  return params.size > 0 ? `/opportunities?${params.toString()}` : '/opportunities';
 }
+
+const stageOptions = OPPORTUNITY_STAGES.map((value) => ({
+  value,
+  label: stageLabel('opportunity', value),
+}));
 
 function columnsFor(items: OpportunityDto[]): BoardColumnData[] {
   const groups = groupByStage('opportunity', items);
@@ -63,18 +77,17 @@ export default async function OpportunitiesPage({
   const sp = await searchParams;
   const view = one(sp.view) === 'board' ? 'board' : 'table';
   const q = one(sp.q)?.trim().slice(0, 100) || undefined;
-  const stageParam = one(sp.stage);
-  const stage = (OPPORTUNITY_STAGES as readonly string[]).includes(stageParam ?? '')
-    ? stageParam
-    : undefined;
-  const filtered = q !== undefined || (view === 'table' && stage !== undefined);
+  const requestedStages = new Set(Array.isArray(sp.stage) ? sp.stage : [sp.stage]);
+  const stages = OPPORTUNITY_STAGES.filter((stage) => requestedStages.has(stage));
+  const hasStageFilter = view === 'table' && stages.length > 0;
+  const filtered = q !== undefined || hasStageFilter;
 
   let items: OpportunityDto[] | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
     items = await listOpportunities(session, {
       ...(q !== undefined ? { q } : {}),
-      ...(view === 'table' && stage !== undefined ? { stage } : {}),
+      ...(hasStageFilter ? { stage: stages } : {}),
       limit: LIMIT,
     });
   } catch (err) {
@@ -90,34 +103,12 @@ export default async function OpportunitiesPage({
       />
 
       <div className={styles.toolbar}>
-        <form method="get" action="/opportunities" className={styles.filters} role="search">
-          {view === 'board' ? <input type="hidden" name="view" value="board" /> : null}
-          <Field label="Search opportunities">
-            {(c) => <Input name="q" type="search" defaultValue={q ?? ''} maxLength={100} {...c} />}
-          </Field>
-          {view === 'table' ? (
-            <Field label="Stage">
-              {(c) => (
-                <Select name="stage" defaultValue={stage ?? ''} {...c}>
-                  <option value="">All stages</option>
-                  {OPPORTUNITY_STAGES.map((s) => (
-                    <option key={s} value={s}>
-                      {stageLabel('opportunity', s)}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          ) : null}
-          <Button type="submit" variant="secondary">
-            Apply
-          </Button>
-        </form>
+        <OpportunityFilters view={view} query={q ?? ''} selection={stages} options={stageOptions} />
         <ViewSwitch
           current={view}
           hrefs={{
-            table: href({ ...(q ? { q } : {}), ...(stage ? { stage } : {}) }),
-            board: href({ view: 'board', ...(q ? { q } : {}) }),
+            table: href({ q, stages }),
+            board: href({ view: 'board', q, stages }),
           }}
         />
       </div>
@@ -127,15 +118,21 @@ export default async function OpportunitiesPage({
           status={problem.status}
           message={problem.message}
           what="opportunities"
-          reloadHref={href({ view, ...(q ? { q } : {}) })}
+          reloadHref={href({ view, q, stages })}
         />
       ) : items !== null && items.length === 0 ? (
         filtered ? (
           <EmptyState
             title="No opportunities match"
-            action={<Link href="/opportunities">Clear the search</Link>}
+            action={
+              hasStageFilter ? (
+                <Link href={href({ q })}>Clear stages</Link>
+              ) : (
+                <Link href={href({ view, stages })}>Clear search</Link>
+              )
+            }
           >
-            Try fewer words or another stage.
+            {hasStageFilter ? 'Try fewer words or another stage.' : 'Try fewer or different words.'}
           </EmptyState>
         ) : (
           <EmptyState title="No opportunities yet">
@@ -199,7 +196,10 @@ export default async function OpportunitiesPage({
 
       {items !== null && items.length >= LIMIT ? (
         <p className={styles.quiet}>
-          Showing the first {LIMIT} opportunities. Search or filter by stage to narrow the list.
+          Showing the first {LIMIT} opportunities.{' '}
+          {view === 'table'
+            ? 'Search or filter by stage to narrow the list.'
+            : 'Search to narrow the board.'}
         </p>
       ) : null}
     </Page>

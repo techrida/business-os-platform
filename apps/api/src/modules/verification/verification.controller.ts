@@ -1,7 +1,7 @@
 // HTTP routes of the KYB verification cases. Thin on purpose: validation here, every rule in
 // VerificationService. Each route names its permission with @Can (route level); the service then checks the
 // record itself (own, all, and 404 outside the caller's scope). Deny by default: a route without @Can is refused.
-import type { VerificationCaseDto } from '@bos/contracts';
+import { RemoveVerificationDocumentBodySchema, type VerificationCaseDto } from '@bos/contracts';
 import {
   BadRequestException,
   Body,
@@ -67,6 +67,20 @@ export class VerificationController {
     @Body() body: unknown,
   ): Promise<VerificationCaseDto> {
     return this.cases.setChecklistItem(id, parseOr400(SetChecklistBodySchema, body));
+  }
+
+  /** 200 with the updated case. The checklist item is emptied and its document is retained. */
+  @Post(':id/checklist/remove')
+  @HttpCode(200)
+  @Can('customer.write')
+  removeChecklist(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<VerificationCaseDto> {
+    return this.cases.removeChecklistDocument(
+      id,
+      parseOr400(RemoveVerificationDocumentBodySchema, body),
+    );
   }
 
   /** 200 (nothing is created at this URL). 409 unless draft, or while a required item has no document. */

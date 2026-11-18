@@ -31,6 +31,7 @@ import {
   quotationLines,
   quotationVersions,
   runMigrations,
+  users,
 } from '@bos/db';
 import { ForbiddenException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -226,12 +227,13 @@ beforeAll(async () => {
   scopeB = { tenantId, organizationId: entityB };
   acting = scopeA;
 
-  for (const key of ['salesA', 'salesB', 'boss'] as const) {
+  for (const key of ['salesA', 'salesB', 'boss', 'acc'] as const) {
     U[key] = (await createStaffUser(appPool, { ...scopeA, idpOrgId: tenant.idpOrgId })).userId;
   }
   const { partyId } = await createParty(appPool, { tenantId, kind: 'customer' });
   customerA = partyId;
   await withTx(db, scopeA, systemActor('test'), async (tx) => {
+    await tx.update(users).set({ displayName: 'Sita Sharma' }).where(eq(users.id, U.acc));
     await tx.execute(
       sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
           VALUES (${customerA}, ${tenantId}, ${`CUS-${customerA.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme', ${ADDRESS}::jsonb)`,
@@ -352,6 +354,21 @@ describe('POST /v1/quotations/:id/versions/:vid/preview', () => {
     expect(result.route.blocked).toBe(false);
     // A requester sees the steps, not the people.
     expect(result.route.steps.every((s) => s.eligibleUserIds.length === 0)).toBe(true);
+    expect(res.text).not.toContain('Sita Sharma');
+  });
+
+  it('shows eligible staff names to an approver without returning their identifiers', async () => {
+    const { quotationId, versionId } = await seedDraft();
+    as(U.boss, 'founder');
+    const res = await post(quotationId, versionId, bodyOf('50000.00'));
+    expect(res.status).toBe(200);
+    const result = PreviewResultSchema.parse(res.body);
+    expect(result.route.steps[0]).toMatchObject({
+      roleKey: 'accountant',
+      eligibleStaffNames: ['Sita Sharma'],
+      eligibleUserIds: [],
+    });
+    expect(res.text).not.toContain(U.acc);
   });
 
   it('adds management, and only management, for a 13% discount on a quote under 1 lakh', async () => {

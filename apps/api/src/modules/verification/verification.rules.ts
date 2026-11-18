@@ -60,8 +60,8 @@ export function missingRequired(items: readonly ChecklistItem[]): string[] {
 }
 
 /**
- * The required items whose document cannot back an approval: absent from the case's documents, or the newest
- * version that was not rejected is not `clean` (same rule as DocumentsService.allClean, but per item).
+ * Required and currently attached items that cannot back an approval. Check their newest
+ * non-rejected version. Prior replacements and unused uploads remain in the case history.
  */
 export function documentProblems(
   items: readonly ChecklistItem[],
@@ -74,7 +74,7 @@ export function documentProblems(
     if (seen === undefined || v.version > seen.version) newest.set(v.documentId, v);
   }
   return items
-    .filter((i) => i.required)
+    .filter((i) => i.required || i.documentId !== null)
     .filter((i) => i.documentId === null || newest.get(i.documentId)?.status !== 'clean')
     .map((i) => i.key);
 }

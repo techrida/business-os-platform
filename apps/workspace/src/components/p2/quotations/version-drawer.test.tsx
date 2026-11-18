@@ -1,7 +1,18 @@
+import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { VersionDrawer, type RevisionRow } from './version-drawer';
+
+// Open the real dialog and render its portal inline to inspect the contents in the Node renderer.
+vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
+  const radix = await importOriginal<typeof import('@radix-ui/react-dialog')>();
+  return {
+    ...radix,
+    Root: (props: ComponentProps<typeof radix.Root>) => <radix.Root {...props} defaultOpen />,
+    Portal: ({ children }: ComponentProps<typeof radix.Portal>) => children,
+  };
+});
 
 function row(over: Partial<RevisionRow> = {}): RevisionRow {
   return {
@@ -33,12 +44,11 @@ function render(over: Partial<Parameters<typeof VersionDrawer>[0]> = {}): string
 }
 
 describe('VersionDrawer', () => {
-  it('is a native dialog named by its heading, opened by a real button', () => {
+  it('renders a dialog heading and an accessible trigger', () => {
     const html = render();
-    expect(html).toMatch(/<dialog[^>]*aria-labelledby="([^"]+)"/);
-    const id = /<dialog[^>]*aria-labelledby="([^"]+)"/.exec(html)?.[1];
-    expect(html).toContain(`id="${id}"`);
-    expect(html).toMatch(/<button[^>]*type="button"[^>]*>All revisions \(2\)/);
+    expect(html).toContain('role="dialog"');
+    expect(html).toMatch(/<h2[^>]*>Revisions of QT-2082-0042<\/h2>/);
+    expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>All revisions \(2\)/);
   });
 
   it('lists every revision, the superseded ones included, with total and status', () => {
@@ -56,8 +66,10 @@ describe('VersionDrawer', () => {
     expect(html.match(/Current/g)).toHaveLength(1);
   });
 
-  it('has a labelled Close button inside the dialog', () => {
-    expect(render()).toContain('aria-label="Close"');
+  it('has a labelled Close button and a Close action in the fixed footer', () => {
+    const html = render();
+    expect(html).toContain('aria-label="Close"');
+    expect(html).toMatch(/<footer[^>]*><button[^>]*>Close<\/button><\/footer>/);
   });
 
   it('shows a plain sentence when there are no revisions to list', () => {

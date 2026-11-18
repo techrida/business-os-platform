@@ -5,7 +5,7 @@
 // order, from either the persisted snapshot or the live form values.
 import PDFDocument from 'pdfkit';
 
-import { NOT_SELECTED, PAPER_NOTE, type MemoPdfInput } from './memo-pdf-input';
+import { NOT_SELECTED, type MemoPdfInput } from './memo-pdf-input';
 
 export interface MemoPdfFontFace {
   /** Registered with pdfkit under this name. */
@@ -264,7 +264,7 @@ export async function renderMemoPdf(
   if (input.departmentName) block(input.departmentName, { size: 11 }, { align: 'center' });
   block('(MEMO)', { size: 11 }, { align: 'center', after: 14 });
 
-  block(`Date: ${input.date}`, { size: 10.5 }, { align: 'right', after: 14 });
+  block(`Date: ${input.date || 'Not set'}`, { size: 10.5 }, { align: 'right', after: 14 });
   block(
     `Subject: ${input.title.trim() || 'Untitled memo'}`,
     { bold: true, size: 11.5 },
@@ -318,9 +318,6 @@ export async function renderMemoPdf(
     });
     y = top + height + 16;
   }
-
-  y += 10;
-  block(PAPER_NOTE, { size: 9, color: MUTED });
 
   const footerFace = fonts.regular.find((f) => f.name === 'regular-latin') ?? fonts.regular[0]!;
   const range = doc.bufferedPageRange();

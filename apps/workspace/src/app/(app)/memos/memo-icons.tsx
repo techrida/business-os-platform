@@ -61,9 +61,9 @@ export function PaperclipIcon({ size }: { size?: number }) {
   );
 }
 
-export function TrashIcon() {
+export function TrashIcon({ size }: { size?: number }) {
   return (
-    <Drawing>
+    <Drawing {...(size ? { size } : {})}>
       <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />
     </Drawing>
   );

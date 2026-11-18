@@ -1,35 +1,35 @@
-/* Quote builder. Tokens only; layout follows the memo detail page (main column + 373px side). */
-
 .layout {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   align-items: start;
+  min-width: 0;
 }
 
 .main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   min-width: 0;
-}
-
-.side {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 @media (min-width: 1200px) {
   .layout {
-    grid-template-columns: minmax(0, 1fr) 373px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 373px);
   }
 
-  /* The totals and approval panels stay in view while the long form scrolls. */
-  .side {
+  .actionBar {
+    grid-column: 1 / -1;
+  }
+
+  .totals {
     position: sticky;
-    top: 16px;
-    max-height: calc(100vh - 32px);
+    top: calc(var(--bos-header-height) + 16px);
+    max-height: calc(100dvh - var(--bos-header-height) - 32px);
     overflow-y: auto;
-    padding-bottom: 2px;
   }
 }
 
@@ -49,11 +49,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-}
-
-.actionBar {
-  display: grid;
-  gap: 8px;
 }
 
 .status {
@@ -88,28 +83,16 @@
 
 /* ---- Lines ---- */
 
-.lineCell {
-  min-width: 0;
-  vertical-align: top;
-}
-
-.lineText {
-  min-height: 40px;
-  padding-block: 8px;
-  resize: vertical;
-}
-
-.lineAmount {
-  min-width: 7rem;
-  padding-top: 12px;
-  font-variant-numeric: tabular-nums;
+.lineDescription {
+  min-width: 9rem;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.lineNo {
-  padding-top: 12px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
+.lineActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .rowError {
@@ -125,29 +108,47 @@
 
 .milestones {
   display: grid;
-  gap: 16px;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .milestone {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)) auto;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: var(--border-width-thin) solid var(--divider-color);
+  border-radius: var(--radius-md);
+}
+
+.milestoneHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  gap: 12px 16px;
+  gap: 8px;
+}
+
+.legacyDue {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
 }
 
 .scheduleTotal {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
   font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
 }
 
+.scheduleTotal[data-invalid] {
+  color: var(--status-error);
+}
+
 /* ---- Totals ---- */
 
-.totals,
-.approval {
+.totals {
   min-width: 0;
 }
 
@@ -242,54 +243,27 @@
   background: var(--skeleton-bg);
 }
 
-/* ---- Approval steps (same look as the memo route card) ---- */
+/* ---- Approval steps ---- */
 
 .steps {
   display: grid;
+  gap: 12px;
+  min-width: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .step {
-  position: relative;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 0 12px;
-  padding-bottom: 16px;
-}
-
-.step:last-child {
-  padding-bottom: 0;
-}
-
-.step:not(:last-child)::before {
-  content: '';
-  position: absolute;
-  top: 32px;
-  bottom: 4px;
-  left: 13px;
-  width: 1px;
-  background: var(--divider-color);
-}
-
-.stepNo {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-full);
-  background: var(--surface-subtle);
-  color: var(--text-primary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-}
-
-.stepBody {
-  display: grid;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.step + .step {
+  padding-top: 12px;
+  border-top: var(--border-width-thin) solid var(--divider-color);
 }
 
 .stepHead {
@@ -297,26 +271,76 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 8px;
-  min-height: 28px;
 }
 
 .stepWho {
   font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
 }
 
-.stepReason {
-  margin: 0;
-  color: var(--text-secondary);
+.nameChips,
+.nameMeasure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nameChips {
+  position: relative;
+  min-width: 0;
+}
+
+.nameChips > *,
+.nameMeasure > * {
+  flex-shrink: 0;
+}
+
+.nameMeasureClip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nameMeasure {
+  width: max-content;
+}
+
+.nameChips .moreNames {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: var(--border-width-thin) solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.namesPopover {
+  z-index: 110;
+  width: max-content;
+  max-width: min(20rem, var(--radix-popover-content-available-width));
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  padding: 12px 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .stale {
-    transition: none;
-  }
+.nameList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
 }

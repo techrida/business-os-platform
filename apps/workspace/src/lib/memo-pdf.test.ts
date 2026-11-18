@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { inflateSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -10,7 +11,7 @@ import { memoPdfFileName, renderMemoPdf, segmentRuns } from './memo-pdf';
 import { loadMemoFonts } from './memo-pdf-fonts';
 import { MemoPdfInputSchema, memoPdfInputOf, type MemoPdfInput } from './memo-pdf-input';
 
-const FONT_DIR = new URL('../../assets/fonts', import.meta.url).pathname;
+const FONT_DIR = fileURLToPath(new URL('../../assets/fonts', import.meta.url));
 const fonts = () => loadMemoFonts((file) => readFile(`${FONT_DIR}/${file}`));
 
 const person = (name: string, jobTitle: string | null = null) => ({ name, jobTitle });
@@ -134,6 +135,29 @@ describe('renderMemoPdf', () => {
     expect(text).not.toMatch(/<html|<!doctype/i);
     expect(pages).toBe(1);
     expect(substituted).toBe(0);
+  });
+
+  it('prints no developer note under the signers: product text only, named signer slots kept', async () => {
+    // Every character here is drawn by the page itself. The old note ("Names indicate the proposed approval
+    // route. Signatures are disabled.") is the only text that would add a lowercase g or an N, so neither may appear.
+    const plain = input({
+      organizationName: 'AAA',
+      departmentName: 'AAA',
+      title: 'AAA',
+      body: 'AAA',
+      closing: 'AAA',
+      preparedBy: person('AAA'),
+      recommenders: [person('AAA')],
+      approvedBy: person('AAA'),
+    });
+    const { bytes } = await renderMemoPdf(plain, await fonts());
+    const drawn = drawnCodePoints(inspect(bytes));
+    expect(drawn.has('g'.codePointAt(0)!)).toBe(false);
+    expect(drawn.has('N'.codePointAt(0)!)).toBe(false);
+    // The signer slot labels are still there ("Prepared by", "Recommended by 1", "Approved by").
+    for (const ch of 'Prepared by'.replace(/ /g, '')) {
+      expect(drawn.has(ch.codePointAt(0)!), ch).toBe(true);
+    }
   });
 
   it('draws actual Unicode names: every Devanagari and Latin-extended character is mapped in an embedded font', async () => {

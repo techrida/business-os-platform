@@ -2,7 +2,10 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { AttachVerificationDocumentBodySchema } from '@bos/contracts';
+import {
+  AttachVerificationDocumentBodySchema,
+  RemoveVerificationDocumentBodySchema,
+} from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
@@ -12,6 +15,7 @@ import { kybFailure } from '@/components/p2/crm/kyb-failure';
 import {
   attachChecklistDocument,
   openVerificationCase,
+  removeChecklistDocument,
   submitVerificationCase,
 } from '@/components/p2/crm/verification-api';
 import { CHECKLIST_LABEL } from '@/components/p2/customers/format';
@@ -110,6 +114,29 @@ export async function attachDocumentAction(
   return { key: randomUUID(), attached: CHECKLIST_LABEL[body.data.key] };
 }
 
+/** Detach through the checklist API so the underlying document and its audit history are retained. */
+export async function removeDocumentAction(form: FormData): Promise<CaseFormState> {
+  const caseId = form.get('caseId');
+  const key = keyOf(form);
+  const body = RemoveVerificationDocumentBodySchema.safeParse({
+    key: form.get('key'),
+    expectedVersion: Number(form.get('expectedVersion')),
+  });
+  if (typeof caseId !== 'string' || !UUID.test(caseId) || !body.success) {
+    return { key, error: 'This form is incomplete. Reload the page.', reload: true };
+  }
+  const session = await requireStaffSession(`/verification/${caseId}`);
+  try {
+    await removeChecklistDocument(session, caseId, body.data, key);
+  } catch (err) {
+    const f = kybFailure(err, 'attach');
+    return { key: nextKey(err, key), error: f.message, ...(f.reload ? { reload: true } : {}) };
+  }
+  revalidatePath('/verification');
+  revalidatePath(`/verification/${caseId}`);
+  return { key: randomUUID() };
+}
+
 export type SubmitCaseState = CaseFormState;
 
 /** Draft to submitted. The reviewer sees exactly the files that are on the case now. */
@@ -133,6 +160,5 @@ export async function submitCaseAction(
   }
   revalidatePath('/verification');
   revalidatePath(`/verification/${caseId}`);
-  // `redirect` throws, so it stays outside the try block. The page shows a confirmation.
-  redirect(`/verification/${caseId}?submitted=1`);
+  return { key: randomUUID() };
 }

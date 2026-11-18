@@ -25,12 +25,6 @@ import styles from './verification.module.css';
 export const metadata: Metadata = { title: 'Verification · Business OS' };
 export const dynamic = 'force-dynamic';
 
-/** What the banner says after a decision. Only these keys are accepted from the query string. */
-const DECIDED: Record<string, string> = {
-  approve: 'The customer was approved. Their verification status is now Verified.',
-  reject: 'The case was rejected. The reason is kept in the audit trail.',
-};
-
 const FILTERS: readonly { value: StatusFilter; label: string }[] = [
   { value: 'submitted', label: 'Awaiting review' },
   { value: 'approved', label: 'Verified' },
@@ -102,12 +96,11 @@ function Row({ c, customer }: { c: VerificationCaseDto; customer: CustomerDto | 
 export default async function VerificationQueuePage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string | string[]; decided?: string | string[] }>;
+  searchParams: Promise<{ status?: string | string[] }>;
 }) {
   const session = await requireStaffSession('/verification');
-  const { status: rawStatus, decided } = await searchParams;
+  const { status: rawStatus } = await searchParams;
   const filter = parseStatusFilter(rawStatus);
-  const banner = typeof decided === 'string' ? DECIDED[decided] : undefined;
 
   let cases: VerificationCaseDto[] | null = null;
   let total: number | null = null;
@@ -137,12 +130,6 @@ export default async function VerificationQueuePage({
           ) : null
         }
       />
-
-      {banner !== undefined ? (
-        <Alert tone="success" role="status">
-          {banner}
-        </Alert>
-      ) : null}
 
       <nav aria-label="Filter cases by status" className={styles.filters}>
         {FILTERS.map((f) => (

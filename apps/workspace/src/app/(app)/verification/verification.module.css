@@ -55,40 +55,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- Detail: checklist across the main column, the 373px decision card beside it ---- */
-
-.columns {
-  display: grid;
-  gap: 24px;
-  align-items: start;
-}
-
-.main {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
-}
-
-@media (min-width: 1200px) {
-  .columns {
-    grid-template-columns: minmax(0, 1fr) 373px;
-  }
-
-  /* The header is sticky too, so the card stops below it. */
-  .side {
-    position: sticky;
-    top: calc(var(--bos-header-height) + 16px);
-  }
-}
-
 .itemName {
   font-weight: var(--font-weight-medium);
   overflow-wrap: anywhere;
-}
-
-.ref {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-caption);
 }
 
 .comment {
@@ -101,52 +70,39 @@
   overflow-wrap: anywhere;
 }
 
-/* ---- Decision card ---- */
-
-.decision {
-  display: grid;
-  gap: 16px;
-}
-
-.buttons {
-  display: grid;
+.headerActions,
+.file,
+.dateField {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
-.buttons > * {
-  width: 100%;
+.decision,
+.editFields {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
 }
 
-/* Reject: the Figma danger button, built from its tokens. Two classes beat the Button's one. */
-.buttons .danger {
+.decision {
+  justify-items: stretch;
+}
+
+.dateField {
+  align-items: end;
+}
+
+.danger.danger {
   border-color: var(--button-danger-bg);
   background: var(--button-danger-bg);
   color: var(--button-danger-text);
 }
 
-.buttons .danger:hover {
-  border-color: var(--button-danger-bg-hover);
+.danger.danger:hover:not(:disabled) {
   background: var(--button-danger-bg-hover);
 }
-
-.buttons .danger:active {
-  border-color: var(--button-danger-bg-active);
-  background: var(--button-danger-bg-active);
-}
-
-.buttons .danger:disabled {
-  border-color: var(--button-disabled-bg);
-  background: var(--button-disabled-bg);
-}
-
-.status {
-  min-height: var(--line-height-caption);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
-}
-
-/* ---- Customer page: the "Start verification" form and its refusal ---- */
 
 .openCase {
   display: grid;
@@ -158,70 +114,76 @@
   max-width: 100%;
 }
 
-/* ---- Detail: one attached file in the checklist table ---- */
-
-.file {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  min-width: 0;
+.fileCell {
+  min-width: 160px;
+  border-radius: var(--radius-lg);
 }
 
-.file .itemName {
-  min-width: 0;
+.dragging {
+  outline: var(--focus-ring);
+  outline-offset: 4px;
+  background: var(--surface-subtle);
 }
 
-/* ---- Detail: attach a document (item, file, expiry, then the button) ---- */
-
-.attach {
-  display: grid;
-  gap: 16px;
+.remove.remove {
+  min-width: 36px;
+  padding-inline: 0;
+  color: var(--status-error);
 }
 
-/* Three fields across when the column is wide, stacked when it is not. */
-.attachFields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-  gap: 16px;
-  align-items: start;
-}
-
-.attachActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-}
-
-.attachActions .note {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* The native file input, with its button drawn like the secondary Button. */
-.fileInput {
-  width: 100%;
-  min-width: 0;
-  color: var(--text-primary);
+.rowError {
+  margin: 6px 0 0;
+  color: var(--status-error);
   font-size: var(--font-size-body-small);
 }
 
-.fileInput::file-selector-button {
-  min-height: 34px;
-  margin-right: 12px;
-  padding: 0 12px;
-  border: var(--border-width-thin) solid var(--button-primary-border);
-  border-radius: var(--radius-lg);
-  background: var(--button-secondary-bg);
-  color: var(--button-primary-border);
-  font: inherit;
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
+.scanBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.fileInput:disabled::file-selector-button {
-  border-color: var(--border-default);
-  color: var(--text-disabled);
-  cursor: not-allowed;
+.previewStatus {
+  align-self: flex-start;
+  margin-top: 20px;
+  color: var(--text-secondary);
+}
+
+.replace.replace {
+  background: color-mix(in srgb, var(--surface-default) 88%, transparent);
+  box-shadow: 0 1px 5px color-mix(in srgb, var(--neutral-900) 20%, transparent);
+}
+
+.replace.replace:hover:not(:disabled) {
+  background: var(--surface-default);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scanCheck {
+    stroke-dasharray: 1;
+    animation: draw-check 220ms ease-out both;
+  }
+}
+
+@keyframes draw-check {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.rowHeader[scope='row'] {
+  border-bottom: 0;
+  background: var(--table-row-bg);
+  color: var(--table-text);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: normal;
+}
+
+tr:hover > .rowHeader[scope='row'],
+tr:focus-within > .rowHeader[scope='row'] {
+  background: var(--table-row-hover-bg);
 }

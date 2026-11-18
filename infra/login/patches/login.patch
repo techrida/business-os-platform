@@ -1,0 +1,491 @@
+diff --git i/apps/login/src/app/(login)/error.tsx w/apps/login/src/app/(login)/error.tsx
+index d14150a..d474c69 100644
+--- i/apps/login/src/app/(login)/error.tsx
++++ w/apps/login/src/app/(login)/error.tsx
+@@ -1,27 +1,23 @@
+ "use client";
+
+-import { Boundary } from "@/components/boundary";
++import { Alert } from "@/components/alert";
+ import { Button } from "@/components/button";
+ import { Translated } from "@/components/translated";
+-import { useEffect } from "react";
+-
+-export default function Error({ error, reset }: any) {
+-  useEffect(() => {
+-    console.log("logging error:", error);
+-  }, [error]);
+
++export default function Error({ reset }: { reset: () => void }) {
+   return (
+-    <Boundary labels={["Login Error"]} color="red">
+-      <div className="space-y-4">
+-        <div className="text-sm text-red-500 dark:text-red-500">
+-          <strong className="font-bold">Error:</strong> {error?.message}
+-        </div>
+-        <div>
+-          <Button data-i18n-key="error.tryagain" onClick={() => reset()}>
+-            <Translated i18nKey="tryagain" namespace="error" />
+-          </Button>
+-        </div>
++    <div className="bos-login-content">
++      <h1>
++        <Translated i18nKey="title" namespace="error" />
++      </h1>
++      <Alert>
++        <Translated i18nKey="tryAgainMessage" namespace="error" />
++      </Alert>
++      <div>
++        <Button data-i18n-key="error.tryagain" onClick={reset}>
++          <Translated i18nKey="tryagain" namespace="error" />
++        </Button>
+       </div>
+-    </Boundary>
++    </div>
+   );
+ }
+diff --git i/apps/login/src/app/(login)/layout.tsx w/apps/login/src/app/(login)/layout.tsx
+index aee7c1d..7edb6fe 100644
+--- i/apps/login/src/app/(login)/layout.tsx
++++ w/apps/login/src/app/(login)/layout.tsx
+@@ -1,30 +1,22 @@
+ import "@/styles/globals.scss";
++import "@fontsource-variable/outfit";
++import "@/styles/bos-login.css";
+
+-import { BackgroundWrapper } from "@/components/background-wrapper";
+ import { LanguageProvider } from "@/components/language-provider";
+ import { LanguageSwitcher } from "@/components/language-switcher";
++import { LoginShell } from "@/components/bos-login-shell";
+ import { Skeleton } from "@/components/skeleton";
+ import { ThemeProvider } from "@/components/theme-provider";
+-import ThemeSwitch from "@/components/theme-switch";
+ import { LANGS, getLanguage } from "@/lib/i18n";
+ import { getServiceConfig } from "@/lib/service-url";
+ import { getAllowedLanguages } from "@/lib/zitadel";
+ import * as Tooltip from "@radix-ui/react-tooltip";
+ import type { Metadata } from "next";
+-import { getTranslations } from "next-intl/server";
+-import { Lato } from "next/font/google";
++import { getLocale } from "next-intl/server";
+ import { headers } from "next/headers";
+ import React, { Suspense } from "react";
+
+-const lato = Lato({
+-  weight: ["400", "700", "900"],
+-  subsets: ["latin"],
+-});
+-
+-export async function generateMetadata(): Promise<Metadata> {
+-  const t = await getTranslations("common");
+-  return { title: t("title") };
+-}
++export const metadata: Metadata = { title: "Sign in · Business OS" };
+
+ export default async function RootLayout({ children }: { children: React.ReactNode }) {
+   const _headers = await headers();
+@@ -42,40 +34,27 @@ export default async function RootLayout({ children }: { children: React.ReactNo
+     console.error("Failed to load supported languages", e);
+   }
+
++  const locale = await getLocale();
++
+   return (
+-    <html className={`${lato.className}`} suppressHydrationWarning>
++    <html lang={locale} suppressHydrationWarning>
+       <head />
+       <body>
+         <ThemeProvider>
+           <Tooltip.Provider>
+             <Suspense
+               fallback={
+-                <BackgroundWrapper
+-                  className={`bg-background-light-600 dark:bg-background-dark-600 relative flex min-h-screen flex-col justify-center`}
+-                >
+-                  <div className="relative mx-auto w-full max-w-[440px] py-8">
+-                    <Skeleton>
+-                      <div className="h-40"></div>
+-                    </Skeleton>
+-                    <div className="flex flex-row items-center justify-end space-x-4 py-4">
+-                      <ThemeSwitch />
+-                    </div>
+-                  </div>
+-                </BackgroundWrapper>
++                <LoginShell>
++                  <Skeleton>
++                    <div className="h-40" />
++                  </Skeleton>
++                </LoginShell>
+               }
+             >
+               <LanguageProvider>
+-                <BackgroundWrapper
+-                  className={`bg-background-light-600 dark:bg-background-dark-600 relative flex min-h-screen flex-col justify-center`}
+-                >
+-                  <div className="relative mx-auto w-full max-w-[1100px] py-8">
+-                    <div>{children}</div>
+-                    <div className="mx-auto flex max-w-[440px] flex-row items-center justify-end space-x-4 px-4 py-4 md:max-w-full md:px-8">
+-                      <LanguageSwitcher languages={languages} />
+-                      <ThemeSwitch />
+-                    </div>
+-                  </div>
+-                </BackgroundWrapper>
++                <LoginShell footer={languages.length > 1 ? <LanguageSwitcher languages={languages} /> : undefined}>
++                  {children}
++                </LoginShell>
+               </LanguageProvider>
+             </Suspense>
+           </Tooltip.Provider>
+diff --git i/apps/login/src/app/global-error.tsx w/apps/login/src/app/global-error.tsx
+index db56324..5feaef8 100644
+--- i/apps/login/src/app/global-error.tsx
++++ w/apps/login/src/app/global-error.tsx
+@@ -1,29 +1,29 @@
+ "use client";
+
+-import { Boundary } from "@/components/boundary";
+-import { Button } from "@/components/button";
+-import { ThemeWrapper } from "@/components/theme-wrapper";
+-import { Translated } from "@/components/translated";
++import "@/styles/globals.scss";
++import "@fontsource-variable/outfit";
++import "@/styles/bos-login.css";
+
+-export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
++import { Alert } from "@/components/alert";
++import { LoginShell } from "@/components/bos-login-shell";
++import { Button } from "@/components/button";
++import { ThemeProvider } from "@/components/theme-provider";
++
++export default function GlobalError({ reset }: { reset: () => void }) {
+   return (
+-    // global-error must include html and body tags
+-    <html>
++    <html lang="en" suppressHydrationWarning>
+       <body>
+-        <ThemeWrapper branding={undefined}>
+-          <Boundary labels={["Login Error"]} color="red">
+-            <div className="space-y-4">
+-              <div className="text-sm text-red-500 dark:text-red-500">
+-                <span className="font-bold">Error:</span> {error?.message}
+-              </div>
++        <ThemeProvider>
++          <LoginShell>
++            <div className="bos-login-content">
++              <h1>Sign-in error</h1>
++              <Alert>Something went wrong. Please try again.</Alert>
+               <div>
+-                <Button data-i18n-key="error.tryagain" onClick={() => reset()}>
+-                  <Translated i18nKey="tryagain" namespace="error" />
+-                </Button>
++                <Button data-i18n-key="error.tryagain" onClick={reset}>Try again</Button>
+               </div>
+             </div>
+-          </Boundary>
+-        </ThemeWrapper>
++          </LoginShell>
++        </ThemeProvider>
+       </body>
+     </html>
+   );
+diff --git i/apps/login/src/components/alert.tsx w/apps/login/src/components/alert.tsx
+index d61d977..9bbc53c 100644
+--- i/apps/login/src/components/alert.tsx
++++ w/apps/login/src/components/alert.tsx
+@@ -12,18 +12,13 @@ export enum AlertType {
+   INFO,
+ }
+
+-const yellow =
+-  "border-yellow-600/40 dark:border-yellow-500/20 bg-yellow-200/30 text-yellow-600 dark:bg-yellow-700/20 dark:text-yellow-200";
+-// const red =
+-//   "border-red-600/40 dark:border-red-500/20 bg-red-200/30 text-red-600 dark:bg-red-700/20 dark:text-red-200";
+-const neutral = "border-divider-light dark:border-divider-dark bg-black/5 text-gray-600 dark:bg-white/10 dark:text-gray-200";
+-
+ export function Alert({ children, type = AlertType.ALERT }: Props) {
+   return (
+     <div
++      role={type === AlertType.ALERT ? "alert" : undefined}
+       className={clsx("flex scroll-px-40 flex-row items-center justify-center rounded-md border py-2 pr-2", {
+-        [yellow]: type === AlertType.ALERT,
+-        [neutral]: type === AlertType.INFO,
++        "bos-alert-error": type === AlertType.ALERT,
++        "bos-alert-info": type === AlertType.INFO,
+       })}
+     >
+       {type === AlertType.ALERT && <ExclamationTriangleIcon className="mr-2 ml-2 h-5 w-5 flex-shrink-0" />}
+diff --git i/apps/login/src/components/dynamic-theme.tsx w/apps/login/src/components/dynamic-theme.tsx
+index 701d9c2..e8f312d 100644
+--- i/apps/login/src/components/dynamic-theme.tsx
++++ w/apps/login/src/components/dynamic-theme.tsx
+@@ -1,134 +1,15 @@
+ "use client";
+
+-import { Logo } from "@/components/logo";
+-import { useResponsiveLayout } from "@/lib/theme-hooks";
+-import { BrandingSettings } from "@zitadel/proto/zitadel/settings/v2/branding_settings_pb";
+-import React, { Children, ReactNode } from "react";
+-import { Card } from "./card";
+-import { ThemeWrapper } from "./theme-wrapper";
++import type { BrandingSettings } from "@zitadel/proto/zitadel/settings/v2/branding_settings_pb";
++import type { ReactNode } from "react";
+
+-/**
+- * DynamicTheme component handles layout switching between traditional top-to-bottom
+- * and modern side-by-side layouts based on NEXT_PUBLIC_THEME_LAYOUT.
+- *
+- * For side-by-side layout:
+- * - First child: Goes to left side (title, description, etc.)
+- * - Second child: Goes to right side (forms, buttons, etc.)
+- * - Single child: Falls back to right side for backward compatibility
+- *
+- * For top-to-bottom layout:
+- * - All children rendered in traditional centered layout
+- */
++// Route content uses the shared centered LoginShell. Keep the route's centered
++// render option for providers that supply a responsive render callback.
+ export function DynamicTheme({
+-  branding,
+   children,
+ }: {
+   children: ReactNode | ((isSideBySide: boolean) => ReactNode);
+   branding?: BrandingSettings;
+ }) {
+-  const { isSideBySide } = useResponsiveLayout();
+-
+-  // Resolve children immediately to avoid passing functions through React
+-  const actualChildren: ReactNode = React.useMemo(() => {
+-    if (typeof children === "function") {
+-      return (children as (isSideBySide: boolean) => ReactNode)(isSideBySide);
+-    }
+-    return children;
+-  }, [children, isSideBySide]);
+-
+-  return (
+-    <ThemeWrapper branding={branding}>
+-      {isSideBySide
+-        ? // Side-by-side layout: first child goes left, second child goes right
+-          (() => {
+-            const childArray = Children.toArray(actualChildren);
+-            const leftContent = childArray[0] || null;
+-            const rightContent = childArray[1] || null;
+-
+-            // If there's only one child, it's likely the old format - keep it on the right side
+-            const hasLeftRightStructure = childArray.length === 2;
+-
+-            return (
+-              <div className="relative mx-auto w-full max-w-[1100px] px-8 py-4">
+-                <Card>
+-                  <div className="flex min-h-[400px]">
+-                    {/* Left side: First child + branding */}
+-                    <div className="from-primary-50 to-primary-100 dark:from-primary-900/20 dark:to-primary-800/20 flex w-1/2 flex-col justify-center bg-gradient-to-br p-4 lg:p-8">
+-                      <div className="mx-auto max-w-[440px] space-y-8">
+-                        {/* Logo and branding */}
+-                        {branding && (
+-                          <Logo
+-                            lightSrc={branding.lightTheme?.logoUrl}
+-                            darkSrc={branding.darkTheme?.logoUrl}
+-                            height={150}
+-                            width={150}
+-                          />
+-                        )}
+-
+-                        {/* First child content (title, description) - only if we have left/right structure */}
+-                        {hasLeftRightStructure && (
+-                          <div className="flex flex-col items-start space-y-4 text-left">
+-                            {/* Apply larger styling to the content */}
+-                            <div className="space-y-6 [&_h1]:text-left [&_h1]:text-4xl [&_h1]:leading-tight [&_h1]:text-gray-900 [&_h1]:lg:text-4xl [&_h1]:dark:text-white [&_p]:text-left [&_p]:leading-relaxed [&_p]:text-gray-700 [&_p]:dark:text-gray-300">
+-                              {leftContent}
+-                            </div>
+-                          </div>
+-                        )}
+-                      </div>
+-                    </div>
+-
+-                    {/* Right side: Second child (form) or single child if old format */}
+-                    <div className="flex w-1/2 items-center justify-center p-4 lg:p-8">
+-                      <div className="w-full max-w-[440px]">
+-                        <div className="space-y-6">{hasLeftRightStructure ? rightContent : leftContent}</div>
+-                      </div>
+-                    </div>
+-                  </div>
+-                </Card>
+-              </div>
+-            );
+-          })()
+-        : // Traditional top-to-bottom layout - center title/description, left-align forms
+-          (() => {
+-            const childArray = Children.toArray(actualChildren);
+-            const titleContent = childArray[0] || null;
+-            const formContent = childArray[1] || null;
+-            const hasMultipleChildren = childArray.length > 1;
+-
+-            return (
+-              <div className="relative mx-auto w-full max-w-[440px] px-4 py-4">
+-                <Card>
+-                  <div className="mx-auto flex flex-col items-center space-y-8">
+-                    <div className="relative flex flex-row items-center justify-center">
+-                      {branding && (
+-                        <Logo
+-                          lightSrc={branding.lightTheme?.logoUrl}
+-                          darkSrc={branding.darkTheme?.logoUrl}
+-                          height={150}
+-                          width={150}
+-                        />
+-                      )}
+-                    </div>
+-
+-                    {hasMultipleChildren ? (
+-                      <>
+-                        {/* Title and description - center aligned */}
+-                        <div className="mb-4 flex w-full flex-col items-center text-center">{titleContent}</div>
+-
+-                        {/* Form content - left aligned */}
+-                        <div className="w-full">{formContent}</div>
+-                      </>
+-                    ) : (
+-                      // Single child - use original behavior
+-                      <div className="w-full">{actualChildren}</div>
+-                    )}
+-
+-                    <div className="flex flex-row justify-between"></div>
+-                  </div>
+-                </Card>
+-              </div>
+-            );
+-          })()}
+-    </ThemeWrapper>
+-  );
++  return <div className="bos-login-content">{typeof children === "function" ? children(false) : children}</div>;
+ }
+diff --git i/apps/login/src/components/theme-provider.tsx w/apps/login/src/components/theme-provider.tsx
+index 9ae817f..875b362 100644
+--- i/apps/login/src/components/theme-provider.tsx
++++ w/apps/login/src/components/theme-provider.tsx
+@@ -4,7 +4,7 @@ import { ReactNode } from "react";
+
+ export function ThemeProvider({ children }: { children: ReactNode }) {
+   return (
+-    <ThemeP attribute="class" defaultTheme="system" storageKey="cp-theme" value={{ dark: "dark" }}>
++    <ThemeP attribute={["class", "data-theme"]} defaultTheme="system" storageKey="bos-login-theme">
+       {children}
+     </ThemeP>
+   );
+diff --git i/apps/login/src/i18n/request.ts w/apps/login/src/i18n/request.ts
+index 4a01284..9d2f22f 100644
+--- i/apps/login/src/i18n/request.ts
++++ w/apps/login/src/i18n/request.ts
+@@ -1,3 +1,4 @@
++import { bosEnglishMessages, bosFallbackMessages } from "@/lib/bos-login-messages";
+ import { LANGS, LANGUAGE_COOKIE_NAME, LANGUAGE_HEADER_NAME } from "@/lib/i18n";
+ import { mergeMessages } from "@/lib/merge-messages";
+ import { getServiceConfig } from "@/lib/service-url";
+@@ -85,6 +86,12 @@ export default getRequestConfig(async () => {
+
+   return {
+     locale,
+-    messages: mergeMessages(fallbackMessages, localeMessages, customMessages) as Record<string, string>,
++    messages: mergeMessages(
++      fallbackMessages,
++      bosFallbackMessages,
++      localeMessages,
++      customMessages,
++      locale === "en" ? bosEnglishMessages : undefined,
++    ) as Record<string, string>,
+   };
+ });
+diff --git i/apps/login/tailwind.config.mjs w/apps/login/tailwind.config.mjs
+index 87595a4..cd3d405 100644
+--- i/apps/login/tailwind.config.mjs
++++ w/apps/login/tailwind.config.mjs
+@@ -1,41 +1,23 @@
+ import colors from "tailwindcss/colors";
+
+-// Generate dynamic theme colors
+-let themeColors = {
+-  background: { light: { contrast: {} }, dark: { contrast: {} } },
+-  primary: { light: { contrast: {} }, dark: { contrast: {} } },
+-  warn: { light: { contrast: {} }, dark: { contrast: {} } },
+-  text: { light: { contrast: {} }, dark: { contrast: {} } },
+-  link: { light: { contrast: {} }, dark: { contrast: {} } },
++// Keep upstream utility names and map their palettes to the workspace tokens.
++const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900];
++const palettes = {
++  background: { main: "--card-bg", contrast: "--text-primary", secondary: "--text-secondary" },
++  primary: { main: "--button-primary-bg", contrast: "--button-primary-text", secondary: "--text-link" },
++  warn: { main: "--status-error", contrast: "--neutral-0", secondary: "--status-error" },
++  text: { main: "--text-primary", contrast: "--text-inverse", secondary: "--text-secondary" },
++  link: { main: "--text-link", contrast: "--text-inverse", secondary: "--text-link" },
+ };
+
+-const shades = [
+-  "50",
+-  "100",
+-  "200",
+-  "300",
+-  "400",
+-  "500",
+-  "600",
+-  "700",
+-  "800",
+-  "900",
+-];
+-const themes = ["light", "dark"];
+-const types = ["background", "primary", "warn", "text", "link"];
+-
+-types.forEach((type) => {
+-  themes.forEach((theme) => {
+-    shades.forEach((shade) => {
+-      themeColors[type][theme][shade] =
+-        `var(--theme-${theme}-${type}-${shade})`;
+-      themeColors[type][theme][`contrast-${shade}`] =
+-        `var(--theme-${theme}-${type}-contrast-${shade})`;
+-      themeColors[type][theme][`secondary-${shade}`] =
+-        `var(--theme-${theme}-${type}-secondary-${shade})`;
+-    });
+-  });
+-});
++const themeColors = Object.fromEntries(Object.entries(palettes).map(([type, palette]) => {
++  const scale = Object.fromEntries(shades.flatMap((shade) => [
++    [shade, `var(${type === "primary" && shade === 400 ? "--button-primary-bg-hover" : palette.main})`],
++    [`contrast-${shade}`, `var(${palette.contrast})`],
++    [`secondary-${shade}`, `var(${palette.secondary})`],
++  ]));
++  return [type, { light: scale, dark: scale }];
++}));
+
+ /** @type {import('tailwindcss').Config} */
+ export default {
+@@ -52,7 +34,7 @@ export default {
+         "14px": "14px",
+       },
+       colors: {
+-        gray: colors.zinc,
++        gray: { ...colors.slate, ...Object.fromEntries([...shades, 950].map((shade) => [shade, `var(--neutral-${shade})`])) },
+         // Dynamic theme colors
+         ...themeColors,
+         // State colors
+@@ -99,8 +81,8 @@ export default {
+           },
+         },
+         divider: {
+-          dark: "rgba(135,149,161,.2)",
+-          light: "rgba(135,149,161,.2)",
++          dark: "var(--border-default)",
++          light: "var(--border-default)",
+         },
+         input: {
+           light: {
+@@ -118,10 +100,10 @@ export default {
+         },
+         button: {
+           light: {
+-            border: "#0000001f",
++            border: "var(--border-default)",
+           },
+           dark: {
+-            border: "#ffffff1f",
++            border: "var(--border-default)",
+           },
+         },
+       },

@@ -15,6 +15,13 @@
      background; the transparent outline keeps it visible in forced-colours mode. */
   --bos-focus-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring);
 
+  /* Focus for bordered fields (text inputs, textareas, selects, the combobox and date picker).
+     The field's own border turns the focus colour and an inset 1px line doubles it to 2px, all
+     inside the box, so nothing draws outside the field and the layout never shifts. Use it with
+     border-color: var(--input-focus-border) (or --input-error-border when invalid). */
+  --bos-field-focus-shadow: inset 0 0 0 1px var(--input-focus-border);
+  --bos-field-focus-shadow-error: inset 0 0 0 1px var(--input-error-border);
+
   /* App shell sizes from Figma (1440 canvas). */
   --bos-sidebar-width: 220px;
   --bos-rail-width: 108px;
@@ -106,6 +113,38 @@ code {
 :focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--bos-focus-shadow);
+}
+
+/* Bordered fields focus on their own border instead of the offset ring above, for pointer and
+   keyboard alike (:focus, not :focus-visible: a mouse click into a field should show it too).
+   Specificity is deliberately above the per-component `.x:focus-visible` rules so every field in
+   the app gets the same treatment. Buttons, checkboxes, radios, links and other controls keep
+   the generic ring. The transparent outline is what forced-colours mode paints instead. */
+:is(
+    input:not(
+      [type='checkbox'],
+      [type='radio'],
+      [type='range'],
+      [type='file'],
+      [type='button'],
+      [type='submit'],
+      [type='reset'],
+      [type='image'],
+      [type='color'],
+      [type='hidden']
+    ),
+    textarea,
+    select
+  ):focus:not(:disabled) {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-field-focus-shadow);
+}
+
+:is(input, textarea, select)[aria-invalid='true']:focus:not(:disabled) {
+  border-color: var(--input-error-border);
+  box-shadow: var(--bos-field-focus-shadow-error);
 }
 
 /* Text for assistive technology only. */

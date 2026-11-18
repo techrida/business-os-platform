@@ -72,6 +72,8 @@ type VerifyRow = {
   reason?: string | null;
 };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** `undefined` and `null` both mean "no value" (SQL NULL); anything else is sent as JSON text. */
 function jsonOrNull(value: unknown): string | null {
   return value === undefined || value === null ? null : JSON.stringify(value);
@@ -116,7 +118,43 @@ export class AuditService {
           ${q.entityType ?? null}::text, ${q.entityId ?? null}::text,
           ${q.from?.toISOString() ?? null}::timestamptz, ${q.to?.toISOString() ?? null}::timestamptz,
           ${q.afterId ?? null}::bigint, ${q.limit}::integer)`);
-    return result.rows.map(toDto);
+    const events = result.rows.map(toDto);
+    const names = await this.displayNames(
+      scope,
+      events.flatMap((e) => (e.actorKind === 'user' ? [e.actorId] : [])),
+    );
+    return events.map((e) => ({
+      ...e,
+      actorDisplayName:
+        e.actorKind === 'user' ? (names.get(e.actorId.toLowerCase()) ?? null) : null,
+    }));
+  }
+
+  /**
+   * Display names for the people behind a page of events, in one query. Only the name is read, never the
+   * address, and only users of the caller's tenant (users are tenant-scoped, ADR 0027): an actor id that
+   * belongs to another tenant, was never a user, or is not a uuid (`system:<job>`) simply has no entry.
+   * This is read-side decoration; the stored events and the hash chain are untouched.
+   */
+  private async displayNames(
+    scope: TxScope,
+    actorIds: readonly string[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(actorIds.filter((id) => UUID.test(id)).map((id) => id.toLowerCase()))];
+    const names = new Map<string, string>();
+    if (ids.length === 0) return names;
+    const result = await this.db.execute<{ id: string; display_name: string | null }>(sql`
+      SELECT id, display_name FROM app.users
+       WHERE tenant_id = ${scope.tenantId}::uuid
+         AND id IN (${sql.join(
+           ids.map((id) => sql`${id}::uuid`),
+           sql`, `,
+         )})`);
+    for (const row of result.rows) {
+      const name = row.display_name?.trim();
+      if (name) names.set(row.id.toLowerCase(), name);
+    }
+    return names;
   }
 
   /**
