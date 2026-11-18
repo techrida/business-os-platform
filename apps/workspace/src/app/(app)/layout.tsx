@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Header } from '@/components/shell/header';
 import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
+import { WebVitals } from '@/components/web-vitals';
 import { getSession } from '@/lib/session';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -24,6 +25,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <ShellFrame>
+      <WebVitals />
       <Sidebar user={{ name: roles, detail: session.orgKind }} roles={session.roles} />
       <ShellMain>
         <Header orgKind={session.orgKind} roles={session.roles} />

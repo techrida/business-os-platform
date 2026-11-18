@@ -1,0 +1,1852 @@
+/* Business OS login: form primitives (inputs, buttons, checkbox, links, headings, notes, chips).
+   Everything is scoped under `.bos-auth`, the class on the shell's left column. Control colours come
+   from the workspace tokens (tokens.css + token-overrides.css). Figma colours that have no token
+   live in the --bos-* variables below, with dark values mapped back to tokens.
+   Unlayered, so these rules win over Tailwind's layered utilities on the upstream primitives. */
+
+.bos-auth {
+  --bos-heading: #182d31;
+  --bos-lead: #5f7173;
+  --bos-meta: #596b69;
+  --bos-link: var(--action-primary);
+  --bos-link-underline: #b5d4c7;
+  --bos-note-bg: #eff4ff;
+  --bos-note-text: #434655;
+  --bos-note-icon: #004ac6;
+  --bos-chip-info-bg: #e5eeff;
+  --bos-chip-info-text: #004ac6;
+  /* Figma uses #d97706 (3.2:1 on #fffbeb). warning-700 keeps the hue and passes 4.5:1 at 12px. */
+  --bos-chip-warning-bg: var(--status-warning-subtle);
+  --bos-chip-warning-text: var(--warning-700);
+  --bos-avatar-bg: #004ac6;
+  --bos-avatar-text: #ffffff;
+  --bos-approval-name: #0b1c30;
+  --bos-field-gap: 20px;
+  --bos-ring: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 32%, transparent);
+  --bos-ease: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+[data-theme='dark'] .bos-auth {
+  --bos-heading: var(--text-primary);
+  --bos-lead: var(--text-secondary);
+  --bos-meta: var(--text-secondary);
+  --bos-link-underline: var(--neutral-600);
+  --bos-note-bg: var(--status-info-subtle);
+  --bos-note-text: var(--text-secondary);
+  --bos-note-icon: var(--status-info);
+  --bos-chip-info-bg: var(--interactive-selected);
+  --bos-chip-info-text: var(--status-info);
+  --bos-chip-warning-text: var(--status-warning);
+  --bos-avatar-bg: var(--action-primary);
+  --bos-avatar-text: var(--text-inverse);
+  --bos-approval-name: var(--text-primary);
+}
+
+/* ---------- Headings and lead ---------- */
+
+.bos-auth h1 {
+  color: var(--bos-heading);
+  font-family: var(--font-family-primary);
+  font-size: clamp(26px, 8vw, 32px);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.375; /* 44px at 32px */
+  letter-spacing: var(--letter-spacing-tight);
+  text-align: start;
+  text-wrap: balance;
+}
+
+.bos-auth .ztdl-p {
+  color: var(--bos-lead);
+  font-family: var(--font-family-primary);
+  font-size: 14px;
+  line-height: 21.7px;
+  text-align: start;
+}
+
+.bos-auth-heading {
+  display: grid;
+  gap: 10.8px;
+  min-width: 0;
+}
+
+/* Pending-verification screen uses 32/40. */
+.bos-auth-heading--compact h1 {
+  line-height: 1.25;
+}
+
+.bos-auth-heading--large-lead .ztdl-p {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+/* ---------- Field layout ---------- */
+
+.bos-form-stack {
+  display: grid;
+  gap: var(--bos-field-gap);
+  min-width: 0;
+}
+
+.bos-form-stack > * {
+  min-width: 0;
+}
+
+/* Right-aligned line under a field ("Forgot Password?"), 8px below the control. */
+.bos-field-aside {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: 8px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* Centered line under the primary button ("Don't have an account? Sign up"). */
+.bos-switch-line {
+  margin: 0;
+  color: var(--bos-lead);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ---------- Labels ---------- */
+
+.bos-auth label:has(> input:not([data-input-otp], [type='checkbox'], [type='radio'])) {
+  font-family: var(--font-family-primary);
+  font-size: var(--font-size-body-small);
+}
+
+.bos-auth
+  label:has(> input:not([data-input-otp], [type='checkbox'], [type='radio']))
+  > span:first-child,
+.bos-auth .bos-otp-label {
+  display: block;
+  margin-block-end: 8px;
+  color: var(--input-text);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  letter-spacing: var(--letter-spacing-medium);
+}
+
+.bos-auth label:has(> input[aria-invalid='true']) > span:first-child {
+  color: var(--status-error);
+}
+
+/* Per-field error text: shown only when there is an error, no reserved row. */
+.bos-auth .bos-field-error {
+  height: auto;
+  margin-block-start: 6px;
+  color: var(--status-error);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* ---------- Text fields ---------- */
+
+.bos-auth
+  :is(
+    input:not([type]),
+    input[type='text'],
+    input[type='password'],
+    input[type='email'],
+    input[type='tel'],
+    input[type='url'],
+    input[type='number'],
+    input[type='search'],
+    textarea
+  ):not([data-input-otp]),
+.bos-auth .bos-otp-slot {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 42px;
+  margin: 0;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--input-bg);
+  color: var(--input-text);
+  font-family: var(--font-family-primary);
+  font-size: 14px;
+  font-style: normal;
+  line-height: 20px;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms var(--bos-ease),
+    background-color 150ms ease;
+}
+
+.bos-auth
+  :is(
+    input:not([type]),
+    input[type='text'],
+    input[type='password'],
+    input[type='email'],
+    input[type='tel'],
+    input[type='url'],
+    input[type='number'],
+    input[type='search'],
+    textarea
+  ):not([data-input-otp]) {
+  width: 100%;
+  height: auto;
+  padding: 10px 12px;
+}
+
+.bos-auth :is(input, textarea)::placeholder {
+  color: var(--input-placeholder);
+  font-style: normal;
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .bos-auth
+    :is(input, textarea):not(
+      [data-input-otp],
+      [type='checkbox'],
+      [type='radio'],
+      :disabled,
+      :focus
+    ):hover,
+  .bos-auth .bos-otp-slots:hover .bos-otp-slot {
+    border-color: var(--input-hover-border);
+  }
+}
+
+.bos-auth
+  :is(input, textarea):not(
+    [data-input-otp],
+    [type='checkbox'],
+    [type='radio']
+  )[aria-invalid='true'],
+.bos-auth .bos-otp-slots[data-invalid] .bos-otp-slot {
+  border-color: var(--input-error-border);
+}
+
+.bos-auth :is(input, textarea):not([data-input-otp], [type='checkbox'], [type='radio']):focus,
+.bos-auth .bos-otp-slots .bos-otp-slot[data-active] {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--bos-ring);
+  outline: 2px solid transparent; /* shows as a real outline in forced-colors mode */
+  outline-offset: 0;
+}
+
+.bos-auth
+  :is(input, textarea):not(
+    [data-input-otp],
+    [type='checkbox'],
+    [type='radio']
+  )[aria-invalid='true']:focus,
+.bos-auth .bos-otp-slots[data-invalid] .bos-otp-slot[data-active] {
+  border-color: var(--input-error-border);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--input-error-border) 28%, transparent);
+}
+
+.bos-auth input:not([data-input-otp]):-webkit-autofill {
+  -webkit-text-fill-color: var(--input-text);
+  box-shadow: inset 0 0 0 100px var(--input-bg);
+}
+
+.bos-auth input:not([data-input-otp]):-webkit-autofill:focus {
+  box-shadow:
+    var(--bos-ring),
+    inset 0 0 0 100px var(--input-bg);
+}
+
+.bos-auth :is(input, textarea):disabled:not([data-input-otp], [type='checkbox'], [type='radio']) {
+  background-color: var(--input-disabled-bg);
+  color: var(--input-disabled-text);
+  cursor: not-allowed;
+}
+
+.bos-auth .animate-shake {
+  animation: none;
+}
+
+/* Suffix chip ("@domain") of the upstream TextInput: anchored from the top of the control so it
+   stays aligned whether or not an error row sits below. */
+.bos-auth .bos-input-suffix {
+  position: absolute;
+  top: 28px;
+  right: 1px;
+  bottom: auto;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  margin-block: 1px;
+  padding: 0 12px;
+  border-radius: calc(var(--radius-lg) - 1px);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  pointer-events: none;
+  transform: none;
+  translate: none; /* Tailwind 4 uses the translate property for translate-y-1/2 */
+}
+
+/* ---------- Password field (components/auth/password-field.tsx) ---------- */
+
+.bos-password-field {
+  position: relative;
+}
+
+.bos-auth
+  .bos-password-field
+  :is(input[type='text'], input[type='password']):not([data-input-otp]) {
+  padding-inline-end: 48px;
+}
+
+.bos-password-toggle {
+  position: absolute;
+  top: 28px; /* label 20px + 8px gap */
+  right: 0;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+@media (hover: hover) {
+  .bos-password-toggle:hover {
+    color: var(--icon-brand);
+  }
+}
+
+.bos-auth .bos-password-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.bos-password-toggle:disabled {
+  color: var(--icon-disabled);
+  cursor: not-allowed;
+}
+
+/* ---------- Buttons (upstream Button adds .bos-btn + variant classes) ---------- */
+
+.bos-auth .bos-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: auto;
+  min-height: 40px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-family-primary);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  letter-spacing: var(--letter-spacing-medium);
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 120ms var(--bos-ease);
+}
+
+.bos-auth .bos-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.bos-auth .bos-btn:disabled {
+  cursor: not-allowed;
+}
+
+/* Primary: full width in a block; in a flex row it takes the space the secondary button leaves. */
+.bos-auth .bos-btn--primary {
+  flex: 99 1 0%;
+  width: 100%;
+  min-width: 0;
+  border-color: var(--button-primary-border);
+  background-color: var(--button-primary-bg);
+  color: var(--button-primary-text);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-btn--primary:hover:not(:disabled) {
+    border-color: var(--button-primary-bg-hover);
+    background-color: var(--button-primary-bg-hover);
+  }
+}
+
+.bos-auth .bos-btn--primary:active:not(:disabled) {
+  border-color: var(--button-primary-bg-active);
+  background-color: var(--button-primary-bg-active);
+}
+
+.bos-auth .bos-btn--primary:disabled {
+  border-color: var(--button-disabled-bg);
+  background-color: var(--button-disabled-bg);
+  color: var(--text-secondary);
+}
+
+/* Secondary (outline): Back, Skip, alternative methods. */
+.bos-auth .bos-btn--secondary {
+  flex: none;
+  border-color: var(--button-secondary-border);
+  background-color: var(--button-secondary-bg);
+  color: var(--button-secondary-text);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-btn--secondary:hover:not(:disabled) {
+    background-color: var(--button-secondary-bg-hover);
+  }
+}
+
+.bos-auth .bos-btn--secondary:active:not(:disabled) {
+  background-color: var(--button-secondary-bg-active);
+}
+
+.bos-auth .bos-btn--secondary:disabled {
+  color: var(--button-secondary-disabled-text);
+}
+
+/* Danger */
+.bos-auth .bos-btn--destructive,
+.bos-auth .bos-btn--primary.bos-btn--warn {
+  border-color: var(--button-danger-bg);
+  background-color: var(--button-danger-bg);
+  color: var(--button-danger-text);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-btn--destructive:hover:not(:disabled),
+  .bos-auth .bos-btn--primary.bos-btn--warn:hover:not(:disabled) {
+    border-color: var(--button-danger-bg-hover);
+    background-color: var(--button-danger-bg-hover);
+  }
+}
+
+.bos-auth .bos-btn--secondary.bos-btn--warn {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.bos-auth :is(a, button, [role='button'], summary):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Link-style button or anchor: "Skip", "Resend code", "Sign up". */
+.bos-auth .bos-link,
+.bos-auth .ztdl-p a,
+.bos-auth .bos-consent a {
+  color: var(--bos-link);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  text-decoration-color: var(--bos-link-underline);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition:
+    color 150ms ease,
+    text-decoration-color 150ms ease;
+}
+
+.bos-auth button.bos-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.bos-auth .bos-link:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-link:hover:not(:disabled),
+  .bos-auth .ztdl-p a:hover,
+  .bos-auth .bos-consent a:hover {
+    color: var(--action-primary-hover);
+    text-decoration-color: currentColor;
+  }
+}
+
+.bos-auth .bos-link--plain {
+  text-decoration: none;
+}
+
+.bos-auth .bos-link-icon {
+  margin-inline-start: 4px;
+  vertical-align: baseline;
+}
+
+/* ---------- Checkbox and consent row ---------- */
+
+.bos-auth input[type='checkbox'].form-checkbox {
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--checkbox-border);
+  border-radius: 2.5px;
+  background-color: var(--checkbox-bg);
+  box-shadow: none;
+  color: var(--checkbox-checked-bg);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.bos-auth input[type='checkbox'].form-checkbox:checked {
+  border-color: var(--checkbox-checked-bg);
+  background-color: var(--checkbox-checked-bg);
+}
+
+.bos-auth input[type='checkbox'].form-checkbox:checked::after {
+  background-color: var(--checkbox-checked-icon);
+}
+
+.bos-auth input[type='checkbox'].form-checkbox:focus-visible {
+  border-color: var(--checkbox-focus-border);
+  box-shadow: var(--bos-ring);
+  outline: 2px solid transparent;
+}
+
+.bos-auth input[type='checkbox'].form-checkbox:disabled {
+  border-color: var(--checkbox-disabled-border);
+  background-color: var(--checkbox-disabled-bg);
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .bos-auth input[type='checkbox'].form-checkbox:hover:not(:disabled, :checked) {
+    background-color: var(--checkbox-hover-bg);
+  }
+}
+
+.bos-consent {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--bos-meta);
+  font-size: 11px;
+  line-height: 16.5px;
+}
+
+.bos-consent p {
+  margin: 0;
+}
+
+.bos-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bos-check-text {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 20px;
+  color: var(--bos-meta);
+  font-size: 11px;
+  line-height: 16.5px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+/* ---------- Info note and alerts ---------- */
+
+.bos-info-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--bos-note-bg);
+  color: var(--bos-note-text);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.bos-info-note__icon {
+  flex: none;
+  color: var(--bos-note-icon);
+}
+
+.bos-info-note__body {
+  min-width: 0;
+}
+
+.bos-alert-error {
+  color: var(--alert-error-text);
+  background: var(--alert-error-bg);
+  border-color: var(--input-error-border);
+}
+
+.bos-alert-info {
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-color: var(--card-border);
+}
+
+/* ---------- Status chip ---------- */
+
+.bos-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.bos-chip--warning {
+  padding: 5px 10px;
+  background: var(--bos-chip-warning-bg);
+  color: var(--bos-chip-warning-text);
+}
+
+.bos-chip--info {
+  padding: 1px 6px;
+  background: var(--bos-chip-info-bg);
+  color: var(--bos-chip-info-text);
+}
+
+/* ---------- Approval card ---------- */
+
+.bos-approval {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-xl);
+  background: var(--bos-note-bg);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 0.05);
+}
+
+.bos-approval__avatar {
+  display: grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--bos-avatar-bg);
+  color: var(--bos-avatar-text);
+  font-size: 11px;
+  font-weight: var(--font-weight-bold);
+  line-height: 16px;
+}
+
+.bos-approval__main {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bos-approval__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.bos-approval__name {
+  min-width: 0;
+  color: var(--bos-approval-name);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.bos-approval__detail,
+.bos-approval__expires {
+  color: var(--bos-note-text);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.bos-approval__expires {
+  display: grid;
+  flex: none;
+  justify-items: end;
+  font-weight: var(--font-weight-semibold);
+  text-align: end;
+}
+
+.bos-approval__expires-value {
+  color: var(--bos-note-icon);
+}
+
+/* ---------- Six-box authenticator code (bos-otp-input.tsx; markup and logic untouched) ---------- */
+
+/* The 2-step design has no visible label; it stays in the DOM as the accessible name. */
+.bos-auth .bos-otp-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.bos-auth .bos-otp-slots {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (min-width: 420px) {
+  .bos-auth .bos-otp-slots {
+    gap: 10px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .bos-auth .bos-otp-slots {
+    gap: 20px;
+  }
+}
+
+.bos-auth .bos-otp-slot {
+  display: grid;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  place-items: center;
+  font-size: 20px;
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: 24px;
+}
+
+.bos-auth .bos-otp-slot[data-caret]::before {
+  width: 2px;
+  height: 1em;
+  background: currentColor;
+  content: '';
+}
+
+.bos-auth .bos-otp-hint {
+  margin-block: 10px 0;
+  color: var(--input-placeholder);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* ---------- Touch targets ---------- */
+
+@media (pointer: coarse) {
+  .bos-auth .bos-btn {
+    min-height: 44px;
+  }
+
+  .bos-auth
+    :is(
+      input:not([type]),
+      input[type='text'],
+      input[type='password'],
+      input[type='email'],
+      input[type='tel'],
+      input[type='url'],
+      input[type='number'],
+      input[type='search']
+    ):not([data-input-otp]),
+  .bos-auth .bos-otp-slot {
+    min-height: 44px;
+  }
+
+  .bos-auth .bos-otp-slot {
+    height: 44px;
+  }
+
+  .bos-auth .bos-password-toggle {
+    top: 28px;
+    width: 44px;
+    height: 44px;
+  }
+
+  .bos-auth .bos-input-suffix {
+    height: 42px;
+  }
+
+  .bos-auth button.bos-link {
+    min-height: 44px;
+  }
+}
+
+/* ---------- Forced colors and reduced motion ---------- */
+
+@media (forced-colors: active) {
+  .bos-auth :is(input, textarea):not([data-input-otp]):focus,
+  .bos-auth .bos-otp-slots .bos-otp-slot[data-active],
+  .bos-auth input[type='checkbox'].form-checkbox:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .bos-auth .bos-btn {
+    border-color: ButtonText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bos-auth *,
+  .bos-auth *::before,
+  .bos-auth *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .bos-auth .bos-btn:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* ===================================================================================================
+   B2: second-factor and session pages (OTP, MFA, passkey, accounts, signed-in, logout, idp, device)
+   =================================================================================================== */
+
+/* Code field plus the quiet row under it: "Didn't receive a code?" left, "Resend code" right. */
+.bos-auth .bos-otp-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bos-auth .bos-otp-group .bos-otp-hint {
+  margin-block: 0;
+}
+
+.bos-auth .bos-otp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  color: var(--input-placeholder);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.bos-auth .bos-otp-meta .bos-link {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* Back (secondary, content width) plus the primary action, which takes the remaining width. */
+.bos-auth .bos-step-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bos-auth .bos-step-actions > a {
+  display: flex;
+  flex: 99 1 0%;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.bos-auth .bos-step-actions > a > .bos-btn {
+  flex: 1 1 auto;
+}
+
+/* Spinner inside a primary button: the stock one is blue on blue. */
+.bos-auth .bos-btn--primary svg[role='status'] {
+  flex: none;
+  color: color-mix(in srgb, var(--button-primary-text) 30%, transparent);
+  fill: var(--button-primary-text);
+}
+
+/* Note-width alerts and error blocks inside a stack never overflow. */
+.bos-auth .bos-form-stack [role='alert'],
+.bos-auth .bos-login-content [role='alert'] {
+  min-width: 0;
+}
+
+/* ---------- B1: account pages (sign-in, register, reset, verify, pending) ---------- */
+
+/* Back + primary action row. The primary button takes the space the secondary one leaves. */
+.bos-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Two fields side by side; stacks when a column would drop under 160px (phones). */
+.bos-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--bos-field-gap);
+  min-width: 0;
+}
+
+.bos-field-row > * {
+  min-width: 0;
+}
+
+/* "Didn't receive a code? Resend code" under a field. */
+.bos-field-aside--inline {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  color: var(--bos-lead);
+}
+
+.bos-auth .bos-field-aside .bos-link {
+  font-weight: var(--font-weight-regular);
+}
+
+/* Passkey or password chooser shown above the register button. */
+.bos-method {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bos-method > p {
+  margin: 0;
+}
+
+/* The chosen identity under the heading (upstream UserAvatar markup, restyled as a quiet chip). */
+.bos-auth .bos-identity > div {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+}
+
+.bos-auth .bos-identity > div > span:not(.flex-grow) {
+  max-width: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+}
+
+.bos-auth .bos-identity a {
+  border-radius: var(--radius-md);
+  color: var(--icon-default);
+}
+
+/* Password complexity hints (upstream PasswordComplexity markup): one quiet column. */
+.bos-auth .bos-complexity > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin: 0;
+}
+
+.bos-auth .bos-complexity span {
+  color: var(--bos-meta);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.bos-auth .bos-complexity svg {
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 8px;
+}
+
+.bos-auth .bos-complexity svg.la-check {
+  color: var(--status-success);
+}
+
+.bos-auth .bos-complexity svg.la-times {
+  color: var(--text-tertiary);
+}
+
+/* Account pending verification */
+.bos-pending {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.bos-pending__tile {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: var(--radius-xl);
+  background: var(--surface-brand);
+  color: var(--icon-brand);
+}
+
+.bos-pending .bos-chip {
+  justify-self: start;
+}
+
+.bos-pending__details {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  list-style: none;
+}
+
+.bos-pending__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.bos-pending__row svg {
+  flex: none;
+}
+
+.bos-pending__row--done {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.bos-pending__row--done svg {
+  color: var(--action-primary);
+}
+
+.bos-pending__row:not(.bos-pending__row--done) svg {
+  color: var(--icon-default);
+}
+
+.bos-pending__actions {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+
+.bos-pending__caption {
+  margin: 0;
+  color: var(--bos-lead);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ---- Page structure shared by the B2 routes ---- */
+
+.bos-auth .bos-stack {
+  display: grid;
+  gap: var(--bos-field-gap);
+  min-width: 0;
+}
+
+.bos-auth .bos-stack > * {
+  min-width: 0;
+}
+
+/* Lead sits 10.8px under the title (the stack gap is 20px). */
+.bos-auth .bos-stack > h1 + .ztdl-p {
+  margin-block-start: -9.2px;
+}
+
+.bos-auth .bos-stack > h1 {
+  margin: 0;
+}
+
+.bos-auth .bos-stack > .ztdl-p {
+  margin: 0;
+}
+
+.bos-auth .bos-stack > .ztdl-p.text-center {
+  text-align: center;
+}
+
+/* ---- Method cards (rendered by auth-methods.tsx; styled from the list wrapper) ---- */
+
+.bos-auth .bos-method-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bos-auth .bos-method-list > :empty {
+  display: none;
+}
+
+.bos-auth .bos-method-list .group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 56px;
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  box-shadow: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  text-decoration: none;
+  opacity: 1;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    transform 120ms var(--bos-ease);
+}
+
+.bos-auth .bos-method-list .group > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding-inline-end: 28px;
+  overflow-wrap: anywhere;
+}
+
+.bos-auth .bos-method-list .group svg:not(.bos-state-badge svg) {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  color: var(--icon-brand);
+  transform: none;
+  translate: none;
+}
+
+.bos-auth .bos-method-list a.group:active {
+  transform: scale(0.99);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-method-list a.group:hover {
+    border-color: var(--input-hover-border);
+    background: var(--surface-subtle);
+  }
+}
+
+/* A method that is already set up: not a link, check badge on the end side. */
+.bos-auth .bos-method-list div.group {
+  cursor: default;
+}
+
+.bos-auth .bos-method-list div.group > div:first-child {
+  opacity: 0.65;
+}
+
+.bos-auth .bos-method-list .group > .absolute {
+  inset: 50% 14px auto auto;
+  transform: translateY(-50%);
+}
+
+/* ---- Radio cards (passkey or password) ---- */
+
+.bos-auth .bos-radio-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 12px;
+}
+
+.bos-auth .bos-radio-card {
+  box-sizing: border-box;
+  display: flex;
+  min-height: 88px;
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms var(--bos-ease);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-radio-card:hover {
+    border-color: var(--input-hover-border);
+  }
+}
+
+.bos-auth .bos-radio-card[data-checked] {
+  border-color: var(--interactive-selected-border);
+  background: var(--interactive-selected);
+  box-shadow: inset 0 0 0 1px var(--interactive-selected-border);
+}
+
+.bos-auth .bos-radio-card[data-focus] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.bos-auth .bos-radio-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  text-align: center;
+}
+
+.bos-auth .bos-radio-card__icon {
+  width: 28px;
+  height: 28px;
+  color: var(--icon-brand);
+}
+
+/* ---- Authenticator app setup (QR, setup link, copy) ---- */
+
+.bos-auth .bos-totp {
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+.bos-auth .bos-totp > form {
+  width: 100%;
+}
+
+/* The QR stays white in both themes: scanners need the contrast. */
+.bos-auth .bos-totp-qr {
+  box-sizing: content-box;
+  width: 168px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: #fff;
+}
+
+.bos-auth .bos-totp-uri {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.bos-auth .bos-totp-uri__link {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bos-auth .bos-copy {
+  display: flex;
+  flex: none;
+}
+
+.bos-auth .bos-icon-btn {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--icon-brand);
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-icon-btn:hover {
+    background: var(--interactive-selected);
+  }
+}
+
+@media (pointer: coarse) {
+  .bos-auth .bos-icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ---- State badge ---- */
+
+.bos-auth .bos-state-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.bos-auth .bos-state-badge--even {
+  padding: 2px;
+}
+
+.bos-auth .bos-state-badge--success {
+  background: var(--status-success-subtle);
+  color: var(--success-700);
+}
+
+.bos-auth .bos-state-badge--info {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.bos-auth .bos-state-badge--error {
+  background: var(--status-error-subtle);
+  color: var(--status-error);
+}
+
+.bos-auth .bos-state-badge--alert {
+  background: var(--status-warning-subtle);
+  color: var(--bos-chip-warning-text);
+}
+
+[data-theme='dark'] .bos-auth .bos-state-badge--success {
+  color: var(--status-success);
+}
+
+.bos-auth .bos-state-badge svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Avatar and current-account pill ---- */
+
+.bos-auth .bos-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+  overflow: hidden;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.bos-auth .bos-avatar--small {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.bos-auth .bos-avatar--base {
+  width: 40px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.bos-auth .bos-avatar--large {
+  width: 80px;
+  height: 80px;
+  font-size: 24px;
+}
+
+.bos-auth .bos-avatar--shadow {
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--overlay-scrim) 18%, transparent);
+}
+
+.bos-auth .bos-avatar--plain {
+  background: var(--surface-muted);
+  color: var(--icon-brand);
+}
+
+.bos-auth .bos-avatar__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.bos-auth .bos-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 6px 6px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+}
+
+.bos-auth .bos-account__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bos-auth .bos-account__switch {
+  display: grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--icon-default);
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-account__switch:hover {
+    background: var(--interactive-hover);
+    color: var(--text-primary);
+  }
+}
+
+@media (pointer: coarse) {
+  .bos-auth .bos-account__switch {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ---- Session rows (accounts, logout) ---- */
+
+.bos-auth .bos-session-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bos-auth .bos-session {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-default);
+  text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    transform 120ms var(--bos-ease);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-session:hover {
+    border-color: var(--input-hover-border);
+    background: var(--surface-subtle);
+  }
+}
+
+.bos-auth .bos-session:has(.bos-session__main:active) {
+  transform: scale(0.995);
+}
+
+.bos-auth .bos-session__main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+}
+
+.bos-auth .bos-session__main:focus-visible {
+  outline-offset: -2px;
+}
+
+.bos-auth .bos-session__text {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 1px;
+  min-width: 0;
+}
+
+.bos-auth .bos-session__name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bos-auth .bos-session__login,
+.bos-auth .bos-session__meta {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bos-auth .bos-session__meta {
+  color: var(--text-tertiary);
+}
+
+.bos-auth .bos-session .bos-state-badge {
+  text-transform: capitalize;
+}
+
+.bos-auth .bos-session__clear {
+  display: grid;
+  flex: none;
+  width: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  background: transparent;
+  color: var(--icon-default);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-session__clear:hover {
+    background: var(--status-error-subtle);
+    color: var(--status-error);
+  }
+}
+
+.bos-auth .bos-session__clear:focus-visible {
+  outline-offset: -2px;
+}
+
+/* "Clear" text on the logout rows: always visible so it works without hover. */
+.bos-auth .bos-session__action {
+  flex: none;
+  color: var(--status-error);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 16px;
+}
+
+.bos-auth .bos-session--add .bos-session__main {
+  color: var(--text-secondary);
+}
+
+/* Tooltip is portalled to <body>, outside .bos-auth, so it carries its own tokens. */
+.bos-tooltip {
+  z-index: 50;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-default);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--overlay-scrim) 14%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 16px;
+  user-select: none;
+}
+
+.bos-tooltip__arrow {
+  fill: var(--border-default);
+}
+
+/* ---- Status screens (signed in, logged out, error) ---- */
+
+.bos-auth .bos-status-tile {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: var(--radius-xl);
+  background: var(--surface-brand);
+  color: var(--icon-brand);
+}
+
+.bos-auth .bos-status-tile--warning {
+  background: var(--bos-chip-warning-bg);
+  color: var(--bos-chip-warning-text);
+}
+
+/* ---- Identity-provider buttons ---- */
+
+.bos-auth .bos-idp-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bos-auth .bos-idp-form {
+  display: flex;
+  min-width: 0;
+}
+
+.bos-auth .bos-idp-label {
+  text-align: center;
+}
+
+.bos-auth .bos-idp-btn {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 16px;
+  border: 1px solid var(--button-secondary-border);
+  border-radius: var(--radius-lg);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-text);
+  cursor: pointer;
+  font-family: var(--font-family-primary);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  text-align: start;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms var(--bos-ease);
+}
+
+@media (hover: hover) {
+  .bos-auth .bos-idp-btn:hover:not(:disabled) {
+    background: var(--button-secondary-bg-hover);
+  }
+}
+
+.bos-auth .bos-idp-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.bos-auth .bos-idp-btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.bos-auth .bos-idp-btn__body {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bos-auth .bos-idp-btn__label {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The brand logos ship with generous box sizes; trim them so the row stays 44px. */
+.bos-auth .bos-idp-btn__label > div {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+}
+
+.bos-auth .bos-idp-btn__label span.ml-4 {
+  margin-inline-start: 0;
+}
+
+/* ---- IdP callback processing ---- */
+
+.bos-auth .bos-center {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+}
+
+.bos-auth .bos-center__loading {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+
+.bos-auth .bos-center__text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.bos-auth .bos-center__alert {
+  width: 100%;
+}
+
+/* ---- Device consent ---- */
+
+.bos-auth .bos-scope-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bos-auth .bos-scope-list__item {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.bos-auth .bos-user-code {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.bos-auth .bos-fineprint {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+@media (forced-colors: active) {
+  .bos-auth .bos-session,
+  .bos-auth .bos-method-list .group,
+  .bos-auth .bos-radio-card,
+  .bos-auth .bos-idp-btn {
+    border-color: ButtonText;
+  }
+
+  .bos-auth .bos-radio-card[data-checked] {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* Figma's register and pending frames use the full 488px column (sign-in is inset to 451px). */
+.bos-shell-content:has(.bos-pending, .bos-field-row) {
+  --bos-shell-content-max: 488px;
+}
+
+/* Figma stores tracking as bare numbers (-0.02, 0.01): treat them as px, not em */
+.bos-auth h1,
+.bos-aside-title {
+  letter-spacing: -0.02px;
+}
+
+/* Keep the trailing external-link glyph on the same line as its link text */
+.bos-auth .bos-switch-line .bos-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* ---- Design review fixes ---- */
+
+/* Empty-form primary button stays brand blue, dimmed, as in the Figma first view */
+.bos-auth .bos-btn--primary:disabled {
+  border-color: var(--button-primary-bg);
+  background-color: var(--button-primary-bg);
+  color: var(--button-primary-text);
+  opacity: 0.45;
+}
+
+/* Hints keep 4.5:1 on the dark surface */
+[data-theme='dark'] .bos-auth .bos-otp-hint {
+  color: var(--neutral-400);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .bos-auth .bos-otp-hint {
+    color: var(--neutral-400);
+  }
+}
+
+/* Method card icons follow currentColor so they never vanish on dark surfaces */
+.bos-auth .bos-radio-card__body svg {
+  color: var(--icon-brand);
+}
+
+.bos-auth .bos-radio-card__body svg:not([fill='none']) path {
+  fill: currentColor;
+}
+
+/* Language picker: compact, so the footer stays a footer */
+.bos-footer-end button {
+  min-height: 28px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Keep the hint clear of the button on the setup screen */
+.bos-auth .bos-otp-group .bos-otp-hint {
+  margin-block-end: 12px;
+}

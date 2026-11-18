@@ -8,6 +8,7 @@ import { failureOf } from './api-kernel';
 import { getEnv } from './env';
 import type { FailureContext } from './kernel-ui';
 import { getSession, type Session } from './session';
+import { SessionUnavailableError, sessionUnavailableResponse } from './session-unavailable';
 
 /**
  * Shared plumbing for the workspace BFF: page guards and Route Handler helpers. Server-only.
@@ -18,7 +19,7 @@ import { getSession, type Session } from './session';
 /**
  * For pages and server actions. A layout cannot see the URL, so each page names its own path and
  * an unauthenticated user comes back to it after signing in. `redirect` throws, so the caller
- * never gets a null session.
+ * never gets a null session. Store outages propagate to the root retry notice.
  */
 export async function requireStaffSession(returnTo: string): Promise<Session> {
   const session = await getSession();
@@ -34,11 +35,17 @@ export function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
- * For Route Handlers: the session, or a 401/403 JSON response the handler returns as is. A handler
+ * For Route Handlers: the session, or a 401/403/503 JSON response the handler returns as is. A handler
  * never redirects, because `fetch` from the browser would follow the redirect into the login HTML.
  */
 export async function routeSession(): Promise<Session | Response> {
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    if (err instanceof SessionUnavailableError) return sessionUnavailableResponse();
+    throw err;
+  }
   if (!session) return jsonResponse({ error: { message: 'Sign in to continue.' } }, 401);
   if (session.orgKind !== 'staff') {
     return jsonResponse({ error: { message: 'This area is for staff only.' } }, 403);
