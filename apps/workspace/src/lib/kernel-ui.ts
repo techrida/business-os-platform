@@ -183,6 +183,7 @@ export interface AttachmentView {
   id: string;
   documentId: string;
   filename: string;
+  detectedMime?: string;
   sizeBytes: number;
   status: string;
 }
@@ -191,6 +192,7 @@ export function toAttachmentView(v: {
   id: string;
   documentId: string;
   filename: string;
+  detectedMime?: string | null;
   sizeBytes: number;
   status: string;
 }): AttachmentView {
@@ -198,6 +200,7 @@ export function toAttachmentView(v: {
     id: v.id,
     documentId: v.documentId,
     filename: v.filename,
+    ...(v.detectedMime ? { detectedMime: v.detectedMime } : {}),
     sizeBytes: v.sizeBytes,
     status: v.status,
   };

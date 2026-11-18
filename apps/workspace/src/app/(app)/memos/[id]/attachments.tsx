@@ -3,13 +3,15 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
-import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
+import { FilePreviewDialog } from '@/components/ui/file-preview-dialog';
+import { previewKind } from '@/components/ui/file-preview-model';
+import { toast } from '@/components/ui/toast';
 import { type AttachmentView, formatBytes, needsPolling, scanLabel } from '@/lib/kernel-ui';
 
 import styles from '../../kit.module.css';
-import { DownloadIcon, PaperclipIcon, TrashIcon, UploadIcon } from '../memo-icons';
+import { PaperclipIcon, TrashIcon, UploadIcon } from '../memo-icons';
 import {
   applyRemovedAttachment,
   applyUploadedAttachment,
@@ -19,7 +21,6 @@ import {
   performAttachmentUpload,
   selectDroppedFile,
   type AttachmentFlightLock,
-  type AttachmentMessage,
   type FocusTarget,
 } from './attachment-actions';
 
@@ -34,8 +35,57 @@ function navigateToLogin(memoId: string): void {
   window.location.assign(`/auth/login?returnTo=${encodeURIComponent(`/memos/${memoId}`)}`);
 }
 
+const versionUrl = (f: AttachmentView, leaf: 'preview' | 'download') =>
+  `/api/documents/${encodeURIComponent(f.documentId)}/versions/${encodeURIComponent(f.id)}/${leaf}`;
+
 /**
- * The attachments panel: list with scan status, instant upload (drop or picker), download, and
+ * Opens a scan-approved file in a dialog (UIP-FORM-003): PDFs and images are drawn, any other type shows the
+ * dialog's "No preview" fallback. Download lives only inside the dialog, as its second action. A click cannot
+ * show that the download succeeded, so the toast says it started.
+ */
+function OpenFile({ file }: { file: AttachmentView }) {
+  const mimeType = file.detectedMime ?? 'application/octet-stream';
+  const label = previewKind(mimeType) === 'unsupported' ? 'Open' : 'Preview';
+  return (
+    <FilePreviewDialog
+      name={file.filename}
+      mimeType={mimeType}
+      previewUrl={versionUrl(file, 'preview')}
+      downloadUrl={versionUrl(file, 'download')}
+      onDownload={() => toast.info('Download started')}
+      trigger={
+        <Button variant="secondary" size="small" aria-label={`${label} ${file.filename}`}>
+          <EyeIcon />
+          {label}
+        </Button>
+      }
+    />
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/**
+ * The attachments panel: list with scan status, instant upload (drop or picker), preview dialog, and
  * soft removal while the memo is editable. While any file is still being scanned it polls the BFF
  * every 3 s; when the last scan finishes it asks the server to re-render the page, so the Submit
  * button (a server-rendered part) unlocks without a manual reload. Serves the NFR "no unscanned
@@ -60,7 +110,6 @@ export function Attachments({
   const [uploading, setUploading] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [message, setMessage] = useState<AttachmentMessage>(null);
   const [announce, setAnnounce] = useState('');
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -108,7 +157,9 @@ export function Attachments({
         );
       }
       setFiles(next);
-      if (!needsPolling(next.map((f) => f.status))) router.refresh();
+      // The Submit button and its missing-pills are server-rendered in the page header: refresh whenever a
+      // scan result changes, not only when the last one finishes.
+      if (changed.length > 0 || !needsPolling(next.map((f) => f.status))) router.refresh();
     } catch {
       // The API is restarting or the network dropped: keep polling, the next tick may work.
     }
@@ -130,10 +181,7 @@ export function Attachments({
       file,
       maxBytes,
       allowedMime,
-      onStart: () => {
-        setUploading(true);
-        setMessage(null);
-      },
+      onStart: () => setUploading(true),
     });
     if (outcome.kind === 'skipped') return;
     setUploading(false);
@@ -143,14 +191,11 @@ export function Attachments({
       return;
     }
     if (outcome.kind === 'error') {
-      setMessage({ tone: 'bad', text: outcome.message });
+      toast.error('Upload failed', { description: outcome.message });
       return;
     }
     setFiles((prev) => applyUploadedAttachment(prev, outcome.item));
-    setMessage({
-      tone: 'ok',
-      text: `${outcome.item.filename} uploaded. It is being scanned for viruses.`,
-    });
+    toast.success('File uploaded', { description: `${outcome.item.filename} is being scanned.` });
     router.refresh();
   }
 
@@ -158,10 +203,7 @@ export function Attachments({
     const outcome = await performAttachmentRemoval({
       lock: flightLock.current,
       documentId: item.documentId,
-      onStart: () => {
-        setRemovingId(item.documentId);
-        setMessage(null);
-      },
+      onStart: () => setRemovingId(item.documentId),
     });
     if (outcome.kind === 'skipped') return;
     setRemovingId(null);
@@ -171,14 +213,14 @@ export function Attachments({
       return;
     }
     if (outcome.kind === 'error') {
-      setMessage({ tone: 'bad', text: outcome.message });
+      toast.error('Not removed', { description: outcome.message });
       if (outcome.reload) router.refresh();
       return;
     }
     const remaining = applyRemovedAttachment(filesRef.current, item.documentId);
     pendingFocus.current = focusAfterAttachmentRemoval(index, remaining);
     setFiles(remaining);
-    setMessage({ tone: 'ok', text: `${item.filename} removed.` });
+    toast.success('File removed', { description: item.filename });
     router.refresh();
   }
 
@@ -221,7 +263,7 @@ export function Attachments({
     if (!hasDraggedFiles(e.dataTransfer) && e.dataTransfer.files.length === 0) return;
     const picked = selectDroppedFile(e.dataTransfer.files);
     if (!picked.ok) {
-      setMessage({ tone: 'bad', text: picked.message });
+      toast.error('Not attached', { description: picked.message });
       return;
     }
     void startUpload(picked.file);
@@ -252,17 +294,7 @@ export function Attachments({
                 </div>
                 <div className={styles.fileSide}>
                   <Badge tone={BADGE_TONE[scan.tone]}>{scan.text}</Badge>
-                  {f.status === 'clean' ? (
-                    <LinkButton
-                      variant="secondary"
-                      size="small"
-                      href={`/api/documents/${encodeURIComponent(f.documentId)}/versions/${encodeURIComponent(f.id)}/download`}
-                      aria-label={`Download ${f.filename}`}
-                    >
-                      <DownloadIcon />
-                      Download
-                    </LinkButton>
-                  ) : null}
+                  {f.status === 'clean' ? <OpenFile file={f} /> : null}
                   {canUpload ? (
                     <button
                       ref={(el) => {
@@ -350,12 +382,6 @@ export function Attachments({
           Files can only be added or removed while the memo is a draft or returned.
         </p>
       )}
-
-      <div aria-live="polite">
-        {message ? (
-          <Alert tone={message.tone === 'ok' ? 'success' : 'error'}>{message.text}</Alert>
-        ) : null}
-      </div>
     </div>
   );
 }
