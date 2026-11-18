@@ -8,8 +8,8 @@ import { useOptimistic, useTransition } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/field';
 import { Icon } from '@/components/ui/icon';
+import { SearchInput } from '@/components/ui/search-input';
 
 import styles from './stage-filter.module.css';
 
@@ -48,26 +48,25 @@ export function OpportunityFilters({
       {stages.map((stage) => (
         <input key={stage} type="hidden" name="stage" value={stage} />
       ))}
-      <Field label="Search opportunities" className={styles.search ?? ''}>
-        {(control) => (
-          <Input
-            key={query}
-            name="q"
-            type="search"
-            defaultValue={query}
-            maxLength={100}
-            {...control}
-          />
-        )}
-      </Field>
-      <Button type="submit" variant="secondary">
-        Search
-      </Button>
+      <div className={styles.search}>
+        <SearchInput
+          key={query}
+          name="q"
+          aria-label="Search opportunities"
+          placeholder="Search opportunities"
+          defaultValue={query}
+          maxLength={100}
+          wrapperClassName={styles.searchInput}
+        />
+        <Button type="submit" variant="ghost">
+          Search
+        </Button>
+      </div>
       {view === 'table' ? (
         <Popover.Root>
           <Popover.Trigger asChild>
             <Button
-              variant="ghost"
+              variant="secondary"
               className={styles.trigger}
               data-filtered={stages.length > 0}
               aria-label={stages.length > 0 ? `Stage, ${stages.length} selected` : 'Stage'}
