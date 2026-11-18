@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { NAV_GROUPS, SHIPPED_PHASES, isBuilt, ownsPath, titleForPath, visibleGroups } from './nav';
+import {
+  NAV_GROUPS,
+  SHIPPED_PHASES,
+  isBuilt,
+  ownsPath,
+  searchNavGroups,
+  titleForPath,
+  visibleGroups,
+} from './nav';
 
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
@@ -133,5 +141,18 @@ describe('titleForPath', () => {
 
   it('falls back to the app name for any other path', () => {
     expect(titleForPath('/somewhere-else')).toBe('Business OS');
+  });
+});
+
+describe('searchNavGroups', () => {
+  it('searches only built destinations visible to the current role', () => {
+    const groups = visibleGroups(false);
+    const labels = (query: string) =>
+      searchNavGroups(groups, query).flatMap((group) => group.items.map((item) => item.label));
+    expect(labels(' work ')).toEqual(['Inbox', 'Memos']);
+    expect(labels('INBOX')).toEqual(['Inbox']);
+    expect(labels('Projects')).toEqual([]);
+    expect(labels('Users')).toEqual([]);
+    expect(searchNavGroups(visibleGroups(true), 'Users')[0]?.items[0]?.href).toBe('/admin/users');
   });
 });
