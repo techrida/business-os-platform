@@ -2,73 +2,126 @@ import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 
-/**
- * The quote builder against the real stack (lead runs it; needs the P2 API and a seeded
- * opportunity whose id is in E2E_OPPORTUNITY_ID, with at least one tax code and a Qualified
- * state). Covers the brief: totals only from the server, the schedule must total 100% before
- * submit, a discount above 12% is shown as needing approval, and leaving with edits asks first.
- */
-
+/** Requires a qualified E2E_OPPORTUNITY_ID and the quotation workflow and tax codes in the P2 stack. */
 const opportunityId = process.env['E2E_OPPORTUNITY_ID'];
 
-test('build, save, price on the server, and submit a quotation', async ({ browser, baseURL }) => {
+test('save, reopen, edit, price and submit a quotation', async ({ browser, baseURL }) => {
   test.skip(!opportunityId, 'Set E2E_OPPORTUNITY_ID to a seeded opportunity id.');
   test.setTimeout(180_000);
-  const appBase = baseURL ?? 'https://app.localhost';
-  const { page } = await signInAs(browser, appBase, 'sales');
+  const { page } = await signInAs(browser, baseURL ?? 'https://app.localhost', 'sales');
 
-  await test.step('a new quotation shows no totals until it is saved', async () => {
+  const save = page.getByRole('button', { name: 'Save draft', exact: true });
+  const submit = page.getByRole('button', { name: 'Submit for approval', exact: true });
+  const lines = page.getByRole('table', { name: 'Quotation lines' });
+  const totals = page.getByRole('complementary', { name: 'Totals' });
+  const add = page.getByRole('dialog', { name: 'Add line' });
+  const edit = page.getByRole('dialog', { name: 'Edit line' });
+  const percent = page.getByRole('spinbutton', { name: 'Percent (%)' });
+  const amount = page.getByRole('spinbutton', { name: /^Amount \(/ });
+
+  await test.step('add a typed line and save the draft', async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/quotations/new?opportunityId=${opportunityId}`);
     await expect(page.getByRole('heading', { name: 'New quotation', level: 1 })).toBeVisible();
-    await expect(page.getByText('Save the draft to see the totals.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Submit for approval' })).toHaveCount(0);
-  });
-
-  await test.step('fill one line and save the draft', async () => {
-    await page.getByRole('button', { name: 'Add the first line' }).click();
-    await page.getByLabel('Line 1 description').fill('HRMS implementation');
-    await page.getByLabel('Line 1 unit').fill('lot');
-    await page.getByLabel('Line 1 quantity').fill('1');
-    await page.getByLabel('Line 1 rate').fill('2,00,000');
-    await page.getByLabel('Line 1 tax code').selectOption({ index: 1 });
-    await page.getByRole('button', { name: 'Save draft' }).first().click();
+    await expect(totals.getByText('Save the draft to see the totals.')).toBeVisible();
+    await expect(submit).toHaveCount(0);
+    await expect(save).toHaveCount(1);
+    await page.getByRole('button', { name: 'Add line', exact: true }).click();
+    await add.getByLabel('Description').fill('HRMS implementation');
+    await add.getByLabel('Unit', { exact: true }).fill('lot');
+    await add.getByRole('spinbutton', { name: 'Quantity' }).fill('1');
+    await add.getByRole('spinbutton', { name: /^Rate \(/ }).fill('200000');
+    await add.getByLabel('Tax code').selectOption({ index: 1 });
+    await add.getByRole('button', { name: 'Add line', exact: true }).click();
+    await expect(lines.getByText('HRMS implementation')).toBeVisible();
+    await save.click();
     await expect(page).toHaveURL(/\/quotations\/[^/]+\/edit\?saved=1/);
-    await expect(page.getByText('Draft saved.')).toBeVisible();
+    await expect(page.getByText('Draft saved.', { exact: true })).toBeVisible();
   });
 
-  await test.step('the totals are the platform\u2019s, and the route is listed', async () => {
-    const totals = page.getByRole('complementary', { name: /7\. Totals/ });
+  await test.step('reopen a saved line, cancel changes, then save a real edit', async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const editFirst = page.getByRole('button', { name: /^Edit line 1:/ });
+    await editFirst.click();
+    await expect(edit.getByLabel('Description')).toHaveValue('HRMS implementation');
+    await expect(edit.getByRole('spinbutton', { name: 'Quantity' })).toHaveValue(/^1(?:\.0+)?$/);
+    await edit.getByLabel('Description').fill('Discard this change');
+    await page.keyboard.press('Escape');
+    await expect(edit).toBeHidden();
+    await expect(editFirst).toBeFocused();
+    await expect(lines.getByText('HRMS implementation')).toBeVisible();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+
+    await editFirst.click();
+    await edit.getByLabel('Description').fill('HRMS implementation and training');
+    await edit.getByRole('button', { name: 'Save line' }).click();
+    await expect(page.getByText('Unsaved changes')).toBeVisible();
+    await save.click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+
+    await page.goto(page.url().split('?')[0]!);
+    await expect(
+      lines.getByText('HRMS implementation and training', { exact: true }),
+    ).toBeVisible();
     await expect(totals.getByText('Total', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '8. Approval requirements' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Approval requirements' })).toBeVisible();
+    await expect(page.getByText('Any accountant', { exact: true })).toBeVisible();
+    await expect(save).toHaveCount(1);
+    await expect(submit).toHaveCount(1);
   });
 
-  await test.step('a schedule that is not 100% blocks Submit', async () => {
+  await test.step('link the amount to the ready total and validate on attempted save or submit', async () => {
     await page.getByRole('button', { name: 'Add milestone' }).click();
     await page.getByLabel('Milestone 1', { exact: true }).fill('Advance');
-    await page.getByLabel('Percent').fill('60');
-    await expect(page.getByText(/must add up to 100%/).first()).toBeVisible();
-    await page.getByRole('button', { name: 'Save draft' }).first().click();
-    await expect(page.getByRole('main').getByRole('alert')).toContainText('100%');
-    await expect(page.getByRole('button', { name: 'Submit for approval' }).first()).toBeDisabled();
+    await percent.fill('100');
+    await expect(amount).toHaveValue(/^[1-9]\d*\.\d{2}$/);
+    const fullAmount = await amount.inputValue();
+    await percent.fill('60');
+    await expect(amount).not.toHaveValue(fullAmount);
+    await expect(page.getByText('60.00% / 100% allocated')).toBeVisible();
+
+    await submit.click();
+    await expect(page.getByText(/The payment schedule must add up to 100%/)).toBeVisible();
+    await expect(percent).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('dialog', { name: /Submit this quotation/ })).toBeHidden();
+    await save.click();
+    await expect(page.getByText(/The payment schedule must add up to 100%/)).toBeVisible();
+
+    await amount.fill('1.23');
+    await expect(page.getByText(/This amount needs more than two decimal places/)).toBeVisible();
+    await expect(percent).toHaveValue('60');
+    await amount.press('Escape');
+    await expect(amount).not.toHaveAttribute('aria-invalid', 'true');
+
+    await amount.fill('9999999999999999');
+    await expect(amount).toHaveAttribute('aria-invalid', 'true');
+    await expect(percent).toHaveValue('60');
+    await amount.fill(fullAmount);
+    await expect(percent).toHaveValue('100.00');
+    await expect(percent).not.toHaveAttribute('aria-invalid', 'true');
   });
 
-  await test.step('a 15% discount is shown as needing approval', async () => {
-    await page.getByLabel('Percent').fill('100');
+  await test.step('refresh server pricing, save, cancel submission, then confirm', async () => {
     await page.getByLabel('Discount type').selectOption('pct');
     await page.getByLabel('Discount (%)').fill('15');
+    await expect(page.getByText('Amount unavailable until pricing is ready.')).toBeVisible();
     await expect(page.getByText('This discount needs approval')).toBeVisible();
-  });
+    await expect(amount).not.toHaveValue('');
+    await expect(amount).toBeEnabled();
+    await expect(percent).toHaveValue('100.00');
+    await save.click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
 
-  await test.step('save, then submit with confirmation', async () => {
-    await page.getByRole('button', { name: 'Save draft' }).first().click();
-    await expect(
-      page
-        .getByRole('status')
-        .filter({ hasText: /^All changes saved$/ })
-        .first(),
-    ).toBeVisible();
-    await page.getByRole('button', { name: 'Submit for approval' }).first().click();
-    await page.getByRole('button', { name: 'Yes, submit' }).click();
-    await expect(page.getByText('Submitted for approval')).toBeVisible();
+    await submit.click();
+    const confirmation = page.getByRole('dialog', { name: 'Submit this quotation for approval?' });
+    await expect(confirmation.getByText('Any accountant')).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Keep editing' }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(submit).toBeFocused();
+
+    await submit.click();
+    await confirmation.getByRole('button', { name: 'Submit quotation' }).click();
+    await expect(page).toHaveURL(/\/quotations\/[^/]+\/edit\?submitted=1/);
+    await expect(page.getByText('Approval pending', { exact: true })).toBeVisible();
   });
 });
