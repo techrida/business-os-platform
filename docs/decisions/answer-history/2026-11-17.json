@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "registerRevision": "2026-11-16",
+  "exportedAt": "2026-11-17T04:19:29.639Z",
+  "source": "Kuu supplied this export and explicitly requested application; clarification requests were not promoted to decisions.",
+  "answers": [
+    {
+      "id": "D13",
+      "choice": "custom",
+      "custom": "well we have already done until p4 so this question is irrelevant, just keep what's here right now for this phase, and if this is still a eustion in p4 we do it then",
+      "notes": ""
+    },
+    {
+      "id": "D14",
+      "choice": "C",
+      "choiceLabel": "Staff-only",
+      "custom": "",
+      "notes": ""
+    },
+    {
+      "id": "D15",
+      "choice": "A",
+      "choiceLabel": "Sales order with billing schedule",
+      "custom": "",
+      "notes": ""
+    },
+    {
+      "id": "D16",
+      "choice": "custom",
+      "custom": "we've already done till p4 so this is irrelevant no?",
+      "notes": ""
+    },
+    {
+      "id": "D17",
+      "choice": "custom",
+      "custom": "i dont understand fully, it's like so each organisation is different,  each is a tenant later yes, and they can have vendors and customers, how is it described in the project plans? tell me if we need to discuss with Raj, but i think the flow is each organisation can have vendors and clients, and they will have ana ccount created in business os the client/vendor can login from and use to work, but i think it'd be good if the vendor can have just one account or id we identify, and so if different orgs in business os use the same vendor, then the vendor can use the same account to see all their dealing and not be a duplicated entity right?",
+      "notes": ""
+    },
+    {
+      "id": "D18",
+      "choice": "D",
+      "choiceLabel": "Signed quote",
+      "custom": "",
+      "notes": ""
+    },
+    {
+      "id": "D19",
+      "choice": "",
+      "custom": "we already have this in the plan right?? threshold budgets and the approval flow for each?",
+      "notes": ""
+    },
+    {
+      "id": "D20",
+      "choice": "A",
+      "choiceLabel": "Finance only for matched PO bills",
+      "custom": "",
+      "notes": ""
+    },
+    {
+      "id": "D21",
+      "choice": "B",
+      "choiceLabel": "No, fewer",
+      "custom": "",
+      "notes": "yes we make the founder the root.\n-IF an org has only the founder as a member so only 1 member in the org, then only he can approve anything created.\n- we'll fix the other cases after P4, so send it and push to the issue there, the other cases and how to handlle our SoD flow till there are enough users in the org to follow it everywhere (or we can also have multiple roles per person)"
+    }
+  ]
+}
