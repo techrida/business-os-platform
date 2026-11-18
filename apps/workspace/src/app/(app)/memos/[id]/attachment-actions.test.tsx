@@ -33,6 +33,7 @@ const cleanItem: AttachmentView = {
   filename: 'quote.pdf',
   sizeBytes: 2048,
   status: 'clean',
+  detectedMime: 'application/pdf',
 };
 
 const infectedItem: AttachmentView = {
@@ -251,8 +252,61 @@ describe('Attachments markup', () => {
     expect(html).toContain('Upload file');
     expect(html).toContain('aria-label="Remove quote.pdf"');
     expect(html).toContain('aria-label="Remove bad-payload.pdf"');
-    expect(html).toContain('aria-label="Download quote.pdf"');
+    expect(html).not.toContain('aria-label="Preview bad-payload.pdf"');
     expect(html).not.toContain('aria-label="Download bad-payload.pdf"');
+  });
+
+  it('opens a clean PDF in the preview dialog, never as a raw download link', () => {
+    const html = renderToStaticMarkup(
+      <Attachments
+        memoId={MEMO_ID}
+        initial={[cleanItem]}
+        canUpload={true}
+        maxBytes={MAX_UPLOAD_BYTES}
+        allowedMime={[...ALLOWED_MIME]}
+      />,
+    );
+    expect(html).toContain('aria-label="Preview quote.pdf"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain('/download');
+    expect(html).not.toContain('aria-label="Download quote.pdf"');
+  });
+
+  it('opens a type that cannot be drawn in the same dialog, labelled Open, with no raw download link', () => {
+    const sheet: AttachmentView = {
+      ...cleanItem,
+      filename: 'costs.xlsx',
+      detectedMime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+    const html = renderToStaticMarkup(
+      <Attachments
+        memoId={MEMO_ID}
+        initial={[sheet]}
+        canUpload={true}
+        maxBytes={MAX_UPLOAD_BYTES}
+        allowedMime={[...ALLOWED_MIME]}
+      />,
+    );
+    expect(html).toContain('aria-label="Open costs.xlsx"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain('/download');
+    expect(html).not.toContain('aria-label="Download costs.xlsx"');
+  });
+
+  it('never offers a preview or download for a file that is still scanning', () => {
+    const scanning: AttachmentView = { ...cleanItem, status: 'quarantined' };
+    const html = renderToStaticMarkup(
+      <Attachments
+        memoId={MEMO_ID}
+        initial={[scanning]}
+        canUpload={true}
+        maxBytes={MAX_UPLOAD_BYTES}
+        allowedMime={[...ALLOWED_MIME]}
+      />,
+    );
+    expect(html).toContain('Scanning');
+    expect(html).not.toContain('aria-label="Preview quote.pdf"');
+    expect(html).not.toContain('/download');
   });
 
   it('hides upload and remove controls when the memo is no longer editable', () => {
