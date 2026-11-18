@@ -2,7 +2,7 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
 
 import styles from './button.module.css';
 
-type Variant = 'primary' | 'secondary' | 'ghost';
+type Variant = 'primary' | 'secondary' | 'tertiary' | 'ghost';
 type Size = 'small' | 'medium' | 'large';
 
 interface Look {
@@ -14,7 +14,7 @@ function classes({ variant = 'primary', size = 'medium' }: Look, extra?: string)
   return [styles.button, styles[variant], styles[size], extra].filter(Boolean).join(' ');
 }
 
-/** Figma Button: Primary / Secondary / Ghost, Small 36 / Medium 40 / Large 48. */
+/** Figma Button: Primary / Secondary / Tertiary / Ghost, Small 34 / Medium 40 / Large 48. */
 export function Button({
   variant,
   size,

@@ -29,6 +29,8 @@ const DRAWER_CLOSE_ID = 'shell-drawer-close';
 interface ShellState {
   collapsed: boolean;
   drawerOpen: boolean;
+  navQuery: string;
+  setNavQuery: (query: string) => void;
   toggleCollapsed: () => void;
   openDrawer: () => void;
   closeDrawer: () => void;
@@ -45,6 +47,7 @@ export function useShell(): ShellState {
 export function ShellFrame({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [navQuery, setNavQuery] = useState('');
   const wasOpen = useRef(false);
 
   const toggleCollapsed = useCallback(() => setCollapsed((value) => !value), []);
@@ -81,8 +84,16 @@ export function ShellFrame({ children }: { children: ReactNode }) {
   }, [drawerOpen]);
 
   const value = useMemo(
-    () => ({ collapsed, drawerOpen, toggleCollapsed, openDrawer, closeDrawer }),
-    [collapsed, drawerOpen, toggleCollapsed, openDrawer, closeDrawer],
+    () => ({
+      collapsed,
+      drawerOpen,
+      navQuery,
+      setNavQuery,
+      toggleCollapsed,
+      openDrawer,
+      closeDrawer,
+    }),
+    [collapsed, drawerOpen, navQuery, toggleCollapsed, openDrawer, closeDrawer],
   );
 
   return (
@@ -98,7 +109,7 @@ export function ShellFrame({ children }: { children: ReactNode }) {
           type="button"
           className={styles.scrim}
           tabIndex={-1}
-          aria-label="Close menu"
+          aria-hidden="true"
           onClick={closeDrawer}
         />
       </div>
@@ -123,7 +134,7 @@ export function CollapseToggle() {
     <button
       type="button"
       className={`${styles.iconButton} ${styles.collapseToggle}`}
-      aria-label="Collapse sidebar"
+      aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       aria-expanded={!collapsed}
       aria-controls={SIDEBAR_ID}
       onClick={toggleCollapsed}

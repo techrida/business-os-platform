@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { accountLabel } from '@/components/shell/account-label';
 import { Header } from '@/components/shell/header';
 import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
@@ -21,7 +22,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // API refuses role-less staff too; this keeps them out of the shell.
   if (session.roles.length === 0) redirect('/no-access');
 
-  const roles = session.roles.length > 0 ? session.roles.join(', ') : 'No roles';
+  const roles = accountLabel(session.roles);
 
   return (
     <ShellFrame>
