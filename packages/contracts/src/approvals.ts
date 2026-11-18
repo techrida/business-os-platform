@@ -190,6 +190,11 @@ export const ApprovalStepDtoSchema = z.object({
   activatedAt: isoDateTime.nullable(),
   decidedBy: z.string().nullable(),
   decidedOnBehalfOf: z.string().nullable(),
+  /**
+   * The one person the author named to decide this step, when they named one (only the first step of some
+   * document types). Then only they, or their delegate, see and decide it. Absent or null: anyone eligible.
+   */
+  assigneeUserId: z.string().nullable().optional(),
 });
 export type ApprovalStepDto = z.infer<typeof ApprovalStepDtoSchema>;
 

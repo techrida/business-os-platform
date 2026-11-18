@@ -294,7 +294,12 @@ export class QuotationSubmitService {
             command: 'quotation.submit',
             key: idempotencyKey,
             // The ids are part of the hashed body: one key cannot replay onto another version.
-            body: { quotationId, versionId, expectedVersion: body.expectedVersion },
+            body: {
+              quotationId,
+              versionId,
+              expectedVersion: body.expectedVersion,
+              ...(body.approverUserId === undefined ? {} : { approverUserId: body.approverUserId }),
+            },
           },
           async () => ({
             status: 200,
@@ -302,6 +307,7 @@ export class QuotationSubmitService {
               quotationId,
               versionId,
               expectedVersion: body.expectedVersion,
+              approverUserId: body.approverUserId,
               now,
             }),
           }),
@@ -324,7 +330,13 @@ export class QuotationSubmitService {
     scope: TxScope,
     actor: Actor,
     callerUserId: string,
-    i: { quotationId: string; versionId: string; expectedVersion: number; now: Date },
+    i: {
+      quotationId: string;
+      versionId: string;
+      expectedVersion: number;
+      approverUserId?: string | undefined;
+      now: Date;
+    },
   ): Promise<QuotationVersionDto> {
     const head = await this.store.load(tx, scope, i.quotationId, i.versionId);
     const { quotation, version } = head;
@@ -376,6 +388,25 @@ export class QuotationSubmitService {
         reason: plan.blockReason ?? 'No eligible approver',
       });
     }
+    // A named approver is checked before any write too (the engine checks again in its own transaction): the
+    // author, someone of another entity or tenant, or someone without a qualifying role is refused with 422.
+    if (i.approverUserId !== undefined) {
+      const choice = await this.approvals.assignableApprovers(
+        scope,
+        QUOTATION_VERSION_DOCUMENT_TYPE,
+        facts,
+        sodUserIds,
+        tx,
+      );
+      if (!choice?.candidates.some((c) => c.userId === i.approverUserId)) {
+        throw new UnprocessableEntityException({
+          code: 'APPROVER_NOT_ELIGIBLE',
+          message: sodUserIds.includes(i.approverUserId)
+            ? 'You prepared this quotation, so you cannot approve it. Choose someone else.'
+            : 'The chosen approver cannot approve this quotation. Choose someone from the list.',
+        });
+      }
+    }
 
     // While the version is still a draft: store the re-priced columns, lines and tax summary, and read them back.
     // The content hash is taken from the rows as Postgres returns them, at full column scale (fx_rate '1.000000',
@@ -422,6 +453,7 @@ export class QuotationSubmitService {
       requesterUserId: ownerUserId,
       submittedByUserId: callerUserId,
       sodUserIds,
+      ...(i.approverUserId === undefined ? {} : { assigneeUserId: i.approverUserId }),
     });
     if (request.status === 'blocked') {
       // The engine re-plans inside the transaction: an approver lost since the preview. Same answer as a blocked

@@ -38,6 +38,7 @@ export type ErrorCode =
   | 'customer_merged'
   | 'idp_org_taken'
   | 'NO_ELIGIBLE_APPROVER'
+  | 'APPROVER_NOT_ELIGIBLE'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
   | 'payload_too_large'
@@ -85,6 +86,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   customer_merged: 'This customer was merged into another',
   idp_org_taken: 'The portal organization is already used by another party',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
+  APPROVER_NOT_ELIGIBLE: 'The chosen approver cannot approve this',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
   payload_too_large: 'Payload too large',
@@ -167,6 +169,8 @@ function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
  */
 const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   'NO_ELIGIBLE_APPROVER',
+  // A quotation submit named an approver who may not decide its first step (or the author themselves).
+  'APPROVER_NOT_ELIGIBLE',
   'evidence_policy_unmet',
   'decided_on_in_future',
 ];

@@ -4,6 +4,7 @@
 import { z } from 'zod';
 
 import { RoutePlanSchema } from './approvals.js';
+import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
 
@@ -306,7 +307,14 @@ export type QuotationPreviewBody = z.infer<typeof QuotationPreviewBodySchema>;
 
 const expectedVersion = z.number().int().min(1);
 
-export const SubmitQuotationBodySchema = z.strictObject({ expectedVersion });
+export const SubmitQuotationBodySchema = z.strictObject({
+  expectedVersion,
+  /**
+   * Optional: the one person who decides the first approval step, from the preview's `approverChoice`.
+   * Absent: every eligible approver of that step sees it, as before. The server checks it again at submit.
+   */
+  approverUserId: z.guid().optional(),
+});
 export type SubmitQuotationBody = z.infer<typeof SubmitQuotationBodySchema>;
 
 /** The creator pulls a Submitted version back to Returned to improve it. */
@@ -611,8 +619,29 @@ export const PreviewResultSchema = z.object({
       }),
     ),
   }),
+  /**
+   * Who the author may name as the approver of step `seq` (the first step) of this quotation, or null when that
+   * step has nobody to choose between. The author and the caller are never offered.
+   */
+  approverChoice: z
+    .object({
+      seq: z.number().int().min(1),
+      options: z.array(
+        z.object({
+          userId: z.guid(),
+          name: z.string().min(1),
+          /** The role that lets them approve the step (for example accountant, or sales when allowed). */
+          roleKey: RoleKeySchema,
+          /** False when the person has no email address: they get the bell notice and the inbox item only. */
+          hasEmail: z.boolean(),
+        }),
+      ),
+    })
+    .nullable()
+    .optional(),
 });
 export type PreviewResult = z.infer<typeof PreviewResultSchema>;
+export type ApproverOption = NonNullable<PreviewResult['approverChoice']>['options'][number];
 
 /** The tax code kinds of the `tax_codes` table. */
 export const TAX_CODE_KINDS = ['vat', 'exempt', 'zero', 'reverse_charge'] as const;
