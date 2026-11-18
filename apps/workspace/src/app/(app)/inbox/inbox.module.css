@@ -50,6 +50,22 @@
   line-height: var(--line-height-body-small);
 }
 
+.frozenFiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.frozenFiles button {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .pre {
   max-height: 24rem;
   margin: 0;
