@@ -151,7 +151,10 @@ export interface BuilderClient {
 
 /** components/p2/quotations/api.ts */
 export interface QuotationsClient {
-  listQuotations(s: S, status?: QuotationStatus): Promise<QuotationListItem[]>;
+  listQuotations(
+    s: S,
+    filter?: { status?: QuotationStatus; opportunityId?: string },
+  ): Promise<QuotationListItem[]>;
   getQuotation(s: S, id: string): Promise<QuotationDetail>;
 }
 

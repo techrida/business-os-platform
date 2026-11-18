@@ -105,18 +105,24 @@ describe('DraftingController', () => {
     expect(() => controller.create(undefined, null)).toThrow(/Idempotency-Key/);
   });
 
-  it('lists with no filter, or with a valid status', async () => {
+  it('lists with no filter, or with a valid status and/or opportunity', async () => {
     const { service, controller } = await setup();
-    await controller.list(undefined);
-    expect(service.list).toHaveBeenLastCalledWith(undefined);
-    await controller.list('draft');
-    expect(service.list).toHaveBeenLastCalledWith('draft');
+    await controller.list(undefined, undefined);
+    expect(service.list).toHaveBeenLastCalledWith({});
+    await controller.list('draft', undefined);
+    expect(service.list).toHaveBeenLastCalledWith({ status: 'draft' });
+    await controller.list(undefined, ID);
+    expect(service.list).toHaveBeenLastCalledWith({ opportunityId: ID });
+    await controller.list('returned', ID);
+    expect(service.list).toHaveBeenLastCalledWith({ status: 'returned', opportunityId: ID });
   });
 
-  it('answers 400 to a status that is not a quotation status, or sent twice', async () => {
+  it('answers 400 to a bad status or opportunityId, or either sent twice', async () => {
     const { service, controller } = await setup();
-    expect(() => controller.list('nonsense')).toThrow(BadRequestException);
-    expect(() => controller.list(['draft', 'sent'])).toThrow(BadRequestException);
+    expect(() => controller.list('nonsense', undefined)).toThrow(BadRequestException);
+    expect(() => controller.list(['draft', 'sent'], undefined)).toThrow(BadRequestException);
+    expect(() => controller.list(undefined, 'not-a-uuid')).toThrow(BadRequestException);
+    expect(() => controller.list(undefined, [ID, ID])).toThrow(BadRequestException);
     expect(service.list).not.toHaveBeenCalled();
   });
 
