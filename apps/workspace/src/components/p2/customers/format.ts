@@ -81,7 +81,7 @@ export function approvalFile(
   );
 }
 
-/** Pre-decision readiness. Acceptance is the result of approval, not its prerequisite. */
+/** Explain the current case gate, including pending row decisions and unavailable evidence. */
 export function approvalProblems(
   c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
   files: ApprovalFiles = new Map(),
