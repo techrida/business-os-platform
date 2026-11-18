@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { __resetEnvForTests } from '@/lib/env';
+import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 vi.mock('server-only', () => ({}));
@@ -57,6 +58,15 @@ afterEach(() => {
 });
 
 describe('GET /vendor/purchase-orders/:id/pdf', () => {
+  it('returns a retryable outage before querying the purchase order', async () => {
+    getSession.mockRejectedValue(new SessionUnavailableError());
+    const response = await call(ID);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('1');
+    expect(await response.text()).toBe(SESSION_UNAVAILABLE_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('refuses without a session (401, plain text) and calls nothing', async () => {
     getSession.mockResolvedValue(null);
     const res = await call(ID);
