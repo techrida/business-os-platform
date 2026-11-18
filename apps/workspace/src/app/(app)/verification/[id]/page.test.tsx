@@ -12,10 +12,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/bff', () => ({
-  requireStaffSession: async () => ({ roles: ['founder'] }),
+  requireStaffSession: () => Promise.resolve({ roles: ['founder'] }),
 }));
 vi.mock('@/components/p2/customers/api', () => ({
-  getCustomer: async () => undefined,
+  getCustomer: () => Promise.resolve(undefined),
   getVerificationCase: mocks.getVerificationCase,
 }));
 vi.mock('@/components/p2/crm/verification-api', () => ({
