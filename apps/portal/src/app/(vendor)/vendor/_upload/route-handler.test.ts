@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 import { callOf, DOC, json, stubPortalEnv, VER, vendorSession } from './test-kit';
@@ -85,6 +86,16 @@ describe.each([
       expect(res.status).toBe(403);
     }
     expect(getSession).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a retryable session outage before accessing the API', async () => {
+    getSession.mockRejectedValue(new SessionUnavailableError());
+    const res = await post(upload());
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    expect(await res.json()).toEqual({ error: SESSION_UNAVAILABLE_MESSAGE });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
