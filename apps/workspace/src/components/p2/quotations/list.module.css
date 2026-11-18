@@ -1,45 +1,123 @@
-/* Layout and small pieces that belong to the quotations list only. Everything else comes from
-   components/ui. Colours are Figma tokens. */
-
-.count {
-  white-space: nowrap;
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--grid-gutter);
 }
 
-/* The filter is a plain GET form: it works without script, and the URL carries the choice. */
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
+@media (min-width: 1100px) {
+  .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
-.filterField {
-  flex: 0 1 240px;
-  min-width: min(100%, 200px);
-}
-
-.toolbarActions {
+.toolbar,
+.toolbarActions,
+.pageSize {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
 }
 
+.toolbar {
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.search {
+  flex: 1 1 230px;
+  max-width: 280px;
+}
+
+.toolbarActions {
+  flex: 0 1 auto;
+  font-size: var(--font-size-body-small);
+}
+
+.toolbarActions .filter {
+  border-color: var(--button-primary-border);
+  color: var(--action-primary);
+}
+
+.results {
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--table-row-bg);
+}
+
+.results .table {
+  border: 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+.table th.statusColumn,
+.table td.statusColumn,
+.table th.actionColumn,
+.table td.actionColumn {
+  background: var(--surface-subtle);
+}
+
+.table th.statusColumn,
+.table td.statusColumn {
+  border-inline-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.table tbody tr:hover > td,
+.table tbody tr:focus-within > td {
+  background: var(--table-row-hover-bg);
+}
+
 .number {
+  display: inline-block;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+  background: var(--surface-muted);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
 
-/* A long customer name wraps inside its column instead of widening the table. */
 .customer {
   min-width: 12ch;
-  max-width: 36ch;
+}
+
+.owner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.owner > :first-child {
+  flex: none;
 }
 
 .amount {
-  font-weight: var(--font-weight-medium);
+  display: block;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .quiet {
   color: var(--text-secondary);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+  padding-right: 16px;
+}
+
+.footer > :first-child {
+  flex: 1 1 290px;
+}
+
+.pageSize {
+  padding: 8px 16px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
 }

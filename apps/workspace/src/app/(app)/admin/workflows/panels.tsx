@@ -3,6 +3,8 @@
 import { useActionState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/dialog';
+import { toast } from '@/components/ui/toast';
 import { Field, Input } from '@/components/ui/field';
 
 import adminStyles from '../admin.module.css';
@@ -53,27 +55,51 @@ export function ActionButton({
 }) {
   const [state, formAction, pending] = useActionState(action, IDLE);
   const look = LOOK[variant];
-  return (
-    <form
-      action={formAction}
-      className={styles.rowAction}
-      onSubmit={(event) => {
-        if (confirmText && !window.confirm(confirmText)) event.preventDefault();
-      }}
+  const button = (
+    <Button
+      type={confirmText ? 'button' : 'submit'}
+      variant={look.variant}
+      size="small"
+      className={look.className}
+      disabled={pending}
     >
+      {label}
+      {hiddenLabel ? <span className="sr-only"> {hiddenLabel}</span> : null}
+    </Button>
+  );
+  if (confirmText) {
+    return (
+      <ConfirmDialog
+        trigger={button}
+        title={hiddenLabel ? `${label} ${hiddenLabel}?` : `${label}?`}
+        description={confirmText}
+        confirmLabel={label}
+        destructive={variant === 'danger' || variant === 'dangerOutline'}
+        onConfirm={async () => {
+          const data = new FormData();
+          for (const [name, value] of Object.entries(fields)) data.set(name, value);
+          try {
+            const result = await action(IDLE, data);
+            if (result.status === 'error') {
+              toast.error(result.message);
+              return false;
+            }
+            toast.success(result.message);
+            return true;
+          } catch {
+            toast.error('Could not confirm the change. Refresh to check its status.');
+            return false;
+          }
+        }}
+      />
+    );
+  }
+  return (
+    <form action={formAction} className={styles.rowAction}>
       {Object.entries(fields).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
-      <Button
-        type="submit"
-        variant={look.variant}
-        size="small"
-        className={look.className}
-        disabled={pending}
-      >
-        {label}
-        {hiddenLabel ? <span className="sr-only"> {hiddenLabel}</span> : null}
-      </Button>
+      {button}
       <FormStatus state={state} pending={pending} />
     </form>
   );

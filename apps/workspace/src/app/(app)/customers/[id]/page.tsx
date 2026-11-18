@@ -22,12 +22,16 @@ import {
 } from '@/components/p2/customers/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
+import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { Icon } from '@/components/ui/icon';
+import { Breadcrumb, Page } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
-import { CellTitle, Table, Td, Th } from '@/components/ui/table';
+import { Table, Td, Th } from '@/components/ui/table';
+import { Tab, TabList, TabPanel, Tabs } from '@/components/ui/tabs';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
@@ -36,9 +40,10 @@ import { listPaymentTerms } from '@/components/p2/quote-builder/api';
 
 import { OpenCaseForm } from '../../verification/open-case-form';
 
+import { CustomerFeedback } from './customer-feedback';
 import styles from './customer.module.css';
 
-export const metadata: Metadata = { title: 'Customer · Business OS' };
+export const metadata: Metadata = { title: 'Organization · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const RELATIONSHIP = {
@@ -95,10 +100,18 @@ function Contacts({
   return (
     <Panel
       title="Contacts"
-      description={
-        result.status === 'fulfilled' && result.value.items.length > 0
-          ? `${result.value.total ?? result.value.items.length} on file.`
-          : undefined
+      className={styles.contacts}
+      actions={
+        mayWrite ? (
+          <ContactForm
+            action={addContactAction}
+            customerId={customerId}
+            idempotencyKey={randomUUID()}
+            hasPrimary={hasPrimary}
+            requireEmail={requireEmail}
+            inDialog
+          />
+        ) : null
       }
     >
       {result.status === 'rejected' ? (
@@ -115,11 +128,11 @@ function Contacts({
             : 'Nobody has been added for this customer yet.'}
         </EmptyState>
       ) : (
-        <Table caption="Contacts" minWidth={640}>
+        <Table caption="Contacts" minWidth={400} className={styles.contactTable ?? ''}>
           <thead>
             <tr>
-              <Th>Name</Th>
-              <Th>Email</Th>
+              <Th>Contact</Th>
+              <Th>Job title</Th>
               <Th>Phone</Th>
             </tr>
           </thead>
@@ -127,20 +140,26 @@ function Contacts({
             {result.value.items.map((c) => (
               <tr key={c.id}>
                 <Td>
-                  <CellTitle
-                    title={<span className={styles.long}>{c.fullName}</span>}
-                    meta={c.isPrimary ? <Badge tone="info">Main contact</Badge> : null}
-                    note={c.title !== null ? <span className={styles.long}>{c.title}</span> : null}
-                  />
+                  <div className={styles.identity}>
+                    <Avatar name={c.fullName} shape="circle" />
+                    <div className={styles.identityText}>
+                      <span className={styles.contactName}>{c.fullName}</span>
+                      {c.email !== null ? (
+                        <a href={`mailto:${c.email}`} className={styles.email}>
+                          {c.email}
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
                 </Td>
                 <Td>
-                  {c.email !== null ? (
-                    <a href={`mailto:${c.email}`} className={styles.long}>
-                      {c.email}
-                    </a>
-                  ) : (
-                    <span className={styles.quiet}>Not set</span>
-                  )}
+                  <div className={styles.contactTitle}>
+                    {c.title !== null ? <span>{c.title}</span> : null}
+                    {c.isPrimary ? <Badge tone="info">Main contact</Badge> : null}
+                    {c.title === null && !c.isPrimary ? (
+                      <span className={styles.quiet}>Not set</span>
+                    ) : null}
+                  </div>
                 </Td>
                 <Td nowrap>
                   {c.phone !== null ? (
@@ -156,20 +175,6 @@ function Contacts({
           </tbody>
         </Table>
       )}
-
-      {mayWrite ? (
-        <div className={styles.addContact}>
-          <h3 className={styles.subhead}>Add a contact</h3>
-          <ContactForm
-            action={addContactAction}
-            customerId={customerId}
-            // One key per render of this page, so a double click saves the contact once.
-            idempotencyKey={randomUUID()}
-            hasPrimary={hasPrimary}
-            requireEmail={requireEmail}
-          />
-        </div>
-      ) : null}
     </Panel>
   );
 }
@@ -332,15 +337,21 @@ export default async function CustomerPage({
     if (f.status === 404) notFound();
     return (
       <Page width="narrow">
-        <Breadcrumb items={[{ label: 'Customers', href: '/customers' }, { label: 'Customer' }]} />
+        <Breadcrumb
+          items={[{ label: 'Organizations', href: '/customers' }, { label: 'Organization' }]}
+        />
         <Alert
           tone={f.status === 403 ? 'info' : 'error'}
           role="alert"
-          title={f.status === 403 ? 'You cannot open this customer' : 'This customer did not load'}
+          title={
+            f.status === 403
+              ? 'You cannot open this organization'
+              : 'This organization did not load'
+          }
           actions={f.status !== 403 ? <a href={here}>Try again</a> : null}
         >
           {f.status === 403
-            ? 'Customers are for the sales and finance teams. Ask an administrator if you need access.'
+            ? 'Organizations are for the sales and finance teams. Ask an administrator if you need access.'
             : f.message}
         </Alert>
       </Page>
@@ -399,7 +410,6 @@ export default async function CustomerPage({
     {
       key: 'address',
       label: 'Address',
-      wide: true,
       value: <CustomerAddress address={customer.address} className={styles.address} />,
     },
   ];
@@ -407,27 +417,10 @@ export default async function CustomerPage({
   return (
     <Page>
       <Breadcrumb
-        items={[{ label: 'Customers', href: '/customers' }, { label: customer.legalName }]}
+        items={[{ label: 'Organizations', href: '/customers' }, { label: customer.legalName }]}
       />
-      <PageHeader
-        title={<span className={styles.long}>{customer.legalName}</span>}
-        status={<Badge tone={relationship.tone}>{relationship.text}</Badge>}
-        description={customer.number}
-        actions={
-          mayWrite && !merged ? (
-            <LinkButton href={`${here}/edit`} variant="secondary">
-              Edit customer
-            </LinkButton>
-          ) : null
-        }
-      />
-
-      {flags.created !== undefined ? (
-        <Alert tone="success" role="status" title="Customer added.">
-          Add a contact below, then send their documents for verification.
-        </Alert>
-      ) : flags.saved !== undefined ? (
-        <Alert tone="success" role="status" title="Changes saved." />
+      {flags.created !== undefined || flags.saved !== undefined ? (
+        <CustomerFeedback created={flags.created !== undefined} href={here} />
       ) : null}
 
       {merged ? (
@@ -438,42 +431,79 @@ export default async function CustomerPage({
         </Alert>
       ) : null}
 
-      <div className={styles.columns}>
-        <div className={styles.main}>
-          <Panel title="Profile">
-            <FactList facts={facts} />
-          </Panel>
-          <Contacts
-            result={contacts}
-            here={here}
-            mayWrite={mayWrite && !merged}
-            customerId={customer.id}
-          />
-          <Accounts
-            customer={customer}
-            terms={
-              new Map(
-                paymentTerms.status === 'fulfilled'
-                  ? paymentTerms.value.map((t) => [t.id, t.label])
-                  : [],
-              )
-            }
-          />
+      <Tabs defaultSelectedKey="contacts">
+        <TabList aria-label="Organization sections">
+          <Tab id="contacts">Contacts</Tab>
+          <Tab id="terms">Terms by legal entity</Tab>
+        </TabList>
+        <div className={styles.columns}>
+          <Card className={styles.profile} as="aside" aria-labelledby="organization-name">
+            <div className={styles.profileIdentity}>
+              <Avatar
+                name={customer.legalName}
+                size="large"
+                shape="circle"
+                className={styles.profileAvatar}
+              />
+              <h1 id="organization-name" className={styles.profileName}>
+                {customer.legalName}
+              </h1>
+              <Badge tone={relationship.tone}>{relationship.text}</Badge>
+              {mayWrite && !merged ? (
+                <LinkButton href={`${here}/edit`} className={styles.editLink}>
+                  Edit Details
+                </LinkButton>
+              ) : null}
+            </div>
+            <Panel
+              title={
+                <span className={styles.infoHeading}>
+                  <Icon name="user" size={16} />
+                  Organization Information
+                </span>
+              }
+              className={styles.info}
+            >
+              <FactList facts={facts} className={styles.facts ?? ''} />
+            </Panel>
+          </Card>
+          <div className={styles.main}>
+            <TabPanel id="contacts">
+              <Contacts
+                result={contacts}
+                here={here}
+                mayWrite={mayWrite && !merged}
+                customerId={customer.id}
+              />
+            </TabPanel>
+            <TabPanel id="terms">
+              <Accounts
+                customer={customer}
+                terms={
+                  new Map(
+                    paymentTerms.status === 'fulfilled'
+                      ? paymentTerms.value.map((t) => [t.id, t.label])
+                      : [],
+                  )
+                }
+              />
+            </TabPanel>
+          </div>
+          <div className={styles.verification}>
+            <Verification
+              result={cases}
+              here={here}
+              maySee={maySeeVerification}
+              // One key per render, so retrying names the same request.
+              open={
+                mayWrite && !merged
+                  ? { customerId: customer.id, idempotencyKey: randomUUID() }
+                  : null
+              }
+            />
+          </div>
         </div>
-
-        <div className={styles.sideStack}>
-          <Verification
-            result={cases}
-            here={here}
-            maySee={maySeeVerification}
-            // One key per render of this page: a double click or a retry after a network error
-            // names the same request.
-            open={
-              mayWrite && !merged ? { customerId: customer.id, idempotencyKey: randomUUID() } : null
-            }
-          />
-        </div>
-      </div>
+      </Tabs>
     </Page>
   );
 }

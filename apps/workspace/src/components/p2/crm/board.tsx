@@ -1,11 +1,11 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 
 import styles from './crm.module.css';
-import { MoveForm } from './move-form';
+import { MoveForm, toastMoveResult } from './move-form';
 import type { BoardCard, BoardColumnData, MoveAction } from './types';
 
 /**
@@ -20,12 +20,25 @@ export function Board({
   columns,
   action,
   noun,
+  className,
 }: {
   columns: BoardColumnData[];
   action: MoveAction;
   /** "lead" or "opportunity", for the hint and empty columns. */
   noun: string;
+  className?: string | undefined;
 }) {
+  // A successful move re-renders the card in its new column, so the card's form unmounts with the
+  // result; the board outlives it and announces the outcome when the action resolves.
+  const moveAndAnnounce = useCallback<MoveAction>(
+    async (prev, form) => {
+      const result = await action(prev, form);
+      const recordId = form.get('recordId');
+      toastMoveResult(result, `board-move-${typeof recordId === 'string' ? recordId : ''}`);
+      return result;
+    },
+    [action],
+  );
   const cards = columns.flatMap((c) => c.cards);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
@@ -49,7 +62,7 @@ export function Board({
   }
 
   return (
-    <div>
+    <div className={className}>
       <p className={styles.boardHint}>
         Drag a card to a column, or open Move on a card to pick the stage. Either way you confirm
         with Move.
@@ -110,7 +123,7 @@ export function Board({
                     <BoardCardItem
                       key={card.id}
                       card={card}
-                      action={action}
+                      action={moveAndAnnounce}
                       open={openId === card.id}
                       onToggle={(open) =>
                         setOpenId(open ? card.id : (id) => (id === card.id ? null : id))
@@ -198,6 +211,7 @@ function BoardCardItem({
             presetStage={presetStage}
             emptyText=""
             compact
+            toasts={false}
           />
         </details>
       ) : null}

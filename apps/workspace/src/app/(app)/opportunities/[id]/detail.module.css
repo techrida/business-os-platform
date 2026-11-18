@@ -1,0 +1,136 @@
+.intro {
+  display: grid;
+  gap: 12px;
+}
+
+.metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.stageCard,
+.summary,
+.records {
+  --section-inset: clamp(16px, 2vw, 24px);
+}
+
+.stageCard.stageCard,
+.summary.summary,
+.records.records {
+  padding: var(--section-inset);
+  box-shadow: 0 1px 2px var(--border-subtle);
+}
+
+.pipeline.pipeline {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 112px), 1fr));
+}
+
+.stageControls {
+  display: grid;
+  gap: 12px;
+  margin-block-start: 16px;
+  padding-block-start: 16px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.stageControls form {
+  align-items: end;
+  grid-template-columns: minmax(0, 20rem) auto;
+  justify-content: start;
+}
+
+.stageControls form > [role='alert'],
+.stageControls form[data-needs-reason] > * {
+  grid-column: 1 / -1;
+}
+
+.reasonBox {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.quiet {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+}
+
+.facts.facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.facts a,
+.quotesTable a {
+  color: var(--action-primary);
+}
+
+.records.records {
+  gap: 0;
+  padding: 0;
+}
+
+.records > :first-child {
+  align-items: center;
+  padding: 16px var(--section-inset);
+  border-bottom: var(--border-width-thin) solid var(--border-default);
+}
+
+.records > p,
+.records > [role='alert'],
+.activityForm {
+  margin: 16px var(--section-inset);
+}
+
+.activityForm {
+  max-width: 44rem;
+}
+
+.quotesTable.quotesTable {
+  border: 0;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+}
+
+.quotesTable th,
+.quotesTable td {
+  padding: 16px var(--section-inset);
+}
+
+.quotesTable tbody tr[data-accepted] td {
+  background: var(--status-success-subtle);
+}
+
+.quotesTable tbody tr[data-accepted]:is(:hover, :focus-within) td {
+  background: var(--table-row-hover-bg);
+}
+
+.activityList > ol > li,
+.activityList > ol > li:first-child {
+  padding: 12px var(--section-inset);
+}
+
+.activityForm:not([hidden]) + .activityList > ol {
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.activityList > [role='alert'] {
+  margin: 16px var(--section-inset);
+}
+
+@media (max-width: 680px) {
+  .facts.facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 360px) {
+  .facts.facts,
+  .stageControls form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

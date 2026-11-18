@@ -18,7 +18,7 @@ export function FxForm({ today }: { today: string }) {
   return (
     <form action={formAction} className={styles.form}>
       <div className={styles.formRow}>
-        <Field label="Currency">
+        <Field label="Currency" error={state.fieldErrors?.currency}>
           {(control) => (
             <Select name="currency" defaultValue={kept.currency ?? 'USD'} {...control}>
               <option value="USD">USD</option>
@@ -26,7 +26,11 @@ export function FxForm({ today }: { today: string }) {
             </Select>
           )}
         </Field>
-        <Field label="Rate (NPR for 1 unit)" hint="Up to 6 decimals.">
+        <Field
+          error={state.fieldErrors?.rateNpr}
+          label="Rate (NPR for 1 unit)"
+          hint="Up to 6 decimals."
+        >
           {(control) => (
             <Input
               name="rateNpr"
@@ -40,7 +44,7 @@ export function FxForm({ today }: { today: string }) {
             />
           )}
         </Field>
-        <Field label="Applies from">
+        <Field label="Applies from" error={state.fieldErrors?.rateDate}>
           {(control) => (
             <DatePicker
               name="rateDate"
@@ -50,7 +54,7 @@ export function FxForm({ today }: { today: string }) {
             />
           )}
         </Field>
-        <Field label="Source">
+        <Field label="Source" error={state.fieldErrors?.source}>
           {(control) => (
             <Input
               name="source"

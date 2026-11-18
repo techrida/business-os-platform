@@ -20,10 +20,11 @@ beforeEach(() => {
 afterEach(async () => {
   await mounted?.unmount();
   mounted = undefined;
+  vi.unstubAllGlobals();
 });
 
 async function mount(
-  props: { hasPrimary?: boolean; requireEmail?: boolean },
+  props: { hasPrimary?: boolean; requireEmail?: boolean; inDialog?: boolean },
   action: (prev: ContactFormState, form: FormData) => Promise<ContactFormState> = (prev) =>
     Promise.resolve(prev),
 ) {
@@ -34,6 +35,7 @@ async function mount(
       idempotencyKey={KEY}
       hasPrimary={props.hasPrimary ?? false}
       requireEmail={props.requireEmail ?? false}
+      inDialog={props.inDialog ?? false}
     />,
   );
   return mounted.container;
@@ -101,4 +103,48 @@ it('confirms a saved contact with a success toast and clears the form', async ()
   await submit(root);
   expect(toast.success).toHaveBeenCalledWith('Sita Rai was added.');
   expect(root.querySelector<HTMLInputElement>('[name="fullName"]')?.value).toBe('');
+});
+
+it('submits from the dialog footer, keeping a refused draft and closing after a save', async () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const action = vi.fn<(prev: ContactFormState, form: FormData) => Promise<ContactFormState>>();
+  action.mockImplementationOnce((prev) =>
+    Promise.resolve({ ...prev, errors: { email: 'Enter an email address.' } }),
+  );
+  action.mockImplementationOnce((prev) =>
+    Promise.resolve({
+      ...prev,
+      errors: {},
+      saved: 'Contact added.',
+      savedCount: prev.savedCount + 1,
+    }),
+  );
+  const root = await mount({ inDialog: true, requireEmail: true, hasPrimary: true }, action);
+
+  await click(root.querySelector('[aria-haspopup="dialog"]'));
+  const dialog = document.querySelector('[role="dialog"]');
+  const fullName = dialog?.querySelector<HTMLInputElement>('[name="fullName"]') ?? null;
+  const email = dialog?.querySelector<HTMLInputElement>('[name="email"]') ?? null;
+  const footerSubmit = dialog?.querySelector('footer button[type="submit"]') ?? null;
+  expect(email?.required).toBe(true);
+  expect(dialog?.querySelector<HTMLInputElement>('[name="isPrimary"]')?.disabled).toBe(true);
+
+  await fill(fullName, 'Sita Rai');
+  await click(footerSubmit);
+  expect(action.mock.calls[0]?.[1].get('fullName')).toBe('Sita Rai');
+  expect(action.mock.calls[0]?.[1].get('requireEmail')).toBe('yes');
+  expect(fullName?.value).toBe('Sita Rai');
+  expect(email?.getAttribute('aria-invalid')).toBe('true');
+
+  await fill(email, 'sita@example.test');
+  await click(footerSubmit);
+  expect(action.mock.calls[1]?.[1].get('email')).toBe('sita@example.test');
+  expect(toast.success).toHaveBeenCalledWith('Contact added.');
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
 });

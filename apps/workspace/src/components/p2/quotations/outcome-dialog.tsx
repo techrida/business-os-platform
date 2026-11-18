@@ -1,9 +1,10 @@
 'use client';
 
-import { useActionState, useId, useRef, useState, type ReactNode } from 'react';
+import { useActionState, useCallback, useId, useRef, useState, type ReactNode } from 'react';
 
 import { outcomeAction, type ActionState } from '@/app/(app)/quotations/[id]/actions';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Field, Textarea } from '@/components/ui/field';
 
 import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './action-dialog';
 import styles from './actions.module.css';
@@ -82,6 +83,11 @@ export function OutcomeDialog({
   const [evidence, setEvidence] = useState<readonly string[]>([]);
   const [comment, setComment] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
+  const [popoverContainer, setPopoverContainer] = useState<HTMLElement>();
+  const connectForm = useCallback((form: HTMLFormElement | null) => {
+    formRef.current = form;
+    setPopoverContainer(form?.closest<HTMLElement>('[role="dialog"]') ?? undefined);
+  }, []);
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, formRef, summaryRef);
 
@@ -103,7 +109,7 @@ export function OutcomeDialog({
           </p>
         </div>
       ) : (
-        <form id={formId} ref={formRef} action={formAction}>
+        <form id={formId} ref={connectForm} action={formAction}>
           <input type="hidden" name="quotationId" value={quotationId} />
           <input type="hidden" name="versionId" value={versionId} />
           <input type="hidden" name="expectedVersion" value={version} />
@@ -134,12 +140,13 @@ export function OutcomeDialog({
 
             <Field label="Date the customer answered" error={state.errors?.decidedOn}>
               {(control) => (
-                <Input
-                  type="date"
+                <DatePicker
                   name="decidedOn"
                   value={decidedOn}
                   max={today}
-                  onChange={(e) => setDecidedOn(e.target.value)}
+                  onChange={setDecidedOn}
+                  popoverContainer={popoverContainer}
+                  disabled={pending}
                   {...control}
                 />
               )}

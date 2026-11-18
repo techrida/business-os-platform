@@ -21,9 +21,13 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
   try {
     await test.step('create a lead', async () => {
       await page.goto('/leads/new');
-      await page.getByLabel('Title').fill(title);
-      await page.getByLabel('Source').selectOption('referral');
-      await page.getByLabel('Company').fill('Binford Ltd.');
+      await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
+      await page
+        .getByRole('combobox', { name: 'Lead source', exact: true })
+        .selectOption('referral');
+      await page
+        .getByRole('textbox', { name: 'Company or organization', exact: true })
+        .fill('Binford Ltd.');
       await page.getByLabel('Contact person').fill('Sunita Shrestha');
       await page.getByRole('button', { name: 'Save lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
@@ -31,10 +35,12 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
 
     await test.step('a refused form keeps what was typed and names the field', async () => {
       await page.goto('/leads/new');
-      await page.getByLabel('Title').fill('Half a lead');
+      await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill('Half a lead');
       await page.getByRole('button', { name: 'Save lead' }).click();
       await expect(page.getByText('Choose where the lead came from.')).toBeVisible();
-      await expect(page.getByLabel('Title')).toHaveValue('Half a lead');
+      await expect(page.getByRole('textbox', { name: 'Lead title', exact: true })).toHaveValue(
+        'Half a lead',
+      );
     });
 
     await test.step('log a call on the lead', async () => {
