@@ -996,6 +996,18 @@ describe('a memo out of scope looks like an unknown id (R23)', () => {
 });
 
 describe('internal memo template', () => {
+  it('returns a selectable signer with a blank mirrored name using only the email local part', async () => {
+    const staff = await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId });
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.update(users)
+        .set({ displayName: ' ', email: 'accounts.desk@example.test' })
+        .where(eq(users.id, staff.userId)),
+    );
+    const directory = await request(baseUrl).get('/v1/test-memos/directory').expect(200);
+    const person = MemoDirectorySchema.parse(directory.body).people.find((p) => p.userId === staff.userId);
+    expect(person?.name).toBe('accounts.desk');
+  });
+
   it('returns only the active company directory and snapshots authoritative staff metadata', async () => {
     const dept = await createDepartment(appPool, scope);
     const machine = await createStaffUser(appPool, { ...scope, idpOrgId: staffIdpOrgId });
