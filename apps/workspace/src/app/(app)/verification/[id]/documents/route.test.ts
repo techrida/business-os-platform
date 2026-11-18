@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 import type { Session } from '@/lib/session';
 
-import { POST } from './route';
+import { GET, POST } from './route';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   isSameOrigin: vi.fn(),
   createDocument: vi.fn(),
   uploadDocumentContent: vi.fn(),
+  getVerificationCase: vi.fn(),
+  getDocument: vi.fn(),
 }));
 
 // The real bff reads the environment and cookies; the route's own order of checks is what is tested.
@@ -32,12 +34,47 @@ vi.mock('@/lib/api-kernel', () => ({
   uploadDocumentContent: mocks.uploadDocumentContent,
 }));
 
+vi.mock('@/components/p2/crm/verification-api', () => ({ getDocument: mocks.getDocument }));
+vi.mock('@/components/p2/customers/api', () => ({
+  getVerificationCase: mocks.getVerificationCase,
+}));
+
 const CASE = '11111111-1111-4111-8111-111111111111';
 const DOC = '33333333-3333-4333-8333-333333333333';
 const VERSION = '44444444-4444-4444-8444-444444444444';
 const session = { accessToken: 'secret' } as Session;
 const MB = 1024 * 1024;
 
+const uploadedVersion = {
+  id: VERSION,
+  documentId: DOC,
+  version: 1,
+  filename: 'PAN certificate.pdf',
+  sizeBytes: 7,
+  detectedMime: 'application/pdf',
+  declaredMime: 'application/pdf',
+  status: 'quarantined',
+  sha256: null,
+  scanSignature: null,
+  scannedAt: null,
+  uploadedBy: null,
+  createdAt: '2026-11-18T12:00:00.000Z',
+};
+const projection = {
+  documentId: DOC,
+  versionId: VERSION,
+  filename: 'PAN certificate.pdf',
+  sizeBytes: 7,
+  mimeType: 'application/pdf',
+  status: 'quarantined',
+};
+const document = {
+  id: DOC,
+  ownerType: 'verification_case',
+  ownerId: CASE,
+  currentVersionId: null,
+  versions: [uploadedVersion],
+};
 interface Init {
   length?: string | null;
   body?: string | null;
@@ -68,14 +105,16 @@ beforeEach(() => {
   mocks.createDocument
     .mockReset()
     .mockResolvedValue({ documentId: DOC, versionId: VERSION, uploadPath: '/x' });
-  mocks.uploadDocumentContent.mockReset().mockResolvedValue({ id: VERSION });
+  mocks.uploadDocumentContent.mockReset().mockResolvedValue(uploadedVersion);
+  mocks.getDocument.mockReset().mockResolvedValue(document);
+  mocks.getVerificationCase.mockReset().mockResolvedValue({ id: CASE });
 });
 
 describe('POST /verification/:id/documents', () => {
   it('reserves a document owned by the case, streams the bytes, and answers 201 with the ids', async () => {
     const res = await upload();
     expect(res.status).toBe(201);
-    expect(await res.json()).toEqual({ documentId: DOC, versionId: VERSION });
+    expect(await res.json()).toEqual(projection);
     expect(mocks.createDocument).toHaveBeenCalledWith(session, {
       ownerType: 'verification_case',
       ownerId: CASE,
@@ -132,5 +171,40 @@ describe('POST /verification/:id/documents', () => {
     expect((await upload()).status).toBe(403);
     mocks.uploadDocumentContent.mockRejectedValueOnce(new ApiError(503, 'x'));
     expect((await upload()).status).toBe(502);
+  });
+});
+
+function status(documentId: string, versionId: string): Promise<Response> {
+  return GET(
+    new Request(
+      `https://app.test/verification/${CASE}/documents?documentId=${documentId}&versionId=${versionId}`,
+    ),
+    { params: Promise.resolve({ id: CASE }) },
+  );
+}
+
+describe('GET /verification/:id/documents', () => {
+  it('projects the fresh status of the exact version returned by the upload', async () => {
+    const response = await upload();
+    const { documentId, versionId } = (await response.json()) as typeof projection;
+    expect(await (await status(documentId, versionId)).json()).toEqual(projection);
+    mocks.getDocument.mockResolvedValueOnce({
+      ...document,
+      versions: [{ ...uploadedVersion, status: 'clean' }],
+    });
+    expect(await (await status(documentId, versionId)).json()).toEqual({
+      ...projection,
+      status: 'clean',
+    });
+    expect(mocks.getVerificationCase).toHaveBeenCalledWith(session, CASE);
+  });
+
+  it('refuses a document from another case, a different version, or a no-longer-readable case', async () => {
+    mocks.getDocument.mockResolvedValueOnce({ ...document, ownerId: VERSION });
+    expect((await status(DOC, VERSION)).status).toBe(404);
+    expect((await status(DOC, CASE)).status).toBe(404);
+    mocks.getVerificationCase.mockRejectedValueOnce(new ApiError(403, 'forbidden'));
+    expect((await status(DOC, VERSION)).status).toBe(403);
+    expect(mocks.getDocument).toHaveBeenCalledTimes(2);
   });
 });
