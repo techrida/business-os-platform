@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 import { memoPdfInputOf } from '@/lib/memo-pdf-input';
 import type { MemoDraftValues } from '@/lib/memo-working-draft-types';
@@ -257,39 +258,14 @@ function MemoFormInner({
 
   return (
     <div className={directory ? templateStyles.layout : undefined}>
-      <form action={formAction} noValidate className={styles.form} onBlur={() => sync.flush()}>
+      <form
+        action={formAction}
+        noValidate
+        className={templateStyles.controls}
+        onBlur={() => sync.flush()}
+      >
         {directory ? (
-          <>
-            <input type="hidden" name="template" value={JSON.stringify(templateInput)} />
-            <Field label="Department" error={err.template}>
-              {(control) => (
-                <Select
-                  {...control}
-                  ref={departmentRef}
-                  value={fields.departmentId}
-                  onChange={(e) => setField('departmentId')(e.target.value)}
-                  required
-                >
-                  <option value="">Choose department</option>
-                  {directory.departments.map((d) => (
-                    <option value={d.id} key={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            {directory.departments.length === 0 ? (
-              <Alert tone="warning">
-                Add a department to the company directory before creating a memo.
-              </Alert>
-            ) : null}
-            <Field label="Date">
-              {(control) => (
-                <DatePicker {...control} value={fields.date} onChange={setField('date')} required />
-              )}
-            </Field>
-          </>
+          <input type="hidden" name="template" value={JSON.stringify(templateInput)} />
         ) : null}
         {memoId ? <input type="hidden" name="memoId" value={memoId} /> : null}
         {memoVersion !== undefined ? (
@@ -303,35 +279,73 @@ function MemoFormInner({
           </Alert>
         ) : null}
 
-        <Field label={directory ? 'Subject' : 'Title'} error={err.title}>
-          {(control) => (
-            <Input
-              ref={titleRef}
-              name="title"
-              value={values.title}
-              onChange={set('title')}
-              maxLength={200}
-              required
-              {...control}
-            />
-          )}
-        </Field>
+        <Panel title={memoId ? 'Edit memo' : 'Memo details'}>
+          {directory ? (
+            <div className={templateStyles.metadataRow}>
+              <Field label="Department" error={err.template}>
+                {(control) => (
+                  <Select
+                    {...control}
+                    ref={departmentRef}
+                    value={fields.departmentId}
+                    onChange={(e) => setField('departmentId')(e.target.value)}
+                    required
+                  >
+                    <option value="">Choose department</option>
+                    {directory.departments.map((d) => (
+                      <option value={d.id} key={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="Date">
+                {(control) => (
+                  <DatePicker
+                    {...control}
+                    value={fields.date}
+                    onChange={setField('date')}
+                    required
+                  />
+                )}
+              </Field>
+            </div>
+          ) : null}
+          {directory && directory.departments.length === 0 ? (
+            <Alert tone="warning">
+              Add a department to the company directory before creating a memo.
+            </Alert>
+          ) : null}
 
-        <Field label={directory ? 'Body' : 'Details'} error={err.body}>
-          {(control) => (
-            <Textarea
-              name="body"
-              rows={6}
-              value={values.body}
-              onChange={set('body')}
-              maxLength={10000}
-              {...control}
-            />
-          )}
-        </Field>
+          <Field label={directory ? 'Subject' : 'Title'} error={err.title}>
+            {(control) => (
+              <Input
+                ref={titleRef}
+                name="title"
+                value={values.title}
+                onChange={set('title')}
+                maxLength={200}
+                required
+                {...control}
+              />
+            )}
+          </Field>
 
-        {directory ? (
-          <>
+          <Field label={directory ? 'Body' : 'Details'} error={err.body}>
+            {(control) => (
+              <Textarea
+                name="body"
+                rows={6}
+                value={values.body}
+                onChange={set('body')}
+                maxLength={10000}
+                {...control}
+              />
+            )}
+          </Field>
+
+          {directory ? (
             <Field label="Closing">
               {(control) => (
                 <Textarea
@@ -342,6 +356,11 @@ function MemoFormInner({
                 />
               )}
             </Field>
+          ) : null}
+        </Panel>
+
+        {directory ? (
+          <Panel title="Sign-off">
             <SignerSection
               people={directory.people}
               currentUserId={preparedBy}
@@ -350,46 +369,48 @@ function MemoFormInner({
               approvedBy={fields.approvedBy}
               onApprovedBy={setField('approvedBy')}
             />
-          </>
+          </Panel>
         ) : null}
-        <div className={styles.amountRow}>
-          <Field
-            label="Amount"
-            hint="For example 1250.50. The NPR value is frozen when you save, using that day's rate."
-            error={err.amount}
-          >
-            {(control) => (
-              <Input
-                ref={amountRef}
-                name="amount"
-                inputMode="decimal"
-                autoComplete="off"
-                value={values.amount}
-                onChange={set('amount')}
-                required
-                className={styles.numeric}
-                {...control}
-              />
-            )}
-          </Field>
+        <Panel title="Amount and currency">
+          <div className={styles.amountRow}>
+            <Field
+              label="Amount"
+              hint="For example 1250.50. The NPR value is frozen when you save, using that day's rate."
+              error={err.amount}
+            >
+              {(control) => (
+                <Input
+                  ref={amountRef}
+                  name="amount"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={values.amount}
+                  onChange={set('amount')}
+                  required
+                  className={styles.numeric}
+                  {...control}
+                />
+              )}
+            </Field>
 
-          <Field label="Currency" error={err.currency}>
-            {(control) => (
-              <Select
-                name="currency"
-                value={values.currency}
-                onChange={set('currency')}
-                {...control}
-              >
-                {CURRENCY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
+            <Field label="Currency" error={err.currency}>
+              {(control) => (
+                <Select
+                  name="currency"
+                  value={values.currency}
+                  onChange={set('currency')}
+                  {...control}
+                >
+                  {CURRENCY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          </div>
+        </Panel>
 
         <div className={templateStyles.footer}>
           <div className={templateStyles.footerIcons} role="group" aria-label="Draft actions">
