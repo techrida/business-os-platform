@@ -335,10 +335,11 @@ function logStoreFailure(
  * a retryable notice (pages) or answer 503 (Route Handlers), and nothing protected is served. A
  * transient store failure must not log the user out, which is what returning null used to do.
  *
- * The read gets one readiness-aware retry within READ_DEADLINE_MS. Writes are never retried:
- * a failed slide keeps the session as read (the TTL catches up on the next request), and a store
- * failure during a token refresh keeps the current token while it is still valid, because
- * repeating the refresh would spend a rotated refresh token twice.
+ * The read gets one readiness-aware retry within READ_DEADLINE_MS. A failed slide is not retried:
+ * it keeps the session as read (the TTL catches up on the next request). The refresh itself is
+ * never repeated, because that would spend a rotated refresh token twice; only the write of the
+ * rotated tokens is retried once (up to about 2 s more: the ready wait plus the command timeout).
+ * If that also fails, the current token is kept while it is still valid.
  */
 export async function getSession(): Promise<Session | null> {
   const id = (await cookies()).get(SESSION_COOKIE)?.value;

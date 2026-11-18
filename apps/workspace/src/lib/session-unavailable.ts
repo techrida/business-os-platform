@@ -34,7 +34,8 @@ export function isSessionUnavailable(error: unknown): boolean {
 
 /**
  * 503 for a Route Handler whose session check could not reach the store. The browser keeps its
- * cookie and may retry; the body has the same shape as every other error the handlers return.
+ * cookie and may retry. The body carries a readable message, and `reload: false` tells a client
+ * not to reload the page for it.
  */
 export function sessionUnavailableResponse(): Response {
   return Response.json(
