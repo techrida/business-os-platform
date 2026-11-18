@@ -9,6 +9,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { Alert } from '@/components/ui/alert';
+import { AuditActor } from '@/components/ui/audit-actor';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import {
@@ -67,8 +68,13 @@ function titleOf(snapshot: unknown): string | null {
   return null;
 }
 
-function Person({ id }: { id: string }) {
-  return <span title={id}>person {shortId(id)}</span>;
+/**
+ * Names for the people the memo's frozen signer list already knows (preparer, recommenders, approver),
+ * keyed by lowercase user id. The approvals API returns bare ids and names are admin-only, so these are
+ * the only names this page can show without a lookup of its own.
+ */
+function signerNames(signers: readonly { userId: string; name: string }[]): Map<string, string> {
+  return new Map(signers.map((s) => [s.userId.toLowerCase(), s.name]));
 }
 
 export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -137,6 +143,10 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const selectedSigners = memoTemplate.success
     ? [...memoTemplate.data.recommenders, memoTemplate.data.approvedBy]
     : [];
+  const names = signerNames(
+    memoTemplate.success ? [memoTemplate.data.preparedBy, ...selectedSigners] : [],
+  );
+  const person = (id: string) => <AuditActor id={id} name={names.get(id.toLowerCase())} />;
   const rows = snapshotEntries(request.snapshot).filter(
     (row) => !memoTemplate.success || row.key !== 'template',
   );
@@ -160,11 +170,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
         {step.decidedBy ? (
           <>
             <br />
-            Decided by <Person id={step.decidedBy} />
+            Decided by {person(step.decidedBy)}
             {step.decidedOnBehalfOf ? (
               <>
                 {' '}
-                for <Person id={step.decidedOnBehalfOf} />
+                for {person(step.decidedOnBehalfOf)}
               </>
             ) : null}
           </>
@@ -186,7 +196,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             {title !== null ? `${request.documentNumber} · ` : ''}
             Submitted <time dateTime={request.submittedAt}>
               {when(request.submittedAt)}
-            </time> by <Person id={request.requesterUserId} />
+            </time> by {person(request.requesterUserId)}
           </>
         }
       />
@@ -247,11 +257,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                     <div className={styles.eventHead}>
                       <span className={styles.eventName}>{ACTION_LABEL[a.action] ?? a.action}</span>
                       <span className={styles.eventMeta}>
-                        <Person id={a.actorUserId} />
+                        {person(a.actorUserId)}
                         {a.onBehalfOfUserId ? (
                           <>
                             {' '}
-                            for <Person id={a.onBehalfOfUserId} />
+                            for {person(a.onBehalfOfUserId)}
                           </>
                         ) : null}
                       </span>

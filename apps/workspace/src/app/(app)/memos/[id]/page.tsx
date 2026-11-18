@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { Alert } from '@/components/ui/alert';
+import { actorLabel } from '@/components/ui/audit-actor';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import {
@@ -46,7 +47,7 @@ function Timeline({ events }: { events: AuditEventDto[] }) {
           <div className={styles.eventHead}>
             <span className={styles.eventName}>{auditLabel(e.action)}</span>
             <span className={styles.eventMeta}>
-              {e.actorKind === 'user' ? `person ${e.actorId.slice(-8)}` : e.actorKind}
+              {actorLabel({ name: e.actorDisplayName, id: e.actorId, kind: e.actorKind })}
             </span>
             <time className={styles.eventMeta} dateTime={e.occurredAt}>
               {when(e.occurredAt)}
