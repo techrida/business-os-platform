@@ -13,17 +13,18 @@
   top: 50%;
   left: 50%;
   z-index: 101;
+  --dialog-gutter: 24px;
   display: flex;
   flex-direction: column;
   width: calc(100vw - 32px);
-  max-width: var(--dialog-width, 520px);
+  max-width: var(--dialog-width);
   max-height: calc(100dvh - 32px);
   translate: -50% -50%;
   border: var(--border-width-thin) solid var(--modal-border);
   border-radius: var(--radius-xl);
   background: var(--modal-bg);
   color: var(--modal-text);
-  box-shadow: 0 16px 40px color-mix(in srgb, var(--neutral-900) 20%, transparent);
+  box-shadow: var(--shadow-section, var(--toast-shadow));
   overflow: hidden;
 }
 
@@ -32,7 +33,7 @@
 }
 
 .small {
-  --dialog-width: 420px;
+  --dialog-width: 460px;
 }
 
 .medium {
@@ -40,7 +41,7 @@
 }
 
 .large {
-  --dialog-width: 880px;
+  --dialog-width: 760px;
 }
 
 /* Nearly the whole viewport: previews, long editors. */
@@ -51,27 +52,35 @@
 
 .header {
   flex: none;
-  /* Room on the right for the close button. */
-  padding: 20px 56px 12px 24px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 56px 20px var(--dialog-gutter);
+  border-bottom: var(--border-width-thin) solid var(--modal-border);
+}
+
+.headerText {
+  min-width: 0;
 }
 
 .title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   margin: 0;
-  font-size: var(--font-size-h3);
+  font-size: min(20px, var(--font-size-h3));
   font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-h3);
+  line-height: min(28px, var(--line-height-h3));
+  letter-spacing: var(--letter-spacing-tight);
   overflow-wrap: anywhere;
 }
 
 .titleIcon {
+  display: grid;
   flex: none;
-}
-
-.destructiveTitle .titleIcon {
-  color: var(--status-error);
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--alert-error-bg);
+  color: var(--alert-error-text);
 }
 
 .description {
@@ -85,9 +94,13 @@
 .body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 4px 24px 20px;
+  padding: 20px var(--dialog-gutter);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.body:empty {
+  padding: 0;
 }
 
 .body:focus-visible {
@@ -100,13 +113,31 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 24px;
-  border-top: var(--border-width-thin) solid var(--border-default);
-  background: var(--surface-subtle);
+  padding: 14px var(--dialog-gutter);
+  border-top: var(--border-width-thin) solid var(--modal-border);
+  background: var(--modal-bg);
+}
+
+.body:empty + .footer {
+  border-top: 0;
+}
+
+/* Confirmations (Figma 790:16324, 790:16245): no rules between header, body and actions. */
+.confirm .header,
+.confirm .footer {
+  border: 0;
+}
+
+.confirm .body:not(:empty) {
+  padding-block-start: 0;
 }
 
 /* On a phone the buttons use the full width and keep the same visual and keyboard order. */
 @media (max-width: 479px) {
+  .content {
+    --dialog-gutter: 16px;
+  }
+
   .footer {
     flex-direction: column;
   }
@@ -163,6 +194,15 @@
 .footer .danger {
   background: var(--button-danger-bg);
   color: var(--button-danger-text);
+}
+
+.footer .dangerCancel:not(:disabled) {
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.footer .dangerCancel:hover:not(:disabled) {
+  background: var(--alert-error-bg);
 }
 
 .footer .danger:hover:not(:disabled) {

@@ -15,24 +15,24 @@
 
 .table th,
 .table td {
-  padding: 16px 24px;
+  padding: 20px 24px;
   text-align: start;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .table th {
-  padding-block: 12px;
   border-bottom: var(--border-width-thin) solid var(--border-default);
-  background: var(--table-header-bg);
+  background: var(--table-row-bg);
   color: var(--table-header-text);
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-medium);
   white-space: nowrap;
 }
 
 .table tbody tr + tr > * {
-  border-top: var(--border-width-thin) solid var(--table-border);
+  border-top: var(--border-width-thin) solid var(--border-default);
 }
 
 .table tbody tr:hover > *,
@@ -60,6 +60,11 @@
 
 .table thead th:last-child {
   border-top-right-radius: calc(var(--radius-xl) - 1px);
+}
+
+.sticky th,
+.sticky td {
+  padding-block: 12px;
 }
 
 .sticky th:first-child,
@@ -122,6 +127,6 @@
 @media (max-width: 767.98px) {
   .table th,
   .table td {
-    padding-inline: 16px;
+    padding: 12px 16px;
   }
 }
