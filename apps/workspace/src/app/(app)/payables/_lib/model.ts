@@ -17,7 +17,7 @@ export const BILL_STATUS_LABEL: Record<BillStatus, { tone: BadgeTone; text: stri
   matching: { tone: 'info', text: 'Matching' },
   variance: { tone: 'warning', text: 'Outside tolerance' },
   exception_pending: { tone: 'warning', text: 'Exception pending' },
-  pending_approval: { tone: 'info', text: 'Waiting for approval' },
+  pending_approval: { tone: 'info', text: 'Awaiting approval' },
   approved: { tone: 'success', text: 'Approved' },
   partially_paid: { tone: 'info', text: 'Partly paid' },
   paid: { tone: 'success', text: 'Paid' },
@@ -26,8 +26,8 @@ export const BILL_STATUS_LABEL: Record<BillStatus, { tone: BadgeTone; text: stri
 };
 
 export const MATCH_STATUS_LABEL: Record<MatchStatus, { tone: BadgeTone; text: string }> = {
-  not_required: { tone: 'neutral', text: 'No order to match' },
-  pending: { tone: 'neutral', text: 'Not matched yet' },
+  not_required: { tone: 'neutral', text: 'No order' },
+  pending: { tone: 'neutral', text: 'Unmatched' },
   matched: { tone: 'success', text: 'Matched' },
   variance: { tone: 'warning', text: 'Outside tolerance' },
   exception_approved: { tone: 'success', text: 'Exception approved' },
@@ -42,13 +42,13 @@ export function matchResultLabel(status: string): { tone: BadgeTone; text: strin
 
 /** The scan status of a submitted file; a bill can be keyed from it only once it is clean. */
 export function fileStatusLabel(status: string | null): { tone: BadgeTone; text: string } {
-  if (status === null) return { tone: 'neutral', text: 'Not scanned yet' };
+  if (status === null) return { tone: 'neutral', text: 'Unscanned' };
   if (status === 'clean') return { tone: 'success', text: 'Scanned clean' };
   if (status === 'infected') return { tone: 'error', text: 'Infected' };
   if (status === 'failed' || status === 'scan_failed')
     return { tone: 'error', text: 'Scan failed' };
   if (status === 'rejected') return { tone: 'error', text: 'File rejected' };
-  return { tone: 'info', text: 'Scan in progress' };
+  return { tone: 'info', text: 'Scanning' };
 }
 
 export interface BillGrants {

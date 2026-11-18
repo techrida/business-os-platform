@@ -83,8 +83,43 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
           ) : null
         }
       />
-      <div className={styles.stack}>
-        <Panel title="Request">
+      <div className={styles.columns}>
+        <Panel title="Payable items">
+          <Table caption="Requested bill items" minWidth={560}>
+            <thead>
+              <tr>
+                <Th>Line</Th>
+                <Th>Payable open item</Th>
+                <Th align="end">Amount</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {request.lines.map((line, index) => {
+                const item = byOpenItem.get(line.openItemId);
+                const reference = item
+                  ? [item.billNumber, item.vendorInvoiceNo].filter(Boolean).join(' · ')
+                  : '';
+                const label = reference || `Bill ${index + 1} of ${request.lines.length}`;
+                return (
+                  <tr key={line.id}>
+                    <Td>{line.lineNo}</Td>
+                    <Td>
+                      <span className={styles.long}>
+                        {item && reference && canReadBill ? (
+                          <Link href={`/payables/bills/${item.vendorBillId}`}>{label}</Link>
+                        ) : (
+                          label
+                        )}
+                      </span>
+                    </Td>
+                    <Td align="end">{poMoney(line.amount, request.currency)}</Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </Panel>
+        <Panel title="Request" as="aside">
           <FactList
             facts={[
               {
@@ -123,41 +158,6 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
                 : []),
             ]}
           />
-        </Panel>
-        <Panel title="Payable items">
-          <Table caption="Requested bill items" minWidth={560}>
-            <thead>
-              <tr>
-                <Th>Line</Th>
-                <Th>Payable open item</Th>
-                <Th align="end">Amount</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {request.lines.map((line, index) => {
-                const item = byOpenItem.get(line.openItemId);
-                const reference = item
-                  ? [item.billNumber, item.vendorInvoiceNo].filter(Boolean).join(' · ')
-                  : '';
-                const label = reference || `Bill ${index + 1} of ${request.lines.length}`;
-                return (
-                  <tr key={line.id}>
-                    <Td>{line.lineNo}</Td>
-                    <Td>
-                      <span className={styles.long}>
-                        {item && reference && canReadBill ? (
-                          <Link href={`/payables/bills/${item.vendorBillId}`}>{label}</Link>
-                        ) : (
-                          label
-                        )}
-                      </span>
-                    </Td>
-                    <Td align="end">{poMoney(line.amount, request.currency)}</Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
         </Panel>
       </div>
     </Page>

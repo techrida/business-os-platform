@@ -3,11 +3,13 @@ import Link from 'next/link';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input } from '@/components/ui/field';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Field } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
+import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getVatRegister, VatPeriodSchema, type VatRegister } from '@/lib/api-payables';
 import { failureOf } from '@/lib/api-kernel';
@@ -58,10 +60,10 @@ export default async function VatRegisterPage({
       {header}
       <form method="get" action="/payables/vat-register" className={styles.filter}>
         <Field label="From (AD)">
-          {(control) => <Input type="date" name="from" defaultValue={from} required {...control} />}
+          {(control) => <DatePicker name="from" defaultValue={from} required {...control} />}
         </Field>
         <Field label="To (AD)">
-          {(control) => <Input type="date" name="to" defaultValue={to} required {...control} />}
+          {(control) => <DatePicker name="to" defaultValue={to} required {...control} />}
         </Field>
         <Button type="submit" variant="secondary">
           Show register
@@ -78,12 +80,29 @@ export default async function VatRegisterPage({
         </Alert>
       ) : null}
       {register ? (
+        <div className={styles.registerTotals}>
+          <StatCard
+            label="Taxable purchases"
+            value={poMoney(register.total.taxableAmount, 'NPR')}
+            icon="receipt"
+          />
+          <StatCard
+            label="Creditable VAT"
+            value={poMoney(register.total.vatAmount, 'NPR')}
+            icon="credit-card"
+          />
+        </div>
+      ) : null}
+      {register ? (
         <Panel
           title="Purchase VAT"
           actions={
-            <a href={`/payables/vat-register/export?${new URLSearchParams({ from, to })}`}>
+            <LinkButton
+              variant="secondary"
+              href={`/payables/vat-register/export?${new URLSearchParams({ from, to })}`}
+            >
               Export CSV
-            </a>
+            </LinkButton>
           }
         >
           {register.rows.length === 0 ? (

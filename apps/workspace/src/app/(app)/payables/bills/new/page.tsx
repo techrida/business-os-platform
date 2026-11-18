@@ -9,8 +9,9 @@ import { listWithholdingCodes } from '@/lib/api-withholding-codes';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
+import { SearchInput } from '@/components/ui/search-input';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { listBillSubmissions, type BillSubmission } from '@/lib/api-payables';
@@ -32,7 +33,7 @@ const INBOX = '/payables/inbox';
 
 function Shell({ children }: { children: ReactNode }) {
   return (
-    <Page width="narrow">
+    <Page>
       <Breadcrumb items={[{ label: 'Inbox', href: INBOX }, { label: 'New bill' }]} />
       <PageHeader
         title="New bill"
@@ -150,7 +151,9 @@ export default async function NewBillPage({
         {poId === '' ? (
           <form method="get" action="/payables/bills/new" className={styles.filter}>
             <Field label="Find a vendor">
-              {(control) => <Input name="q" defaultValue={q} {...control} />}
+              {(control) => (
+                <SearchInput placeholder="Vendor name" name="q" defaultValue={q} {...control} />
+              )}
             </Field>
             <Button type="submit" variant="secondary">
               Find vendor
@@ -167,36 +170,35 @@ export default async function NewBillPage({
             No vendors match this search. Try another name, or ask Procurement to add the vendor.
           </Alert>
         ) : (
-          <Panel
-            title={standaloneOrder ? `Invoice for ${standaloneOrder.number}` : 'Vendor invoice'}
-          >
-            <BillEntryForm
-              idempotencyKey={randomUUID()}
-              orderLines={
-                standaloneOrder?.lines.map((line) => ({
-                  poLineId: line.poLineId,
-                  lineNo: line.lineNo,
-                  description: line.description,
-                  uom: line.uom,
-                  open: qtyText(line.openQuantity),
-                })) ?? []
-              }
-              taxCodes={standaloneTax}
-              withholdingCodes={standaloneWithholding}
-              cancelHref="/payables/bills"
-              reloadHref={here}
-              entry={{
-                vendors,
-                ...(standaloneOrder
-                  ? {
-                      vendorPartyId: standaloneOrder.vendorId,
-                      vendorName: standaloneOrder.vendorName,
-                      purchaseOrderId: standaloneOrder.purchaseOrderId,
-                    }
-                  : {}),
-              }}
-            />
-          </Panel>
+          <BillEntryForm
+            invoiceTitle={
+              standaloneOrder ? `Invoice for ${standaloneOrder.number}` : 'Vendor invoice'
+            }
+            idempotencyKey={randomUUID()}
+            orderLines={
+              standaloneOrder?.lines.map((line) => ({
+                poLineId: line.poLineId,
+                lineNo: line.lineNo,
+                description: line.description,
+                uom: line.uom,
+                open: qtyText(line.openQuantity),
+              })) ?? []
+            }
+            taxCodes={standaloneTax}
+            withholdingCodes={standaloneWithholding}
+            cancelHref="/payables/bills"
+            reloadHref={here}
+            entry={{
+              vendors,
+              ...(standaloneOrder
+                ? {
+                    vendorPartyId: standaloneOrder.vendorId,
+                    vendorName: standaloneOrder.vendorName,
+                    purchaseOrderId: standaloneOrder.purchaseOrderId,
+                  }
+                : {}),
+            }}
+          />
         )}
       </Shell>
     );
@@ -336,18 +338,16 @@ export default async function NewBillPage({
             {blocked}
           </Alert>
         ) : (
-          <Panel title="Lines">
-            <BillEntryForm
-              submissionId={submission.id}
-              // One key per render of this page: a double click or a retry creates the bill once.
-              idempotencyKey={randomUUID()}
-              orderLines={orderLines}
-              taxCodes={taxCodes}
-              withholdingCodes={withholdingCodes}
-              cancelHref={INBOX}
-              reloadHref={here}
-            />
-          </Panel>
+          <BillEntryForm
+            submissionId={submission.id}
+            // One key per render of this page: a double click or a retry creates the bill once.
+            idempotencyKey={randomUUID()}
+            orderLines={orderLines}
+            taxCodes={taxCodes}
+            withholdingCodes={withholdingCodes}
+            cancelHref={INBOX}
+            reloadHref={here}
+          />
         )}
       </div>
     </Shell>
