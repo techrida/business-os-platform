@@ -155,20 +155,6 @@ export function reviewVerificationItem(
     json('POST', body, retryKey),
   );
 }
-export function detachVerificationItem(
-  session: Session,
-  id: string,
-  key: string,
-  expectedVersion: number,
-  retryKey: string,
-) {
-  return call(
-    session,
-    `/v1/verification-cases/${encodeURIComponent(id)}/checklist/${encodeURIComponent(key)}`,
-    VerificationCaseDtoSchema,
-    json('DELETE', { expectedVersion }, retryKey),
-  );
-}
 export function getVerificationReviewHistory(session: Session, id: string, before?: string) {
   return call(
     session,
