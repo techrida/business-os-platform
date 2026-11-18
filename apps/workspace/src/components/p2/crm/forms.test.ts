@@ -161,6 +161,38 @@ describe('parseConvert', () => {
     opportunityName: 'Binford dispatch automation',
     expectedVersion: '4',
   };
+  const withContact = {
+    contactMode: 'create',
+    contactName: 'Sunita Shrestha',
+    contactEmail: 'sunita@binford.example',
+  };
+
+  it('needs a contact, and a new one needs an email (quotations are emailed)', () => {
+    for (const extra of [{}, { contactMode: 'none' }]) {
+      const none = parseConvert(form({ ...create, ...extra }));
+      expect(none.ok, JSON.stringify(extra)).toBe(false);
+      if (!none.ok) expect(none.fieldErrors.contactMode).toMatch(/choose a contact/i);
+    }
+    const noEmail = parseConvert(form({ ...create, ...withContact, contactEmail: '' }));
+    expect(noEmail.ok).toBe(false);
+    if (!noEmail.ok) expect(noEmail.fieldErrors.contactEmail).toMatch(/quotations are sent/i);
+  });
+
+  it('makes a new contact the main one only for a new customer', () => {
+    const forNew = parseConvert(form({ ...create, ...withContact }));
+    expect(forNew.ok && forNew.data.contact).toMatchObject({ contact: { isPrimary: true } });
+    const forExisting = parseConvert(
+      form({
+        ...create,
+        ...withContact,
+        customerMode: 'existing',
+        customerId: GUID,
+      }),
+    );
+    expect(forExisting.ok && forExisting.data.contact).toMatchObject({
+      contact: { isPrimary: false },
+    });
+  });
 
   it('builds create-customer with a contact from the lead', () => {
     const r = parseConvert(
@@ -192,18 +224,20 @@ describe('parseConvert', () => {
       form({
         customerMode: 'existing',
         customerId: GUID,
-        contactMode: 'none',
+        contactMode: 'existing',
+        contactId: GUID,
         opportunityName: 'Deal',
         expectedVersion: '1',
       }),
     );
     expect(ok.ok && ok.data.customer).toEqual({ mode: 'existing', customerId: GUID });
-    expect(ok.ok && ok.data.contact).toBeUndefined();
+    expect(ok.ok && ok.data.contact).toEqual({ mode: 'existing', contactId: GUID });
     const bad = parseConvert(
       form({
         customerMode: 'existing',
         customerId: 'not-an-id',
-        contactMode: 'none',
+        contactMode: 'existing',
+        contactId: GUID,
         opportunityName: 'Deal',
         expectedVersion: '1',
       }),
@@ -216,7 +250,7 @@ describe('parseConvert', () => {
     const withReason = parseConvert(
       form({
         ...create,
-        contactMode: 'none',
+        ...withContact,
         createAnyway: 'on',
         overrideReason: 'Different branch',
       }),
@@ -224,17 +258,17 @@ describe('parseConvert', () => {
     expect(withReason.ok && withReason.data.duplicateOverride).toEqual({
       reason: 'Different branch',
     });
-    const missing = parseConvert(form({ ...create, contactMode: 'none', createAnyway: 'on' }));
+    const missing = parseConvert(form({ ...create, ...withContact, createAnyway: 'on' }));
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.fieldErrors.overrideReason).toBeDefined();
     const unticked = parseConvert(
-      form({ ...create, contactMode: 'none', overrideReason: 'Left over text' }),
+      form({ ...create, ...withContact, overrideReason: 'Left over text' }),
     );
     expect(unticked.ok && unticked.data.duplicateOverride).toBeUndefined();
   });
 
   it('needs an opportunity name', () => {
-    const r = parseConvert(form({ ...create, contactMode: 'none', opportunityName: '  ' }));
+    const r = parseConvert(form({ ...create, ...withContact, opportunityName: '  ' }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.fieldErrors.opportunityName).toBeDefined();
   });

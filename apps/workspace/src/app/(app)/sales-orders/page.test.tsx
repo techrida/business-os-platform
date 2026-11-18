@@ -125,7 +125,7 @@ describe('sales orders list', () => {
 
   it('offers Confirm from quotation only to a role that may confirm', async () => {
     expect(await render()).toContain('Confirm from quotation');
-    expect(mocks.listQuotations).toHaveBeenCalledWith(expect.anything(), 'accepted');
+    expect(mocks.listQuotations).toHaveBeenCalledWith(expect.anything(), { status: 'accepted' });
 
     mocks.listQuotations.mockClear();
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });

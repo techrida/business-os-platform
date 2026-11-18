@@ -1,0 +1,3846 @@
+diff --git i/apps/login/src/app/(login)/accounts/page.tsx w/apps/login/src/app/(login)/accounts/page.tsx
+index d429e91..81f51d0 100644
+--- i/apps/login/src/app/(login)/accounts/page.tsx
++++ w/apps/login/src/app/(login)/accounts/page.tsx
+@@ -106,7 +106,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="title" namespace="accounts" />
+         </h1>
+@@ -115,18 +115,20 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         </p>
+       </div>
+ 
+-      <div className="w-full">
+-        <div className="flex w-full flex-col space-y-2">
++      <div className="bos-stack">
++        <div className="bos-session-list">
+           <SessionsList sessions={sessions} requestId={requestId} />
+-          <Link href={`/loginname?` + params}>
+-            <div className="flex flex-row items-center rounded-md px-4 py-3 transition-all hover:bg-black/10 dark:hover:bg-white/10">
+-              <div className="mr-4 flex h-8 w-8 flex-row items-center justify-center rounded-full bg-black/5 dark:bg-white/5">
+-                <UserPlusIcon className="h-5 w-5" />
+-              </div>
+-              <span className="text-sm">
+-                <Translated i18nKey="addAnother" namespace="accounts" />
++          <Link href={`/loginname?` + params} className="bos-session bos-session--add">
++            <span className="bos-session__main">
++              <span className="bos-avatar bos-avatar--small bos-avatar--plain" aria-hidden="true">
++                <UserPlusIcon className="h-4 w-4" />
+               </span>
+-            </div>
++              <span className="bos-session__text">
++                <span className="bos-session__name">
++                  <Translated i18nKey="addAnother" namespace="accounts" />
++                </span>
++              </span>
++            </span>
+           </Link>
+         </div>
+       </div>
+diff --git i/apps/login/src/app/(login)/authenticator/set/page.tsx w/apps/login/src/app/(login)/authenticator/set/page.tsx
+index ebf873e..fe3b818 100644
+--- i/apps/login/src/app/(login)/authenticator/set/page.tsx
++++ w/apps/login/src/app/(login)/authenticator/set/page.tsx
+@@ -147,7 +147,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="title" namespace="authenticator" />
+         </h1>
+@@ -164,7 +164,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         ></UserAvatar>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {loginSettings && (
+           <ChooseAuthenticatorToSetup
+             authMethods={sessionWithData.authMethods}
+@@ -192,9 +192,8 @@ export default async function Page(props: { searchParams: Promise<Record<string
+           </>
+         )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center">
++        <div className="bos-step-actions">
+           <BackButton />
+-          <span className="flex-grow"></span>
+         </div>
+       </div>
+     </DynamicTheme>
+diff --git i/apps/login/src/app/(login)/device/consent/page.tsx w/apps/login/src/app/(login)/device/consent/page.tsx
+index 68c4ef0..8605bd5 100644
+--- i/apps/login/src/app/(login)/device/consent/page.tsx
++++ w/apps/login/src/app/(login)/device/consent/page.tsx
+@@ -73,7 +73,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="request.title" namespace="device" data={{ appName: deviceAuthorizationRequest?.appName }} />
+         </h1>
+@@ -93,7 +93,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         />
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <ConsentScreen
+           userCode={userCode}
+           sessionId={sessionFactors.id}
+diff --git i/apps/login/src/app/(login)/device/page.tsx w/apps/login/src/app/(login)/device/page.tsx
+index 0d6d726..23bf380 100644
+--- i/apps/login/src/app/(login)/device/page.tsx
++++ w/apps/login/src/app/(login)/device/page.tsx
+@@ -34,7 +34,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="usercode.title" namespace="device" />
+         </h1>
+@@ -43,7 +43,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         </p>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <DeviceCodeForm userCode={userCode}></DeviceCodeForm>
+       </div>
+     </DynamicTheme>
+diff --git i/apps/login/src/app/(login)/error.tsx w/apps/login/src/app/(login)/error.tsx
+index d474c69..ed6583f 100644
+--- i/apps/login/src/app/(login)/error.tsx
++++ w/apps/login/src/app/(login)/error.tsx
+@@ -1,19 +1,23 @@
+ "use client";
+ 
+ import { Alert } from "@/components/alert";
++import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+ import { Button } from "@/components/button";
+ import { Translated } from "@/components/translated";
+ 
+ export default function Error({ reset }: { reset: () => void }) {
+   return (
+     <div className="bos-login-content">
++      <div className="bos-status-tile bos-status-tile--warning" aria-hidden="true">
++        <ExclamationTriangleIcon className="h-8 w-8" />
++      </div>
+       <h1>
+         <Translated i18nKey="title" namespace="error" />
+       </h1>
+       <Alert>
+         <Translated i18nKey="tryAgainMessage" namespace="error" />
+       </Alert>
+-      <div>
++      <div className="bos-step-actions">
+         <Button data-i18n-key="error.tryagain" onClick={reset}>
+           <Translated i18nKey="tryagain" namespace="error" />
+         </Button>
+diff --git i/apps/login/src/app/(login)/idp/[provider]/account-not-found/page.tsx w/apps/login/src/app/(login)/idp/[provider]/account-not-found/page.tsx
+index 5ce906e..59959ef 100644
+--- i/apps/login/src/app/(login)/idp/[provider]/account-not-found/page.tsx
++++ w/apps/login/src/app/(login)/idp/[provider]/account-not-found/page.tsx
+@@ -42,7 +42,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+           <Translated i18nKey="accountNotFound.description" namespace="idp" />
+         </p>
+ 
+-        <div className="w-full">
++        <div className="bos-stack">
+           <Alert type={AlertType.INFO}>
+             <Translated i18nKey="accountNotFound.info" namespace="idp" />
+           </Alert>
+diff --git i/apps/login/src/app/(login)/idp/[provider]/complete-registration/page.tsx w/apps/login/src/app/(login)/idp/[provider]/complete-registration/page.tsx
+index 9741f4b..1880c9a 100644
+--- i/apps/login/src/app/(login)/idp/[provider]/complete-registration/page.tsx
++++ w/apps/login/src/app/(login)/idp/[provider]/complete-registration/page.tsx
+@@ -26,7 +26,7 @@ export default async function CompleteRegistrationPage(props: {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="completeRegister.title" namespace="idp" />
+         </h1>
+@@ -35,7 +35,7 @@ export default async function CompleteRegistrationPage(props: {
+         </p>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <RegisterFormIDPIncomplete
+           idpUserId={idpUserId}
+           idpId={idpId}
+diff --git i/apps/login/src/app/(login)/idp/[provider]/failure/page.tsx w/apps/login/src/app/(login)/idp/[provider]/failure/page.tsx
+index b47fe92..9ee0b30 100644
+--- i/apps/login/src/app/(login)/idp/[provider]/failure/page.tsx
++++ w/apps/login/src/app/(login)/idp/[provider]/failure/page.tsx
+@@ -57,13 +57,13 @@ export default async function Page(props: {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="loginError.title" namespace="idp" />
+         </h1>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <Alert type={AlertType.ALERT}>
+           <Translated i18nKey="loginError.description" namespace="idp" />
+         </Alert>
+diff --git i/apps/login/src/app/(login)/idp/[provider]/linking-failed/page.tsx w/apps/login/src/app/(login)/idp/[provider]/linking-failed/page.tsx
+index 52fc14f..e82fb2d 100644
+--- i/apps/login/src/app/(login)/idp/[provider]/linking-failed/page.tsx
++++ w/apps/login/src/app/(login)/idp/[provider]/linking-failed/page.tsx
+@@ -21,7 +21,7 @@ export default async function LinkingFailedPage(props: {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="title" namespace="idp" />
+         </h1>
+diff --git i/apps/login/src/app/(login)/idp/[provider]/registration-failed/page.tsx w/apps/login/src/app/(login)/idp/[provider]/registration-failed/page.tsx
+index 6e43fb8..c21bcc4 100644
+--- i/apps/login/src/app/(login)/idp/[provider]/registration-failed/page.tsx
++++ w/apps/login/src/app/(login)/idp/[provider]/registration-failed/page.tsx
+@@ -42,7 +42,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+           <Translated i18nKey="registrationFailed.description" namespace="idp" />
+         </p>
+ 
+-        <div className="w-full">
++        <div className="bos-stack">
+           <Alert type={AlertType.ALERT}>
+             <Translated i18nKey="registrationFailed.info" namespace="idp" />
+           </Alert>
+diff --git i/apps/login/src/app/(login)/idp/ldap/page.tsx w/apps/login/src/app/(login)/idp/ldap/page.tsx
+index fc598c6..93c95c2 100644
+--- i/apps/login/src/app/(login)/idp/ldap/page.tsx
++++ w/apps/login/src/app/(login)/idp/ldap/page.tsx
+@@ -33,7 +33,7 @@ export default async function Page(props: {
+   // return login failed if no linking or creation is allowed and no user was found
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="title" namespace="ldap" />
+         </h1>
+@@ -42,7 +42,7 @@ export default async function Page(props: {
+         </p>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <LDAPUsernamePasswordForm
+           idpId={idpId}
+           link={link === "true"}
+diff --git i/apps/login/src/app/(login)/idp/page.tsx w/apps/login/src/app/(login)/idp/page.tsx
+index b304409..49468c7 100644
+--- i/apps/login/src/app/(login)/idp/page.tsx
++++ w/apps/login/src/app/(login)/idp/page.tsx
+@@ -29,7 +29,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="title" namespace="idp" />
+         </h1>
+@@ -38,7 +38,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         </p>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {!!identityProviders?.length && (
+           <SignInWithIdp
+             identityProviders={identityProviders}
+diff --git i/apps/login/src/app/(login)/loginname/page.tsx w/apps/login/src/app/(login)/loginname/page.tsx
+index 7b12c1e..2f0d3ad 100644
+--- i/apps/login/src/app/(login)/loginname/page.tsx
++++ w/apps/login/src/app/(login)/loginname/page.tsx
+@@ -1,3 +1,4 @@
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { SignInWithIdp } from "@/components/sign-in-with-idp";
+ import { Translated } from "@/components/translated";
+@@ -52,14 +53,10 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="title" namespace="loginname" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="description" namespace="loginname" />
+-        </p>
+-      </div>
++      <AuthHeading
++        title={<Translated i18nKey="title" namespace="loginname" />}
++        lead={<Translated i18nKey="description" namespace="loginname" />}
++      />
+ 
+       <div className="w-full">
+         {loginSettings?.allowLocalAuthentication && (
+diff --git i/apps/login/src/app/(login)/logout/done/page.tsx w/apps/login/src/app/(login)/logout/done/page.tsx
+index a68ba89..9be7125 100644
+--- i/apps/login/src/app/(login)/logout/done/page.tsx
++++ w/apps/login/src/app/(login)/logout/done/page.tsx
+@@ -1,3 +1,4 @@
++import { CheckCircleIcon } from "@/components/auth/icons";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { Translated } from "@/components/translated";
+ import { getServiceConfig } from "@/lib/service-url";
+@@ -16,15 +17,18 @@ export default async function Page(props: { searchParams: Promise<any> }) {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
++        <div className="bos-status-tile" aria-hidden="true">
++          <CheckCircleIcon width={32} height={32} />
++        </div>
+         <h1>
+           <Translated i18nKey="success.title" namespace="logout" />
+         </h1>
+-        <p className="ztdl-p mb-6 block">
++        <p className="ztdl-p">
+           <Translated i18nKey="success.description" namespace="logout" />
+         </p>
+       </div>
+-      <div className="w-full"></div>
++      <div className="bos-stack"></div>
+     </DynamicTheme>
+   );
+ }
+diff --git i/apps/login/src/app/(login)/logout/page.tsx w/apps/login/src/app/(login)/logout/page.tsx
+index d7a328d..e5e5b22 100644
+--- i/apps/login/src/app/(login)/logout/page.tsx
++++ w/apps/login/src/app/(login)/logout/page.tsx
+@@ -80,7 +80,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="title" namespace="logout" />
+         </h1>
+@@ -89,7 +89,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         </p>
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <div className="flex w-full flex-col space-y-2">
+           <SessionsClearList
+             sessions={sessions}
+diff --git i/apps/login/src/app/(login)/mfa/page.tsx w/apps/login/src/app/(login)/mfa/page.tsx
+index 0cc2301..2166742 100644
+--- i/apps/login/src/app/(login)/mfa/page.tsx
++++ w/apps/login/src/app/(login)/mfa/page.tsx
+@@ -71,7 +71,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="verify.title" namespace="mfa" />
+         </h1>
+@@ -89,7 +89,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         )}
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {!(loginName || sessionId) && (
+           <Alert>
+             <Translated i18nKey="unknownContext" namespace="error" />
+@@ -110,9 +110,8 @@ export default async function Page(props: { searchParams: Promise<Record<string
+           </Alert>
+         )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center">
++        <div className="bos-step-actions">
+           <BackButton />
+-          <span className="flex-grow"></span>
+         </div>
+       </div>
+     </DynamicTheme>
+diff --git i/apps/login/src/app/(login)/mfa/set/page.tsx w/apps/login/src/app/(login)/mfa/set/page.tsx
+index 467004b..be73e5d 100644
+--- i/apps/login/src/app/(login)/mfa/set/page.tsx
++++ w/apps/login/src/app/(login)/mfa/set/page.tsx
+@@ -130,7 +130,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="set.title" namespace="mfa" />
+         </h1>
+@@ -149,8 +149,8 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         )}
+       </div>
+ 
+-      <div className="w-full">
+-        <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
++        <div className="bos-stack">
+           {!(loginName || sessionId) && (
+             <Alert>
+               <Translated i18nKey="unknownContext" namespace="error" />
+@@ -179,9 +179,8 @@ export default async function Page(props: { searchParams: Promise<Record<string
+             ></ChooseSecondFactorToSetup>
+           )}
+ 
+-          <div className="mt-8 flex w-full flex-row items-center">
++          <div className="bos-step-actions">
+             <BackButton />
+-            <span className="flex-grow"></span>
+           </div>
+         </div>
+       </div>
+diff --git i/apps/login/src/app/(login)/otp/[method]/page.tsx w/apps/login/src/app/(login)/otp/[method]/page.tsx
+index 0718de0..12effbd 100644
+--- i/apps/login/src/app/(login)/otp/[method]/page.tsx
++++ w/apps/login/src/app/(login)/otp/[method]/page.tsx
+@@ -1,4 +1,5 @@
+ import { Alert } from "@/components/alert";
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { LoginOTP } from "@/components/login-otp";
+ import { Translated } from "@/components/translated";
+@@ -69,59 +70,45 @@ export default async function Page(props: {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="verify.title" namespace="otp" />
+-        </h1>
+-        {method === "time-based" && (
+-          <p className="ztdl-p">
+-            <Translated i18nKey="verify.totpDescription" namespace="otp" />
+-          </p>
+-        )}
+-        {method === "sms" && (
+-          <p className="ztdl-p">
+-            <Translated i18nKey="verify.smsDescription" namespace="otp" />
+-          </p>
+-        )}
+-        {method === "email" && (
+-          <p className="ztdl-p">
+-            <Translated i18nKey="verify.emailDescription" namespace="otp" />
+-          </p>
+-        )}
++      <AuthHeading
++        title={<Translated i18nKey="verify.title" namespace="otp" />}
++        lead={
++          <>
++            {method === "time-based" && <Translated i18nKey="verify.totpDescription" namespace="otp" />}
++            {method === "sms" && <Translated i18nKey="verify.smsDescription" namespace="otp" />}
++            {method === "email" && <Translated i18nKey="verify.emailDescription" namespace="otp" />}
++          </>
++        }
++      />
+ 
+-        {!session && (
+-          <div className="py-4">
+-            <Alert>
+-              {/* context was provided but the session could not be resolved (cookie missing, invalid or expired) */}
+-              <Translated i18nKey={loginName || sessionId ? "sessionExpired" : "unknownContext"} namespace="error" />
+-            </Alert>
+-          </div>
+-        )}
++      {!session && (
++        // context was provided but the session could not be resolved (cookie missing, invalid or expired)
++        <Alert>
++          <Translated i18nKey={loginName || sessionId ? "sessionExpired" : "unknownContext"} namespace="error" />
++        </Alert>
++      )}
+ 
+-        {session && (
+-          <UserAvatar
+-            loginName={loginName ?? session.factors?.user?.loginName}
+-            displayName={session.factors?.user?.displayName}
+-            showDropdown
+-            searchParams={searchParams}
+-          ></UserAvatar>
+-        )}
+-      </div>
++      {session && (
++        <UserAvatar
++          loginName={loginName ?? session.factors?.user?.loginName}
++          displayName={session.factors?.user?.displayName}
++          showDropdown
++          searchParams={searchParams}
++        ></UserAvatar>
++      )}
+ 
+-      <div className="w-full">
+-        {method && session && (
+-          <LoginOTP
+-            loginName={loginName ?? session.factors?.user?.loginName}
+-            sessionId={sessionId}
+-            requestId={requestId}
+-            organization={organization ?? session?.factors?.user?.organizationId}
+-            method={method}
+-            loginSettings={loginSettings}
+-            host={host}
+-            code={code}
+-          ></LoginOTP>
+-        )}
+-      </div>
++      {method && session && (
++        <LoginOTP
++          loginName={loginName ?? session.factors?.user?.loginName}
++          sessionId={sessionId}
++          requestId={requestId}
++          organization={organization ?? session?.factors?.user?.organizationId}
++          method={method}
++          loginSettings={loginSettings}
++          host={host}
++          code={code}
++        ></LoginOTP>
++      )}
+     </DynamicTheme>
+   );
+ }
+diff --git i/apps/login/src/app/(login)/otp/[method]/set/page.tsx w/apps/login/src/app/(login)/otp/[method]/set/page.tsx
+index 3f0d4e3..28faa18 100644
+--- i/apps/login/src/app/(login)/otp/[method]/set/page.tsx
++++ w/apps/login/src/app/(login)/otp/[method]/set/page.tsx
+@@ -1,6 +1,5 @@
+ import { Alert } from "@/components/alert";
+ import { BackButton } from "@/components/back-button";
+-import { Button, ButtonVariants } from "@/components/button";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { TotpRegister } from "@/components/totp-register";
+ import { Translated } from "@/components/translated";
+@@ -117,7 +116,7 @@ export default async function Page(props: {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="set.title" namespace="otp" />
+         </h1>
+@@ -137,7 +136,7 @@ export default async function Page(props: {
+         )}
+ 
+         {!session && (
+-          <div className="py-4">
++          <div>
+             <Alert>
+               {/* context was provided but the session could not be resolved (cookie missing, invalid or expired) */}
+               <Translated i18nKey={loginName || sessionId ? "sessionExpired" : "unknownContext"} namespace="error" />
+@@ -146,7 +145,7 @@ export default async function Page(props: {
+         )}
+ 
+         {error && (
+-          <div className="py-4">
++          <div>
+             <Alert>{error?.message}</Alert>
+           </div>
+         )}
+@@ -161,7 +160,7 @@ export default async function Page(props: {
+         )}
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {totpResponse && "uri" in totpResponse && "secret" in totpResponse ? (
+           <div>
+             <TotpRegister
+@@ -176,14 +175,11 @@ export default async function Page(props: {
+             ></TotpRegister>
+           </div>
+         ) : (
+-          <div className="mt-8 flex w-full flex-row items-center">
++          <div className="bos-step-actions">
+             <BackButton />
+-            <span className="flex-grow"></span>
+ 
+-            <Link href={urlToContinue}>
+-              <Button type="submit" className="self-end" variant={ButtonVariants.Primary}>
+-                <Translated i18nKey="set.submit" namespace="otp" />
+-              </Button>
++            <Link href={urlToContinue} className="bos-btn bos-btn--primary">
++              <Translated i18nKey="set.submit" namespace="otp" />
+             </Link>
+           </div>
+         )}
+diff --git i/apps/login/src/app/(login)/passkey/page.tsx w/apps/login/src/app/(login)/passkey/page.tsx
+index eda5093..2781d5c 100644
+--- i/apps/login/src/app/(login)/passkey/page.tsx
++++ w/apps/login/src/app/(login)/passkey/page.tsx
+@@ -64,12 +64,12 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="verify.title" namespace="passkey" />
+         </h1>
+ 
+-        <p className="ztdl-p mb-6 block">
++        <p className="ztdl-p">
+           <Translated i18nKey="verify.description" namespace="passkey" />
+         </p>
+ 
+@@ -85,7 +85,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         ) : null}
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {!(loginName || sessionId) && (
+           <Alert>
+             <Translated i18nKey="unknownContext" namespace="error" />
+diff --git i/apps/login/src/app/(login)/passkey/set/page.tsx w/apps/login/src/app/(login)/passkey/set/page.tsx
+index 05d02c5..1f08d5e 100644
+--- i/apps/login/src/app/(login)/passkey/set/page.tsx
++++ w/apps/login/src/app/(login)/passkey/set/page.tsx
+@@ -52,12 +52,12 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="set.title" namespace="passkey" />
+         </h1>
+ 
+-        <p className="ztdl-p mb-6 block">
++        <p className="ztdl-p">
+           <Translated i18nKey="set.description" namespace="passkey" />
+         </p>
+ 
+@@ -78,7 +78,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         ) : null}
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         <Alert type={AlertType.INFO}>
+           <span>
+             <Translated i18nKey="set.info.description" namespace="passkey" />
+@@ -93,7 +93,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         </Alert>
+ 
+         {!session && !user && (
+-          <div className="py-4">
++          <div>
+             <Alert>
+               {/* context was provided but the session could not be resolved (cookie missing, invalid or expired) */}
+               <Translated i18nKey={loginName || userId ? "sessionExpired" : "unknownContext"} namespace="error" />
+diff --git i/apps/login/src/app/(login)/password/change/page.tsx w/apps/login/src/app/(login)/password/change/page.tsx
+index ad1d765..bee144d 100644
+--- i/apps/login/src/app/(login)/password/change/page.tsx
++++ w/apps/login/src/app/(login)/password/change/page.tsx
+@@ -1,5 +1,6 @@
+ import { Alert } from "@/components/alert";
+ import { ChangePasswordForm } from "@/components/change-password-form";
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { Translated } from "@/components/translated";
+ import { UserAvatar } from "@/components/user-avatar";
+@@ -39,38 +40,34 @@ export default async function Page(props: { searchParams: Promise<Record<string
+     organization: sessionFactors?.factors?.user?.organizationId,
+   });
+ 
++  const identity = sessionFactors ? (
++    <UserAvatar
++      loginName={loginName ?? sessionFactors.factors?.user?.loginName}
++      displayName={sessionFactors.factors?.user?.displayName}
++      showDropdown
++      searchParams={searchParams}
++    ></UserAvatar>
++  ) : loginName ? (
++    <UserAvatar loginName={loginName} displayName={loginName} showDropdown searchParams={searchParams}></UserAvatar>
++  ) : null;
++
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="change.title" namespace="password" />
+-        </h1>
+-        <p className="ztdl-p mb-6 block">
+-          <Translated i18nKey="change.description" namespace="password" />
+-        </p>
++      <AuthHeading
++        title={<Translated i18nKey="change.title" namespace="password" />}
++        lead={<Translated i18nKey="change.description" namespace="password" />}
++      />
+ 
+-        {/* Only warn when there is no loginName to continue with; a failed session
+-            lookup is reported by the form gate below (failedLoading), and under
+-            enumeration protection no session may exist by design. */}
+-        {!loginName && (
+-          <div className="py-4">
+-            <Alert>
+-              <Translated i18nKey="unknownContext" namespace="error" />
+-            </Alert>
+-          </div>
+-        )}
++      {/* Only warn when there is no loginName to continue with; a failed session
++          lookup is reported by the form gate below (failedLoading), and under
++          enumeration protection no session may exist by design. */}
++      {!loginName && (
++        <Alert>
++          <Translated i18nKey="unknownContext" namespace="error" />
++        </Alert>
++      )}
+ 
+-        {sessionFactors ? (
+-          <UserAvatar
+-            loginName={loginName ?? sessionFactors.factors?.user?.loginName}
+-            displayName={sessionFactors.factors?.user?.displayName}
+-            showDropdown
+-            searchParams={searchParams}
+-          ></UserAvatar>
+-        ) : loginName ? (
+-          <UserAvatar loginName={loginName} displayName={loginName} showDropdown searchParams={searchParams}></UserAvatar>
+-        ) : null}
+-      </div>
++      {identity && <div className="bos-identity">{identity}</div>}
+ 
+       <div className="w-full">
+         {passwordComplexity && loginName && sessionFactors?.factors?.user?.id ? (
+@@ -82,11 +79,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+             passwordComplexitySettings={passwordComplexity}
+           />
+         ) : (
+-          <div className="py-4">
+-            <Alert>
+-              <Translated i18nKey="failedLoading" namespace="error" />
+-            </Alert>
+-          </div>
++          <Alert>
++            <Translated i18nKey="failedLoading" namespace="error" />
++          </Alert>
+         )}
+       </div>
+     </DynamicTheme>
+diff --git i/apps/login/src/app/(login)/password/page.tsx w/apps/login/src/app/(login)/password/page.tsx
+index 580ded2..26779df 100644
+--- i/apps/login/src/app/(login)/password/page.tsx
++++ w/apps/login/src/app/(login)/password/page.tsx
+@@ -1,4 +1,5 @@
+ import { Alert } from "@/components/alert";
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { PasswordForm } from "@/components/password-form";
+ import { Translated } from "@/components/translated";
+@@ -50,27 +51,25 @@ export default async function Page(props: { searchParams: Promise<Record<string
+     organization: organization ?? sessionFactors?.factors?.user?.organizationId ?? defaultOrganization,
+   });
+ 
++  const identity = sessionFactors ? (
++    <UserAvatar
++      loginName={loginName ?? sessionFactors.factors?.user?.loginName}
++      displayName={sessionFactors.factors?.user?.displayName}
++      showDropdown
++      searchParams={searchParams}
++    ></UserAvatar>
++  ) : loginName ? (
++    <UserAvatar loginName={loginName} displayName={loginName} showDropdown searchParams={searchParams}></UserAvatar>
++  ) : null;
++
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="verify.title" namespace="password" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="verify.description" namespace="password" />
+-        </p>
++      <AuthHeading
++        title={<Translated i18nKey="verify.title" namespace="password" />}
++        lead={<Translated i18nKey="verify.description" namespace="password" />}
++      />
+ 
+-        {sessionFactors ? (
+-          <UserAvatar
+-            loginName={loginName ?? sessionFactors.factors?.user?.loginName}
+-            displayName={sessionFactors.factors?.user?.displayName}
+-            showDropdown
+-            searchParams={searchParams}
+-          ></UserAvatar>
+-        ) : loginName ? (
+-          <UserAvatar loginName={loginName} displayName={loginName} showDropdown searchParams={searchParams}></UserAvatar>
+-        ) : null}
+-      </div>
++      {identity && <div className="bos-identity">{identity}</div>}
+ 
+       <div className="w-full">
+         {/* Only warn when there is no loginName to continue with (e.g. a direct visit
+@@ -78,11 +77,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+             form still works via the user-search fallback in sendPassword, and under
+             enumeration protection no session exists by design. */}
+         {!loginName && (
+-          <div className="py-4">
+-            <Alert>
+-              <Translated i18nKey="unknownContext" namespace="error" />
+-            </Alert>
+-          </div>
++          <Alert>
++            <Translated i18nKey="unknownContext" namespace="error" />
++          </Alert>
+         )}
+ 
+         {loginName && (
+diff --git i/apps/login/src/app/(login)/password/set/page.tsx w/apps/login/src/app/(login)/password/set/page.tsx
+index 1727c7c..76106ae 100644
+--- i/apps/login/src/app/(login)/password/set/page.tsx
++++ w/apps/login/src/app/(login)/password/set/page.tsx
+@@ -1,4 +1,6 @@
+-import { Alert, AlertType } from "@/components/alert";
++import { Alert } from "@/components/alert";
++import { AuthHeading } from "@/components/auth/auth-heading";
++import { InfoNote } from "@/components/auth/info-note";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { SetPasswordForm } from "@/components/set-password-form";
+ import { Translated } from "@/components/translated";
+@@ -69,11 +71,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+   if (!loginSettings) {
+     return (
+       <DynamicTheme branding={branding}>
+-        <div className="mx-auto flex max-w-sm flex-col space-y-4 pt-4">
+-          <Alert>
+-            <Translated i18nKey="errors.couldNotGetLoginSettings" namespace="loginname" />
+-          </Alert>
+-        </div>
++        <Alert>
++          <Translated i18nKey="errors.couldNotGetLoginSettings" namespace="loginname" />
++        </Alert>
+       </DynamicTheme>
+     );
+   }
+@@ -100,42 +100,46 @@ export default async function Page(props: { searchParams: Promise<Record<string
+     }
+   }
+ 
++  const identity = session ? (
++    <UserAvatar
++      loginName={loginName ?? session.factors?.user?.loginName}
++      displayName={session.factors?.user?.displayName}
++      showDropdown
++      searchParams={searchParams}
++    ></UserAvatar>
++  ) : loginName ? (
++    <UserAvatar loginName={loginName} displayName={loginName} showDropdown searchParams={searchParams}></UserAvatar>
++  ) : null;
++
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>{session?.factors?.user?.displayName ?? <Translated i18nKey="set.title" namespace="password" />}</h1>
+-        <p className="ztdl-p mb-6 block">
+-          <Translated i18nKey="set.description" namespace="password" />
+-        </p>
++      <AuthHeading
++        title={<Translated i18nKey="set.title" namespace="password" />}
++        lead={
++          initial ? (
++            <Translated i18nKey="set.description" namespace="password" />
++          ) : (
++            <Translated i18nKey="set.descriptionCode" namespace="password" />
++          )
++        }
++      />
+ 
+-        {/* Only warn when there is neither a loginName nor a userId to continue with.
+-            A missing session is expected here: the set/reset flow works via code +
+-            userId, and under enumeration protection no session exists by design. */}
+-        {!loginName && !userId && (
+-          <div className="py-4">
+-            <Alert>
+-              <Translated i18nKey="unknownContext" namespace="error" />
+-            </Alert>
+-          </div>
+-        )}
++      {/* Only warn when there is neither a loginName nor a userId to continue with.
++          A missing session is expected here: the set/reset flow works via code +
++          userId, and under enumeration protection no session exists by design. */}
++      {!loginName && !userId && (
++        <Alert>
++          <Translated i18nKey="unknownContext" namespace="error" />
++        </Alert>
++      )}
+ 
+-        {session ? (
+-          <UserAvatar
+-            loginName={loginName ?? session.factors?.user?.loginName}
+-            displayName={session.factors?.user?.displayName}
+-            showDropdown
+-            searchParams={searchParams}
+-          ></UserAvatar>
+-        ) : loginName ? (
+-          <UserAvatar loginName={loginName} displayName={loginName} showDropdown searchParams={searchParams}></UserAvatar>
+-        ) : null}
+-      </div>
++      {identity && <div className="bos-identity">{identity}</div>}
+ 
+-      <div className="w-full">
++      <div className="bos-form-stack">
+         {!initial && (
+-          <Alert type={AlertType.INFO}>
+-            <Translated i18nKey="set.codeSent" namespace="password" />
+-          </Alert>
++          <InfoNote>
++            <Translated i18nKey="set.workflow" namespace="password" />
++          </InfoNote>
+         )}
+ 
+         {passwordComplexity &&
+@@ -152,11 +156,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+             codeRequired={!(initial === "true")}
+           />
+         ) : (
+-          <div className="py-4">
+-            <Alert>
+-              <Translated i18nKey="failedLoading" namespace="error" />
+-            </Alert>
+-          </div>
++          <Alert>
++            <Translated i18nKey="failedLoading" namespace="error" />
++          </Alert>
+         )}
+       </div>
+     </DynamicTheme>
+diff --git i/apps/login/src/app/(login)/register/page.tsx w/apps/login/src/app/(login)/register/page.tsx
+index ce799e3..e2c8039 100644
+--- i/apps/login/src/app/(login)/register/page.tsx
++++ w/apps/login/src/app/(login)/register/page.tsx
+@@ -1,4 +1,7 @@
+ import { Alert } from "@/components/alert";
++import { AuthHeading } from "@/components/auth/auth-heading";
++import { SwitchLine } from "@/components/auth/form-layout";
++import { ExternalLinkIcon } from "@/components/auth/icons";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { RegisterForm } from "@/components/register-form";
+ import { SignInWithIdp } from "@/components/sign-in-with-idp";
+@@ -16,6 +19,7 @@ import { Organization } from "@zitadel/proto/zitadel/org/v2/org_pb";
+ import { Metadata } from "next";
+ import { getTranslations } from "next-intl/server";
+ import { headers } from "next/headers";
++import Link from "next/link";
+ 
+ export async function generateMetadata(): Promise<Metadata> {
+   const t = await getTranslations("register");
+@@ -26,6 +30,8 @@ export default async function Page(props: { searchParams: Promise<Record<string
+   const searchParams = await props.searchParams;
+ 
+   let { firstname, lastname, email, organization, requestId } = searchParams;
++  // The default organization filled in below is not sent back to the sign-in page.
++  const requestedOrganization = searchParams.organization;
+ 
+   const _headers = await headers();
+   const { serviceConfig } = getServiceConfig(_headers);
+@@ -50,18 +56,22 @@ export default async function Page(props: { searchParams: Promise<Record<string
+     });
+   });
+ 
++  const signInParams = new URLSearchParams();
++  if (requestedOrganization) {
++    signInParams.set("organization", requestedOrganization);
++  }
++  if (requestId) {
++    signInParams.set("requestId", requestId);
++  }
++  const signInHref = signInParams.toString() ? `/loginname?${signInParams}` : "/loginname";
++
+   if (!loginSettings) {
+     return (
+       <DynamicTheme branding={branding}>
+-        <div className="flex flex-col space-y-4">
+-          <h1>
+-            <Translated i18nKey="title" namespace="register" />
+-          </h1>
+-          <Alert>
+-            <Translated i18nKey="unknownContext" namespace="error" />
+-          </Alert>
+-        </div>
+-        <div className="w-full"></div>
++        <AuthHeading title={<Translated i18nKey="title" namespace="register" />} />
++        <Alert>
++          <Translated i18nKey="unknownContext" namespace="error" />
++        </Alert>
+       </DynamicTheme>
+     );
+   }
+@@ -69,31 +79,22 @@ export default async function Page(props: { searchParams: Promise<Record<string
+   if (!loginSettings?.allowRegister && (!loginSettings.allowExternalIdp || identityProviders.length === 0)) {
+     return (
+       <DynamicTheme branding={branding}>
+-        <div className="flex flex-col space-y-4">
+-          <h1>
+-            <Translated i18nKey="disabled.title" namespace="register" />
+-          </h1>
+-          <p className="ztdl-p">
+-            <Translated i18nKey="disabled.description" namespace="register" />
+-          </p>
+-        </div>
+-        <div className="w-full"></div>
++        <AuthHeading
++          title={<Translated i18nKey="disabled.title" namespace="register" />}
++          lead={<Translated i18nKey="disabled.description" namespace="register" />}
++        />
+       </DynamicTheme>
+     );
+   }
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="title" namespace="register" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="description" namespace="register" />
+-        </p>
+-      </div>
++      <AuthHeading
++        title={<Translated i18nKey="title" namespace="register" />}
++        lead={<Translated i18nKey="description" namespace="register" />}
++      />
+ 
+-      <div className="w-full">
++      <div className="bos-form-stack">
+         {!organization && (
+           <Alert>
+             <Translated i18nKey="unknownContext" namespace="error" />
+@@ -122,6 +123,14 @@ export default async function Page(props: { searchParams: Promise<Record<string
+             ></SignInWithIdp>
+           </>
+         )}
++
++        <SwitchLine>
++          <Translated i18nKey="haveAccount" namespace="register" />{" "}
++          <Link className="bos-link" href={signInHref}>
++            <Translated i18nKey="signIn" namespace="register" />
++            <ExternalLinkIcon className="bos-link-icon" />
++          </Link>
++        </SwitchLine>
+       </div>
+     </DynamicTheme>
+   );
+diff --git i/apps/login/src/app/(login)/register/password/page.tsx w/apps/login/src/app/(login)/register/password/page.tsx
+index 2f36fef..d861b1c 100644
+--- i/apps/login/src/app/(login)/register/password/page.tsx
++++ w/apps/login/src/app/(login)/register/password/page.tsx
+@@ -1,3 +1,4 @@
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { SetRegisterPasswordForm } from "@/components/set-register-password-form";
+ import { Translated } from "@/components/translated";
+@@ -38,26 +39,17 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return missingData ? (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col items-center space-y-4">
+-        <h1>
+-          <Translated i18nKey="missingdata.title" namespace="register" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="missingdata.description" namespace="register" />
+-        </p>
+-      </div>
+-      <div className="w-full"></div>
++      <AuthHeading
++        title={<Translated i18nKey="missingdata.title" namespace="register" />}
++        lead={<Translated i18nKey="missingdata.description" namespace="register" />}
++      />
+     </DynamicTheme>
+   ) : loginSettings?.allowRegister && loginSettings.allowLocalAuthentication ? (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="password.title" namespace="register" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="description" namespace="register" />
+-        </p>
+-      </div>
++      <AuthHeading
++        title={<Translated i18nKey="password.title" namespace="register" />}
++        lead={<Translated i18nKey="description" namespace="register" />}
++      />
+ 
+       <div className="w-full">
+         {legal && passwordComplexitySettings && (
+@@ -74,15 +66,10 @@ export default async function Page(props: { searchParams: Promise<Record<string
+     </DynamicTheme>
+   ) : (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="disabled.title" namespace="register" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="disabled.description" namespace="register" />
+-        </p>
+-      </div>
+-      <div className="w-full"></div>
++      <AuthHeading
++        title={<Translated i18nKey="disabled.title" namespace="register" />}
++        lead={<Translated i18nKey="disabled.description" namespace="register" />}
++      />
+     </DynamicTheme>
+   );
+ }
+diff --git i/apps/login/src/app/(login)/signedin/page.tsx w/apps/login/src/app/(login)/signedin/page.tsx
+index 6d6069b..ee5af8e 100644
+--- i/apps/login/src/app/(login)/signedin/page.tsx
++++ w/apps/login/src/app/(login)/signedin/page.tsx
+@@ -1,5 +1,5 @@
+ import { Alert, AlertType } from "@/components/alert";
+-import { Button, ButtonVariants } from "@/components/button";
++import { CheckCircleIcon } from "@/components/auth/icons";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { Translated } from "@/components/translated";
+ import { UserAvatar } from "@/components/user-avatar";
+@@ -45,11 +45,14 @@ export default async function Page(props: { searchParams: Promise<any> }) {
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
++        <div className="bos-status-tile" aria-hidden="true">
++          <CheckCircleIcon width={32} height={32} />
++        </div>
+         <h1>
+           <Translated i18nKey="title" namespace="signedin" data={{ user: sessionFactors?.factors?.user?.displayName }} />
+         </h1>
+-        <p className="ztdl-p mb-6 block">
++        <p className="ztdl-p">
+           <Translated i18nKey="description" namespace="signedin" />
+         </p>
+ 
+@@ -61,7 +64,7 @@ export default async function Page(props: { searchParams: Promise<any> }) {
+         />
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {requestId && requestId.startsWith("device_") && (
+           <Alert type={AlertType.INFO}>
+             You can now close this window and return to the device where you started the authorization process to continue.
+@@ -69,13 +72,9 @@ export default async function Page(props: { searchParams: Promise<any> }) {
+         )}
+ 
+         {redirectUri && !isSamePage && (
+-          <div className="mt-8 flex w-full flex-row items-center">
+-            <span className="flex-grow"></span>
+-
+-            <Link href={redirectUri}>
+-              <Button type="submit" className="self-end" variant={ButtonVariants.Primary}>
+-                <Translated i18nKey="continue" namespace="signedin" />
+-              </Button>
++          <div className="bos-step-actions">
++            <Link href={redirectUri} className="bos-btn bos-btn--primary">
++              <Translated i18nKey="continue" namespace="signedin" />
+             </Link>
+           </div>
+         )}
+diff --git i/apps/login/src/app/(login)/u2f/page.tsx w/apps/login/src/app/(login)/u2f/page.tsx
+index 04f73b0..064d228 100644
+--- i/apps/login/src/app/(login)/u2f/page.tsx
++++ w/apps/login/src/app/(login)/u2f/page.tsx
+@@ -46,12 +46,12 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
++      <div className="bos-stack">
+         <h1>
+           <Translated i18nKey="verify.title" namespace="u2f" />
+         </h1>
+ 
+-        <p className="ztdl-p mb-6 block">
++        <p className="ztdl-p">
+           <Translated i18nKey="verify.description" namespace="u2f" />
+         </p>
+ 
+@@ -71,7 +71,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         )}
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {(loginName || sessionId) && (
+           <LoginPasskey
+             loginName={loginName}
+diff --git i/apps/login/src/app/(login)/u2f/set/page.tsx w/apps/login/src/app/(login)/u2f/set/page.tsx
+index 468ecdd..7b15df4 100644
+--- i/apps/login/src/app/(login)/u2f/set/page.tsx
++++ w/apps/login/src/app/(login)/u2f/set/page.tsx
+@@ -54,7 +54,7 @@ export default async function Page(props: { searchParams: Promise<Record<string
+           <Translated i18nKey="set.title" namespace="u2f" />
+         </h1>
+ 
+-        <p className="ztdl-p mb-6 block">
++        <p className="ztdl-p">
+           <Translated i18nKey="set.description" namespace="u2f" />
+         </p>
+ 
+@@ -68,9 +68,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         )}
+       </div>
+ 
+-      <div className="w-full">
++      <div className="bos-stack">
+         {(!sessionFactors || !enrollmentAuthorized) && (
+-          <div className="py-4">
++          <div>
+             <Alert>
+               {/* a loginName was provided but the session could not be resolved (cookie missing, invalid or expired) */}
+               <Translated i18nKey={!sessionFactors && loginName ? "sessionExpired" : "unknownContext"} namespace="error" />
+diff --git i/apps/login/src/app/(login)/verify/page.tsx w/apps/login/src/app/(login)/verify/page.tsx
+index 02d7bba..40b4813 100644
+--- i/apps/login/src/app/(login)/verify/page.tsx
++++ w/apps/login/src/app/(login)/verify/page.tsx
+@@ -1,4 +1,5 @@
+ import { Alert } from "@/components/alert";
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { Translated } from "@/components/translated";
+ import { UserAvatar } from "@/components/user-avatar";
+@@ -103,45 +104,39 @@ export default async function Page(props: { searchParams: Promise<any> }) {
+     params.set("requestId", requestId);
+   }
+ 
++  const identity = sessionFactors ? (
++    <UserAvatar
++      loginName={loginName ?? sessionFactors.factors?.user?.loginName}
++      displayName={sessionFactors.factors?.user?.displayName}
++      showDropdown
++      searchParams={searchParams}
++    ></UserAvatar>
++  ) : (
++    (user || loginName) && (
++      <UserAvatar
++        loginName={loginName ?? user?.preferredLoginName}
++        displayName={
++          !loginSettings?.ignoreUnknownUsernames ? human?.profile?.displayName : (loginName ?? user?.preferredLoginName)
++        }
++        showDropdown={false}
++      />
++    )
++  );
++
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="verify.title" namespace="verify" />
+-        </h1>
+-        <p className="ztdl-p">
+-          <Translated i18nKey="verify.description" namespace="verify" />
+-        </p>
++      <AuthHeading
++        title={<Translated i18nKey="verify.title" namespace="verify" />}
++        lead={<Translated i18nKey="verify.description" namespace="verify" />}
++      />
+ 
+-        {sessionFactors ? (
+-          <UserAvatar
+-            loginName={loginName ?? sessionFactors.factors?.user?.loginName}
+-            displayName={sessionFactors.factors?.user?.displayName}
+-            showDropdown
+-            searchParams={searchParams}
+-          ></UserAvatar>
+-        ) : (
+-          (user || loginName) && (
+-            <UserAvatar
+-              loginName={loginName ?? user?.preferredLoginName}
+-              displayName={
+-                !loginSettings?.ignoreUnknownUsernames
+-                  ? human?.profile?.displayName
+-                  : (loginName ?? user?.preferredLoginName)
+-              }
+-              showDropdown={false}
+-            />
+-          )
+-        )}
+-      </div>
++      {identity && <div className="bos-identity">{identity}</div>}
+ 
+       <div className="w-full">
+         {!id && (
+-          <div className="py-4">
+-            <Alert>
+-              <Translated i18nKey="unknownContext" namespace="error" />
+-            </Alert>
+-          </div>
++          <Alert>
++            <Translated i18nKey="unknownContext" namespace="error" />
++          </Alert>
+         )}
+ 
+         {id && (
+diff --git i/apps/login/src/app/(login)/verify/success/page.tsx w/apps/login/src/app/(login)/verify/success/page.tsx
+index 58db516..e440071 100644
+--- i/apps/login/src/app/(login)/verify/success/page.tsx
++++ w/apps/login/src/app/(login)/verify/success/page.tsx
+@@ -1,3 +1,4 @@
++import { AuthHeading } from "@/components/auth/auth-heading";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { Translated } from "@/components/translated";
+ import { UserAvatar } from "@/components/user-avatar";
+@@ -52,29 +53,25 @@ export default async function Page(props: { searchParams: Promise<any> }) {
+     continueUrl = `/loginname?${params}`;
+   }
+ 
++  const identity = sessionFactors ? (
++    <UserAvatar
++      loginName={loginName ?? sessionFactors.factors?.user?.loginName}
++      displayName={sessionFactors.factors?.user?.displayName}
++      showDropdown
++      searchParams={searchParams}
++    ></UserAvatar>
++  ) : (
++    user && <UserAvatar loginName={user.preferredLoginName} displayName={human?.profile?.displayName} showDropdown={false} />
++  );
++
+   return (
+     <DynamicTheme branding={branding}>
+-      <div className="flex flex-col space-y-4">
+-        <h1>
+-          <Translated i18nKey="successTitle" namespace="verify" />
+-        </h1>
+-        <p className="ztdl-p mb-6 block">
+-          <Translated i18nKey="successDescription" namespace="verify" />
+-        </p>
++      <AuthHeading
++        title={<Translated i18nKey="successTitle" namespace="verify" />}
++        lead={<Translated i18nKey="successDescription" namespace="verify" />}
++      />
+ 
+-        {sessionFactors ? (
+-          <UserAvatar
+-            loginName={loginName ?? sessionFactors.factors?.user?.loginName}
+-            displayName={sessionFactors.factors?.user?.displayName}
+-            showDropdown
+-            searchParams={searchParams}
+-          ></UserAvatar>
+-        ) : (
+-          user && (
+-            <UserAvatar loginName={user.preferredLoginName} displayName={human?.profile?.displayName} showDropdown={false} />
+-          )
+-        )}
+-      </div>
++      {identity && <div className="bos-identity">{identity}</div>}
+       <div className="w-full">{continueUrl && <VerifySuccessContinue continueUrl={continueUrl} />}</div>
+     </DynamicTheme>
+   );
+diff --git i/apps/login/src/app/global-error.tsx w/apps/login/src/app/global-error.tsx
+index 5feaef8..7e5f504 100644
+--- i/apps/login/src/app/global-error.tsx
++++ w/apps/login/src/app/global-error.tsx
+@@ -5,6 +5,7 @@ import "@fontsource-variable/outfit";
+ import "@/styles/bos-login.css";
+ 
+ import { Alert } from "@/components/alert";
++import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+ import { LoginShell } from "@/components/bos-login-shell";
+ import { Button } from "@/components/button";
+ import { ThemeProvider } from "@/components/theme-provider";
+@@ -16,9 +17,12 @@ export default function GlobalError({ reset }: { reset: () => void }) {
+         <ThemeProvider>
+           <LoginShell>
+             <div className="bos-login-content">
++              <div className="bos-status-tile bos-status-tile--warning" aria-hidden="true">
++                <ExclamationTriangleIcon className="h-8 w-8" />
++              </div>
+               <h1>Sign-in error</h1>
+               <Alert>Something went wrong. Please try again.</Alert>
+-              <div>
++              <div className="bos-step-actions">
+                 <Button data-i18n-key="error.tryagain" onClick={reset}>Try again</Button>
+               </div>
+             </div>
+diff --git i/apps/login/src/components/address-bar.tsx w/apps/login/src/components/address-bar.tsx
+index eb9bc1d..95d09bc 100644
+--- i/apps/login/src/components/address-bar.tsx
++++ w/apps/login/src/components/address-bar.tsx
+@@ -11,8 +11,8 @@ export function AddressBar({ domain }: Props) {
+   const pathname = usePathname();
+ 
+   return (
+-    <div className="flex items-center space-x-2 overflow-hidden p-3.5 lg:px-5 lg:py-3">
+-      <div className="text-gray-600">
++    <div className="flex items-center space-x-2 overflow-hidden p-3.5 lg:px-5 lg:py-3 text-[var(--text-secondary)]">
++      <div className="text-[var(--icon-default)]">
+         <svg xmlns="http://www.w3.org/2000/svg" className="h-4" viewBox="0 0 20 20" fill="currentColor">
+           <path
+             fillRule="evenodd"
+@@ -22,7 +22,7 @@ export function AddressBar({ domain }: Props) {
+         </svg>
+       </div>
+       <div className="flex space-x-1 text-sm font-medium">
+-        <div className="max-w-[150px] overflow-hidden px-2 text-ellipsis text-gray-500">
++        <div className="max-w-[150px] overflow-hidden px-2 text-ellipsis text-[var(--text-secondary)]">
+           <span className="whitespace-nowrap">{domain}</span>
+         </div>
+         {pathname ? (
+@@ -38,7 +38,7 @@ export function AddressBar({ domain }: Props) {
+                     <span>
+                       <span
+                         key={segment}
+-                        className="animate-[highlight_1s_ease-in-out_1] rounded-full px-1.5 py-0.5 text-gray-800 dark:text-gray-100"
++                        className="animate-[highlight_1s_ease-in-out_1] rounded-full px-1.5 py-0.5 text-[var(--text-primary)]"
+                       >
+                         {segment}
+                       </span>
+diff --git i/apps/login/src/components/alert.tsx w/apps/login/src/components/alert.tsx
+index 9bbc53c..b98a12a 100644
+--- i/apps/login/src/components/alert.tsx
++++ w/apps/login/src/components/alert.tsx
+@@ -16,14 +16,14 @@ export function Alert({ children, type = AlertType.ALERT }: Props) {
+   return (
+     <div
+       role={type === AlertType.ALERT ? "alert" : undefined}
+-      className={clsx("flex scroll-px-40 flex-row items-center justify-center rounded-md border py-2 pr-2", {
++      className={clsx("flex scroll-px-40 flex-row items-start rounded-lg border py-3 pr-3", {
+         "bos-alert-error": type === AlertType.ALERT,
+         "bos-alert-info": type === AlertType.INFO,
+       })}
+     >
+-      {type === AlertType.ALERT && <ExclamationTriangleIcon className="mr-2 ml-2 h-5 w-5 flex-shrink-0" />}
+-      {type === AlertType.INFO && <InformationCircleIcon className="mr-2 ml-2 h-5 w-5 flex-shrink-0" />}
+-      <span className="w-full text-sm">{children}</span>
++      {type === AlertType.ALERT && <ExclamationTriangleIcon className="mr-2 ml-3 h-5 w-5 flex-shrink-0" />}
++      {type === AlertType.INFO && <InformationCircleIcon className="mr-2 ml-3 h-5 w-5 flex-shrink-0" />}
++      <span className="w-full min-w-0 text-sm leading-5 [overflow-wrap:anywhere]">{children}</span>
+     </div>
+   );
+ }
+diff --git i/apps/login/src/components/authentication-method-radio.tsx w/apps/login/src/components/authentication-method-radio.tsx
+index 165f0e4..9a16acc 100644
+--- i/apps/login/src/components/authentication-method-radio.tsx
++++ w/apps/login/src/components/authentication-method-radio.tsx
+@@ -19,24 +19,18 @@ export function AuthenticationMethodRadio({
+ }) {
+   return (
+     <div className="w-full">
+-      <div className="mx-auto w-full max-w-md">
++      <div className="w-full">
+         <RadioGroup value={selected} onChange={selectionChanged}>
+-          <Label className="sr-only">Server size</Label>
+-          <div className="flex flex-row space-x-4">
++          <Label className="sr-only">Authentication method</Label>
++          <div className="bos-radio-grid">
+             {methods.map((method) => (
+               <Radio
+                 key={method}
+                 value={method}
+                 data-testid={method + "-radio"}
+-                className={({ focus, checked }) =>
+-                  `${focus ? "ring-primary-light-500/60 ring-2 dark:ring-white/20" : ""} ${
+-                    checked
+-                      ? "bg-background-light-400 ring-primary-light-500 dark:bg-background-dark-400 dark:ring-primary-dark-500 ring-2"
+-                      : "bg-background-light-400 dark:bg-background-dark-400"
+-                  } boder-divider-light dark:border-divider-dark relative flex h-full flex-1 cursor-pointer rounded-lg border px-5 py-4 hover:shadow-lg focus:outline-none dark:hover:bg-white/10`
+-                }
++                className="bos-radio-card"
+               >
+-                <div className="flex w-full flex-col items-center text-sm">
++                <div className="bos-radio-card__body">
+                   {method === "passkey" && (
+                     <svg
+                       xmlns="http://www.w3.org/2000/svg"
+@@ -44,7 +38,7 @@ export function AuthenticationMethodRadio({
+                       viewBox="0 0 24 24"
+                       strokeWidth="1.5"
+                       stroke="currentColor"
+-                      className="mb-3 h-8 w-8"
++                      className="bos-radio-card__icon"
+                     >
+                       <path
+                         strokeLinecap="round"
+@@ -54,7 +48,7 @@ export function AuthenticationMethodRadio({
+                     </svg>
+                   )}
+                   {method === "password" && (
+-                    <svg className="mb-3 h-8 w-8 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
++                    <svg className="bos-radio-card__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                       <title>form-textbox-password</title>
+                       <path d="M17,7H22V17H17V19A1,1 0 0,0 18,20H20V22H17.5C16.95,22 16,21.55 16,21C16,21.55 15.05,22 14.5,22H12V20H14A1,1 0 0,0 15,19V5A1,1 0 0,0 14,4H12V2H14.5C15.05,2 16,2.45 16,3C16,2.45 16.95,2 17.5,2H20V4H18A1,1 0 0,0 17,5V7M2,7H13V9H4V15H13V17H2V7M20,15V9H17V15H20M8.5,12A1.5,1.5 0 0,0 7,10.5A1.5,1.5 0 0,0 5.5,12A1.5,1.5 0 0,0 7,13.5A1.5,1.5 0 0,0 8.5,12M13,10.89C12.39,10.33 11.44,10.38 10.88,11C10.32,11.6 10.37,12.55 11,13.11C11.55,13.63 12.43,13.63 13,13.11V10.89Z" />
+                     </svg>
+diff --git i/apps/login/src/components/avatar.tsx w/apps/login/src/components/avatar.tsx
+index 29621f9..cbeed6b 100644
+--- i/apps/login/src/components/avatar.tsx
++++ w/apps/login/src/components/avatar.tsx
+@@ -1,7 +1,6 @@
+ "use client";
+ 
+ import { ColorShade, getColorHash } from "@/helpers/colors";
+-import { getComponentRoundness } from "@/lib/theme";
+ import { useTheme } from "next-themes";
+ 
+ interface AvatarProps {
+@@ -30,15 +29,9 @@ export function getInitials(name: string, loginName: string) {
+   return split[0].charAt(0) + (split[1] ? split[1].charAt(0) : "");
+ }
+ 
+-// Helper function to get avatar roundness from theme
+-function getAvatarRoundness(): string {
+-  return getComponentRoundness("avatar");
+-}
+-
+ export function Avatar({ size = "base", name, loginName, imageUrl, shadow }: AvatarProps) {
+   const { resolvedTheme } = useTheme();
+   const credentials = getInitials(name ?? loginName, loginName);
+-  const avatarRoundness = getAvatarRoundness();
+ 
+   const color: ColorShade = getColorHash(loginName);
+ 
+@@ -54,29 +47,13 @@ export function Avatar({ size = "base", name, loginName, imageUrl, shadow }: Ava
+ 
+   return (
+     <div
+-      className={`dark:group-focus:ring-offset-blue dark:text-blue bg-primary-light-500 text-primary-light-contrast-500 hover:bg-primary-light-400 group-focus:ring-primary-light-200 dark:bg-primary-dark-300 dark:text-primary-dark-contrast-300 hover:dark:bg-primary-dark-500 dark:group-focus:ring-primary-dark-400 pointer-events-none flex h-full w-full flex-shrink-0 cursor-default items-center justify-center transition-colors duration-200 group-focus:ring-2 group-focus:outline-none ${avatarRoundness} ${
+-        shadow ? "shadow" : ""
+-      } ${
+-        size === "large"
+-          ? "h-20 w-20 font-normal"
+-          : size === "base"
+-            ? "h-[38px] w-[38px] font-bold"
+-            : size === "small"
+-              ? "!h-[32px] !w-[32px] text-[13px] font-bold"
+-              : "h-12 w-12"
+-      }`}
++      className={`bos-avatar bos-avatar--${size}${shadow ? " bos-avatar--shadow" : ""}`}
+       style={resolvedTheme === "light" ? avatarStyleLight : avatarStyleDark}
+     >
+       {imageUrl ? (
+-        <img
+-          height={48}
+-          width={48}
+-          alt="avatar"
+-          className={`border-divider-light dark:border-divider-dark h-full w-full border ${avatarRoundness}`}
+-          src={imageUrl}
+-        />
++        <img height={48} width={48} alt="avatar" className="bos-avatar__img" src={imageUrl} />
+       ) : (
+-        <span className={`uppercase ${size === "large" ? "text-xl" : "text-13px"}`}>{credentials}</span>
++        <span className="bos-avatar__initials">{credentials}</span>
+       )}
+     </div>
+   );
+diff --git i/apps/login/src/components/button.tsx w/apps/login/src/components/button.tsx
+index 925d721..fc1ccc1 100644
+--- i/apps/login/src/components/button.tsx
++++ w/apps/login/src/components/button.tsx
+@@ -48,6 +48,13 @@ export const getButtonClasses = (
+         color === ButtonColors.Warn && variant !== ButtonVariants.Primary,
+       "px-16 py-2": size === ButtonSizes.Large,
+       "px-4 h-[36px]": size === ButtonSizes.Small,
++      // Hooks for apps/login/src/styles/bos-form.css; the utilities above stay for upstream tests and theming.
++      "bos-btn": true,
++      "bos-btn--primary": variant === ButtonVariants.Primary,
++      "bos-btn--secondary": variant === ButtonVariants.Secondary,
++      "bos-btn--destructive": variant === ButtonVariants.Destructive,
++      "bos-btn--warn": color === ButtonColors.Warn,
++      "bos-btn--lg": size === ButtonSizes.Large,
+     },
+     roundnessClasses, // Apply the full roundness classes directly
+     appearance, // Apply appearance-specific styling (shadows, borders, etc.)
+diff --git i/apps/login/src/components/change-password-form.tsx w/apps/login/src/components/change-password-form.tsx
+index c352ebf..3cc8dd2 100644
+--- i/apps/login/src/components/change-password-form.tsx
++++ w/apps/login/src/components/change-password-form.tsx
+@@ -11,10 +11,11 @@ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { FieldValues, useForm } from "react-hook-form";
+ import { Alert } from "./alert";
++import { FormStack } from "./auth/form-layout";
++import { PasswordField } from "./auth/password-field";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+-import { TextInput } from "./input";
+ import { PasswordComplexity } from "./password-complexity";
+ import { Spinner } from "./spinner";
+ import { Translated } from "./translated";
+@@ -124,7 +125,7 @@ export function ChangePasswordForm({ passwordComplexitySettings, sessionId, logi
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       <form className="w-full">
+-        <div className="mb-4 grid grid-cols-1 gap-4 pt-4">
++        <FormStack>
+           <input
+             type="text"
+             name="username"
+@@ -135,70 +136,63 @@ export function ChangePasswordForm({ passwordComplexitySettings, sessionId, logi
+             aria-hidden="true"
+             className="sr-only"
+           />
+-          <div className="">
+-            <TextInput
+-              type="password"
+-              autoComplete="current-password"
+-              autoFocus
+-              required
+-              {...register("currentPassword", {
+-                required: t("change.required.currentPassword"),
+-              })}
+-              label={t("change.labels.currentPassword")}
+-              error={errors.currentPassword?.message as string}
+-              data-testid="password-change-current-text-input"
+-            />
+-          </div>
+-          <div className="">
+-            <TextInput
+-              type="password"
+-              autoComplete="new-password"
+-              required
+-              {...register("password", {
+-                required: t("change.required.newPassword"),
+-              })}
+-              label={t("change.labels.newPassword")}
+-              error={errors.password?.message as string}
+-              data-testid="password-change-text-input"
+-            />
+-          </div>
+-          <div className="">
+-            <TextInput
+-              type="password"
+-              required
+-              autoComplete="new-password"
+-              {...register("confirmPassword", {
+-                required: t("change.required.confirmPassword"),
+-              })}
+-              label={t("change.labels.confirmPassword")}
+-              error={errors.confirmPassword?.message as string}
+-              data-testid="password-change-confirm-text-input"
+-            />
+-          </div>
+-        </div>
+-
+-        {passwordComplexitySettings && (
+-          <PasswordComplexity
+-            passwordComplexitySettings={passwordComplexitySettings}
+-            password={watchPassword}
+-            equals={!!watchPassword && watchPassword === watchConfirmPassword}
++          <PasswordField
++            autoComplete="current-password"
++            autoFocus
++            required
++            {...register("currentPassword", {
++              required: t("change.required.currentPassword"),
++            })}
++            label={t("change.labels.currentPassword")}
++            error={errors.currentPassword?.message as string}
++            data-testid="password-change-current-text-input"
++          />
++          <PasswordField
++            autoComplete="new-password"
++            required
++            {...register("password", {
++              required: t("change.required.newPassword"),
++            })}
++            label={t("change.labels.newPassword")}
++            error={errors.password?.message as string}
++            data-testid="password-change-text-input"
++          />
++          <PasswordField
++            required
++            autoComplete="new-password"
++            {...register("confirmPassword", {
++              required: t("change.required.confirmPassword"),
++            })}
++            label={t("change.labels.confirmPassword")}
++            error={errors.confirmPassword?.message as string}
++            data-testid="password-change-confirm-text-input"
+           />
+-        )}
+ 
+-        {error && <Alert>{error}</Alert>}
++          {passwordComplexitySettings && (
++            <div className="bos-complexity">
++              <PasswordComplexity
++                passwordComplexitySettings={passwordComplexitySettings}
++                password={watchPassword}
++                equals={!!watchPassword && watchPassword === watchConfirmPassword}
++              />
++            </div>
++          )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center justify-between">
+-          <BackButton data-testid="back-button" />
+-          <Button
+-            type="submit"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !policyIsValid || !formState.isValid || watchPassword !== watchConfirmPassword}
+-            onClick={handleSubmit(submitChange)}
+-            data-testid="submit-button"
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="change.submit" namespace="password" />
+-          </Button>
+-        </div>
++          {error && <Alert>{error}</Alert>}
++
++          <div className="bos-actions">
++            <BackButton data-testid="back-button" />
++            <Button
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !policyIsValid || !formState.isValid || watchPassword !== watchConfirmPassword}
++              onClick={handleSubmit(submitChange)}
++              data-testid="submit-button"
++            >
++              {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="change.submit" namespace="password" />
++            </Button>
++          </div>
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/checkbox.tsx w/apps/login/src/components/checkbox.tsx
+index 4fc7981..da73fa1 100644
+--- i/apps/login/src/components/checkbox.tsx
++++ w/apps/login/src/components/checkbox.tsx
+@@ -31,7 +31,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
+             disabled={disabled}
+             type="checkbox"
+             className={classNames(
+-              "form-checkbox text-primary-light-500 dark:text-primary-dark-500 rounded border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200/50 focus:ring-offset-0",
++              "bos-checkbox form-checkbox text-primary-light-500 dark:text-primary-dark-500 rounded border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200/50 focus:ring-offset-0",
+               className,
+             )}
+             {...props}
+diff --git i/apps/login/src/components/choose-authenticator-to-login.tsx w/apps/login/src/components/choose-authenticator-to-login.tsx
+index 34c421b..1305983 100644
+--- i/apps/login/src/components/choose-authenticator-to-login.tsx
++++ w/apps/login/src/components/choose-authenticator-to-login.tsx
+@@ -17,7 +17,7 @@ export function ChooseAuthenticatorToLogin({ authMethods, params, loginSettings
+           <Translated i18nKey="chooseAlternativeMethod" namespace="idp" />
+         </div>
+       )}
+-      <div className="grid w-full grid-cols-1 gap-5 pt-4">
++      <div className="bos-method-list">
+         {authMethods.includes(AuthenticationMethodType.PASSWORD) &&
+           loginSettings?.allowLocalAuthentication &&
+           PASSWORD(false, "/password?" + params)}
+diff --git i/apps/login/src/components/choose-authenticator-to-setup.tsx w/apps/login/src/components/choose-authenticator-to-setup.tsx
+index e89a7af..22eefe6 100644
+--- i/apps/login/src/components/choose-authenticator-to-setup.tsx
++++ w/apps/login/src/components/choose-authenticator-to-setup.tsx
+@@ -19,7 +19,7 @@ export function ChooseAuthenticatorToSetup({ authMethods, params, loginSettings
+     );
+   } else {
+     return (
+-      <div className="grid w-full grid-cols-1 gap-5 pt-4">
++      <div className="bos-method-list">
+         {!authMethods.includes(AuthenticationMethodType.PASSWORD) &&
+           loginSettings.allowLocalAuthentication &&
+           PASSWORD(false, "/password/set?" + params)}
+diff --git i/apps/login/src/components/choose-second-factor-to-setup.tsx w/apps/login/src/components/choose-second-factor-to-setup.tsx
+index e5af29f..1464cea 100644
+--- i/apps/login/src/components/choose-second-factor-to-setup.tsx
++++ w/apps/login/src/components/choose-second-factor-to-setup.tsx
+@@ -63,7 +63,7 @@ export function ChooseSecondFactorToSetup({
+   return (
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+-      <div className="grid w-full grid-cols-1 gap-5 pt-4">
++      <div className="bos-method-list">
+         {loginSettings.secondFactors.map((factor) => {
+           switch (factor) {
+             case SecondFactorType.OTP:
+@@ -83,7 +83,7 @@ export function ChooseSecondFactorToSetup({
+       </div>
+       {!force && (
+         <button
+-          className="hover:text-primary-light-500 dark:hover:text-primary-dark-500 text-sm transition-all"
++          className="bos-link justify-self-start"
+           onClick={async () => {
+             const skipResponse = await skipMFAAndContinueWithNextUrl({
+               userId,
+@@ -102,7 +102,7 @@ export function ChooseSecondFactorToSetup({
+         </button>
+       )}
+       {error && (
+-        <div className="py-4" data-testid="error">
++        <div data-testid="error">
+           <Alert>{error}</Alert>
+         </div>
+       )}
+diff --git i/apps/login/src/components/choose-second-factor.tsx w/apps/login/src/components/choose-second-factor.tsx
+index f18ad23..e245e50 100644
+--- i/apps/login/src/components/choose-second-factor.tsx
++++ w/apps/login/src/components/choose-second-factor.tsx
+@@ -28,7 +28,7 @@ export function ChooseSecondFactor({ loginName, sessionId, requestId, organizati
+   }
+ 
+   return (
+-    <div className="grid w-full grid-cols-1 gap-5 pt-4">
++    <div className="bos-method-list">
+       {userMethods.map((method, i) => {
+         return (
+           <div key={"method-" + i}>
+diff --git i/apps/login/src/components/consent.tsx w/apps/login/src/components/consent.tsx
+index 4d44305..827cd83 100644
+--- i/apps/login/src/components/consent.tsx
++++ w/apps/login/src/components/consent.tsx
+@@ -46,12 +46,12 @@ export function ConsentScreen({
+   const scopes = scope?.filter((s) => !!s);
+ 
+   return (
+-    <div className="flex w-full flex-col items-center space-y-4 pt-4">
+-      <ul className="w-full list-disc space-y-2">
++    <div className="bos-stack">
++      <ul className="bos-scope-list">
+         {scopes?.length === 0 && (
+-          <span className="border-divider-light bg-background-light-400 dark:bg-background-dark-400 flex w-full flex-row items-center rounded-md border px-4 py-2 text-sm transition-all">
++          <li className="bos-scope-list__item">
+             <Translated i18nKey="scope.openid" namespace="device" />
+-          </span>
++          </li>
+         )}
+         {scopes?.map((s) => {
+           const translationKey = `device.scope.${s}`;
+@@ -63,7 +63,7 @@ export function ConsentScreen({
+           return (
+             <li
+               key={s}
+-              className="border-divider-light bg-background-light-400 dark:bg-background-dark-400 flex w-full flex-row items-center rounded-md border px-4 py-2 text-sm transition-all"
++              className="bos-scope-list__item"
+             >
+               <span>{resolvedDescription}</span>
+             </li>
+@@ -72,24 +72,24 @@ export function ConsentScreen({
+       </ul>
+ 
+       {/* RFC 8628 5.4: show the user code so the user can compare it with the one on the device */}
+-      <p className="ztdl-p w-full text-left text-sm">
++      <p className="ztdl-p">
+         <Translated i18nKey="request.usercode" namespace="device" />{" "}
+-        <span className="font-mono font-bold" data-testid="user-code">
++        <span className="bos-user-code" data-testid="user-code">
+           {userCode}
+         </span>
+       </p>
+ 
+-      <p className="ztdl-p text-left text-xs">
++      <p className="ztdl-p bos-fineprint">
+         <Translated i18nKey="request.disclaimer" namespace="device" data={{ appName: appName }} />
+       </p>
+ 
+       {error && (
+-        <div className="py-4">
++        <div>
+           <Alert>{error}</Alert>
+         </div>
+       )}
+ 
+-      <div className="mt-4 flex w-full flex-row items-center">
++      <div className="bos-step-actions">
+         <Button
+           onClick={() =>
+             run(
+@@ -100,10 +100,9 @@ export function ConsentScreen({
+           variant={ButtonVariants.Secondary}
+           data-testid="deny-button"
+         >
+-          {loading && <Spinner className="mr-2 h-5 w-5" />}
++          {loading && <Spinner className="h-5 w-5" />}
+           <Translated i18nKey="request.deny" namespace="device" />
+         </Button>
+-        <span className="flex-grow"></span>
+ 
+         <Button
+           onClick={() =>
+@@ -114,10 +113,9 @@ export function ConsentScreen({
+           }
+           disabled={loading}
+           data-testid="submit-button"
+-          className="self-end"
+           variant={ButtonVariants.Primary}
+         >
+-          {loading && <Spinner className="mr-2 h-5 w-5" />}
++          {loading && <Spinner className="h-5 w-5" />}
+           <Translated i18nKey="request.submit" namespace="device" />
+         </Button>
+       </div>
+diff --git i/apps/login/src/components/copy-to-clipboard.tsx w/apps/login/src/components/copy-to-clipboard.tsx
+index 3a9c35e..64f9b02 100644
+--- i/apps/login/src/components/copy-to-clipboard.tsx
++++ w/apps/login/src/components/copy-to-clipboard.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { ClipboardDocumentCheckIcon, ClipboardIcon } from "@heroicons/react/20/solid";
+ import copy from "copy-to-clipboard";
++import { useTranslations } from "next-intl";
+ import { useEffect, useState } from "react";
+ 
+ type Props = {
+@@ -10,6 +11,7 @@ type Props = {
+ 
+ export function CopyToClipboard({ value }: Props) {
+   const [copied, setCopied] = useState(false);
++  const t = useTranslations("bosAuth");
+ 
+   useEffect(() => {
+     if (copied) {
+@@ -20,14 +22,15 @@ export function CopyToClipboard({ value }: Props) {
+   }, [copied, value]);
+ 
+   return (
+-    <div className="flex flex-row items-center px-2">
++    <div className="bos-copy">
+       <button
+         id="tooltip-ctc"
+         type="button"
+-        className="text-primary-light-500 dark:text-primary-dark-500"
++        className="bos-icon-btn"
++        aria-label={copied ? t("copied") : t("copy")}
+         onClick={() => setCopied(true)}
+       >
+-        {!copied ? <ClipboardIcon className="h-5 w-5" /> : <ClipboardDocumentCheckIcon className="h-5 w-5" />}
++        {!copied ? <ClipboardIcon className="h-5 w-5" aria-hidden="true" /> : <ClipboardDocumentCheckIcon className="h-5 w-5" aria-hidden="true" />}
+       </button>
+     </div>
+   );
+diff --git i/apps/login/src/components/device-code-form.tsx w/apps/login/src/components/device-code-form.tsx
+index ab2919b..8f46df5 100644
+--- i/apps/login/src/components/device-code-form.tsx
++++ w/apps/login/src/components/device-code-form.tsx
+@@ -60,8 +60,8 @@ export function DeviceCodeForm({ userCode }: { userCode?: string }) {
+ 
+   return (
+     <>
+-      <form className="w-full">
+-        <div className="mt-4">
++      <form className="bos-form-stack">
++        <div>
+           <TextInput
+             type="text"
+             autoComplete="one-time-code"
+@@ -73,23 +73,21 @@ export function DeviceCodeForm({ userCode }: { userCode?: string }) {
+         </div>
+ 
+         {error && (
+-          <div className="py-4" data-testid="error">
++          <div data-testid="error">
+             <Alert>{error}</Alert>
+           </div>
+         )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center">
++        <div className="bos-step-actions">
+           <BackButton />
+-          <span className="flex-grow"></span>
+           <Button
+             type="submit"
+-            className="self-end"
+             variant={ButtonVariants.Primary}
+             disabled={loading || !formState.isValid}
+             onClick={handleSubmit(submitCodeAndContinue)}
+             data-testid="submit-button"
+           >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="usercode.submit" namespace="device" />
++            {loading && <Spinner className="h-5 w-5" />} <Translated i18nKey="usercode.submit" namespace="device" />
+           </Button>
+         </div>
+       </form>
+diff --git i/apps/login/src/components/idp-process-handler.tsx w/apps/login/src/components/idp-process-handler.tsx
+index 6a9afa5..c79c9ab 100644
+--- i/apps/login/src/components/idp-process-handler.tsx
++++ w/apps/login/src/components/idp-process-handler.tsx
+@@ -94,16 +94,16 @@ export function IdpProcessHandler({
+   }, [provider, id, token, requestId, organization, link, sessionId, linkFingerprint, postErrorRedirectUrl, router, t]);
+ 
+   return (
+-    <div className="flex items-center justify-center">
++    <div className="bos-center">
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       {loading && (
+-        <div className="flex flex-col items-center space-y-4">
++        <div className="bos-center__loading" role="status">
+           <Spinner className="h-8 w-8" />
+-          <p className="text-sm text-gray-700 dark:text-gray-300">{t("processing.message")}</p>
++          <p className="bos-center__text">{t("processing.message")}</p>
+         </div>
+       )}
+       {error && (
+-        <div className="max-w-md py-4">
++        <div className="bos-center__alert">
+           <Alert>{error}</Alert>
+         </div>
+       )}
+diff --git i/apps/login/src/components/idps/base-button.tsx w/apps/login/src/components/idps/base-button.tsx
+index 4fb84f4..c585e04 100644
+--- i/apps/login/src/components/idps/base-button.tsx
++++ w/apps/login/src/components/idps/base-button.tsx
+@@ -1,6 +1,5 @@
+ "use client";
+ 
+-import { APPEARANCE_STYLES, getComponentRoundness, getThemeConfig } from "@/lib/theme";
+ import { clsx } from "clsx";
+ import { Loader2Icon } from "lucide-react";
+ import { ButtonHTMLAttributes, DetailedHTMLProps, forwardRef } from "react";
+@@ -14,35 +13,15 @@ export type SignInWithIdentityProviderProps = DetailedHTMLProps<
+   e2e?: string;
+ };
+ 
+-// Helper function to get default IDP button appearance from centralized theme system
+-function getDefaultIdpButtonAppearance(): string {
+-  const themeConfig = getThemeConfig();
+-  const appearance = APPEARANCE_STYLES[themeConfig.appearance];
+-  return appearance?.["idp-button"] || "border border-divider-light dark:border-divider-dark"; // Fallback to basic border
+-}
+-
++// Look comes from .bos-idp-btn in styles/bos-form.css (tokens, 8px radius, 44px minimum height).
+ export const BaseButton = forwardRef<HTMLButtonElement, SignInWithIdentityProviderProps>(function BaseButton(props, ref) {
+   const formStatus = useFormStatus();
+-  const buttonRoundness = getComponentRoundness("button");
+-  const idpButtonAppearance = getDefaultIdpButtonAppearance();
+ 
+   return (
+-    <button
+-      {...props}
+-      type="submit"
+-      ref={ref}
+-      disabled={formStatus.pending}
+-      className={clsx(
+-        `text-text-light-500 focus:border-primary-light-500 dark:text-text-dark-500 focus:dark:border-primary-dark-500 flex flex-1 cursor-pointer flex-row items-center px-4 text-sm transition-all outline-none hover:border-black hover:dark:border-white`,
+-        buttonRoundness,
+-        idpButtonAppearance,
+-        `bg-background-light-400 dark:bg-background-dark-500`, // Keep background as fallback for non-glass themes
+-        props.className,
+-      )}
+-    >
+-      <div className="flex flex-1 items-center justify-between gap-4">
+-        <div className="flex flex-1 flex-row items-center">{props.children}</div>
+-        {formStatus.pending && <Loader2Icon className="h-4 w-4 animate-spin" />}
++    <button {...props} type="submit" ref={ref} disabled={formStatus.pending} className={clsx("bos-idp-btn", props.className)}>
++      <div className="bos-idp-btn__body">
++        <div className="bos-idp-btn__label">{props.children}</div>
++        {formStatus.pending && <Loader2Icon className="h-4 w-4 animate-spin" aria-hidden="true" />}
+       </div>
+     </button>
+   );
+diff --git i/apps/login/src/components/idps/sign-in-with-generic.tsx w/apps/login/src/components/idps/sign-in-with-generic.tsx
+index 9c01547..da6b75c 100644
+--- i/apps/login/src/components/idps/sign-in-with-generic.tsx
++++ w/apps/login/src/components/idps/sign-in-with-generic.tsx
+@@ -5,7 +5,7 @@ import { BaseButton, SignInWithIdentityProviderProps } from "./base-button";
+ 
+ export const SignInWithGeneric = forwardRef<HTMLButtonElement, SignInWithIdentityProviderProps>(
+   function SignInWithGeneric(props, ref) {
+-    const { children, name = "", className = "h-[50px]", ...restProps } = props;
++    const { children, name = "", className = "", ...restProps } = props;
+     return (
+       <BaseButton {...restProps} ref={ref} className={className}>
+         {children ? children : <span className="w-full text-center">{name}</span>}
+diff --git i/apps/login/src/components/input.tsx w/apps/login/src/components/input.tsx
+index bbc30d0..436fac8 100644
+--- i/apps/login/src/components/input.tsx
++++ w/apps/login/src/components/input.tsx
+@@ -72,6 +72,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
+           disabled={disabled}
+           placeholder={placeholder}
+           autoComplete={props.autoComplete ?? "off"}
++          aria-invalid={error ? true : undefined}
+           onChange={(e) => onChange && onChange(e)}
+           onBlur={(e) => onBlur && onBlur(e)}
+           {...props}
+@@ -80,7 +81,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
+         {suffix && (
+           <span
+             className={clsx(
+-              "bg-background-light-500 dark:bg-background-dark-500 absolute right-[3px] bottom-[22px] z-30 translate-y-1/2 transform p-2",
++              "bos-input-suffix bg-background-light-500 dark:bg-background-dark-500 absolute right-[3px] bottom-[22px] z-30 translate-y-1/2 transform p-2",
+               // Extract just the roundness part for the suffix (no padding)
+               actualRoundness.split(" ")[0], // Take only the first part (rounded-full, rounded-md, etc.)
+             )}
+@@ -89,9 +90,11 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
+           </span>
+         )}
+ 
+-        <div className="leading-14.5px h-14.5px text-12px text-warn-light-500 dark:text-warn-dark-500 flex flex-row items-center">
+-          <span>{error ? error : " "}</span>
+-        </div>
++        {error && (
++          <div className="bos-field-error text-12px text-warn-light-500 dark:text-warn-dark-500 flex flex-row items-center">
++            <span>{error}</span>
++          </div>
++        )}
+ 
+         {success && (
+           <div className="text-md mt-1 flex flex-row items-center text-green-500">
+diff --git i/apps/login/src/components/ldap-username-password-form.tsx w/apps/login/src/components/ldap-username-password-form.tsx
+index b026169..c574482 100644
+--- i/apps/login/src/components/ldap-username-password-form.tsx
++++ w/apps/login/src/components/ldap-username-password-form.tsx
+@@ -82,7 +82,7 @@ export function LDAPUsernamePasswordForm({
+   }
+ 
+   return (
+-    <form className="w-full space-y-4">
++    <form className="bos-form-stack">
+       <TextInput
+         type="text"
+         autoComplete="username"
+@@ -106,23 +106,21 @@ export function LDAPUsernamePasswordForm({
+       </div>
+ 
+       {error && (
+-        <div className="py-4" data-testid="error">
++        <div data-testid="error">
+           <Alert>{error}</Alert>
+         </div>
+       )}
+ 
+-      <div className="mt-8 flex w-full flex-row items-center">
++      <div className="bos-step-actions">
+         <BackButton data-testid="back-button" />
+-        <span className="flex-grow"></span>
+         <Button
+           type="submit"
+-          className="self-end"
+           variant={ButtonVariants.Primary}
+           disabled={loading || !formState.isValid}
+           onClick={handleSubmit(submitUsernamePassword)}
+           data-testid="submit-button"
+         >
+-          {loading && <Spinner className="mr-2 h-5 w-5" />}
++          {loading && <Spinner className="h-5 w-5" />}
+           <Translated i18nKey="submit" namespace="ldap" />
+         </Button>
+       </div>
+diff --git i/apps/login/src/components/login-otp.tsx w/apps/login/src/components/login-otp.tsx
+index 08b9bb6..1d2c993 100644
+--- i/apps/login/src/components/login-otp.tsx
++++ w/apps/login/src/components/login-otp.tsx
+@@ -11,7 +11,7 @@ import { useTranslations } from "next-intl";
+ import { useRouter } from "next/navigation";
+ import { useCallback, useEffect, useId, useRef, useState } from "react";
+ import { Controller, useForm } from "react-hook-form";
+-import { Alert, AlertType } from "./alert";
++import { Alert } from "./alert";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { BackButton } from "./back-button";
+ import { AUTHENTICATOR_CODE, AuthenticatorCode } from "./bos-otp-input";
+@@ -219,35 +219,8 @@ export function LoginOTP({ host, loginName, sessionId, requestId, organization,
+   return (
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+-      <form className="w-full" onSubmit={submit}>
+-        {["email", "sms"].includes(method) && (
+-          <Alert type={AlertType.INFO}>
+-            <div className="flex flex-row">
+-              <span className="mr-auto flex-1 text-left">
+-                <Translated i18nKey="verify.noCodeReceived" namespace="otp" />
+-              </span>
+-              <button
+-                aria-label={t("verify.resendCode")}
+-                disabled={loading}
+-                type="button"
+-                className="text-primary-light-500 hover:text-primary-light-400 dark:text-primary-dark-500 hover:dark:text-primary-dark-400 ml-4 cursor-pointer disabled:cursor-default disabled:text-gray-400 dark:disabled:text-gray-700"
+-                onClick={async () => {
+-                  if (verifying.current) return;
+-                  setLoading(true);
+-                  const response = await updateSessionForOTPChallenge();
+-                  if (response?.error) {
+-                    setError(response.error);
+-                  }
+-                  setLoading(false);
+-                }}
+-                data-testid="resend-button"
+-              >
+-                <Translated i18nKey="verify.resendCode" namespace="otp" />
+-              </button>
+-            </div>
+-          </Alert>
+-        )}
+-        <div className="mt-4">
++      <form className="bos-form-stack" onSubmit={submit}>
++        <div className="bos-otp-group">
+           {isAuthenticator ? (
+             <Controller
+               control={control}
+@@ -275,25 +248,48 @@ export function LoginOTP({ host, loginName, sessionId, requestId, organization,
+               data-testid="code-text-input"
+             />
+           )}
++          {["email", "sms"].includes(method) && (
++            <div className="bos-otp-meta">
++              <span>
++                <Translated i18nKey="verify.noCodeReceived" namespace="otp" />
++              </span>
++              <button
++                aria-label={t("verify.resendCode")}
++                disabled={loading}
++                type="button"
++                className="bos-link"
++                onClick={async () => {
++                  if (verifying.current) return;
++                  setLoading(true);
++                  const response = await updateSessionForOTPChallenge();
++                  if (response?.error) {
++                    setError(response.error);
++                  }
++                  setLoading(false);
++                }}
++                data-testid="resend-button"
++              >
++                <Translated i18nKey="verify.resendCode" namespace="otp" />
++              </button>
++            </div>
++          )}
+         </div>
+ 
+         {error && (
+-          <div className="py-4" id={errorId} data-testid="error">
++          <div id={errorId} data-testid="error">
+             <Alert>{error}</Alert>
+           </div>
+         )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center">
++        <div className="bos-step-actions">
+           <BackButton data-testid="back-button" />
+-          <span className="flex-grow"></span>
+           <Button
+             type="submit"
+-            className="self-end"
+             variant={ButtonVariants.Primary}
+             disabled={loading || !formState.isValid}
+             data-testid="submit-button"
+           >
+-            {loading && !verified && <Spinner className="mr-2 h-5 w-5" />}
++            {loading && !verified && <Spinner className="h-5 w-5" />}
+             <Translated i18nKey={verified ? "verified" : "verify.submit"} namespace="otp" aria-live="polite" />
+           </Button>
+         </div>
+diff --git i/apps/login/src/components/login-passkey.tsx w/apps/login/src/components/login-passkey.tsx
+index 18a884e..fc11fde 100644
+--- i/apps/login/src/components/login-passkey.tsx
++++ w/apps/login/src/components/login-passkey.tsx
+@@ -186,14 +186,14 @@ export function LoginPasskey({ loginName, sessionId, requestId, altPassword, org
+   }
+ 
+   return (
+-    <div className="w-full">
++    <div className="bos-stack">
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       {error && (
+-        <div className="py-4">
++        <div>
+           <Alert>{error}</Alert>
+         </div>
+       )}
+-      <div className="mt-8 flex w-full flex-row items-center">
++      <div className="bos-step-actions">
+         {altPassword ? (
+           <Button
+             type="button"
+@@ -229,10 +229,8 @@ export function LoginPasskey({ loginName, sessionId, requestId, altPassword, org
+           <BackButton />
+         )}
+ 
+-        <span className="flex-grow"></span>
+         <Button
+           type="submit"
+-          className="self-end"
+           variant={ButtonVariants.Primary}
+           disabled={loading}
+           onClick={async () => {
+@@ -260,7 +258,7 @@ export function LoginPasskey({ loginName, sessionId, requestId, altPassword, org
+           }}
+           data-testid="submit-button"
+         >
+-          {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="verify.submit" namespace="passkey" />
++          {loading && <Spinner className="h-5 w-5" />} <Translated i18nKey="verify.submit" namespace="passkey" />
+         </Button>
+       </div>
+     </div>
+diff --git i/apps/login/src/components/password-form.tsx w/apps/login/src/components/password-form.tsx
+index d76c5ea..84baf6d 100644
+--- i/apps/login/src/components/password-form.tsx
++++ w/apps/login/src/components/password-form.tsx
+@@ -10,10 +10,11 @@ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { useForm } from "react-hook-form";
+ import { Alert, AlertType } from "./alert";
++import { FieldAside, FormStack } from "./auth/form-layout";
++import { PasswordField } from "./auth/password-field";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+-import { TextInput } from "./input";
+ import { Spinner } from "./spinner";
+ import { Translated } from "./translated";
+ 
+@@ -112,56 +113,52 @@ export function PasswordForm({ loginSettings, loginName, organization, defaultOr
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       <form className="w-full">
+-        <div className={`${error && "animate-shake transform-gpu"}`}>
+-          <TextInput
+-            type="password"
+-            autoComplete="password"
+-            autoFocus
+-            {...register("password", { required: t("verify.required.password") })}
+-            label={t("verify.labels.password")}
+-            data-testid="password-text-input"
+-          />
+-          {!loginSettings?.hidePasswordReset && (
+-            <button
+-              className="hover:text-primary-light-500 dark:hover:text-primary-dark-500 text-sm transition-all"
+-              onClick={() => resetPasswordAndContinue()}
+-              type="button"
+-              disabled={loading}
+-              data-testid="reset-button"
+-            >
+-              <Translated i18nKey="verify.resetPassword" namespace="password" />
+-            </button>
++        <FormStack>
++          <div>
++            <PasswordField
++              autoFocus
++              {...register("password", { required: t("verify.required.password") })}
++              label={t("verify.labels.password")}
++              data-testid="password-text-input"
++            />
++            {!loginSettings?.hidePasswordReset && (
++              <FieldAside>
++                <button
++                  className="bos-link bos-link--plain"
++                  onClick={() => resetPasswordAndContinue()}
++                  type="button"
++                  disabled={loading}
++                  data-testid="reset-button"
++                >
++                  <Translated i18nKey="verify.resetPassword" namespace="password" />
++                </button>
++              </FieldAside>
++            )}
++
++            {loginName && <input type="hidden" name="loginName" autoComplete="username" value={loginName} />}
++          </div>
++
++          {info && <Alert type={AlertType.INFO}>{info}</Alert>}
++
++          {error && (
++            <div data-testid="error">
++              <Alert>{error}</Alert>
++            </div>
+           )}
+ 
+-          {loginName && <input type="hidden" name="loginName" autoComplete="username" value={loginName} />}
+-        </div>
+-
+-        {info && (
+-          <div className="py-4">
+-            <Alert type={AlertType.INFO}>{info}</Alert>
++          <div className="bos-actions">
++            <BackButton data-testid="back-button" />
++            <Button
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !formState.isValid}
++              onClick={handleSubmit(submitPassword)}
++              data-testid="submit-button"
++            >
++              {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="verify.submit" namespace="password" />
++            </Button>
+           </div>
+-        )}
+-
+-        {error && (
+-          <div className="py-4" data-testid="error">
+-            <Alert>{error}</Alert>
+-          </div>
+-        )}
+-
+-        <div className="mt-8 flex w-full flex-row items-center">
+-          <BackButton data-testid="back-button" />
+-          <span className="flex-grow"></span>
+-          <Button
+-            type="submit"
+-            className="self-end"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !formState.isValid}
+-            onClick={handleSubmit(submitPassword)}
+-            data-testid="submit-button"
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="verify.submit" namespace="password" />
+-          </Button>
+-        </div>
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/privacy-policy-checkboxes.tsx w/apps/login/src/components/privacy-policy-checkboxes.tsx
+index 0998ad5..e9499c9 100644
+--- i/apps/login/src/components/privacy-policy-checkboxes.tsx
++++ w/apps/login/src/components/privacy-policy-checkboxes.tsx
+@@ -3,7 +3,7 @@ import { resolveLocalizedLegalLink } from "@/lib/legal-links";
+ import { LegalAndSupportSettings } from "@zitadel/proto/zitadel/settings/v2/legal_settings_pb";
+ import { useLocale } from "next-intl";
+ import Link from "next/link";
+-import { useState } from "react";
++import { useId, useState } from "react";
+ import { Checkbox } from "./checkbox";
+ import { Translated } from "./translated";
+ 
+@@ -19,6 +19,9 @@ type AcceptanceState = {
+ 
+ export function PrivacyPolicyCheckboxes({ legal, onChange }: Props) {
+   const locale = useLocale();
++  const idBase = useId();
++  const tosId = `${idBase}-tos`;
++  const privacyId = `${idBase}-privacy`;
+   const [acceptanceState, setAcceptanceState] = useState<AcceptanceState>({
+     tosAccepted: false,
+     privacyPolicyAccepted: false,
+@@ -37,8 +40,8 @@ export function PrivacyPolicyCheckboxes({ legal, onChange }: Props) {
+   };
+ 
+   return (
+-    <>
+-      <p className="text-text-light-secondary-500 dark:text-text-dark-secondary-500 mt-4 flex flex-row items-center text-sm">
++    <div className="bos-consent">
++      <p className="flex flex-row items-center">
+         <Translated i18nKey="agreeTo" namespace="register" />
+         {helpLink && (
+           <span>
+@@ -49,7 +52,7 @@ export function PrivacyPolicyCheckboxes({ legal, onChange }: Props) {
+                 viewBox="0 0 24 24"
+                 strokeWidth={1.5}
+                 stroke="currentColor"
+-                className="ml-1 h-5 w-5"
++                className="ml-1 h-4 w-4"
+               >
+                 <path
+                   strokeLinecap="round"
+@@ -62,9 +65,9 @@ export function PrivacyPolicyCheckboxes({ legal, onChange }: Props) {
+         )}
+       </p>
+       {tosLink && (
+-        <div className="mt-4 flex items-center">
++        <div className="bos-check-row">
+           <Checkbox
+-            className="mr-4"
++            id={tosId}
+             checked={acceptanceState.tosAccepted}
+             value={"tos"}
+             onChangeVal={(checked: boolean) => {
+@@ -78,19 +81,17 @@ export function PrivacyPolicyCheckboxes({ legal, onChange }: Props) {
+             data-testid="tos-checkbox"
+           />
+ 
+-          <div className="mr-4 w-[28rem]">
+-            <p className="text-text-light-500 dark:text-text-dark-500 text-sm">
+-              <Link href={tosLink} className="underline" target="_blank" data-testid="tos-link">
+-                <Translated i18nKey="termsOfService" namespace="register" />
+-              </Link>
+-            </p>
+-          </div>
++          <label htmlFor={tosId} className="bos-check-text">
++            <Link href={tosLink} target="_blank" data-testid="tos-link">
++              <Translated i18nKey="termsOfService" namespace="register" />
++            </Link>
++          </label>
+         </div>
+       )}
+       {privacyPolicyLink && (
+-        <div className="mt-4 flex items-center">
++        <div className="bos-check-row">
+           <Checkbox
+-            className="mr-4"
++            id={privacyId}
+             checked={acceptanceState.privacyPolicyAccepted}
+             value={"privacypolicy"}
+             onChangeVal={(checked: boolean) => {
+@@ -104,15 +105,13 @@ export function PrivacyPolicyCheckboxes({ legal, onChange }: Props) {
+             data-testid="privacy-policy-checkbox"
+           />
+ 
+-          <div className="mr-4 w-[28rem]">
+-            <p className="text-text-light-500 dark:text-text-dark-500 text-sm">
+-              <Link href={privacyPolicyLink} className="underline" target="_blank" data-testid="privacy-policy-link">
+-                <Translated i18nKey="privacyPolicy" namespace="register" />
+-              </Link>
+-            </p>
+-          </div>
++          <label htmlFor={privacyId} className="bos-check-text">
++            <Link href={privacyPolicyLink} target="_blank" data-testid="privacy-policy-link">
++              <Translated i18nKey="privacyPolicy" namespace="register" />
++            </Link>
++          </label>
+         </div>
+       )}
+-    </>
++    </div>
+   );
+ }
+diff --git i/apps/login/src/components/register-form.tsx w/apps/login/src/components/register-form.tsx
+index 9979f79..ca494de 100644
+--- i/apps/login/src/components/register-form.tsx
++++ w/apps/login/src/components/register-form.tsx
+@@ -9,9 +9,9 @@ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { FieldValues, useForm } from "react-hook-form";
+ import { Alert, AlertType } from "./alert";
++import { FormStack } from "./auth/form-layout";
+ import { AuthenticationMethod, AuthenticationMethodRadio, methods } from "./authentication-method-radio";
+ import { AutoSubmitForm } from "./auto-submit-form";
+-import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+ import { TextInput } from "./input";
+ import { PrivacyPolicyCheckboxes } from "./privacy-policy-checkboxes";
+@@ -117,93 +117,82 @@ export function RegisterForm({
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       <form className="w-full">
+-        <div className="mb-4 grid grid-cols-2 gap-4">
+-          <div className="">
++        <FormStack>
++          <div className="bos-field-row">
+             <TextInput
+-              type="firstname"
+-              autoComplete="firstname"
++              type="text"
++              autoComplete="given-name"
+               autoFocus
+               required
+               {...register("firstname", { required: t("required.firstname") })}
+               label={t("labels.firstname")}
++              placeholder={t("placeholders.firstname")}
+               error={errors.firstname?.message as string}
+               data-testid="firstname-text-input"
+             />
+-          </div>
+-          <div className="">
+             <TextInput
+-              type="lastname"
+-              autoComplete="lastname"
++              type="text"
++              autoComplete="family-name"
+               required
+               {...register("lastname", { required: t("required.lastname") })}
+               label={t("labels.lastname")}
++              placeholder={t("placeholders.lastname")}
+               error={errors.lastname?.message as string}
+               data-testid="lastname-text-input"
+             />
+           </div>
+-          <div className="col-span-2">
+-            <TextInput
+-              type="email"
+-              autoComplete="email"
+-              required
+-              {...register("email", { required: t("required.email") })}
+-              label={t("labels.email")}
+-              error={errors.email?.message as string}
+-              data-testid="email-text-input"
+-            />
+-          </div>
+-        </div>
+-        {(legal?.tosLink || legal?.privacyPolicyLink) && (
+-          <PrivacyPolicyCheckboxes legal={legal} onChange={setTosAndPolicyAccepted} />
+-        )}
+-        {/* show chooser if both methods are allowed */}
+-        {loginSettings && loginSettings.allowLocalAuthentication && loginSettings.passkeysType == PasskeysType.ALLOWED && (
+-          <>
+-            <p className="ztdl-p mt-4 mb-6 block text-left">
+-              <Translated i18nKey="selectMethod" namespace="register" />
+-            </p>
+-
+-            <div className="pb-4">
++          <TextInput
++            type="email"
++            autoComplete="email"
++            required
++            {...register("email", { required: t("required.email") })}
++            label={t("labels.email")}
++            placeholder={t("placeholders.email")}
++            error={errors.email?.message as string}
++            data-testid="email-text-input"
++          />
++          {(legal?.tosLink || legal?.privacyPolicyLink) && (
++            <PrivacyPolicyCheckboxes legal={legal} onChange={setTosAndPolicyAccepted} />
++          )}
++          {/* show chooser if both methods are allowed */}
++          {loginSettings && loginSettings.allowLocalAuthentication && loginSettings.passkeysType == PasskeysType.ALLOWED && (
++            <div className="bos-method">
++              <p className="ztdl-p">
++                <Translated i18nKey="selectMethod" namespace="register" />
++              </p>
+               <AuthenticationMethodRadio selected={selected} selectionChanged={setSelected} />
+             </div>
+-          </>
+-        )}
+-        {!loginSettings?.allowLocalAuthentication &&
+-          loginSettings?.passkeysType !== PasskeysType.ALLOWED &&
+-          (!loginSettings?.allowExternalIdp || !idpCount) && (
+-            <div className="py-4">
++          )}
++          {!loginSettings?.allowLocalAuthentication &&
++            loginSettings?.passkeysType !== PasskeysType.ALLOWED &&
++            (!loginSettings?.allowExternalIdp || !idpCount) && (
+               <Alert type={AlertType.INFO}>
+                 <Translated i18nKey="noMethodAvailableWarning" namespace="register" />
+               </Alert>
+-            </div>
+-          )}
++            )}
+ 
+-        {error && (
+-          <div className="py-4">
+-            <Alert>{error}</Alert>
++          {error && <Alert>{error}</Alert>}
++
++          <div className="bos-actions">
++            <Button
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !canSubmit}
++              onClick={handleSubmit((values) => {
++                const usePasswordToContinue: boolean =
++                  loginSettings?.allowLocalAuthentication && loginSettings?.passkeysType == PasskeysType.ALLOWED
++                    ? !(selected === methods[0]) // choose selection if both available
++                    : !!loginSettings?.allowLocalAuthentication; // if password is chosen
++                // set password as default if only password is allowed
++                return submitAndContinue(values, usePasswordToContinue);
++              })}
++              data-testid="submit-button"
++            >
++              {loading && <Spinner className="mr-2 h-5 w-5" />}
++              <Translated i18nKey="submit" namespace="register" />
++            </Button>
+           </div>
+-        )}
+-
+-        <div className="mt-8 flex w-full flex-row items-center justify-between">
+-          <BackButton data-testid="back-button" />
+-          <Button
+-            type="submit"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !canSubmit}
+-            onClick={handleSubmit((values) => {
+-              const usePasswordToContinue: boolean =
+-                loginSettings?.allowLocalAuthentication && loginSettings?.passkeysType == PasskeysType.ALLOWED
+-                  ? !(selected === methods[0]) // choose selection if both available
+-                  : !!loginSettings?.allowLocalAuthentication; // if password is chosen
+-              // set password as default if only password is allowed
+-              return submitAndContinue(values, usePasswordToContinue);
+-            })}
+-            data-testid="submit-button"
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />}
+-            <Translated i18nKey="submit" namespace="register" />
+-          </Button>
+-        </div>
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/register-passkey.tsx w/apps/login/src/components/register-passkey.tsx
+index c2e6145..31971ef 100644
+--- i/apps/login/src/components/register-passkey.tsx
++++ w/apps/login/src/components/register-passkey.tsx
+@@ -205,14 +205,14 @@ export function RegisterPasskey({
+   }, [code, submitRegisterAndContinue]);
+ 
+   return (
+-    <form className="w-full">
++    <form className="bos-form-stack">
+       {error && (
+-        <div className="py-4">
++        <div>
+           <Alert>{error}</Alert>
+         </div>
+       )}
+ 
+-      <div className="mt-8 flex w-full flex-row items-center">
++      <div className="bos-step-actions">
+         {isPrompt ? (
+           <Button
+             type="button"
+@@ -227,16 +227,14 @@ export function RegisterPasskey({
+           <BackButton />
+         )}
+ 
+-        <span className="flex-grow"></span>
+         <Button
+           type="submit"
+-          className="self-end"
+           variant={ButtonVariants.Primary}
+           disabled={loading || !formState.isValid}
+           onClick={handleSubmit(submitRegisterAndContinue)}
+           data-testid="submit-button"
+         >
+-          {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="set.submit" namespace="passkey" />
++          {loading && <Spinner className="h-5 w-5" />} <Translated i18nKey="set.submit" namespace="passkey" />
+         </Button>
+       </div>
+     </form>
+diff --git i/apps/login/src/components/register-u2f.tsx w/apps/login/src/components/register-u2f.tsx
+index 128bf4b..627bb44 100644
+--- i/apps/login/src/components/register-u2f.tsx
++++ w/apps/login/src/components/register-u2f.tsx
+@@ -177,26 +177,24 @@ export function RegisterU2f({ loginName, sessionId, organization, requestId, che
+   return (
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+-      <form className="w-full">
++      <form className="bos-form-stack">
+         {error && (
+-          <div className="py-4">
++          <div>
+             <Alert>{error}</Alert>
+           </div>
+         )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center">
++        <div className="bos-step-actions">
+           <BackButton data-testid="back-button" />
+ 
+-          <span className="flex-grow"></span>
+           <Button
+             type="submit"
+-            className="self-end"
+             variant={ButtonVariants.Primary}
+             disabled={loading}
+             onClick={submitRegisterAndContinue}
+             data-testid="submit-button"
+           >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="set.submit" namespace="u2f" />
++            {loading && <Spinner className="h-5 w-5" />} <Translated i18nKey="set.submit" namespace="u2f" />
+           </Button>
+         </div>
+       </form>
+diff --git i/apps/login/src/components/self-service-menu.tsx w/apps/login/src/components/self-service-menu.tsx
+index 63b9e79..fbf1a0d 100644
+--- i/apps/login/src/components/self-service-menu.tsx
++++ w/apps/login/src/components/self-service-menu.tsx
+@@ -15,7 +15,7 @@ export function SelfServiceMenu() {
+   // }
+ 
+   return (
+-    <div className="flex w-full flex-col space-y-2">
++    <div className="bos-session-list">
+       {list.map((menuitem, index) => {
+         return <SelfServiceItem link={menuitem.link} key={"self-service-" + index} name={menuitem.name} />;
+       })}
+@@ -28,7 +28,7 @@ const SelfServiceItem = ({ name, link }: { name: string; link: string }) => {
+     <Link
+       prefetch={false}
+       href={link}
+-      className="group border-divider-light bg-background-light-400 dark:bg-background-dark-400 flex w-full flex-row items-center rounded-md border px-4 py-2 transition-all hover:shadow-lg dark:hover:bg-white/10"
++      className="bos-session bos-session__main"
+     >
+       {name}
+     </Link>
+diff --git i/apps/login/src/components/session-clear-item.tsx w/apps/login/src/components/session-clear-item.tsx
+index b832e3d..9d90097 100644
+--- i/apps/login/src/components/session-clear-item.tsx
++++ w/apps/login/src/components/session-clear-item.tsx
+@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { Alert } from "./alert";
+ import { Avatar } from "./avatar";
++import { BadgeState, StateBadge } from "./state-badge";
+ import { isSessionPrimaryFactorAndLifetimeValid } from "./session-item";
+ import { Translated } from "./translated";
+ 
+@@ -50,57 +51,54 @@ export function SessionClearItem({ session, reload }: { session: Session; reload
+ 
+   return (
+     <>
+-      <button
+-        onClick={async () => {
+-          if (await clearSessionId(session.id)) {
+-            reload();
+-          }
+-        }}
+-        className="group border-divider-light bg-background-light-400 dark:bg-background-dark-400 flex flex-row items-center rounded-md border px-4 py-2 transition-all hover:shadow-lg dark:hover:bg-white/10"
+-      >
+-        <div className="pr-4">
++      <div className="bos-session">
++        <button
++          type="button"
++          onClick={async () => {
++            if (await clearSessionId(session.id)) {
++              reload();
++            }
++          }}
++          className="bos-session__main"
++        >
+           <Avatar
+             size="small"
+             loginName={session.factors?.user?.loginName as string}
+             name={session.factors?.user?.displayName ?? ""}
+           />
+-        </div>
+ 
+-        <div className="flex flex-col items-start overflow-hidden">
+-          <span className="">{session.factors?.user?.displayName}</span>
+-          <span className="text-xs text-ellipsis opacity-80">{session.factors?.user?.loginName}</span>
+-          {valid ? (
+-            <span className="text-xs text-ellipsis opacity-80">
+-              {verifiedAt && (
+-                <Translated
+-                  i18nKey="verifiedAt"
+-                  namespace="logout"
+-                  data={{ time: moment(timestampDate(verifiedAt)).fromNow() }}
+-                />
+-              )}
+-            </span>
+-          ) : (
+-            verifiedAt && (
+-              <span className="text-xs text-ellipsis opacity-80">
+-                expired {session.expirationDate && moment(timestampDate(session.expirationDate)).fromNow()}
+-              </span>
+-            )
+-          )}
+-        </div>
++          <span className="bos-session__text">
++            {session.factors?.user?.displayName && (
++              <span className="bos-session__name">{session.factors?.user?.displayName}</span>
++            )}
++            <span className="bos-session__login">{session.factors?.user?.loginName}</span>
++            {valid ? (
++              verifiedAt && (
++                <span className="bos-session__meta">
++                  <Translated
++                    i18nKey="verifiedAt"
++                    namespace="logout"
++                    data={{ time: moment(timestampDate(verifiedAt)).fromNow() }}
++                  />
++                </span>
++              )
++            ) : (
++              verifiedAt && (
++                <span className="bos-session__meta">
++                  expired {session.expirationDate && moment(timestampDate(session.expirationDate)).fromNow()}
++                </span>
++              )
++            )}
++          </span>
+ 
+-        <span className="flex-grow"></span>
+-        <div className="relative flex flex-row items-center">
+-          <div className="text-warn-light-500 dark:text-warn-dark-500 mr-6 flex hidden items-center justify-center rounded-full bg-[#ff0000]/10 px-2 py-[2px] text-xs transition-all group-hover:block dark:bg-[#ff0000]/10">
++          <StateBadge state={valid ? BadgeState.Success : BadgeState.Alert}>
++            <Translated i18nKey={valid ? "verified" : "expired"} namespace="accounts" />
++          </StateBadge>
++          <span className="bos-session__action">
+             <Translated i18nKey="clear" namespace="logout" />
+-          </div>
+-
+-          {valid ? (
+-            <div className="absolute right-0 mx-2 h-2 w-2 transform rounded-full bg-green-500 transition-all"></div>
+-          ) : (
+-            <div className="absolute right-0 mx-2 h-2 w-2 transform rounded-full bg-red-500 transition-all"></div>
+-          )}
+-        </div>
+-      </button>
++          </span>
++        </button>
++      </div>
+       {error && <Alert>{error}</Alert>}
+     </>
+   );
+diff --git i/apps/login/src/components/session-item.tsx w/apps/login/src/components/session-item.tsx
+index a0d5c7c..8f36177 100644
+--- i/apps/login/src/components/session-item.tsx
++++ w/apps/login/src/components/session-item.tsx
+@@ -10,10 +10,11 @@ import { Session } from "@zitadel/proto/zitadel/session/v2/session_pb";
+ import moment from "moment";
+ import { useLocale, useTranslations } from "next-intl";
+ import { useRouter } from "next/navigation";
+-import React, { useState } from "react";
++import { useId, useState } from "react";
+ import { Alert } from "./alert";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { Avatar } from "./avatar";
++import { BadgeState, StateBadge } from "./state-badge";
+ import { Translated } from "./translated";
+ 
+ export function isSessionPrimaryFactorAndLifetimeValid(session: Partial<Session>): {
+@@ -36,6 +37,8 @@ export function SessionItem({ session, reload, requestId }: { session: Session;
+   const currentLocale = useLocale();
+   moment.locale(currentLocale === "zh" ? "zh-cn" : currentLocale);
+   const t = useTranslations("error");
++  const tLogout = useTranslations("logout");
++  const loginNameId = useId();
+ 
+   const [_loading, setLoading] = useState<boolean>(false);
+ 
+@@ -70,98 +73,98 @@ export function SessionItem({ session, reload, requestId }: { session: Session;
+ 
+   return (
+     <>
+-      <Tooltip.Root delayDuration={300}>
+-        {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+-        <Tooltip.Trigger asChild>
+-          <button
+-            onClick={async () => {
+-              if (valid && session?.factors?.user) {
+-                const sessionPayload: ContinueWithSessionCommand = session;
+-                if (requestId) {
+-                  sessionPayload.requestId = requestId;
++      <div className="bos-session">
++        <Tooltip.Root delayDuration={300}>
++          {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
++          <Tooltip.Trigger asChild>
++            <button
++              type="button"
++              onClick={async () => {
++                if (valid && session?.factors?.user) {
++                  const sessionPayload: ContinueWithSessionCommand = session;
++                  if (requestId) {
++                    sessionPayload.requestId = requestId;
++                  }
++
++                  const callbackResponse = await continueWithSession(sessionPayload);
++
++                  handleServerActionResponse(callbackResponse, router, setSamlData, (e) => setError(e));
++                } else if (session.factors?.user) {
++                  setLoading(true);
++                  try {
++                    const res = await sendLoginname({
++                      loginName: session.factors?.user?.loginName,
++                      organization: session.factors.user.organizationId,
++                      requestId: requestId,
++                    });
++
++                    handleServerActionResponse(res, router, setSamlData, (e) => setError(e));
++                  } catch {
++                    setError("An internal error occurred");
++                  } finally {
++                    setLoading(false);
++                  }
+                 }
+-
+-                const callbackResponse = await continueWithSession(sessionPayload);
+-
+-                handleServerActionResponse(callbackResponse, router, setSamlData, (e) => setError(e));
+-              } else if (session.factors?.user) {
+-                setLoading(true);
+-                try {
+-                  const res = await sendLoginname({
+-                    loginName: session.factors?.user?.loginName,
+-                    organization: session.factors.user.organizationId,
+-                    requestId: requestId,
+-                  });
+-
+-                  handleServerActionResponse(res, router, setSamlData, (e) => setError(e));
+-                } catch {
+-                  setError("An internal error occurred");
+-                } finally {
+-                  setLoading(false);
+-                }
+-              }
+-            }}
+-            className="group border-divider-light bg-background-light-400 dark:bg-background-dark-400 flex flex-row items-center rounded-md border px-4 py-2 transition-all hover:shadow-lg dark:hover:bg-white/10"
+-          >
+-            <div className="pr-4">
++              }}
++              className="bos-session__main"
++            >
+               <Avatar
+                 size="small"
+                 loginName={session.factors?.user?.loginName as string}
+                 name={session.factors?.user?.displayName ?? ""}
+               />
+-            </div>
+ 
+-            <div className="flex flex-col items-start overflow-hidden">
+-              <span className="">{session.factors?.user?.displayName}</span>
+-              <span className="text-xs text-ellipsis opacity-80">{session.factors?.user?.loginName}</span>
+-              {valid ? (
+-                <span className="text-xs text-ellipsis opacity-80">
+-                  <Translated i18nKey="verified" namespace="accounts" />{" "}
+-                  {verifiedAt && moment(timestampDate(verifiedAt)).fromNow()}
++              <span className="bos-session__text">
++                {session.factors?.user?.displayName && (
++                  <span className="bos-session__name">{session.factors?.user?.displayName}</span>
++                )}
++                <span className="bos-session__login" id={loginNameId}>
++                  {session.factors?.user?.loginName}
+                 </span>
+-              ) : (
+-                verifiedAt && (
+-                  <span className="text-xs text-ellipsis opacity-80">
+-                    <Translated i18nKey="expired" namespace="accounts" />{" "}
+-                    {session.expirationDate && moment(timestampDate(session.expirationDate)).fromNow()}
++                {valid ? (
++                  <span className="bos-session__meta">
++                    {verifiedAt && moment(timestampDate(verifiedAt)).fromNow()}
+                   </span>
+-                )
+-              )}
+-            </div>
++                ) : (
++                  verifiedAt && (
++                    <span className="bos-session__meta">
++                      {session.expirationDate && moment(timestampDate(session.expirationDate)).fromNow()}
++                    </span>
++                  )
++                )}
++              </span>
+ 
+-            <span className="flex-grow"></span>
+-            <div className="relative flex flex-row items-center">
+-              {valid ? (
+-                <div className="absolute right-6 mx-2 h-2 w-2 transform rounded-full bg-green-500 transition-all group-hover:right-6 sm:right-0"></div>
+-              ) : (
+-                <div className="absolute right-6 mx-2 h-2 w-2 transform rounded-full bg-red-500 transition-all group-hover:right-6 sm:right-0"></div>
+-              )}
+-
+-              <XCircleIcon
+-                className="h-5 w-5 opacity-50 transition-all group-hover:block hover:opacity-100 sm:hidden"
+-                onClick={async (event: React.MouseEvent) => {
+-                  event.preventDefault();
+-                  event.stopPropagation();
+-                  if (await clearSessionId(session.id)) {
+-                    reload();
+-                  }
+-                }}
+-              />
+-            </div>
+-          </button>
+-        </Tooltip.Trigger>
+-        {valid && session.expirationDate && (
+-          <Tooltip.Portal>
+-            <Tooltip.Content
+-              className="bg-background-light-500 dark:bg-background-dark-500 z-50 rounded-md border px-3 py-2 text-xs text-black shadow-xl select-none dark:border-white/20 dark:text-white"
+-              sideOffset={5}
+-            >
+-              Expires {moment(timestampDate(session.expirationDate)).fromNow()}
+-              <Tooltip.Arrow className="fill-white dark:fill-white/20" />
+-            </Tooltip.Content>
+-          </Tooltip.Portal>
+-        )}
+-      </Tooltip.Root>
++              <StateBadge state={valid ? BadgeState.Success : BadgeState.Alert}>
++                <Translated i18nKey={valid ? "verified" : "expired"} namespace="accounts" />
++              </StateBadge>
++            </button>
++          </Tooltip.Trigger>
++          {valid && session.expirationDate && (
++            <Tooltip.Portal>
++              <Tooltip.Content
++                className="bos-tooltip"
++                sideOffset={5}
++              >
++                Expires {moment(timestampDate(session.expirationDate)).fromNow()}
++                <Tooltip.Arrow className="bos-tooltip__arrow" />
++              </Tooltip.Content>
++            </Tooltip.Portal>
++          )}
++        </Tooltip.Root>
++        <button
++          type="button"
++          className="bos-session__clear"
++          aria-label={tLogout("clear")}
++          aria-describedby={loginNameId}
++          onClick={async () => {
++            if (await clearSessionId(session.id)) {
++              reload();
++            }
++          }}
++        >
++          <XCircleIcon className="h-5 w-5" aria-hidden="true" />
++        </button>
++      </div>
+       {error && <Alert>{error}</Alert>}
+     </>
+   );
+diff --git i/apps/login/src/components/sessions-clear-list.tsx w/apps/login/src/components/sessions-clear-list.tsx
+index 29c3263..dfef49f 100644
+--- i/apps/login/src/components/sessions-clear-list.tsx
++++ w/apps/login/src/components/sessions-clear-list.tsx
+@@ -72,7 +72,7 @@ export function SessionsClearList({ sessions, logoutHint, postLogoutRedirectUri,
+   }, [logoutHint, clearHintedSession]);
+ 
+   return sessions ? (
+-    <div className="flex flex-col space-y-2">
++    <div className="bos-session-list">
+       {list
+         .filter((session) => session?.factors?.user?.loginName)
+         // sort by change date descending
+diff --git i/apps/login/src/components/sessions-list.tsx w/apps/login/src/components/sessions-list.tsx
+index b7fd0e4..0a02085 100644
+--- i/apps/login/src/components/sessions-list.tsx
++++ w/apps/login/src/components/sessions-list.tsx
+@@ -15,7 +15,7 @@ type Props = {
+ export function SessionsList({ sessions, requestId }: Props) {
+   const [list, setList] = useState<Session[]>(sessions);
+   return sessions ? (
+-    <div className="flex flex-col space-y-2">
++    <div className="bos-session-list">
+       {list
+         .filter((session) => session?.factors?.user?.loginName)
+         // sort by change date descending
+diff --git i/apps/login/src/components/set-password-form.tsx w/apps/login/src/components/set-password-form.tsx
+index 412d27c..08365a5 100644
+--- i/apps/login/src/components/set-password-form.tsx
++++ w/apps/login/src/components/set-password-form.tsx
+@@ -10,7 +10,9 @@ import { useTranslations } from "next-intl";
+ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { FieldValues, useForm } from "react-hook-form";
+-import { Alert, AlertType } from "./alert";
++import { Alert } from "./alert";
++import { FieldAside, FormStack } from "./auth/form-layout";
++import { PasswordField } from "./auth/password-field";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+@@ -172,7 +174,7 @@ export function SetPasswordForm({
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       <form className="w-full">
+-        <div className="mb-4 grid grid-cols-1 gap-4 pt-4">
++        <FormStack>
+           <input
+             type="text"
+             name="username"
+@@ -183,27 +185,6 @@ export function SetPasswordForm({
+             aria-hidden="true"
+             className="sr-only"
+           />
+-          {codeRequired && (
+-            <Alert type={AlertType.INFO}>
+-              <div className="flex flex-row">
+-                <span className="mr-auto flex-1 text-left">
+-                  <Translated i18nKey="set.noCodeReceived" namespace="password" />
+-                </span>
+-                <button
+-                  aria-label={t("set.resend")}
+-                  disabled={loading}
+-                  type="button"
+-                  className="text-primary-light-500 hover:text-primary-light-400 dark:text-primary-dark-500 hover:dark:text-primary-dark-400 ml-4 cursor-pointer disabled:cursor-default disabled:text-gray-400 dark:disabled:text-gray-700"
+-                  onClick={() => {
+-                    resendCode();
+-                  }}
+-                  data-testid="resend-button"
+-                >
+-                  <Translated i18nKey="set.resend" namespace="password" />
+-                </button>
+-              </div>
+-            </Alert>
+-          )}
+           {codeRequired && (
+             <div>
+               <TextInput
+@@ -218,59 +199,72 @@ export function SetPasswordForm({
+                 error={errors.code?.message as string}
+                 data-testid="code-text-input"
+               />
++              <FieldAside className="bos-field-aside--inline">
++                <span>
++                  <Translated i18nKey="set.noCodeReceived" namespace="password" />
++                </span>
++                <button
++                  aria-label={t("set.resend")}
++                  disabled={loading}
++                  type="button"
++                  className="bos-link bos-link--plain"
++                  onClick={() => {
++                    resendCode();
++                  }}
++                  data-testid="resend-button"
++                >
++                  <Translated i18nKey="set.resend" namespace="password" />
++                </button>
++              </FieldAside>
+             </div>
+           )}
+-          <div>
+-            <TextInput
+-              type="password"
+-              autoComplete="new-password"
+-              autoFocus={!codeRequired}
+-              required
+-              {...register("password", {
+-                required: t("set.required.newPassword"),
+-              })}
+-              label={t("set.labels.newPassword")}
+-              error={errors.password?.message as string}
+-              data-testid="password-set-text-input"
+-            />
+-          </div>
+-          <div>
+-            <TextInput
+-              type="password"
+-              required
+-              autoComplete="new-password"
+-              {...register("confirmPassword", {
+-                required: t("set.required.confirmPassword"),
+-              })}
+-              label={t("set.labels.confirmPassword")}
+-              error={errors.confirmPassword?.message as string}
+-              data-testid="password-set-confirm-text-input"
+-            />
+-          </div>
+-        </div>
+-
+-        {passwordComplexitySettings && (
+-          <PasswordComplexity
+-            passwordComplexitySettings={passwordComplexitySettings}
+-            password={watchPassword}
+-            equals={!!watchPassword && watchPassword === watchConfirmPassword}
++          <PasswordField
++            autoComplete="new-password"
++            autoFocus={!codeRequired}
++            required
++            {...register("password", {
++              required: t("set.required.newPassword"),
++            })}
++            label={t("set.labels.newPassword")}
++            error={errors.password?.message as string}
++            data-testid="password-set-text-input"
++          />
++          <PasswordField
++            required
++            autoComplete="new-password"
++            {...register("confirmPassword", {
++              required: t("set.required.confirmPassword"),
++            })}
++            label={t("set.labels.confirmPassword")}
++            error={errors.confirmPassword?.message as string}
++            data-testid="password-set-confirm-text-input"
+           />
+-        )}
+ 
+-        {error && <Alert>{error}</Alert>}
++          {passwordComplexitySettings && (
++            <div className="bos-complexity">
++              <PasswordComplexity
++                passwordComplexitySettings={passwordComplexitySettings}
++                password={watchPassword}
++                equals={!!watchPassword && watchPassword === watchConfirmPassword}
++              />
++            </div>
++          )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center justify-between">
+-          <BackButton data-testid="back-button" />
+-          <Button
+-            type="submit"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !policyIsValid || !formState.isValid || watchPassword !== watchConfirmPassword}
+-            onClick={handleSubmit(submitPassword)}
+-            data-testid="submit-button"
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="set.submit" namespace="password" />
+-          </Button>
+-        </div>
++          {error && <Alert>{error}</Alert>}
++
++          <div className="bos-actions">
++            <BackButton data-testid="back-button" />
++            <Button
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !policyIsValid || !formState.isValid || watchPassword !== watchConfirmPassword}
++              onClick={handleSubmit(submitPassword)}
++              data-testid="submit-button"
++            >
++              {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="set.submit" namespace="password" />
++            </Button>
++          </div>
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/set-register-password-form.tsx w/apps/login/src/components/set-register-password-form.tsx
+index d85806e..c42f993 100644
+--- i/apps/login/src/components/set-register-password-form.tsx
++++ w/apps/login/src/components/set-register-password-form.tsx
+@@ -9,10 +9,11 @@ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { FieldValues, useForm } from "react-hook-form";
+ import { Alert } from "./alert";
++import { FormStack } from "./auth/form-layout";
++import { PasswordField } from "./auth/password-field";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+-import { TextInput } from "./input";
+ import { PasswordComplexity } from "./password-complexity";
+ import { Spinner } from "./spinner";
+ import { Translated } from "./translated";
+@@ -101,7 +102,7 @@ export function SetRegisterPasswordForm({
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       <form className="w-full">
+-        <div className="mb-4 grid grid-cols-1 gap-4 pt-4">
++        <FormStack>
+           <input
+             type="text"
+             name="username"
+@@ -112,57 +113,53 @@ export function SetRegisterPasswordForm({
+             aria-hidden="true"
+             className="sr-only"
+           />
+-          <div className="">
+-            <TextInput
+-              type="password"
+-              autoComplete="new-password"
+-              autoFocus
+-              required
+-              {...register("password", {
+-                required: t("password.required.password"),
+-              })}
+-              label={t("password.labels.password")}
+-              error={errors.password?.message as string}
+-              data-testid="password-text-input"
+-            />
+-          </div>
+-          <div className="">
+-            <TextInput
+-              type="password"
+-              required
+-              autoComplete="new-password"
+-              {...register("confirmPassword", {
+-                required: t("password.required.confirmPassword"),
+-              })}
+-              label={t("password.labels.confirmPassword")}
+-              error={errors.confirmPassword?.message as string}
+-              data-testid="password-confirm-text-input"
+-            />
+-          </div>
+-        </div>
+-
+-        {passwordComplexitySettings && (
+-          <PasswordComplexity
+-            passwordComplexitySettings={passwordComplexitySettings}
+-            password={watchPassword}
+-            equals={!!watchPassword && watchPassword === watchConfirmPassword}
++          <PasswordField
++            autoComplete="new-password"
++            autoFocus
++            required
++            {...register("password", {
++              required: t("password.required.password"),
++            })}
++            label={t("password.labels.password")}
++            error={errors.password?.message as string}
++            data-testid="password-text-input"
++          />
++          <PasswordField
++            required
++            autoComplete="new-password"
++            {...register("confirmPassword", {
++              required: t("password.required.confirmPassword"),
++            })}
++            label={t("password.labels.confirmPassword")}
++            error={errors.confirmPassword?.message as string}
++            data-testid="password-confirm-text-input"
+           />
+-        )}
+ 
+-        {error && <Alert>{error}</Alert>}
++          {passwordComplexitySettings && (
++            <div className="bos-complexity">
++              <PasswordComplexity
++                passwordComplexitySettings={passwordComplexitySettings}
++                password={watchPassword}
++                equals={!!watchPassword && watchPassword === watchConfirmPassword}
++              />
++            </div>
++          )}
+ 
+-        <div className="mt-8 flex w-full flex-row items-center justify-between">
+-          <BackButton data-testid="back-button" />
+-          <Button
+-            type="submit"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !policyIsValid || !formState.isValid || watchPassword !== watchConfirmPassword}
+-            onClick={handleSubmit(submitRegister)}
+-            data-testid="submit-button"
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="password.submit" namespace="register" />
+-          </Button>
+-        </div>
++          {error && <Alert>{error}</Alert>}
++
++          <div className="bos-actions">
++            <BackButton data-testid="back-button" />
++            <Button
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !policyIsValid || !formState.isValid || watchPassword !== watchConfirmPassword}
++              onClick={handleSubmit(submitRegister)}
++              data-testid="submit-button"
++            >
++              {loading && <Spinner className="mr-2 h-5 w-5" />} <Translated i18nKey="password.submit" namespace="register" />
++            </Button>
++          </div>
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/sign-in-with-idp.tsx w/apps/login/src/components/sign-in-with-idp.tsx
+index 360d674..bc2425e 100644
+--- i/apps/login/src/components/sign-in-with-idp.tsx
++++ w/apps/login/src/components/sign-in-with-idp.tsx
+@@ -60,7 +60,7 @@ export function SignInWithIdp({
+ 
+     const Component = components[type];
+     return Component ? (
+-      <form action={action} className="flex" key={`idp-${index}`}>
++      <form action={action} className="bos-idp-form" key={`idp-${index}`}>
+         <input type="hidden" name="id" value={id} />
+         <input type="hidden" name="provider" value={idpTypeToSlug(type)} />
+         <input type="hidden" name="requestId" value={requestId} />
+@@ -74,16 +74,16 @@ export function SignInWithIdp({
+   };
+ 
+   return (
+-    <div className="flex w-full flex-col space-y-2 text-sm">
++    <div className="bos-idp-list">
+       {state?.samlData && <AutoSubmitForm url={state.samlData.url} fields={state.samlData.fields} />}
+       {showLabel && (
+-        <p className="ztdl-p text-center">
++        <p className="ztdl-p bos-idp-label">
+           <Translated i18nKey="orSignInWith" namespace="idp" />
+         </p>
+       )}
+       {!!identityProviders?.length && identityProviders?.map(renderIDPButton)}
+       {state?.error && (
+-        <div className="py-4">
++        <div>
+           <Alert>{state?.error}</Alert>
+         </div>
+       )}
+diff --git i/apps/login/src/components/state-badge.tsx w/apps/login/src/components/state-badge.tsx
+index b6ae682..04cfb2f 100644
+--- i/apps/login/src/components/state-badge.tsx
++++ w/apps/login/src/components/state-badge.tsx
+@@ -15,18 +15,7 @@ export type StateBadgeProps = {
+ };
+ 
+ const getBadgeClasses = (state: BadgeState, evenPadding: boolean) =>
+-  clsx({
+-    "w-fit border-box h-18.5px flex flex-row items-center whitespace-nowrap tracking-wider leading-4 items-center justify-center px-2 py-2px text-12px rounded-full shadow-sm": true,
+-    "bg-state-success-light-background text-state-success-light-color dark:bg-state-success-dark-background dark:text-state-success-dark-color ":
+-      state === BadgeState.Success,
+-    "bg-state-neutral-light-background text-state-neutral-light-color dark:bg-state-neutral-dark-background dark:text-state-neutral-dark-color":
+-      state === BadgeState.Info,
+-    "bg-state-error-light-background text-state-error-light-color dark:bg-state-error-dark-background dark:text-state-error-dark-color":
+-      state === BadgeState.Error,
+-    "bg-state-alert-light-background text-state-alert-light-color dark:bg-state-alert-dark-background dark:text-state-alert-dark-color":
+-      state === BadgeState.Alert,
+-    "p-[2px]": evenPadding,
+-  });
++  clsx("bos-state-badge", `bos-state-badge--${state}`, evenPadding && "bos-state-badge--even");
+ 
+ export function StateBadge({ state = BadgeState.Success, evenPadding = false, children }: StateBadgeProps) {
+   return <span className={`${getBadgeClasses(state, evenPadding)}`}>{children}</span>;
+diff --git i/apps/login/src/components/totp-register.tsx w/apps/login/src/components/totp-register.tsx
+index c25b62f..4b73de5 100644
+--- i/apps/login/src/components/totp-register.tsx
++++ w/apps/login/src/components/totp-register.tsx
+@@ -106,13 +106,13 @@ export function TotpRegister({ uri, loginName, sessionId, requestId, organizatio
+   const submit = handleSubmit(continueWithCode);
+ 
+   return (
+-    <div className="flex flex-col items-center">
++    <div className="bos-totp">
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       {uri && (
+         <>
+-          <QRCodeSVG className="my-4 h-40 w-40 rounded-md bg-white p-2" value={uri} />
+-          <div className="border-divider-light dark:border-divider-dark my-2 mb-4 flex w-full min-w-0 rounded-lg border px-4 py-2 pr-2 text-sm">
+-            <Link href={uri} target="_blank" className="min-w-0 flex-1 overflow-x-auto">
++          <QRCodeSVG className="bos-totp-qr" value={uri} />
++          <div className="bos-totp-uri">
++            <Link href={uri} target="_blank" className="bos-totp-uri__link">
+               {uri}
+             </Link>
+ 
+@@ -137,21 +137,19 @@ export function TotpRegister({ uri, loginName, sessionId, requestId, organizatio
+             />
+ 
+             {error && (
+-              <div className="py-4" id={errorId}>
++              <div id={errorId}>
+                 <Alert>{error}</Alert>
+               </div>
+             )}
+ 
+-            <div className="mt-8 flex w-full flex-row items-center">
+-              <span className="flex-grow"></span>
++            <div className="bos-step-actions">
+               <Button
+                 type="submit"
+-                className="self-end"
+                 variant={ButtonVariants.Primary}
+                 disabled={loading || !formState.isValid}
+                 data-testid="submit-button"
+               >
+-                {loading && <Spinner className="mr-2 h-5 w-5" />}
++                {loading && <Spinner className="h-5 w-5" />}
+                 <Translated i18nKey="set.submit" namespace="otp" />
+               </Button>
+             </div>
+diff --git i/apps/login/src/components/user-avatar.tsx w/apps/login/src/components/user-avatar.tsx
+index 4782e74..2376e5e 100644
+--- i/apps/login/src/components/user-avatar.tsx
++++ w/apps/login/src/components/user-avatar.tsx
+@@ -1,13 +1,8 @@
+ import { Avatar } from "@/components/avatar";
+-import { getComponentRoundness } from "@/lib/theme";
+ import { ChevronDownIcon } from "@heroicons/react/24/outline";
++import { useTranslations } from "next-intl";
+ import Link from "next/link";
+ 
+-// Helper function to get user avatar container roundness from theme
+-function getUserAvatarRoundness(): string {
+-  return getComponentRoundness("avatarContainer");
+-}
+-
+ type Props = {
+   loginName?: string;
+   displayName?: string;
+@@ -17,7 +12,7 @@ type Props = {
+ 
+ export function UserAvatar({ loginName, displayName, showDropdown, searchParams }: Props) {
+   const params = new URLSearchParams({});
+-  const userAvatarRoundness = getUserAvatarRoundness();
++  const t = useTranslations("accounts");
+ 
+   if (searchParams?.sessionId) {
+     params.set("sessionId", searchParams.sessionId);
+@@ -36,18 +31,12 @@ export function UserAvatar({ loginName, displayName, showDropdown, searchParams
+   }
+ 
+   return (
+-    <div className={`flex h-full flex-row items-center border p-[1px] dark:border-white/20 ${userAvatarRoundness}`}>
+-      <div>
+-        <Avatar size="small" name={displayName ?? loginName ?? ""} loginName={loginName ?? ""} />
+-      </div>
+-      <span className="text-14px ml-4 max-w-[250px] overflow-hidden pr-4 text-ellipsis">{loginName}</span>
+-      <span className="flex-grow"></span>
++    <div className="bos-account">
++      <Avatar size="small" name={displayName ?? loginName ?? ""} loginName={loginName ?? ""} />
++      <span className="bos-account__name">{loginName}</span>
+       {showDropdown && (
+-        <Link
+-          href={"/accounts?" + params}
+-          className={`mr-1 ml-4 flex items-center justify-center p-1 transition-all hover:bg-black/10 dark:hover:bg-white/10 ${userAvatarRoundness}`}
+-        >
+-          <ChevronDownIcon className="h-4 w-4" />
++        <Link href={"/accounts?" + params} className="bos-account__switch" aria-label={t("title")}>
++          <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
+         </Link>
+       )}
+     </div>
+diff --git i/apps/login/src/components/username-form.tsx w/apps/login/src/components/username-form.tsx
+index ec37c3c..dd7d5a8 100644
+--- i/apps/login/src/components/username-form.tsx
++++ w/apps/login/src/components/username-form.tsx
+@@ -8,8 +8,9 @@ import { useRouter } from "next/navigation";
+ import { useCallback, useEffect, useState } from "react";
+ import { useForm } from "react-hook-form";
+ import { Alert } from "./alert";
++import { FormStack, SwitchLine } from "./auth/form-layout";
++import { ExternalLinkIcon } from "./auth/icons";
+ import { AutoSubmitForm } from "./auto-submit-form";
+-import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+ import { TextInput } from "./input";
+ import { Spinner } from "./spinner";
+@@ -101,7 +102,7 @@ export function UsernameForm({
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+       <form className="w-full">
+-        <div className="">
++        <FormStack>
+           <TextInput
+             type="text"
+             autoComplete="username"
+@@ -111,52 +112,56 @@ export function UsernameForm({
+             autoFocus
+             {...register("loginName", { required: t("required.loginName") })}
+             label={inputLabel}
++            placeholder={loginSettings?.disableLoginWithEmail ? undefined : t("placeholders.loginname")}
+             data-testid="username-text-input"
+             suffix={hideSuffix ? undefined : suffix}
+           />
+-          {allowRegister && (
+-            <button
+-              className="hover:text-primary-light-500 dark:hover:text-primary-dark-500 text-sm transition-all"
+-              onClick={() => {
+-                const registerParams = new URLSearchParams();
+-                if (organization) {
+-                  registerParams.append("organization", organization);
+-                }
+-                if (requestId) {
+-                  registerParams.append("requestId", requestId);
+-                }
+ 
+-                router.push("/register?" + registerParams);
+-              }}
+-              type="button"
+-              disabled={loading}
+-              data-testid="register-button"
+-            >
+-              <Translated i18nKey="register" namespace="loginname" />
+-            </button>
++          {error && (
++            <div data-testid="error">
++              <Alert>{error}</Alert>
++            </div>
+           )}
+-        </div>
+ 
+-        {error && (
+-          <div className="py-4" data-testid="error">
+-            <Alert>{error}</Alert>
++          <div className="bos-actions">
++            <Button
++              data-testid="submit-button"
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !formState.isValid}
++              onClick={handleSubmit((e) => submitLoginName(e, organization))}
++            >
++              {loading && <Spinner className="mr-2 h-5 w-5" />}
++              <Translated i18nKey="submit" namespace="loginname" />
++            </Button>
+           </div>
+-        )}
+-        <div className="mt-4 flex w-full flex-row items-center">
+-          <BackButton data-testid="back-button" />
+-          <span className="flex-grow"></span>
+-          <Button
+-            data-testid="submit-button"
+-            type="submit"
+-            className="self-end"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !formState.isValid}
+-            onClick={handleSubmit((e) => submitLoginName(e, organization))}
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />}
+-            <Translated i18nKey="submit" namespace="loginname" />
+-          </Button>
+-        </div>
++
++          {allowRegister && (
++            <SwitchLine>
++              <Translated i18nKey="noAccount" namespace="loginname" />{" "}
++              <button
++                className="bos-link"
++                onClick={() => {
++                  const registerParams = new URLSearchParams();
++                  if (organization) {
++                    registerParams.append("organization", organization);
++                  }
++                  if (requestId) {
++                    registerParams.append("requestId", requestId);
++                  }
++
++                  router.push("/register?" + registerParams);
++                }}
++                type="button"
++                disabled={loading}
++                data-testid="register-button"
++              >
++                <Translated i18nKey="register" namespace="loginname" />
++                <ExternalLinkIcon className="bos-link-icon" />
++              </button>
++            </SwitchLine>
++          )}
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/verify-form.tsx w/apps/login/src/components/verify-form.tsx
+index 499abd0..0c62d71 100644
+--- i/apps/login/src/components/verify-form.tsx
++++ w/apps/login/src/components/verify-form.tsx
+@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
+ import { usePathname, useRouter, useSearchParams } from "next/navigation";
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { useForm } from "react-hook-form";
++import { FieldAside, FormStack } from "./auth/form-layout";
+ import { AutoSubmitForm } from "./auto-submit-form";
+ import { BackButton } from "./back-button";
+ import { Button, ButtonVariants } from "./button";
+@@ -123,65 +124,61 @@ export function VerifyForm({ userId, loginName, organization, requestId, code, i
+   return (
+     <>
+       {samlData && <AutoSubmitForm url={samlData.url} fields={samlData.fields} />}
+-      {codeSent && (
+-        <div className="w-full py-4">
+-          <Alert type={AlertType.INFO}>
+-            <Translated i18nKey="verify.codeSent" namespace="verify" />
+-          </Alert>
+-        </div>
+-      )}
+       <form className="w-full">
+-        <Alert type={AlertType.INFO}>
+-          <div className="flex flex-row">
+-            <span className="mr-auto flex-1 text-left">
+-              <Translated i18nKey="verify.noCodeReceived" namespace="verify" />
+-            </span>
+-            <button
+-              aria-label="Resend Code"
+-              disabled={loading}
+-              type="button"
+-              className="text-primary-light-500 hover:text-primary-light-400 dark:text-primary-dark-500 hover:dark:text-primary-dark-400 ml-4 cursor-pointer disabled:cursor-default disabled:text-gray-400 dark:disabled:text-gray-700"
+-              onClick={() => {
+-                resendCode();
+-              }}
+-              data-testid="resend-button"
++        <FormStack>
++          {codeSent && (
++            <Alert type={AlertType.INFO}>
++              <Translated i18nKey="verify.codeSent" namespace="verify" />
++            </Alert>
++          )}
++          <div>
++            <TextInput
++              type="text"
++              autoComplete="one-time-code"
++              autoFocus
++              {...register("code", { required: t("verify.required.code") })}
++              label={t("verify.labels.code")}
++              data-testid="code-text-input"
++            />
++            <FieldAside className="bos-field-aside--inline">
++              <span>
++                <Translated i18nKey="verify.noCodeReceived" namespace="verify" />
++              </span>
++              <button
++                aria-label="Resend Code"
++                disabled={loading}
++                type="button"
++                className="bos-link bos-link--plain"
++                onClick={() => {
++                  resendCode();
++                }}
++                data-testid="resend-button"
++              >
++                <Translated i18nKey="verify.resendCode" namespace="verify" />
++              </button>
++            </FieldAside>
++          </div>
++
++          {error && (
++            <div data-testid="error">
++              <Alert>{error}</Alert>
++            </div>
++          )}
++
++          <div className="bos-actions">
++            <BackButton />
++            <Button
++              type="submit"
++              variant={ButtonVariants.Primary}
++              disabled={loading || !formState.isValid}
++              onClick={handleSubmit(fcn)}
++              data-testid="submit-button"
+             >
+-              <Translated i18nKey="verify.resendCode" namespace="verify" />
+-            </button>
++              {loading && <Spinner className="mr-2 h-5 w-5" />}
++              <Translated i18nKey="verify.submit" namespace="verify" />
++            </Button>
+           </div>
+-        </Alert>
+-        <div className="mt-4">
+-          <TextInput
+-            type="text"
+-            autoComplete="one-time-code"
+-            autoFocus
+-            {...register("code", { required: t("verify.required.code") })}
+-            label={t("verify.labels.code")}
+-            data-testid="code-text-input"
+-          />
+-        </div>
+-
+-        {error && (
+-          <div className="py-4" data-testid="error">
+-            <Alert>{error}</Alert>
+-          </div>
+-        )}
+-
+-        <div className="mt-8 flex w-full flex-row items-center">
+-          <BackButton />
+-          <span className="flex-grow"></span>
+-          <Button
+-            type="submit"
+-            className="self-end"
+-            variant={ButtonVariants.Primary}
+-            disabled={loading || !formState.isValid}
+-            onClick={handleSubmit(fcn)}
+-            data-testid="submit-button"
+-          >
+-            {loading && <Spinner className="mr-2 h-5 w-5" />}
+-            <Translated i18nKey="verify.submit" namespace="verify" />
+-          </Button>
+-        </div>
++        </FormStack>
+       </form>
+     </>
+   );
+diff --git i/apps/login/src/components/verify-success-continue.tsx w/apps/login/src/components/verify-success-continue.tsx
+index 2fe4c75..3f0fea4 100644
+--- i/apps/login/src/components/verify-success-continue.tsx
++++ w/apps/login/src/components/verify-success-continue.tsx
+@@ -13,15 +13,13 @@ export function VerifySuccessContinue({ continueUrl }: Props) {
+   const t = useTranslations("verify");
+ 
+   return (
+-    <div className="mt-8 flex w-full flex-row items-center justify-end">
+-      <Button
+-        type="button"
+-        variant={ButtonVariants.Primary}
+-        onClick={() => router.push(continueUrl)}
+-        data-testid="continue-button"
+-      >
+-        {t("successContinue")}
+-      </Button>
+-    </div>
++    <Button
++      type="button"
++      variant={ButtonVariants.Primary}
++      onClick={() => router.push(continueUrl)}
++      data-testid="continue-button"
++    >
++      {t("successContinue")}
++    </Button>
+   );
+ }

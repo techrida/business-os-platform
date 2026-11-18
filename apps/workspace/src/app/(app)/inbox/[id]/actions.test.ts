@@ -98,17 +98,17 @@ describe('decideAction ID token (K7)', () => {
     },
   );
 
-  it('carries on without an ID token when the session store fails, logging only the error name', async () => {
+  it('keeps the decision key and asks for a retry when the token read fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const boom = new Error(`GET ws:sess:x ${ID_TOKEN}`);
     boom.name = 'ReplyError';
     peekSession.mockRejectedValue(boom);
-    actOnApproval.mockRejectedValue(new ApiError(401, 'x', errorBody('step_up_required')));
-    await expect(decideAction({ key: IDEM }, approveForm())).rejects.toThrow(
-      'REDIRECT:/auth/login?prompt=login',
-    );
-    expect(actOnApproval.mock.calls[0]?.[4]).toBeUndefined();
+    await expect(decideAction({ key: IDEM }, approveForm())).resolves.toEqual({
+      key: IDEM,
+      error: 'Session check temporarily unavailable. Retry.',
+    });
+    expect(actOnApproval).not.toHaveBeenCalled();
     const logged = JSON.stringify([...warn.mock.calls, ...error.mock.calls]);
     expect(logged).toContain('ReplyError');
     expect(logged).not.toContain(ID_TOKEN);

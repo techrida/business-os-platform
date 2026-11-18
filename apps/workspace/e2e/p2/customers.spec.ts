@@ -110,6 +110,9 @@ test('verification uploads immediately and only saves changes confirmed in the p
     await page.getByLabel('Legal name').fill(name);
     await page.getByLabel('Address line 1').fill('Fixture road');
     await page.getByLabel('City', { exact: true }).fill('Kathmandu');
+    // Every customer starts with a main contact who has an email (quotations are sent by email).
+    await page.getByLabel('Full name').fill('Fixture Contact');
+    await page.getByLabel('Email', { exact: true }).fill(`fixture.${Date.now()}@example.test`);
     await page.getByRole('button', { name: 'Add customer', exact: true }).click();
     await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}(?:\?created=1)?$/);
     await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();

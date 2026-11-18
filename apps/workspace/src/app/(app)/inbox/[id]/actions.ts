@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 import { actOnApproval, failureOf } from '@/lib/api-kernel';
 import { isStepUpRequired, redirectToStepUp, requireStaffSession } from '@/lib/bff';
 import { peekSession } from '@/lib/session';
+import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
 
 /**
  * The approve, return and reject action. Serves the NFR "no double decisions": the form carries an
@@ -42,7 +43,7 @@ function text(form: FormData, name: string): string {
 
 /**
  * K7: the session's ID token, read server-side, for the API's recent-sign-in check. It goes only
- * to `actOnApproval` and never into the returned state. No record or a failed read means no
+ * to `actOnApproval` and never into the returned state. A missing record means no
  * token: the API then answers `step_up_required` for a step that needs one, and the approver signs
  * in again. Not exported: a `'use server'` file may export only server actions.
  */
@@ -58,7 +59,7 @@ async function readIdToken(sessionId: string): Promise<string | undefined> {
         error: err instanceof Error ? err.name : 'unknown',
       }),
     );
-    return undefined;
+    throw new SessionUnavailableError();
   }
 }
 
@@ -92,6 +93,7 @@ export async function decideAction(prev: DecisionState, form: FormData): Promise
   } catch (err) {
     // K7: a Founder step needs a recent sign-in. Nothing was decided, so after signing in again the
     // approver lands back on this request and decides with a fresh form. `redirect` throws.
+    if (err instanceof SessionUnavailableError) return { key, error: SESSION_UNAVAILABLE_MESSAGE };
     if (isStepUpRequired(err)) redirectToStepUp(`/inbox/${requestId}`);
     const failure = failureOf(err, 'approval');
     return {

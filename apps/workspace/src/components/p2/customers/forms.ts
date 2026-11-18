@@ -3,6 +3,7 @@ import {
   CreateCustomerBodySchema,
   CUSTOMER_RELATIONSHIPS,
   CURRENCIES,
+  CustomerFieldsSchema,
   type CreateContactBody,
   type CreateCustomerBody,
   type CustomerDto,
@@ -34,6 +35,14 @@ export interface CustomerValues {
   province: string;
   postalCode: string;
   country: string;
+  /**
+   * The first contact, asked for on create only (the edit form leaves these blank and never sends
+   * them). Its email is required: quotations are sent by email.
+   */
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  contactTitle: string;
 }
 export type CustomerField = keyof CustomerValues;
 
@@ -50,6 +59,10 @@ export const EMPTY_CUSTOMER_VALUES: CustomerValues = {
   province: '',
   postalCode: '',
   country: 'NP',
+  contactName: '',
+  contactEmail: '',
+  contactPhone: '',
+  contactTitle: '',
 };
 
 export const CUSTOMER_FIELDS = Object.keys(EMPTY_CUSTOMER_VALUES) as CustomerField[];
@@ -64,6 +77,9 @@ const MAX: Partial<Record<CustomerField, number>> = {
   district: 100,
   province: 100,
   postalCode: 20,
+  contactName: 200,
+  contactEmail: 254,
+  contactTitle: 100,
 };
 
 const REQUIRED: Partial<Record<CustomerField, string>> = {
@@ -71,6 +87,8 @@ const REQUIRED: Partial<Record<CustomerField, string>> = {
   line1: 'Enter the first line of the address, such as the street or area.',
   city: 'Enter the city.',
   country: 'Enter the two-letter country code, for example NP.',
+  contactName: "Enter the main contact's full name.",
+  contactEmail: "Enter the main contact's email. Quotations are sent to it.",
 };
 
 const INVALID: Record<CustomerField, string> = {
@@ -86,15 +104,29 @@ const INVALID: Record<CustomerField, string> = {
   province: 'Enter the province.',
   postalCode: 'Enter the postal code.',
   country: 'Use the two-letter country code, for example NP.',
+  contactName: "Enter the contact's full name, up to 200 characters.",
+  contactEmail: 'Enter an email address like name@company.com.',
+  contactPhone:
+    'Add the country code, starting with +. For Nepal that looks like +9779812345678. Spaces and hyphens are fine.',
+  contactTitle: 'Use up to 100 characters for the job title.',
+};
+
+/** A contract path under `contact` (the first contact) and the form field it belongs to. */
+const CONTACT_PATH: Record<string, CustomerField> = {
+  fullName: 'contactName',
+  email: 'contactEmail',
+  phone: 'contactPhone',
+  title: 'contactTitle',
 };
 
 const clean = (v: string): string => v.trim();
 
-/** What a person typed, tidied: trimmed, and the country in capitals. */
+/** What a person typed, tidied: trimmed, the country in capitals and the phone without punctuation. */
 export function tidyCustomerValues(raw: Partial<CustomerValues>): CustomerValues {
   const out = { ...EMPTY_CUSTOMER_VALUES };
   for (const key of CUSTOMER_FIELDS) out[key] = clean(raw[key] ?? '');
   out.country = out.country.toUpperCase();
+  out.contactPhone = normalizePhone(out.contactPhone);
   return out;
 }
 
@@ -113,10 +145,24 @@ export function valuesOfCustomer(c: CustomerDto): CustomerValues {
     province: c.address.province ?? '',
     postalCode: c.address.postalCode ?? '',
     country: c.address.country,
+    contactName: '',
+    contactEmail: '',
+    contactPhone: '',
+    contactTitle: '',
   };
 }
 
 const blankToUndefined = (v: string): string | undefined => (v === '' ? undefined : v);
+
+/** The first contact of a new customer. Blank optional fields are left out. */
+function firstContactBody(v: CustomerValues): Record<string, unknown> {
+  return {
+    fullName: v.contactName,
+    email: v.contactEmail,
+    phone: blankToUndefined(v.contactPhone),
+    title: blankToUndefined(v.contactTitle),
+  };
+}
 
 /** The contract body for these values. Blank optional fields are left out (the schema rejects ''). */
 function customerBody(v: CustomerValues): Record<string, unknown> {
@@ -142,7 +188,16 @@ function customerErrors(values: CustomerValues, issues: readonly { path: Propert
   const errors: FieldErrors<CustomerField> = {};
   for (const issue of issues) {
     const [first, second] = issue.path;
-    const field = (first === 'address' ? second : first) as CustomerField | undefined;
+    const field = (
+      first === 'address'
+        ? second
+        : first === 'contact'
+          ? // A missing contact object is reported on its first required field.
+            typeof second === 'string'
+            ? CONTACT_PATH[second]
+            : 'contactName'
+          : first
+    ) as CustomerField | undefined;
     if (typeof field !== 'string' || !CUSTOMER_FIELDS.includes(field) || errors[field]) continue;
     const value = values[field];
     const max = MAX[field];
@@ -159,10 +214,13 @@ function customerErrors(values: CustomerValues, issues: readonly { path: Propert
 export type CreateCustomerParse =
   { ok: true; data: CreateCustomerBody } | { ok: false; errors: FieldErrors<CustomerField> };
 
-/** Checks the create form against `CreateCustomerBodySchema`. */
+/** Checks the create form, first contact included, against `CreateCustomerBodySchema`. */
 export function parseCreateCustomer(raw: CustomerValues): CreateCustomerParse {
   const values = tidyCustomerValues(raw);
-  const parsed = CreateCustomerBodySchema.safeParse(customerBody(values));
+  const parsed = CreateCustomerBodySchema.safeParse({
+    ...customerBody(values),
+    contact: firstContactBody(values),
+  });
   if (parsed.success) return { ok: true, data: parsed.data };
   return { ok: false, errors: customerErrors(values, parsed.error.issues) };
 }
@@ -192,7 +250,7 @@ export function parseUpdateCustomer(
     if (values[field] === '' && before[field] !== '') errors[field] = CANNOT_CLEAR;
   }
 
-  const parsed = CreateCustomerBodySchema.safeParse(customerBody(values));
+  const parsed = CustomerFieldsSchema.safeParse(customerBody(values));
   if (!parsed.success) {
     Object.assign(errors, { ...customerErrors(values, parsed.error.issues), ...errors });
   }
@@ -269,8 +327,25 @@ const CONTACT_INVALID: Record<ContactField, string> = {
 export type ContactParse =
   { ok: true; data: CreateContactBody } | { ok: false; errors: FieldErrors<ContactField> };
 
-/** Checks the add-contact form against `CreateContactBodySchema`; the phone must be E.164. */
-export function parseContact(raw: ContactValues): ContactParse {
+/** The words for a missing email while the customer has no contact with one. */
+export const CONTACT_EMAIL_REQUIRED =
+  'This customer has no contact with an email yet, so enter one. Quotations are sent to it.';
+
+/**
+ * Checks the add-contact form against `CreateContactBodySchema`; the phone must be E.164.
+ * `requireEmail`: the customer has no contact with an email yet, so this one needs it (the API
+ * refuses it too, with 422 `contact_email_required`).
+ */
+export function parseContact(raw: ContactValues, { requireEmail = false } = {}): ContactParse {
+  const parsed = parseContactFields(raw);
+  if (!requireEmail || clean(raw.email) !== '') return parsed;
+  return {
+    ok: false,
+    errors: { ...(parsed.ok ? {} : parsed.errors), email: CONTACT_EMAIL_REQUIRED },
+  };
+}
+
+function parseContactFields(raw: ContactValues): ContactParse {
   const values = {
     fullName: clean(raw.fullName),
     title: clean(raw.title),

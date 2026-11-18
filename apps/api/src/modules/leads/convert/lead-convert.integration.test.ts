@@ -24,6 +24,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { configureApp } from '../../../app.setup';
 import { AuditService } from '../../../platform/audit/audit.service';
 import type { AuthzService } from '../../../platform/authz/authz.service';
+import { systemActor, withTx } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../../platform/tenancy/error-body.filter';
 import { CustomersService } from '../../customers/customers.service';
@@ -119,8 +120,14 @@ async function qualifiedLead(extra: Record<string, unknown> = {}) {
 const convert = (leadId: string, body: Record<string, unknown>, key: string = randomUUID()) =>
   request(baseUrl).post(`/v1/leads/${leadId}/convert`).set('Idempotency-Key', key).send(body);
 
+/** A new contact with its own email: a conversion always names a contact that can receive a quotation. */
+const newContact = () => ({
+  mode: 'create',
+  contact: { fullName: 'Buyer', email: `buyer.${tag()}@convert.example` },
+});
 const createCustomerBody = (customer: Record<string, unknown> = customerBody(), extra = {}) => ({
   customer: { mode: 'create', customer },
+  contact: newContact(),
   opportunityName: 'Acme website',
   expectedVersion: 3,
   ...extra,
@@ -218,16 +225,58 @@ describe('POST /v1/leads/:id/convert', () => {
     expect(copies).toHaveLength(1);
   });
 
-  it('converts without a contact: the lead and the opportunity carry no contact', async () => {
+  it('refuses a conversion without a contact, or with a new contact that has no email (400)', async () => {
     const customerId = await h.seedCustomer();
     const lead = await qualifiedLead();
-    const res = await convert(lead.id, {
-      customer: { mode: 'existing', customerId },
-      opportunityName: 'No contact',
+    const base = { customer: { mode: 'existing', customerId }, expectedVersion: 3 };
+    const none = await convert(lead.id, { ...base, opportunityName: 'No contact' });
+    expect(none.status, JSON.stringify(none.body)).toBe(400);
+    const noEmail = await convert(lead.id, {
+      ...base,
+      opportunityName: 'No email',
+      contact: { mode: 'create', contact: { fullName: 'Phone Only', phone: phone() } },
+    });
+    expect(noEmail.status, JSON.stringify(noEmail.body)).toBe(400);
+    const newCustomerNoContact = await convert(lead.id, {
+      customer: { mode: 'create', customer: customerBody() },
+      opportunityName: 'New customer, no contact',
       expectedVersion: 3,
     });
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(await leadRow(lead.id)).toMatchObject({ customerId, contactId: null });
+    expect(newCustomerNoContact.status).toBe(400);
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified', version: 3 });
+    expect(
+      await h.db.select().from(opportunities).where(eq(opportunities.leadId, lead.id)),
+    ).toHaveLength(0);
+  });
+
+  it('refuses an existing contact without an email (422 contact_email_required) and links one with an email', async () => {
+    const customerId = await h.seedCustomer();
+    const insertContact = async (fullName: string, email: string | null) => {
+      const [row] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+        tx
+          .insert(customerContacts)
+          .values({ tenantId: h.tenantId, customerId, fullName, emailNorm: email })
+          .returning({ id: customerContacts.id }),
+      );
+      return row!.id;
+    };
+    const noEmail = await insertContact('Phone Only', null);
+    const withEmail = await insertContact('Has Mail', `mail.${tag()}@convert.example`);
+    const lead = await qualifiedLead();
+    const body = (contactId: string) => ({
+      customer: { mode: 'existing', customerId },
+      contact: { mode: 'existing', contactId },
+      opportunityName: 'Existing contact',
+      expectedVersion: 3,
+    });
+    const refused = await convert(lead.id, body(noEmail));
+    expect(refused.status, JSON.stringify(refused.body)).toBe(422);
+    expect(errorOf(refused.body).code).toBe('contact_email_required');
+    expect(await leadRow(lead.id)).toMatchObject({ stage: 'qualified', contactId: null });
+
+    const linked = await convert(lead.id, body(withEmail));
+    expect(linked.status, JSON.stringify(linked.body)).toBe(201);
+    expect(await leadRow(lead.id)).toMatchObject({ customerId, contactId: withEmail });
   });
 
   it('answers 409 duplicate_found with error.duplicates on the wire, and writes nothing', async () => {
@@ -350,6 +399,7 @@ describe('POST /v1/leads/:id/convert', () => {
     const lead = await qualifiedLead();
     const body = {
       customer: { mode: 'existing', customerId },
+      contact: newContact(),
       opportunityName: 'Once',
       expectedVersion: 3,
     };
@@ -371,6 +421,7 @@ describe('POST /v1/leads/:id/convert', () => {
     const key = `convert-${randomUUID()}`;
     const body = {
       customer: { mode: 'existing', customerId },
+      contact: newContact(),
       opportunityName: 'Replay',
       expectedVersion: 3,
     };
@@ -391,6 +442,7 @@ describe('POST /v1/leads/:id/convert', () => {
     const early = LeadDtoSchema.parse(fresh.body);
     const body = {
       customer: { mode: 'existing', customerId },
+      contact: newContact(),
       opportunityName: 'Early',
       expectedVersion: 1,
     };
@@ -411,6 +463,7 @@ describe('POST /v1/leads/:id/convert', () => {
     const customerId = await h.seedCustomer();
     const body = {
       customer: { mode: 'existing', customerId },
+      contact: newContact(),
       opportunityName: 'X',
       expectedVersion: 3,
     };

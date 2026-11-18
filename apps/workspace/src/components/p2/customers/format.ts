@@ -72,23 +72,26 @@ export type ApprovalFiles = ReadonlyMap<string, ApprovalFile>;
 
 /** Match the API: newest non-rejected version, even when currentVersionId points at an older clean file. */
 export function approvalFile(
-  versions: readonly Pick<DocumentVersionDto, 'version' | 'status'>[],
+  versions: readonly (Pick<DocumentVersionDto, 'version' | 'status'> & { id?: string })[],
+  boundVersionId?: string,
 ): ApprovalFile {
+  if (boundVersionId) return versions.find((v) => v.id === boundVersionId) ?? null;
   return (
     versions.filter((v) => v.status !== 'rejected').sort((a, b) => b.version - a.version)[0] ?? null
   );
 }
 
-/** Pre-decision readiness. Acceptance is the result of approval, not its prerequisite. */
+/** Explain the current case gate, including pending row decisions and unavailable evidence. */
 export function approvalProblems(
-  c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
   files: ApprovalFiles = new Map(),
 ): string[] {
   if (c.status !== 'submitted') return ['Only a case awaiting review can be approved.'];
+  if (c.reviewPolicy === 'document_review_v1' && c.approvalBlockedReason === null) return [];
   if (!c.checklist.some((item) => item.required)) {
     return ['Approval requires at least one required document.'];
   }
-  return c.checklist.flatMap((item) => {
+  const problems = c.checklist.flatMap((item) => {
     const label = CHECKLIST_LABEL[item.key];
     if (
       item.required &&
@@ -105,7 +108,9 @@ export function approvalProblems(
     }
     switch (file.status) {
       case 'clean':
-        return [];
+        return c.reviewPolicy === 'document_review_v1' && item.status !== 'accepted'
+          ? [`${label}: needs approval.`]
+          : [];
       case 'quarantined':
       case 'awaiting_content':
         return [`${label}: the scan is pending.`];
@@ -115,17 +120,18 @@ export function approvalProblems(
         ];
     }
   });
+  return problems.length || !c.approvalBlockedReason ? problems : [c.approvalBlockedReason];
 }
 
 export function approveBlockedReason(
-  c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
   files: ApprovalFiles = new Map(),
 ): string | null {
   return approvalProblems(c, files)[0] ?? null;
 }
 
 export function canApprove(
-  c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
+  c: Pick<VerificationCaseDto, 'status' | 'checklist' | 'reviewPolicy' | 'approvalBlockedReason'>,
   files: ApprovalFiles = new Map(),
 ): boolean {
   return approveBlockedReason(c, files) === null;

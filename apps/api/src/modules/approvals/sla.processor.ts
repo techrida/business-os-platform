@@ -136,9 +136,12 @@ export class ApprovalsSlaService {
           spec,
           step.kind === 'user' && step.userId !== null ? [step.userId] : [],
         );
-        const eligible = this.approvals
-          .directory(data, now, request.documentType, request.sodUserIds)
-          .eligible(stepSpecOf(step, data));
+        // A step whose author named its approver reminds only them (and their delegates), as submit told them.
+        const eligible =
+          this.approvals.assignedApprovers(request, step, data, now) ??
+          this.approvals
+            .directory(data, now, request.documentType, request.sodUserIds)
+            .eligible(stepSpecOf(step, data));
         await this.approvals.notifyApprovers(
           tx,
           request.id,

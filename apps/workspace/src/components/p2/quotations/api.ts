@@ -1,11 +1,11 @@
 import 'server-only';
 
 import {
+  type ListQuotationsQuery,
   type QuotationDetail,
   QuotationDetailSchema,
   type QuotationListItem,
   QuotationListItemSchema,
-  type QuotationStatus,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -45,12 +45,18 @@ async function get<T>(session: Session, path: string, schema: z.ZodType<T>): Pro
 /** One path segment from a caller-supplied id: encoded, so `../` can never climb out of the route. */
 const seg = (id: string): string => encodeURIComponent(id);
 
-/** `GET /v1/quotations[?status=]`: a bare array of list rows. */
+/**
+ * `GET /v1/quotations[?status=&opportunityId=]`: a bare array of list rows. Both filters are optional;
+ * the API still limits the rows to what the caller may read.
+ */
 export function listQuotations(
   session: Session,
-  status?: QuotationStatus,
+  filter: ListQuotationsQuery = {},
 ): Promise<QuotationListItem[]> {
-  const query = status === undefined ? '' : `?${new URLSearchParams({ status }).toString()}`;
+  const params = new URLSearchParams();
+  if (filter.status !== undefined) params.set('status', filter.status);
+  if (filter.opportunityId !== undefined) params.set('opportunityId', filter.opportunityId);
+  const query = params.size === 0 ? '' : `?${params.toString()}`;
   return get(session, `/v1/quotations${query}`, z.array(QuotationListItemSchema));
 }
 

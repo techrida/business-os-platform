@@ -26,7 +26,7 @@ import { persona } from './helpers/personas';
  *     Accountant as the approver (only people who can decide approvals are offered).
  *  2. Before submitting, the route preview shows exactly those two people in that order, each with a reason.
  *     Sales submits, and the memo becomes "Submitted".
- *  3. No self-approval: Sales's inbox says in plain words that its roles do not include approvals, and the
+ *  3. No self-approval: the Sales inbox excludes the memo, and the
  *     request's own page (opened by URL) offers Sales no Approve button.
  *  4. Management signs in, sees the memo in the inbox with the same reason the preview gave, and approves
  *     (banner "Your approval was recorded.").
@@ -108,13 +108,10 @@ test('memo exit: a memo goes through the two approvals its author named, with em
 
     // ------------------------------------------------------------------ 3. no self-approval
     await test.step('sales cannot approve their own memo: inbox says so, and the request has no Approve button', async () => {
-      // `GET /v1/approvals/inbox` needs approvals.requests.act, which sales lacks: a 403 that the
-      // page turns into words.
       await sales.goto('/inbox');
-      await expect(sales.getByText('Your roles do not include approvals')).toBeVisible();
-      await expect(
-        sales.getByText('The inbox is for people who approve documents.', { exact: false }),
-      ).toBeVisible();
+      await expect(sales.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
+      await expect(sales.getByRole('alert')).toHaveCount(0);
+      await expect(inboxRow(sales, title)).toHaveCount(0);
 
       // The request itself may be read by its requester (approvals.requests.read, own scope), but
       // the page offers no decision.

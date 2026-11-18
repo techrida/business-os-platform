@@ -23,8 +23,6 @@ import {
 import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { snapshotEntries, when } from '@/lib/kernel-format';
-import { userNames } from '@/lib/business-labels';
-import { listApprovalGroups } from '@/lib/api-admin';
 
 import { StatusBadge, statusText } from '../../kit';
 import { DecisionForm } from './decision-form';
@@ -47,13 +45,15 @@ const ACTION_LABEL: Record<string, string> = {
 
 type Step = ApprovalRequestDto['steps'][number];
 
-/** Who a step belongs to, in words. Names are not available to staff without admin rights. */
-function stepWho(step: Step, people: Map<string, string>, groups: Map<string, string>): string {
+/** Resolve step labels from the authorized request. */
+function stepWho(step: Step, names: Map<string, string>): string {
+  if (step.assigneeUserId)
+    return names.get(step.assigneeUserId.toLowerCase()) ?? 'Approver name unavailable';
   if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
   if (step.kind === 'group' && step.groupId)
-    return groups.get(step.groupId) ?? 'Approval group name unavailable';
+    return step.groupName ?? 'Approval group name unavailable';
   if (step.kind === 'user' && step.userId)
-    return people.get(step.userId) ?? 'Approver name unavailable';
+    return names.get(step.userId.toLowerCase()) ?? 'Approver name unavailable';
   return `Step ${step.seq}`;
 }
 
@@ -90,10 +90,6 @@ function titleOf(snapshot: unknown): string | null {
   return null;
 }
 
-function Person({ id, people }: { id: string; people: Map<string, string> }) {
-  return <span>{people.get(id) ?? 'Person name unavailable'}</span>;
-}
-
 export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const path = `/inbox/${encodeURIComponent(id)}`;
@@ -125,11 +121,6 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   }
 
   const request = detail.value;
-  const people = await userNames(session);
-  const groups = await listApprovalGroups(session).then(
-    (rows) => new Map(rows.map((g) => [g.id, g.name])),
-    () => new Map<string, string>(),
-  );
   const items: InboxItemDto[] | null = inbox.status === 'fulfilled' ? inbox.value : null;
   const inboxDenied = inbox.status === 'rejected' && failureOf(inbox.reason).status === 403;
   // `yes` when the inbox lists it, `no` when it does not (or the person has no approval rights),
@@ -164,12 +155,15 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const selectedSigners = memoTemplate.success
     ? [...memoTemplate.data.recommenders, memoTemplate.data.approvedBy]
     : [];
-  if (memoTemplate.success) {
-    for (const signer of [memoTemplate.data.preparedBy, ...selectedSigners]) {
-      if (!people.has(signer.userId)) people.set(signer.userId, signer.name);
-    }
-  }
-  const rows = snapshotEntries(snapshot, people).filter(
+  // Preserve the submitted memo's signer names if someone has since been renamed.
+  const names = new Map(
+    [
+      ...(request.people ?? []),
+      ...(memoTemplate.success ? [memoTemplate.data.preparedBy, ...selectedSigners] : []),
+    ].map((person) => [person.userId.toLowerCase(), person.name]),
+  );
+  const person = (id: string) => <span>{names.get(id.toLowerCase()) ?? 'Person name unavailable'}</span>;
+  const rows = snapshotEntries(snapshot, names).filter(
     (row) =>
       (!memoTemplate.success || row.key !== 'template') && (!isMemo || row.key !== 'attachments'),
   );
@@ -184,7 +178,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
   const timeline: TimelineStep[] = request.steps.map((step) => ({
     key: step.seq,
-    title: selectedSigners[step.seq - 1]?.name ?? stepWho(step, people, groups),
+    title: selectedSigners[step.seq - 1]?.name ?? stepWho(step, names),
     status: statusText(step.status),
     tone: STEP_TONE[step.status] ?? 'upcoming',
     detail: (
@@ -193,13 +187,8 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
         {step.decidedBy ? (
           <>
             <br />
-            Decided by <Person people={people} id={step.decidedBy} />
-            {step.decidedOnBehalfOf ? (
-              <>
-                {' '}
-                for <Person people={people} id={step.decidedOnBehalfOf} />
-              </>
-            ) : null}
+            Decided by {person(step.decidedBy)}
+            {step.decidedOnBehalfOf ? <> for {person(step.decidedOnBehalfOf)}</> : null}
           </>
         ) : null}
       </>
@@ -219,7 +208,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             {title !== null ? `${request.documentNumber} · ` : ''}
             Submitted <time dateTime={request.submittedAt}>
               {when(request.submittedAt)}
-            </time> by <Person people={people} id={request.requesterUserId} />
+            </time> by {person(request.requesterUserId)}
           </>
         }
       />
@@ -303,13 +292,8 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                     <div className={styles.eventHead}>
                       <span className={styles.eventName}>{ACTION_LABEL[a.action] ?? a.action}</span>
                       <span className={styles.eventMeta}>
-                        <Person people={people} id={a.actorUserId} />
-                        {a.onBehalfOfUserId ? (
-                          <>
-                            {' '}
-                            for <Person people={people} id={a.onBehalfOfUserId} />
-                          </>
-                        ) : null}
+                        {person(a.actorUserId)}
+                        {a.onBehalfOfUserId ? <> for {person(a.onBehalfOfUserId)}</> : null}
                       </span>
                       <time className={styles.eventMeta} dateTime={a.createdAt}>
                         {when(a.createdAt)}

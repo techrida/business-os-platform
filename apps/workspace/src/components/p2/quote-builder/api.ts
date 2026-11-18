@@ -124,19 +124,27 @@ export function previewVersion(
   );
 }
 
-/** Like create, submit needs an Idempotency-Key (400 without one). */
+/**
+ * Like create, submit needs an Idempotency-Key (400 without one). `approverUserId` names the one person who
+ * decides the first approval step; without it every eligible approver of that step sees it.
+ */
 export function submitVersion(
   session: Session,
   quotationId: string,
   versionId: string,
   expectedVersion: number,
   idempotencyKey: string,
+  approverUserId?: string,
 ): Promise<unknown> {
   return call(
     session,
     `/v1/quotations/${seg(quotationId)}/versions/${seg(versionId)}/submit`,
     z.unknown(),
-    json('POST', { expectedVersion }, { 'idempotency-key': idempotencyKey }),
+    json(
+      'POST',
+      { expectedVersion, ...(approverUserId === undefined ? {} : { approverUserId }) },
+      { 'idempotency-key': idempotencyKey },
+    ),
   );
 }
 

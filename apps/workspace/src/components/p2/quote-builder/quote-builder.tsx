@@ -249,6 +249,15 @@ export function QuoteBuilder({
     previewKey,
   ]);
   const readyPreview = view.state === 'ready' ? view.preview : null;
+  // The first-step approver the author chose ('' = anyone eligible). A fresh route that no longer offers
+  // the chosen person puts the choice back to anyone eligible rather than submitting a stale name.
+  const [approver, setApprover] = useState('');
+  const approverOptions = readyPreview?.approverChoice?.options;
+  if (approver !== '' && approverOptions && !approverOptions.some((o) => o.userId === approver)) {
+    setApprover('');
+  }
+  const chosenApprover = approverOptions?.find((o) => o.userId === approver);
+  const approverChoiceSeq = readyPreview?.approverChoice?.seq;
   const pricedTotal = readyPreview?.totals.total ?? null;
   // An amount draft only has meaning against the total it was typed for. Once pricing is unavailable
   // (for example a new issue date that must be saved first) the amount field is disabled, so a kept
@@ -362,6 +371,7 @@ export function QuoteBuilder({
         expectedVersion: rowVersion,
         idempotencyKey: key,
         values,
+        approverUserId: approver === '' ? undefined : approver,
       });
       if (res.ok) {
         leaving.current = true;
@@ -419,7 +429,14 @@ export function QuoteBuilder({
             size="medium"
           >
             {readyPreview?.route.steps.length ? (
-              <ApprovalSteps steps={readyPreview.route.steps} />
+              <ApprovalSteps
+                steps={readyPreview.route.steps}
+                assigned={
+                  chosenApprover && approverChoiceSeq !== undefined
+                    ? { seq: approverChoiceSeq, option: chosenApprover }
+                    : null
+                }
+              />
             ) : null}
           </ConfirmDialog>
         ) : null}
@@ -715,7 +732,13 @@ export function QuoteBuilder({
           </div>
         </Panel>
 
-        <ApprovalPanel state={view.state} preview={readyPreview} message={view.message} />
+        <ApprovalPanel
+          state={view.state}
+          preview={readyPreview}
+          message={view.message}
+          approver={approver}
+          onApproverChange={setApprover}
+        />
       </fieldset>
 
       <TotalsPanel

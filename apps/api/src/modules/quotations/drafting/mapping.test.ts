@@ -361,6 +361,7 @@ describe('toQuotationListItem', () => {
     const item = toQuotationListItem(quotation(), sentUsd(), {
       customerName: 'Himal Traders',
       ownerName: null,
+      canEdit: false,
     });
     expect(QuotationListItemSchema.safeParse(item).success).toBe(true);
     expect(item).toMatchObject({
@@ -370,6 +371,7 @@ describe('toQuotationListItem', () => {
       validUntil: '2026-11-30',
       customerName: 'Himal Traders',
       ownerName: null,
+      canEdit: false,
     });
   });
 });
@@ -404,6 +406,7 @@ describe('toQuotationDetail', () => {
       { id: id(60), fullName: 'Sita Rai', emailNorm: 'sita@example.com' },
       { id: id(61), fullName: 'Ram Thapa', emailNorm: null },
     ],
+    capabilities: { canEdit: false, canRevise: true },
   });
 
   it('parses with the contract schema and derives the parent status from the current version', () => {
@@ -421,6 +424,7 @@ describe('toQuotationDetail', () => {
       { id: id(60), name: 'Sita Rai', email: 'sita@example.com' },
       { id: id(61), name: 'Ram Thapa', email: null },
     ]);
+    expect(dto.capabilities).toEqual({ canEdit: false, canRevise: true });
   });
 
   it('fails loudly when the current version is not among the versions', () => {

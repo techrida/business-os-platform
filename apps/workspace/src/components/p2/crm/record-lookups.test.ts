@@ -34,10 +34,23 @@ it('keeps contact reads scoped to the chosen customer and caller', async () => {
     items: [{ id, fullName: 'Mina', email: 'private' }],
     total: 1,
   } as never);
-  expect(await loadConversionContacts(id)).toEqual({ options: [{ id, label: 'Mina' }], error: '' });
+  expect(await loadConversionContacts(id)).toEqual({
+    options: [{ id, label: 'Mina', disabled: false }],
+    error: '',
+  });
   expect(listContacts).toHaveBeenCalledWith(session, id);
   expect((await loadConversionContacts('../users')).error).not.toBe('');
   expect(listContacts).toHaveBeenCalledTimes(1);
+});
+it('shows a contact without an email but does not let it be chosen (its quotations could not be sent)', async () => {
+  vi.mocked(listContacts).mockResolvedValue({
+    items: [{ id, fullName: 'Ravi', email: null }],
+    total: 1,
+  } as never);
+  expect(await loadConversionContacts(id)).toEqual({
+    options: [{ id, label: 'Ravi (no email address)', disabled: true }],
+    error: '',
+  });
 });
 it('reports denied or failed lookups without leaking API errors or granting access', async () => {
   vi.mocked(listCustomers).mockRejectedValue(new Error('secret backend details'));

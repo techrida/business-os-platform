@@ -11,11 +11,13 @@ import { submitCaseAction, type SubmitCaseState } from './case-actions';
 
 export function SubmitForm({
   caseId,
+  version,
   idempotencyKey,
   missing,
   reloadHref,
 }: {
   caseId: string;
+  version: number;
   idempotencyKey: string;
   missing: string[];
   reloadHref: string;
@@ -30,6 +32,7 @@ export function SubmitForm({
     inFlight.current = true;
     const form = new FormData();
     form.set('caseId', caseId);
+    form.set('expectedVersion', String(version));
     form.set('idempotencyKey', state.key);
     try {
       const result = await submitCaseAction(state, form);

@@ -103,4 +103,13 @@ describe('submitVersion', () => {
       expectedVersion: 3,
     });
   });
+
+  it('sends the chosen first-step approver when there is one', async () => {
+    fetchMock.mockResolvedValue(reply(200, { status: 'submitted' }));
+    await submitVersion(session, QID, OTHER, 3, KEY, TAX);
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      expectedVersion: 3,
+      approverUserId: TAX,
+    });
+  });
 });
