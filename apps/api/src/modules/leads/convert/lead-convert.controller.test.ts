@@ -16,6 +16,7 @@ const ID = '4f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
 const CUSTOMER_ID = '9b1c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
 const EXISTING = {
   customer: { mode: 'existing', customerId: CUSTOMER_ID },
+  contact: { mode: 'create', contact: { fullName: 'Sita Rai', email: 'sita@acme.example' } },
   opportunityName: 'Acme website',
   expectedVersion: 3,
 };
@@ -45,7 +46,14 @@ describe('LeadConvertController', () => {
       opportunityId: 'o',
       customerId: 'c',
     });
-    expect(service.convert).toHaveBeenCalledWith(ID, EXISTING, 'key-1');
+    expect(service.convert).toHaveBeenCalledWith(
+      ID,
+      {
+        ...EXISTING,
+        contact: { mode: 'create', contact: { ...EXISTING.contact.contact, isPrimary: false } },
+      },
+      'key-1',
+    );
   });
 
   it('refuses a missing or malformed Idempotency-Key before the service', async () => {
@@ -64,6 +72,9 @@ describe('LeadConvertController', () => {
       { ...EXISTING, customer: { mode: 'existing' } },
       { ...EXISTING, duplicateOverride: {} },
       { ...EXISTING, duplicateOverride: { reason: '' } },
+      // A contact is required, and a new one needs an email so its quotations can be sent.
+      { ...EXISTING, contact: undefined },
+      { ...EXISTING, contact: { mode: 'create', contact: { fullName: 'Sita Rai' } } },
     ]) {
       expect(() => controller.convert(ID, 'key-1', body), JSON.stringify(body)).toThrow(
         BadRequestException,
