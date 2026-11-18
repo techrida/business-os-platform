@@ -66,12 +66,12 @@ test('Sales replaces rejected evidence and the reviewer approves the new round',
     await create.goto('/customers/new');
     await create.waitForLoadState('networkidle');
     const customer = `Verification review ${Date.now()}`;
-    await create.getByLabel('Legal name').fill(customer);
+    await create.getByLabel('Organization legal name').fill(customer);
     await create.getByLabel('Address line 1').fill('Fixture road');
     await create.getByLabel('City', { exact: true }).fill('Kathmandu');
     await create.getByLabel('Full name').fill('Sales Contact');
     await create.getByLabel('Email', { exact: true }).fill('contact@example.test');
-    await create.getByRole('button', { name: 'Add customer', exact: true }).click();
+    await create.getByRole('button', { name: 'Create Organization', exact: true }).click();
     await create.getByRole('button', { name: 'Start verification' }).click();
     await expect(create).toHaveURL(/\/verification\/[0-9a-f-]{36}$/);
     const url = create.url();
