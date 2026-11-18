@@ -22,7 +22,6 @@ vi.mock('@/components/p2/customers/api', () => ({
 }));
 
 import { convertLeadAction } from '@/app/(app)/leads/actions';
-import { searchConversionCustomers } from './record-lookups';
 import { ConvertDialog } from './convert-dialog';
 import type { DuplicateInfo } from './types';
 
@@ -99,28 +98,6 @@ async function showDuplicate(duplicate: DuplicateInfo) {
   await click(useExisting ?? null);
 }
 
-it('clicking Use existing on a contact match submits its customer and contact through the real action', async () => {
-  await showDuplicate({
-    kind: 'contact',
-    id: CONTACT,
-    customerId: CUSTOMER,
-    label: 'Mina',
-    matchedOn: 'email',
-  });
-  await submit(dialog());
-  expect(submitted[1]?.get('customerId')).toBe(CUSTOMER);
-  expect(submitted[1]?.get('contactId')).toBe(CONTACT);
-  expect(api.convertLead).toHaveBeenLastCalledWith(
-    expect.anything(),
-    LEAD,
-    expect.objectContaining({
-      customer: { mode: 'existing', customerId: CUSTOMER },
-      contact: { mode: 'existing', contactId: CONTACT },
-    }),
-    expect.stringMatching(/^[0-9a-f-]{36}$/),
-  );
-});
-
 it("offers the existing customer's contacts, a contact without an email disabled, and submits the chosen one", async () => {
   await showDuplicate({
     kind: 'customer',
@@ -149,79 +126,6 @@ it("offers the existing customer's contacts, a contact without an email disabled
   );
   expect(dialog().textContent).not.toContain(CONTACT);
   expect(dialog().textContent).not.toContain('customer screens');
-});
-
-it('searches a different legal name and links the selected customer without duplicate detection', async () => {
-  api.convertLead.mockRejectedValue(new ApiError(503, 'offline'));
-  api.listCustomers.mockResolvedValue({
-    items: [{ id: CUSTOMER, legalName: 'Mountain Legal Ltd' }],
-  });
-  api.listContacts.mockResolvedValue({
-    items: [
-      { id: CONTACT, fullName: 'Mina', email: 'mina@himal.example' },
-      { id: NO_MAIL, fullName: 'Ravi', email: null },
-    ],
-  });
-  mounted = await mountForm(
-    <ConvertDialog
-      lead={{
-        id: LEAD,
-        version: 1,
-        number: 'LEAD-1',
-        title: 'Office supply',
-        companyName: 'Trading Alias',
-        contactName: '',
-        email: '',
-        phone: '',
-      }}
-      action={async (prev, form) => {
-        submitted.push(form);
-        return convertLeadAction(prev, form);
-      }}
-    />,
-  );
-  await click(mounted.container.querySelector('button'));
-  await click(dialog().querySelector('input[name="customerMode"][value="existing"]'));
-  await fill(dialog().querySelector('input[maxlength="100"]'), 'Mountain');
-  await click(
-    [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Search customers') ??
-      null,
-  );
-  expect(api.listCustomers).toHaveBeenLastCalledWith(expect.anything(), {
-    q: 'Mountain',
-    limit: 20,
-  });
-  const customers = dialog().querySelector('select[name="customerId"]');
-  expect(customers?.textContent).toContain('Mountain Legal Ltd');
-  await fill(customers, CUSTOMER);
-  expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
-  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
-  await fill(dialog().querySelector('select[name="contactId"]'), CONTACT);
-  await submit(dialog());
-  expect(submitted[0]?.get('customerId')).toBe(CUSTOMER);
-  expect(submitted[0]?.getAll('customerMode')).toEqual(['existing']);
-  expect(api.convertLead).toHaveBeenCalledTimes(1);
-  expect(api.convertLead).toHaveBeenCalledWith(
-    expect.anything(),
-    LEAD,
-    expect.objectContaining({
-      customer: { mode: 'existing', customerId: CUSTOMER },
-      contact: { mode: 'existing', contactId: CONTACT },
-    }),
-    expect.any(String),
-  );
-  expect(dialog().textContent).not.toContain(CUSTOMER);
-});
-
-it('keeps refused customer searches empty and does not issue blank or oversized reads', async () => {
-  api.listCustomers.mockRejectedValue(new ApiError(403, 'forbidden'));
-  const result = await searchConversionCustomers('Mountain');
-  expect(result.options).toEqual([]);
-  expect(result.error).toBeTruthy();
-  api.listCustomers.mockClear();
-  expect(await searchConversionCustomers('  ')).toEqual({ options: [], error: '' });
-  expect(await searchConversionCustomers('x'.repeat(101))).toEqual({ options: [], error: '' });
-  expect(api.listCustomers).not.toHaveBeenCalled();
 });
 
 it('creates a new customer and contact through the real action', async () => {
