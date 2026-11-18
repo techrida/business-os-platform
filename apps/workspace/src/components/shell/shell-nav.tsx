@@ -7,7 +7,7 @@ import { NavLink } from './nav-link';
 import { useShell } from './shell-state';
 import styles from './sidebar.module.css';
 
-export function ShellNavSearch({ className }: { className?: string }) {
+export function ShellNavSearch({ className }: { className?: string | undefined }) {
   const { navQuery, setNavQuery } = useShell();
   return (
     <SearchInput
@@ -27,11 +27,9 @@ export function ShellNav({ groups }: { groups: readonly NavGroup[] }) {
 
   return (
     <nav id="app-navigation" aria-label="Main" className={styles.nav}>
-      {matches.length === 0 && (
-        <p className={styles.groupLabel} role="status">
-          No matching pages
-        </p>
-      )}
+      <p className={matches.length === 0 ? styles.groupLabel : 'sr-only'} role="status">
+        {matches.length === 0 ? 'No matching pages' : ''}
+      </p>
       {matches.map((group, index) => {
         const labelId = `nav-group-${index}`;
         return (

@@ -239,6 +239,7 @@ export function ConfirmDialog({
     onOpenChange: setOpen,
     title,
     size,
+    className: styles.confirm,
     tone: destructive ? 'destructive' : 'default',
     locked: pending,
     closeOnOutsideClick: !destructive,

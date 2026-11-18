@@ -81,7 +81,7 @@
 
 .item[data-selected] {
   background: var(--interactive-selected);
-  color: var(--text-link);
+  color: var(--action-primary);
 }
 
 .item[data-hovered],

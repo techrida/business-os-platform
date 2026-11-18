@@ -18,13 +18,13 @@ export function Tabs(props: Omit<TabsProps, 'orientation' | 'className'>) {
 }
 
 export function TabList<T extends object>(props: Omit<TabListProps<T>, 'className'>) {
-  return <AriaTabList {...props} className={styles.list} />;
+  return <AriaTabList {...props} className={styles.list ?? ''} />;
 }
 
 export function Tab(props: Omit<TabProps, 'className'>) {
-  return <AriaTab {...props} className={styles.tab} />;
+  return <AriaTab {...props} className={styles.tab ?? ''} />;
 }
 
 export function TabPanel(props: Omit<TabPanelProps, 'className'>) {
-  return <AriaTabPanel {...props} className={styles.panel} />;
+  return <AriaTabPanel {...props} className={styles.panel ?? ''} />;
 }
