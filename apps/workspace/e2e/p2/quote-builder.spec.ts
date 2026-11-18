@@ -101,6 +101,20 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(percent).not.toHaveAttribute('aria-invalid', 'true');
   });
 
+  await test.step('changing the issue date clears an invalid draft amount and allows saving', async () => {
+    await amount.fill('9999999999999999');
+    await expect(amount).toHaveAttribute('aria-invalid', 'true');
+    const issueDate = page.getByLabel('Issue date');
+    const priorDay = new Date(await issueDate.inputValue());
+    priorDay.setUTCDate(priorDay.getUTCDate() - 1);
+    await issueDate.fill(priorDay.toISOString().slice(0, 10));
+    await expect(amount).toBeDisabled();
+    await expect(percent).toHaveValue('100.00');
+    await save.click();
+    await expect(page.getByText('All changes saved')).toBeVisible();
+    await expect(amount).toBeEnabled();
+  });
+
   await test.step('refresh server pricing, save, cancel submission, then confirm', async () => {
     await page.getByLabel('Discount type').selectOption('pct');
     await page.getByLabel('Discount (%)').fill('15');
