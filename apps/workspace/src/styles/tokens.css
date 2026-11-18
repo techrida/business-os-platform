@@ -316,6 +316,13 @@
   --toast-success-text: var(--text-inverse);
   --toast-warning-bg: var(--status-warning);
   --toast-warning-text: var(--text-inverse);
+  /* Toast card (Sonner). The filled --toast-<tone>-* rows above are the Figma export; the card
+     uses a neutral elevated surface like the bell panel, with the tone on the icon and edge. */
+  --toast-bg: var(--dropdown-bg);
+  --toast-border: var(--dropdown-border);
+  --toast-text: var(--text-primary);
+  --toast-shadow: 0 12px 32px color-mix(in srgb, var(--overlay-scrim) 14%, transparent);
+  --toast-width: 380px;
   /* Tooltip */
   --tooltip-bg: var(--surface-inverse);
   --tooltip-border: var(--border-strong);

@@ -8,6 +8,7 @@ import '@/styles/token-overrides.css';
 import '@fontsource-variable/outfit';
 import '@/styles/globals.css';
 
+import { WorkspaceToaster } from '@/components/ui/toast';
 import { WebVitals } from '@/components/web-vitals';
 
 export const metadata: Metadata = {
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <WebVitals />
         {children}
+        <WorkspaceToaster />
       </body>
     </html>
   );
