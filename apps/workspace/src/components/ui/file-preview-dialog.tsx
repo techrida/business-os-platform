@@ -26,7 +26,7 @@ export interface FilePreviewDialogProps {
   open?: boolean | undefined;
   defaultOpen?: boolean | undefined;
   onOpenChange?: ((open: boolean) => void) | undefined;
-  /** Called when Download is activated, for example to show a "File downloaded" toast. */
+  /** Called when Download is activated, for example to show a "Download started" toast. */
   onDownload?: (() => void) | undefined;
 }
 
@@ -47,7 +47,7 @@ export interface FilePreviewDialogProps {
  *     previewUrl={`/api/documents/${doc.id}/versions/${v.id}/preview`}
  *     downloadUrl={`/api/documents/${doc.id}/versions/${v.id}/download`}
  *     trigger={<button type="button">{file.name}</button>}
- *     onDownload={() => toast.success('File downloaded')}
+ *     onDownload={() => toast.info('Download started')}
  *   />
  */
 export function FilePreviewDialog({
@@ -115,7 +115,7 @@ function Footer({
 }) {
   const origin = window.location.origin;
   const canPreview =
-    !failed && previewKind(mimeType) !== 'unsupported' && isSameOriginUrl(previewUrl, origin);
+    !failed && browserCanPreview(mimeType) && isSameOriginUrl(previewUrl, origin);
   return (
     <>
       <DialogClose asChild>
@@ -152,7 +152,7 @@ function Stage({
   const kind = previewKind(mimeType);
   const safe = isSameOriginUrl(previewUrl, window.location.origin);
 
-  if (failed || kind === 'unsupported' || !safe) {
+  if (failed || !browserCanPreview(mimeType) || !safe) {
     return (
       <div className={styles.fallback} role="status">
         <Icon name="file-text" size={40} className={styles.fallbackIcon} />
@@ -181,6 +181,11 @@ function Stage({
       )}
     </div>
   );
+}
+
+function browserCanPreview(mimeType: string): boolean {
+  const kind = previewKind(mimeType);
+  return kind === 'image' || (kind === 'pdf' && window.navigator.pdfViewerEnabled !== false);
 }
 
 function typeLabel(mime: string): string {
