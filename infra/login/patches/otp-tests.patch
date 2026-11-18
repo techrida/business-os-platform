@@ -127,6 +127,6 @@ index f149f27..919e440 100644
 +
 +
 +// jsdom has no layout hit-testing. input-otp uses it to detect password-manager badges.
-+if (!document.elementFromPoint) {
++if (typeof document !== "undefined" && !document.elementFromPoint) {
 +  document.elementFromPoint = () => null;
 +}
