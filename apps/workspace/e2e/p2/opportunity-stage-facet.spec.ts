@@ -11,7 +11,13 @@ async function moveStage(page: Page, value: string, label: string) {
     await page.getByLabel('Note', { exact: true }).fill('No further work planned.');
   }
   await page.getByRole('button', { name: 'Move', exact: true }).click();
-  await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();
+  if (value === 'lost') {
+    await expect(
+      page.getByRole('complementary', { name: 'Stage' }).getByText(label, { exact: true }),
+    ).toBeVisible();
+  } else {
+    await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();
+  }
 }
 
 async function createOpportunity(page: Page, name: string) {
