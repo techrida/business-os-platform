@@ -105,7 +105,7 @@
   background: var(--surface-subtle);
 }
 
-/* On a phone the primary action is easiest to reach when buttons stack full width, primary on top. */
+/* On a phone the buttons use the full width and keep the same visual and keyboard order. */
 @media (max-width: 479px) {
   .footer {
     flex-direction: column;

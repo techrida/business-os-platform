@@ -77,6 +77,10 @@ export function HeaderAction({
   disabled,
   onClick,
   type = 'button',
+  'aria-controls': controls,
+  'aria-expanded': expanded,
+  'aria-haspopup': hasPopup,
+  'aria-describedby': describedBy,
   ...rest
 }: HeaderActionProps) {
   const descriptionId = useId();
@@ -94,7 +98,7 @@ export function HeaderAction({
               // Never `disabled`: it must keep focus and clicks. Never a submit: it must not post the form.
               type="button"
               aria-disabled="true"
-              aria-describedby={descriptionId}
+              aria-describedby={describedBy ? `${describedBy} ${descriptionId}` : descriptionId}
               className={[styles.blocked, className].filter(Boolean).join(' ')}
             >
               {children}
@@ -125,7 +129,17 @@ export function HeaderAction({
           </Popover.Portal>
         </Popover.Root>
       ) : (
-        <Button {...rest} type={type} className={className} disabled={disabled} onClick={onClick}>
+        <Button
+          {...rest}
+          type={type}
+          className={className}
+          disabled={disabled}
+          onClick={onClick}
+          aria-controls={controls}
+          aria-expanded={expanded}
+          aria-haspopup={hasPopup}
+          aria-describedby={describedBy}
+        >
           {children}
         </Button>
       )}
