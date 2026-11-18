@@ -72,7 +72,11 @@ export function DraftSummary({
             </div>
             <strong>Draft invoice</strong>
           </div>
-          <Table caption="Draft invoice line items" minWidth={485} className={styles.previewItems}>
+          <Table
+            caption="Draft invoice line items"
+            minWidth={485}
+            className={styles.previewItems ?? ''}
+          >
             <thead>
               <tr>
                 <Th>Description</Th>
