@@ -10,7 +10,8 @@ import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input } from '@/components/ui/field';
+import { SearchInput } from '@/components/ui/search-input';
+import { Field } from '@/components/ui/field';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
@@ -94,13 +95,39 @@ export default async function NewPaymentPage({
 
   const showSearch = q !== '' || truncated;
 
+  const search = showSearch ? (
+    <form method="get" action="/payments/new" className={styles.search}>
+      <div className={styles.searchField}>
+        <Field
+          label="Find a customer"
+          hint={
+            truncated
+              ? `Showing the first ${PICKER_LIMIT}. Search by name or number to narrow the list. Searching resets the form.`
+              : 'Searching resets the form.'
+          }
+        >
+          {(control) => (
+            <SearchInput
+              name="q"
+              defaultValue={q}
+              maxLength={100}
+              autoComplete="off"
+              {...control}
+            />
+          )}
+        </Field>
+      </div>
+      <Button type="submit" variant="secondary">
+        Search
+      </Button>
+      {q !== '' ? <Link href="/payments/new">Clear search</Link> : null}
+    </form>
+  ) : null;
+
   return (
-    <Page width="narrow">
+    <Page>
       <Crumbs />
-      <PageHeader
-        title="Record payment"
-        description="Enter a payment a customer made outside the portal, with the bank slip or receipt. Finance verifies it, then allocates it to invoices."
-      />
+      {problem !== null || customers.length === 0 ? <PageHeader title="Record payment" /> : null}
 
       {problem !== null ? (
         <Alert
@@ -119,56 +146,29 @@ export default async function NewPaymentPage({
         </Alert>
       ) : (
         <>
-          {showSearch ? (
-            <form method="get" action="/payments/new" className={styles.search}>
-              <div className={styles.searchField}>
-                <Field
-                  label="Find a customer"
-                  hint={
-                    truncated
-                      ? `Showing the first ${PICKER_LIMIT}. Search by name or number to narrow the list. Searching resets the form.`
-                      : 'Searching resets the form.'
-                  }
-                >
-                  {(control) => (
-                    <Input
-                      type="search"
-                      name="q"
-                      defaultValue={q}
-                      maxLength={100}
-                      autoComplete="off"
-                      {...control}
-                    />
-                  )}
-                </Field>
-              </div>
-              <Button type="submit" variant="secondary">
-                Search
-              </Button>
-              {q !== '' ? <Link href="/payments/new">Clear search</Link> : null}
-            </form>
-          ) : null}
-
           {customers.length === 0 ? (
-            <EmptyState
-              icon="users"
-              title={q !== '' ? 'No customers match that search.' : 'There are no customers yet.'}
-              action={
-                q !== '' ? (
-                  <LinkButton href="/payments/new" variant="secondary">
-                    Clear search
-                  </LinkButton>
-                ) : (
-                  <LinkButton href="/customers/new" variant="secondary">
-                    Add a customer
-                  </LinkButton>
-                )
-              }
-            >
-              {q !== ''
-                ? 'Try part of the name or the customer number.'
-                : 'A payment is recorded against a customer. Add the customer first.'}
-            </EmptyState>
+            <>
+              {search}
+              <EmptyState
+                icon="users"
+                title={q !== '' ? 'No customers match that search.' : 'There are no customers yet.'}
+                action={
+                  q !== '' ? (
+                    <LinkButton href="/payments/new" variant="secondary">
+                      Clear search
+                    </LinkButton>
+                  ) : (
+                    <LinkButton href="/customers/new" variant="secondary">
+                      Add a customer
+                    </LinkButton>
+                  )
+                }
+              >
+                {q !== ''
+                  ? 'Try part of the name or the customer number.'
+                  : 'A payment is recorded against a customer. Add the customer first.'}
+              </EmptyState>
+            </>
           ) : (
             <PaymentForm
               // One key per render of this page: a double click or a retry records the payment once.
@@ -177,7 +177,9 @@ export default async function NewPaymentPage({
               customers={customers}
               initialCustomerId={customers.some((c) => c.id === customerId) ? customerId : ''}
               reloadHref={here}
-            />
+            >
+              {search}
+            </PaymentForm>
           )}
         </>
       )}

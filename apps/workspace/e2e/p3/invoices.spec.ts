@@ -4,20 +4,20 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
 
 /**
  * The P3 invoice screens against the real stack: the list, the detail page with its credit-note and
- * debit-note buttons, and the manual invoice form's validation.
+ * debit-note buttons, and the manual invoice form's validation and draft creation.
  *
- * The invoice endpoints and their seed data are not in the stack yet, so each test reads what it needs
- * from the environment and skips itself when it is unset:
+ * Each test reads its fixture requirements from the environment:
  *
  *   BOS_E2E_INVOICES_READY   any value: the invoice endpoints answer and the tax-code and customer
  *                            lists are seeded. Needed by the list and the manual invoice tests.
  *   BOS_E2E_INVOICE_ISSUED   id of an issued tax invoice with at least one line, owned by the
  *                            `accountant` and `finance` personas' organization.
- *
- * Nothing here creates an invoice: the validation test stops at the refusals, which never reach the
- * API, so no test leaves a record behind. `playwright.config.ts` lists the specs of the `dev` project
- * by name; this one runs through `'p3/*.spec.ts'`.
+ *   BOS_E2E_INVOICE_DRAFT_CUSTOMER   legal name of a disposable customer the accountant can
+ *                            invoice. The draft creation test leaves one draft in that stack.
  */
+
+// The full Chromium channel includes the PDF viewer used by the preview dialog.
+test.use({ channel: 'chromium' });
 
 const ready = (): boolean => process.env.BOS_E2E_INVOICES_READY !== undefined;
 const issuedId = (): string | undefined => process.env.BOS_E2E_INVOICE_ISSUED;
@@ -40,7 +40,7 @@ async function heading(page: Page, name: RegExp | string): Promise<void> {
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
 }
 
-test('the list shows its filters and offers New invoice to the accountant', async ({
+test('the list shows its filters and offers Create Invoice to the accountant', async ({
   browser,
   baseURL,
 }) => {
@@ -50,7 +50,7 @@ test('the list shows its filters and offers New invoice to the accountant', asyn
     await heading(page, 'Invoices');
     await expect(page.getByLabel('Kind')).toBeVisible();
     await expect(page.getByLabel('Status')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'New invoice' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Create Invoice' })).toBeVisible();
   });
 });
 
@@ -64,7 +64,7 @@ test('the detail page shows the totals the server worked out, and Finance gets t
     await page.goto(`/invoices/${id ?? ''}`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Totals' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Lines' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Line Items' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Credit note', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: /^Credit note for / });
@@ -99,7 +99,7 @@ test('the new invoice form names every missing field and has no number or date t
   test.skip(!ready(), 'BOS_E2E_INVOICES_READY is not set');
   await as(browser, baseURL, 'accountant', async ({ page }) => {
     await page.goto('/invoices/new');
-    await heading(page, 'New invoice');
+    await heading(page, 'Create Invoice');
 
     // The number and the issue date are the platform's: there is no field for either.
     await expect(page.getByLabel(/^Number/)).toHaveCount(0);
@@ -122,9 +122,92 @@ test('the new invoice form names every missing field and has no number or date t
     await expect(page).toHaveURL(/\/invoices\/new$/);
 
     // A second line can be added and removed again.
-    await page.getByRole('button', { name: 'Add line' }).click();
+    await page.getByRole('button', { name: 'Add items' }).click();
     await expect(page.getByText('Line 2', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Remove line 2' }).click();
     await expect(page.getByText('Line 2', { exact: true })).toHaveCount(0);
+  });
+});
+
+test.describe('invoice document preview', () => {
+  test('opens the issued PDF in a dialog with a separate download', async ({
+    browser,
+    baseURL,
+  }) => {
+    const id = issuedId();
+    test.skip(id === undefined, 'BOS_E2E_INVOICE_ISSUED is not set');
+    await as(browser, baseURL, 'accountant', async ({ page }) => {
+      const path = `/invoices/${id ?? ''}/document`;
+      await page.goto(`/invoices/${id ?? ''}`);
+      const response = page.waitForResponse(
+        (res) => new URL(res.url()).pathname === path + '/preview',
+      );
+      await page.getByRole('button', { name: 'Preview invoice', exact: true }).click();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator('iframe')).toBeVisible();
+      await expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('href', path);
+      const preview = await response;
+      expect(preview.ok()).toBe(true);
+      expect(preview.headers()['content-type']).toBe('application/pdf');
+      expect(preview.headers()['content-disposition']).toMatch(/^inline/);
+    });
+  });
+});
+
+test('the accountant can save, reopen, and submit a manual invoice', async ({
+  browser,
+  baseURL,
+}) => {
+  const customerName = process.env.BOS_E2E_INVOICE_DRAFT_CUSTOMER;
+  test.skip(!customerName, 'BOS_E2E_INVOICE_DRAFT_CUSTOMER is not set');
+  test.setTimeout(120_000);
+  await as(browser, baseURL, 'accountant', async ({ page }) => {
+    await page.goto('/invoices');
+    await page.getByRole('link', { name: 'Create Invoice' }).click();
+    await heading(page, 'Create Invoice');
+
+    const customer = page.getByLabel('Organization legal name', { exact: true });
+    const customerValue = await customer
+      .locator('option', { hasText: customerName ?? '' })
+      .first()
+      .getAttribute('value');
+    expect(customerValue, 'the disposable customer is in the picker').toBeTruthy();
+    await customer.selectOption(customerValue ?? '');
+    await page.getByLabel('Currency', { exact: true }).selectOption('NPR');
+
+    const description = `Invoice draft workflow ${Date.now()}`;
+    await page.getByLabel('Why is there no sales order?').fill('One-time staff training');
+    await page.getByLabel('Description (line 1)').fill(description);
+    await page.getByLabel('Unit (line 1)').fill('hr');
+    await page.getByLabel('Quantity (line 1)').fill('2');
+    await page.getByLabel('Unit price (NPR) (line 1)').fill('125.00');
+    const tax = page.getByLabel('Tax code (line 1)');
+    await tax.selectOption({ index: 1 });
+    await page.getByRole('button', { name: 'Save draft invoice' }).click();
+
+    await expect(page).toHaveURL(/\/invoices\/[a-f0-9-]{36}$/);
+    await expect(page.getByText(description, { exact: true })).toBeVisible();
+    await expect(page.getByText('One-time staff training', { exact: true })).toBeVisible();
+    const draftPath = new URL(page.url()).pathname;
+
+    await page.goto('/invoices');
+    const draft = page
+      .getByRole('link')
+      .and(page.locator(`[href="${draftPath}"]`))
+      .first();
+    await expect(draft).toBeVisible();
+    await draft.click();
+    await expect(page).toHaveURL(new RegExp(draftPath + '$'));
+    await expect(page.getByText(description, { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
+    const confirmation = page.getByRole('dialog', { name: /^Submit / });
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Submit for approval', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(page.getByText('Awaiting approval', { exact: true }).first()).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(draftPath + '$'));
   });
 });

@@ -1,0 +1,19 @@
+.form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+button.danger:not(:disabled) {
+  border-color: var(--button-danger-bg);
+  background: var(--button-danger-bg);
+  color: var(--button-danger-text);
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--button-danger-bg-hover);
+}
+
+button.danger:active:not(:disabled) {
+  background: var(--button-danger-bg-active);
+}

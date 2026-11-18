@@ -6,15 +6,15 @@ import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 
 import { MAX_LINES, newLine, type FieldErrors, type LineValues } from './lines';
 import styles from './lines-editor.module.css';
 
 /**
  * The lines of a manual invoice or a debit note, one small group per line: what, unit, quantity,
- * price and tax code. There is no per-line discount (the contract's line takes none), no amount
- * column and no total: the server prices the lines and the invoice page shows what it worked out.
- * Each line stacks its fields, so the editor fits the invoice page and a narrow dialog alike.
+ * price and tax code. The invoice layout uses a table-like row where there is space. The debit
+ * note retains the stacked field groups suited to its dialog.
  */
 export function useLines(initial: number = 1): {
   lines: LineValues[];
@@ -47,6 +47,7 @@ export function LinesEditor({
   onChange,
   onAdd,
   onRemove,
+  layout,
 }: {
   lines: readonly LineValues[];
   currency: string;
@@ -56,10 +57,15 @@ export function LinesEditor({
   onChange: (key: string, patch: Partial<LineValues>) => void;
   onAdd: () => void;
   onRemove: (key: string) => void;
+  layout?: 'invoice';
 }) {
   const noTax = taxCodes === null || taxCodes.length === 0;
   return (
-    <div className={styles.editor}>
+    <div
+      className={[styles.editor, layout === 'invoice' ? styles.invoice : undefined]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {taxCodes === null ? (
         <Alert tone="warning" role="status">
           The tax codes did not load, so a tax code cannot be chosen for a line. Reload the page to
@@ -83,19 +89,7 @@ export function LinesEditor({
           );
           return (
             <li key={line.key} className={styles.line}>
-              <div className={styles.lineHead}>
-                <span className={styles.lineNo}>Line {no}</span>
-                {lines.length > 1 ? (
-                  <Button
-                    variant="ghost"
-                    size="small"
-                    onClick={() => onRemove(line.key)}
-                    aria-label={`Remove line ${no}`}
-                  >
-                    Remove
-                  </Button>
-                ) : null}
-              </div>
+              <span className={styles.lineNo}>Line {no}</span>
               <div className={styles.fields}>
                 <Field
                   label={label('Description')}
@@ -165,6 +159,17 @@ export function LinesEditor({
                   )}
                 </Field>
               </div>
+              {lines.length > 1 ? (
+                <Button
+                  className={styles.remove}
+                  variant="ghost"
+                  size="small"
+                  onClick={() => onRemove(line.key)}
+                  aria-label={`Remove line ${no}`}
+                >
+                  {layout === 'invoice' ? <Icon name="x" size={18} /> : 'Remove'}
+                </Button>
+              ) : null}
             </li>
           );
         })}
@@ -177,8 +182,21 @@ export function LinesEditor({
       ) : null}
 
       <div className={styles.add}>
-        <Button variant="secondary" onClick={onAdd} disabled={lines.length >= MAX_LINES}>
-          Add line
+        <Button
+          variant={layout === 'invoice' ? 'tertiary' : 'secondary'}
+          onClick={onAdd}
+          disabled={lines.length >= MAX_LINES}
+        >
+          {layout === 'invoice' ? (
+            <>
+              <span aria-hidden="true" className={styles.plus}>
+                +
+              </span>{' '}
+              Add items
+            </>
+          ) : (
+            'Add line'
+          )}
         </Button>
         {lines.length >= MAX_LINES ? (
           <span className={styles.hint}>An invoice holds up to {MAX_LINES} lines.</span>

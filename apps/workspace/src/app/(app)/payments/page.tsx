@@ -7,13 +7,24 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/field';
+import { Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
+import { SearchInput } from '@/components/ui/search-input';
+import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listPayments } from '@/lib/api-receivables';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
+
+import {
+  ListFooter,
+  listHref,
+  listQuery,
+  listWindow,
+  type ListQuery,
+} from '@/components/p3/list-view';
+import layout from '@/components/p3/list.module.css';
 
 import {
   methodLabel,
@@ -63,11 +74,13 @@ export default async function PaymentsPage({
   searchParams,
 }: {
   // Next 16: searchParams is a Promise.
-  searchParams: Promise<{ status?: string | string[] }>;
+  searchParams: Promise<ListQuery & { status?: string | string[] }>;
 }) {
-  const { status: rawStatus } = await searchParams;
-  const status = parseStatusFilter(rawStatus);
-  const here = status === undefined ? '/payments' : `/payments?status=${status}`;
+  const raw = await searchParams;
+  const status = parseStatusFilter(raw.status);
+  const { q, page } = listQuery(raw);
+  const filters = { status, q };
+  const here = listHref('/payments', filters, page);
   const session = await requireStaffSession(here);
 
   let items: PaymentListItem[] | null = null;
@@ -79,50 +92,85 @@ export default async function PaymentsPage({
     problem = { message: f.message, status: f.status };
   }
 
-  const hasCount = items !== null && items.length > 0;
+  const needle = q.toLowerCase();
+  const matches = (items ?? []).filter((payment) =>
+    [payment.number ?? 'Not yet numbered', payment.customerName, methodLabel(payment.method)].some(
+      (text) => text.toLowerCase().includes(needle),
+    ),
+  );
+  const window = listWindow(matches, page);
   const mayRecord = hasPermission(session.roles, 'payment.record');
 
   return (
     <Page>
       <PageHeader
         title="Payments"
-        description="Money customers have paid, from submitted to verified. A verified payment is allocated to invoices; only then do they count as paid."
+        description="Review customer payments and allocate verified receipts to invoices."
         actions={
-          hasCount || mayRecord ? (
-            <>
-              {items !== null && items.length > 0 ? (
-                <Badge tone="info" role="status" className={styles.count}>
-                  {items.length} {items.length === 1 ? 'payment' : 'payments'}
-                  {status !== undefined ? ` · ${paymentStatusMeta(status).label}` : ''}
-                </Badge>
-              ) : null}
-              {mayRecord ? <LinkButton href="/payments/new">Record payment</LinkButton> : null}
-            </>
+          mayRecord ? (
+            <LinkButton href="/payments/new">
+              <span aria-hidden="true">＋</span> Record payment
+            </LinkButton>
           ) : null
         }
       />
 
-      <form method="get" action="/payments" className={styles.toolbar}>
-        <div className={styles.filterField}>
-          <Field label="Status">
-            {(control) => (
-              <Select name="status" defaultValue={status ?? ''} {...control}>
-                <option value="">All statuses</option>
-                {PAYMENT_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
-        <div className={styles.toolbarActions}>
-          <Button type="submit" variant="secondary">
-            Apply filter
-          </Button>
-          {status !== undefined ? <Link href="/payments">Show all payments</Link> : null}
-        </div>
+      {items !== null && (
+        <section aria-label="Payment summary" className={layout.stats}>
+          <StatCard
+            label={status || q ? 'Matching payments' : 'Total payments'}
+            icon="banknote"
+            value={matches.length}
+          />
+          <StatCard
+            label="Awaiting verification"
+            icon="list-checks"
+            tone="warning"
+            value={matches.filter((item) => item.status === 'submitted').length}
+          />
+          <StatCard
+            label="Verified"
+            icon="check-circle"
+            tone="success"
+            value={matches.filter((item) => item.status === 'verified').length}
+          />
+          <StatCard
+            label="Rejected"
+            icon="x-circle"
+            tone="error"
+            value={matches.filter((item) => item.status === 'rejected').length}
+          />
+        </section>
+      )}
+      <form method="get" action="/payments" className={layout.toolbar}>
+        <SearchInput
+          name="q"
+          aria-label="Search payments"
+          placeholder="Search receipts or customers"
+          defaultValue={q}
+          maxLength={100}
+          wrapperClassName={layout.search}
+        />
+        <label className="sr-only" htmlFor="payment-status">
+          Status
+        </label>
+        <Select
+          id="payment-status"
+          className={layout.select}
+          name="status"
+          defaultValue={status ?? ''}
+        >
+          <option value="">All statuses</option>
+          {PAYMENT_STATUS_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+        <Button type="submit" variant="secondary">
+          Apply filter
+        </Button>
+        {status !== undefined || q ? <Link href="/payments">Show all payments</Link> : null}
       </form>
 
       {problem !== null ? (
@@ -140,8 +188,12 @@ export default async function PaymentsPage({
             ? 'Payments are for the accounts and finance team. Ask an administrator if you need access.'
             : problem.message}
         </Alert>
-      ) : items !== null && items.length === 0 ? (
-        status !== undefined ? (
+      ) : items !== null && matches.length === 0 ? (
+        q ? (
+          <EmptyState icon="search" title="No matching payments.">
+            Try another receipt number or customer name.
+          </EmptyState>
+        ) : status !== undefined ? (
           <EmptyState
             icon="banknote"
             title={`No payments are ${paymentStatusMeta(status).label.toLowerCase()}.`}
@@ -155,24 +207,33 @@ export default async function PaymentsPage({
           </EmptyState>
         )
       ) : items !== null ? (
-        <Table caption="Payments" minWidth={860}>
-          <thead>
-            <tr>
-              <Th>Receipt</Th>
-              <Th>Customer</Th>
-              <Th>Status</Th>
-              <Th>Method</Th>
-              <Th align="end">Amount received</Th>
-              <Th align="end">Not yet allocated</Th>
-              <Th>Received on</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <PaymentRow key={item.id} item={item} />
-            ))}
-          </tbody>
-        </Table>
+        <div className={layout.results}>
+          <Table caption="Payments" minWidth={860}>
+            <thead>
+              <tr>
+                <Th>Receipt</Th>
+                <Th>Customer</Th>
+                <Th>Status</Th>
+                <Th>Method</Th>
+                <Th align="end">Amount received</Th>
+                <Th align="end">Not yet allocated</Th>
+                <Th>Received on</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {window.rows.map((item) => (
+                <PaymentRow key={item.id} item={item} />
+              ))}
+            </tbody>
+          </Table>
+          <ListFooter
+            count={matches.length}
+            noun="payment"
+            path="/payments"
+            filters={filters}
+            window={window}
+          />
+        </div>
       ) : null}
     </Page>
   );

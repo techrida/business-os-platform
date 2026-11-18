@@ -1,16 +1,6 @@
-/* The credit and debit note forms inside their dialogs. The dialog frame comes from the shared
-   ActionDialog; the lines editor of a debit note comes with its own styles. Colours are Figma tokens. */
-
 .form {
   display: grid;
   gap: 16px;
-}
-
-.buttons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .error {

@@ -1,58 +1,263 @@
 /* Layout and small pieces that belong to the KYB screens only. Everything else comes from
    components/ui. Colours are Figma tokens from styles/tokens.css. */
 
-.count {
-  white-space: nowrap;
-}
-
 .note {
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
 }
 
 .quiet {
   color: var(--text-secondary);
 }
 
-/* ---- Status filter: real links, one per status, the current one marked ---- */
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  border-bottom: var(--border-width-thin) solid var(--tabs-border);
+.queue,
+.caseHeader,
+.caseNotices,
+.supporting {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing-content-gap);
 }
 
-.filter {
-  padding: 10px 16px;
-  margin-bottom: -1px;
-  border-bottom: var(--border-width-medium) solid transparent;
+.caseHeader,
+.caseNotices {
+  gap: 12px;
+}
+
+.caseNotices:empty {
+  display: none;
+}
+
+.queueResults.queueResults {
+  min-width: 0;
+  padding: 0;
+}
+
+.queueTable.queueTable {
+  border: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.queueTable tbody tr {
+  height: 88px;
+}
+
+.customerCell {
+  width: 40%;
+}
+
+.customer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.customer > :first-child {
+  flex: none;
+}
+
+.customerIcon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-brand);
+  color: var(--action-primary);
+}
+
+.rowProgress,
+.documentProgress {
+  display: grid;
+  gap: 6px;
+  width: max-content;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.documentProgress {
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-body-small);
-  text-decoration: none;
 }
 
-.filter:hover {
-  color: var(--tabs-text-hover);
+.rowProgress progress,
+.documentProgress progress {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--progress-track-bg);
+  color: var(--progress-fill-bg);
 }
 
-.filter[aria-current='page'] {
-  border-bottom-color: var(--tabs-active-border);
-  color: var(--tabs-text-active);
+.rowProgress progress::-webkit-progress-bar,
+.documentProgress progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--progress-track-bg);
 }
 
-.filter:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
+.rowProgress progress::-webkit-progress-value,
+.documentProgress progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--progress-fill-bg);
 }
 
-/* ---- Queue rows ---- */
+.rowProgress progress::-moz-progress-bar,
+.documentProgress progress::-moz-progress-bar {
+  border-radius: inherit;
+  background: var(--progress-fill-bg);
+}
 
-.progress {
-  font-variant-numeric: tabular-nums;
+.resultsFooter {
+  padding: 16px 24px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.documents.documents {
+  --document-inset: 24px;
+  padding: var(--document-inset) 0 0;
+}
+
+.documents > :first-child,
+.tableHint {
+  margin-inline: var(--document-inset);
+}
+
+.tableHint {
+  display: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.documentTable.documentTable {
+  border: 0;
+  border-top: var(--border-width-thin) solid var(--border-default);
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
+.documentTable.documentTable :is(th, td) {
+  padding: 16px;
+}
+
+.documentTable :is(th, td):first-child {
+  padding-inline-start: var(--document-inset);
+}
+
+.documentTable :is(th, td):last-child {
+  padding-inline-end: var(--document-inset);
+}
+
+.documentTable .required {
+  color: var(--status-success);
+}
+
+.reviewCell {
+  min-width: 170px;
+}
+
+.itemReview,
+.historyText {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.itemReview .reject {
+  color: var(--status-error);
+}
+
+.itemReview button[aria-disabled='true'] {
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+.supporting {
+  align-items: start;
+}
+
+.history,
+.attachments {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyEntry,
+.attachment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding-block: 16px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.historyEntry:last-child,
+.attachment:last-child {
+  padding-bottom: 0;
+}
+
+.historyEntry > svg,
+.attachment > svg {
+  margin-block-start: 2px;
+}
+
+.attachment {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.attachment > div {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.approved {
+  color: var(--status-success);
+}
+
+.rejected {
+  color: var(--status-error);
+}
+
+.caseLink {
+  justify-self: start;
+  color: var(--action-primary);
+  text-underline-offset: 0.2em;
+}
+
+@media (min-width: 1024px) {
+  .supporting:has(> :nth-child(2)) {
+    grid-template-columns: minmax(0, 2fr) minmax(270px, 1fr);
+    gap: var(--grid-gutter);
+  }
+}
+
+@media (max-width: 1099px) {
+  .tableHint {
+    display: block;
+  }
+}
+
+@media (max-width: 767px) {
+  .documents.documents {
+    --document-inset: 16px;
+  }
+
+  .queueTable.queueTable :is(th, td),
+  .resultsFooter {
+    padding-inline: 16px;
+  }
 }
 
 .itemName {

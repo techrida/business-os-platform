@@ -1,7 +1,7 @@
 'use client';
 
 import type { TaxCode } from '@bos/contracts';
-import { useActionState, useRef, useState, type ReactNode } from 'react';
+import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import {
   createCreditNoteAction,
@@ -9,15 +9,12 @@ import {
 } from '@/app/(app)/invoices/_components/notes/actions';
 import type { InvoiceFormState } from '@/app/(app)/invoices/new/form-state';
 import { LinesEditor, useLines } from '@/app/(app)/invoices/new/lines-editor';
-import {
-  ActionDialog,
-  DialogCloseButton,
-  PendingLine,
-  useFocusOnProblem,
-} from '@/components/ui/transaction-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
+import { useFocusOnProblem } from '@/components/ui/transaction-dialog';
 
 import styles from './notes.module.css';
 
@@ -43,6 +40,9 @@ function NoteForm({
   idempotencyKey,
   reloadHref,
   lines,
+  triggerLabel,
+  title,
+  description,
   confirmLabel,
   pendingWords,
   reasonHint,
@@ -52,6 +52,9 @@ function NoteForm({
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState>;
   /** The posted `lines` field: what the person entered, as the action parses it. */
   lines: unknown;
+  triggerLabel: string;
+  title: string;
+  description: string;
   confirmLabel: string;
   pendingWords: string;
   reasonHint: string;
@@ -64,14 +67,37 @@ function NoteForm({
     errors: {},
   });
   const [reason, setReason] = useState('');
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const formId = useId();
+  const wrapRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrapRef, summaryRef);
   const summary = state.error ?? state.errors['form'];
+  useEffect(() => {
+    if (state.error || Object.keys(state.errors).length) toast.error('Check the note fields');
+  }, [state]);
 
   return (
-    <div ref={wrapRef}>
-      <form action={formAction} noValidate className={styles.form}>
+    <Dialog
+      trigger={<Button variant="secondary">{triggerLabel}</Button>}
+      title={title}
+      description={description}
+      locked={pending}
+      closeOnOutsideClick={false}
+      size="large"
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="submit" form={formId} disabled={pending || disabled === true}>
+            {pending ? pendingWords : confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} ref={wrapRef} action={formAction} noValidate className={styles.form}>
         <input type="hidden" name="originalInvoiceId" value={originalInvoiceId} />
         <input type="hidden" name="idempotencyKey" value={state.key} />
         <input type="hidden" name="lines" value={JSON.stringify(lines)} />
@@ -108,15 +134,11 @@ function NoteForm({
           )}
         </Field>
 
-        <div className={styles.buttons}>
-          <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-          <Button type="submit" disabled={pending || disabled === true}>
-            {confirmLabel}
-          </Button>
-        </div>
-        <PendingLine pending={pending} words={pendingWords} />
+        <p className="sr-only" role="status">
+          {pending ? pendingWords : ''}
+        </p>
       </form>
-    </div>
+    </Dialog>
   );
 }
 
@@ -140,29 +162,26 @@ export function CreditNoteDialog({
   const [quantities, setQuantities] = useState<Record<number, string>>({});
   const posted = lines.map((l) => ({ lineNo: l.lineNo, quantity: quantities[l.lineNo] ?? '' }));
   return (
-    <ActionDialog
+    <NoteForm
+      {...rest}
       triggerLabel="Credit note"
       title={`Credit note for ${name}`}
-      intro="Choose how much of each line to credit. The platform prices the note and checks it against the invoice. It is a draft until Finance issues it."
+      description="Choose the quantities to credit. Finance issues the note after review."
+      action={createCreditNoteAction}
+      lines={posted}
+      confirmLabel="Create credit note"
+      pendingWords="Creating"
+      reasonHint="Kept on the note and shown to the approvers."
     >
-      <NoteForm
-        {...rest}
-        action={createCreditNoteAction}
-        lines={posted}
-        confirmLabel="Create credit note"
-        pendingWords="Creating the credit note"
-        reasonHint="Kept on the note and shown to the approvers."
-      >
-        {(state) => (
-          <CreditLines
-            lines={lines}
-            quantities={quantities}
-            errors={state.errors}
-            onChange={(lineNo, value) => setQuantities((q) => ({ ...q, [lineNo]: value }))}
-          />
-        )}
-      </NoteForm>
-    </ActionDialog>
+      {(state) => (
+        <CreditLines
+          lines={lines}
+          quantities={quantities}
+          errors={state.errors}
+          onChange={(lineNo, value) => setQuantities((q) => ({ ...q, [lineNo]: value }))}
+        />
+      )}
+    </NoteForm>
   );
 }
 
@@ -249,32 +268,29 @@ export function DebitNoteDialog({
 }: NoteProps & { currency: string; taxCodes: readonly TaxCode[] | null }) {
   const { lines, setLine, add, remove } = useLines(1);
   return (
-    <ActionDialog
+    <NoteForm
+      {...rest}
       triggerLabel="Debit note"
       title={`Debit note for ${name}`}
-      intro="Add what the invoice under-charged. The platform prices the lines and works out the tax. It is a draft until Finance issues it."
+      description="Add the items that were undercharged. Finance issues the note after review."
+      action={createDebitNoteAction}
+      lines={lines}
+      confirmLabel="Create debit note"
+      pendingWords="Creating"
+      reasonHint="Kept on the note and shown to the approvers."
+      disabled={taxCodes === null || taxCodes.length === 0}
     >
-      <NoteForm
-        {...rest}
-        action={createDebitNoteAction}
-        lines={lines}
-        confirmLabel="Create debit note"
-        pendingWords="Creating the debit note"
-        reasonHint="Kept on the note and shown to the approvers."
-        disabled={taxCodes === null || taxCodes.length === 0}
-      >
-        {(state) => (
-          <LinesEditor
-            lines={lines}
-            currency={currency}
-            taxCodes={taxCodes}
-            errors={state.errors}
-            onChange={setLine}
-            onAdd={add}
-            onRemove={remove}
-          />
-        )}
-      </NoteForm>
-    </ActionDialog>
+      {(state) => (
+        <LinesEditor
+          lines={lines}
+          currency={currency}
+          taxCodes={taxCodes}
+          errors={state.errors}
+          onChange={setLine}
+          onAdd={add}
+          onRemove={remove}
+        />
+      )}
+    </NoteForm>
   );
 }

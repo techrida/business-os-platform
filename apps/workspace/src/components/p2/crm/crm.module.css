@@ -207,12 +207,6 @@
   padding-top: 8px;
 }
 
-.moved {
-  color: var(--success-700);
-  font-size: var(--font-size-body-small);
-  font-weight: var(--font-weight-medium);
-}
-
 /* ---- Forms ---- */
 
 .form {

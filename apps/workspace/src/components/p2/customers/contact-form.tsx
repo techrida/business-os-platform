@@ -4,6 +4,7 @@ import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
@@ -15,9 +16,8 @@ import styles from './customer-form.module.css';
 export const PRIMARY_TAKEN_REASON = 'This customer already has a main contact.';
 
 /**
- * Add a contact to a customer. The outer component owns the action state; the fields live in a
- * child keyed by `savedCount`, so a saved contact clears the form while a refusal keeps what was
- * typed (React 19 resets uncontrolled fields after every action, so the inputs are controlled).
+ * Add a contact to a customer. Drafts belong to the current save count, so a successful save
+ * clears the fields while a refusal keeps what was typed.
  * A save and a lost race for the main contact are transient, so they are toasts; a refusal that
  * blocks the save stays on the form.
  */
@@ -27,6 +27,7 @@ export function ContactForm({
   idempotencyKey,
   hasPrimary,
   requireEmail,
+  inDialog = false,
 }: {
   action: (prev: ContactFormState, form: FormData) => Promise<ContactFormState>;
   customerId: string;
@@ -36,12 +37,17 @@ export function ContactForm({
   hasPrimary: boolean;
   /** The customer has no contact with an email yet, so this one needs an email. */
   requireEmail: boolean;
+  inDialog?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<ContactFormState, FormData>(action, {
     key: idempotencyKey,
     errors: {},
     savedCount: 0,
   });
+  const formId = useId();
+  const [openedAt, setOpenedAt] = useState<number | null>(null);
+  const [draft, setDraft] = useState({ savedCount: 0, values: EMPTY_CONTACT_VALUES });
+  const values = draft.savedCount === state.savedCount ? draft.values : EMPTY_CONTACT_VALUES;
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
 
@@ -52,8 +58,18 @@ export function ContactForm({
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [state]);
 
-  return (
-    <form ref={formRef} action={formAction} noValidate className={styles.contactForm}>
+  const submit = (
+    <Button
+      type="submit"
+      form={formId}
+      variant={inDialog ? 'primary' : 'secondary'}
+      disabled={pending}
+    >
+      {pending ? 'Saving' : 'Add contact'}
+    </Button>
+  );
+  const form = (
+    <form id={formId} ref={formRef} action={formAction} noValidate className={styles.contactForm}>
       <input type="hidden" name="customerId" value={customerId} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
       {requireEmail ? <input type="hidden" name="requireEmail" value="yes" /> : null}
@@ -64,38 +80,70 @@ export function ContactForm({
         </Alert>
       ) : null}
       <ContactFields
-        key={state.savedCount}
+        values={values}
+        onChange={(next) => setDraft({ savedCount: state.savedCount, values: next })}
         errors={state.errors}
         hasPrimary={hasPrimary}
         requireEmail={requireEmail}
       />
 
-      <div className={styles.actions}>
-        <Button type="submit" variant="secondary" disabled={pending}>
-          {pending ? 'Saving' : 'Add contact'}
-        </Button>
-      </div>
+      {inDialog ? null : <div className={styles.actions}>{submit}</div>}
     </form>
+  );
+
+  if (!inDialog) return form;
+
+  return (
+    <Dialog
+      trigger={
+        <Button variant="tertiary" size="small">
+          <span aria-hidden="true" className={styles.plus}>
+            +
+          </span>
+          Add Contact
+        </Button>
+      }
+      title="Add Contact"
+      open={openedAt === state.savedCount}
+      onOpenChange={(open) => setOpenedAt(open ? state.savedCount : null)}
+      locked={pending}
+      closeOnOutsideClick={false}
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
+              Close
+            </Button>
+          </DialogClose>
+          {submit}
+        </>
+      }
+    >
+      {form}
+    </Dialog>
   );
 }
 
 function ContactFields({
+  values,
+  onChange,
   errors,
   hasPrimary,
   requireEmail,
 }: {
+  values: ContactValues;
+  onChange: (values: ContactValues) => void;
   errors: ContactFormState['errors'];
   hasPrimary: boolean;
   requireEmail: boolean;
 }) {
-  const [values, setValues] = useState<ContactValues>(EMPTY_CONTACT_VALUES);
   const primaryReasonId = useId();
   // Never send a tick the page knows is refused (the box was ticked before the page reloaded).
   const isPrimary = values.isPrimary && !hasPrimary;
   const set =
     (field: ContactField) =>
     (e: { target: { value: string } }): void =>
-      setValues((v) => ({ ...v, [field]: e.target.value }));
+      onChange({ ...values, [field]: e.target.value });
 
   return (
     <>
@@ -170,7 +218,7 @@ function ContactFields({
           checked={isPrimary}
           disabled={hasPrimary}
           aria-describedby={hasPrimary ? primaryReasonId : undefined}
-          onChange={(e) => setValues((v) => ({ ...v, isPrimary: e.target.checked }))}
+          onChange={(e) => onChange({ ...values, isPrimary: e.target.checked })}
         />
         Make this the main contact
       </label>

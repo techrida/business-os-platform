@@ -720,3 +720,48 @@
 .table .hint {
   display: block;
 }
+
+/* Contain intrinsically wide tables and their absolutely positioned accessible labels. */
+.page {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.local {
+  position: relative;
+  contain: inline-size;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.destinations ul {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.destinations li {
+  align-content: start;
+  padding: 24px;
+  padding-inline-start: 72px;
+  box-shadow: var(--shadow-section);
+}
+
+.areaIcon {
+  position: absolute;
+  inset-block-start: 24px;
+  inset-inline-start: 24px;
+  box-sizing: content-box;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  color: var(--action-primary);
+  background: var(--badge-info-bg);
+  pointer-events: none;
+}
+
+@media (max-width: 767.98px) {
+  .destinations ul {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}

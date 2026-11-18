@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SalesOrderDetail } from '@bos/contracts';
+import type { SalesOrderDetail, ScheduleLineStatus } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -11,6 +11,7 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { StatusTimeline, type TimelineTone } from '@/components/ui/status-timeline';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getSalesOrder } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
@@ -34,6 +35,14 @@ export const dynamic = 'force-dynamic';
 
 type Order = SalesOrderDetail['order'];
 
+const stepTones: Record<ScheduleLineStatus, TimelineTone> = {
+  planned: 'upcoming',
+  billable: 'current',
+  drafted: 'warning',
+  invoiced: 'done',
+  cancelled: 'muted',
+};
+
 function Totals({ order }: { order: Order }) {
   const { totals, currency } = order;
   const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
@@ -44,7 +53,7 @@ function Totals({ order }: { order: Order }) {
     { key: 'total', label: 'Total', value: totals.total, grand: true },
   ];
   return (
-    <Panel as="aside" title="Totals" description={`In ${currency}, as calculated by the server.`}>
+    <Panel as="aside" title="Totals" description={`Order amounts in ${currency}.`}>
       <dl className={detail.totals}>
         {rows.map((row) => (
           <div
@@ -126,10 +135,7 @@ function NprSnapshot({ order }: { order: Order }) {
     },
   ];
   return (
-    <Panel
-      title="Nepali rupee snapshot"
-      description="The rate frozen when the order was confirmed. It does not change afterwards."
-    >
+    <Panel title="Nepali rupee snapshot" description="Exchange rate at confirmation.">
       <FactList facts={facts} />
     </Panel>
   );
@@ -138,7 +144,7 @@ function NprSnapshot({ order }: { order: Order }) {
 function Lines({ data }: { data: SalesOrderDetail }) {
   const { currency } = data.order;
   return (
-    <Panel title="Lines" description="Copied from the accepted quotation. They never change.">
+    <Panel title="Order lines" description="Items from the accepted quotation.">
       {data.lines.length === 0 ? (
         <p className={detail.note}>This order has no lines.</p>
       ) : (
@@ -202,7 +208,7 @@ function Schedule({
   return (
     <Panel
       title="Billing schedule"
-      description="One invoice is drafted for each step, once the step is billable. The amounts add up to the order total."
+      description="Billable steps, supporting documents and linked invoices."
     >
       {schedule.length === 0 ? (
         <p className={detail.note}>This order has no billing schedule yet.</p>
@@ -263,6 +269,7 @@ function Schedule({
                     <div className={local.actionCell}>
                       {action === 'mark_billable' ? (
                         <MarkBillableDialog
+                          key={order.version}
                           salesOrderId={order.id}
                           scheduleLineId={line.id}
                           lineLabel={line.label}
@@ -376,7 +383,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
       <PageHeader
         title={<span className={detail.wrap}>{order.number ?? 'Draft sales order'}</span>}
         status={<Badge tone={tone}>{label}</Badge>}
-        description={`Order in ${order.currency}. Amounts, numbers and dates come from the platform.`}
+        description={`Sales order · ${money(order.totals.total, order.currency)}`}
       />
 
       {order.status === 'draft' ? (
@@ -385,15 +392,28 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
         </Alert>
       ) : null}
 
+      {data.schedule.length > 0 && (
+        <div className={local.progress}>
+          <StatusTimeline
+            label="Billing milestones"
+            steps={data.schedule.map((line) => ({
+              key: line.id,
+              title: line.label,
+              status: scheduleLineStatusMeta(line.status).label,
+              tone: stepTones[line.status],
+            }))}
+          />
+        </div>
+      )}
       <div className={detail.columns}>
-        <Panel title="Order">
+        <Panel title="Order overview">
           <FactList facts={summaryFacts(order, data.deliveryReleased)} />
         </Panel>
         <Totals order={order} />
       </div>
 
-      <Lines data={data} />
       <Schedule data={data} evidence={evidence} can={can} reloadHref={path} />
+      <Lines data={data} />
       <div className={detail.columns}>
         <Evidence items={data.evidence} />
         <NprSnapshot order={order} />

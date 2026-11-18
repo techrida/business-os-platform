@@ -1,4 +1,5 @@
 import type { QuotationListItem } from '@bos/contracts';
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,9 +31,9 @@ vi.mock('@/components/p2/quote-builder/lookups', () => ({
   loadLookups: vi.fn(() => Promise.resolve({ contacts: [], taxCodes: [], paymentTerms: [] })),
 }));
 vi.mock('@/components/p2/quote-builder/quote-builder', () => ({
-  QuoteBuilder: (props: unknown) => {
+  QuoteBuilder: (props: { notice?: ReactNode }) => {
     mocks.builderProps(props);
-    return <div data-testid="builder" />;
+    return <div data-testid="builder">{props.notice}</div>;
   },
 }));
 vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: mocks.redirect }));

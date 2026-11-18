@@ -83,6 +83,9 @@ describe('renderInvoiceHtml', () => {
     const debit = renderInvoiceHtml(sample({ kind: 'debit_note', number: 'DN-2083/84-00001' }));
     expect(credit).toContain('<h1>Credit Note</h1>');
     expect(debit).toContain('<h1>Debit Note</h1>');
+    expect(credit).toContain('<h2>Credit Note total</h2>');
+    expect(credit).not.toContain('Invoice total');
+    expect(debit).toContain('<h2>Debit Note total</h2>');
   });
 
   it('formats a foreign currency in its own style', () => {

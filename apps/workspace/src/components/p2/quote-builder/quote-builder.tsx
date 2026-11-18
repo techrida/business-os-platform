@@ -4,9 +4,12 @@ import { unstable_rethrow, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 
@@ -90,6 +93,11 @@ const DISCOUNT_LABEL: Record<DiscountMode, string> = {
  */
 export function QuoteBuilder({
   target,
+  title,
+  description,
+  status,
+  cancelHref,
+  notice,
   initial,
   context,
   contacts,
@@ -99,6 +107,11 @@ export function QuoteBuilder({
   savedNotice = false,
 }: {
   target: BuilderTarget;
+  title: string;
+  description?: string;
+  status?: ReactNode;
+  cancelHref: string;
+  notice?: ReactNode;
   initial: BuilderValues;
   /** Section 1's read-only customer and opportunity facts (rendered on the server). */
   context: ReactNode;
@@ -408,42 +421,78 @@ export function QuoteBuilder({
 
   return (
     <div className={styles.layout}>
-      <div className={`${styles.actions} ${styles.actionBar}`}>
-        <Button onClick={() => void save()} disabled={busy !== null} aria-busy={busy === 'save'}>
-          {busy === 'save' ? 'Saving' : 'Save draft'}
-        </Button>
-        {target.mode === 'edit' ? (
-          <ConfirmDialog
-            trigger={
-              <Button variant="secondary" disabled={busy !== null}>
-                {busy === 'submit' ? 'Submitting' : 'Submit for approval'}
+      <div className={styles.heading}>
+        <PageHeader
+          title={title}
+          description={description}
+          status={status}
+          actions={
+            <>
+              {dirty ? (
+                <ConfirmDialog
+                  trigger={
+                    <Button variant="secondary" disabled={busy !== null}>
+                      Cancel
+                    </Button>
+                  }
+                  title="Discard unsaved changes?"
+                  description="Changes since the last save will be lost."
+                  confirmLabel="Discard changes"
+                  cancelLabel="Keep editing"
+                  destructive
+                  onConfirm={() => {
+                    leaving.current = true;
+                    router.push(cancelHref);
+                  }}
+                />
+              ) : (
+                <LinkButton href={cancelHref} variant="secondary">
+                  Cancel
+                </LinkButton>
+              )}
+              <Button
+                onClick={() => void save()}
+                disabled={busy !== null}
+                aria-busy={busy === 'save'}
+              >
+                {busy === 'save' ? 'Saving' : 'Save draft'}
               </Button>
-            }
-            open={confirming}
-            onOpenChange={openConfirmation}
-            title="Submit this quotation for approval?"
-            description="Editing is locked while approval is pending. Recall the quotation if it needs changes."
-            confirmLabel="Submit quotation"
-            cancelLabel="Keep editing"
-            onConfirm={submit}
-            size="medium"
-          >
-            {readyPreview?.route.steps.length ? (
-              <ApprovalSteps
-                steps={readyPreview.route.steps}
-                assigned={
-                  chosenApprover && approverChoiceSeq !== undefined
-                    ? { seq: approverChoiceSeq, option: chosenApprover }
-                    : null
-                }
-              />
-            ) : null}
-          </ConfirmDialog>
-        ) : null}
+              {target.mode === 'edit' ? (
+                <ConfirmDialog
+                  trigger={
+                    <Button variant="secondary" disabled={busy !== null}>
+                      {busy === 'submit' ? 'Submitting' : 'Submit for approval'}
+                    </Button>
+                  }
+                  open={confirming}
+                  onOpenChange={openConfirmation}
+                  title="Submit this quotation for approval?"
+                  description="Editing is locked while approval is pending. Recall the quotation if it needs changes."
+                  confirmLabel="Submit quotation"
+                  cancelLabel="Keep editing"
+                  onConfirm={submit}
+                  size="medium"
+                >
+                  {readyPreview?.route.steps.length ? (
+                    <ApprovalSteps
+                      steps={readyPreview.route.steps}
+                      assigned={
+                        chosenApprover && approverChoiceSeq !== undefined
+                          ? { seq: approverChoiceSeq, option: chosenApprover }
+                          : null
+                      }
+                    />
+                  ) : null}
+                </ConfirmDialog>
+              ) : null}
+            </>
+          }
+        />
         <span className={styles.status} role="status">
           {dirty ? 'Unsaved changes' : target.mode === 'edit' ? 'All changes saved' : ''}
         </span>
       </div>
+      {notice}
 
       <fieldset className={styles.main} disabled={busy !== null} aria-label="Quotation fields">
         {stale ? (
@@ -467,64 +516,60 @@ export function QuoteBuilder({
           </Alert>
         ) : null}
 
-        <Panel title="1. Customer and opportunity">
-          <div className={styles.sectionBody}>
-            {context}
-            <Field
-              label="Contact"
-              hint={
-                contacts === null
-                  ? 'The contact list did not load. Reload the page to choose one.'
-                  : 'Who at the customer receives this quotation.'
-              }
-              error={errors['contactId']}
-            >
+        <Card className={styles.contextCard}>
+          {context}
+          <Field
+            label="Contact"
+            hint={
+              contacts === null
+                ? 'The contact list did not load. Reload the page to choose one.'
+                : 'Who at the customer receives this quotation.'
+            }
+            error={errors['contactId']}
+          >
+            {(control) => (
+              <Select
+                value={values.contactId}
+                onChange={(e) => set('contactId')(e.target.value)}
+                disabled={contacts === null}
+                {...control}
+              >
+                <option value="">No contact chosen</option>
+                {(contacts ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </Card>
+
+        <Panel title="Quotation details">
+          <div className={styles.grid2}>
+            <Field label="Issue date" error={errors['issueDate']}>
               {(control) => (
-                <Select
-                  value={values.contactId}
-                  onChange={(e) => set('contactId')(e.target.value)}
-                  disabled={contacts === null}
+                <DatePicker
+                  required
+                  disabled={busy !== null}
+                  value={values.issueDate}
+                  onChange={set('issueDate')}
                   {...control}
-                >
-                  <option value="">No contact chosen</option>
-                  {(contacts ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </Select>
+                />
               )}
             </Field>
-          </div>
-        </Panel>
-
-        <Panel title="2. Validity and currency">
-          <div className={styles.sectionBody}>
-            <div className={styles.grid2}>
-              <Field label="Issue date" error={errors['issueDate']}>
-                {(control) => (
-                  <Input
-                    type="date"
-                    required
-                    value={values.issueDate}
-                    onChange={(e) => set('issueDate')(e.target.value)}
-                    {...control}
-                  />
-                )}
-              </Field>
-              <Field label="Valid until" error={errors['validUntil']}>
-                {(control) => (
-                  <Input
-                    type="date"
-                    required
-                    min={values.issueDate || undefined}
-                    value={values.validUntil}
-                    onChange={(e) => set('validUntil')(e.target.value)}
-                    {...control}
-                  />
-                )}
-              </Field>
-            </div>
+            <Field label="Valid until" error={errors['validUntil']}>
+              {(control) => (
+                <DatePicker
+                  required
+                  disabled={busy !== null}
+                  min={values.issueDate || undefined}
+                  value={values.validUntil}
+                  onChange={set('validUntil')}
+                  {...control}
+                />
+              )}
+            </Field>
             <Field
               label="Currency"
               hint={
@@ -548,18 +593,48 @@ export function QuoteBuilder({
                 </Select>
               )}
             </Field>
+            <Field
+              label="Payment term"
+              hint={
+                paymentTerms === null
+                  ? 'Reload to choose a payment term.'
+                  : "Defaults to the customer's term when left empty."
+              }
+              error={errors.paymentTermId}
+            >
+              {(control) => (
+                <Select
+                  {...control}
+                  value={values.paymentTermId}
+                  onChange={(e) => set('paymentTermId')(e.target.value)}
+                  disabled={paymentTerms === null}
+                >
+                  <option value="">Customer default</option>
+                  {(paymentTerms ?? []).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </div>
         </Panel>
 
-        <Panel
-          title="3. Lines"
-          description="Quantity, unit, rate and tax code. The discount is set once, in section 4."
-        >
+        <Card as="section" aria-label="Line items" className={styles.linesPanel}>
           <LinesSection
             lines={values.lines}
             currency={values.currency}
             taxCodes={taxCodes}
             lineAmounts={lineAmounts}
+            totals={
+              <TotalsPanel
+                currency={values.currency}
+                state={view.state}
+                preview={view.preview}
+                message={view.message}
+              />
+            }
             errors={errors}
             onSave={(line: LineValues) => {
               if (line.key) {
@@ -585,9 +660,9 @@ export function QuoteBuilder({
               edit((v) => ({ ...v, lines: v.lines.filter((l) => l.key !== key) }));
             }}
           />
-        </Panel>
+        </Card>
 
-        <Panel title="4. Discount" description="One discount for the whole quotation.">
+        <Panel title="Discount" description="Applies to the full quotation.">
           <div className={styles.sectionBody}>
             <div className={styles.grid2}>
               <Field label="Discount type">
@@ -623,6 +698,10 @@ export function QuoteBuilder({
                 >
                   {(control) => (
                     <Input
+                      type="number"
+                      min="0"
+                      max={values.discountMode === 'pct' ? '100' : undefined}
+                      step={values.discountMode === 'pct' ? '0.0001' : '0.01'}
                       inputMode="decimal"
                       autoComplete="off"
                       className={styles.numInput}
@@ -637,10 +716,8 @@ export function QuoteBuilder({
           </div>
         </Panel>
 
-        <Panel title="5. Payment schedule" description="Milestones must add up to 100%.">
+        <Panel title="Payment schedule" description="Milestones must add up to 100%.">
           <ScheduleSection
-            paymentTermId={values.paymentTermId}
-            paymentTerms={paymentTerms}
             milestones={values.schedule}
             currency={values.currency}
             total={pricedTotal}
@@ -649,7 +726,6 @@ export function QuoteBuilder({
             showScheduleErrors={scheduleAttempted}
             onAmountDraft={setAmountDraft}
             errors={errors}
-            onTerm={set('paymentTermId')}
             onChange={(key, patch: Partial<MilestoneValues>) => {
               const index = values.schedule.findIndex((m) => m.key === key);
               setErrors((current) =>
@@ -683,7 +759,7 @@ export function QuoteBuilder({
           />
         </Panel>
 
-        <Panel title="6. Terms">
+        <Panel title="Terms">
           <div className={styles.sectionBody}>
             <Field label="Scope" hint="What is included." error={errors['scope']}>
               {(control) => (
@@ -740,13 +816,6 @@ export function QuoteBuilder({
           onApproverChange={setApprover}
         />
       </fieldset>
-
-      <TotalsPanel
-        currency={values.currency}
-        state={view.state}
-        preview={view.preview}
-        message={view.message}
-      />
     </div>
   );
 }

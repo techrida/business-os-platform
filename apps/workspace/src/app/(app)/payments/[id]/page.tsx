@@ -6,7 +6,15 @@ import Link from 'next/link';
 
 import { getCustomer } from '@/components/p2/customers/api';
 import { getDocument } from '@/components/p2/crm/verification-api';
-import { downloadHref, fileOf, type FileView } from '@/components/p2/crm/verification-file';
+import {
+  downloadHref,
+  previewHref,
+  fileOf,
+  type FileView,
+} from '@/components/p2/crm/verification-file';
+import { FilePreviewDialog } from '@/components/ui/file-preview-dialog';
+import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -74,10 +82,18 @@ function ProofList({ proofs }: { proofs: Proof[] }) {
         return (
           <li key={documentId} className={styles.file}>
             {file.status === 'clean' ? (
-              // A plain anchor: the route behind it issues a single-use signed link per call.
-              <a href={downloadHref(file)} className={styles.wrap}>
-                {file.filename}
-              </a>
+              <FilePreviewDialog
+                name={file.filename}
+                mimeType={file.mimeType}
+                previewUrl={previewHref(file)}
+                downloadUrl={downloadHref(file)}
+                trigger={
+                  <Button variant="tertiary" size="small" className={styles.fileTrigger}>
+                    <Icon name="file-text" size={16} />
+                    {file.filename}
+                  </Button>
+                }
+              />
             ) : (
               <span className={styles.wrap}>{file.filename}</span>
             )}
@@ -350,6 +366,7 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
         actions={
           <div className={styles.actions}>
             <ReviewDialogs
+              key={payment.version}
               paymentId={payment.id}
               version={payment.version}
               number={payment.number}
@@ -361,63 +378,56 @@ export default async function PaymentDetailPage({ params }: { params: Promise<{ 
       />
 
       <div className={styles.stack}>
-        <Panel title="Payment" description="What was received and what it settles.">
+        <Panel title="Payment overview">
           <FactList facts={facts(payment, customerName)} />
         </Panel>
 
-        {payment.npr !== null ? (
-          <Panel
-            title="Value in NPR"
-            description="Frozen when Finance verified the payment, so reports never drift."
-          >
-            <FactList
-              facts={[
-                { key: 'npr', label: 'Amount in NPR', value: money(payment.npr.amountNpr, 'NPR') },
-                { key: 'rate', label: 'Rate', value: payment.npr.rate },
-                { key: 'source', label: 'Rate source', value: payment.npr.rateSource },
-                { key: 'date', label: 'Rate date', value: when(payment.npr.rateDate, 'date') },
-              ]}
-            />
-          </Panel>
-        ) : null}
-
-        <Panel
-          title="Proof of payment"
-          description="Bank slips and receipts. A file can be opened once it has passed the virus scan."
-        >
+        <Panel as="aside" title="Proof of payment" description="Scanned bank slips and receipts.">
           <ProofList proofs={proofs} />
         </Panel>
-
-        {canAllocate ? (
-          <AllocatePanel
-            paymentId={payment.id}
-            currency={payment.currency}
-            remaining={payment.unallocatedAmount}
-            advance={advance}
-            items={openItems}
-            idempotencyKey={randomUUID()}
-            reloadHref={here}
-          />
-        ) : null}
-
-        <Panel
-          title="Allocations"
-          description="How the verified amount settles invoices. Reversals are listed as their own rows."
-        >
-          {allocations === null ? (
-            <Alert tone="warning" role="status">
-              The allocations could not be loaded. Reload the page to try again.
-            </Alert>
-          ) : (
-            <AllocationsTable
-              rows={allocations}
-              currency={payment.currency}
-              labels={labels}
-              deallocate={deallocate}
-            />
-          )}
-        </Panel>
       </div>
+      {payment.npr !== null ? (
+        <Panel title="Value in NPR" description="Exchange rate at verification.">
+          <FactList
+            facts={[
+              { key: 'npr', label: 'Amount in NPR', value: money(payment.npr.amountNpr, 'NPR') },
+              { key: 'rate', label: 'Rate', value: payment.npr.rate },
+              { key: 'source', label: 'Rate source', value: payment.npr.rateSource },
+              { key: 'date', label: 'Rate date', value: when(payment.npr.rateDate, 'date') },
+            ]}
+          />
+        </Panel>
+      ) : null}
+
+      {canAllocate ? (
+        <AllocatePanel
+          paymentId={payment.id}
+          currency={payment.currency}
+          remaining={payment.unallocatedAmount}
+          advance={advance}
+          items={openItems}
+          idempotencyKey={randomUUID()}
+          reloadHref={here}
+        />
+      ) : null}
+
+      <Panel
+        title="Allocations"
+        description="How the verified amount settles invoices. Reversals are listed as their own rows."
+      >
+        {allocations === null ? (
+          <Alert tone="warning" role="status">
+            The allocations could not be loaded. Reload the page to try again.
+          </Alert>
+        ) : (
+          <AllocationsTable
+            rows={allocations}
+            currency={payment.currency}
+            labels={labels}
+            deallocate={deallocate}
+          />
+        )}
+      </Panel>
     </Page>
   );
 }

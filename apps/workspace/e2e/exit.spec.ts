@@ -48,10 +48,12 @@ import { persona } from './helpers/personas';
 // Mail goes through BullMQ: allow a generous wait.
 const MAIL_TIMEOUT_MS = 60_000;
 
-/** Approves from an inbox detail page and checks the confirmation banner on the inbox. */
+/** Approves from an inbox detail page and checks the confirmation toast on the inbox. */
 async function approve(page: Page, comment: string): Promise<void> {
-  await page.getByLabel('Comment', { exact: true }).fill(comment);
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Approve request' });
+  await dialog.getByLabel('Comment (optional)', { exact: true }).fill(comment);
+  await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.waitForURL(/\/inbox\?decided=approve/, { timeout: 30_000 });
   await expect(page.getByText('Your approval was recorded.')).toBeVisible();
 }
@@ -117,9 +119,7 @@ test('memo exit: a memo goes through the two approvals its author named, with em
       // the page offers no decision.
       await sales.goto(`/inbox/${requestId}`);
       await expect(
-        sales.getByText(
-          'This request is not waiting on you right now. You can read it, but you cannot decide it.',
-        ),
+        sales.getByText('This request is waiting for a different approver.'),
       ).toBeVisible();
       await expect(sales.getByRole('button', { name: 'Approve' })).toHaveCount(0);
       await expect(sales.getByRole('button', { name: 'Reject' })).toHaveCount(0);

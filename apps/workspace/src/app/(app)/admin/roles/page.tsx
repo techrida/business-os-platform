@@ -11,13 +11,14 @@ import {
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Page, PageHeader } from '@/components/ui/page';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listUsers } from '@/lib/api-admin';
 
 import admin from '../admin.module.css';
 import { requireSession } from '../guard';
+import { roleLabel } from '../users/role-checkboxes';
 import { section } from '../section';
 import styles from './roles.module.css';
 
@@ -57,20 +58,24 @@ export default async function RolesPage() {
   const countsPartial = users.ok && users.data.nextAfter !== null;
 
   return (
-    <Page>
+    <Page className={admin.page}>
+      <Breadcrumb
+        items={[{ label: 'Administration', href: '/admin' }, { label: 'Roles and permissions' }]}
+      />
       <PageHeader
         title="Roles and permissions"
-        description="What each role may do, and how far each permission reaches."
+        description="Review the built-in permissions for each role and the records they apply to."
       />
 
-      <div className={styles.notices}>
-        <Alert tone="info">This matrix is read-only and shows the built-in role permissions.</Alert>
-        {!users.ok ? (
-          <Alert tone="info">User counts are not shown. {users.message}</Alert>
-        ) : countsPartial ? (
-          <Alert tone="info">User counts cover the first {COUNT_LIMIT} users only.</Alert>
-        ) : null}
-      </div>
+      {(!users.ok || countsPartial) && (
+        <div className={styles.notices}>
+          {!users.ok ? (
+            <Alert tone="info">User counts are not shown. {users.message}</Alert>
+          ) : countsPartial ? (
+            <Alert tone="info">User counts cover the first {COUNT_LIMIT} users only.</Alert>
+          ) : null}
+        </div>
+      )}
 
       <Table
         caption="Permission scope by role (defaults)"
@@ -83,7 +88,7 @@ export default async function RolesPage() {
             <Th>Permission</Th>
             {ROLE_KEYS.map((role) => (
               <Th key={role} className={styles.roleHead}>
-                <span className={styles.roleName}>{role}</span>
+                <span className={styles.roleName}>{roleLabel(role)}</span>
                 {users.ok ? (
                   <span className={styles.count}>
                     {counts.get(role) ?? 0} {counts.get(role) === 1 ? 'user' : 'users'}
@@ -115,7 +120,7 @@ export default async function RolesPage() {
                   return (
                     <Td key={role} className={styles.cell}>
                       {scope ? (
-                        <Badge tone="info">{scope}</Badge>
+                        <Badge tone="info">{roleLabel(scope)}</Badge>
                       ) : (
                         <>
                           <span aria-hidden="true" className={styles.none}>
@@ -137,7 +142,7 @@ export default async function RolesPage() {
         <FactList
           facts={SCOPES.map((scope) => ({
             key: scope,
-            label: <Badge tone="info">{scope}</Badge>,
+            label: <Badge tone="info">{roleLabel(scope)}</Badge>,
             value: SCOPE_TEXT[scope],
           }))}
         />

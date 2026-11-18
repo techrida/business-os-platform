@@ -165,9 +165,11 @@ beforeEach(() => {
 
 describe('edit quotation page', () => {
   it('reads the detail and fills the builder from the current revision', async () => {
-    const html = await render();
+    await render();
     expect(mocks.getQuotation).toHaveBeenCalledWith(expect.anything(), ID);
-    expect(html).toContain('QT-2082-0042 Rev 2');
+    expect(mocks.builderProps).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'QT-2082-0042 Rev 2' }),
+    );
     const props = mocks.builderProps.mock.calls[0]?.[0] as {
       target: { quotationId: string; versionId: string; expectedVersion: number };
       initial: { scope: string };

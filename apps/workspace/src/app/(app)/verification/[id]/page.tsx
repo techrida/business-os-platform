@@ -7,6 +7,7 @@ import {
   type VerificationCaseDto,
 } from '@bos/contracts';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { getVerificationReviewHistory, getDocument } from '@/components/p2/crm/verification-api';
@@ -27,6 +28,7 @@ import {
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -166,84 +168,100 @@ export default async function VerificationCasePage({
   ) : null;
   return (
     <Page>
-      <Breadcrumb items={[{ label: 'Verification', href: '/verification' }, { label: name }]} />
-      <PageHeader
-        title={name}
-        actions={actions}
-        status={<Badge tone={status.tone}>{status.text}</Badge>}
-        description={
-          customer !== undefined
-            ? `${customer.number}${customer.panVatNo !== null ? ` · PAN/VAT ${customer.panVatNo}` : ''}`
-            : 'The customer record could not be read.'
-        }
-      />
-
-      {legacy ? (
-        <Alert tone="info">
-          {c.status === 'approved'
-            ? 'Approved before document review.'
-            : 'This case needs an update before review.'}
-        </Alert>
-      ) : c.status === 'submitted' && c.checklist.some((item) => item.status === 'rejected') ? (
-        <Alert tone="warning">
-          {mayReview
-            ? 'Reject the case so Sales can replace the rejected documents.'
-            : 'You can replace rejected documents once the case is returned.'}
-        </Alert>
-      ) : c.status === 'submitted' && mayReview && c.reviewBlockedReason ? (
-        <Alert tone="info">{c.reviewBlockedReason}</Alert>
-      ) : c.status === 'submitted' ? (
-        <p className={styles.note}>
-          {mayReview
-            ? 'Review the documents before recording a decision.'
-            : 'The documents are locked while this case is under review. The decision will appear here.'}
-        </p>
-      ) : c.status === 'rejected' && (mayAttach || mayRemove) ? (
-        <p className={styles.note}>Update the documents to reopen this case as a draft.</p>
-      ) : null}
-
-      {!legacy && c.status === 'submitted' && c.reviewerNames?.length ? (
-        <p className={styles.note}>Can review: {c.reviewerNames.join(', ')}.</p>
-      ) : null}
-
-      {c.status === 'approved' || c.status === 'rejected' ? (
-        <Alert
-          tone={c.status === 'approved' ? 'success' : 'warning'}
-          role="region"
-          aria-label="Decision"
-          title={
-            c.status === 'approved'
-              ? vendor
-                ? 'This vendor is verified.'
-                : 'This customer is verified.'
-              : 'This case was rejected.'
+      <div className={styles.caseHeader}>
+        <Breadcrumb items={[{ label: 'Verification', href: '/verification' }, { label: name }]} />
+        <PageHeader
+          title={name}
+          actions={actions}
+          status={<Badge tone={status.tone}>{status.text}</Badge>}
+          description={
+            customer !== undefined
+              ? `${customer.number}${customer.panVatNo !== null ? ` · PAN/VAT ${customer.panVatNo}` : ''}`
+              : 'The customer record could not be read.'
           }
-        >
-          {c.decidedAt !== null ? (
-            <>
-              Decided <time dateTime={c.decidedAt}>{when(c.decidedAt)}</time>
-              {c.reviewedBy !== null ? (
-                <>
-                  {' '}
-                  by <span>{reviewerNames.get(c.reviewedBy) || 'a staff member'}</span>
-                </>
-              ) : null}
-              .
-            </>
-          ) : null}
-          {c.decisionNote !== null ? <p className={styles.comment}>{c.decisionNote}</p> : null}
-        </Alert>
-      ) : null}
+        />
+      </div>
+
+      <div className={styles.caseNotices}>
+        {legacy ? (
+          <Alert tone="info">
+            {c.status === 'approved'
+              ? 'Approved before document review.'
+              : 'This case needs an update before review.'}
+          </Alert>
+        ) : c.status === 'submitted' && c.checklist.some((item) => item.status === 'rejected') ? (
+          <Alert tone="warning">
+            {mayReview
+              ? 'Reject the case so Sales can replace the rejected documents.'
+              : 'You can replace rejected documents once the case is returned.'}
+          </Alert>
+        ) : c.status === 'submitted' && mayReview && c.reviewBlockedReason ? (
+          <Alert tone="info">{c.reviewBlockedReason}</Alert>
+        ) : c.status === 'submitted' ? (
+          <Alert tone="info">
+            {mayReview
+              ? 'Review the documents before recording a decision.'
+              : 'The documents are locked while this case is under review. The decision will appear here.'}
+          </Alert>
+        ) : c.status === 'rejected' && (mayAttach || mayRemove) ? (
+          <p className={styles.note}>Update the documents to reopen this case as a draft.</p>
+        ) : null}
+
+        {!legacy && c.status === 'submitted' && c.reviewerNames?.length ? (
+          <p className={styles.note}>Can review: {c.reviewerNames.join(', ')}.</p>
+        ) : null}
+
+        {c.status === 'approved' || c.status === 'rejected' ? (
+          <Alert
+            tone={c.status === 'approved' ? 'success' : 'warning'}
+            role="region"
+            aria-label="Decision"
+            title={
+              c.status === 'approved'
+                ? vendor
+                  ? 'This vendor is verified.'
+                  : 'This customer is verified.'
+                : 'This case was rejected.'
+            }
+          >
+            {c.decidedAt !== null ? (
+              <>
+                Decided <time dateTime={c.decidedAt}>{when(c.decidedAt)}</time>
+                {c.reviewedBy !== null ? (
+                  <>
+                    {' '}
+                    by <span>{reviewerNames.get(c.reviewedBy) || 'a staff member'}</span>
+                  </>
+                ) : null}
+                .
+              </>
+            ) : null}
+            {c.decisionNote !== null ? <p className={styles.comment}>{c.decisionNote}</p> : null}
+          </Alert>
+        ) : null}
+      </div>
 
       <Panel
         title="Documents"
-        description={
-          progress.required === 0
-            ? 'This case has no required document yet.'
-            : `${progress.accepted} of ${progress.required} required documents accepted.`
+        className={styles.documents}
+        description={progress.required === 0 ? 'No required documents.' : undefined}
+        actions={
+          progress.required > 0 ? (
+            <div className={styles.documentProgress}>
+              <span>
+                {progress.accepted} of {progress.required} required accepted
+              </span>
+              <progress aria-hidden="true" value={progress.accepted} max={progress.required} />
+            </div>
+          ) : null
         }
       >
-        <Table caption="Verification documents" minWidth={660}>
+        <p className={styles.tableHint}>Scroll sideways to see all columns.</p>
+        <Table
+          caption="Verification documents"
+          minWidth={790}
+          className={styles.documentTable ?? ''}
+        >
           <thead>
             <tr>
               <Th>Document</Th>
@@ -263,7 +281,7 @@ export default async function VerificationCasePage({
                   <Th scope="row" className={styles.rowHeader}>
                     <span className={styles.itemName}>{label}</span>
                   </Th>
-                  <Td nowrap>
+                  <Td nowrap className={styles.required}>
                     {item.required ? <CheckMark /> : null}
                     <span className="sr-only">{item.required ? 'Required' : 'Optional'}</span>
                   </Td>
@@ -292,10 +310,10 @@ export default async function VerificationCasePage({
                     )}
                   </Td>
                   {!vendor && (
-                    <Td>
+                    <Td className={styles.reviewCell}>
                       {item.review ? (
                         <>
-                          <span>
+                          <span className={styles.note}>
                             {when(item.review.reviewedAt)} ·{' '}
                             {reviewerNames.get(item.review.reviewedBy) || 'a staff member'}
                           </span>
@@ -331,47 +349,92 @@ export default async function VerificationCasePage({
           </tbody>
         </Table>
       </Panel>
-      {c.looseEvidence?.length ? (
-        <Panel
-          title="Other case attachments"
-          description="All active attachments must pass scanning. Remove unwanted files while the case is editable."
-        >
-          {c.looseEvidence.map((file) => (
-            <div key={file.documentId}>
-              <p>
-                {file.filename}: {scanLabel(file.status).text}
-              </p>
-              {mayAttach ? (
-                <RemoveLoose caseId={c.id} documentId={file.documentId} filename={file.filename} />
-              ) : null}
-            </div>
-          ))}
-        </Panel>
-      ) : null}
-      {!vendor && (
+      <div className={styles.supporting}>
         <Panel title="Review history">
-          {history ? (
+          {history !== null ? (
             <>
-              {history.items.map((entry) => (
-                <div key={entry.id}>
-                  <p>
-                    {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'}: {entry.decision}.{' '}
-                    {when(entry.reviewedAt)} · {entry.reviewerName || 'a staff member'}
-                  </p>
-                  {entry.comment ? <p className={styles.comment}>{entry.comment}</p> : null}
-                </div>
-              ))}
+              {history.items.length > 0 ? (
+                <ol className={styles.history}>
+                  {history.items.map((entry) => (
+                    <li key={entry.id} className={styles.historyEntry}>
+                      <Icon
+                        name={entry.decision === 'approve' ? 'check-circle' : 'x-circle'}
+                        size={16}
+                        className={entry.decision === 'approve' ? styles.approved : styles.rejected}
+                      />
+                      <div className={styles.historyText}>
+                        <p className={styles.itemName}>
+                          {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'} ·{' '}
+                          {entry.decision === 'approve' ? 'Approved' : 'Rejected'}
+                        </p>
+                        <p className={styles.note}>
+                          <time dateTime={entry.reviewedAt}>{when(entry.reviewedAt)}</time>
+                          {' · '}
+                          {entry.reviewerName || 'a staff member'}
+                        </p>
+                        {entry.comment ? <p className={styles.comment}>{entry.comment}</p> : null}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className={styles.note}>No decisions recorded.</p>
+              )}
               {history.nextCursor ? (
-                <a href={`${path}?before=${encodeURIComponent(history.nextCursor)}`}>
+                <Link
+                  className={styles.caseLink}
+                  href={`${path}?before=${encodeURIComponent(history.nextCursor)}`}
+                >
                   Earlier decisions
-                </a>
+                </Link>
               ) : null}
             </>
           ) : (
-            <p>Review history could not be loaded. Reload this case.</p>
+            <Alert tone="error" actions={<Link href={path}>Reload this case</Link>}>
+              Review history could not be loaded.
+            </Alert>
           )}
         </Panel>
-      )}
+        {c.looseEvidence?.length ? (
+          <Panel
+            as="aside"
+            title="Other case attachments"
+            description="All active attachments must pass scanning."
+          >
+            <ul className={styles.attachments}>
+              {c.looseEvidence.map((file) => {
+                const scan = scanLabel(file.status);
+                return (
+                  <li key={file.documentId} className={styles.attachment}>
+                    <Icon name="file-text" size={18} />
+                    <div>
+                      <p className={styles.itemName}>{file.filename}</p>
+                      <Badge
+                        tone={
+                          scan.tone === 'good'
+                            ? 'success'
+                            : scan.tone === 'wait'
+                              ? 'warning'
+                              : 'error'
+                        }
+                      >
+                        {scan.text}
+                      </Badge>
+                    </div>
+                    {mayAttach ? (
+                      <RemoveLoose
+                        caseId={c.id}
+                        documentId={file.documentId}
+                        filename={file.filename}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </Panel>
+        ) : null}
+      </div>
     </Page>
   );
 }

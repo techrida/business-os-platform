@@ -1,11 +1,15 @@
 'use client';
 
 import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Icon } from '@/components/ui/icon';
+import { PageHeader } from '@/components/ui/page';
+import { toast } from '@/components/ui/toast';
 import { Panel } from '@/components/ui/panel';
 
 import { methodLabel } from '../_lib/status';
@@ -46,6 +50,7 @@ export function PaymentForm({
   customers,
   initialCustomerId,
   reloadHref,
+  children,
 }: {
   /** A UUID the server generated for this render. */
   idempotencyKey: string;
@@ -54,12 +59,14 @@ export function PaymentForm({
   customers: readonly CustomerOption[];
   initialCustomerId: string;
   reloadHref: string;
+  children?: ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<RecordPaymentState, FormData>(
     recordPaymentAction,
     { key: idempotencyKey },
   );
   const fe = state.fieldErrors ?? {};
+  const formId = useId();
 
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [customerId, setCustomerId] = useState(initialCustomerId);
@@ -75,9 +82,9 @@ export function PaymentForm({
   const [code, setCode] = useState('');
 
   const [proofs, setProofs] = useState<Proof[]>([]);
-  const [problems, setProblems] = useState<string[]>([]);
   const [uploading, setUploading] = useState(0);
   const pickerRef = useRef<HTMLInputElement>(null);
+  const uploadBusy = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
 
@@ -94,13 +101,14 @@ export function PaymentForm({
   }
 
   async function addFiles(files: FileList | null) {
-    if (files === null || customerId === '') return;
+    if (files === null || customerId === '' || uploadBusy.current) return;
+    uploadBusy.current = true;
     const picked = [...files];
     const room = MAX_PROOFS - proofs.length;
     const found: string[] = [];
     const accepted = picked.slice(0, Math.max(room, 0));
     if (picked.length > accepted.length) found.push(`You can add up to ${MAX_PROOFS} files.`);
-    setProblems([]);
+
     for (const file of accepted) {
       const problem = proofProblem(file);
       if (problem !== null) {
@@ -134,7 +142,8 @@ export function PaymentForm({
         setUploading((n) => n - 1);
       }
     }
-    setProblems(found);
+    uploadBusy.current = false;
+    for (const message of found) toast.error(message);
     // Allow choosing the same file again after removing it.
     if (pickerRef.current) pickerRef.current.value = '';
   }
@@ -143,260 +152,267 @@ export function PaymentForm({
   const customerLocked = proofs.length > 0 || uploading > 0;
 
   return (
-    <form ref={formRef} action={formAction} noValidate className={styles.form}>
-      <input type="hidden" name="idempotencyKey" value={state.key} />
-      {/* The select below is locked while proof is held, and a locked select sends nothing. */}
-      <input type="hidden" name="customerId" value={customerId} />
-      {proofs.map((p) => (
-        <input key={p.documentId} type="hidden" name="proofDocumentId" value={p.documentId} />
-      ))}
+    <>
+      <PageHeader
+        title="Record payment"
+        description="Record money received from a customer and attach proof for Finance to verify."
+        actions={
+          <>
+            <LinkButton href="/payments" variant="secondary">
+              Cancel
+            </LinkButton>
+            <Button type="submit" form={formId} disabled={busy} aria-busy={busy || undefined}>
+              {pending ? 'Recording' : 'Record payment'}
+            </Button>
+          </>
+        }
+      />
+      {children}
+      <form id={formId} ref={formRef} action={formAction} noValidate className={styles.form}>
+        <input type="hidden" name="idempotencyKey" value={state.key} />
+        {/* The select below is locked while proof is held, and a locked select sends nothing. */}
+        <input type="hidden" name="customerId" value={customerId} />
+        {proofs.map((p) => (
+          <input key={p.documentId} type="hidden" name="proofDocumentId" value={p.documentId} />
+        ))}
 
-      {state.error ? (
-        <Alert
-          ref={errorRef}
-          tabIndex={-1}
-          tone="error"
-          role="alert"
-          title={state.reload ? 'This page is out of date' : 'The payment was not recorded'}
-          actions={state.reload ? <a href={reloadHref}>Reload the form</a> : null}
-        >
-          {state.error}
-        </Alert>
-      ) : null}
-
-      <Panel
-        title="Payment details"
-        description="What the customer paid, as it appears on the bank slip."
-      >
-        <div className={styles.form}>
-          <Field
-            label="Customer"
-            hint={
-              customerLocked
-                ? 'Remove the proof files below to change the customer.'
-                : 'Proof is stored against this customer.'
-            }
-            error={fe.customerId}
+        {state.error ? (
+          <Alert
+            ref={errorRef}
+            tabIndex={-1}
+            tone="error"
+            role="alert"
+            title={state.reload ? 'This page is out of date' : 'The payment was not recorded'}
+            actions={state.reload ? <a href={reloadHref}>Reload the form</a> : null}
           >
-            {(control) => (
-              <Select
-                value={customerId}
-                disabled={customerLocked}
-                onChange={(e) => chooseCustomer(e.target.value)}
-                required
-                {...control}
-              >
-                <option value="">Choose a customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.number})
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
+            {state.error}
+          </Alert>
+        ) : null}
 
-          <div className={styles.grid}>
-            <Field label="Currency" error={fe.currency}>
-              {(control) => (
-                <Select
-                  name="currency"
-                  required
-                  value={currency}
-                  onChange={(e) => {
-                    setCurrency(e.target.value);
-                    setCurrencyChosen(true);
-                  }}
-                  {...control}
-                >
-                  {CURRENCIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+        <Panel
+          title="Payment details"
+          description="What the customer paid, as it appears on the bank slip."
+        >
+          <div className={styles.form}>
             <Field
-              label="Amount received"
-              hint="The cash that arrived, for example 20,18,180.00."
-              error={fe.amount}
+              label="Customer"
+              hint={
+                customerLocked
+                  ? 'Remove the proof files below to change the customer.'
+                  : 'Proof is stored against this customer.'
+              }
+              error={fe.customerId}
             >
               {(control) => (
-                <Input
-                  name="amount"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  required
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className={styles.numeric}
-                  {...control}
-                />
-              )}
-            </Field>
-          </div>
-
-          <div className={styles.grid}>
-            <Field label="Payment method" error={fe.method}>
-              {(control) => (
                 <Select
-                  name="method"
+                  value={customerId}
+                  disabled={customerLocked}
+                  onChange={(e) => chooseCustomer(e.target.value)}
                   required
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as PaymentMethod)}
                   {...control}
                 >
-                  {PAYMENT_METHODS.map((m) => (
-                    <option key={m} value={m}>
-                      {methodLabel(m)}
+                  <option value="">Choose a customer</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.number})
                     </option>
                   ))}
                 </Select>
               )}
             </Field>
-            <Field label="Received on" error={fe.receivedOn}>
-              {(control) => (
-                <Input
-                  type="date"
-                  name="receivedOn"
-                  required
-                  max={today}
-                  value={receivedOn}
-                  onChange={(e) => setReceivedOn(e.target.value)}
-                  {...control}
-                />
-              )}
-            </Field>
-          </div>
 
-          <Field
-            label="Bank reference"
-            hint="Optional. The transaction or cheque number on the slip, so Finance can match it."
-            error={fe.bankReference}
-          >
-            {(control) => (
-              <Input
-                name="bankReference"
-                autoComplete="off"
-                maxLength={100}
-                value={bankReference}
-                onChange={(e) => setBankReference(e.target.value)}
-                {...control}
-              />
-            )}
-          </Field>
-
-          <details className={styles.tds} open={Boolean(fe.tdsWithheld || fe.withholdingCode)}>
-            <summary>The customer withheld tax at source (TDS)</summary>
             <div className={styles.grid}>
+              <Field label="Currency" error={fe.currency}>
+                {(control) => (
+                  <Select
+                    name="currency"
+                    required
+                    value={currency}
+                    onChange={(e) => {
+                      setCurrency(e.target.value);
+                      setCurrencyChosen(true);
+                    }}
+                    {...control}
+                  >
+                    {CURRENCIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
               <Field
-                label="Tax withheld"
-                hint="The amount withheld and not sent. Leave empty if none."
-                error={fe.tdsWithheld}
+                label="Amount received"
+                hint="The cash that arrived, for example 20,18,180.00."
+                error={fe.amount}
               >
                 {(control) => (
                   <Input
-                    name="tdsWithheld"
+                    name="amount"
                     inputMode="decimal"
                     autoComplete="off"
-                    placeholder="0.00"
-                    value={tds}
-                    onChange={(e) => setTds(e.target.value)}
+                    required
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
                     className={styles.numeric}
                     {...control}
                   />
                 )}
               </Field>
-              <Field
-                label="Withholding code"
-                hint="Required when tax was withheld."
-                error={fe.withholdingCode}
-              >
+            </div>
+
+            <div className={styles.grid}>
+              <Field label="Payment method" error={fe.method}>
                 {(control) => (
-                  <Input
-                    name="withholdingCode"
-                    autoComplete="off"
-                    maxLength={40}
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
+                  <Select
+                    name="method"
+                    required
+                    value={method}
+                    onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                    {...control}
+                  >
+                    {PAYMENT_METHODS.map((m) => (
+                      <option key={m} value={m}>
+                        {methodLabel(m)}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="Received on" error={fe.receivedOn}>
+                {(control) => (
+                  <DatePicker
+                    name="receivedOn"
+                    required
+                    max={today}
+                    value={receivedOn}
+                    onChange={setReceivedOn}
                     {...control}
                   />
                 )}
               </Field>
             </div>
-            <p className={styles.note}>
-              Type the code exactly as it appears on the tax certificate. The platform works out
-              what the payment settles.
-            </p>
-          </details>
-        </div>
-      </Panel>
 
-      <Panel
-        title="Proof of payment"
-        description={`A bank slip or receipt, as a PDF or a picture, up to ${MAX_PROOFS} files. Each file is checked for viruses before the payment can use it.`}
-      >
-        <Field
-          label="Add proof files"
-          hint={
-            customerId === '' ? 'Choose the customer first.' : 'You can add several files at once.'
-          }
-          error={fe.proof}
-        >
-          {(control) => (
-            <Input
-              ref={pickerRef}
-              type="file"
-              multiple
-              accept={PROOF_ACCEPT}
-              disabled={customerId === '' || proofs.length >= MAX_PROOFS}
-              onChange={(e) => void addFiles(e.target.files)}
-              {...control}
-            />
-          )}
-        </Field>
-        <p className={styles.status} role="status">
-          {uploading > 0 ? `Uploading ${uploading} ${uploading === 1 ? 'file' : 'files'}…` : ''}
-        </p>
-        {problems.length > 0 ? (
-          <ul className={styles.problems} role="alert">
-            {problems.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
-        ) : null}
-        {proofs.length > 0 ? (
-          <ul className={styles.proofs} aria-label="Uploaded proof">
-            {proofs.map((p) => (
-              <li key={p.documentId}>
-                <span>{p.filename}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="small"
-                  aria-label={`Remove ${p.filename}`}
-                  onClick={() => setProofs((l) => l.filter((x) => x.documentId !== p.documentId))}
+            <Field
+              label="Bank reference"
+              hint="Optional. The transaction or cheque number on the slip, so Finance can match it."
+              error={fe.bankReference}
+            >
+              {(control) => (
+                <Input
+                  name="bankReference"
+                  autoComplete="off"
+                  maxLength={100}
+                  value={bankReference}
+                  onChange={(e) => setBankReference(e.target.value)}
+                  {...control}
+                />
+              )}
+            </Field>
+
+            <details className={styles.tds} open={Boolean(fe.tdsWithheld || fe.withholdingCode)}>
+              <summary>The customer withheld tax at source (TDS)</summary>
+              <div className={styles.grid}>
+                <Field
+                  label="Tax withheld"
+                  hint="The amount withheld and not sent. Leave empty if none."
+                  error={fe.tdsWithheld}
                 >
-                  Remove
-                </Button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </Panel>
+                  {(control) => (
+                    <Input
+                      name="tdsWithheld"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder="0.00"
+                      value={tds}
+                      onChange={(e) => setTds(e.target.value)}
+                      className={styles.numeric}
+                      {...control}
+                    />
+                  )}
+                </Field>
+                <Field
+                  label="Withholding code"
+                  hint="Required when tax was withheld."
+                  error={fe.withholdingCode}
+                >
+                  {(control) => (
+                    <Input
+                      name="withholdingCode"
+                      autoComplete="off"
+                      maxLength={40}
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      {...control}
+                    />
+                  )}
+                </Field>
+              </div>
+              <p className={styles.note}>
+                Type the code exactly as it appears on the tax certificate. The platform works out
+                what the payment settles.
+              </p>
+            </details>
+          </div>
+        </Panel>
 
-      <div className={styles.actions}>
-        <Button type="submit" disabled={busy}>
-          {pending ? 'Recording' : 'Record payment'}
-        </Button>
-        <LinkButton href="/payments" variant="ghost">
-          Cancel
-        </LinkButton>
-      </div>
-      <p className={styles.status} role="status">
-        {pending ? 'Recording the payment' : ''}
-      </p>
-    </form>
+        <Panel
+          title="Proof of payment"
+          description={`A bank slip or receipt, as a PDF or a picture, up to ${MAX_PROOFS} files. Each file is checked for viruses before the payment can use it.`}
+        >
+          <Field
+            label="Add proof files"
+            hint={
+              customerId === ''
+                ? 'Choose the customer first.'
+                : 'You can add several files at once.'
+            }
+            error={fe.proof}
+          >
+            {(control) => (
+              <div className={styles.drop}>
+                <Icon name="file-text" size={24} />
+                <span>Drop files here or choose files</span>
+                <input
+                  ref={pickerRef}
+                  type="file"
+                  multiple
+                  accept={PROOF_ACCEPT}
+                  disabled={busy || customerId === '' || proofs.length >= MAX_PROOFS}
+                  onChange={(e) => void addFiles(e.target.files)}
+                  {...control}
+                />
+              </div>
+            )}
+          </Field>
+          <p className={styles.status} role="status">
+            {uploading > 0 ? `Uploading ${uploading} ${uploading === 1 ? 'file' : 'files'}…` : ''}
+          </p>
+          {proofs.length > 0 ? (
+            <ul className={styles.proofs} aria-label="Uploaded proof">
+              {proofs.map((p) => (
+                <li key={p.documentId}>
+                  <span>{p.filename}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="small"
+                    aria-label={`Remove ${p.filename}`}
+                    onClick={() => setProofs((l) => l.filter((x) => x.documentId !== p.documentId))}
+                  >
+                    <Icon name="x" size={18} />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </Panel>
+
+        <p className={styles.status} role="status">
+          {pending ? 'Recording the payment' : ''}
+        </p>
+      </form>
+    </>
   );
 }

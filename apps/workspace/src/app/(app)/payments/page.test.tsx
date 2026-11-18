@@ -46,6 +46,30 @@ describe('payments list', () => {
     expect(html).toContain('2 payments');
   });
 
+  it('paginates matching receipts while preserving the search and status', async () => {
+    mocks.listPayments.mockResolvedValue(
+      Array.from({ length: 8 }, (_, i) =>
+        listItem({
+          id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+          number: `RCPT-${i}`,
+          status: 'verified',
+          customerName: i === 7 ? 'Other customer' : 'Acme Ltd',
+        }),
+      ),
+    );
+    const html = renderToStaticMarkup(
+      await PaymentsPage({
+        searchParams: Promise.resolve({ status: 'verified', q: 'ACME', page: '2' }),
+      }),
+    );
+    expect(mocks.listPayments).toHaveBeenCalledWith(expect.anything(), 'verified');
+    expect(html).toContain('Showing 6–7 of 7 payments');
+    expect(html).toContain('RCPT-5');
+    expect(html).not.toContain('RCPT-4');
+    expect(html).not.toContain('Other customer');
+    expect(html).toContain('href="/payments?status=verified&amp;q=ACME"');
+  });
+
   it('links to Record payment for a role with payment.record, with rows and when empty', async () => {
     mocks.listPayments.mockResolvedValue([listItem()]);
     const html = await render();
