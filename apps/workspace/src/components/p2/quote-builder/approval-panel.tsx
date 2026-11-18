@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Field, Select } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { Panel } from '@/components/ui/panel';
 import { humanizeKey } from '@/lib/kernel-ui';
 
@@ -15,6 +17,27 @@ import type { PreviewResult } from './schemas';
 import type { PreviewState } from './totals-panel';
 
 type Step = PreviewResult['route']['steps'][number];
+type ApproverOption = NonNullable<PreviewResult['approverChoice']>['options'][number];
+
+/** The role that lets a person approve, as the picker names it. */
+function roleName(roleKey: string): string {
+  return humanizeKey(roleKey);
+}
+
+/** One option of the approver picker: the person, their role and, when they have no address, that fact. */
+export function approverOptionLabel(o: ApproverOption): string {
+  return [o.name, roleName(o.roleKey), o.hasEmail ? null : 'no email'].filter(Boolean).join(' · ');
+}
+
+/** Shown next to a chosen approver without an email address. */
+function NoEmailBadge() {
+  return (
+    <Badge tone="warning" className={styles.noEmail}>
+      <Icon name="alert-triangle" size={14} />
+      No email
+    </Badge>
+  );
+}
 
 function stepLabel({ kind, roleKey }: Step): string {
   if (kind === 'group') return 'Any group member';
@@ -119,18 +142,28 @@ function ApproverNames({ names, group }: { names: readonly string[]; group: stri
   );
 }
 
-export function ApprovalSteps({ steps }: { steps: readonly Step[] }) {
+export function ApprovalSteps({
+  steps,
+  assigned,
+}: {
+  steps: readonly Step[];
+  /** The person chosen for one step; that step then names them instead of its eligible group. */
+  assigned?: { seq: number; option: ApproverOption } | null | undefined;
+}) {
   return (
     <ol className={styles.steps} aria-label="Approval steps">
       {steps.map((step) => {
-        const group = stepLabel(step);
+        const named = assigned?.seq === step.seq ? assigned.option : null;
+        const group = named ? named.name : stepLabel(step);
         return (
           <li key={step.seq} className={styles.step}>
             <div className={styles.stepHead}>
               <span className={styles.stepWho}>{group}</span>
-              {step.blocked ? <Badge tone="warning">Unavailable</Badge> : null}
+              {named ? <Badge tone="info">Chosen</Badge> : null}
+              {named && !named.hasEmail ? <NoEmailBadge /> : null}
+              {step.blocked && !named ? <Badge tone="warning">Unavailable</Badge> : null}
             </div>
-            {step.eligibleStaffNames?.length ? (
+            {named ? null : step.eligibleStaffNames?.length ? (
               <ApproverNames names={step.eligibleStaffNames} group={group} />
             ) : null}
             <p className={styles.muted}>{step.reason.replace(/^Base route: /, '')}</p>
@@ -141,16 +174,71 @@ export function ApprovalSteps({ steps }: { steps: readonly Step[] }) {
   );
 }
 
+/**
+ * Choose who decides the first approval step. "Anyone eligible" (the empty value) keeps today's route: every
+ * eligible approver of the step sees it. The server checks the choice again when the quotation is submitted.
+ */
+function ApproverPicker({
+  step,
+  options,
+  value,
+  onChange,
+}: {
+  step: Step;
+  options: readonly ApproverOption[];
+  value: string;
+  onChange: (userId: string) => void;
+}) {
+  const chosen = options.find((o) => o.userId === value);
+  return (
+    <div className={styles.approverPicker}>
+      <Field
+        label={`Approver for step ${step.seq}`}
+        hint="Only the person you choose sees this step in their Inbox and can decide it. You cannot choose yourself."
+      >
+        {(control) => (
+          <Select
+            value={chosen ? value : ''}
+            onChange={(e) => onChange(e.target.value)}
+            {...control}
+          >
+            <option value="">{stepLabel(step)} (anyone eligible)</option>
+            {options.map((o) => (
+              <option key={o.userId} value={o.userId}>
+                {approverOptionLabel(o)}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
+      {chosen && !chosen.hasEmail ? (
+        <p className={styles.approverNote}>
+          <NoEmailBadge />
+          <span>They get a bell notice and the Inbox item, not an email.</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function ApprovalPanel({
   state,
   preview,
   message,
+  approver = '',
+  onApproverChange,
 }: {
   state: PreviewState;
   preview?: PreviewResult | null | undefined;
   message?: string | undefined;
+  /** The chosen first-step approver's user id, or '' for anyone eligible. */
+  approver?: string;
+  onApproverChange?: (userId: string) => void;
 }) {
   const plan = state === 'ready' ? preview?.route : null;
+  const choice = state === 'ready' ? preview?.approverChoice : null;
+  const choiceStep = choice ? plan?.steps.find((s) => s.seq === choice.seq) : undefined;
+  const chosen = choice?.options.find((o) => o.userId === approver);
   const discountTriggers =
     plan && preview && discountAboveThreshold(preview.totals.effectiveDiscountPct);
 
@@ -165,7 +253,20 @@ export function ApprovalPanel({
         plan.steps.length === 0 ? (
           <p className={styles.muted}>No approval steps apply.</p>
         ) : (
-          <ApprovalSteps steps={plan.steps} />
+          <>
+            <ApprovalSteps
+              steps={plan.steps}
+              assigned={chosen && choice ? { seq: choice.seq, option: chosen } : null}
+            />
+            {choice && choiceStep && choice.options.length > 0 && onApproverChange ? (
+              <ApproverPicker
+                step={choiceStep}
+                options={choice.options}
+                value={approver}
+                onChange={onApproverChange}
+              />
+            ) : null}
+          </>
         )
       ) : state === 'loading' ? (
         <p role="status" className={styles.muted}>

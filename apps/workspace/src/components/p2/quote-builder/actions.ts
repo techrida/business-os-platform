@@ -9,6 +9,7 @@ import {
 } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { z } from 'zod';
 
 import { ApiError } from '@/lib/api';
 import { requireStaffSession } from '@/lib/bff';
@@ -197,9 +198,19 @@ export async function saveDraftAction(
 // ---------------------------------------------------------------------------------------------
 
 export async function submitQuoteAction(
-  input: Ref & { expectedVersion: number; idempotencyKey: string; values: BuilderValues },
+  input: Ref & {
+    expectedVersion: number;
+    idempotencyKey: string;
+    values: BuilderValues;
+    /** The person chosen to decide the first approval step; absent for "anyone eligible". */
+    approverUserId?: string | undefined;
+  },
 ): Promise<{ ok: true } | ActionFailure> {
   if (!refOk(input)) return invalid(INCOMPLETE);
+  const approver = input.approverUserId === '' ? undefined : input.approverUserId;
+  if (approver !== undefined && !z.guid().safeParse(approver).success) {
+    return invalid('Choose the approver again.');
+  }
   const session = await requireStaffSession(`/quotations/${input.quotationId}/edit`);
   const key = keyOf(input.idempotencyKey);
 
@@ -214,6 +225,7 @@ export async function submitQuoteAction(
       input.versionId,
       input.expectedVersion,
       key,
+      approver,
     );
   } catch (err) {
     const f = describeQuoteFailure(err, 'submit');
