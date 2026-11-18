@@ -155,3 +155,59 @@ test.describe('invoice document preview', () => {
     });
   });
 });
+
+test('the accountant can save, reopen, and submit a manual invoice', async ({
+  browser,
+  baseURL,
+}) => {
+  const customerName = process.env.BOS_E2E_INVOICE_DRAFT_CUSTOMER;
+  test.skip(!customerName, 'BOS_E2E_INVOICE_DRAFT_CUSTOMER is not set');
+  test.setTimeout(120_000);
+  await as(browser, baseURL, 'accountant', async ({ page }) => {
+    await page.goto('/invoices');
+    await page.getByRole('link', { name: 'Create Invoice' }).click();
+    await heading(page, 'Create Invoice');
+
+    const customer = page.getByLabel('Organization legal name', { exact: true });
+    const customerValue = await customer
+      .locator('option', { hasText: customerName ?? '' })
+      .first()
+      .getAttribute('value');
+    expect(customerValue, 'the disposable customer is in the picker').toBeTruthy();
+    await customer.selectOption(customerValue ?? '');
+    await page.getByLabel('Currency', { exact: true }).selectOption('NPR');
+
+    const description = `Invoice draft workflow ${Date.now()}`;
+    await page.getByLabel('Why is there no sales order?').fill('One-time staff training');
+    await page.getByLabel('Description (line 1)').fill(description);
+    await page.getByLabel('Unit (line 1)').fill('hr');
+    await page.getByLabel('Quantity (line 1)').fill('2');
+    await page.getByLabel('Unit price (NPR) (line 1)').fill('125.00');
+    const tax = page.getByLabel('Tax code (line 1)');
+    await tax.selectOption({ index: 1 });
+    await page.getByRole('button', { name: 'Save draft invoice' }).click();
+
+    await expect(page).toHaveURL(/\/invoices\/[a-f0-9-]{36}$/);
+    await expect(page.getByText(description, { exact: true })).toBeVisible();
+    await expect(page.getByText('One-time staff training', { exact: true })).toBeVisible();
+    const draftPath = new URL(page.url()).pathname;
+
+    await page.goto('/invoices');
+    const draft = page
+      .getByRole('link')
+      .and(page.locator(`[href="${draftPath}"]`))
+      .first();
+    await expect(draft).toBeVisible();
+    await draft.click();
+    await expect(page).toHaveURL(new RegExp(draftPath + '$'));
+    await expect(page.getByText(description, { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Submit for approval', exact: true }).click();
+    const confirmation = page.getByRole('dialog', { name: /^Submit / });
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Submit for approval', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(page.getByText('Awaiting approval', { exact: true }).first()).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(draftPath + '$'));
+  });
+});
