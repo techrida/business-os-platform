@@ -57,15 +57,28 @@ test('the inbox shows the reason for each item, and a 403 is explained in words'
       await openFromInbox(page, title, reason);
       await expect(page.getByRole('region', { name: 'Attachments', exact: true })).toHaveCount(0);
 
+      const rejectButton = page.getByRole('button', { name: 'Reject', exact: true });
+      const rejection = page.getByRole('dialog', { name: 'Reject request' });
+      const reject = rejection
+        .locator('footer')
+        .getByRole('button', { name: 'Reject', exact: true });
+      await rejectButton.click();
+      await rejection.getByRole('button', { name: 'Cancel' }).click();
+      await expect(rejection).toHaveCount(0);
+      await expect(rejectButton).toBeFocused();
+
       // Reject without a comment: refused in place, with the field named.
-      await page.getByRole('button', { name: 'Reject', exact: true }).click();
+      await rejectButton.click();
+      await reject.click();
       await expect(
-        page.getByText('Say why you are rejecting it. The reason is kept in the audit trail.'),
+        rejection.getByText('Say why you are rejecting it. The reason is kept in the audit trail.'),
       ).toBeVisible();
       await expect(page).toHaveURL(/\/inbox\/[0-9a-f-]{36}$/);
 
-      await page.getByLabel('Comment', { exact: true }).fill('Rejected by the inbox spec.');
-      await page.getByRole('button', { name: 'Reject', exact: true }).click();
+      await rejection
+        .getByLabel('Reason for rejection', { exact: true })
+        .fill('Rejected by the inbox spec.');
+      await reject.click();
       await page.waitForURL(/\/inbox\?decided=reject/, { timeout: 30_000 });
       await expect(page.getByText('The request was rejected.')).toBeVisible();
       await expect(inboxRow(page, title)).toHaveCount(0);
