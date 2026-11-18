@@ -53,6 +53,29 @@ test.describe('seeded personas', () => {
   });
 });
 
+test('branded sign-in exposes the product name and accepts a real persona', async ({
+  page,
+  baseURL,
+}) => {
+  test.skip(
+    process.env.BOS_E2E_BRANDED_LOGIN !== '1',
+    'set BOS_E2E_BRANDED_LOGIN=1 when testing the Business OS login image',
+  );
+
+  const appOrigin = new URL(baseURL ?? '').origin;
+  await page.goto('/');
+  await expect(page).toHaveURL((url) => url.origin === authOrigin);
+  await expect(page.getByText('Business OS', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Email or username', { exact: true })).toBeVisible();
+
+  await signInOnZitadel(page, persona('sales'), appOrigin);
+  await expect(page).toHaveURL(`${appOrigin}/`);
+  const cookies = await page.context().cookies(appOrigin);
+  expect(cookies.some((cookie) => cookie.name === SESSION_COOKIE && cookie.value !== '')).toBe(
+    true,
+  );
+});
+
 test.describe('persona sign-in and sign-out', () => {
   for (const who of personas) {
     test(`${who.key} (${who.orgKind}) signs in, lands in the right place, and sign-out ends the session`, async ({
@@ -121,16 +144,7 @@ test.describe('persona sign-in and sign-out', () => {
         // "Accounts / Select the account you want to use" chooser. Listing the account is fine;
         // what matters is that picking it asks for the password again instead of signing
         // straight back in (which would mean ZITADEL's own session survived the logout).
-        const chooser = page.getByRole('heading', { name: 'Accounts', level: 1 });
-        // Wait until ZITADEL has rendered either page before deciding (avoids a race).
-        await expect(chooser.or(page.getByLabel(/^\s*(login ?name|password)\s*$/i))).toBeVisible({
-          timeout: 30_000,
-        });
-        if (await chooser.isVisible()) {
-          const name = who.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          await page.getByRole('button', { name: new RegExp(name, 'i') }).click();
-        }
-        await expectZitadelCredentialForm(page);
+        await expectZitadelCredentialForm(page, who);
         await expect(page.getByRole('heading', { name: 'Welcome back' })).toHaveCount(0);
       });
     });

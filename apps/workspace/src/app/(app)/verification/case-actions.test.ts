@@ -17,11 +17,17 @@ vi.mock('@/lib/bff', () => ({
 const api = vi.hoisted(() => ({
   attachChecklistDocument: vi.fn(),
   openVerificationCase: vi.fn(),
+  removeChecklistDocument: vi.fn(),
   submitVerificationCase: vi.fn(),
 }));
 vi.mock('@/components/p2/crm/verification-api', () => api);
 
-import { attachDocumentAction, openCaseAction, submitCaseAction } from './case-actions';
+import {
+  attachDocumentAction,
+  openCaseAction,
+  removeDocumentAction,
+  submitCaseAction,
+} from './case-actions';
 
 const KEY = '44444444-4444-4444-8444-444444444444';
 const CUSTOMER = '22222222-2222-4222-8222-222222222222';
@@ -120,11 +126,11 @@ const submitForm = (extra: Record<string, string> = {}): FormData => {
 };
 
 describe('submitCaseAction', () => {
-  it('sends the page key and returns to the case with the confirmation flag', async () => {
+  it('sends the page key and refreshes the case so the caller can show a success toast', async () => {
     api.submitVerificationCase.mockResolvedValue({ id: CASE, status: 'submitted' });
-    await expect(submitCaseAction({ key: KEY }, submitForm())).rejects.toThrow(
-      `NEXT_REDIRECT /verification/${CASE}?submitted=1`,
-    );
+    const result = await submitCaseAction({ key: KEY }, submitForm());
+    expect(result.error).toBeUndefined();
+    expect(revalidatePath).toHaveBeenCalledWith(`/verification/${CASE}`);
     expect(api.submitVerificationCase).toHaveBeenCalledWith(expect.anything(), CASE, KEY);
   });
 
@@ -314,5 +320,35 @@ describe('attachDocumentAction', () => {
     expect((await attachDocumentAction({ key: KEY }, attachForm())).error).toBe(
       "You don't have permission to do this.",
     );
+  });
+});
+
+describe('removeDocumentAction', () => {
+  it('detaches a single checklist row using the expected version and request key', async () => {
+    const body = submitForm({ key: 'pan_vat_certificate', expectedVersion: '3' });
+    api.removeChecklistDocument.mockResolvedValueOnce({ id: CASE, version: 4 });
+    expect((await removeDocumentAction(body)).error).toBeUndefined();
+    expect(api.removeChecklistDocument).toHaveBeenCalledWith(
+      expect.anything(),
+      CASE,
+      { key: 'pan_vat_certificate', expectedVersion: 3 },
+      KEY,
+    );
+    expect(revalidatePath).toHaveBeenCalledWith(`/verification/${CASE}`);
+  });
+
+  it('preserves the request key on unknown outcomes and surfaces stale version conflicts', async () => {
+    const body = submitForm({ key: 'pan_vat_certificate', expectedVersion: '3' });
+    api.removeChecklistDocument.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const unknown = await removeDocumentAction(body);
+    expect(unknown.key).toBe(KEY);
+    expect(unknown.error).toBeTruthy();
+    api.removeChecklistDocument.mockRejectedValueOnce(
+      apiError(409, 'conflict', 'This record was changed by someone else.'),
+    );
+    const stale = await removeDocumentAction(body);
+    expect(stale.reload).toBe(true);
+    expect(stale.error).toBeTruthy();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

@@ -5,8 +5,6 @@ import { z } from 'zod';
 
 /** The text the paper shows for a signer who has not been picked yet (kept in step with MemoPaper). */
 export const NOT_SELECTED = 'Not selected';
-/** The note printed under the signers (kept in step with MemoPaper). */
-export const PAPER_NOTE = 'Names indicate the proposed approval route. Signatures are disabled.';
 
 const text = (max: number) => z.string().max(max);
 const PersonSchema = z.object({

@@ -8,7 +8,7 @@ import {
   PendingLine,
   useFocusOnProblem,
   useReloadWhenClosed,
-} from '@/components/p2/quotations/action-dialog';
+} from '@/components/ui/transaction-dialog';
 import styles from '@/components/p2/quotations/actions.module.css';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';

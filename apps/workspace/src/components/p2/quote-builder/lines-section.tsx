@@ -1,198 +1,333 @@
 'use client';
 
+import { QuotationLineInputSchema } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
+import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { EmptyState } from '@/components/ui/empty-state';
-import { Input, Select, Textarea } from '@/components/ui/field';
+import { ConfirmDialog, Dialog, DialogClose } from '@/components/ui/dialog';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Table, Td, Th } from '@/components/ui/table';
 
-import type { Currency, LineValues } from './model';
-import type { TaxCode } from './schemas';
+import { newLine, type Currency, type LineValues } from './model';
 import styles from './quote-builder.module.css';
+import type { TaxCode } from './schemas';
 
-export const MAX_LINES = 500;
+const MAX_LINES = 500;
 
-/** Section 3: the lines. There is no per-line discount; the one discount sits in section 4. */
+const LINE_ERRORS = {
+  description: 'Enter a description, up to 500 characters.',
+  uom: 'Enter a unit, up to 20 characters.',
+  quantity: 'Enter a quantity above zero, up to 14 whole digits and 4 decimal places.',
+  unitPrice: 'Enter a rate of zero or more, up to 16 whole digits and 2 decimal places.',
+  taxCodeId: 'Choose a tax code.',
+};
+
+type EditableField = keyof typeof LINE_ERRORS;
+
+function LineEditor({
+  line,
+  currency,
+  taxCodes,
+  trigger,
+  errors = {},
+  onSave,
+}: {
+  line?: LineValues;
+  currency: Currency;
+  taxCodes: readonly TaxCode[];
+  trigger: ReactNode;
+  errors?: Partial<Record<EditableField, string>>;
+  onSave: (line: LineValues) => void;
+}) {
+  const formId = useId();
+  const form = useRef<HTMLFormElement>(null);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(() => line ?? newLine(''));
+  const [fieldErrors, setFieldErrors] = useState(errors);
+
+  function change(field: EditableField, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+    setFieldErrors(({ [field]: _error, ...rest }) => rest);
+  }
+
+  function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = {
+      description: draft.description.trim(),
+      uom: draft.uom.trim(),
+      quantity: draft.quantity.replace(/^\./, '0.'),
+      unitPrice: draft.unitPrice.replace(/^\./, '0.'),
+      taxCodeId: draft.taxCodeId,
+    };
+    const result = QuotationLineInputSchema.safeParse(normalized);
+    if (!result.success) {
+      const nextErrors: Partial<Record<EditableField, string>> = {};
+      for (const issue of result.error.issues) {
+        const field = issue.path[0] as EditableField;
+        nextErrors[field] = LINE_ERRORS[field];
+      }
+      setFieldErrors(nextErrors);
+      const first = Object.keys(nextErrors)[0];
+      if (first) form.current?.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
+      return;
+    }
+    // Copy the whole line, including its identity and any saved catalog and cost metadata.
+    onSave({ ...draft, ...normalized });
+    setOpen(false);
+  }
+
+  const savedTaxMissing =
+    Boolean(draft.taxCodeId) && !taxCodes.some((t) => t.id === draft.taxCodeId);
+
+  return (
+    <Dialog
+      trigger={trigger}
+      open={open}
+      onOpenChange={(next) => {
+        if (next) {
+          setDraft(line ?? newLine(''));
+          setFieldErrors(errors);
+        }
+        setOpen(next);
+      }}
+      title={line ? 'Edit line' : 'Add line'}
+      closeOnOutsideClick={false}
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary">Cancel</Button>
+          </DialogClose>
+          <Button type="submit" form={formId}>
+            {line ? 'Save line' : 'Add line'}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} ref={form} className={styles.sectionBody} noValidate onSubmit={save}>
+        <Field label="Description" error={fieldErrors.description}>
+          {(control) => (
+            <Textarea
+              {...control}
+              name="description"
+              required
+              rows={3}
+              maxLength={500}
+              value={draft.description}
+              onChange={(e) => change('description', e.target.value)}
+            />
+          )}
+        </Field>
+        <div className={styles.grid2}>
+          <Field label="Quantity" error={fieldErrors.quantity}>
+            {(control) => (
+              <Input
+                {...control}
+                name="quantity"
+                type="number"
+                inputMode="decimal"
+                required
+                min="0.0001"
+                max="99999999999999.9999"
+                step="0.0001"
+                value={draft.quantity}
+                onChange={(e) => change('quantity', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label="Unit" error={fieldErrors.uom}>
+            {(control) => (
+              <Input
+                {...control}
+                name="uom"
+                required
+                maxLength={20}
+                value={draft.uom}
+                onChange={(e) => change('uom', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label={`Rate (${currency})`} error={fieldErrors.unitPrice}>
+            {(control) => (
+              <Input
+                {...control}
+                name="unitPrice"
+                type="number"
+                inputMode="decimal"
+                required
+                min="0"
+                step="0.01"
+                value={draft.unitPrice}
+                onChange={(e) => change('unitPrice', e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label="Tax code" error={fieldErrors.taxCodeId}>
+            {(control) => (
+              <Select
+                {...control}
+                name="taxCodeId"
+                required
+                value={draft.taxCodeId}
+                onChange={(e) => change('taxCodeId', e.target.value)}
+              >
+                <option value="">Choose a tax code</option>
+                {savedTaxMissing ? <option value={draft.taxCodeId}>Current tax code</option> : null}
+                {taxCodes.map((tax) => (
+                  <option key={tax.id} value={tax.id}>
+                    {tax.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 export function LinesSection({
   lines,
   currency,
   taxCodes,
   lineAmounts,
   errors,
-  onChange,
-  onAdd,
+  onSave,
   onRemove,
 }: {
   lines: readonly LineValues[];
   currency: Currency;
-  /** null when the list failed to load. */
   taxCodes: readonly TaxCode[] | null;
-  /** Server-computed amount per line number (before discount), when a preview has arrived. */
   lineAmounts: ReadonlyMap<number, string>;
-  /** Field errors keyed by `lines.<index>.<field>`. */
   errors: Readonly<Record<string, string>>;
-  onChange: (key: string, patch: Partial<LineValues>) => void;
-  onAdd: () => void;
+  onSave: (line: LineValues) => void;
   onRemove: (key: string) => void;
 }) {
+  const addRef = useRef<HTMLButtonElement>(null);
   const atLimit = lines.length >= MAX_LINES;
+  const codes = taxCodes ?? [];
+  const taxLabels = new Map(codes.map((tax) => [tax.id, tax.label]));
+  const canAdd = !atLimit && codes.length > 0;
 
   return (
     <div className={styles.sectionBody}>
-      {taxCodes === null ? (
+      {codes.length === 0 ? (
         <Alert tone="warning" role="status">
-          The tax codes did not load, so a tax code cannot be chosen for a line. Reload the page to
-          try again. Your edits are kept until you leave it.
-        </Alert>
-      ) : taxCodes.length === 0 ? (
-        <Alert tone="warning" role="status">
-          No tax codes are set up yet. Ask an administrator to add them, then reload.
+          {taxCodes === null
+            ? 'Tax codes could not load. Reload the page to add a line.'
+            : 'Set up a tax code before adding a line.'}
         </Alert>
       ) : null}
-
-      {lines.length === 0 ? (
-        <EmptyState
-          title="No lines yet"
-          headingLevel={3}
-          action={<Button onClick={onAdd}>Add the first line</Button>}
-        >
-          Add what you are selling. Quantity, unit, rate and tax code are needed for each line.
-        </EmptyState>
-      ) : (
-        <>
-          <Table caption="Quotation lines" minWidth={920}>
-            <thead>
-              <tr>
-                <Th>#</Th>
-                <Th>Description</Th>
-                <Th>Unit</Th>
-                <Th align="end">Quantity</Th>
-                <Th align="end">Rate ({currency})</Th>
-                <Th>Tax code</Th>
-                <Th align="end">Amount before discount</Th>
-                <Th>
-                  <span className="sr-only">Remove line</span>
-                </Th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line, index) => {
-                const no = index + 1;
-                const e = (field: string) => errors[`lines.${index}.${field}`];
-                const amount = lineAmounts.get(no);
-                const label = (what: string) => `Line ${no} ${what}`;
-                return (
-                  <tr key={line.key}>
-                    <Td className={styles.lineNo}>{no}</Td>
-                    <Td className={styles.lineCell}>
-                      <Textarea
-                        aria-label={label('description')}
-                        aria-invalid={e('description') ? true : undefined}
-                        className={styles.lineText}
-                        rows={2}
-                        maxLength={500}
-                        value={line.description}
-                        onChange={(ev) => onChange(line.key, { description: ev.target.value })}
-                      />
-                      {e('description') ? (
-                        <span className={styles.rowError}>{e('description')}</span>
-                      ) : null}
-                    </Td>
-                    <Td className={styles.lineCell}>
-                      <Input
-                        aria-label={label('unit')}
-                        aria-invalid={e('uom') ? true : undefined}
-                        maxLength={20}
-                        value={line.uom}
-                        onChange={(ev) => onChange(line.key, { uom: ev.target.value })}
-                      />
-                      {e('uom') ? <span className={styles.rowError}>{e('uom')}</span> : null}
-                    </Td>
-                    <Td align="end" className={styles.lineCell}>
-                      <Input
-                        aria-label={label('quantity')}
-                        aria-invalid={e('quantity') ? true : undefined}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        className={styles.numInput}
-                        value={line.quantity}
-                        onChange={(ev) => onChange(line.key, { quantity: ev.target.value })}
-                      />
-                      {e('quantity') ? (
-                        <span className={styles.rowError}>{e('quantity')}</span>
-                      ) : null}
-                    </Td>
-                    <Td align="end" className={styles.lineCell}>
-                      <Input
-                        aria-label={label('rate')}
-                        aria-invalid={e('unitPrice') ? true : undefined}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        className={styles.numInput}
-                        value={line.unitPrice}
-                        onChange={(ev) => onChange(line.key, { unitPrice: ev.target.value })}
-                      />
-                      {e('unitPrice') ? (
-                        <span className={styles.rowError}>{e('unitPrice')}</span>
-                      ) : null}
-                    </Td>
-                    <Td className={styles.lineCell}>
-                      <Select
-                        aria-label={label('tax code')}
-                        aria-invalid={e('taxCodeId') ? true : undefined}
-                        disabled={taxCodes === null || taxCodes.length === 0}
-                        value={line.taxCodeId}
-                        onChange={(ev) => onChange(line.key, { taxCodeId: ev.target.value })}
-                      >
-                        <option value="">Choose</option>
-                        {(taxCodes ?? []).map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </Select>
-                      {e('taxCodeId') ? (
-                        <span className={styles.rowError}>{e('taxCodeId')}</span>
-                      ) : null}
-                    </Td>
-                    <Td align="end" className={styles.lineAmount}>
-                      {amount !== undefined ? (
-                        formatMoney(amount, currency)
-                      ) : (
-                        <span
-                          className={styles.muted}
-                          title="Shown once the platform has priced the lines"
-                        >
-                          not priced yet
-                        </span>
-                      )}
-                    </Td>
-                    <Td className={styles.lineCell}>
-                      <Button
-                        variant="ghost"
-                        size="small"
-                        onClick={() => onRemove(line.key)}
-                        aria-label={`Remove line ${no}`}
-                      >
-                        Remove
-                      </Button>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-          <div className={styles.actions}>
-            <Button variant="secondary" onClick={onAdd} disabled={atLimit}>
+      {errors.lines ? <p className={styles.rowError}>{errors.lines}</p> : null}
+      <div className={styles.actions}>
+        <LineEditor
+          currency={currency}
+          taxCodes={codes}
+          onSave={onSave}
+          trigger={
+            <Button ref={addRef} variant="secondary" disabled={!canAdd}>
               Add line
             </Button>
-            {atLimit ? (
-              <span className={styles.muted}>A quotation holds up to {MAX_LINES} lines.</span>
-            ) : null}
-          </div>
-        </>
+          }
+        />
+        {atLimit ? <span className={styles.muted}>Up to {MAX_LINES} lines.</span> : null}
+      </div>
+      {lines.length === 0 ? (
+        <p className={styles.muted}>No lines yet.</p>
+      ) : (
+        <Table caption="Quotation lines" minWidth={570}>
+          <thead>
+            <tr>
+              <Th>Description</Th>
+              <Th align="end">Quantity</Th>
+              <Th align="end">Rate ({currency})</Th>
+              <Th>Tax code</Th>
+              <Th align="end">Before discount</Th>
+              <Th>
+                <span className="sr-only">Line actions</span>
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((line, index) => {
+              const no = index + 1;
+              const amount = lineAmounts.get(no);
+              const fieldErrors = Object.fromEntries(
+                Object.keys(LINE_ERRORS).flatMap((field) => {
+                  const error = errors[`lines.${index}.${field}`];
+                  return error ? [[field, error]] : [];
+                }),
+              );
+              return (
+                <tr key={line.key}>
+                  <Td className={styles.lineDescription}>
+                    {line.description}
+                    {Object.values(fieldErrors).map((error) => (
+                      <span key={error} className={styles.rowError}>
+                        {error}
+                      </span>
+                    ))}
+                  </Td>
+                  <Td align="end">
+                    {line.quantity} {line.uom}
+                  </Td>
+                  <Td align="end">{formatMoney(line.unitPrice, currency)}</Td>
+                  <Td>{taxLabels.get(line.taxCodeId) ?? 'Current tax code'}</Td>
+                  <Td align="end">
+                    {amount === undefined ? (
+                      <span aria-label="Amount unavailable">—</span>
+                    ) : (
+                      formatMoney(amount, currency)
+                    )}
+                  </Td>
+                  <Td>
+                    <div className={styles.lineActions}>
+                      <LineEditor
+                        line={line}
+                        currency={currency}
+                        taxCodes={codes}
+                        errors={fieldErrors}
+                        onSave={onSave}
+                        trigger={
+                          <Button
+                            variant="ghost"
+                            size="small"
+                            aria-label={`Edit line ${no}: ${line.description}`}
+                          >
+                            Edit
+                          </Button>
+                        }
+                      />
+                      <ConfirmDialog
+                        trigger={
+                          <Button
+                            variant="ghost"
+                            size="small"
+                            aria-label={`Remove line ${no}: ${line.description}`}
+                          >
+                            Remove
+                          </Button>
+                        }
+                        title="Remove line?"
+                        description="This line will be removed from the draft."
+                        confirmLabel="Remove line"
+                        destructive
+                        onConfirm={() => {
+                          onRemove(line.key);
+                          requestAnimationFrame(() => addRef.current?.focus());
+                        }}
+                      >
+                        <p className={styles.lineDescription}>{line.description}</p>
+                      </ConfirmDialog>
+                    </div>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
       )}
     </div>
   );

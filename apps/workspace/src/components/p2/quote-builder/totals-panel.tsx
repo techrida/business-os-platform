@@ -34,12 +34,7 @@ export function TotalsPanel({ currency, state, preview, message }: TotalsPanelPr
   const t = shown?.totals;
 
   return (
-    <Panel
-      as="aside"
-      title="7. Totals"
-      description={`Worked out by the platform, in ${currency}. This page never calculates them.`}
-      className={styles.totals}
-    >
+    <Panel as="aside" title="Totals" className={styles.totals} tabIndex={0}>
       {state === 'loading' ? (
         <p role="status" className={styles.updating}>
           Updating totals
@@ -112,7 +107,7 @@ export function TotalsPanel({ currency, state, preview, message }: TotalsPanelPr
         <p className={styles.muted}>
           {message ??
             (state === 'needs_save'
-              ? 'Save the draft to see the totals. They come from the platform, not from this page.'
+              ? 'Save the draft to see the totals.'
               : 'Complete every line to see the totals.')}
         </p>
       )}

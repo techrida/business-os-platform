@@ -635,6 +635,13 @@ export const AttachVerificationDocumentBodySchema = z.strictObject({
 });
 export type AttachVerificationDocumentBody = z.infer<typeof AttachVerificationDocumentBodySchema>;
 
+/** Removes the checklist association at the version the caller saw. */
+export const RemoveVerificationDocumentBodySchema = AttachVerificationDocumentBodySchema.pick({
+  key: true,
+  expectedVersion: true,
+});
+export type RemoveVerificationDocumentBody = z.infer<typeof RemoveVerificationDocumentBodySchema>;
+
 export const ReviewVerificationBodySchema = z
   .strictObject({
     decision: z.enum(['approve', 'reject']),

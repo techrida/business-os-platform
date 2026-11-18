@@ -7,7 +7,7 @@ import {
   DialogCloseButton,
   PendingLine,
   useFocusOnProblem,
-} from '@/components/p2/quotations/action-dialog';
+} from '@/components/ui/transaction-dialog';
 import styles from '@/components/p2/quotations/actions.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';

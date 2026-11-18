@@ -1,118 +1,180 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
+import { HeaderAction } from '@/components/ui/header-action';
+import { toast } from '@/components/ui/toast';
 
 import { reviewAction, type ReviewState } from '../actions';
 import styles from '../verification.module.css';
 
-/**
- * Approve or reject a KYB case. A Client Component only so a refusal (403 reason, 409 stale) shows
- * inline next to the buttons and keeps the reason the person typed. It submits to a server action,
- * so no token or API URL is in the browser. The server worked out `canApprove` and `canReject`
- * from the case; the action and the API check them again.
- */
+type Intent = 'approve' | 'reject';
+
 export function ReviewForm({
   caseId,
   version,
   idempotencyKey,
-  canApprove,
   canReject,
-  approveBlockedReason,
+  approvalProblems,
   reloadHref,
 }: {
   caseId: string;
   version: number;
-  /** A UUID the server generated for this render. */
   idempotencyKey: string;
-  canApprove: boolean;
   canReject: boolean;
-  /** Why Approve is closed, in words, shown beside the buttons. */
-  approveBlockedReason: string | null;
+  approvalProblems: string[];
   reloadHref: string;
 }) {
-  const [state, formAction, pending] = useActionState<ReviewState, FormData>(reviewAction, {
-    key: idempotencyKey,
-  });
-  // Controlled: React 19 resets uncontrolled fields after every action, which would wipe the
-  // reason when the API refuses and the person has to retype it.
+  const [state, setState] = useState<ReviewState>({ key: idempotencyKey });
+  const [choice, setChoice] = useState<{ intent: Intent; version: number } | null>(null);
   const [comment, setComment] = useState('');
+  const [pending, setPending] = useState(false);
+  const [retryUnconfirmed, setRetryUnconfirmed] = useState(false);
+  const inFlight = useRef(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
+  const formId = useId();
+  const canApprove = approvalProblems.length === 0;
+  const rejecting = choice?.intent === 'reject';
 
-  // Move focus to what went wrong, so a keyboard or screen reader user lands on it.
   useEffect(() => {
     if (state.commentError) commentRef.current?.focus();
     else if (state.error) summaryRef.current?.focus();
   }, [state]);
 
+  function open(intent: Intent, button: HTMLButtonElement) {
+    opener.current = button;
+    setChoice({ intent, version });
+    setState({ key: crypto.randomUUID() });
+    setComment('');
+    setRetryUnconfirmed(false);
+  }
+
+  function close() {
+    if (inFlight.current) return;
+    setChoice(null);
+    requestAnimationFrame(() => opener.current?.focus());
+  }
+
+  async function decide(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!choice || inFlight.current || state.reload || (rejecting ? !canReject : !canApprove))
+      return;
+    const form = new FormData();
+    form.set('caseId', caseId);
+    form.set('intent', choice.intent);
+    form.set('comment', comment);
+    form.set('expectedVersion', String(choice.version));
+    form.set('idempotencyKey', state.key);
+    inFlight.current = true;
+    setPending(true);
+    try {
+      const result = await reviewAction(state, form);
+      setState(result);
+      // A retry after an unknown outcome must send the same reason and decision with the same key.
+      setRetryUnconfirmed(Boolean(result.error && result.key === state.key && !result.reload));
+      if (result.error || result.commentError) return;
+      setChoice(null);
+      toast.success(rejecting ? 'Case rejected' : 'Customer approved');
+    } catch {
+      setRetryUnconfirmed(true);
+      setState({ key: state.key, error: 'The decision could not be confirmed. Try again.' });
+    } finally {
+      inFlight.current = false;
+      setPending(false);
+    }
+  }
+
   return (
-    <form action={formAction} className={styles.decision}>
-      <input type="hidden" name="caseId" value={caseId} />
-      <input type="hidden" name="expectedVersion" value={version} />
-      <input type="hidden" name="idempotencyKey" value={state.key} />
-
-      {state.error ? (
-        <Alert
-          ref={summaryRef}
-          tabIndex={-1}
-          tone="error"
-          role="alert"
-          actions={state.reload ? <a href={reloadHref}>Reload this case</a> : null}
-        >
-          {state.error}
-        </Alert>
-      ) : null}
-
-      <Field
-        label="Reason"
-        hint="Required for both decisions. It is kept in the audit trail."
-        error={state.commentError}
-      >
-        {(control) => (
-          <Textarea
-            ref={commentRef}
-            name="comment"
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            rows={4}
-            maxLength={2000}
-            {...control}
-          />
-        )}
-      </Field>
-
-      <div className={styles.buttons}>
-        <Button
-          type="submit"
-          name="intent"
-          value="approve"
-          disabled={pending || !canApprove}
-          aria-describedby={approveBlockedReason ? 'approve-blocked' : undefined}
-        >
-          Approve customer
-        </Button>
-        <Button
-          type="submit"
-          name="intent"
-          value="reject"
-          className={styles.danger}
-          disabled={pending || !canReject}
-        >
+    <div className={styles.headerActions}>
+      {canReject ? (
+        <Button variant="secondary" onClick={(event) => open('reject', event.currentTarget)}>
           Reject
         </Button>
-      </div>
-      {approveBlockedReason ? (
-        <p id="approve-blocked" className={styles.note}>
-          {approveBlockedReason}
-        </p>
       ) : null}
-      <p className={styles.status} role="status">
-        {pending ? 'Sending your decision' : ''}
-      </p>
-    </form>
+      <HeaderAction
+        missing={approvalProblems}
+        pills={false}
+        missingTitle="Approval requirements"
+        missingLabel="Approval blocked"
+        onClick={(event) => open('approve', event.currentTarget)}
+      >
+        Approve customer
+      </HeaderAction>
+      <Dialog
+        title={rejecting ? 'Reject this case?' : 'Approve this customer?'}
+        description={
+          rejecting
+            ? 'The case will be returned for changes.'
+            : 'This marks the customer as verified.'
+        }
+        tone={rejecting ? 'destructive' : 'default'}
+        open={choice !== null}
+        onOpenChange={(next) => {
+          if (!next) close();
+        }}
+        locked={pending}
+        closeOnOutsideClick={false}
+        footer={
+          <>
+            <DialogClose asChild>
+              <Button variant="secondary" disabled={pending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              type="submit"
+              form={formId}
+              className={rejecting ? styles.danger : undefined}
+              disabled={pending || state.reload || (rejecting ? !canReject : !canApprove)}
+              aria-busy={pending || undefined}
+            >
+              {rejecting ? 'Reject case' : 'Approve customer'}
+            </Button>
+          </>
+        }
+      >
+        <form id={formId} onSubmit={(event) => void decide(event)} className={styles.decision}>
+          {state.error ? (
+            <Alert
+              ref={summaryRef}
+              tabIndex={-1}
+              tone="error"
+              role="alert"
+              actions={state.reload ? <a href={reloadHref}>Reload this case</a> : null}
+            >
+              {state.error}
+            </Alert>
+          ) : null}
+          {approvalProblems.length > 0 && !rejecting ? (
+            <Alert tone="warning" role="status">
+              {approvalProblems.join(' ')}
+            </Alert>
+          ) : null}
+          <Field
+            label="Reason"
+            hint="Required. The reason is kept with the decision."
+            error={state.commentError}
+          >
+            {(control) => (
+              <Textarea
+                ref={commentRef}
+                value={comment}
+                onChange={(event) => setComment(event.target.value)}
+                rows={4}
+                maxLength={2000}
+                readOnly={pending || retryUnconfirmed}
+                {...control}
+              />
+            )}
+          </Field>
+        </form>
+      </Dialog>
+    </div>
   );
 }

@@ -57,6 +57,7 @@ test('a draft is saved with a server total, then cancelled and read-only', async
 
     await test.step('the form saves a draft', async () => {
       await page.goto('/procurement/requests/new');
+      await page.waitForLoadState('networkidle');
       await page.getByLabel('Needed by').fill('2026-12-31');
       await page.getByLabel('Department').selectOption(DEPARTMENT);
       await page.getByLabel('Cost centre').selectOption(COST_CENTER);

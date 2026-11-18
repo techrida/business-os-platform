@@ -1,41 +1,98 @@
 'use client';
 
+import { Dec, formatMoney } from '@bos/locale';
+
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select } from '@/components/ui/field';
 
-import { scheduleMessage, scheduleState, type MilestoneValues } from './model';
-import type { PaymentTerm } from './schemas';
+import {
+  milestoneAmount,
+  milestoneDue,
+  reconcileMilestone,
+  scheduleProgress,
+  scheduleState,
+  setMilestoneDueDate,
+  type Currency,
+  type MilestoneValues,
+} from './model';
 import styles from './quote-builder.module.css';
+import type { PaymentTerm } from './schemas';
 
-export const MAX_MILESTONES = 12;
+const MAX_MILESTONES = 12;
 
-/**
- * Section 5: payment term and schedule. The milestones must add up to 100%. The running total is
- * announced politely as it changes; Submit (and Save) refuse a schedule that is off, here and on
- * the server.
- */
+export interface AmountDraft {
+  value: string;
+  initialPercent: string;
+  error?: string;
+}
+
 export function ScheduleSection({
   paymentTermId,
   paymentTerms,
   milestones,
+  currency,
+  total,
+  amountDrafts,
+  disabled,
+  showScheduleErrors,
   errors,
   onTerm,
   onChange,
+  onAmountDraft,
   onAdd,
   onRemove,
 }: {
   paymentTermId: string;
-  /** null when the list failed to load. */
   paymentTerms: readonly PaymentTerm[] | null;
   milestones: readonly MilestoneValues[];
+  currency: Currency;
+  /** The final total from the current, ready server preview. */
+  total: string | null;
+  amountDrafts: Readonly<Record<string, AmountDraft>>;
+  disabled: boolean;
+  showScheduleErrors: boolean;
   errors: Readonly<Record<string, string>>;
   onTerm: (id: string) => void;
   onChange: (key: string, patch: Partial<MilestoneValues>) => void;
+  onAmountDraft: (key: string, draft: AmountDraft | undefined) => void;
   onAdd: () => void;
   onRemove: (key: string) => void;
 }) {
   const state = scheduleState(milestones);
-  const problem = scheduleMessage(state);
+  const zeroTotal = total !== null && new Dec(total).isZero();
+
+  function changeAmount(milestone: MilestoneValues, value: string) {
+    const draft = {
+      value,
+      initialPercent: amountDrafts[milestone.key]?.initialPercent ?? milestone.percent,
+    };
+    const result = reconcileMilestone(milestone.percent, { field: 'amount', value }, total);
+    if (!result.ok) {
+      const error =
+        result.reason === 'above-total' && total !== null
+          ? `Enter an amount up to ${formatMoney(total, currency)}.`
+          : result.reason === 'total-unavailable'
+            ? 'Wait for the quote total before editing this amount.'
+            : 'Enter a non-negative amount with up to two decimal places.';
+      onAmountDraft(milestone.key, { ...draft, error });
+      return;
+    }
+
+    // Reject an amount that the two-decimal percentage cannot represent exactly.
+    if (result.amount === null || !new Dec(value).eq(result.amount)) {
+      const suggestion =
+        result.amount === null ? '' : ` Try ${formatMoney(result.amount, currency)}.`;
+      onAmountDraft(milestone.key, {
+        ...draft,
+        error: `This amount needs more than two decimal places in the percentage.${suggestion}`,
+      });
+      return;
+    }
+
+    onAmountDraft(milestone.key, draft);
+    onChange(milestone.key, { percent: result.percent });
+  }
 
   return (
     <div className={styles.sectionBody}>
@@ -43,17 +100,17 @@ export function ScheduleSection({
         label="Payment term"
         hint={
           paymentTerms === null
-            ? 'The payment terms did not load. Reload the page to choose one.'
+            ? 'Reload to choose a payment term.'
             : "Defaults to the customer's term when left empty."
         }
-        error={errors['paymentTermId']}
+        error={errors.paymentTermId}
       >
         {(control) => (
           <Select
+            {...control}
             value={paymentTermId}
             onChange={(e) => onTerm(e.target.value)}
             disabled={paymentTerms === null}
-            {...control}
           >
             <option value="">Customer default</option>
             {(paymentTerms ?? []).map((t) => (
@@ -66,55 +123,134 @@ export function ScheduleSection({
       </Field>
 
       {milestones.length === 0 ? (
-        <p className={styles.muted}>
-          No milestones. The payment term applies as one payment. Add milestones to split the price,
-          for example 60% advance, 20% on delivery, 20% on go-live.
-        </p>
+        <p className={styles.muted}>Add milestones to split the payment.</p>
       ) : (
         <ol className={styles.milestones} aria-label="Payment milestones">
           {milestones.map((m, index) => {
-            const e = (field: string) => errors[`paymentSchedule.${index}.${field}`];
+            const error = (field: string) => errors[`paymentSchedule.${index}.${field}`];
+            const amount = milestoneAmount(m.percent, total);
+            const draft: AmountDraft | undefined = amountDrafts[m.key];
+            const due = milestoneDue(m.dueDescription);
+            const rowInvalid = scheduleState([m]).kind === 'invalid';
+            const scheduleError = showScheduleErrors
+              ? rowInvalid
+                ? 'Enter 0–100% with up to two decimal places.'
+                : state.kind === 'short' || state.kind === 'over'
+                  ? 'Adjust the milestones to total 100%.'
+                  : undefined
+              : undefined;
             return (
               <li key={m.key} className={styles.milestone}>
-                <Field label={`Milestone ${index + 1}`} error={e('label')}>
-                  {(control) => (
-                    <Input
-                      maxLength={100}
-                      value={m.label}
-                      onChange={(ev) => onChange(m.key, { label: ev.target.value })}
-                      {...control}
-                    />
-                  )}
-                </Field>
-                <Field label="Percent" error={e('percent')}>
-                  {(control) => (
-                    <Input
-                      inputMode="decimal"
-                      autoComplete="off"
-                      className={styles.numInput}
-                      value={m.percent}
-                      onChange={(ev) => onChange(m.key, { percent: ev.target.value })}
-                      {...control}
-                    />
-                  )}
-                </Field>
-                <Field label="Due when" hint="Optional" error={e('dueDescription')}>
-                  {(control) => (
-                    <Input
-                      maxLength={200}
-                      value={m.dueDescription}
-                      onChange={(ev) => onChange(m.key, { dueDescription: ev.target.value })}
-                      {...control}
-                    />
-                  )}
-                </Field>
-                <Button
-                  variant="ghost"
-                  onClick={() => onRemove(m.key)}
-                  aria-label={`Remove milestone ${index + 1}`}
-                >
-                  Remove
-                </Button>
+                <div className={styles.milestoneHead}>
+                  <Field label={`Milestone ${index + 1}`} error={error('label')}>
+                    {(control) => (
+                      <Input
+                        {...control}
+                        maxLength={100}
+                        value={m.label}
+                        onChange={(ev) => onChange(m.key, { label: ev.target.value })}
+                      />
+                    )}
+                  </Field>
+                  <Button
+                    variant="ghost"
+                    onClick={() => onRemove(m.key)}
+                    aria-label={`Remove milestone ${index + 1}`}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <div className={styles.grid2}>
+                  <Field label="Percent (%)" error={error('percent') ?? scheduleError}>
+                    {(control) => (
+                      <Input
+                        {...control}
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        className={styles.numInput}
+                        value={m.percent}
+                        onChange={(ev) => {
+                          const value = ev.target.value;
+                          const result = reconcileMilestone(
+                            m.percent,
+                            { field: 'percent', value },
+                            total,
+                          );
+                          onAmountDraft(m.key, undefined);
+                          onChange(m.key, { percent: result.ok ? result.percent : value });
+                        }}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label={`Amount (${currency})`}
+                    error={draft?.error}
+                    hint={
+                      total === null
+                        ? 'Amount unavailable until pricing is ready.'
+                        : zeroTotal
+                          ? 'Use percent to split a zero total.'
+                          : draft?.error
+                            ? 'Correct the amount, edit the percent, or press Escape to undo.'
+                            : undefined
+                    }
+                  >
+                    {(control) => (
+                      <Input
+                        {...control}
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        max={total ?? undefined}
+                        step="0.01"
+                        className={styles.numInput}
+                        disabled={total === null}
+                        readOnly={zeroTotal}
+                        value={
+                          total === null
+                            ? ''
+                            : (draft?.value ?? amount ?? (zeroTotal ? '0.00' : ''))
+                        }
+                        onChange={(ev) => changeAmount(m, ev.target.value)}
+                        onBlur={() => {
+                          if (draft && !draft.error) onAmountDraft(m.key, undefined);
+                        }}
+                        onKeyDown={(ev) => {
+                          if (ev.key === 'Escape' && draft) {
+                            onChange(m.key, { percent: draft.initialPercent });
+                            onAmountDraft(m.key, undefined);
+                          }
+                        }}
+                      />
+                    )}
+                  </Field>
+                </div>
+                {due.kind === 'legacy' ? (
+                  <div className={styles.legacyDue}>
+                    <span className={styles.stepWho}>Due when</span>
+                    <span>{due.description}</span>
+                    {error('dueDescription') ? (
+                      <span className={styles.rowError}>{error('dueDescription')}</span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <Field label="Due when" hint="Optional" error={error('dueDescription')}>
+                    {(control) => (
+                      <DatePicker
+                        {...control}
+                        disabled={disabled}
+                        value={due.kind === 'date' ? due.date : ''}
+                        onChange={(date) => {
+                          const result = setMilestoneDueDate(m.dueDescription, date);
+                          if (result.ok) onChange(m.key, { dueDescription: result.dueDescription });
+                        }}
+                      />
+                    )}
+                  </Field>
+                )}
               </li>
             );
           })}
@@ -125,28 +261,19 @@ export function ScheduleSection({
         <Button variant="secondary" onClick={onAdd} disabled={milestones.length >= MAX_MILESTONES}>
           Add milestone
         </Button>
+        {milestones.length > 0 ? (
+          <p
+            role="status"
+            className={styles.scheduleTotal}
+            data-invalid={(showScheduleErrors && state.kind !== 'ok') || undefined}
+          >
+            {scheduleProgress(milestones)}% / 100% allocated
+          </p>
+        ) : null}
         {milestones.length >= MAX_MILESTONES ? (
           <span className={styles.muted}>Up to {MAX_MILESTONES} milestones.</span>
         ) : null}
       </div>
-
-      {milestones.length > 0 ? (
-        <p
-          role="status"
-          aria-live="polite"
-          className={styles.scheduleTotal}
-          data-state={state.kind}
-        >
-          {state.kind === 'ok'
-            ? 'Milestones add up to 100%.'
-            : (problem ?? 'Enter the milestone percentages.')}
-        </p>
-      ) : null}
-      {errors['paymentSchedule'] && problem === null ? (
-        <p role="alert" className={styles.rowError}>
-          {errors['paymentSchedule']}
-        </p>
-      ) : null}
     </div>
   );
 }

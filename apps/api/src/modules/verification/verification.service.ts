@@ -1,6 +1,6 @@
 // VerificationService: the KYB (know your business) case of a customer or a vendor. Serves the NFRs:
 // - "no approval without evidence": an approval needs every required checklist item backed by a document
-//   that the virus scan passed (DocumentsService.allClean plus a per-item check);
+//   that each file on the submitted checklist passed its virus scan;
 // - "separation of duties": whoever submitted the case cannot decide it;
 // - "no double decisions" and "no lost updates": every state change locks the case row and goes through
 //   updateVersioned with the version the caller saw; a decision also honours the Idempotency-Key;
@@ -19,6 +19,7 @@ import {
   type AttachVerificationDocumentBody,
   type ChecklistItem,
   type Permission,
+  type RemoveVerificationDocumentBody,
   type VerificationCaseDto,
   type VerificationPartyKind,
 } from '@bos/contracts';
@@ -383,6 +384,52 @@ export class VerificationService implements OnModuleInit {
     });
   }
 
+  /** Detaches the file from one checklist row, leaving the document and its versions on the case. */
+  async removeChecklistDocument(
+    id: string,
+    body: RemoveVerificationDocumentBody,
+  ): Promise<VerificationCaseDto> {
+    const { scope, actor } = this.caller.current();
+    this.assertKybWriter();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const l = await this.lock(tx, scope.tenantId, id);
+      this.assertVisible('verification.read', scope, l);
+      this.assertVisible(l.port.writePermission, scope, l);
+      if (!isEditable(l.row.status)) {
+        throw conflict(`A case in status ${l.row.status} cannot be changed`);
+      }
+      if (l.row.version !== body.expectedVersion) throw this.stale();
+
+      const checklist = checklistOf(l.row);
+      const before = checklist.find((item) => item.key === body.key);
+      if (before === undefined || before.documentId === null) {
+        throw conflict('This checklist item has no attached document');
+      }
+      const after = { ...before, status: 'missing' as const, documentId: null, expiresOn: null };
+      // Like replacing a file, removing one starts a fresh draft after a rejection.
+      const reopen = l.row.status === 'rejected';
+      const updated = await updateVersioned(tx, verificationCases, id, body.expectedVersion, {
+        checklist: checklist.map((item) => (item === before ? after : item)),
+        ...(reopen && {
+          status: 'draft' as const,
+          reviewerUserId: null,
+          decidedAt: null,
+          reason: null,
+        }),
+        updatedAt: this.now(),
+      });
+      await this.audit.record(tx, {
+        action: 'verification.checklist_document_detached',
+        entityType: 'verification_case',
+        entityId: id,
+        before,
+        after,
+        meta: { key: body.key, documentId: before.documentId, reopened: reopen },
+      });
+      return toVerificationCaseDto(updated);
+    });
+  }
+
   // -------------------------------------------------------------------------------------------------- submit
 
   /** Draft to submitted. Every required item must have a document; whether the scan passed is the reviewer's gate. */
@@ -455,11 +502,8 @@ export class VerificationService implements OnModuleInit {
         }
         const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
         const unusable = documentProblems(items, versions);
-        const allClean = await this.documents.allClean(scope, VERIFICATION_OWNER_TYPE, id);
-        if (unusable.length > 0 || !allClean) {
-          throw conflict(
-            `Documents are not all clean${unusable.length > 0 ? `: ${unusable.join(', ')}` : ''}`,
-          );
+        if (unusable.length > 0) {
+          throw conflict(`Documents are not all clean: ${unusable.join(', ')}`);
         }
       }
 

@@ -1,5 +1,8 @@
 import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
+import { getDocument } from '@/components/p2/crm/verification-api';
+import { projectVersion } from '@/components/p2/crm/verification-file';
+import { getVerificationCase } from '@/components/p2/customers/api';
 import { createDocument, uploadDocumentContent } from '@/lib/api-kernel';
 import {
   errorResponse,
@@ -23,6 +26,42 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const bad = (message: string, status = 400): Response =>
   jsonResponse({ error: { message } }, status);
+
+/** Fresh scan metadata for one version belonging to this case, including an upload awaiting Save. */
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const session = await routeSession();
+  if (session instanceof Response) return session;
+  const { id } = await params;
+  const query = new URL(req.url).searchParams;
+  const documentId = query.get('documentId') ?? '';
+  const versionId = query.get('versionId') ?? '';
+  if (![id, documentId, versionId].every((value) => UUID.test(value))) {
+    return bad('That is not a case, document or file version id.');
+  }
+
+  try {
+    await getVerificationCase(session, id);
+    const document = await getDocument(session, documentId);
+    if (
+      document.ownerType !== OWNER_TYPE ||
+      document.ownerId !== id ||
+      document.id !== documentId
+    ) {
+      return bad('File not found.', 404);
+    }
+    const version = document.versions.find(
+      (v) => v.id === versionId && v.documentId === documentId,
+    );
+    return version === undefined
+      ? bad('File not found.', 404)
+      : jsonResponse(projectVersion(version));
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
 
 /**
  * Upload one document for a verification case; the browser then attaches it to a checklist item
@@ -64,12 +103,12 @@ export async function POST(
 
   try {
     const created = await createDocument(session, parsed.data);
-    await uploadDocumentContent(session, created, {
+    const version = await uploadDocumentContent(session, created, {
       body: req.body,
       contentLength: length,
       contentType,
     });
-    return jsonResponse({ documentId: created.documentId, versionId: created.versionId }, 201);
+    return jsonResponse(projectVersion(version), 201);
   } catch (err) {
     return errorResponse(err, 'upload');
   }

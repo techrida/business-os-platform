@@ -12,7 +12,7 @@ const monorepoRoot = path.join(__dirname, '../..');
 // and this app has no per-request nonce yet. 'unsafe-eval' is only for React's dev tooling.
 // No form-action directive: Chrome applies it to the redirect after a form POST, so it would
 // block "Sign out" when /auth/logout answers with a redirect to the identity provider.
-const contentSecurityPolicy = [
+const contentSecurityDirectives = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
   "style-src 'self' 'unsafe-inline'",
@@ -21,8 +21,9 @@ const contentSecurityPolicy = [
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
+];
+const contentSecurityPolicy = [...contentSecurityDirectives, "frame-ancestors 'none'"].join('; ');
+const filePreviewPolicy = [...contentSecurityDirectives, "frame-ancestors 'self'"].join('; ');
 
 const nextConfig: NextConfig = {
   output: 'standalone',
@@ -56,6 +57,14 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Content-Security-Policy', value: contentSecurityPolicy },
+        ],
+      },
+      {
+        // This route streams only authenticated, scan-approved PDF or raster image bytes.
+        source: '/api/documents/:documentId/versions/:versionId/preview',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: filePreviewPolicy },
         ],
       },
     ]);

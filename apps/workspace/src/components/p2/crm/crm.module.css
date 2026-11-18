@@ -346,44 +346,17 @@
 
 /* ---- Convert dialog ---- */
 
-.dialog {
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100dvh - 32px);
-  padding: 0;
-  border: var(--border-width-thin) solid var(--border-default);
-  border-radius: var(--radius-xl);
-  background: var(--surface-default);
-  color: var(--text-primary);
-  box-shadow: 0 24px 48px rgb(15 23 42 / 18%);
-  overflow: auto;
+.convertDialog.convertDialog {
+  --dialog-width: 720px;
 }
 
-.dialog::backdrop {
-  background: rgb(15 23 42 / 45%);
-}
-
-.dialogHead {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px 16px;
-  border-bottom: var(--border-width-thin) solid var(--border-default);
-}
-
-.dialogBody {
+.convertFields {
   display: grid;
   gap: 20px;
-  padding: 20px 24px;
-}
-
-.dialogFoot {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 24px 20px;
-  border-top: var(--border-width-thin) solid var(--border-default);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .section {

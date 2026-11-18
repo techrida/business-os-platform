@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DocumentSchema, downloadHref, fileOf } from './verification-file';
+import { DocumentSchema, downloadHref, fileOf, previewHref } from './verification-file';
 
 const DOC = '11111111-1111-4111-8111-111111111111';
 const V1 = '22222222-2222-4222-8222-222222222222';
@@ -22,10 +22,15 @@ const version = (id: string, n: number, status: string, filename = `cert-${n}.pd
   createdAt: '2026-11-01T08:00:00.000Z',
 });
 
-const parse = (body: unknown) => DocumentSchema.parse(body);
+const parse = (body: object) =>
+  DocumentSchema.parse({
+    ownerType: 'verification_case',
+    ownerId: V1,
+    ...body,
+  });
 
 describe('fileOf', () => {
-  it('picks the current version of the document as the API answers it', () => {
+  it('projects the newest eligible version of the document as the API answers it', () => {
     const doc = parse({
       id: DOC,
       ownerType: 'verification_case',
@@ -39,6 +44,7 @@ describe('fileOf', () => {
       versionId: V2,
       filename: 'cert-2.pdf',
       sizeBytes: 2048,
+      mimeType: 'application/pdf',
       status: 'clean',
     });
   });
@@ -50,6 +56,15 @@ describe('fileOf', () => {
       versions: [version(V1, 1, 'clean'), version(V2, 2, 'rejected')],
     });
     expect(fileOf(doc)?.versionId).toBe(V1);
+  });
+
+  it('shows the newest candidate while the current clean version is older', () => {
+    const doc = parse({
+      id: DOC,
+      currentVersionId: V1,
+      versions: [version(V1, 1, 'clean'), version(V2, 2, 'quarantined')],
+    });
+    expect(fileOf(doc)).toMatchObject({ versionId: V2, status: 'quarantined' });
   });
 
   it('is null for a document with no usable version', () => {
@@ -78,4 +93,10 @@ describe('downloadHref', () => {
       `/api/documents/${DOC}/versions/${V2}/download`,
     );
   });
+});
+
+it('uses the same-origin P1 preview route for the selected version', () => {
+  expect(previewHref({ documentId: DOC, versionId: V2 })).toBe(
+    `/api/documents/${DOC}/versions/${V2}/preview`,
+  );
 });

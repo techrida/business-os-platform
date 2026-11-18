@@ -1,0 +1,132 @@
+diff --git i/apps/login/src/components/login-otp.test.tsx w/apps/login/src/components/login-otp.test.tsx
+index ddc9da0..2aee3cc 100644
+--- i/apps/login/src/components/login-otp.test.tsx
++++ w/apps/login/src/components/login-otp.test.tsx
+@@ -35,24 +35,72 @@ describe("LoginOTP", () => {
+     expect(getByTestId("code-text-input")).toHaveFocus();
+   });
+
+-  test("should display translated fallback error when OTP verification request rejects", async () => {
+-    mockUpdateOrCreateSession.mockRejectedValueOnce(new Error("network down"));
++  test("completes the real numeric field and sends one check even if the form is also submitted", async () => {
++    let rejectVerification!: (reason: Error) => void;
++    mockUpdateOrCreateSession.mockImplementationOnce(
++      () => new Promise((_, reject) => { rejectVerification = reject; }),
++    );
+
++    render(<LoginOTP host={null} method="time-based" requestId="request" sessionId="session" />);
++    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "verify.labels.code" });
++    const form = input.form!;
++
++    fireEvent.change(input, { target: { value: "a" } });
++    expect(input).toHaveValue("");
++    fireEvent.change(input, { target: { value: "01234" } });
++    expect(screen.getByTestId("submit-button")).toBeDisabled();
++    expect(mockUpdateOrCreateSession).not.toHaveBeenCalled();
++
++    fireEvent.change(input, { target: { value: "012345" } });
++    fireEvent.submit(form);
++    await waitFor(() => expect(mockUpdateOrCreateSession).toHaveBeenCalledTimes(1));
++    expect(mockUpdateOrCreateSession).toHaveBeenCalledWith(expect.objectContaining({
++      requestId: "request",
++      sessionId: "session",
++      checks: expect.objectContaining({ totp: expect.objectContaining({ code: "012345" }) }),
++    }));
++
++    fireEvent.submit(form);
++    rejectVerification(new Error("network down"));
++    expect(await screen.findByRole("alert")).toHaveTextContent("errors.couldNotVerifyCode");
++    expect(mockUpdateOrCreateSession).toHaveBeenCalledTimes(1);
++    expect(input).toHaveValue("");
++    expect(input).toHaveFocus();
++    expect(input).toHaveAttribute("aria-invalid", "true");
++    fireEvent.change(input, { target: { value: "1" } });
++    expect(screen.queryByRole("alert")).toBeNull();
++  });
++
++  test("verifies formatted paste through the same TOTP check", async () => {
++    mockUpdateOrCreateSession.mockResolvedValueOnce({ error: "Expired code" });
+     render(<LoginOTP host={null} method="time-based" />);
+-
+-    const input = screen.getByTestId("code-text-input");
+-    fireEvent.change(input, { target: { value: "123456" } });
+-
+-    const submitButton = screen.getByTestId("submit-button");
+-    await waitFor(() => {
+-      expect(submitButton).not.toBeDisabled();
++    fireEvent.paste(screen.getByTestId("code-text-input"), {
++      clipboardData: { getData: () => "Your code is 012-345." },
+     });
++    expect(await screen.findByRole("alert")).toHaveTextContent("Expired code");
++    expect(mockUpdateOrCreateSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
++      checks: expect.objectContaining({ totp: expect.objectContaining({ code: "012345" }) }),
++    }));
++  });
+
+-    fireEvent.click(submitButton);
++  test("retains variable-length alphanumeric email codes and the resend action", async () => {
++    mockUpdateOrCreateSession.mockResolvedValueOnce({}).mockResolvedValueOnce({}).mockResolvedValueOnce({ error: "Expired code" });
++    render(<LoginOTP host={null} method="email" />);
++    const resend = screen.getByRole("button", { name: "verify.resendCode" });
++    await waitFor(() => expect(resend).toBeEnabled());
++    fireEvent.click(resend);
++    await waitFor(() => expect(mockUpdateOrCreateSession).toHaveBeenCalledTimes(2));
++    await waitFor(() => expect(resend).toBeEnabled());
+
+-    await waitFor(() => {
+-      expect(screen.getByText("errors.couldNotVerifyCode")).toBeInTheDocument();
+-    });
++    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "verify.labels.code" });
++    fireEvent.change(input, { target: { value: "AB-43cd89" } });
++    expect(input).toHaveValue("AB-43cd89");
++    expect(mockUpdateOrCreateSession).toHaveBeenCalledTimes(2);
++    fireEvent.submit(input.form!);
++    expect(await screen.findByRole("alert")).toHaveTextContent("Expired code");
++    expect(mockUpdateOrCreateSession).toHaveBeenLastCalledWith(expect.objectContaining({
++      checks: expect.objectContaining({ otpEmail: expect.objectContaining({ code: "AB-43cd89" }) }),
++    }));
+   });
+
+   test("should display translated fallback error when OTP challenge request rejects", async () => {
+diff --git i/apps/login/src/components/totp-register.test.tsx w/apps/login/src/components/totp-register.test.tsx
+index afc42c1..2e686ba 100644
+--- i/apps/login/src/components/totp-register.test.tsx
++++ w/apps/login/src/components/totp-register.test.tsx
+@@ -1,4 +1,6 @@
+-import { cleanup, render } from "@testing-library/react";
++import { completeFlowOrGetUrl } from "@/lib/client";
++import { verifyTOTP } from "@/lib/server/verify";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+ import { afterEach, describe, expect, test, vi } from "vitest";
+ import { TotpRegister } from "./totp-register";
+
+@@ -30,4 +32,17 @@ describe("TotpRegister", () => {
+     const { getByTestId } = render(<TotpRegister uri="otpauth://totp/test" secret="SECRET" />);
+     expect(getByTestId("code-text-input")).toHaveFocus();
+   });
++
++  test("sends the completed code to the enrollment action and surfaces a provider error before continuing", async () => {
++    vi.mocked(verifyTOTP).mockResolvedValueOnce({ error: "Enrollment was rejected" });
++    render(<TotpRegister uri="otpauth://totp/test" secret="SECRET" loginName="person" organization="org" />);
++    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "set.labels.code" });
++    fireEvent.change(input, { target: { value: "000123" } });
++    fireEvent.submit(input.form!);
++    expect(await screen.findByRole("alert")).toHaveTextContent("Enrollment was rejected");
++    expect(verifyTOTP).toHaveBeenCalledExactlyOnceWith("000123", "person", "org");
++    expect(completeFlowOrGetUrl).not.toHaveBeenCalled();
++    expect(input).toHaveValue("");
++    expect(input).toHaveFocus();
++  });
+ });
+diff --git i/apps/login/test-setup.ts w/apps/login/test-setup.ts
+index f149f27..919e440 100644
+--- i/apps/login/test-setup.ts
++++ w/apps/login/test-setup.ts
+@@ -1 +1,7 @@
+ import "@testing-library/jest-dom/vitest";
++
++
++// jsdom has no layout hit-testing. input-otp uses it to detect password-manager badges.
++if (typeof document !== "undefined" && !document.elementFromPoint) {
++  document.elementFromPoint = () => null;
++}
