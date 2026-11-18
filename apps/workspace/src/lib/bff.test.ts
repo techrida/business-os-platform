@@ -76,6 +76,20 @@ describe('requireStaffSession', () => {
 });
 
 describe('routeSession', () => {
+  it('returns a retryable 503 only for a session store outage', async () => {
+    getSession.mockRejectedValueOnce(new SessionUnavailableError());
+    const response = (await routeSession()) as Response;
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('1');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.has('set-cookie')).toBe(false);
+    expect(await response.json()).toMatchObject({ error: { reload: false } });
+
+    const unexpected = new Error('unexpected failure');
+    getSession.mockRejectedValueOnce(unexpected);
+    await expect(routeSession()).rejects.toBe(unexpected);
+  });
+
   it('answers 401 JSON instead of redirecting', async () => {
     getSession.mockResolvedValue(null);
     const res = await routeSession();
