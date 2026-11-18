@@ -50,6 +50,10 @@
   color: var(--action-primary);
 }
 
+.listTable {
+  position: relative;
+}
+
 .listTable th {
   height: 64px;
 }
