@@ -880,10 +880,7 @@ export class ApprovalsService {
         };
         specs.set(request.workflowVersionId, entry);
       }
-      if (
-        !genericApprover &&
-        !this.outsideRoleAssignment(principal, request, step, entry.data)
-      ) {
+      if (!genericApprover && !this.outsideRoleAssignment(principal, request, step, entry.data)) {
         continue;
       }
       // The same checks as act() step 3, in the same order and with the same directory, so the inbox
@@ -1276,17 +1273,10 @@ export class ApprovalsService {
     extraUserIds: readonly string[] = [],
   ): Promise<DirectoryData> {
     const all = [...spec.steps, ...spec.rules.map((r) => r.add)];
-    const roles = [
-      ...new Set(
-        // The roles a named approver may hold besides the step's own (assignee.ts), for this document type.
-        [...outsideRoleAssigneeRoles(spec.documentType)].concat(
-          all.flatMap((s) => {
-            if (s.kind === 'role' && s.role !== undefined) return [s.role];
-            return [];
-          }),
-        ),
-      ),
-    ];
+    const roles = new Set([
+      ...all.flatMap((s) => (s.kind === 'role' && s.role !== undefined ? [s.role] : [])),
+      ...outsideRoleAssigneeRoles(spec.documentType),
+    ]);
     const groupKeys = [
       ...new Set(
         all.flatMap((s) => (s.kind === 'group' && s.group !== undefined ? [s.group] : [])),
