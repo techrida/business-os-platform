@@ -15,6 +15,7 @@ import {
   type CreateContactBody,
   type CreateCustomerBody,
   type CustomerDto,
+  type CustomerFields,
   type PartyAccountDto,
   type Permission,
   type UpdateCustomerBody,
@@ -36,8 +37,9 @@ import {
   Injectable,
   NotFoundException,
   Optional,
+  UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, like, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, like, ne, or, sql, type SQL } from 'drizzle-orm';
 
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
@@ -76,6 +78,17 @@ const iso = (d: Date): string => d.toISOString();
 
 const customerNotFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Customer not found' });
+
+/**
+ * 422 `contact_email_required`: a quotation is sent by email, so a customer must keep at least one contact
+ * with an address. A contact without one is refused while the customer has none.
+ */
+export const contactEmailRequired = () =>
+  new UnprocessableEntityException({
+    code: 'contact_email_required',
+    message:
+      'This customer has no contact with an email yet, so this contact needs one. Quotations are sent by email.',
+  });
 
 export function toCustomerDto(row: CustomerRow): CustomerDto {
   return {
@@ -220,15 +233,30 @@ export class CustomersService {
 
   // ------------------------------------------------------------------------------------------------- create
 
+  /**
+   * The customer and its first contact, in one transaction: a refusal of either (a duplicate PAN, a bad owner)
+   * leaves neither. The first contact has an email (the contract requires it) and becomes the main contact.
+   */
   async create(body: CreateCustomerBody, idempotencyKey: string): Promise<CustomerDto> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
     const now = this.clock();
+    const { contact, ...fields } = body;
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'customer.create', key: idempotencyKey, body },
-        async () => ({ status: 201, response: await this.createInTx(tx, scope, body, now) }),
+        async () => {
+          const customer = await this.createInTx(tx, scope, fields, now);
+          await this.createContactInTx(
+            tx,
+            scope,
+            customer.id,
+            { ...contact, isPrimary: true },
+            now,
+          );
+          return { status: 201, response: customer };
+        },
       );
       return done.response;
     });
@@ -243,7 +271,7 @@ export class CustomersService {
   async createInTx(
     tx: DbTransaction,
     scope: TxScope,
-    body: CreateCustomerBody,
+    body: CustomerFields,
     now: Date,
   ): Promise<CustomerDto> {
     const pan = body.panVatNo === undefined ? null : normalizePan(body.panVatNo);
@@ -403,7 +431,9 @@ export class CustomersService {
   /**
    * The contact insert of createContact(), inside a transaction that withTx opened for `scope`. The customer must
    * exist and the caller must be allowed to write it: the caller of this method decides both (a 409
-   * `primary_contact_exists` is answered here, from the unique index).
+   * `primary_contact_exists` is answered here, from the unique index). A contact without an email is refused
+   * (422 `contact_email_required`) while the customer has no contact with one, on every path: add contact, the
+   * first contact of a new customer and lead conversion.
    */
   async createContactInTx(
     tx: DbTransaction,
@@ -412,6 +442,20 @@ export class CustomersService {
     body: CreateContactBody,
     now: Date,
   ): Promise<ContactDto> {
+    if (body.email === undefined) {
+      const [withEmail] = await tx
+        .select({ id: customerContacts.id })
+        .from(customerContacts)
+        .where(
+          and(
+            eq(customerContacts.tenantId, scope.tenantId),
+            eq(customerContacts.customerId, customerId),
+            isNotNull(customerContacts.emailNorm),
+          ),
+        )
+        .limit(1);
+      if (withEmail === undefined) throw contactEmailRequired();
+    }
     try {
       const [row] = await tx
         .insert(customerContacts)

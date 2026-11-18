@@ -6,11 +6,19 @@
 // customer case is written with customer.write (sales) and a vendor case with vendor.write (procurement). The
 // service is the gate and denies by default: a caller holding neither gets 403 before any record is read, and
 // one holding the other kind's permission gets 403 on the case. Deny by default: a route with no marker is refused.
-import { RemoveVerificationDocumentBodySchema, type VerificationCaseDto } from '@bos/contracts';
+import {
+  RemoveVerificationDocumentBodySchema,
+  ChecklistItemKeySchema,
+  ReviewVerificationItemBodySchema,
+  VerificationVersionBodySchema,
+  type VerificationCaseDto,
+} from '@bos/contracts';
+import { z } from 'zod';
 import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
@@ -92,8 +100,92 @@ export class VerificationController {
   @Post(':id/submit')
   @HttpCode(200)
   @AnyAuthenticated()
-  submit(@Param('id', ParseUUIDPipe) id: string): Promise<VerificationCaseDto> {
-    return this.cases.submit(id);
+  submit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') retryKey?: string,
+  ): Promise<VerificationCaseDto> {
+    return this.cases.submit(
+      id,
+      parseOr400(
+        z
+          .union([VerificationVersionBodySchema, z.strictObject({}).transform(() => undefined)])
+          .optional(),
+        body,
+      ),
+      retryKey === undefined ? undefined : parseOr400(IdempotencyKeySchema, retryKey),
+    );
+  }
+
+  @Post(':id/checklist/:key/decision')
+  @HttpCode(200)
+  @Can('verification.review')
+  reviewItem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('key') key: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') retryKey: unknown,
+  ) {
+    return this.cases.reviewItem(
+      id,
+      parseOr400(ChecklistItemKeySchema, key),
+      parseOr400(ReviewVerificationItemBodySchema, body),
+      parseOr400(IdempotencyKeySchema, retryKey),
+    );
+  }
+
+  @Delete(':id/checklist/:key')
+  @Can('customer.write')
+  detachItem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('key') key: unknown,
+    @Body() body: unknown,
+    @Headers('idempotency-key') retryKey: unknown,
+  ) {
+    return this.cases.detachItem(
+      id,
+      parseOr400(ChecklistItemKeySchema, key),
+      parseOr400(VerificationVersionBodySchema, body),
+      parseOr400(IdempotencyKeySchema, retryKey),
+    );
+  }
+
+  @Delete(':id/loose-documents/:documentId')
+  @HttpCode(204)
+  @Can('customer.write')
+  removeLooseDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+  ) {
+    return this.cases.removeLooseDocument(id, documentId);
+  }
+
+  @Get(':id/review-history')
+  @Can('verification.read')
+  history(@Param('id', ParseUUIDPipe) id: string, @Query() query: unknown) {
+    return this.cases.reviewHistory(
+      id,
+      parseOr400(
+        z.strictObject({
+          limit: z.coerce.number().int().min(1).max(100).default(20),
+          before: z
+            .string()
+            .max(256)
+            .transform((value, ctx) => {
+              try {
+                return z
+                  .strictObject({ at: z.iso.datetime(), id: z.guid() })
+                  .parse(JSON.parse(Buffer.from(value, 'base64url').toString('utf8')));
+              } catch {
+                ctx.addIssue({ code: 'custom', message: 'Invalid history cursor' });
+                return z.NEVER;
+              }
+            })
+            .optional(),
+        }),
+        query,
+      ),
+    );
   }
 
   /**

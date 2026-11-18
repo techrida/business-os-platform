@@ -279,6 +279,30 @@
   line-height: var(--line-height-body-small);
 }
 
+/* The first-step approver picker, under the route. */
+.approverPicker {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.approverNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.noEmail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .nameChips,
 .nameMeasure {
   display: flex;

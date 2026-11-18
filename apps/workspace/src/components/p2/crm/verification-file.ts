@@ -39,9 +39,11 @@ export function projectVersion(v: DocumentVersionDto): FileView {
 }
 
 /** The newest non-rejected version is also the evidence used for approval. */
-export function fileOf(doc: DocumentDetail): FileView | null {
+export function fileOf(doc: DocumentDetail, boundVersionId?: string): FileView | null {
   const versions = [...doc.versions].sort((a, b) => b.version - a.version);
-  const version = versions.find((v) => v.status !== 'rejected') ?? versions[0];
+  const version = boundVersionId
+    ? versions.find((v) => v.id === boundVersionId)
+    : (versions.find((v) => v.status !== 'rejected') ?? versions[0]);
   return version === undefined ? null : projectVersion(version);
 }
 

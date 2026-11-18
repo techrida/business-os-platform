@@ -16,6 +16,8 @@ const valid: CustomerValues = {
   legalName: '  Himalayan Construction Pvt. Ltd.  ',
   line1: 'Balaju',
   city: 'Kathmandu',
+  contactName: ' Sita Rai ',
+  contactEmail: ' sita@himalayan.example ',
 };
 
 const existing: CustomerDto = {
@@ -43,8 +45,35 @@ describe('parseCreateCustomer', () => {
         legalName: 'Himalayan Construction Pvt. Ltd.',
         relationship: 'prospect',
         address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+        contact: { fullName: 'Sita Rai', email: 'sita@himalayan.example' },
       },
     });
+  });
+
+  it('needs a first contact with an email, and says so on its fields', () => {
+    const out = parseCreateCustomer({ ...valid, contactName: '', contactEmail: '' });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.errors.contactName).toMatch(/full name/i);
+    expect(out.errors.contactEmail).toMatch(/email/i);
+    const bad = parseCreateCustomer({ ...valid, contactEmail: 'not-an-email' });
+    expect(!bad.ok && bad.errors.contactEmail).toMatch(/name@company.com/);
+  });
+
+  it("keeps the first contact's phone (punctuation removed) and job title", () => {
+    const out = parseCreateCustomer({
+      ...valid,
+      contactPhone: '+977 981-234 5678',
+      contactTitle: 'Director',
+    });
+    expect(out.ok && out.data.contact).toEqual({
+      fullName: 'Sita Rai',
+      email: 'sita@himalayan.example',
+      phone: '+9779812345678',
+      title: 'Director',
+    });
+    const badPhone = parseCreateCustomer({ ...valid, contactPhone: '9812345678' });
+    expect(!badPhone.ok && badPhone.errors.contactPhone).toMatch(/country code/i);
   });
 
   it('keeps the optional fields that are filled', () => {
@@ -159,6 +188,21 @@ describe('normalizePhone', () => {
 
 describe('parseContact', () => {
   const base = { fullName: ' Sita Sharma ', title: '', email: '', phone: '', isPrimary: false };
+
+  it('needs an email while the customer has no contact with one, and only then', () => {
+    const out = parseContact(base, { requireEmail: true });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.errors.email).toMatch(/no contact with an email/i);
+    expect(parseContact({ ...base, email: 'sita@example.com' }, { requireEmail: true }).ok).toBe(
+      true,
+    );
+    expect(parseContact(base, { requireEmail: false }).ok).toBe(true);
+  });
+
+  it('keeps the other field errors when the email is also missing', () => {
+    const out = parseContact({ ...base, fullName: ' ' }, { requireEmail: true });
+    expect(!out.ok && Object.keys(out.errors).sort()).toEqual(['email', 'fullName']);
+  });
 
   it('builds a contact with only a name', () => {
     expect(parseContact(base)).toEqual({

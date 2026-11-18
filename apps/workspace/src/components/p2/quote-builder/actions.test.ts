@@ -73,7 +73,21 @@ describe('submitQuoteAction', () => {
     api.submitVersion.mockResolvedValue({ status: 'submitted' });
     const res = await submitQuoteAction({ ...submit, values: v });
     expect(res.ok).toBe(true);
-    expect(api.submitVersion).toHaveBeenCalledWith(expect.anything(), QID, VID, 3, KEY);
+    expect(api.submitVersion).toHaveBeenCalledWith(expect.anything(), QID, VID, 3, KEY, undefined);
+  });
+
+  it('passes the chosen approver through, and refuses one that is not an id', async () => {
+    const v = values();
+    v.schedule = [m('60'), m('40')];
+    api.submitVersion.mockResolvedValue({ status: 'submitted' });
+    const res = await submitQuoteAction({ ...submit, values: v, approverUserId: OPP });
+    expect(res.ok).toBe(true);
+    expect(api.submitVersion).toHaveBeenCalledWith(expect.anything(), QID, VID, 3, KEY, OPP);
+
+    api.submitVersion.mockClear();
+    const bad = await submitQuoteAction({ ...submit, values: v, approverUserId: 'someone' });
+    expect(bad.ok).toBe(false);
+    expect(api.submitVersion).not.toHaveBeenCalled();
   });
 
   it('keeps the key after a 5xx and rotates it after a 4xx', async () => {

@@ -466,7 +466,7 @@ describe('BFF contract: workspace clients against the real API', () => {
     expect(detail.versions.map((v) => v.id)).toEqual(
       expect.arrayContaining([s.versionId, draft.id]),
     );
-    const listed = await seen(() => bff.quotations.listQuotations(sales(), 'draft'), {
+    const listed = await seen(() => bff.quotations.listQuotations(sales(), { status: 'draft' }), {
       list: true,
       maybeEmpty: true,
     });
@@ -540,7 +540,7 @@ describe('BFF contract: workspace clients against the real API', () => {
     expect(document.versions).toHaveLength(1);
 
     const submitted = await seen(() =>
-      bff.verification.submitVerificationCase(founder(), s.caseId, randomUUID()),
+      bff.verification.submitVerificationCase(founder(), s.caseId, randomUUID(), current.version),
     );
     expect(submitted.status).toBe('submitted');
   });

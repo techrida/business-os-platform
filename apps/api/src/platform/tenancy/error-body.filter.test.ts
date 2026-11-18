@@ -444,6 +444,17 @@ describe('ErrorBodyFilter', () => {
     });
   });
 
+  it('names a refused first-step approver with its 422 code', () => {
+    const out = filter(
+      new UnprocessableEntityException({
+        code: 'APPROVER_NOT_ELIGIBLE',
+        message: 'The chosen approver cannot approve this quotation.',
+      }),
+    );
+    expect(out.status).toBe(422);
+    expect(ErrorBodySchema.parse(out.body).error.code).toBe('APPROVER_NOT_ELIGIBLE');
+  });
+
   it('passes a known reason through on a 400: a malformed X-Entity-Id is invalid_entity', () => {
     const out = filter(
       new BadRequestException({

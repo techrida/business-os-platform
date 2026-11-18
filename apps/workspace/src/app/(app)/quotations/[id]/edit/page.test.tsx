@@ -144,6 +144,7 @@ function detail(): QuotationDetail {
     statusHistory: [],
     customerName: 'Big Kahuna Burger Ltd.',
     contacts: [],
+    capabilities: { canEdit: true, canRevise: false },
   });
 }
 
@@ -187,6 +188,17 @@ describe('edit quotation page', () => {
     mocks.getQuotation.mockResolvedValue({ ...d, versions: d.versions.filter((v) => v.id !== V2) });
     const html = await render();
     expect(html).toContain('The current revision is missing');
+    expect(mocks.builderProps).not.toHaveBeenCalled();
+  });
+
+  it('offers no editor for a Returned quotation the caller may not edit, and links back to it', async () => {
+    mocks.getQuotation.mockResolvedValue({
+      ...detail(),
+      capabilities: { canEdit: false, canRevise: false },
+    });
+    const html = await render();
+    expect(html).toContain('You can view this quotation but not edit it');
+    expect(html).toContain(`href="/quotations/${ID}"`);
     expect(mocks.builderProps).not.toHaveBeenCalled();
   });
 

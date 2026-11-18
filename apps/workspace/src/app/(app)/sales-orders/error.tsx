@@ -1,11 +1,22 @@
 'use client';
 
+import { SessionUnavailableNotice } from '@/components/shell/session-unavailable-notice';
+import { isSessionUnavailable } from '@/lib/session-unavailable';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Page, PageHeader } from '@/components/ui/page';
 
 /** Last-resort boundary for the sales orders list: say what happened, offer a retry. */
-export default function SalesOrdersError({ reset }: { error: Error; reset: () => void }) {
+export default function SalesOrdersError({
+  error,
+  reset,
+  retry,
+}: {
+  error: unknown;
+  reset: () => void;
+  retry: () => void;
+}) {
+  if (isSessionUnavailable(error)) return <SessionUnavailableNotice retry={retry} />;
   return (
     <Page width="narrow">
       <PageHeader title="Sales orders" />

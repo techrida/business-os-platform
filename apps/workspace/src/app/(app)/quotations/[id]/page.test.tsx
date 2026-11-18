@@ -142,6 +142,7 @@ function detail(over: Record<string, unknown> = {}): QuotationDetail {
     ],
     customerName: 'Big Kahuna Burger Ltd.',
     contacts: [],
+    capabilities: { canEdit: false, canRevise: true },
     ...over,
   });
 }
@@ -151,7 +152,7 @@ async function render(id: string = ID): Promise<string> {
 }
 
 beforeEach(() => {
-  mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
+  mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
   mocks.notFound.mockClear();
 });

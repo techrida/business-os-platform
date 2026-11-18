@@ -3,16 +3,15 @@
 .body {
   display: flex;
   min-height: 0;
-  padding: 0 24px 16px;
 }
 
 .stage {
-  display: flex;
+  display: grid;
   flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
   min-width: 0;
-  min-height: 240px;
+  min-height: 0;
   border: var(--border-width-thin) solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--surface-muted);
@@ -21,11 +20,8 @@
 
 /* A page of a PDF: the viewer hints in the URL fit the whole page; the frame takes the full stage. */
 .frame {
-  flex: 1 1 auto;
-  align-self: stretch;
   width: 100%;
   height: 100%;
-  min-height: 240px;
   border: 0;
   background: var(--surface-default);
 }
@@ -47,8 +43,9 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: 240px;
-  padding: 24px;
+  min-width: 0;
+  min-height: min-content;
+  padding: var(--spacing-section);
   border: var(--border-width-thin) dashed var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface-subtle);
@@ -56,11 +53,16 @@
 }
 
 .fallbackIcon {
-  color: var(--icon-secondary);
+  box-sizing: content-box;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-brand);
+  color: var(--icon-brand);
 }
 
 .fallbackTitle {
   margin: 8px 0 0;
+  overflow-wrap: anywhere;
   font-size: var(--font-size-body-large);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body-large);

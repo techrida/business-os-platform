@@ -5,7 +5,7 @@ import type { Session } from './session';
 
 vi.mock('server-only', () => ({}));
 vi.mock('./api-admin', () => ({ listUsers: vi.fn() }));
-const session = { accessToken: 'test-token' } as Session;
+const session = { accessToken: 'test-token', roles: ['founder'] } as Session;
 beforeEach(() => vi.resetAllMocks());
 it('resolves all directory pages as the caller and keeps unnamed references out of labels', async () => {
   vi.mocked(listUsers)
@@ -33,4 +33,9 @@ it('resolves all directory pages as the caller and keeps unnamed references out 
 it('keeps business records usable when directory access is denied', async () => {
   vi.mocked(listUsers).mockRejectedValue(new Error('denied'));
   expect(await userNames(session)).toEqual(new Map());
+});
+
+it('skips the admin directory when resolving labels for Sales', async () => {
+  expect(await userNames({ ...session, roles: ['sales'] })).toEqual(new Map());
+  expect(listUsers).not.toHaveBeenCalled();
 });

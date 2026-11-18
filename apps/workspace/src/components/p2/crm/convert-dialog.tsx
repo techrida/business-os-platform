@@ -43,7 +43,9 @@ function initialValues(lead: ConvertLead): Record<string, string> {
 }
 
 /**
- * Convert a qualified lead into a customer, a contact and an opportunity. When the server finds
+ * Convert a qualified lead into a customer, a contact and an opportunity. The contact is required
+ * and needs an email (a new one types it; an existing one without an address cannot be chosen), so
+ * the opportunity's quotations can be sent. When the server finds
  * duplicates, the dialog lists the candidates. The user can link a matching record or provide
  * a reason to create new records. Typed values survive every refusal.
  */
@@ -67,7 +69,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
   const [searching, setSearching] = useState(false);
   const [contacts, setContacts] = useState<{
     customerId: string;
-    options: { id: string; label: string }[];
+    options: { id: string; label: string; disabled?: boolean }[];
     error: string;
   } | null>(null);
   const customerId = values['customerId'] ?? '';
@@ -371,16 +373,6 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
               />
               Link to an existing contact
             </label>
-            <label className={styles.choice}>
-              <input
-                type="radio"
-                name="contactMode"
-                value="none"
-                checked={contactMode === 'none'}
-                onChange={set('contactMode')}
-              />
-              No contact
-            </label>
 
             {contactMode === 'create' ? (
               <div className={styles.formGrid}>
@@ -395,7 +387,11 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                     />
                   )}
                 </Field>
-                <Field label="Email" hint="Optional." error={err['contactEmail']}>
+                <Field
+                  label="Email"
+                  hint="Required: quotations are sent to it."
+                  error={err['contactEmail']}
+                >
                   {(c) => (
                     <Input
                       name="contactEmail"
@@ -403,6 +399,9 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       value={values['contactEmail']}
                       onChange={set('contactEmail')}
                       autoComplete="off"
+                      spellCheck={false}
+                      maxLength={254}
+                      required
                       {...c}
                     />
                   )}
@@ -454,7 +453,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       </option>
                     ) : null}
                     {(contacts?.customerId === customerId ? contacts.options : []).map((c) => (
-                      <option key={c.id} value={c.id}>
+                      <option key={c.id} value={c.id} disabled={c.disabled}>
                         {c.label}
                       </option>
                     ))}

@@ -291,7 +291,7 @@ describe('ApprovalsController', () => {
     expect(service.reroute).toHaveBeenCalledWith(ID);
   });
 
-  it('keeps static permissions where possible and delegates record-specific head eligibility to the service', () => {
+  it('keeps static permissions where possible and delegates record-specific eligibility to the service', () => {
     const expected: Record<string, string> = {
       preview: 'approvals.requests.read',
       reroute: 'approvals.requests.reroute',

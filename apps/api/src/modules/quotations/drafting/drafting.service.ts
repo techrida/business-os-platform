@@ -12,9 +12,13 @@
 //   so a quotation of another entity, or of another owner under `own` scope, is a 404 and never in the list.
 // - updateDraft (Part 3) re-prices the merged draft content and guards the write with the row version.
 import {
+  canReviseQuotation,
   type CreateQuotationBody,
   type DocumentVersionStatus,
+  isQuotationEditable,
+  type ListQuotationsQuery,
   type Permission,
+  type QuotationCapabilities,
   type QuotationDetail,
   type QuotationDto,
   type QuotationListItem,
@@ -50,11 +54,12 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
-import { type Principal } from '../../../platform/authz/can';
+import { can, type Principal, type ResourceRef } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { quotationRef } from '../preview/quotation-preview.service';
 import { PricingService } from '../pricing/pricing.service';
 import type { PricingInput } from '../pricing/pricing.types';
 import { DraftingCaller } from './drafting.caller';
@@ -188,6 +193,41 @@ export function pricingInputOf(
       unitCost: line.unitCost ?? null,
     })),
     discount: content.discount ?? null,
+  };
+}
+
+/**
+ * The record updateDraft() checks `quotation.draft` against: the stored owner, so under `own` scope a
+ * colleague's quotation is read-only. One function, so the capability and the command cannot drift.
+ */
+export function draftRefOf(q: {
+  tenantId: string;
+  organizationId: string;
+  ownerUserId: string | null;
+  customerPartyId: string | null;
+}): ResourceRef {
+  return {
+    tenantId: q.tenantId,
+    organizationId: q.organizationId,
+    ownerUserId: q.ownerUserId,
+    customerPartyId: q.customerPartyId,
+  };
+}
+
+/**
+ * What `p` may do with a quotation whose current version has `status`, by the same rules the commands
+ * enforce: updateDraft() (Draft or Returned, `quotation.draft` on the record) and ReviseService.revise()
+ * (a revisable status, `quotation.revise` on quotationRef()). Pure, so a screen can trust it and a test
+ * can check it without a database.
+ */
+export function capabilitiesOf(
+  p: Principal,
+  q: Parameters<typeof draftRefOf>[0],
+  status: QuotationStatus,
+): QuotationCapabilities {
+  return {
+    canEdit: isQuotationEditable(status) && can(p, 'quotation.draft', draftRefOf(q)).allowed,
+    canRevise: canReviseQuotation(status) && can(p, 'quotation.revise', quotationRef(q)).allowed,
   };
 }
 
@@ -340,11 +380,20 @@ export class DraftingService {
 
   // -------------------------------------------------------------------------------------------------- reads
 
-  /** The quotations of the acting entity the caller may read, newest first; `status` is the current version's. */
-  async list(status?: QuotationStatus): Promise<QuotationListItem[]> {
+  /**
+   * The quotations of the acting entity the caller may read, newest first. `status` is the current version's;
+   * `opportunityId` keeps one opportunity's quotations (a filter on top of the read scope, never a widening).
+   */
+  async list(query: ListQuotationsQuery = {}): Promise<QuotationListItem[]> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
+    const { status, opportunityId } = query;
     const visible = scopeWhereFor(principal, quotations, 'quotation.read');
+    const where = and(
+      visible,
+      status === undefined ? undefined : eq(quotationVersions.status, status),
+      opportunityId === undefined ? undefined : eq(quotations.opportunityId, opportunityId),
+    );
     return withTx(this.db, scope, actor, async (tx) => {
       const rows = await tx
         .select({
@@ -372,12 +421,13 @@ export class DraftingService {
           users,
           and(eq(users.tenantId, quotations.tenantId), eq(users.id, quotations.ownerUserId)),
         )
-        .where(status === undefined ? visible : and(visible, eq(quotationVersions.status, status)))
+        .where(where)
         .orderBy(desc(quotations.createdAt), desc(quotations.id));
       return rows.map((r) =>
         toQuotationListItem(r.quotation, r.current, {
           customerName: r.customerName,
           ownerName: r.ownerName,
+          canEdit: capabilitiesOf(principal, r.quotation, r.current.status).canEdit,
         }),
       );
     });
@@ -439,12 +489,18 @@ export class DraftingService {
           ),
         )
         .orderBy(asc(customerContacts.fullName), asc(customerContacts.id));
+      const current = versionRows.find((v) => v.id === quotation.currentVersionId);
       return toQuotationDetail({
         quotation,
         versions,
         statusHistory,
         customerName: customer.legalName,
         contacts,
+        // No current version: toQuotationDetail refuses the answer anyway, so nothing is offered.
+        capabilities:
+          current === undefined
+            ? { canEdit: false, canRevise: false }
+            : capabilitiesOf(principal, quotation, current.status),
       });
     });
   }
@@ -506,12 +562,7 @@ export class DraftingService {
     const quotation = await this.findVisible(tx, principal, id);
     // The record check uses the stored owner: under `own`, a colleague's quotation is read-only.
     const action: Permission = 'quotation.draft';
-    this.authz.assert(action, {
-      tenantId: quotation.tenantId,
-      organizationId: quotation.organizationId,
-      ownerUserId: quotation.ownerUserId,
-      customerPartyId: quotation.customerPartyId,
-    });
+    this.authz.assert(action, draftRefOf(quotation));
     const version = await this.findVersion(tx, quotation, versionId, true);
     if (version.status !== 'draft' && version.status !== 'returned') throw notEditable();
 

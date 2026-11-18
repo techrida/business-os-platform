@@ -206,6 +206,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
             number={quotation.number}
             current={current}
             contacts={contacts}
+            capabilities={detail.capabilities}
             reloadHref={path}
           />
         ) : null}

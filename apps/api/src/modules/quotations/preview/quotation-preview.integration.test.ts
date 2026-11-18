@@ -354,7 +354,20 @@ describe('POST /v1/quotations/:id/versions/:vid/preview', () => {
     expect(result.route.blocked).toBe(false);
     // A requester sees the steps, not the people.
     expect(result.route.steps.every((s) => s.eligibleUserIds.length === 0)).toBe(true);
-    expect(res.text).not.toContain('Sita Sharma');
+    expect(result.route.steps.every((s) => (s.eligibleStaffNames ?? []).length === 0)).toBe(true);
+    // Except for the one choice they make (demo 2026-11-17): who decides the first step of THIS quote. Only that
+    // step's people are offered, by name and id (the select's value); the later steps' people stay hidden.
+    expect(result.approverChoice).toEqual({
+      seq: 1,
+      options: [
+        {
+          userId: U.acc,
+          name: 'Sita Sharma',
+          roleKey: 'accountant',
+          hasEmail: expect.any(Boolean) as unknown,
+        },
+      ],
+    });
   });
 
   it('shows eligible staff names to an approver without returning their identifiers', async () => {
@@ -368,7 +381,9 @@ describe('POST /v1/quotations/:id/versions/:vid/preview', () => {
       eligibleStaffNames: ['Sita Sharma'],
       eligibleUserIds: [],
     });
-    expect(res.text).not.toContain(U.acc);
+    // The route itself carries no identifiers; only the first-step choice does.
+    expect(JSON.stringify(result.route)).not.toContain(U.acc);
+    expect(result.approverChoice?.options.map((o) => o.userId)).toEqual([U.acc]);
   });
 
   it('adds management, and only management, for a 13% discount on a quote under 1 lakh', async () => {

@@ -1,6 +1,6 @@
 .field {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -9,16 +9,19 @@
   font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-body-small);
+  letter-spacing: var(--letter-spacing-medium);
 }
 
 .hint {
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
 }
 
 .error {
   color: var(--status-error);
+  overflow-wrap: anywhere;
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-caption);
@@ -26,14 +29,14 @@
 
 .control {
   width: 100%;
-  min-height: 40px;
-  padding: 0 12px;
+  min-height: 42px;
+  padding: 10px 12px;
   border: var(--border-width-thin) solid var(--input-border);
   border-radius: var(--radius-lg);
   background: var(--input-bg);
   color: var(--input-text);
-  font-size: var(--font-size-body);
-  line-height: var(--line-height-body);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
   transition: border-color 120ms ease;
 }
 
@@ -41,7 +44,7 @@
   color: var(--input-placeholder);
 }
 
-.control:hover {
+.control:hover:not(:disabled) {
   border-color: var(--input-hover-border);
 }
 
@@ -60,8 +63,7 @@
 }
 
 .textarea {
-  min-height: 96px;
-  padding-block: 10px;
+  min-height: 120px;
   resize: vertical;
 }
 
@@ -73,7 +75,7 @@
 
 .select {
   appearance: none;
-  padding-inline-end: 36px;
+  padding-inline-end: 40px;
   cursor: pointer;
 }
 
@@ -84,4 +86,15 @@
   color: var(--icon-secondary);
   transform: translateY(-50%);
   pointer-events: none;
+}
+
+.select:disabled + .caret {
+  color: var(--icon-disabled);
+}
+
+/* Keep text entry at 16px on touch screens to avoid automatic focus zoom. */
+@media (pointer: coarse) {
+  .control {
+    font-size: max(16px, var(--font-size-body-small));
+  }
 }

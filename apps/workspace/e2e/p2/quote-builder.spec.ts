@@ -21,7 +21,9 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
 
   await test.step('add a typed line and save the draft', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/quotations/new?opportunityId=${opportunityId}`);
+    // `another=1`: start a new quotation even if an earlier run left a draft on this opportunity
+    // (without it, the New page resumes that draft instead).
+    await page.goto(`/quotations/new?opportunityId=${opportunityId}&another=1`);
     await expect(page.getByRole('heading', { name: 'New quotation', level: 1 })).toBeVisible();
     await expect(totals.getByText('Save the draft to see the totals.')).toBeVisible();
     await expect(submit).toHaveCount(0);
