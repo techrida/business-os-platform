@@ -350,51 +350,55 @@ export default async function VerificationCasePage({
         </Table>
       </Panel>
       <div className={styles.supporting}>
-        <Panel title="Review history">
-          {history !== null ? (
-            <>
-              {history.items.length > 0 ? (
-                <ol className={styles.history}>
-                  {history.items.map((entry) => (
-                    <li key={entry.id} className={styles.historyEntry}>
-                      <Icon
-                        name={entry.decision === 'approve' ? 'check-circle' : 'x-circle'}
-                        size={16}
-                        className={entry.decision === 'approve' ? styles.approved : styles.rejected}
-                      />
-                      <div className={styles.historyText}>
-                        <p className={styles.itemName}>
-                          {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'} ·{' '}
-                          {entry.decision === 'approve' ? 'Approved' : 'Rejected'}
-                        </p>
-                        <p className={styles.note}>
-                          <time dateTime={entry.reviewedAt}>{when(entry.reviewedAt)}</time>
-                          {' · '}
-                          {entry.reviewerName || 'a staff member'}
-                        </p>
-                        {entry.comment ? <p className={styles.comment}>{entry.comment}</p> : null}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className={styles.note}>No decisions recorded.</p>
-              )}
-              {history.nextCursor ? (
-                <Link
-                  className={styles.caseLink}
-                  href={`${path}?before=${encodeURIComponent(history.nextCursor)}`}
-                >
-                  Earlier decisions
-                </Link>
-              ) : null}
-            </>
-          ) : (
-            <Alert tone="error" actions={<Link href={path}>Reload this case</Link>}>
-              Review history could not be loaded.
-            </Alert>
-          )}
-        </Panel>
+        {!vendor && (
+          <Panel title="Review history">
+            {history !== null ? (
+              <>
+                {history.items.length > 0 ? (
+                  <ol className={styles.history}>
+                    {history.items.map((entry) => (
+                      <li key={entry.id} className={styles.historyEntry}>
+                        <Icon
+                          name={entry.decision === 'approve' ? 'check-circle' : 'x-circle'}
+                          size={16}
+                          className={
+                            entry.decision === 'approve' ? styles.approved : styles.rejected
+                          }
+                        />
+                        <div className={styles.historyText}>
+                          <p className={styles.itemName}>
+                            {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'} ·{' '}
+                            {entry.decision === 'approve' ? 'Approved' : 'Rejected'}
+                          </p>
+                          <p className={styles.note}>
+                            <time dateTime={entry.reviewedAt}>{when(entry.reviewedAt)}</time>
+                            {' · '}
+                            {entry.reviewerName || 'a staff member'}
+                          </p>
+                          {entry.comment ? <p className={styles.comment}>{entry.comment}</p> : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className={styles.note}>No decisions recorded.</p>
+                )}
+                {history.nextCursor ? (
+                  <Link
+                    className={styles.caseLink}
+                    href={`${path}?before=${encodeURIComponent(history.nextCursor)}`}
+                  >
+                    Earlier decisions
+                  </Link>
+                ) : null}
+              </>
+            ) : (
+              <Alert tone="error" actions={<Link href={path}>Reload this case</Link>}>
+                Review history could not be loaded.
+              </Alert>
+            )}
+          </Panel>
+        )}
         {c.looseEvidence?.length ? (
           <Panel
             as="aside"
