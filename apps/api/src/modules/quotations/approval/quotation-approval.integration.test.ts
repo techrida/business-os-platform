@@ -767,7 +767,7 @@ describe('quotation approval: tamper after submit', () => {
 
 describe('quotation approval: the author names the first-step approver', () => {
   /** More people: a second accountant and a Sales colleague of entity A, and people who must be refused. */
-  const X = { acc2: '', mate: '', wh: '', accB: '', otherTenant: '' };
+  const X = { acc2: '', mate: '', receiver: '', accB: '', otherTenant: '' };
 
   beforeAll(async () => {
     const [owner] = await read((tx) =>
@@ -780,7 +780,7 @@ describe('quotation approval: the author names the first-step approver', () => {
       (await createStaffUser(appPool, { ...scope, idpOrgId, roleKeys: [roleKey] })).userId;
     X.acc2 = await staffOf(scopeA, 'accountant');
     X.mate = await staffOf(scopeA, 'sales');
-    X.wh = await staffOf(scopeA, 'warehouse');
+    X.receiver = await staffOf(scopeA, 'receiver');
     X.accB = await staffOf(scopeB, 'accountant');
     const other = await createTenantWithEntity(appPool, { code: 'OTHER-T' });
     X.otherTenant = await staffOf(
@@ -793,7 +793,7 @@ describe('quotation approval: the author names the first-step approver', () => {
   beforeEach(() => {
     roles.accountant = [U.acc, X.acc2];
     roles.sales = [f.ownerUserId, X.mate];
-    roles.warehouse = [X.wh];
+    roles.receiver = [X.receiver];
   });
 
   const submitNaming = (
@@ -862,7 +862,6 @@ describe('quotation approval: the author names the first-step approver', () => {
     // The later steps are unchanged: finance is next, open to finance as before.
     expect(decided.steps[1]).toMatchObject({ roleKey: 'finance', status: 'active' });
     expect(decided.steps[1]!.assigneeUserId ?? null).toBeNull();
-
   });
 
   it('a named Sales colleague sees and decides only that step, and nothing else', async () => {
@@ -899,11 +898,32 @@ describe('quotation approval: the author names the first-step approver', () => {
     expect([403, 404]).toContain(later.getStatus());
   });
 
+  it('admits only the original Sales decision for replay after the Finance step activates', async () => {
+    const draftQuote = await draft('50000.00');
+    await submitNaming(draftQuote, X.mate);
+    const [request] = await requestsOf(draftQuote.versionId);
+    const id = request!.id;
+    const key = randomUUID();
+    const action = { action: 'approve' as const, expectedVersion: await requestVersionOf(id) };
+    as(X.mate, 'sales');
+    try {
+      await approvals.getForAction(id, action, key);
+      const result = await approvals.act(id, action, key);
+      await approvals.getForAction(id, action, key);
+      expect(await approvals.act(id, action, key)).toEqual(result);
+      await expect(approvals.getForAction(id, action, randomUUID())).rejects.toMatchObject({
+        status: 404,
+      });
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+  });
+
   it('refuses the author, another entity, another tenant and an ineligible user at submit, writing nothing', async () => {
     // A directory that (wrongly) lists people of entity B and of another tenant as accountants: the server's own
     // tenant, entity and active-staff check must still refuse them.
     roles.accountant = [U.acc, X.acc2, X.accB, X.otherTenant];
-    for (const who of [f.ownerUserId, X.accB, X.otherTenant, X.wh, U.fin]) {
+    for (const who of [f.ownerUserId, X.accB, X.otherTenant, X.receiver, U.fin]) {
       const d = await draft('50000.00');
       const error = await httpErrorOf(submitNaming(d, who));
       expect(error.getStatus()).toBe(422);
