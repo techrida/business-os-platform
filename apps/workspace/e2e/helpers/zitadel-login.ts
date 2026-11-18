@@ -187,6 +187,7 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
   // "set up 2FA" page (the seed did not register TOTP), or straight back to the app (MFA off).
   // Poll until one shows; the redirect chain can take a few seconds.
   let otpDone = false;
+  let passwordRetried = false;
   let deadline = Date.now() + 30_000;
   for (;;) {
     const state = await classify(page, appOrigin);
@@ -204,6 +205,18 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
         deadline = Date.now() + 30_000;
         otpDone = true;
       }
+    }
+    if (
+      !otpDone &&
+      !passwordRetried &&
+      (await password(page).isVisible()) &&
+      (await page.getByText('Could not verify password', { exact: true }).isVisible())
+    ) {
+      // The development login can show this error after the first password check succeeds.
+      // Retry the real password step once, then leave any persistent error visible to the test.
+      passwordRetried = true;
+      await submitCredential(page, password(page), who.password);
+      deadline = Date.now() + 30_000;
     }
     if (Date.now() > deadline) {
       throw new Error(
