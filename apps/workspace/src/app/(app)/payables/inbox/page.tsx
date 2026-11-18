@@ -72,7 +72,7 @@ export default async function BillInboxPage() {
   return (
     <Page>
       {header}
-      <Panel title="Waiting for a bill">
+      <Panel title="Waiting for a bill" actions={<Badge tone="neutral">{rows.length}</Badge>}>
         {rows.length === 0 ? (
           <EmptyState title="The inbox is empty." icon="check-circle" headingLevel={3}>
             When a vendor sends an invoice through the portal, it appears here.
@@ -103,7 +103,7 @@ export default async function BillInboxPage() {
                       ) : (
                         <span className={styles.quiet}>Not named</span>
                       )}
-                      {s.note !== null ? <span className={styles.note}> {s.note}</span> : null}
+                      {s.note !== null ? <span className={styles.rowNote}>{s.note}</span> : null}
                     </Td>
                     <Td>
                       {s.vendorInvoiceNo !== null ? (

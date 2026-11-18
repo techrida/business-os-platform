@@ -8,7 +8,6 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listBills, type BillListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
@@ -97,79 +96,77 @@ export default async function BillsPage({
           Show bills
         </Button>
       </form>
-      <Panel title="Bills">
-        {bills.length === 0 ? (
-          <EmptyState
-            title={status === undefined ? 'No bills yet.' : 'No bills with this status.'}
-            icon="file-text"
-            headingLevel={3}
-            action={
-              grants.enter && status === undefined ? (
-                <LinkButton href="/payables/inbox" variant="secondary">
-                  Open the inbox
-                </LinkButton>
-              ) : undefined
-            }
-          >
-            {status === undefined
-              ? 'A bill appears here once an invoice from the inbox is keyed in.'
-              : 'Choose another status, or show every status.'}
-          </EmptyState>
-        ) : (
-          <Table caption="Vendor bills, newest first" minWidth={900}>
-            <thead>
-              <tr>
-                <Th>Bill</Th>
-                <Th>Vendor</Th>
-                <Th>Vendor invoice</Th>
-                <Th>Invoice date</Th>
-                <Th>Status</Th>
-                <Th>Match</Th>
-                <Th align="end">Payable</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {bills.map((b) => {
-                const st = BILL_STATUS_LABEL[b.status];
-                const match = MATCH_STATUS_LABEL[b.matchStatus];
-                return (
-                  <tr key={b.id}>
-                    <Td>
-                      <Link
-                        href={`/payables/bills/${encodeURIComponent(b.id)}`}
-                        className={styles.name}
-                      >
-                        {b.number ?? 'Draft bill'}
-                      </Link>
-                      {b.kind === 'vendor_credit_note' ? (
-                        <span className={styles.note}> Credit note</span>
-                      ) : null}
-                    </Td>
-                    <Td>
-                      <span className={styles.long}>{b.vendorName}</span>
-                    </Td>
-                    <Td>
-                      <span className={styles.long}>{b.vendorInvoiceNo}</span>
-                    </Td>
-                    <Td nowrap>
-                      <time dateTime={b.invoiceDate}>{when(b.invoiceDate, 'date')}</time>
-                    </Td>
-                    <Td nowrap>
-                      <Badge tone={st.tone}>{st.text}</Badge>
-                    </Td>
-                    <Td nowrap>
-                      <Badge tone={match.tone}>{match.text}</Badge>
-                    </Td>
-                    <Td align="end" nowrap>
-                      <span className={styles.numeric}>{poMoney(b.payableTotal, b.currency)}</span>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </Panel>
+      {bills.length === 0 ? (
+        <EmptyState
+          title={status === undefined ? 'No bills yet.' : 'No bills with this status.'}
+          icon="file-text"
+          headingLevel={2}
+          action={
+            grants.enter && status === undefined ? (
+              <LinkButton href="/payables/inbox" variant="secondary">
+                Open the inbox
+              </LinkButton>
+            ) : undefined
+          }
+        >
+          {status === undefined
+            ? 'A bill appears here once an invoice from the inbox is keyed in.'
+            : 'Choose another status, or show every status.'}
+        </EmptyState>
+      ) : (
+        <Table caption="Vendor bills, newest first" minWidth={900}>
+          <thead>
+            <tr>
+              <Th>Bill</Th>
+              <Th>Vendor</Th>
+              <Th>Vendor invoice</Th>
+              <Th>Invoice date</Th>
+              <Th>Status</Th>
+              <Th>Match</Th>
+              <Th align="end">Payable</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {bills.map((b) => {
+              const st = BILL_STATUS_LABEL[b.status];
+              const match = MATCH_STATUS_LABEL[b.matchStatus];
+              return (
+                <tr key={b.id}>
+                  <Td>
+                    <Link
+                      href={`/payables/bills/${encodeURIComponent(b.id)}`}
+                      className={styles.name}
+                    >
+                      {b.number ?? 'Draft bill'}
+                    </Link>
+                    {b.kind === 'vendor_credit_note' ? (
+                      <span className={styles.note}> Credit note</span>
+                    ) : null}
+                  </Td>
+                  <Td>
+                    <span className={styles.long}>{b.vendorName}</span>
+                  </Td>
+                  <Td>
+                    <span className={styles.long}>{b.vendorInvoiceNo}</span>
+                  </Td>
+                  <Td nowrap>
+                    <time dateTime={b.invoiceDate}>{when(b.invoiceDate, 'date')}</time>
+                  </Td>
+                  <Td nowrap>
+                    <Badge tone={st.tone}>{st.text}</Badge>
+                  </Td>
+                  <Td nowrap>
+                    <Badge tone={match.tone}>{match.text}</Badge>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{poMoney(b.payableTotal, b.currency)}</span>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
     </Page>
   );
 }

@@ -1,17 +1,14 @@
 'use client';
 
-import { useActionState, useRef, useState, type ReactNode } from 'react';
+import { useActionState, useId, useRef, useState, type ReactNode } from 'react';
 
 import {
   ActionDialog,
-  DialogCloseButton,
   PendingLine,
   useFocusOnProblem,
-  useReloadWhenClosed,
-} from '@/components/ui/transaction-dialog';
+} from '@/components/p2/quotations/action-dialog';
 import actions from '@/components/p2/quotations/actions.module.css';
 import { Alert } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';
 
 import type { ActionState } from '../../procurement/orders/_lib/state';
@@ -25,7 +22,7 @@ import {
 } from '../actions';
 
 /**
- * The action dialogs of the bill page and the inbox: a trigger button and a native modal dialog
+ * The action dialogs of the bill page and the inbox: a trigger button and a modal dialog
  * (focus trapped, Esc closes). The page makes one Idempotency-Key per render and the action returns
  * the key the next submit must use (kept after a timeout, rotated after a 4xx). Once the API
  * accepts, the dialog says what happened and closing it reloads the page with the new status.
@@ -46,7 +43,10 @@ function Form({
   common,
   submitLabel,
   pendingWords,
-  tone = 'primary',
+  triggerLabel,
+  triggerVariant,
+  title,
+  intro,
   fields,
 }: {
   action: (prev: ActionState, form: FormData) => Promise<ActionState>;
@@ -54,7 +54,10 @@ function Form({
   common: Common;
   submitLabel: string;
   pendingWords: string;
-  tone?: 'primary' | 'secondary';
+  triggerLabel: string;
+  triggerVariant?: 'primary' | 'secondary';
+  title: string;
+  intro: string;
   fields?: (errors: Record<string, string>) => ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {
@@ -63,43 +66,45 @@ function Form({
   const wrapRef = useRef<HTMLDivElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrapRef, summaryRef);
-  useReloadWhenClosed(state.done !== undefined, wrapRef);
+  const formId = useId();
 
   return (
-    <div ref={wrapRef}>
-      {state.done !== undefined ? (
-        <div className={actions.form}>
-          <p role="status">{state.done} Close this to see the new status.</p>
-          <div className={actions.buttons}>
-            <DialogCloseButton variant="primary">Done</DialogCloseButton>
+    <ActionDialog
+      title={title}
+      intro={intro}
+      triggerLabel={triggerLabel}
+      triggerVariant={triggerVariant ?? 'secondary'}
+      formId={formId}
+      pending={pending}
+      done={state.done !== undefined}
+      submitLabel={submitLabel}
+    >
+      <div ref={wrapRef}>
+        {state.done !== undefined ? (
+          <div className={actions.form}>
+            <p role="status">{state.done} Close this to see the new status.</p>
           </div>
-        </div>
-      ) : (
-        <form action={formAction} className={actions.form}>
-          <input type="hidden" name={idField} value={common.targetId} />
-          <input type="hidden" name="idempotencyKey" value={state.key} />
-          {state.error ? (
-            <Alert
-              ref={summaryRef}
-              tabIndex={-1}
-              tone="error"
-              role="alert"
-              actions={state.reload ? <a href={common.reloadHref}>Reload this page</a> : null}
-            >
-              {state.error}
-            </Alert>
-          ) : null}
-          {fields?.(state.errors ?? {})}
-          <div className={actions.buttons}>
-            <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-            <Button type="submit" variant={tone} disabled={pending}>
-              {submitLabel}
-            </Button>
-          </div>
-          <PendingLine pending={pending} words={pendingWords} />
-        </form>
-      )}
-    </div>
+        ) : (
+          <form id={formId} action={formAction} className={actions.form}>
+            <input type="hidden" name={idField} value={common.targetId} />
+            <input type="hidden" name="idempotencyKey" value={state.key} />
+            {state.error ? (
+              <Alert
+                ref={summaryRef}
+                tabIndex={-1}
+                tone="error"
+                role="alert"
+                actions={state.reload ? <a href={common.reloadHref}>Reload this page</a> : null}
+              >
+                {state.error}
+              </Alert>
+            ) : null}
+            {fields?.(state.errors ?? {})}
+            <PendingLine pending={pending} words={pendingWords} />
+          </form>
+        )}
+      </div>
+    </ActionDialog>
   );
 }
 
@@ -130,98 +135,79 @@ function ReasonField({
 
 export function MatchDialog(props: Common) {
   return (
-    <ActionDialog
+    <Form
       triggerLabel="Match again"
       title={`Match ${props.label}`}
       intro="Compares this bill with its purchase order and the receipts again, line by line. Use it after goods were received or the order changed. Nothing is approved by matching."
-    >
-      <Form
-        action={matchBillAction}
-        idField="billId"
-        common={props}
-        submitLabel="Match bill"
-        pendingWords="Matching the bill"
-        tone="secondary"
-      />
-    </ActionDialog>
+      action={matchBillAction}
+      idField="billId"
+      common={props}
+      submitLabel="Match bill"
+      pendingWords="Matching the bill"
+    />
   );
 }
 
 export function SubmitDialog(props: Common) {
   return (
-    <ActionDialog
+    <Form
       triggerLabel="Submit for approval"
       triggerVariant="primary"
       title={`Submit ${props.label}`}
       intro="Sends the bill to its approvers. You cannot approve a bill you keyed in. Once submitted, the bill can no longer be matched or changed."
-    >
-      <Form
-        action={submitBillAction}
-        idField="billId"
-        common={props}
-        submitLabel="Submit for approval"
-        pendingWords="Submitting the bill"
-      />
-    </ActionDialog>
+      action={submitBillAction}
+      idField="billId"
+      common={props}
+      submitLabel="Submit for approval"
+      pendingWords="Submitting the bill"
+    />
   );
 }
 
 export function DiscardBillDialog(props: Common) {
   return (
-    <ActionDialog
+    <Form
       triggerLabel="Discard draft"
       title={`Discard ${props.label}`}
       intro="Discarding keeps this draft in the audit trail and releases its invoice number for a replacement bill. This cannot be undone."
-    >
-      <Form
-        action={discardBillAction}
-        idField="billId"
-        common={props}
-        submitLabel="Discard draft"
-        pendingWords="Discarding the draft bill"
-        tone="secondary"
-      />
-    </ActionDialog>
+      action={discardBillAction}
+      idField="billId"
+      common={props}
+      submitLabel="Discard draft"
+      pendingWords="Discarding the draft bill"
+    />
   );
 }
 
 export function VoidDialog(props: Common) {
   return (
-    <ActionDialog
+    <Form
       triggerLabel="Void bill"
       title={`Void ${props.label}`}
       intro="Voiding cancels an approved bill with a vendor debit note in the payables ledger. It cannot be undone, and it is refused once a payment is allocated or a payment request is open on the bill."
-    >
-      <Form
-        action={voidBillAction}
-        idField="billId"
-        common={props}
-        submitLabel="Void bill"
-        pendingWords="Voiding the bill"
-        tone="secondary"
-        fields={(errors) => <ReasonField errors={errors} />}
-      />
-    </ActionDialog>
+      action={voidBillAction}
+      idField="billId"
+      common={props}
+      submitLabel="Void bill"
+      pendingWords="Voiding the bill"
+      fields={(errors) => <ReasonField errors={errors} />}
+    />
   );
 }
 
 export function RejectDialog(props: Common) {
   return (
-    <ActionDialog
+    <Form
       triggerLabel="Reject"
       title={`Reject ${props.label}`}
       intro="Rejecting closes this submission without making a bill. The reason is kept with the submission."
-    >
-      <Form
-        action={rejectSubmissionAction}
-        idField="submissionId"
-        common={props}
-        submitLabel="Reject submission"
-        pendingWords="Rejecting the submission"
-        tone="secondary"
-        fields={(errors) => <ReasonField errors={errors} hint="The audit trail keeps this." />}
-      />
-    </ActionDialog>
+      action={rejectSubmissionAction}
+      idField="submissionId"
+      common={props}
+      submitLabel="Reject submission"
+      pendingWords="Rejecting the submission"
+      fields={(errors) => <ReasonField errors={errors} hint="The audit trail keeps this." />}
+    />
   );
 }
 
@@ -263,19 +249,16 @@ function ExceptionFields({ errors }: { errors: Record<string, string> }) {
 
 export function ExceptionDialog(props: Common) {
   return (
-    <ActionDialog
+    <Form
       triggerLabel="Request match exception"
       title={`Match exception for ${props.label}`}
       intro="Explain why Finance should accept the variance. The bill remains blocked until Finance approves the exception."
-    >
-      <Form
-        action={requestExceptionAction}
-        idField="billId"
-        common={props}
-        submitLabel="Send to Finance"
-        pendingWords="Requesting the exception"
-        fields={(errors) => <ExceptionFields errors={errors} />}
-      />
-    </ActionDialog>
+      action={requestExceptionAction}
+      idField="billId"
+      common={props}
+      submitLabel="Send to Finance"
+      pendingWords="Requesting the exception"
+      fields={(errors) => <ExceptionFields errors={errors} />}
+    />
   );
 }

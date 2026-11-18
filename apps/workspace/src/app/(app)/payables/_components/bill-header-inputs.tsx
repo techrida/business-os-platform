@@ -5,7 +5,9 @@ import { useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
 import { guessMime } from '@/lib/kernel-ui';
 
 import styles from '../payables.module.css';
@@ -78,6 +80,7 @@ export function BillHeaderInputs({
       }
       setDocumentId(data.documentId);
       onReady(true);
+      toast.success('Invoice uploaded');
     } catch {
       setProblem('The invoice upload was interrupted. Check your connection and try again.');
     } finally {
@@ -141,11 +144,10 @@ export function BillHeaderInputs({
         </Field>
         <Field label="Invoice date (AD)" error={errors['invoiceDate']}>
           {(control) => (
-            <Input
-              type="date"
+            <DatePicker
               name="invoiceDate"
               value={invoiceDate}
-              onChange={(e) => setInvoiceDate(e.target.value)}
+              onChange={setInvoiceDate}
               required
               {...control}
             />
@@ -191,8 +193,7 @@ export function BillHeaderInputs({
       ) : null}
       {documentId ? (
         <p role="status" className={styles.note}>
-          The invoice was uploaded. It must scan clean before the bill can be submitted for
-          approval.
+          The invoice must scan clean before the bill can be submitted for approval.
         </p>
       ) : null}
     </>

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
 import { guessMime } from '@/lib/kernel-ui';
 
 import styles from '../payables.module.css';
@@ -74,6 +75,7 @@ export function InvoiceReplacement({
         return;
       }
       setUploaded(true);
+      toast.success('Replacement invoice uploaded');
     } catch {
       setProblem(
         'The replacement upload was interrupted. Reload the bill to check its file before trying again.',
@@ -89,9 +91,9 @@ export function InvoiceReplacement({
       <Alert
         ref={resultRef}
         tabIndex={-1}
-        tone="success"
+        tone="info"
         role="status"
-        title="The replacement invoice was uploaded"
+        title="Check the scan status"
         actions={<a href={reloadHref}>Reload the bill</a>}
       >
         The new file must scan clean before this bill can be submitted. Reload the bill to check its

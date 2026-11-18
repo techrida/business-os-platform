@@ -9,7 +9,6 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listPaymentRequests, type PaymentRequestListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
@@ -101,50 +100,44 @@ export default async function PaymentRequestsPage({
           Show requests
         </Button>
       </form>
-      <Panel title="Payment requests">
-        {rows.length === 0 ? (
-          <EmptyState
-            title="No payment requests with this status."
-            icon="banknote"
-            headingLevel={3}
-          >
-            Create a draft for approved vendor bills, or choose another status.
-          </EmptyState>
-        ) : (
-          <Table caption="Payment requests, newest first" minWidth={700}>
-            <thead>
-              <tr>
-                <Th>Request</Th>
-                <Th>Vendor</Th>
-                <Th>Status</Th>
-                <Th>Vendor bank account</Th>
-                <Th align="end">Amount</Th>
+      {rows.length === 0 ? (
+        <EmptyState title="No payment requests with this status." icon="banknote" headingLevel={2}>
+          Create a draft for approved vendor bills, or choose another status.
+        </EmptyState>
+      ) : (
+        <Table caption="Payment requests, newest first" minWidth={700}>
+          <thead>
+            <tr>
+              <Th>Request</Th>
+              <Th>Vendor</Th>
+              <Th>Status</Th>
+              <Th>Vendor bank account</Th>
+              <Th align="end">Amount</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <Td>
+                  <Link href={`/payables/payment-requests/${row.id}`}>
+                    {row.number ?? 'Draft request'}
+                  </Link>
+                </Td>
+                <Td>
+                  <Link href={`/vendors/${row.vendorPartyId}`}>View vendor</Link>
+                </Td>
+                <Td>
+                  <Badge tone={PAYMENT_STATUS[row.status].tone}>
+                    {PAYMENT_STATUS[row.status].text}
+                  </Badge>
+                </Td>
+                <Td>Ending {row.bankLast4}</Td>
+                <Td align="end">{poMoney(row.totalAmount, row.currency)}</Td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <Td>
-                    <Link href={`/payables/payment-requests/${row.id}`}>
-                      {row.number ?? 'Draft request'}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <Link href={`/vendors/${row.vendorPartyId}`}>View vendor</Link>
-                  </Td>
-                  <Td>
-                    <Badge tone={PAYMENT_STATUS[row.status].tone}>
-                      {PAYMENT_STATUS[row.status].text}
-                    </Badge>
-                  </Td>
-                  <Td>Ending {row.bankLast4}</Td>
-                  <Td align="end">{poMoney(row.totalAmount, row.currency)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Panel>
+            ))}
+          </tbody>
+        </Table>
+      )}
     </Page>
   );
 }

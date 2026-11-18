@@ -1,17 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useActionState, useRef, useState } from 'react';
+import { useActionState, useId, useRef, useState } from 'react';
 
 import {
   ActionDialog,
-  DialogCloseButton,
   PendingLine,
   useFocusOnProblem,
-  useReloadWhenClosed,
-} from '@/components/ui/transaction-dialog';
+} from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
 import { money } from '@/lib/kernel-format';
@@ -79,152 +78,159 @@ export function PaymentRequestEntry({
             {state.error}
           </Alert>
         ) : null}
-        <div className={styles.lineFields}>
-          <Field label="Vendor" error={errors['vendorPartyId']}>
-            {(control) => (
-              <Select
-                name="vendorPartyId"
-                value={header.vendorPartyId}
-                onChange={(e) => {
-                  const vendorPartyId = e.target.value;
-                  setHeader((current) => ({
-                    ...current,
-                    vendorPartyId,
-                    currency:
-                      items.find((item) => item.vendorPartyId === vendorPartyId)?.currency ?? 'NPR',
-                  }));
-                  setRows([{ openItemId: '', amount: '' }]);
-                }}
-                {...control}
-              >
-                <option value="">Choose a vendor</option>
-                {vendors.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          {(
-            [
-              ['fromBankAccountId', 'Paying entity bank account ID'],
-              ['purchaseOrderId', 'Purchase order ID (optional)'],
-            ] as const
-          ).map(([name, label]) => (
-            <Field key={name} label={label} error={errors[name]}>
+        <Panel title="Request details">
+          <div className={styles.lineFields}>
+            <Field label="Vendor" error={errors['vendorPartyId']}>
               {(control) => (
-                <Input
-                  name={name}
-                  value={header[name]}
-                  onChange={(e) => setHeader((current) => ({ ...current, [name]: e.target.value }))}
-                  autoComplete="off"
-                  spellCheck={false}
+                <Select
+                  name="vendorPartyId"
+                  value={header.vendorPartyId}
+                  onChange={(e) => {
+                    const vendorPartyId = e.target.value;
+                    setHeader((current) => ({
+                      ...current,
+                      vendorPartyId,
+                      currency:
+                        items.find((item) => item.vendorPartyId === vendorPartyId)?.currency ??
+                        'NPR',
+                    }));
+                    setRows([{ openItemId: '', amount: '' }]);
+                  }}
                   {...control}
-                />
+                >
+                  <option value="">Choose a vendor</option>
+                  {vendors.map(([id, name]) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+                </Select>
               )}
             </Field>
-          ))}
-          <Field label="Currency" error={errors['currency']}>
-            {(control) => (
-              <Select
-                name="currency"
-                value={header.currency}
-                onChange={(e) => {
-                  setHeader((current) => ({ ...current, currency: e.target.value }));
-                  setRows([{ openItemId: '', amount: '' }]);
-                }}
-                disabled={header.vendorPartyId === ''}
-                {...control}
-              >
-                {currencies.map((currency) => (
-                  <option key={currency} value={currency}>
-                    {currency}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
-        <p className={styles.note}>
-          Request settlement of this vendor&apos;s approved bills. The platform checks each open
-          item and snapshots the vendor&apos;s active, verified bank account. Available amounts
-          exclude claims by pending and approved requests and are checked again when you save.
-        </p>
-        {rows.map((row, i) => (
-          <fieldset key={i} className={styles.lineGroup}>
-            <legend>Payable item {i + 1}</legend>
-            <div className={styles.lineFields}>
-              <Field label={`Bill ${i + 1}`} error={errors[`allocations.${i}.openItemId`]}>
-                {(control) => (
-                  <Select
-                    name={`allocation:${i}:openItemId`}
-                    value={row.openItemId}
-                    onChange={(e) =>
-                      setRows((current) =>
-                        current.map((line, index) =>
-                          index === i ? { ...line, openItemId: e.target.value } : line,
-                        ),
-                      )
-                    }
-                    disabled={header.vendorPartyId === ''}
-                    {...control}
-                  >
-                    <option value="">Choose an approved bill</option>
-                    {eligible.map((item) => (
-                      <option key={item.openItemId} value={item.openItemId}>
-                        {item.billNumber ?? item.vendorInvoiceNo} · {item.vendorInvoiceNo} ·{' '}
-                        {money(item.availableAmount, item.currency)} available
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-              <Field label={`Amount ${i + 1}`} error={errors[`allocations.${i}.amount`]}>
+            {(
+              [
+                ['fromBankAccountId', 'Paying entity bank account ID'],
+                ['purchaseOrderId', 'Purchase order ID (optional)'],
+              ] as const
+            ).map(([name, label]) => (
+              <Field key={name} label={label} error={errors[name]}>
                 {(control) => (
                   <Input
-                    name={`allocation:${i}:amount`}
-                    value={row.amount}
-                    inputMode="decimal"
+                    name={name}
+                    value={header[name]}
                     onChange={(e) =>
-                      setRows((current) =>
-                        current.map((line, index) =>
-                          index === i ? { ...line, amount: e.target.value } : line,
-                        ),
-                      )
+                      setHeader((current) => ({ ...current, [name]: e.target.value }))
                     }
+                    autoComplete="off"
+                    spellCheck={false}
                     {...control}
                   />
                 )}
               </Field>
-            </div>
-            {rows.length > 1 ? (
-              <div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => setRows((current) => current.filter((_, index) => index !== i))}
+            ))}
+            <Field label="Currency" error={errors['currency']}>
+              {(control) => (
+                <Select
+                  name="currency"
+                  value={header.currency}
+                  onChange={(e) => {
+                    setHeader((current) => ({ ...current, currency: e.target.value }));
+                    setRows([{ openItemId: '', amount: '' }]);
+                  }}
+                  disabled={header.vendorPartyId === ''}
+                  {...control}
                 >
-                  Remove item {i + 1}
-                </Button>
-              </div>
-            ) : null}
-          </fieldset>
-        ))}
-        {rows.length < 200 ? (
-          <div>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={pending}
-              onClick={() => setRows((current) => [...current, { openItemId: '', amount: '' }])}
-            >
-              Add a payable item
-            </Button>
+                  {currencies.map((currency) => (
+                    <option key={currency} value={currency}>
+                      {currency}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </div>
-        ) : null}
-        <div className={styles.formButtons}>
+        </Panel>
+        <Panel title="Payable items">
+          <p className={styles.note}>
+            Request settlement of this vendor&apos;s approved bills. The platform checks each open
+            item and snapshots the vendor&apos;s active, verified bank account. Available amounts
+            exclude claims by pending and approved requests and are checked again when you save.
+          </p>
+          {rows.map((row, i) => (
+            <fieldset key={i} className={styles.lineGroup}>
+              <legend>Payable item {i + 1}</legend>
+              <div className={styles.lineFields}>
+                <Field label={`Bill ${i + 1}`} error={errors[`allocations.${i}.openItemId`]}>
+                  {(control) => (
+                    <Select
+                      name={`allocation:${i}:openItemId`}
+                      value={row.openItemId}
+                      onChange={(e) =>
+                        setRows((current) =>
+                          current.map((line, index) =>
+                            index === i ? { ...line, openItemId: e.target.value } : line,
+                          ),
+                        )
+                      }
+                      disabled={header.vendorPartyId === ''}
+                      {...control}
+                    >
+                      <option value="">Choose an approved bill</option>
+                      {eligible.map((item) => (
+                        <option key={item.openItemId} value={item.openItemId}>
+                          {item.billNumber ?? item.vendorInvoiceNo} · {item.vendorInvoiceNo} ·{' '}
+                          {money(item.availableAmount, item.currency)} available
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+                <Field label={`Amount ${i + 1}`} error={errors[`allocations.${i}.amount`]}>
+                  {(control) => (
+                    <Input
+                      name={`allocation:${i}:amount`}
+                      value={row.amount}
+                      inputMode="decimal"
+                      onChange={(e) =>
+                        setRows((current) =>
+                          current.map((line, index) =>
+                            index === i ? { ...line, amount: e.target.value } : line,
+                          ),
+                        )
+                      }
+                      {...control}
+                    />
+                  )}
+                </Field>
+              </div>
+              {rows.length > 1 ? (
+                <div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => setRows((current) => current.filter((_, index) => index !== i))}
+                  >
+                    Remove item {i + 1}
+                  </Button>
+                </div>
+              ) : null}
+            </fieldset>
+          ))}
+          {rows.length < 200 ? (
+            <div>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={pending}
+                onClick={() => setRows((current) => [...current, { openItemId: '', amount: '' }])}
+              >
+                Add a payable item
+              </Button>
+            </div>
+          ) : null}
+        </Panel>
+        <div className={styles.entryActions}>
           <Button type="submit" disabled={pending || eligible.length === 0}>
             Create draft request
           </Button>
@@ -256,10 +262,14 @@ export function PaymentRequestCommand({
   const wrap = useRef<HTMLDivElement>(null);
   const summary = useRef<HTMLDivElement>(null);
   useFocusOnProblem(state, wrap, summary);
-  useReloadWhenClosed(state.done !== undefined, wrap);
+  const formId = useId();
   const label = cancel ? 'Cancel draft' : 'Submit for approval';
   return (
     <ActionDialog
+      formId={formId}
+      pending={pending}
+      done={state.done !== undefined}
+      submitLabel={label}
       triggerLabel={label}
       title={label}
       intro={
@@ -270,12 +280,9 @@ export function PaymentRequestCommand({
     >
       <div ref={wrap}>
         {state.done ? (
-          <>
-            <p role="status">{state.done}</p>
-            <DialogCloseButton variant="primary">Done</DialogCloseButton>
-          </>
+          <p role="status">{state.done}</p>
         ) : (
-          <form action={action} className={styles.form}>
+          <form id={formId} action={action} className={styles.form}>
             <input type="hidden" name="requestId" value={id} />
             <input type="hidden" name="idempotencyKey" value={state.key} />
             {state.error ? (
@@ -308,12 +315,6 @@ export function PaymentRequestCommand({
                 )}
               </Field>
             ) : null}
-            <div className={styles.formButtons}>
-              <Button type="submit" disabled={pending}>
-                {label}
-              </Button>
-              <DialogCloseButton disabled={pending}>Back</DialogCloseButton>
-            </div>
             <PendingLine
               pending={pending}
               words={cancel ? 'Cancelling the request' : 'Submitting the request'}

@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
+import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
@@ -317,11 +318,7 @@ export default async function BillPage({
       />
 
       <div className={styles.stack}>
-        {justCreated ? (
-          <Alert tone="success" role="status" title="The bill was created">
-            It was matched where it names an order. Its totals come from the invoice lines.
-          </Alert>
-        ) : null}
+        {justCreated ? <SuccessNotice message="The bill was created." /> : null}
         {inVariance ? (
           <Alert tone="warning" role="status" title="This bill is outside the tolerance">
             It cannot be submitted for approval while a line is outside the tolerance. Match it
@@ -340,22 +337,28 @@ export default async function BillPage({
             ) : null}
           </Panel>
         ) : null}
-        <Panel title="Bill">
-          <FactList facts={facts} />
-        </Panel>
-        <Panel title="Totals" description="Worked out by the platform from the lines.">
-          <FactList facts={totals} />
-        </Panel>
-        <Lines bill={bill} />
-        <MatchPanel bill={bill} />
-        {grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance' ? (
-          <Panel
-            title="Match exception"
-            description="Finance can approve a reasoned exception to the match tolerance."
-          >
-            <ExceptionDialog {...common} idempotencyKey={randomUUID()} />
-          </Panel>
-        ) : null}
+        <div className={styles.columns}>
+          <div className={styles.stack}>
+            <Panel title="Bill">
+              <FactList facts={facts} />
+            </Panel>
+            <Lines bill={bill} />
+            <MatchPanel bill={bill} />
+          </div>
+          <aside className={styles.stack}>
+            <Panel title="Totals" description="Worked out by the platform from the lines.">
+              <FactList facts={totals} />
+            </Panel>
+            {grants.enter && bill.status === 'variance' && bill.matchStatus === 'variance' ? (
+              <Panel
+                title="Match exception"
+                description="Finance can approve a reasoned exception to the match tolerance."
+              >
+                <ExceptionDialog {...common} idempotencyKey={randomUUID()} />
+              </Panel>
+            ) : null}
+          </aside>
+        </div>
       </div>
     </Page>
   );

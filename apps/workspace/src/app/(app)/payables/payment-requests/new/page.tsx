@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
-import { Panel } from '@/components/ui/panel';
 import { requireStaffSession } from '@/lib/bff';
 import { listPaymentRequestItems, type PaymentRequestItem } from '@/lib/api-payables';
 
@@ -29,7 +28,7 @@ export default async function NewPaymentRequestPage() {
     }
   }
   return (
-    <Page width="narrow">
+    <Page>
       <Breadcrumb
         items={[
           { label: 'Payment requests', href: '/payables/payment-requests' },
@@ -55,9 +54,7 @@ export default async function NewPaymentRequestPage() {
             have claimed the remaining balances.
           </Alert>
         ) : (
-          <Panel title="Request details">
-            <PaymentRequestEntry idempotencyKey={randomUUID()} items={items} />
-          </Panel>
+          <PaymentRequestEntry idempotencyKey={randomUUID()} items={items} />
         )
       ) : (
         <Alert tone="info" role="alert">
