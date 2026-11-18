@@ -384,7 +384,7 @@ describe('inbox', () => {
     const out = await html(InboxPage());
     expect(out).toContain('Himal Traders');
     expect(out).toContain('Scanned clean');
-    expect(out).toContain('Scan in progress');
+    expect(out).toContain('Scanning');
     expect(out).toContain(`/payables/bills/new?submission=${SUB}`);
     expect(out).not.toContain(`/payables/bills/new?submission=${BILL}`);
     expect(out).toContain('Waiting for the file scan to pass');
