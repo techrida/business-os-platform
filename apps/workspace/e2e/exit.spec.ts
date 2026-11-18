@@ -50,6 +50,9 @@ import { persona } from './helpers/personas';
 // Real ClamAV scans take a few seconds, mail goes through BullMQ: allow generous waits.
 const SCAN_TIMEOUT_MS = 60_000;
 
+// The full Chromium build includes its inline PDF viewer. The lightweight headless shell does not.
+test.use({ channel: 'chromium' });
+
 /** Approves from an inbox detail page and checks the confirmation banner on the inbox. */
 async function approve(page: Page, comment: string): Promise<void> {
   await page.getByLabel('Comment', { exact: true }).fill(comment);
