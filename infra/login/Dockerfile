@@ -24,6 +24,11 @@ COPY apps/workspace/src/components/shell/brand.tsx apps/workspace/src/components
 COPY apps/workspace/src/components/ui/icon.tsx apps/login/src/components/ui/
 COPY apps/workspace/src/lib/nav.ts apps/login/src/lib/
 
+FROM overlay AS test
+COPY infra/login/patches/otp-tests.patch /tmp/
+RUN git apply --check /tmp/otp-tests.patch && git apply /tmp/otp-tests.patch
+RUN pnpm --filter @zitadel/login test-unit src/components/login-otp.test.tsx
+
 FROM overlay AS build
 ENV NEXT_PUBLIC_BASE_PATH=/ui/v2/login \
     NEXT_TELEMETRY_DISABLED=1
