@@ -9,6 +9,7 @@
 import 'reflect-metadata';
 
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -20,6 +21,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
   ErrorBodySchema,
   VerificationCaseDtoSchema,
+  VerificationReviewHistorySchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -274,6 +276,7 @@ async function attach(caseId: string, status: 'quarantined' | 'clean' | 'infecte
             status,
             sha256: createHash('sha256').update(created.versionId).digest(),
             detectedMime: 'application/pdf',
+            scannedAt: new Date(),
             updatedAt: new Date(),
           })
           .where(eq(documentVersions.id, created.versionId));
@@ -315,7 +318,27 @@ async function fillRequired(
   return dto;
 }
 
-const submitCase = (id: string) => api().post(`/v1/verification-cases/${id}/submit`);
+const submitCase = async (id: string) => {
+  const current = await api().get(`/v1/verification-cases/${id}`);
+  return api()
+    .post(`/v1/verification-cases/${id}/submit`)
+    .set('Idempotency-Key', randomUUID())
+    .send({
+      expectedVersion: VerificationCaseDtoSchema.safeParse(current.body).data?.version ?? 1,
+    });
+};
+async function reviewAll(c: VerificationCaseDto) {
+  let current = c;
+  for (const item of c.checklist.filter((i) => i.documentId)) {
+    const result = await api()
+      .post(`/v1/verification-cases/${c.id}/checklist/${item.key}/decision`)
+      .set('Idempotency-Key', randomUUID())
+      .send({ decision: 'approve', expectedVersion: current.version });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    current = VerificationCaseDtoSchema.parse(result.body);
+  }
+  return current;
+}
 const decide = (id: string, body: Record<string, unknown>, key?: string) => {
   const req = api().post(`/v1/verification-cases/${id}/decision`);
   if (key !== undefined) req.set('Idempotency-Key', key);
@@ -368,6 +391,7 @@ describe('POST /v1/verification-cases', () => {
     const customer = await customers.create(
       {
         legalName: 'Normal form customer',
+        contact: { fullName: 'Test contact', email: 'review@example.test' },
         relationship: 'prospect',
         address: { line1: 'Durbar Marg 1', city: 'Kathmandu', country: 'NP' },
       },
@@ -538,12 +562,20 @@ describe('POST /v1/verification-cases/:id/checklist/remove', () => {
     expect((await removeDocument(draft.id, key, replaced.version)).status).toBe(403);
     as(U.salesA, 'sales');
     expect((await removeDocument(draft.id, key, initialDto.version)).status).toBe(409);
-    expect((await api().get(`/v1/verification-cases/${draft.id}`)).body).toEqual(replaced);
+    expect((await api().get(`/v1/verification-cases/${draft.id}`)).body).toMatchObject(replaced);
 
     const res = await removeDocument(draft.id, key, replaced.version);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const dto = VerificationCaseDtoSchema.parse(res.body);
-    const emptyRow = { key, required: false, status: 'missing', documentId: null, expiresOn: null };
+    const emptyRow = {
+      review: null,
+      evidence: null,
+      key,
+      required: false,
+      status: 'missing',
+      documentId: null,
+      expiresOn: null,
+    };
     expect(dto).toEqual({
       ...replaced,
       version: replaced.version + 1,
@@ -588,6 +620,8 @@ describe('POST /v1/verification-cases/:id/checklist/remove', () => {
       decisionNote: null,
     });
     expect(dto.checklist.find((item) => item.key === key)).toEqual({
+      evidence: null,
+      review: null,
       key,
       required: true,
       status: 'missing',
@@ -606,7 +640,7 @@ describe('POST /v1/verification-cases/:id/submit', () => {
     const c = await openCase();
     const res = await submitCase(c.id);
     expect(res.status).toBe(409);
-    expect(ErrorBodySchema.parse(res.body).error.message).toContain('registration_certificate');
+    expect(ErrorBodySchema.parse(res.body).error.message).toContain('documents');
     expect((await rawCase(c.id)).status).toBe('draft');
   });
 
@@ -624,7 +658,7 @@ describe('POST /v1/verification-cases/:id/submit', () => {
 });
 
 describe('POST /v1/verification-cases/:id/decision', () => {
-  it('approves clean current files after a replacement, a detach, and an unused upload', async () => {
+  it('blocks final approval after all rows are accepted when a loose upload is still scanning', async () => {
     const draft = await fillRequired(await openCase());
     const old = await attach(draft.id, 'infected');
     const withOld = await putDocument(
@@ -661,13 +695,14 @@ describe('POST /v1/verification-cases/:id/decision', () => {
     const submitted = await submitCase(draft.id);
     expect(submitted.status).toBe(200);
     as(U.pmo, 'pmo');
+    const reviewed = await reviewAll(VerificationCaseDtoSchema.parse(submitted.body));
     const decision = await decide(draft.id, {
       decision: 'approve',
       comment: 'Reviewed the replacement and remaining documents',
-      expectedVersion: VerificationCaseDtoSchema.parse(submitted.body).version,
+      expectedVersion: reviewed.version,
     });
-    expect(decision.status, JSON.stringify(decision.body)).toBe(200);
-    expect(VerificationCaseDtoSchema.parse(decision.body).status).toBe('approved');
+    expect(decision.status, JSON.stringify(decision.body)).toBe(409);
+    expect(ErrorBodySchema.parse(decision.body).error.message).toContain('not all clean');
   });
 
   it('blocks approval when a currently attached optional file is still scanning', async () => {
@@ -679,18 +714,21 @@ describe('POST /v1/verification-cases/:id/decision', () => {
     const submitted = await submitCase(draft.id);
     expect(submitted.status).toBe(200);
     as(U.pmo, 'pmo');
-    const decision = await decide(draft.id, {
-      decision: 'approve',
-      comment: 'Checked the documents',
-      expectedVersion: VerificationCaseDtoSchema.parse(submitted.body).version,
-    });
+    const decision = await api()
+      .post(`/v1/verification-cases/${draft.id}/checklist/address_proof/decision`)
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        decision: 'approve',
+        expectedVersion: VerificationCaseDtoSchema.parse(submitted.body).version,
+      });
     expect(decision.status).toBe(409);
-    expect(ErrorBodySchema.parse(decision.body).error.message).toContain('address_proof');
+    expect(ErrorBodySchema.parse(decision.body).error.message).toContain('clean');
   });
 
   it('runs the flow draft -> submit -> approve, and every write leaves a domain event', async () => {
-    const submitted = await submittedCase();
+    let submitted = await submittedCase();
     as(U.pmo, 'pmo');
+    submitted = await reviewAll(submitted);
     const res = await decide(submitted.id, {
       decision: 'approve',
       comment: 'Registration and PAN verified against the registry',
@@ -718,6 +756,9 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       'verification.checklist_updated',
       'verification.checklist_updated',
       'verification.submitted',
+      'verification.item_approved',
+      'verification.item_approved',
+      'verification.item_approved',
       'verification.approved',
     ]);
     // An approved case is frozen.
@@ -830,12 +871,16 @@ describe('POST /v1/verification-cases/:id/decision', () => {
             status: 'clean',
             sha256: createHash('sha256').update(v.id).digest(),
             detectedMime: 'application/pdf',
+            scannedAt: new Date(),
             updatedAt: new Date(),
           })
           .where(eq(documentVersions.id, v.id));
       }
     });
-    expect((await decide(submitted.id, body)).status).toBe(200);
+    const reviewed = await reviewAll(submitted);
+    expect(
+      (await decide(submitted.id, { ...body, expectedVersion: reviewed.version })).status,
+    ).toBe(200);
   });
 
   it('is 409 to approve with an infected document', async () => {
@@ -868,7 +913,7 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       expectedVersion: submitted.version,
     });
     expect(approve.status, JSON.stringify(approve.body)).toBe(409);
-    expect(ErrorBodySchema.parse(approve.body).error.message).toContain('pan_vat_certificate');
+    expect(ErrorBodySchema.parse(approve.body).error.message).toContain('document');
     const reject = await decide(submitted.id, {
       decision: 'reject',
       comment: 'PAN missing',
@@ -897,8 +942,9 @@ describe('POST /v1/verification-cases/:id/decision', () => {
   });
 
   it('decides once per Idempotency-Key: a retry replays the answer, another body with the key is 422', async () => {
-    const submitted = await submittedCase();
+    let submitted = await submittedCase();
     as(U.pmo, 'pmo');
+    submitted = await reviewAll(submitted);
     const key = `kyb-${randomUUID()}`;
     const body = { decision: 'approve', comment: 'ok', expectedVersion: submitted.version };
     const first = await decide(submitted.id, body, key);
@@ -968,5 +1014,371 @@ describe('reading', () => {
     const list = await api().get('/v1/verification-cases');
     expect((list.body as VerificationCaseDto[]).map((c) => c.id)).not.toContain(foreignId);
     expect((await rawCase(foreignId)).status).toBe('draft');
+  });
+});
+
+describe('customer document decisions', () => {
+  it('reviews producer-provided documents before final approval and preserves Sales reasons through correction', async () => {
+    as(U.salesA, 'sales');
+    const c = await fillRequired(await openCase(await newCustomer(scope, U.salesA)));
+    const submitted = await api()
+      .post(`/v1/verification-cases/${c.id}/submit`)
+      .set('Idempotency-Key', randomUUID())
+      .send({ expectedVersion: c.version });
+    expect(submitted.status).toBe(200);
+    let currentCase = VerificationCaseDtoSchema.parse(submitted.body);
+    expect(
+      currentCase.checklist.filter((i) => i.required).every((i) => i.status === 'provided'),
+    ).toBe(true);
+    as(U.founder, 'founder');
+    const early = await decide(c.id, {
+      decision: 'approve',
+      comment: 'Not reviewed',
+      expectedVersion: currentCase.version,
+    });
+    expect(early.status, 'final approval must not bulk-accept supplied files').toBe(409);
+    const reason = 'Please replace the PAN. अस्पष्ट छ.';
+    const key = randomUUID();
+    const body = { decision: 'reject', comment: reason, expectedVersion: currentCase.version };
+    const path = `/v1/verification-cases/${c.id}/checklist/pan_vat_certificate/decision`;
+    const rejected = await api().post(path).set('Idempotency-Key', key).send(body);
+    expect(rejected.status).toBe(200);
+    currentCase = VerificationCaseDtoSchema.parse(rejected.body);
+    expect(currentCase.status).toBe('submitted');
+    expect((await api().post(path).set('Idempotency-Key', key).send(body)).body).toEqual(
+      rejected.body,
+    );
+    expect(
+      (
+        await api()
+          .post(path)
+          .set('Idempotency-Key', key)
+          .send({ ...body, comment: 'changed' })
+      ).status,
+    ).toBe(422);
+    const returned = await decide(c.id, {
+      decision: 'reject',
+      comment: 'Correct PAN',
+      expectedVersion: currentCase.version,
+    });
+    expect(returned.status).toBe(200);
+    currentCase = VerificationCaseDtoSchema.parse(returned.body);
+    as(U.salesA, 'sales');
+    expect(JSON.stringify((await api().get(`/v1/verification-cases/${c.id}`)).body)).toContain(
+      reason,
+    );
+    const fresh = await attach(c.id, 'clean');
+    const replaced = await putDocument(
+      c.id,
+      'pan_vat_certificate',
+      fresh.documentId,
+      currentCase.version,
+    );
+    expect(replaced.status).toBe(200);
+    currentCase = VerificationCaseDtoSchema.parse(replaced.body);
+    expect(
+      JSON.stringify((await api().get(`/v1/verification-cases/${c.id}/review-history`)).body),
+    ).toContain(reason);
+    const resubmitted = await api()
+      .post(`/v1/verification-cases/${c.id}/submit`)
+      .set('Idempotency-Key', randomUUID())
+      .send({ expectedVersion: currentCase.version });
+    expect(resubmitted.status).toBe(200);
+    currentCase = VerificationCaseDtoSchema.parse(resubmitted.body);
+    expect(
+      currentCase.checklist.filter((i) => i.documentId).every((i) => i.status === 'provided'),
+    ).toBe(true);
+    as(U.founder, 'founder');
+    for (const itemKey of REQUIRED_KEYS) {
+      const reviewed = await api()
+        .post(`/v1/verification-cases/${c.id}/checklist/${itemKey}/decision`)
+        .set('Idempotency-Key', randomUUID())
+        .send({ decision: 'approve', expectedVersion: currentCase.version });
+      expect(reviewed.status, JSON.stringify(reviewed.body)).toBe(200);
+      currentCase = VerificationCaseDtoSchema.parse(reviewed.body);
+    }
+    expect(
+      (
+        await decide(c.id, {
+          decision: 'approve',
+          comment: 'All reviewed',
+          expectedVersion: currentCase.version,
+        })
+      ).status,
+    ).toBe(200);
+  });
+});
+
+describe('document review boundaries', () => {
+  it('requires bounded reasons, serializes competing rows and authorizes before retry', async () => {
+    const c = await submittedCase();
+    as(U.pmo, 'pmo');
+    const path = `/v1/verification-cases/${c.id}/checklist/registration_certificate/decision`;
+    for (const comment of ['', '   ', 'x'.repeat(2001)]) {
+      expect(
+        (
+          await api()
+            .post(path)
+            .set('Idempotency-Key', randomUUID())
+            .send({ decision: 'reject', comment, expectedVersion: c.version })
+        ).status,
+      ).toBe(400);
+    }
+    const key = randomUUID(),
+      body = { decision: 'reject', comment: 'द'.repeat(2000), expectedVersion: c.version };
+    const results = await Promise.all([
+      api().post(path).set('Idempotency-Key', key).send(body),
+      api()
+        .post(`/v1/verification-cases/${c.id}/checklist/pan_vat_certificate/decision`)
+        .set('Idempotency-Key', randomUUID())
+        .send({ decision: 'approve', expectedVersion: c.version }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    if (results[0].status === 200) {
+      as(U.salesB, 'sales');
+      expect((await api().post(path).set('Idempotency-Key', key).send(body)).status).toBe(403);
+    }
+    const history = await ownerPool.query(
+      'SELECT id FROM app.verification_review_events WHERE case_id=$1',
+      [c.id],
+    );
+    expect(history.rows).toHaveLength(1);
+    await expect(
+      ownerPool.query('DELETE FROM app.verification_review_events WHERE case_id=$1', [c.id]),
+    ).rejects.toThrow('immutable');
+    as(U.salesB, 'sales');
+    expect((await api().get(`/v1/verification-cases/${c.id}/review-history`)).status).toBe(404);
+  });
+
+  it('pins the newest version and refuses expiry-only correction of rejected evidence', async () => {
+    const c = await openCase();
+    const filled = await fillRequired(c);
+    const old = filled.checklist.find((i) => i.key === 'pan_vat_certificate')!.documentId!;
+    const v2 = await withTx(
+      db,
+      scope,
+      { kind: 'user', id: current.userId, correlationId: 'new-version' },
+      (tx) =>
+        documents.createVersion(tx, old, {
+          filename: 'new.pdf',
+          declaredMime: 'application/pdf',
+          sizeBytes: 10,
+        }),
+    );
+    const submitted = await submitCase(c.id);
+    expect(submitted.status).toBe(200);
+    let currentCase = VerificationCaseDtoSchema.parse(submitted.body);
+    expect(
+      currentCase.checklist.find((i) => i.key === 'pan_vat_certificate')?.evidence
+        ?.documentVersionId,
+    ).toBe(v2.versionId);
+    as(U.pmo, 'pmo');
+    const path = `/v1/verification-cases/${c.id}/checklist/pan_vat_certificate/decision`;
+    expect(
+      (
+        await api()
+          .post(path)
+          .set('Idempotency-Key', randomUUID())
+          .send({ decision: 'approve', expectedVersion: currentCase.version })
+      ).status,
+    ).toBe(409);
+    const rejected = await api().post(path).set('Idempotency-Key', randomUUID()).send({
+      decision: 'reject',
+      comment: 'Replace unreadable file',
+      expectedVersion: currentCase.version,
+    });
+    expect(rejected.status).toBe(200);
+    currentCase = VerificationCaseDtoSchema.parse(rejected.body);
+    const returned = await decide(c.id, {
+      decision: 'reject',
+      comment: 'Correct evidence',
+      expectedVersion: currentCase.version,
+    });
+    currentCase = VerificationCaseDtoSchema.parse(returned.body);
+    as(U.founder, 'founder');
+    const reattached = await putDocument(
+      c.id,
+      'pan_vat_certificate',
+      old,
+      currentCase.version,
+      '2028-01-01',
+    );
+    expect(reattached.status).toBe(200);
+    expect((await submitCase(c.id)).status).toBe(409);
+  });
+
+  it('atomically retires replaced infected optional evidence and permits absence after detach', async () => {
+    let c = await fillRequired(await openCase());
+    const infected = await attach(c.id, 'infected');
+    c = VerificationCaseDtoSchema.parse(
+      (await putDocument(c.id, 'other', infected.documentId, c.version)).body,
+    );
+    const fresh = await attach(c.id, 'clean');
+    c = VerificationCaseDtoSchema.parse(
+      (await putDocument(c.id, 'other', fresh.documentId, c.version)).body,
+    );
+    expect(await documents.allClean(scope, 'verification_case', c.id)).toBe(true);
+    const detached = await api()
+      .delete(`/v1/verification-cases/${c.id}/checklist/other`)
+      .set('Idempotency-Key', randomUUID())
+      .send({ expectedVersion: c.version });
+    expect(detached.status).toBe(200);
+    c = VerificationCaseDtoSchema.parse(detached.body);
+    expect(c.checklist.find((i) => i.key === 'other')!.status).toBe('missing');
+    const submitted = await submitCase(c.id);
+    expect(submitted.status).toBe(200);
+    as(U.pmo, 'pmo');
+    c = await reviewAll(VerificationCaseDtoSchema.parse(submitted.body));
+    expect(
+      (
+        await decide(c.id, {
+          decision: 'approve',
+          comment: 'Optional evidence absent',
+          expectedVersion: c.version,
+        })
+      ).status,
+    ).toBe(200);
+  });
+});
+
+describe('document review activation', () => {
+  it('rehearses rollback and restart without deciding a submitted case or inventing reviews', async () => {
+    const c = await submittedCase();
+    await withTx(db, scope, systemActor('legacy-fixture'), (tx) =>
+      tx.execute(
+        sql`UPDATE app.verification_cases SET review_policy='case_review_v0',review_round=0 WHERE id=${c.id}`,
+      ),
+    );
+    const source = readFileSync(
+      join(process.cwd(), '../../tools/db/activate-customer-document-review.sql'),
+      'utf8',
+    );
+    const activation = (apply: boolean) =>
+      source
+        .replace(/:'tenant_id'/g, `'${scope.tenantId}'`)
+        .replace(/:'organization_id'/g, `'${scope.organizationId}'`)
+        .split('\n')
+        .filter(
+          (line) => !line.startsWith('\\') && !(apply ? line === 'ROLLBACK;' : line === 'COMMIT;'),
+        )
+        .join('\n');
+    await ownerPool.query(activation(false));
+    expect(
+      (
+        await ownerPool.query<{ review_policy: string }>(
+          'SELECT review_policy FROM app.verification_cases WHERE id=$1',
+          [c.id],
+        )
+      ).rows[0]?.review_policy,
+    ).toBe('case_review_v0');
+    await ownerPool.query(activation(true));
+    const activated = await api().get(`/v1/verification-cases/${c.id}`);
+    expect(activated.body).toMatchObject({
+      status: 'submitted',
+      reviewPolicy: 'document_review_v1',
+      version: c.version + 1,
+    });
+    expect(
+      VerificationCaseDtoSchema.parse(activated.body)
+        .checklist.filter((i) => i.required)
+        .every((i) => i.status === 'provided' && i.evidence),
+    ).toBe(true);
+    await ownerPool.query(activation(true));
+    expect((await rawCase(c.id)).version).toBe(c.version + 1);
+    expect(
+      (
+        await ownerPool.query<{ count: string }>(
+          'SELECT count(*) FROM app.verification_review_events WHERE case_id=$1',
+          [c.id],
+        )
+      ).rows[0]?.count,
+    ).toBe('0');
+  });
+});
+
+it('paginates equal-time journal decisions without duplicates and refuses malformed cursors', async () => {
+  let c = await submittedCase();
+  as(U.pmo, 'pmo');
+  c = await reviewAll(c);
+  const first = await api().get(`/v1/verification-cases/${c.id}/review-history?limit=2`);
+  expect(first.status).toBe(200);
+  const firstPage = VerificationReviewHistorySchema.parse(first.body);
+  expect(firstPage.items).toHaveLength(2);
+  const second = await api()
+    .get(`/v1/verification-cases/${c.id}/review-history`)
+    .query({ limit: 2, before: firstPage.nextCursor });
+  expect(second.status).toBe(200);
+  const secondPage = VerificationReviewHistorySchema.parse(second.body);
+  expect(secondPage.items).toHaveLength(1);
+  expect(new Set([...firstPage.items, ...secondPage.items].map((i) => i.id)).size).toBe(3);
+  expect(secondPage.nextCursor).toBeNull();
+  expect(
+    (await api().get(`/v1/verification-cases/${c.id}/review-history?before=invalid`)).status,
+  ).toBe(400);
+  expect((await api().get(`/v1/verification-cases/${c.id}/review-history?limit=101`)).status).toBe(
+    400,
+  );
+});
+
+it('rechecks expiry after individual approvals before making the final decision', async () => {
+  let c = await fillRequired(await openCase());
+  const item = c.checklist.find((i) => i.key === 'registration_certificate')!;
+  c = VerificationCaseDtoSchema.parse(
+    (await putDocument(c.id, item.key, item.documentId!, c.version, '2026-11-09')).body,
+  );
+  c = VerificationCaseDtoSchema.parse((await submitCase(c.id)).body);
+  as(U.pmo, 'pmo');
+  c = await reviewAll(c);
+  clock = new Date('2026-11-09T00:00:00Z');
+  expect(
+    (
+      await decide(c.id, {
+        decision: 'approve',
+        comment: 'No stale expiry approval',
+        expectedVersion: c.version,
+      })
+    ).status,
+  ).toBe(409);
+});
+
+it('preserves real legacy case notes before correction and leaves legacy approved cases approved', async () => {
+  const approved = await submittedCase();
+  const rejected = await submittedCase();
+  await withTx(db, scope, systemActor('legacy-history-fixture'), async (tx) => {
+    for (const [id, status] of [
+      [approved.id, 'approved'],
+      [rejected.id, 'rejected'],
+    ]) {
+      await tx.execute(
+        sql`UPDATE app.verification_cases SET status=${status},review_policy='case_review_v0',reviewer_user_id=${U.pmo},decided_at=${clock.toISOString()},reason='Original legacy decision' WHERE id=${id}`,
+      );
+    }
+  });
+  const unchanged = VerificationCaseDtoSchema.parse(
+    (await api().get(`/v1/verification-cases/${approved.id}`)).body,
+  );
+  expect(unchanged.status).toBe('approved');
+  expect(unchanged.reviewPolicy).toBe('case_review_v0');
+  const document = await attach(rejected.id, 'clean');
+  expect(
+    (
+      await putDocument(
+        rejected.id,
+        'registration_certificate',
+        document.documentId,
+        rejected.version,
+      )
+    ).status,
+  ).toBe(200);
+  const history = VerificationReviewHistorySchema.parse(
+    (await api().get(`/v1/verification-cases/${rejected.id}/review-history`)).body,
+  );
+  expect(history.items).toHaveLength(1);
+  expect(history.items[0]).toMatchObject({
+    kind: 'legacy_case_decided',
+    comment: 'Original legacy decision',
+    reviewedBy: U.pmo,
+    reviewedAt: clock.toISOString(),
+    evidence: null,
   });
 });
