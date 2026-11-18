@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 
 import type { Redis } from 'ioredis';
@@ -149,6 +150,39 @@ describe('checkLoginRateLimit', () => {
     expect(await checkLoginRateLimit(req(ip))).toEqual({ allowed: true });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(warn.mock.calls)).not.toContain('203.0.113.7');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('OOM');
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
+      event: 'auth.login_rate_limit_unavailable',
+      category: 'other',
+      clientStatus: expect.any(String) as string,
+    });
+  });
+
+  it('logs a connection failure by category, still failing open', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(redis, 'eval').mockRejectedValue(
+      new Error("Stream isn't writeable and enableOfflineQueue options is false"),
+    );
+    expect(await checkLoginRateLimit(req(ip))).toEqual({ allowed: true });
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({ category: 'connection' });
+  });
+
+  it('waits for a cold client to be ready before counting (cold start)', async () => {
+    // Without the offline queue ioredis rejects a command sent while still connecting, which used
+    // to switch the limiter off for the first logins after a start. A plain emitter stands in for
+    // the client, as in session.test.ts.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const evalFn = vi.fn().mockResolvedValue([1, LOGIN_RATE_WINDOW_S]);
+    const cold = Object.assign(new EventEmitter(), { status: 'connecting', eval: evalFn });
+    vi.mocked(getOidcRedis).mockReturnValue(cold as unknown as Redis);
+    const pending = checkLoginRateLimit(req(ip));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(evalFn).not.toHaveBeenCalled();
+    cold.status = 'ready';
+    cold.emit('ready');
+    expect(await pending).toEqual({ allowed: true });
+    expect(evalFn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

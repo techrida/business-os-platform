@@ -1,5 +1,6 @@
 import { getMe } from '@/lib/api';
-import { getSession } from '@/lib/session';
+import { getSession, type Session } from '@/lib/session';
+import { SessionUnavailableError, sessionUnavailableResponse } from '@/lib/session-unavailable';
 
 /**
  * Dev-only: who the DEV MENU widget is signed in as. It calls the same production functions
@@ -26,7 +27,13 @@ export async function GET(): Promise<Response> {
   // Wall 2. A route handler cannot call `notFound()` like a page, so answer 404 directly.
   if (process.env.NODE_ENV !== 'development') return new Response(null, { status: 404 });
 
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    if (err instanceof SessionUnavailableError) return sessionUnavailableResponse();
+    throw err;
+  }
   if (!session) return json(401, { error: 'signed_out' });
 
   let me;

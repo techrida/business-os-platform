@@ -12,13 +12,12 @@ import {
 
 /**
  * The inbox screen on its own, against the real stack: (1) an approver's inbox row shows WHY the
- * item is theirs, the same reason the route preview gave (for an internal memo, the person the author selected); (2) a person without approval rights
- * gets the 403 in plain words, not a blank page or a raw error; (3) rejecting needs a comment, and
+ * item is theirs, the same reason the route preview gave (for an internal memo, the person the author selected); (2) the Sales inbox excludes this memo; (3) rejecting needs a comment, and
  * a rejected item leaves the inbox. It rejects at the end so it leaves no pending request behind.
  * The full two-approval story is in exit.spec.ts.
  */
 
-test('the inbox shows the reason for each item, and a 403 is explained in words', async ({
+test('the inbox shows the reason for each item, and excludes the requester’s memo', async ({
   browser,
   baseURL,
 }) => {
@@ -44,14 +43,11 @@ test('the inbox shows the reason for each item, and a 403 is explained in words'
       });
     expect(reason.length).toBeGreaterThan(0);
 
-    await test.step('a 403 on the inbox reads as words for sales', async () => {
+    await test.step('Sales can open the inbox but cannot decide this memo', async () => {
       await sales.page.goto('/inbox');
-      await expect(sales.page.getByText('Your roles do not include approvals')).toBeVisible();
-      await expect(
-        sales.page.getByText(
-          'The inbox is for people who approve documents. If you prepare documents, open Memos to follow yours.',
-        ),
-      ).toBeVisible();
+      await expect(sales.page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible();
+      await expect(sales.page.getByRole('alert')).toHaveCount(0);
+      await expect(inboxRow(sales.page, title)).toHaveCount(0);
     });
 
     const management = await signInAs(browser, appBase, 'management');

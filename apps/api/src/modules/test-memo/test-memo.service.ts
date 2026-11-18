@@ -84,6 +84,7 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
+import { personLabel } from '../../platform/users/person-names';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { NotifyService } from '../../platform/notify/notify.service';
 import { MoneyService } from '../../platform/settings/money.service';
@@ -296,7 +297,8 @@ export class TestMemoService implements OnModuleInit {
     const people = await this.db
       .select({
         userId: users.id,
-        name: users.displayName,
+        displayName: users.displayName,
+        email: users.email,
         jobTitle: userEntities.jobTitle,
         departmentId: userEntities.departmentId,
       })
@@ -316,7 +318,10 @@ export class TestMemoService implements OnModuleInit {
           eq(idpOrgs.kind, 'staff'),
         ),
       );
-    const named = people.filter((p) => p.name?.trim());
+    const named = people.flatMap((p) => {
+      const name = personLabel(p.displayName, p.email);
+      return name ? [{ ...p, name }] : [];
+    });
     const approvers = await this.approverIds(
       scope,
       named.map((p) => p.userId),
@@ -329,7 +334,7 @@ export class TestMemoService implements OnModuleInit {
       departments: depts,
       people: named.map((p) => ({
         userId: p.userId,
-        name: p.name as string,
+        name: p.name,
         jobTitle: p.jobTitle,
         department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
         canApprove: approvers.has(p.userId),

@@ -116,7 +116,9 @@ export async function submitZitadelOtp(page: Page, input: Locator, code: string)
   if (autoSubmits) return;
 
   const submit = page
-    .getByRole('button', { name: /^\s*(continue|verify|submit|next|authenticate)\s*$/i })
+    .getByRole('button', {
+      name: /^\s*(continue|verify and continue|verify|submit|next|authenticate)\s*$/i,
+    })
     .first();
   if (await submit.isVisible()) await submit.click();
   else await input.press('Enter');

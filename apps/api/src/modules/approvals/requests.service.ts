@@ -52,6 +52,7 @@ import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
+import { personNames } from '../../platform/users/person-names';
 import {
   ASSIGNABLE_SEQ,
   assigneeOf,
@@ -941,7 +942,43 @@ export class ApprovalsService {
     replay?: { action: ApprovalActionBody; idempotencyKey: string },
   ): Promise<ApprovalRequestDto> {
     await this.eligibleRequest(requestId, replay);
-    return this.loadDto(this.db, this.caller.current().scope, requestId);
+    const { scope } = this.caller.current();
+    const dto = await this.loadDto(this.db, scope, requestId);
+    const people = await personNames(this.db, scope.tenantId, [
+      dto.requesterUserId,
+      ...dto.steps.flatMap((step) => [
+        step.userId,
+        step.assigneeUserId,
+        step.decidedBy,
+        step.decidedOnBehalfOf,
+      ]),
+      ...dto.actions.flatMap((action) => [
+        action.actorUserId === 'system' ? null : action.actorUserId,
+        action.onBehalfOfUserId,
+      ]),
+    ]);
+    const groupIds = dto.steps.flatMap((step) => (step.groupId ? [step.groupId] : []));
+    const groups = groupIds.length
+      ? await this.db
+          .select({ id: approvalGroups.id, name: approvalGroups.name })
+          .from(approvalGroups)
+          .where(
+            and(
+              eq(approvalGroups.tenantId, scope.tenantId),
+              eq(approvalGroups.organizationId, scope.organizationId),
+              inArray(approvalGroups.id, groupIds),
+            ),
+          )
+      : [];
+    const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+    return {
+      ...dto,
+      people,
+      steps: dto.steps.map((step) => ({
+        ...step,
+        groupName: step.groupId ? (groupNames.get(step.groupId) ?? null) : null,
+      })),
+    };
   }
 
   private requireStaff(scope: TxScope, p: Principal): void {
