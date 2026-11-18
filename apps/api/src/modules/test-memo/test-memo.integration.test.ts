@@ -41,7 +41,7 @@ import {
   users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
-import { ForbiddenException, type INestApplication } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
@@ -52,7 +52,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configureApp } from '../../app.setup';
-import { CAN_KEY } from '../../platform/authz/decorators';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import { can } from '../../platform/authz/can';
 import { scopeWhereFor, type AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
@@ -1387,26 +1387,26 @@ describe('a template memo routes through exactly the people the author named', (
       approvals.act(requestId, { action: 'approve', expectedVersion: version }, randomUUID());
 
     // Nobody but the first signer may decide step 1: not a later signer, not a founder.
-    as(ops.b, 'operations_head');
+    as(ops.b, 'founder');
     await expect(approve(1)).rejects.toBeInstanceOf(ForbiddenException);
     as(U.boss, 'founder');
     await expect(approve(1)).rejects.toBeInstanceOf(ForbiddenException);
     // Only the active step's person has it in their inbox.
-    as(ops.b, 'operations_head');
+    as(ops.b, 'founder');
     expect((await approvals.inbox()).map((i) => i.requestId)).not.toContain(requestId);
-    as(ops.a, 'operations_head');
+    as(ops.a, 'management');
     expect((await approvals.inbox()).map((i) => i.requestId)).toContain(requestId);
     expect((await approvals.inbox()).find((i) => i.requestId === requestId)?.amountNpr).toBeNull();
 
     const first = await approve(1);
     expect(first).toMatchObject({ status: 'pending', currentSeq: 2 });
-    as(ops.a, 'operations_head');
+    as(ops.a, 'management');
     // The first signer has decided; step 2 belongs to someone else.
     await expect(approve(first.version)).rejects.toBeInstanceOf(ForbiddenException);
-    as(ops.b, 'operations_head');
+    as(ops.b, 'founder');
     const second = await approve(first.version);
     expect(second).toMatchObject({ status: 'pending', currentSeq: 3 });
-    as(ops.c, 'operations_head');
+    as(ops.c, 'management');
     const third = await approve(second.version);
     expect(third.status).toBe('approved');
     expect((await statusOf(id)).status).toBe('approved');
@@ -1490,25 +1490,29 @@ describe('a template memo routes through exactly the people the author named', (
   });
 
   it('lets a named signer reach the inbox and the decide route through the permission check', async () => {
-    // The route guard reads the @Can marker and asks can() with the caller's grants from the real RoleCache.
-    const needed = (handler: 'act' | 'inbox') =>
-      Reflect.getMetadata(CAN_KEY, ApprovalsController.prototype[handler]) as Permission;
-    const mayReach = async (roleKeys: RoleKey[], handler: 'act' | 'inbox') => {
-      const grants = await roleCache.grantsFor(scope.tenantId, scope.organizationId, roleKeys);
-      return can({ ...principalNow(), roles: roleKeys, grants }, needed(handler)).allowed;
-    };
-    expect(needed('act')).toBe('approvals.requests.act');
-    expect(needed('inbox')).toBe('approvals.requests.act');
-    for (const roleKeys of [['management'], ['founder']] as RoleKey[][]) {
-      expect(await mayReach(roleKeys, 'act')).toBe(true);
-      expect(await mayReach(roleKeys, 'inbox')).toBe(true);
+    for (const handler of ['act', 'inbox'] as const) {
+      const target = ApprovalsController.prototype[handler];
+      expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, target)).toBe(true);
+      expect(Reflect.getMetadata(CAN_KEY, target)).toBeUndefined();
     }
-    expect(await mayReach(['sales'], 'act')).toBe(false);
 
     const { id } = await createTemplateMemo([ops.a], ops.b);
     const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    const action = { action: 'approve', expectedVersion: 1 } as const;
+    as(U.salesB, 'sales');
+    expect((await approvals.inbox()).map((item) => item.requestId)).not.toContain(requestId);
+    await expect(approvals.getForAction(requestId, action, randomUUID())).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(approvals.act(requestId, action, randomUUID())).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
     as(ops.a, 'management');
     expect((await approvals.inbox()).map((i) => i.requestId)).toContain(requestId);
+    await expect(approvals.getForAction(requestId, action, randomUUID())).resolves.toMatchObject({
+      requestId,
+    });
   });
 
   it('keeps the attachment rules: unscanned files block submit and clean ones are frozen', async () => {
