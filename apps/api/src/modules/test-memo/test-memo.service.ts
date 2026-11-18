@@ -9,6 +9,9 @@
 //   the owner policy refuses new uploads until the memo is editable again;
 // - "no double decisions": submit and update lock the memo row (FOR UPDATE), so a second click waits and then
 //   sees the new status.
+// - "no history is lost": a creator discards an unsubmitted memo softly (discarded_at). The row keeps its number,
+//   audit trail, approval history and attachment files, but every read and write here skips it, so it cannot be
+//   listed, opened, edited, submitted or attached to, and its files stop being served.
 // P2 replaces this with quotations and deletes the module; the audit rows stay.
 import {
   type CreateMemoBody,
@@ -44,7 +47,7 @@ import {
   Optional,
   type OnModuleInit,
 } from '@nestjs/common';
-import { and, desc, eq, isNotNull, ne, or, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, ne, or, notInArray, sql, type SQL } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
 import { ApprovalsService, type SubmitInput } from '../approvals/requests.service';
@@ -77,6 +80,9 @@ const MEMO_SERIES = 'MEMO';
 const EDITABLE: readonly MemoRow['status'][] = ['draft', 'returned'];
 
 const iso = (d: Date): string => d.toISOString();
+
+/** A memo that was not discarded. Added to every lookup, so a discarded memo is as absent as a random id. */
+const live = () => isNull(testMemos.discardedAt);
 
 interface ListCursor {
   createdAt: string;
@@ -410,6 +416,7 @@ export class TestMemoService implements OnModuleInit {
     const createdKey = sql<string>`to_char(${testMemos.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
     const { principal } = this.caller.current();
     const filters: SQL[] = [
+      live(),
       this.authz.scopeWhere(testMemos, 'memo.read'),
       or(
         notInArray(testMemos.status, ['draft', 'returned']),
@@ -508,6 +515,41 @@ export class TestMemoService implements OnModuleInit {
         .where(scoped(scope).where(testMemos, eq(testMemos.id, id)))
         .returning();
       return toMemoDto(updated!);
+    });
+  }
+
+  // ----------------------------------------------------------------------------------------------- discard
+
+  /**
+   * Soft-discards the caller's own unsubmitted memo (draft or returned). Order of refusals, so nobody learns more
+   * than they could already read: out of scope or someone else's private draft is 404; a memo the caller can read
+   * but did not create is 403; a submitted, approved or rejected memo is 409. The row is locked first, so a
+   * concurrent autosave or submit waits and then finds the memo gone (404) instead of writing to it. A second
+   * discard of the same memo is also 404. The audit trigger records the update with the actor.
+   */
+  async discard(id: string): Promise<void> {
+    const { scope, actor, principal } = this.caller.current();
+    const now = this.clock();
+    await withTx(this.db, scope, actor, async (tx) => {
+      const row = await this.lock(tx, scope, id);
+      this.assertVisible('memo.update', row);
+      if (row.ownerUserId !== principal.userId) {
+        throw new ForbiddenException({
+          code: 'forbidden',
+          message: 'Only the person who created a memo can discard it',
+          reason: 'not_creator',
+        });
+      }
+      this.assertEditable(row);
+      await tx
+        .update(testMemos)
+        .set({
+          discardedAt: now,
+          discardedByUserId: principal.userId,
+          version: row.version + 1,
+          updatedAt: now,
+        })
+        .where(scoped(scope).where(testMemos, eq(testMemos.id, id)));
     });
   }
 
@@ -681,7 +723,7 @@ export class TestMemoService implements OnModuleInit {
     const [row] = await q
       .select()
       .from(testMemos)
-      .where(scoped(scope).where(testMemos, eq(testMemos.id, id)));
+      .where(scoped(scope).where(testMemos, and(eq(testMemos.id, id), live())));
     return row;
   }
 
@@ -705,7 +747,7 @@ export class TestMemoService implements OnModuleInit {
           testMemos,
           'customer',
           principal.partyId,
-          eq(testMemos.id, id),
+          and(eq(testMemos.id, id), live()),
         ),
       );
     return row;
@@ -716,7 +758,7 @@ export class TestMemoService implements OnModuleInit {
     const [row] = await tx
       .select()
       .from(testMemos)
-      .where(scoped(scope).where(testMemos, eq(testMemos.id, id)))
+      .where(scoped(scope).where(testMemos, and(eq(testMemos.id, id), live())))
       .for('update');
     if (row === undefined) throw memoNotFound();
     return row;
