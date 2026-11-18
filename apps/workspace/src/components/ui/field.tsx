@@ -49,17 +49,17 @@ export function Field({
       <label id={labelId} htmlFor={base} className={styles.label}>
         {label}
       </label>
-      {hint ? (
-        <span id={hintId} className={styles.hint}>
-          {hint}
-        </span>
-      ) : null}
       {children({
         id: base,
         'aria-describedby': describedBy,
         'aria-invalid': error ? true : undefined,
         'aria-labelledby': labelId,
       })}
+      {hint ? (
+        <span id={hintId} className={styles.hint}>
+          {hint}
+        </span>
+      ) : null}
       {error ? (
         <span id={errorId} className={styles.error}>
           {error}
@@ -94,7 +94,7 @@ export function Select({ className, children, ...rest }: ComponentPropsWithRef<'
       >
         {children}
       </select>
-      <Icon name="chevron-down" size={16} className={styles.caret} />
+      <Icon name="chevron-down" size={20} className={styles.caret} />
     </span>
   );
 }

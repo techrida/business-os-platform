@@ -1,0 +1,64 @@
+.card.card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 20px;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-section);
+}
+
+.icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  margin-bottom: 8px;
+  border-radius: var(--radius-lg);
+}
+
+.info {
+  background: var(--badge-info-bg);
+  color: var(--badge-info-text);
+}
+
+.success {
+  background: var(--badge-success-bg);
+  color: var(--badge-success-text);
+}
+
+.warning {
+  background: var(--badge-warning-bg);
+  color: var(--badge-warning-text);
+}
+
+.error {
+  background: var(--badge-error-bg);
+  color: var(--badge-error-text);
+}
+
+.neutral {
+  background: var(--surface-muted);
+  color: var(--icon-default);
+}
+
+.label,
+.detail {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.label {
+  font-weight: var(--font-weight-semibold);
+}
+
+.value {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}

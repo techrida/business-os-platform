@@ -3,8 +3,8 @@
  * screen map. Pure data with no React import, so unit tests and the header title lookup can use
  * it anywhere.
  *
- * An item is "built" when it has an `href`: it renders as a link. Other items render as
- * plain disabled rows. `phase` and SHIPPED_PHASES are internal and never shown to users.
+ * An item is "built" when it has an `href`: it renders as a link. Unbuilt items stay out of
+ * navigation. `phase` and SHIPPED_PHASES are internal and never shown to users.
  * When an item ships, give it an `href` and a phase in SHIPPED_PHASES; nav.test.ts keeps
  * the two in step.
  *
@@ -13,7 +13,7 @@
  * this file stays free of server code because the header title (a client component) imports it.
  *
  * "Estimates" is left out on purpose: decision D3 merged it into Quotations. "Approvals" and
- * "User" are not listed: they are Work > Inbox and Administration > Users.
+ * "User" are not listed: they are Work > Inbox and Organization > Users.
  */
 
 export type Phase = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'later';
@@ -85,7 +85,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     ],
   },
   {
-    label: 'Administration',
+    label: 'Organization',
     items: [
       { label: 'Users', href: '/admin/users', icon: 'users', phase: 'P1', audience: 'admin' },
       {
@@ -102,11 +102,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         phase: 'P1',
         audience: 'admin',
       },
-    ],
-  },
-  {
-    label: 'Organization',
-    items: [
       { label: 'Department', icon: 'layers', phase: 'P1' },
       { label: 'Projects', icon: 'briefcase', phase: 'later' },
     ],
@@ -232,9 +227,8 @@ export function isBuilt(item: NavItem): item is NavItem & { href: string } {
 }
 
 /**
- * The groups a person sees: unbuilt items stay as plain disabled rows, admin-only items go
- * unless `showAdmin`, items with a `permission` go unless `can` grants it (no `can` means none
- * is granted), and a group left with no items goes too.
+ * Keep built destinations the user can see and omit groups with no visible items. Admin-only
+ * items need `showAdmin`; items with a `permission` need `can` to grant it (no `can` grants none).
  */
 export function visibleGroups(
   showAdmin: boolean,
@@ -244,6 +238,7 @@ export function visibleGroups(
     ...group,
     items: group.items.filter(
       (item) =>
+        isBuilt(item) &&
         (item.audience !== 'admin' || showAdmin) &&
         (item.permission === undefined || can?.(item.permission) === true),
     ),
@@ -265,4 +260,19 @@ export function titleForPath(pathname: string): string {
     }
   }
   return best?.label ?? APP_NAME;
+}
+
+/** Filter already-authorized, built navigation by group or destination name. */
+export function searchNavGroups(groups: readonly NavGroup[], query: string): readonly NavGroup[] {
+  const term = query.trim().toLowerCase();
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) =>
+          isBuilt(item) &&
+          (group.label.toLowerCase().includes(term) || item.label.toLowerCase().includes(term)),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
 }
