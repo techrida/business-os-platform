@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import { Alert } from '@/components/ui/alert';
 import { AuditActor } from '@/components/ui/audit-actor';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FilePreviewDialog } from '@/components/ui/file-preview-dialog';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -24,7 +25,6 @@ import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { snapshotEntries, when } from '@/lib/kernel-format';
 
-import { StatusBadge, statusText } from '../../kit';
 import { DecisionForm } from './decision-form';
 import { MemoPaper } from '../../memos/memo-paper';
 import styles from '../inbox.module.css';
@@ -62,6 +62,24 @@ const STEP_TONE: Record<string, TimelineTone> = {
   returned: 'warning',
   rejected: 'error',
   skipped: 'muted',
+};
+
+const STATUS = {
+  pending: ['Pending', 'pending'],
+  approved: ['Approved', 'success'],
+  returned: ['Returned', 'warning'],
+  rejected: ['Rejected', 'error'],
+  blocked: ['Blocked', 'error'],
+  cancelled: ['Cancelled', 'neutral'],
+} as const;
+
+const STEP_LABEL: Record<string, string> = {
+  waiting: 'Waiting',
+  active: 'Pending',
+  approved: 'Approved',
+  returned: 'Returned',
+  rejected: 'Rejected',
+  skipped: 'Skipped',
 };
 
 const FrozenAttachment = z.object({
@@ -166,6 +184,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
       (!memoTemplate.success || row.key !== 'template') && (!isMemo || row.key !== 'attachments'),
   );
   const inboxItem = items?.find((i) => i.requestId === request.requestId);
+  const [requestLabel, requestTone] = STATUS[request.status];
 
   const facts: Fact[] = rows.map((row) => ({
     key: row.key,
@@ -177,7 +196,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const timeline: TimelineStep[] = request.steps.map((step) => ({
     key: step.seq,
     title: selectedSigners[step.seq - 1]?.name ?? stepWho(step, names),
-    status: statusText(step.status),
+    status: STEP_LABEL[step.status] ?? step.status,
     tone: STEP_TONE[step.status] ?? 'upcoming',
     detail: (
       <>
@@ -194,13 +213,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   }));
 
   return (
-    <Page>
-      <Breadcrumb
-        items={[{ label: 'Inbox', href: '/inbox' }, { label: title ?? request.documentNumber }]}
-      />
+    <Page className={styles.detail}>
+      <Breadcrumb items={[{ label: 'Inbox', href: '/inbox' }, { label: request.documentNumber }]} />
       <PageHeader
         title={title ?? request.documentNumber}
-        status={<StatusBadge status={request.status} />}
+        status={<Badge tone={requestTone}>{requestLabel}</Badge>}
         description={
           <>
             {title !== null ? `${request.documentNumber} · ` : ''}
@@ -217,29 +234,16 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
         </Alert>
       ) : null}
 
-      {inboxItem ? (
-        <Alert
-          tone="info"
-          role="region"
-          aria-label="Why this is in your inbox"
-          title="Why this is in your inbox"
-        >
-          {inboxItem.reason}
-        </Alert>
-      ) : null}
-
-      <Panel
-        title="Approval route"
-        description="Each step must approve before the next one starts."
-      >
+      <Panel title="Approval route" className={styles.detailPanel}>
         <StatusTimeline label="Approval route steps" steps={timeline} />
       </Panel>
 
-      <div className={isMemo ? styles.main : styles.columns}>
+      <div className={styles.columns}>
         <div className={styles.main}>
           <Panel
-            title="What was submitted"
-            description="A frozen copy from the moment of submission. Later edits do not change it."
+            title="Submitted details"
+            className={styles.detailPanel}
+            description="Snapshot taken when the request was submitted."
           >
             {facts.length === 0 && !memoTemplate.success ? (
               <p className={styles.note}>The snapshot is empty.</p>
@@ -258,7 +262,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           </Panel>
 
           {attachments.length > 0 ? (
-            <Panel title="Attachments">
+            <Panel title="Attachments" className={styles.detailPanel}>
               <ul className={styles.frozenFiles}>
                 {attachments.map((file) => {
                   const base = `/api/documents/${file.documentId}/versions/${file.versionId}`;
@@ -278,7 +282,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             </Panel>
           ) : null}
 
-          <Panel title="History">
+          <Panel title="History" className={styles.detailPanel}>
             {request.actions.length === 0 ? (
               <p className={styles.note}>Nothing has happened yet.</p>
             ) : (
@@ -303,20 +307,23 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           </Panel>
         </div>
 
-        <Panel
-          as={isMemo ? 'section' : 'aside'}
-          title="Your decision"
-          className={isMemo ? undefined : styles.side}
-        >
+        <Panel as="aside" title="Your decision" className={`${styles.detailPanel} ${styles.side}`}>
+          {inboxItem ? (
+            <div className={styles.assignment} role="region" aria-label="Why this is in your inbox">
+              <p className={styles.assignmentLabel}>Why this is in your inbox</p>
+              <p>{inboxItem.reason}</p>
+            </div>
+          ) : null}
           {waitingOnMe === 'no' ? (
             <p className={styles.note}>
               {request.status === 'pending'
-                ? 'This request is not waiting on you right now. You can read it, but you cannot decide it.'
-                : 'This request has been decided, so there is nothing left to do.'}
+                ? 'This request is waiting for a different approver.'
+                : 'This request has been decided.'}
             </p>
           ) : (
             <DecisionForm
               requestId={request.requestId}
+              documentNumber={request.documentNumber}
               version={request.version}
               // One key per render of this page: a double click or a retry after a network
               // error sends the same key, so the decision is applied once.
