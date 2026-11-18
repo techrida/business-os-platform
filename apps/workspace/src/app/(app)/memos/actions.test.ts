@@ -58,6 +58,7 @@ const good = {
   template,
   draftAccount: 'bound:org-1:user-1',
   draftRevision: 'AAAAAAAAAAAA',
+  expectedVersion: '1',
 };
 const prev = { values: { title: '', body: '', amount: '', currency: 'NPR' }, fieldErrors: {} };
 
@@ -142,7 +143,7 @@ describe('Next and Done commit the memo and clear its working copy', () => {
 });
 
 describe('submitting approves the saved memo, so unreviewed working changes stop it', () => {
-  const form = () => formOf({ memoId: MEMO });
+  const form = () => formOf({ memoId: MEMO, expectedVersion: '1' });
 
   it('refuses while a working copy with changes exists, and submits nothing', async () => {
     mocks.readDraft.mockResolvedValue({
