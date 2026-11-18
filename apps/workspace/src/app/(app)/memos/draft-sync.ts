@@ -221,7 +221,9 @@ export function createDraftSync(options: SyncOptions): DraftSync {
   }
 
   function drain(): Promise<void> {
-    running ??= (async () => {
+    if (running) return running;
+    if (!dirty() || !canSave()) return Promise.resolve();
+    running = (async () => {
       try {
         let rounds = 0;
         while (dirty() && canSave() && rounds < 20) {
