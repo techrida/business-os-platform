@@ -16,6 +16,9 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
  *                            invoice. The draft creation test leaves one draft in that stack.
  */
 
+// The full Chromium channel includes the PDF viewer used by the preview dialog.
+test.use({ channel: 'chromium' });
+
 const ready = (): boolean => process.env.BOS_E2E_INVOICES_READY !== undefined;
 const issuedId = (): string | undefined => process.env.BOS_E2E_INVOICE_ISSUED;
 
@@ -127,9 +130,6 @@ test('the new invoice form names every missing field and has no number or date t
 });
 
 test.describe('invoice document preview', () => {
-  // The full Chromium channel includes the PDF viewer used by the preview dialog.
-  test.use({ channel: 'chromium' });
-
   test('opens the issued PDF in a dialog with a separate download', async ({
     browser,
     baseURL,
