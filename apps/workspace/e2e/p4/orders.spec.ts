@@ -63,3 +63,35 @@ test('an issued purchase order shows its lines, versions and the right buttons',
     await Promise.all(opened.map((s) => s.context.close()));
   }
 });
+
+test('purchase order lines scroll inside the page at narrow widths', async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  const id = process.env.BOS_E2E_PO_ID;
+  if (!id) {
+    test.skip(true, 'set BOS_E2E_PO_ID to an issued purchase order with lines');
+    return;
+  }
+
+  const { context, page } = await signInAs(browser, baseURL ?? 'https://app.localhost', 'founder');
+  try {
+    await page.goto(`/procurement/orders/${id}`);
+    const lines = page.getByRole('region', { name: /purchase order lines.*scrolls sideways/i });
+    await expect(lines.getByRole('table')).toBeVisible();
+
+    for (const width of [768, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBe(width);
+      await lines.focus();
+      await expect(lines).toBeFocused();
+      await lines.press('ArrowRight');
+      await expect.poll(() => lines.evaluate((region) => region.scrollLeft)).toBeGreaterThan(0);
+    }
+  } finally {
+    await context.close();
+  }
+});
