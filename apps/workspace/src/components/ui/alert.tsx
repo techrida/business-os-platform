@@ -21,9 +21,8 @@ type AlertProps = Omit<ComponentPropsWithRef<'div'>, 'title'> & {
 };
 
 /**
- * Inline message strip (Figma Alert/*): a tinted box with a 1px border in the status colour and
- * an icon. The text stays in the primary text colour so it passes 4.5:1 on every tint; the tone
- * is carried by the icon and border, and the title or text names it in words.
+ * Inline message strip (Figma Alert/*): a tinted box with a thin neutral border and a status icon.
+ * The text uses the primary text colour for contrast, and the title or text names the state.
  *
  * Pass `role="alert"` for something that must interrupt (a failed save) and `role="status"` for
  * a quiet confirmation. Leave `role` off for static text. It spreads its props, so a caller can
@@ -33,7 +32,7 @@ export function Alert({ tone = 'info', title, actions, className, children, ...r
   const cls = [styles.alert, styles[tone], className].filter(Boolean).join(' ');
   return (
     <div className={cls} {...rest}>
-      <Icon name={ICON[tone]} size={20} className={styles.icon} />
+      <Icon name={ICON[tone]} size={16} className={styles.icon} />
       <div className={styles.body}>
         {title ? <p className={styles.title}>{title}</p> : null}
         {children ? <div className={styles.text}>{children}</div> : null}

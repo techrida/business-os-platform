@@ -118,21 +118,19 @@ export function Dialog({
           }}
         >
           <header className={styles.header}>
-            <RadixDialog.Title
-              className={[styles.title, tone === 'destructive' ? styles.destructiveTitle : '']
-                .filter(Boolean)
-                .join(' ')}
-            >
-              {tone === 'destructive' ? (
-                <Icon name="alert-triangle" size={20} className={styles.titleIcon} />
-              ) : null}
-              {title}
-            </RadixDialog.Title>
-            {description ? (
-              <RadixDialog.Description className={styles.description}>
-                {description}
-              </RadixDialog.Description>
+            {tone === 'destructive' ? (
+              <span className={styles.titleIcon}>
+                <Icon name="alert-triangle" size={20} />
+              </span>
             ) : null}
+            <div className={styles.headerText}>
+              <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
+              {description ? (
+                <RadixDialog.Description className={styles.description}>
+                  {description}
+                </RadixDialog.Description>
+              ) : null}
+            </div>
           </header>
           <div
             ref={setBody}
@@ -241,6 +239,7 @@ export function ConfirmDialog({
     onOpenChange: setOpen,
     title,
     size,
+    className: styles.confirm,
     tone: destructive ? 'destructive' : 'default',
     locked: pending,
     closeOnOutsideClick: !destructive,
@@ -252,6 +251,7 @@ export function ConfirmDialog({
         <Button
           ref={cancelRef}
           variant="secondary"
+          className={destructive ? styles.dangerCancel : undefined}
           disabled={pending}
           onClick={() => setOpen(false)}
         >
