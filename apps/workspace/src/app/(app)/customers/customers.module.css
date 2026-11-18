@@ -1,63 +1,128 @@
-/* Layout and small pieces that belong to the customer screens only. Everything else comes from
-   components/ui. Colours are Figma tokens from styles/tokens.css. */
-
-.count {
-  white-space: nowrap;
+.stats {
+  display: grid;
+  grid-template-columns: minmax(0, 280px);
+  margin-bottom: var(--spacing-content-gap);
 }
 
-.note {
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
+.plus {
+  font-size: 22px;
+  line-height: 1;
 }
 
+.search,
+.tableFooter,
+.rows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.searchField {
+  flex: 0 1 280px;
+}
+
+.directory {
+  min-width: 0;
+  padding-inline: clamp(12px, 2vw, 24px);
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background: var(--table-row-bg);
+}
+
+.directory .table {
+  border: 0;
+  border-radius: 0;
+}
+
+.directory .table td,
+.directory .table th {
+  padding-inline: 12px;
+}
+
+.directory .table td {
+  height: 88px;
+}
+
+.directory .table :is(td, th):first-child {
+  padding-inline-start: 0;
+}
+
+.directory .table :is(td, th):last-child {
+  padding-inline-end: 0;
+}
+
+.organizationColumn {
+  width: 32%;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.identity > :first-child {
+  flex: none;
+}
+
+.identityText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.name {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+  text-underline-offset: 0.2em;
+}
+
+.name:hover {
+  color: var(--action-primary);
+}
+
+.number,
 .quiet {
   color: var(--text-secondary);
 }
 
-/* A legal name can be long or have no spaces: let it wrap rather than push the table wider. */
-.name {
-  font-weight: var(--font-weight-medium);
-  overflow-wrap: anywhere;
+.number {
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
 }
 
 .flags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: 4px;
 }
 
-/* ---- Search: a plain GET form, so it works without scripts and the URL can be shared ---- */
-
-.search {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px 16px;
+.tableFooter {
+  padding-block: 4px;
+  border-top: var(--border-width-thin) solid var(--border-default);
 }
 
-.search > :first-child {
-  flex: 1 1 18rem;
-  max-width: 32rem;
+.tableFooter > :first-child {
+  flex: 1 1 280px;
+  padding-inline-start: 0;
 }
 
-.searchActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.rows {
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
 }
 
-/* ---- Pager ---- */
-
-.pager {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
+@media (max-width: 1023.98px) {
+  .directory .table td {
+    height: 72px;
+  }
 }
 
-.pagerLinks {
-  display: flex;
-  gap: 8px;
+@media (max-width: 767.98px) {
+  .searchField {
+    flex-basis: 100%;
+  }
 }
