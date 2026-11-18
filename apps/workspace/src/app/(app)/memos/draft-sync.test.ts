@@ -280,6 +280,19 @@ describe('a draft exists only while it differs from the baseline', () => {
 });
 
 describe('leaving, submitting, deleting', () => {
+  it('an idle flush leaves the next edit able to save', async () => {
+    const s = setup();
+    s.engine.start();
+    await settle();
+    await s.engine.flush();
+    s.engine.update(v({ body: 'typed after visiting the form' }));
+    await s.engine.flush();
+    expect(s.t.calls.at(-1)).toMatchObject({
+      op: 'save',
+      values: v({ body: 'typed after visiting the form' }),
+    });
+  });
+
   it('detects a later edit that the in-flight request cannot carry through navigation', async () => {
     const s = setup();
     s.engine.start();
