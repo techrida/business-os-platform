@@ -114,7 +114,7 @@ describe('vendor list', () => {
     const out = await list();
     expect(out).toContain('Himal Traders Pvt. Ltd.');
     expect(out).toContain('Approved');
-    expect(out).toContain('Waiting for KYC');
+    expect(out).toContain('KYC pending');
     expect(out).toContain('Foreign vendor');
     expect(out).toContain('301234567');
     expect(out).toContain('Add vendor');
