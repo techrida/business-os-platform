@@ -12,6 +12,7 @@ export interface MemoFormState {
   values: MemoValues;
   fieldErrors: Partial<Record<keyof MemoValues, string>>;
   error?: string;
+  savedTo?: string;
 }
 
 export const FIELD_MESSAGE: Record<keyof MemoValues, string> = {

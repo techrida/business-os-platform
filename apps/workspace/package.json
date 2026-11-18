@@ -14,15 +14,20 @@
   },
   "dependencies": {
     "@bos/contracts": "workspace:*",
-    "@fontsource-variable/outfit": "catalog:",
     "@bos/locale": "workspace:*",
+    "@fontsource-variable/outfit": "catalog:",
+    "@internationalized/date": "catalog:",
+    "@radix-ui/react-dialog": "catalog:",
+    "@radix-ui/react-popover": "catalog:",
     "ioredis": "catalog:",
     "next": "catalog:",
     "openid-client": "catalog:",
     "pdfkit": "catalog:",
     "react": "catalog:",
+    "react-aria-components": "catalog:",
     "react-dom": "catalog:",
     "server-only": "catalog:",
+    "sonner": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

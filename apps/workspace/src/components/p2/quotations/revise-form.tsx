@@ -1,18 +1,11 @@
 'use client';
 
-import { useActionState, useRef, useState } from 'react';
+import { useActionState, useId, useRef, useState } from 'react';
 
 import { reviseAction, type ActionState } from '@/app/(app)/quotations/[id]/actions';
-import { Button } from '@/components/ui/button';
 import { Field, Textarea } from '@/components/ui/field';
 
-import {
-  ActionDialog,
-  DialogCloseButton,
-  ErrorSummary,
-  PendingLine,
-  useFocusOnProblem,
-} from './action-dialog';
+import { ActionDialog, ErrorSummary, PendingLine, useFocusOnProblem } from './action-dialog';
 import styles from './actions.module.css';
 
 export interface ReviseFormProps {
@@ -41,6 +34,16 @@ export function ReviseForm({
   idempotencyKey,
   reloadHref,
 }: ReviseFormProps) {
+  const formId = useId();
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(reviseAction, {
+    key: idempotencyKey,
+  });
+  // Controlled, so a refusal never wipes the reason (React 19 resets uncontrolled fields).
+  const [reason, setReason] = useState('');
+  const formRef = useRef<HTMLFormElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  useFocusOnProblem(state, formRef, summaryRef);
+
   return (
     <ActionDialog
       triggerLabel="Revise"
@@ -50,71 +53,43 @@ export function ReviseForm({
           ? 'This starts a new draft revision and marks the current one Superseded. It stays in the revision list as a record.'
           : 'This starts a new draft revision. The current one stays in the revision list as a record.'
       }
+      formId={formId}
+      submitLabel="Start revision"
+      pending={pending}
     >
-      {<ReviseBody {...{ quotationId, versionId, version, idempotencyKey, reloadHref }} />}
-    </ActionDialog>
-  );
-}
-
-function ReviseBody({
-  quotationId,
-  versionId,
-  version,
-  idempotencyKey,
-  reloadHref,
-}: Pick<
-  ReviseFormProps,
-  'quotationId' | 'versionId' | 'version' | 'idempotencyKey' | 'reloadHref'
->) {
-  const [state, formAction, pending] = useActionState<ActionState, FormData>(reviseAction, {
-    key: idempotencyKey,
-  });
-  // Controlled, so a refusal never wipes the reason (React 19 resets uncontrolled fields).
-  const [reason, setReason] = useState('');
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const summaryRef = useRef<HTMLDivElement>(null);
-  useFocusOnProblem(state, wrapRef, summaryRef);
-
-  return (
-    <div ref={wrapRef}>
-      <form action={formAction} className={styles.form}>
+      <form id={formId} ref={formRef} action={formAction}>
         <input type="hidden" name="quotationId" value={quotationId} />
         <input type="hidden" name="versionId" value={versionId} />
         <input type="hidden" name="expectedVersion" value={version} />
         <input type="hidden" name="idempotencyKey" value={state.key} />
 
-        <ErrorSummary
-          error={state.error}
-          reload={state.reload}
-          reloadHref={reloadHref}
-          summaryRef={summaryRef}
-        />
+        <fieldset className={styles.form} disabled={pending}>
+          <ErrorSummary
+            error={state.error}
+            reload={state.reload && !pending}
+            reloadHref={reloadHref}
+            summaryRef={summaryRef}
+          />
 
-        <Field
-          label="Why are you revising it?"
-          hint="Kept with the new revision, so everyone can see why it changed."
-          error={state.errors?.reason}
-        >
-          {(control) => (
-            <Textarea
-              name="reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={4}
-              maxLength={1000}
-              {...control}
-            />
-          )}
-        </Field>
-
-        <div className={styles.buttons}>
-          <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-          <Button type="submit" disabled={pending}>
-            Start revision
-          </Button>
-        </div>
+          <Field
+            label="Why are you revising it?"
+            hint="Kept with the new revision, so everyone can see why it changed."
+            error={state.errors?.reason}
+          >
+            {(control) => (
+              <Textarea
+                name="reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={4}
+                maxLength={1000}
+                {...control}
+              />
+            )}
+          </Field>
+        </fieldset>
         <PendingLine pending={pending} words="Starting the revision" />
       </form>
-    </div>
+    </ActionDialog>
   );
 }

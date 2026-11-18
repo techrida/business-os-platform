@@ -128,3 +128,68 @@ scan. No deployment or runtime demo readiness is claimed from these source check
 To start local development after provisioning an isolated P1 environment, use
 `pnpm --filter @bos/workspace dev --port 3101` with the P1 API, identity service,
 Valkey and proxy configured. Run heavy jobs through the shared resource queue.
+
+## Private tailnet development access (Nov15)
+
+Kuu requested private remote-PC/phone access as a development default. The dev-only
+account service now accepts additional exact HTTPS origins only when explicitly
+listed in BOS_DEV_TRUSTED_ORIGINS. Host, port, Origin and Fetch Metadata checks
+remain enforced; production routes remain excluded and the production guard refuses.
+BOS_DEV_IDENTITY_API_URL separates privileged server-side identity calls from a
+restricted browser OIDC bridge. No browser receives the login-client token.
+Runtime configuration belongs to the isolated P1 checkout; it uses a canonical
+identity issuer, two registered app callbacks and separate Next dev cache directories.
+Cookies are not port-isolated: future same-host phase apps need distinct cookie
+names or service hostnames. Host Serve configuration is owned by Config Omarchy.
+This is a later development convenience request, not an original PRD main feature.
+Verification: 448 workspace tests, typecheck/lint, isolated production webpack
+build and dev-route exclusion passed. Tailnet full P1 browser exit passed with
+real password/TOTP login, clean PDF scan, named approvals, no self-approval, mail
+and audit. One-click Sales/Finance switching passed on both local and tailnet
+origins; remote memo PDF/list/print-content/mobile checks passed. External auth
+console/admin/management/privileged APIs and invalid switch origins returned404.
+The original local process needed one additional restart after a transient
+login-store/reload failure; the final compatibility rerun passed. No cache deletion.
+Physical remote-device browser and native print-dialog tests remain unrun here.
+
+The API container cannot directly hairpin into tailscaled’s interface-bound
+listener. Config Omarchy supplies a firewall-scoped raw TLS relay at the P1
+Docker gateway; only API/worker resolve the canonical hostname to that gateway.
+Issuer, URL, SNI and certificate verification stay unchanged. Existing Login V2
+baseUri also had to be updated through the authenticated internal Feature API;
+changing deployment defaults alone did not update the persisted instance setting.
+Both databases/configs were backed up first; no schema migration or data reset.
+Shared host Serve/helper configuration is documented by its owning session.
+The separate runtime overlay and Next wrappers remain ignored local settings.
+Higher-phase source cascade awaits delivery because T3 rejects the cross-machine
+message with runtime_mode_escalation_denied; no downstream completion is claimed.
+
+## Memo attachment interaction follow-up (Nov16)
+
+Kuu requested direct upload (picker selection or one-file drop, no second Upload
+click) and an icon-only red removal control on editable attachments. The workspace
+now forwards authenticated same-origin removal to the existing audited document
+DELETE API. Refusal keeps the row visible; successful removal refreshes submission
+readiness. Submitted snapshots remain locked by the backend. No migration or API
+rebuild is needed. This is a later UI preference, not an original PRD requirement.
+
+Verification: 473 workspace tests, workspace typecheck, touched-file lint and an
+isolated production webpack build with no-dev-routes check passed. The live P1
+exit passed (password/TOTP, scan, named approvals, mail/audit). The added live
+attachment regression passed picker/repeated selection, drop, infected-file
+removal/recovery, refusal without hiding, missing/foreign Origin refusal and the
+post-submit API/UI lock. Physical mobile device and screen-reader testing were
+not performed. Canonical personal preferences live in life-kb, not this repo.
+
+Higher-phase merge resolution must retain P2's removal of financial test memo
+fields, attachment UI and scan workflow. Keep the generic document removal BFF
+where applicable; omit the P1-only attachment component/actions/tests and the
+P1-only attachment exit scenario from P2+ instead of reviving them on merge.
+
+## P1 study issues and decisions
+
+P0 study completed by Kuu on 2026-11-17. P1 is the current study phase. Use `reviewPhase=P1` in the canonical decision register; affected later phases do not change the question owner.
+
+- Review pending P1-owned decisions only (including approver record visibility and audit-anchor destination). Keep existing D01-D12 answers.
+- D17 concept preparation: the planned hierarchy is Tenant → legal entities, with customers/vendors as tenant-scoped parties. Do not settle cross-tenant account sharing in P1; discussion belongs to P2/P4.
+- The founder-only exception in D21 is a recorded policy requirement, not an implemented P1 authorization change. Track in P4 and post-P4; no global root bypass.

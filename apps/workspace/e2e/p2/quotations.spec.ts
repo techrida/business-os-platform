@@ -23,8 +23,7 @@ import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
  *                                download test runs first; it clicks the link exactly once, because
  *                                every call to the route issues a single-use signed link).
  *
- * `playwright.config.ts` lists the specs of the `dev` project by name, so this one runs only after
- * `'p2/quotations.spec.ts'` is added to that list.
+ * The `dev` project runs this spec through its `p2/*.spec.ts` match.
  */
 
 const fixture = (name: string): string | undefined => process.env[`BOS_E2E_QUOTATION_${name}`];
@@ -59,11 +58,18 @@ test('the detail page shows the summary, the totals and every revision in a dial
     await expect(page.getByText('Totals')).toBeVisible();
     await expect(page.getByText('Status history')).toBeVisible();
 
-    await page.getByRole('button', { name: /^All revisions \(\d+\)$/ }).click();
+    const revisions = page.getByRole('button', { name: /^All revisions \(\d+\)$/ });
+    await revisions.click();
     const dialog = page.getByRole('dialog', { name: /^Revisions of / });
-    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('table', { name: /^Revisions of / })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
+    await expect(revisions).toBeFocused();
+
+    await revisions.press('Enter');
+    await dialog.locator('footer').getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(revisions).toBeFocused();
   });
 });
 
@@ -106,18 +112,53 @@ test('Send gives the customer a portal link by email, never the file', async ({
   test.skip(id === undefined || contact === undefined, 'APPROVED or CONTACT is not set');
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
-    await page.getByRole('button', { name: 'Send to customer' }).click();
+    const trigger = page.getByRole('button', { name: 'Send to customer' });
+    await trigger.click();
     const dialog = page.getByRole('dialog', { name: /^Send / });
     await expect(dialog).toContainText('never sent as a file');
 
-    // Nothing chosen: refused in place, with the field named.
-    await dialog.getByRole('button', { name: 'Send to customer' }).click();
-    await expect(dialog.getByText('Choose who should receive it.')).toBeVisible();
-
     const select = dialog.getByLabel('Send to');
+    const message = dialog.getByLabel('Message (optional)');
+    const footer = dialog.locator('footer');
+    const submit = footer.getByRole('button', { name: 'Send to customer' });
+    const key = dialog.locator('input[name="idempotencyKey"]');
+    const initialKey = await key.inputValue();
+    expect(initialKey).toBeTruthy();
+
+    // Clear the preselected contact. Hold this request to check the pending state before validation.
+    await select.selectOption('');
+    await message.fill('Thank you for considering this quotation.');
+    let releaseRequest: () => void = () => {};
+    const pendingRequest = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    await page.route('**/quotations/**', async (route) => {
+      if (route.request().headers()['next-action']) await pendingRequest;
+      await route.continue();
+    });
+    try {
+      await submit.click();
+      await expect(dialog.getByRole('status')).toHaveText('Sending the quotation');
+      await expect(footer.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+      await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeDisabled();
+      await expect(submit).toBeDisabled();
+      await page.keyboard.press('Escape');
+      await page.mouse.click(2, 2);
+      await expect(dialog).toHaveAttribute('data-state', 'open');
+    } finally {
+      releaseRequest();
+    }
+    await expect(dialog.getByText('Choose who should receive it.')).toBeVisible();
+    await expect(select).toBeFocused();
+    await footer.getByRole('button', { name: 'Cancel' }).click();
+    await expect(trigger).toBeFocused();
+    await trigger.press('Enter');
+    await expect(message).toHaveValue('Thank you for considering this quotation.');
+    await expect(key).toHaveValue(initialKey);
+
     const value = await select.locator('option', { hasText: contact ?? '' }).getAttribute('value');
     await select.selectOption({ value: value ?? '' });
-    await dialog.getByRole('button', { name: 'Send to customer' }).click();
+    await submit.click();
     await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
 
     // Closing reloads the page, which now shows the new status.

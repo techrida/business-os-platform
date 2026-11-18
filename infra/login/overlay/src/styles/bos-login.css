@@ -1,0 +1,230 @@
+@import './tokens.css';
+@import './token-overrides.css';
+
+:root {
+  --font-family-primary: 'Outfit Variable', 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  --theme-light-primary-500: var(--checkbox-checked-bg);
+  --theme-dark-primary-500: var(--checkbox-checked-bg);
+  --theme-light-primary-contrast-500: var(--checkbox-checked-icon);
+  --theme-dark-primary-contrast-500: var(--checkbox-checked-icon);
+  --theme-light-background-400: var(--surface-muted);
+  --theme-dark-background-400: var(--surface-muted);
+  --theme-light-background-500: var(--border-default);
+  --theme-dark-background-500: var(--border-default);
+}
+
+.bos-login-page {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font: var(--font-size-body) / 1.5 var(--font-family-primary);
+}
+
+.bos-login-card {
+  width: min(100%, 400px);
+  min-width: 0;
+  padding: 32px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .bos-login-card {
+    padding: 24px;
+  }
+}
+
+.bos-login-content {
+  display: grid;
+  gap: 20px;
+  margin-block-start: 24px;
+}
+
+.bos-login-content > * {
+  min-width: 0;
+}
+
+.bos-login-card h1 {
+  color: var(--text-primary);
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+  text-align: start;
+  text-wrap: balance;
+}
+
+.bos-login-card .ztdl-p {
+  color: var(--text-secondary);
+  text-align: start;
+}
+
+.bos-login-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: 24px;
+}
+
+.bos-alert-error {
+  color: var(--alert-error-text);
+  background: var(--alert-error-bg);
+  border-color: var(--input-error-border);
+}
+
+.bos-alert-info {
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-color: var(--card-border);
+}
+
+.bos-login-card :is(a, button, [role='button']):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.bos-login-card button[type='submit'] {
+  min-height: 44px;
+  border-radius: var(--radius-lg);
+  white-space: normal;
+}
+
+.bos-login-card label:has(> input:not([data-input-otp])) > span:first-child,
+.bos-otp-label {
+  margin-block-end: 8px;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+}
+
+.bos-login-card
+  :is(
+    input:not([type]),
+    input[type='text'],
+    input[type='password'],
+    input[type='email'],
+    input[type='tel'],
+    input[type='url'],
+    textarea
+  ):not([data-input-otp]),
+.bos-otp-slot {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--input-bg);
+  color: var(--input-text);
+}
+
+.bos-login-card
+  :is(
+    input:not([type]),
+    input[type='text'],
+    input[type='password'],
+    input[type='email'],
+    input[type='tel'],
+    input[type='url'],
+    textarea
+  ):not([data-input-otp]) {
+  padding-inline: 12px;
+}
+
+.bos-login-card :is(input, textarea)::placeholder {
+  color: var(--input-placeholder);
+  font-style: normal;
+}
+
+@media (hover: hover) {
+  .bos-login-card
+    :is(input, textarea):not([data-input-otp], [type='checkbox'], [type='radio'], :disabled):hover,
+  .bos-otp-slots:hover .bos-otp-slot {
+    border-color: var(--input-hover-border);
+  }
+}
+
+.bos-login-card
+  :is(input, textarea):not(
+    [data-input-otp],
+    [type='checkbox'],
+    [type='radio']
+  )[aria-invalid='true'],
+.bos-otp-slots[data-invalid] .bos-otp-slot {
+  border-color: var(--input-error-border);
+}
+
+.bos-login-card :is(input, textarea):not([data-input-otp], [type='checkbox'], [type='radio']):focus,
+.bos-otp-slots .bos-otp-slot[data-active] {
+  border-color: var(--input-focus-border);
+  box-shadow: inset 0 0 0 1px var(--input-focus-border);
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+.bos-login-card input:not([data-input-otp]):-webkit-autofill {
+  -webkit-text-fill-color: var(--input-text);
+  box-shadow: inset 0 0 0 100px var(--input-bg);
+}
+
+.bos-login-card input:not([data-input-otp]):-webkit-autofill:focus {
+  box-shadow:
+    inset 0 0 0 1px var(--input-focus-border),
+    inset 0 0 0 100px var(--input-bg);
+}
+
+.bos-login-card input:disabled:not([data-input-otp]) {
+  color: var(--input-disabled-text);
+  background: var(--input-disabled-bg);
+}
+
+.bos-login-card .animate-shake {
+  animation: none;
+}
+
+.bos-otp-slots {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(4px, 1.5vw, 8px);
+}
+
+.bos-otp-slot {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.bos-otp-slot[data-caret]::before {
+  width: 2px;
+  height: 1em;
+  background: currentColor;
+  content: '';
+}
+
+.bos-otp-hint {
+  margin-block-start: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+}
+
+@media (forced-colors: active) {
+  .bos-login-card :is(input, textarea):not([data-input-otp]):focus,
+  .bos-otp-slots .bos-otp-slot[data-active] {
+    outline-color: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bos-login-card *,
+  .bos-login-card *::before,
+  .bos-login-card *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

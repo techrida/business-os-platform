@@ -5,8 +5,12 @@ import {
   defaultDates,
   discountAboveThreshold,
   emptyValues,
+  milestoneAmount,
+  milestoneDue,
   newLine,
+  reconcileMilestone,
   scheduleState,
+  setMilestoneDueDate,
   submitBlocker,
   toContent,
   valuesFromVersion,
@@ -49,6 +53,103 @@ describe('scheduleState', () => {
   it('is invalid when a percent is not a number', () => {
     expect(scheduleState([m('a', '60'), m('b', 'abc')])).toEqual({ kind: 'invalid' });
   });
+  it.each(['-0.01', '100.01', '33.333', '000', '1e2'])(
+    'rejects %s at the row boundary before checking the sum',
+    (percent) => {
+      expect(scheduleState([m('a', percent)])).toEqual({ kind: 'invalid' });
+      expect(reconcileMilestone('', { field: 'percent', value: percent }, '100')).toEqual({
+        ok: false,
+        reason: 'invalid-percent',
+      });
+    },
+  );
+});
+
+describe('milestone reconciliation', () => {
+  it('derives an amount with half-up rounding and keeps both endpoints exact', () => {
+    expect(reconcileMilestone('', { field: 'percent', value: '.50' }, '101.00')).toEqual({
+      ok: true,
+      percent: '0.50',
+      amount: '0.51',
+    });
+    expect(milestoneAmount('50', '9999999999999999.99')).toBe('5000000000000000.00');
+    expect(milestoneAmount('100', '9999999999999999.99')).toBe('9999999999999999.99');
+    expect(milestoneAmount('0', '9999999999999999.99')).toBe('0.00');
+  });
+
+  it('rounds an amount edit to hundredths of a percent and derives the persisted amount', () => {
+    const edit = (value: string) => reconcileMilestone('25', { field: 'amount', value }, '200.00');
+    expect(edit('0.01')).toEqual({ ok: true, percent: '0.01', amount: '0.02' });
+    expect(edit('200.00')).toEqual({ ok: true, percent: '100.00', amount: '200.00' });
+    expect(edit('0')).toEqual({ ok: true, percent: '0.00', amount: '0.00' });
+    expect(edit('200.01')).toEqual({ ok: false, reason: 'above-total' });
+  });
+
+  it.each(['', '-0.01', '1.001', '1e2', '10000000000000000.00'])(
+    'rejects %j as an amount',
+    (value) => {
+      expect(reconcileMilestone('25', { field: 'amount', value }, '100')).toEqual({
+        ok: false,
+        reason: 'invalid-amount',
+      });
+    },
+  );
+
+  it('keeps the allocation at a zero total and permits percent entry before totals load', () => {
+    expect(reconcileMilestone('25.04', { field: 'amount', value: '0' }, '0.00')).toEqual({
+      ok: true,
+      percent: '25.04',
+      amount: '0.00',
+    });
+    expect(reconcileMilestone('', { field: 'amount', value: '0' }, '0.00')).toEqual({
+      ok: false,
+      reason: 'invalid-percent',
+    });
+    expect(reconcileMilestone('25', { field: 'amount', value: '0.01' }, '0.00')).toEqual({
+      ok: false,
+      reason: 'above-total',
+    });
+    expect(reconcileMilestone('25', { field: 'amount', value: '0' }, null)).toEqual({
+      ok: false,
+      reason: 'total-unavailable',
+    });
+    expect(reconcileMilestone('25', { field: 'percent', value: '100' }, null)).toEqual({
+      ok: true,
+      percent: '100',
+      amount: null,
+    });
+    expect(milestoneAmount('25.04', '0.00')).toBe('0.00');
+  });
+});
+
+describe('milestone due date', () => {
+  it('accepts a Gregorian leap day and can clear a stored date', () => {
+    expect(setMilestoneDueDate('', '2028-02-29')).toEqual({
+      ok: true,
+      dueDescription: '2028-02-29',
+    });
+    expect(setMilestoneDueDate('2028-02-29', '')).toEqual({ ok: true, dueDescription: '' });
+    expect(setMilestoneDueDate('', '2026-02-29')).toEqual({ ok: false, reason: 'invalid-date' });
+    expect(setMilestoneDueDate('', '2026-03-01T00:00:00Z')).toEqual({
+      ok: false,
+      reason: 'invalid-date',
+    });
+  });
+
+  it.each(['On order', 'On or before 2026-02-28', '2026-02-30'])(
+    'preserves the existing text %j when opening or editing a date',
+    (description) => {
+      expect(milestoneDue(description)).toEqual({ kind: 'legacy', description });
+      expect(setMilestoneDueDate(description, '2026-02-28')).toEqual({
+        ok: false,
+        reason: 'legacy-description',
+      });
+      expect(setMilestoneDueDate(description, '')).toEqual({
+        ok: false,
+        reason: 'legacy-description',
+      });
+    },
+  );
 });
 
 describe('submitBlocker', () => {
@@ -114,7 +215,7 @@ describe('toContent', () => {
   });
 });
 
-describe('hidden line fields (unitCost, catalogItemId)', () => {
+describe('editing a saved quotation', () => {
   const CAT = '66666666-6666-4666-8666-666666666666';
   const version = (): VersionLike => ({
     contactId: null,
@@ -185,6 +286,52 @@ describe('hidden line fields (unitCost, catalogItemId)', () => {
     const c = toContent(v, 'update');
     expect(c.lines[1]).not.toHaveProperty('unitCost');
     expect(c.lines[1]).not.toHaveProperty('catalogItemId');
+  });
+
+  it('round-trips a linked amount edit, a new date and an existing description through the contract', () => {
+    const v = valuesFromVersion({
+      ...version(),
+      paymentSchedule: [
+        { label: 'Advance', percent: '30', dueDescription: 'On order' },
+        { label: 'Delivery', percent: '70' },
+      ],
+    });
+    const amount = reconcileMilestone('30', { field: 'amount', value: '333.34' }, '1000.00');
+    const percent = reconcileMilestone('70', { field: 'percent', value: '66.67' }, '1000.00');
+    const date = setMilestoneDueDate('', '2028-02-29');
+    if (!amount.ok || !percent.ok || !date.ok) throw new Error('Expected valid milestone edits');
+    v.schedule = v.schedule.map((milestone, index) =>
+      index === 0
+        ? { ...milestone, percent: amount.percent }
+        : { ...milestone, percent: percent.percent, dueDescription: date.dueDescription },
+    );
+    expect(scheduleState(v.schedule)).toEqual({ kind: 'ok' });
+
+    const saved = UpdateQuotationDraftBodySchema.parse({
+      ...toContent(v, 'update'),
+      expectedVersion: 2,
+    });
+    expect(saved.paymentSchedule).toEqual([
+      { label: 'Advance', percent: '33.33', dueDescription: 'On order' },
+      { label: 'Delivery', percent: '66.67', dueDescription: '2028-02-29' },
+    ]);
+    const reopened = valuesFromVersion({
+      ...version(),
+      paymentSchedule: saved.paymentSchedule ?? [],
+    });
+    expect(reopened.schedule.map((row) => milestoneDue(row.dueDescription))).toEqual([
+      { kind: 'legacy', description: 'On order' },
+      { kind: 'date', date: '2028-02-29' },
+    ]);
+    expect(amount.amount).toBe('333.30');
+    expect(reopened.schedule.map((row) => milestoneAmount(row.percent, '1000.00'))).toEqual([
+      '333.30',
+      '666.70',
+    ]);
+    expect(reopened.schedule.map((row) => milestoneAmount(row.percent, '2000.00'))).toEqual([
+      '666.60',
+      '1333.40',
+    ]);
   });
 });
 

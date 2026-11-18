@@ -17,7 +17,7 @@ export interface Failure {
   definite: boolean;
 }
 
-export type FailureContext = 'approval' | 'submit' | 'upload' | 'generic';
+export type FailureContext = 'approval' | 'submit' | 'upload' | 'remove' | 'generic';
 
 export interface FailureInput {
   status: number;
@@ -68,10 +68,19 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
       message = 'This request changed since you opened it.';
       reload = true;
     } else if (context === 'submit') {
-      message =
-        'Every attachment must finish its virus scan and come back clean before you can submit. Wait for the scan to finish, then try again.';
+      if (reason === 'stale_memo') {
+        message = 'This memo changed. Reload it and review the latest version before submitting.';
+        reload = true;
+      } else {
+        message =
+          'Every attachment must finish its virus scan and come back clean before you can submit. Wait for the scan to finish, then try again.';
+      }
     } else if (context === 'upload') {
       message = 'This memo can no longer take attachments because it is not a draft.';
+    } else if (context === 'remove') {
+      message =
+        'Attachments can no longer be removed because this memo is no longer a draft or returned.';
+      reload = true;
     } else {
       message = 'This item changed since you opened it. Reload and try again.';
       reload = true;
@@ -192,6 +201,7 @@ export interface AttachmentView {
   id: string;
   documentId: string;
   filename: string;
+  detectedMime?: string;
   sizeBytes: number;
   status: string;
 }
@@ -200,6 +210,7 @@ export function toAttachmentView(v: {
   id: string;
   documentId: string;
   filename: string;
+  detectedMime?: string | null;
   sizeBytes: number;
   status: string;
 }): AttachmentView {
@@ -207,6 +218,7 @@ export function toAttachmentView(v: {
     id: v.id,
     documentId: v.documentId,
     filename: v.filename,
+    ...(v.detectedMime ? { detectedMime: v.detectedMime } : {}),
     sizeBytes: v.sizeBytes,
     status: v.status,
   };

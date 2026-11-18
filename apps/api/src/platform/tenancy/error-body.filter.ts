@@ -318,7 +318,10 @@ export class ErrorBodyFilter implements ExceptionFilter {
       status = exception.getStatus();
       exposedMessage = messageOf(exception);
       // 403 for authz denials; 400 for `invalid_entity` (a malformed X-Entity-Id, ADR 0027 §4).
-      if (status === 403 || status === 400) reason = reasonOf(exception);
+      const reportedReason = reasonOf(exception);
+      if (status === 403 || status === 400 || (status === 409 && reportedReason === 'stale_memo')) {
+        reason = reportedReason;
+      }
       stepUp = isStepUp(exception);
       conflictCode = conflictCodeOf(exception) ?? unprocessableCodeOf(exception);
       if (conflictCode !== undefined) details = detailsOf(exception);

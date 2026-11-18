@@ -8,6 +8,7 @@ import {
   type CreateLeadBody,
   type LeadStageChangeBody,
   LeadDtoSchema,
+  type OpportunityStage,
   type OpportunityStageChangeBody,
   OpportunityDtoSchema,
 } from '@bos/contracts';
@@ -70,9 +71,16 @@ function json(method: string, body: unknown, headers: Record<string, string> = {
   };
 }
 
-function query(params: Record<string, string | number | undefined>): string {
+function query(params: Record<string, string | number | readonly string[] | undefined>): string {
   const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue;
+    if (typeof value === 'object') {
+      for (const item of value) q.append(key, item);
+    } else {
+      q.set(key, String(value));
+    }
+  }
   return q.size > 0 ? `?${q.toString()}` : '';
 }
 
@@ -132,9 +140,10 @@ export function convertLead(
 // Opportunities
 // ---------------------------------------------------------------------------------------------
 
+/** An empty stage selection omits the filter. Each selected stage becomes a `stage` parameter. */
 export function listOpportunities(
   session: Session,
-  opts: { stage?: string; q?: string; limit?: number } = {},
+  opts: { stage?: string | readonly OpportunityStage[]; q?: string; limit?: number } = {},
 ) {
   return call(session, `/v1/opportunities${query(opts)}`, listOf(OpportunityDtoSchema));
 }

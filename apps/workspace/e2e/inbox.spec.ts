@@ -60,6 +60,7 @@ test('the inbox shows the reason for each item, and a 403 is explained in words'
     await test.step('the named approver sees the reason, and rejecting needs a comment', async () => {
       const page = management.page;
       await openFromInbox(page, title, reason);
+      await expect(page.getByRole('region', { name: 'Attachments', exact: true })).toHaveCount(0);
 
       // Reject without a comment: refused in place, with the field named.
       await page.getByRole('button', { name: 'Reject', exact: true }).click();

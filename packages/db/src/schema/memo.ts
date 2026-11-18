@@ -2,6 +2,7 @@
 // Serves the audit NFR (the table is audited) and the money NFR (the NPR snapshot is stored on the row).
 // The SQL in migrations/0007_test_memo.sql and 0013_legal_entities.sql is the source of truth (0013 drops the
 // assert_org_kind trigger: the kind is now an FK to parties); this file only types the queries, so keep them in step.
+// 0039_discard_memo_drafts adds the soft discard (discarded_at, discarded_by_user_id) and its guard trigger.
 import { sql } from 'drizzle-orm';
 import {
   char,
@@ -80,6 +81,13 @@ export const testMemos = appSchema.table(
       .notNull()
       .default(sql`'{}'::uuid[]`),
     version: integer('version').notNull().default(1),
+    /**
+     * Soft discard (0039): set once by the creator on a draft or returned memo, never cleared. The memo keeps its
+     * number, status, audit trail and attachments; every read and write of the memo skips rows where this is set.
+     */
+    discardedAt: timestamp('discarded_at', { withTimezone: true }),
+    /** Always the owner (test_memos_discarded_by_owner_check). Composite FK test_memos_discarded_by_fk below. */
+    discardedByUserId: uuid('discarded_by_user_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -102,6 +110,12 @@ export const testMemos = appSchema.table(
       foreignColumns: [users.tenantId, users.id],
     }),
     // Created by 0007 as test_memos_tenant_customer_org_idx; it follows the renamed column, so 0013 renames it too.
+    // 0039. MATCH SIMPLE: not checked while discarded_by_user_id is NULL.
+    foreignKey({
+      name: 'test_memos_discarded_by_fk',
+      columns: [t.tenantId, t.discardedByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
     index('test_memos_tenant_customer_party_idx').on(t.tenantId, t.customerPartyId),
     // MATCH SIMPLE: not checked while customer_party_id is NULL.
     foreignKey({
@@ -119,5 +133,17 @@ export const testMemos = appSchema.table(
     check('test_memos_currency_check', sql`${t.currency} in ('NPR', 'INR', 'USD')`),
     check('test_memos_fx_rate_check', sql`${t.fxRate} > 0`),
     check('test_memos_version_check', sql`${t.version} >= 1`),
+    check(
+      'test_memos_discarded_pair_check',
+      sql`(${t.discardedAt} IS NULL) = (${t.discardedByUserId} IS NULL)`,
+    ),
+    check(
+      'test_memos_discarded_status_check',
+      sql`${t.discardedAt} IS NULL OR ${t.status} in ('draft', 'returned')`,
+    ),
+    check(
+      'test_memos_discarded_by_owner_check',
+      sql`${t.discardedByUserId} IS NULL OR ${t.discardedByUserId} = ${t.ownerUserId}`,
+    ),
   ],
 );

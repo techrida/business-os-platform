@@ -7,9 +7,12 @@ import {
 } from '@bos/contracts';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { z } from 'zod';
 
 import { QuotationApprovalSummary } from '@/components/p2/quotations/approval-summary';
 import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { FilePreviewDialog } from '@/components/ui/file-preview-dialog';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import {
@@ -62,6 +65,22 @@ const STEP_TONE: Record<string, TimelineTone> = {
   rejected: 'error',
   skipped: 'muted',
 };
+
+const FrozenAttachment = z.object({
+  documentId: z.guid(),
+  versionId: z.guid(),
+  filename: z.string(),
+  detectedMime: z.string().nullable(),
+});
+
+function memoAttachments(snapshot: unknown) {
+  if (typeof snapshot !== 'object' || snapshot === null || !('attachments' in snapshot)) return [];
+  if (!Array.isArray(snapshot.attachments)) return [];
+  return snapshot.attachments.flatMap((raw: unknown) => {
+    const file = FrozenAttachment.safeParse(raw);
+    return file.success ? [file.data] : [];
+  });
+}
 
 function titleOf(snapshot: unknown): string | null {
   if (snapshot !== null && typeof snapshot === 'object' && 'title' in snapshot) {
@@ -128,11 +147,10 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
   const title = titleOf(request.snapshot);
   const snapshot = request.snapshot;
+  const isMemo = request.documentType === 'test_memo';
+  const attachments = isMemo ? memoAttachments(snapshot) : [];
   const memoTemplate = MemoTemplateSnapshotSchema.safeParse(
-    request.documentType === 'test_memo' &&
-      snapshot !== null &&
-      typeof snapshot === 'object' &&
-      'template' in snapshot
+    isMemo && snapshot !== null && typeof snapshot === 'object' && 'template' in snapshot
       ? snapshot.template
       : null,
   );
@@ -146,8 +164,14 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const selectedSigners = memoTemplate.success
     ? [...memoTemplate.data.recommenders, memoTemplate.data.approvedBy]
     : [];
-  const rows = snapshotEntries(request.snapshot, people).filter(
-    (row) => !memoTemplate.success || row.key !== 'template',
+  if (memoTemplate.success) {
+    for (const signer of [memoTemplate.data.preparedBy, ...selectedSigners]) {
+      if (!people.has(signer.userId)) people.set(signer.userId, signer.name);
+    }
+  }
+  const rows = snapshotEntries(snapshot, people).filter(
+    (row) =>
+      (!memoTemplate.success || row.key !== 'template') && (!isMemo || row.key !== 'attachments'),
   );
   const inboxItem = items?.find((i) => i.requestId === request.requestId);
 
@@ -224,7 +248,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
         <StatusTimeline label="Approval route steps" steps={timeline} />
       </Panel>
 
-      <div className={styles.columns}>
+      <div className={isMemo ? styles.main : styles.columns}>
         <div className={styles.main}>
           <Panel
             title="What was submitted"
@@ -232,7 +256,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           >
             {request.documentType === 'quotation_version' ? (
               <QuotationApprovalSummary request={request} />
-            ) : facts.length === 0 ? (
+            ) : facts.length === 0 && !memoTemplate.success ? (
               <p className={styles.note}>The snapshot is empty.</p>
             ) : (
               <>
@@ -247,6 +271,27 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
               </>
             )}
           </Panel>
+
+          {attachments.length > 0 ? (
+            <Panel title="Attachments">
+              <ul className={styles.frozenFiles}>
+                {attachments.map((file) => {
+                  const base = `/api/documents/${file.documentId}/versions/${file.versionId}`;
+                  return (
+                    <li key={file.versionId}>
+                      <FilePreviewDialog
+                        name={file.filename}
+                        mimeType={file.detectedMime ?? 'application/octet-stream'}
+                        previewUrl={`${base}/preview`}
+                        downloadUrl={`${base}/download`}
+                        trigger={<Button variant="secondary">{file.filename}</Button>}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
+          ) : null}
 
           <Panel title="History">
             {request.actions.length === 0 ? (
@@ -278,7 +323,11 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           </Panel>
         </div>
 
-        <Panel as="aside" title="Your decision" className={styles.side}>
+        <Panel
+          as={isMemo ? 'section' : 'aside'}
+          title="Your decision"
+          className={isMemo ? undefined : styles.side}
+        >
           {waitingOnMe === 'no' ? (
             <p className={styles.note}>
               {request.status === 'pending'

@@ -3,7 +3,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
 
 import { nextKey } from '@/components/p2/crm/idempotency';
 import { decideVerification } from '@/components/p2/customers/api';
@@ -75,6 +74,5 @@ export async function reviewAction(prev: ReviewState, form: FormData): Promise<R
 
   revalidatePath('/verification');
   revalidatePath(`/verification/${caseId}`);
-  // `redirect` throws, so it stays outside the try block. The queue shows a confirmation.
-  redirect(`/verification?decided=${parsed.data.decision}`);
+  return { key: randomUUID() };
 }
