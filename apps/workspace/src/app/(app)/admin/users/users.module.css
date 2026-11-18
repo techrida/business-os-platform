@@ -1,3 +1,125 @@
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(12px, 2vw, 32px);
+}
+
+.filters,
+.filterActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.filters {
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.search {
+  flex: 0 1 280px;
+}
+
+.filterActions select {
+  min-height: 36px;
+  padding-block: 4px;
+  border-color: var(--action-primary);
+  color: var(--action-primary);
+}
+
+.filterActions a {
+  color: var(--text-link);
+}
+
+.results {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding-inline: clamp(6px, 2vw, 24px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background: var(--card-bg);
+}
+
+.directory.directory {
+  border: 0;
+  border-radius: 0;
+}
+
+.directory tbody tr {
+  height: 84px;
+}
+
+.directory thead th,
+.directory tbody td,
+.directory tbody th {
+  padding-inline: 12px;
+}
+
+.resultsFooter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 10px 6px;
+}
+
+.resultsFooter > div {
+  display: contents;
+}
+
+.resultsFooter p,
+.pageSize {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.resultsFooter p {
+  margin-inline-end: auto;
+}
+
+.pageSize {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pageSize select {
+  min-height: 32px;
+  padding-block: 3px;
+  font-size: var(--font-size-caption);
+}
+
+.resultsFooter nav {
+  order: 1;
+  margin-inline-start: 0;
+}
+
+.results > :last-child {
+  border-top: 1px solid var(--border-default);
+}
+
+@media (max-width: 900px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .filters {
+    align-items: stretch;
+  }
+  .search {
+    flex-basis: 100%;
+  }
+  .filterActions {
+    gap: 8px;
+  }
+  .directory tbody tr {
+    height: 64px;
+  }
+}
+
 /* Users screens (list, invite, edit-roles dialog), on the shared tokens only. The table's row-head
    override and the shared components live in admin.module.css and src/components/ui. */
 
@@ -8,23 +130,6 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.avatar {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border: var(--border-width-thin) solid var(--avatar-border);
-  border-radius: var(--radius-full);
-  background: var(--avatar-bg);
-  color: var(--avatar-text);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-caption);
-  letter-spacing: var(--letter-spacing-medium);
-  text-transform: uppercase;
 }
 
 .personText {
@@ -65,46 +170,6 @@
   list-style: none;
 }
 
-.pagerRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-}
-
-.count {
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-}
-
-.pager {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.pagerLink {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
-  border: var(--border-width-thin) solid var(--pagination-border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-default);
-  color: var(--pagination-text-active);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
-  text-decoration: none;
-  transition: background-color 120ms ease;
-}
-
-.pagerLink:hover {
-  background: var(--pagination-bg-hover);
-}
-
 /* ---- invite form ------------------------------------------------------------------------------ */
 
 /* The form wraps the page header too, so its Save button submits it; it takes over the page grid. */
@@ -133,10 +198,6 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px 24px;
-}
-
-.wide {
-  grid-column: 1 / -1;
 }
 
 @media (max-width: 640px) {
@@ -200,75 +261,33 @@
   cursor: pointer;
 }
 
-/* ---- edit-roles dialog ------------------------------------------------------------------------ */
-
-.dialog {
-  width: min(480px, calc(100vw - 32px));
-  max-height: calc(100dvh - 32px);
-  padding: 0;
-  overflow: hidden;
-  border: var(--border-width-thin) solid var(--modal-border);
-  border-radius: var(--radius-xl);
-  background: var(--modal-bg);
-  color: var(--modal-text);
-  box-shadow: 0 24px 48px color-mix(in srgb, var(--modal-overlay) 18%, transparent);
-}
-
-.dialog::backdrop {
-  background: color-mix(in srgb, var(--modal-overlay) 50%, transparent);
-}
-
-.dialogForm {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  max-height: calc(100dvh - 32px);
-}
-
-.dialogHead {
+.activation {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px 16px;
-  border-bottom: var(--border-width-thin) solid var(--border-subtle);
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
 }
 
-.dialogTitle {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.dialogTitle h2 {
-  font-size: var(--font-size-body-large);
-  line-height: var(--line-height-body-large);
-}
-
-.dialogSub {
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-  overflow-wrap: anywhere;
-}
-
-.dialogClose {
+.activation svg {
   flex: none;
-  padding-inline: 8px;
-  color: var(--modal-close-icon);
+  color: var(--action-primary);
 }
 
-.dialogBody {
-  display: grid;
-  gap: 16px;
-  padding: 20px 24px;
-  overflow-y: auto;
+.activation h3 {
+  font-size: var(--font-size-body-small);
 }
 
-.dialogFoot {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px 24px;
-  border-top: var(--border-width-thin) solid var(--border-subtle);
+.activation p {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+@media (min-width: 641px) {
+  .checkGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

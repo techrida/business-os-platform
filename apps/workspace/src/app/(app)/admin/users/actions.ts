@@ -51,7 +51,12 @@ export async function inviteUserAction(
 
   const parsed = InviteSchema.safeParse(fields);
   if (!parsed.success) {
-    return fail(parsed.error.issues[0]?.message ?? 'Check the form and try again.', fields);
+    return {
+      ...fail('Check the highlighted fields.', fields),
+      fieldErrors: Object.fromEntries(
+        parsed.error.issues.map((issue) => [String(issue.path[0]), issue.message]),
+      ),
+    };
   }
 
   try {
