@@ -4,7 +4,7 @@
 // POST needs an Idempotency-Key, so a double click or a retry cannot create two quotations.
 import {
   CreateQuotationBodySchema,
-  QuotationStatusSchema,
+  ListQuotationsQuerySchema,
   UpdateQuotationDraftBodySchema,
   type QuotationDetail,
   type QuotationDto,
@@ -43,13 +43,17 @@ export class DraftingController {
     return this.drafting.create(parseOr400(CreateQuotationBodySchema, body), key);
   }
 
-  /** 200 with a bare array of QuotationListItem, optionally only the given `status`. */
+  /**
+   * 200 with a bare array of QuotationListItem, optionally only the given `status` and/or one
+   * `opportunityId`. 400 for an unknown status or an opportunityId that is not a UUID.
+   */
   @Get()
   @Can('quotation.read')
-  list(@Query('status') status?: unknown): Promise<QuotationListItem[]> {
-    return this.drafting.list(
-      status === undefined ? undefined : parseOr400(QuotationStatusSchema, status),
-    );
+  list(
+    @Query('status') status?: unknown,
+    @Query('opportunityId') opportunityId?: unknown,
+  ): Promise<QuotationListItem[]> {
+    return this.drafting.list(parseOr400(ListQuotationsQuerySchema, { status, opportunityId }));
   }
 
   /** 200 with the QuotationDetail. 404 for a record of another entity or outside the caller's scope. */

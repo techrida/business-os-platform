@@ -1,13 +1,14 @@
 .badge {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   max-width: 100%;
   padding: 4px 8px;
-  border-radius: var(--radius-full);
-  /* Figma Label/small: text-xs, medium, leading-4, tracking-tight. */
+  border-radius: var(--radius-status);
+  /* Figma Label/small: text-xs, medium, leading-4, medium tracking. */
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
-  letter-spacing: var(--letter-spacing-tight);
+  letter-spacing: var(--letter-spacing-medium);
   line-height: var(--line-height-caption);
   white-space: nowrap;
 }

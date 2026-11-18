@@ -255,11 +255,7 @@ export function Combobox({
                   role="option"
                   aria-selected={o.id === value}
                   aria-disabled={o.disabled || undefined}
-                  className={[
-                    styles.option,
-                    o.id === live ? styles.active : undefined,
-                    o.disabled ? styles.disabled : undefined,
-                  ]
+                  className={[styles.option, o.id === live ? styles.active : undefined]
                     .filter(Boolean)
                     .join(' ')}
                   onMouseMove={() => {

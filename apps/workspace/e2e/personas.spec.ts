@@ -65,7 +65,8 @@ test('branded sign-in exposes the product name and accepts a real persona', asyn
   const appOrigin = new URL(baseURL ?? '').origin;
   await page.goto('/');
   await expect(page).toHaveURL((url) => url.origin === authOrigin);
-  await expect(page.getByText('Business OS', { exact: true })).toBeVisible();
+  // The sign-in page streams behind a loading shell, so the lockup can exist twice for a moment.
+  await expect(page.getByText('Business OS', { exact: true }).first()).toBeVisible();
   await expect(page.getByLabel('Email or username', { exact: true })).toBeVisible();
 
   await signInOnZitadel(page, persona('sales'), appOrigin);
@@ -97,8 +98,8 @@ test.describe('persona sign-in and sign-out', () => {
           await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
           // The header shows the org kind badge and the roles that came from the token.
           const header = page.getByRole('banner');
-          await expect(header).toContainText('staff');
-          await expect(header).toContainText(who.role);
+          await expect(header).toContainText(/staff/i);
+          await expect(header).toContainText(new RegExp(who.role.replace(/[_-]/g, ' '), 'i'));
         } else {
           // A valid session, but not for this app: `/` sends customers and vendors away.
           await expect(page).toHaveURL(`${appOrigin}/staff-only`);

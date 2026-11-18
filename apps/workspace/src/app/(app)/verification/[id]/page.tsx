@@ -9,7 +9,7 @@ import {
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { getDocument } from '@/components/p2/crm/verification-api';
+import { getVerificationReviewHistory, getDocument } from '@/components/p2/crm/verification-api';
 import { fileOf, type FileView } from '@/components/p2/crm/verification-file';
 import { getCustomer, getVerificationCase } from '@/components/p2/customers/api';
 import {
@@ -32,11 +32,12 @@ import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { scanLabel } from '@/lib/kernel-ui';
 import { when } from '@/lib/kernel-format';
-import { userNames } from '@/lib/business-labels';
 
 import { CheckMark, ChecklistFile } from './checklist-file';
 import { ReviewForm } from './review-form';
+import { ItemReview, RemoveLoose } from './item-review';
 import { SubmitForm } from '../submit-form';
 import styles from '../verification.module.css';
 
@@ -51,16 +52,20 @@ const ITEM_STATUS = {
 function missingForSubmit(c: VerificationCaseDto): string[] {
   const required = c.checklist.filter((item) => item.required);
   if (required.length === 0) return ['At least one required document'];
-  return required
-    .filter((item) => item.documentId === null || !['provided', 'accepted'].includes(item.status))
-    .map((item) => CHECKLIST_LABEL[item.key]);
+  return c.checklist.flatMap((item) => {
+    if (item.status === 'rejected') return [`${CHECKLIST_LABEL[item.key]}: replace the file`];
+    return item.required && !item.documentId ? [CHECKLIST_LABEL[item.key]] : [];
+  });
 }
 
 export default async function VerificationCasePage({
   params,
+  searchParams,
 }: {
+  searchParams: Promise<{ before?: string }>;
   params: Promise<{ id: string }>;
 }) {
+  const { before } = await searchParams;
   const { id } = await params;
   // An id that is not a GUID cannot be a case, so it never reaches the API.
   if (!isGuid(id)) notFound();
@@ -88,7 +93,7 @@ export default async function VerificationCasePage({
     );
   }
 
-  // A failed name lookup leaves the case usable with an explicit unavailable label.
+  // The name is a courtesy: a failed lookup shows the short id and the case still works.
   let customer: CustomerDto | undefined;
   try {
     customer = await getCustomer(session, c.partyId);
@@ -105,41 +110,60 @@ export default async function VerificationCasePage({
   lookups.forEach((r, i) => {
     const documentId = documentIds[i];
     if (documentId === undefined) return;
-    approvalFiles.set(
-      documentId,
-      r.status === 'fulfilled' ? approvalFile(r.value.versions) : 'unavailable',
-    );
-    files.set(documentId, r.status === 'fulfilled' ? fileOf(r.value) : null);
+    const bound = c.checklist.find((item) => item.documentId === documentId)?.evidence
+      ?.documentVersionId;
+    const document =
+      r.status === 'fulfilled' &&
+      r.value.id === documentId &&
+      r.value.ownerType === 'verification_case' &&
+      r.value.ownerId === c.id
+        ? r.value
+        : null;
+    const needsBinding = c.reviewPolicy === 'document_review_v1' && c.status === 'submitted';
+    if (!document || (needsBinding && !bound)) {
+      approvalFiles.set(documentId, 'unavailable');
+      files.set(documentId, null);
+      return;
+    }
+    approvalFiles.set(documentId, approvalFile(document.versions, bound));
+    files.set(documentId, fileOf(document, bound));
   });
-  const people = await userNames(session);
+  const vendor = c.partyKind === 'vendor';
+  const history = vendor
+    ? null
+    : await getVerificationReviewHistory(session, id, before).catch(() => null);
+  const reviewerNames = new Map(
+    history?.items.map((entry) => [entry.reviewedBy, entry.reviewerName]),
+  );
   const name = customerLabel(customer, c.partyId);
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
   const mayReview = hasPermission(session.roles, 'verification.review');
-  const mayEdit = hasPermission(session.roles, 'customer.write');
+  const mayEdit = hasPermission(session.roles, vendor ? 'vendor.write' : 'customer.write');
   const editable = mayEdit && (c.status === 'draft' || c.status === 'rejected');
   const mayAttach = editable && hasPermission(session.roles, 'documents.upload');
   const mayRemove = editable && hasPermission(session.roles, 'verification.read');
-  const actions =
-    c.status === 'draft' && mayEdit ? (
-      <SubmitForm
-        key={c.id}
-        caseId={c.id}
-        idempotencyKey={randomUUID()}
-        missing={missingForSubmit(c)}
-        reloadHref={path}
-      />
-    ) : c.status === 'submitted' && mayReview ? (
-      <ReviewForm
-        key={c.id}
-        caseId={c.id}
-        version={c.version}
-        idempotencyKey={randomUUID()}
-        canReject={canReject(c)}
-        approvalProblems={approvalProblems(c, approvalFiles)}
-        reloadHref={path}
-      />
-    ) : null;
+  const legacy = !vendor && c.reviewPolicy === 'case_review_v0';
+  const actions = legacy ? null : c.status === 'draft' && mayEdit ? (
+    <SubmitForm
+      key={c.id}
+      caseId={c.id}
+      idempotencyKey={randomUUID()}
+      version={c.version}
+      missing={missingForSubmit(c)}
+      reloadHref={path}
+    />
+  ) : c.status === 'submitted' && mayReview && !c.reviewBlockedReason ? (
+    <ReviewForm
+      key={c.id}
+      caseId={c.id}
+      version={c.version}
+      idempotencyKey={randomUUID()}
+      canReject={canReject(c)}
+      approvalProblems={approvalProblems(c, approvalFiles)}
+      reloadHref={path}
+    />
+  ) : null;
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Verification', href: '/verification' }, { label: name }]} />
@@ -154,7 +178,21 @@ export default async function VerificationCasePage({
         }
       />
 
-      {c.status === 'submitted' ? (
+      {legacy ? (
+        <Alert tone="info">
+          {c.status === 'approved'
+            ? 'Approved before document review.'
+            : 'This case needs an update before review.'}
+        </Alert>
+      ) : c.status === 'submitted' && c.checklist.some((item) => item.status === 'rejected') ? (
+        <Alert tone="warning">
+          {mayReview
+            ? 'Reject the case so Sales can replace the rejected documents.'
+            : 'You can replace rejected documents once the case is returned.'}
+        </Alert>
+      ) : c.status === 'submitted' && mayReview && c.reviewBlockedReason ? (
+        <Alert tone="info">{c.reviewBlockedReason}</Alert>
+      ) : c.status === 'submitted' ? (
         <p className={styles.note}>
           {mayReview
             ? 'Review the documents before recording a decision.'
@@ -164,12 +202,22 @@ export default async function VerificationCasePage({
         <p className={styles.note}>Update the documents to reopen this case as a draft.</p>
       ) : null}
 
+      {!legacy && c.status === 'submitted' && c.reviewerNames?.length ? (
+        <p className={styles.note}>Can review: {c.reviewerNames.join(', ')}.</p>
+      ) : null}
+
       {c.status === 'approved' || c.status === 'rejected' ? (
         <Alert
           tone={c.status === 'approved' ? 'success' : 'warning'}
           role="region"
           aria-label="Decision"
-          title={c.status === 'approved' ? 'This customer is verified.' : 'This case was rejected.'}
+          title={
+            c.status === 'approved'
+              ? vendor
+                ? 'This vendor is verified.'
+                : 'This customer is verified.'
+              : 'This case was rejected.'
+          }
         >
           {c.decidedAt !== null ? (
             <>
@@ -177,7 +225,7 @@ export default async function VerificationCasePage({
               {c.reviewedBy !== null ? (
                 <>
                   {' '}
-                  by <span>{people.get(c.reviewedBy) ?? 'Reviewer name unavailable'}</span>
+                  by <span>{reviewerNames.get(c.reviewedBy) || 'a staff member'}</span>
                 </>
               ) : null}
               .
@@ -203,6 +251,7 @@ export default async function VerificationCasePage({
               <Th>Status</Th>
               <Th>File</Th>
               <Th>Expires</Th>
+              {!vendor && <Th>Review</Th>}
             </tr>
           </thead>
           <tbody>
@@ -242,12 +291,87 @@ export default async function VerificationCasePage({
                       <span className={styles.quiet}>No expiry</span>
                     )}
                   </Td>
+                  {!vendor && (
+                    <Td>
+                      {item.review ? (
+                        <>
+                          <span>
+                            {when(item.review.reviewedAt)} ·{' '}
+                            {reviewerNames.get(item.review.reviewedBy) || 'a staff member'}
+                          </span>
+                          {item.review.comment && (
+                            <p className={styles.comment}>{item.review.comment}</p>
+                          )}
+                        </>
+                      ) : null}
+                      {!legacy &&
+                      mayReview &&
+                      !c.reviewBlockedReason &&
+                      c.status === 'submitted' &&
+                      item.status === 'provided' ? (
+                        <ItemReview
+                          key={`${item.key}/${c.version}`}
+                          caseId={c.id}
+                          itemKey={item.key}
+                          label={label}
+                          version={c.version}
+                          canApprove={
+                            !!item.documentId &&
+                            files.get(item.documentId)?.status === 'clean' &&
+                            (!item.expiresOn ||
+                              item.expiresOn > new Date().toISOString().slice(0, 10))
+                          }
+                        />
+                      ) : null}
+                    </Td>
+                  )}
                 </tr>
               );
             })}
           </tbody>
         </Table>
       </Panel>
+      {c.looseEvidence?.length ? (
+        <Panel
+          title="Other case attachments"
+          description="All active attachments must pass scanning. Remove unwanted files while the case is editable."
+        >
+          {c.looseEvidence.map((file) => (
+            <div key={file.documentId}>
+              <p>
+                {file.filename}: {scanLabel(file.status).text}
+              </p>
+              {mayAttach ? (
+                <RemoveLoose caseId={c.id} documentId={file.documentId} filename={file.filename} />
+              ) : null}
+            </div>
+          ))}
+        </Panel>
+      ) : null}
+      {!vendor && (
+        <Panel title="Review history">
+          {history ? (
+            <>
+              {history.items.map((entry) => (
+                <div key={entry.id}>
+                  <p>
+                    {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'}: {entry.decision}.{' '}
+                    {when(entry.reviewedAt)} · {entry.reviewerName || 'a staff member'}
+                  </p>
+                  {entry.comment ? <p className={styles.comment}>{entry.comment}</p> : null}
+                </div>
+              ))}
+              {history.nextCursor ? (
+                <a href={`${path}?before=${encodeURIComponent(history.nextCursor)}`}>
+                  Earlier decisions
+                </a>
+              ) : null}
+            </>
+          ) : (
+            <p>Review history could not be loaded. Reload this case.</p>
+          )}
+        </Panel>
+      )}
     </Page>
   );
 }

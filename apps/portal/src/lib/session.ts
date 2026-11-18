@@ -9,6 +9,14 @@ import { z } from 'zod';
 import { getEnv } from './env';
 import { refreshTokens } from './oidc';
 import { type Keyring, openSessionValue, sealSessionValue } from './session-crypto';
+import { SessionUnavailableError } from './session-unavailable';
+import {
+  clientStatus,
+  CONNECT_WAIT_MS,
+  errorCategory,
+  whenReady,
+  withDeadline,
+} from './valkey-health';
 
 /**
  * Server-side sessions for the portal BFF. Copied from apps/workspace/src/lib/session.ts (dedupe
@@ -105,28 +113,9 @@ export const VALKEY_CLIENT_OPTIONS = {
   maxRetriesPerRequest: 1,
 } as const satisfies RedisOptions;
 
-/** How long a command waits for a client that is still connecting. */
-const CONNECT_WAIT_MS = 1000;
-const CONNECTING_STATES: ReadonlySet<string> = new Set(['connecting', 'connect', 'reconnecting']);
-
-/**
- * Resolves once `client` is ready, or after CONNECT_WAIT_MS, whichever comes first. Without the
- * offline queue ioredis rejects any command sent while it is still connecting, which would fail
- * the first request after every start (the clients connect lazily, on first use). A client that
- * is still not ready after the wait gets the command anyway and fails fast.
- */
-export function whenReady(client: Redis): Promise<Redis> {
-  if (!CONNECTING_STATES.has(client.status)) return Promise.resolve(client);
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      client.off('ready', done);
-      resolve(client);
-    };
-    const timer = setTimeout(done, CONNECT_WAIT_MS);
-    client.once('ready', done);
-  });
-}
+// `whenReady` lives in valkey-health.ts (the login rate limiter needs it without `server-only`);
+// it is re-exported here for the OIDC state client, which has always imported it from this module.
+export { whenReady };
 
 let redis: Redis | undefined;
 
@@ -309,70 +298,151 @@ export async function peekSession(id: string): Promise<{ idToken?: string } | nu
   return record.idToken !== undefined ? { idToken: record.idToken } : {};
 }
 
+/** Total time one request may spend reading its session record, including the one retry. */
+const READ_DEADLINE_MS = 2000;
+
+/** Where a store failure happened. `cleanup` is the best-effort delete of an invalid record. */
+type StoreStage = 'read' | 'slide' | 'rotate' | 'cleanup';
+/** What the failure meant for this request. */
+type StoreOutcome = 'unavailable' | 'kept' | 'signed_out';
+
 /**
- * Resolves the session from the cookie, or null.
+ * One structured line per store failure. Only allow-listed values: never the error message
+ * (ioredis errors carry the command arguments, which here include the session key and the stored
+ * record with its tokens), never a key name or cookie value.
+ */
+function logStoreFailure(
+  stage: StoreStage,
+  outcome: StoreOutcome,
+  started: number,
+  err: unknown,
+): void {
+  console.warn(
+    JSON.stringify({
+      event: 'session.valkey_error',
+      stage,
+      outcome,
+      elapsedMs: Math.round(performance.now() - started),
+      clientStatus: clientStatus(redis),
+      category: errorCategory(err),
+    }),
+  );
+}
+
+/**
+ * Resolves the session from the cookie: the session, or null when there definitively is none.
  *
- * Enforces the idle and absolute limits (destroying an expired record), slides `lastSeenAt` and
- * the key TTL, and refreshes the access token when fewer than 60 s remain. A failed refresh
- * destroys the session. It never writes cookies: Server Components may not, so a dead cookie is
- * left for the next sign-in or logout to overwrite.
+ * Null means "sign in": no cookie, a malformed id, no record, a record that does not decrypt or
+ * parse, an idle- or absolute-expired record (which is destroyed), or a failed token refresh
+ * (which destroys the session). It never writes cookies: Server Components may not, so a dead
+ * cookie is left for the next sign-in or logout to overwrite.
  *
- * Fails closed and never throws on Valkey errors (CR-03): Valkey runs `noeviction`, so when it is
- * full every write is refused, and a throw here would turn every page into a 500. The user is
- * treated as signed out instead.
+ * Throws SessionUnavailableError when Valkey cannot say (CR-03 still holds: never a signed-in
+ * answer without a record that was read). The cookie and the record are left alone, callers show
+ * a retryable notice (pages) or answer 503 (Route Handlers), and nothing protected is served. A
+ * transient store failure must not log the user out, which is what returning null used to do.
+ *
+ * The read gets one readiness-aware retry within READ_DEADLINE_MS. A failed slide is not retried:
+ * it keeps the session as read (the TTL catches up on the next request). The refresh itself is
+ * never repeated, because that would spend a rotated refresh token twice; only the write of the
+ * rotated tokens is retried once (up to about 2 s more: the ready wait plus the command timeout).
+ * If that also fails, the current token is kept while it is still valid.
  */
 export async function getSession(): Promise<Session | null> {
   const id = (await cookies()).get(SESSION_COOKIE)?.value;
   // Validate before building a Redis key from browser input.
   if (!id || !SESSION_ID_PATTERN.test(id)) return null;
 
+  const started = performance.now();
+  const raw = await readSessionValue(id, started);
+  if (raw === null) return null;
+  return resolveRecord(id, raw, started);
+}
+
+/**
+ * GET of the session record, with one retry after waiting for the client to be ready again
+ * (a dropped connection reconnects in the background). Throws SessionUnavailableError when
+ * neither attempt answers before the deadline.
+ */
+async function readSessionValue(id: string, started: number): Promise<string | null> {
+  const left = () => READ_DEADLINE_MS - (performance.now() - started);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2 && left() > 0; attempt++) {
+    try {
+      const client = await whenReady(getRedis(), Math.min(CONNECT_WAIT_MS, left()));
+      return await withDeadline(client.get(sessionKey(id)), left());
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  logStoreFailure('read', 'unavailable', started, lastError);
+  throw new SessionUnavailableError();
+}
+
+/** Deletes an invalid or expired record. The user is signed out whether or not the delete lands. */
+async function destroyQuietly(id: string, started: number): Promise<void> {
   try {
-    return await resolveSession(id);
+    await destroySession(id);
   } catch (err) {
-    // Only the error name: ioredis errors carry the command arguments, which here include the
-    // session id and the stored record with its tokens.
-    console.warn(
-      JSON.stringify({
-        event: 'session.valkey_unavailable',
-        error: err instanceof Error ? err.name : typeof err,
-      }),
-    );
-    return null;
+    logStoreFailure('cleanup', 'signed_out', started, err);
   }
 }
 
-/** The Valkey part of `getSession`, for an id that already passed the pattern check. */
-async function resolveSession(id: string): Promise<Session | null> {
-  const client = await readyRedis();
-  const raw = await client.get(sessionKey(id));
-  if (raw === null) return null;
-
+/** The rest of `getSession` once the record was read: expiry, refresh and the sliding TTL. */
+async function resolveRecord(id: string, raw: string, started: number): Promise<Session | null> {
   const record = unseal(id, raw);
   const now = nowSeconds();
   if (!record || isExpired(record, now)) {
-    await destroySession(id);
+    await destroyQuietly(id, started);
     return null;
   }
 
   if (record.accessExp - now < REFRESH_MARGIN_SECONDS) {
-    const refreshed = await refreshUnderLock(id, record, now);
+    let refreshed: StoredSession | null;
+    try {
+      refreshed = await refreshUnderLock(id, record, now, started);
+    } catch (err) {
+      // Valkey failed around the refresh. The record we read is valid; use its access token while
+      // it lasts. Never retry: the refresh may already have rotated the refresh token.
+      if (record.accessExp > nowSeconds() && !isExpired(record, nowSeconds())) {
+        logStoreFailure('rotate', 'kept', started, err);
+        return toSession(id, record);
+      }
+      logStoreFailure('rotate', 'unavailable', started, err);
+      throw new SessionUnavailableError();
+    }
     return refreshed ? toSession(id, refreshed) : null;
   }
 
+  const client = getRedis();
   const slid: StoredSession = { ...record, lastSeenAt: now };
-  const written = await client.eval(
-    CAS_SCRIPT,
-    1,
-    sessionKey(id),
-    raw,
-    seal(id, slid),
-    String(ttlFor(slid, now)),
-  );
+  let written: unknown;
+  try {
+    written = await client.eval(
+      CAS_SCRIPT,
+      1,
+      sessionKey(id),
+      raw,
+      seal(id, slid),
+      String(ttlFor(slid, now)),
+    );
+  } catch (err) {
+    // The read proved the session valid; only its idle timer did not move. Keep the user in.
+    logStoreFailure('slide', 'kept', started, err);
+    return toSession(id, record);
+  }
   if (written === 'OK') return toSession(id, slid);
 
   // The record changed under us: deleted (logout) or rewritten by a concurrent request, which
   // already slid it. Trust what is there now rather than overwrite it.
-  const latestRaw = await client.get(sessionKey(id));
+  let latestRaw: string | null;
+  try {
+    latestRaw = await client.get(sessionKey(id));
+  } catch (err) {
+    // A logout may have just deleted it, so the earlier read no longer proves anything.
+    logStoreFailure('read', 'unavailable', started, err);
+    throw new SessionUnavailableError();
+  }
   const latest = latestRaw === null ? null : unseal(id, latestRaw);
   if (!latest || isExpired(latest, now)) return null;
   return toSession(id, latest);
@@ -387,6 +457,7 @@ async function refreshUnderLock(
   id: string,
   stale: StoredSession,
   now: number,
+  started: number,
 ): Promise<StoredSession | null> {
   const client = await readyRedis();
   const lockToken = randomBytes(16).toString('base64url');
@@ -400,14 +471,14 @@ async function refreshUnderLock(
     const latestRaw = await client.get(sessionKey(id));
     const latest = latestRaw === null ? null : unseal(id, latestRaw);
     if (!latest || isExpired(latest, now)) {
-      await destroySession(id);
+      await destroyQuietly(id, started);
       return null;
     }
     if (latest.accessExp - now >= REFRESH_MARGIN_SECONDS) return latest;
 
     if (latest.refreshToken === undefined) {
       // No way to get a fresh token: treat it as a failed refresh.
-      await destroySession(id);
+      await destroyQuietly(id, started);
       return null;
     }
 
@@ -416,7 +487,7 @@ async function refreshUnderLock(
       tokens = await refreshTokens(latest.refreshToken);
     } catch {
       // Deliberately not logging the error: it can echo request parameters, including the token.
-      await destroySession(id);
+      await destroyQuietly(id, started);
       return null;
     }
 
@@ -431,16 +502,22 @@ async function refreshUnderLock(
     });
     // XX: only if the session still exists, so a concurrent logout is not undone. We hold the
     // lock and the newest tokens, so overwriting a concurrent slide is correct here.
-    const written = await client.set(
-      sessionKey(id),
-      seal(id, updated),
-      'EX',
-      ttlFor(updated, now),
-      'XX',
-    );
+    const sealed = seal(id, updated);
+    const ttl = ttlFor(updated, now);
+    let written: string | null;
+    try {
+      written = await client.set(sessionKey(id), sealed, 'EX', ttl, 'XX');
+    } catch {
+      // The provider has already rotated the refresh token, so losing this write would sign the
+      // user out at the next refresh. Retry once after a reconnect: the same value, still under
+      // the lock, and XX so a concurrent logout is still not undone.
+      written = await (await whenReady(client)).set(sessionKey(id), sealed, 'EX', ttl, 'XX');
+    }
     return written === 'OK' ? updated : null;
   } finally {
-    await client.eval(UNLOCK_SCRIPT, 1, refreshLockKey(id), lockToken);
+    // Best effort: the lock expires by itself after REFRESH_LOCK_MS, and a failed unlock must not
+    // turn a stored refresh into an error.
+    await client.eval(UNLOCK_SCRIPT, 1, refreshLockKey(id), lockToken).catch(() => undefined);
   }
 }
 

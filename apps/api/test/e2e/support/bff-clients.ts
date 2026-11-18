@@ -134,6 +134,7 @@ export interface VerificationClient {
     s: S,
     caseId: string,
     idempotencyKey: string,
+    expectedVersion: number,
   ): Promise<VerificationCaseDto>;
   getDocument(
     s: S,
@@ -192,7 +193,10 @@ export interface TaxCodesClient {
 
 /** components/p2/quotations/api.ts */
 export interface QuotationsClient {
-  listQuotations(s: S, status?: QuotationStatus): Promise<QuotationListItem[]>;
+  listQuotations(
+    s: S,
+    filter?: { status?: QuotationStatus; opportunityId?: string },
+  ): Promise<QuotationListItem[]>;
   getQuotation(s: S, id: string): Promise<QuotationDetail>;
 }
 

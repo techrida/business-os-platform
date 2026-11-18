@@ -216,6 +216,10 @@ export const verificationCases = appSchema.table(
       .notNull()
       .default(sql`'[]'::jsonb`),
     /** Who submitted the case and when; set by the submit, and so never the reviewer's (separation of duties). */
+    reviewPolicy: text('review_policy', { enum: ['case_review_v0', 'document_review_v1'] })
+      .notNull()
+      .default('case_review_v0'),
+    reviewRound: integer('review_round').notNull().default(0),
     submittedByUserId: uuid('submitted_by_user_id'),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     /** Who decided; set only by the decision. */

@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { ApiError } from '@/lib/api';
+import { apiCodeOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 
@@ -73,6 +74,20 @@ export async function convertLeadAction(
     if (err instanceof ApiError && err.status === 409) {
       const duplicates = duplicatesFrom(err.body);
       if (duplicates !== null) return { values, fieldErrors: {}, duplicates, definite: true };
+    }
+    if (
+      err instanceof ApiError &&
+      err.status === 422 &&
+      apiCodeOf(err) === 'contact_email_required'
+    ) {
+      return {
+        values,
+        fieldErrors: {
+          contactId:
+            'This contact has no email, so quotations could not be sent to it. Choose another, or create one from the lead.',
+        },
+        definite: true,
+      };
     }
     const f = failureOf(err);
     return { values, fieldErrors: {}, error: f.message, definite: f.definite, reload: f.reload };

@@ -31,6 +31,7 @@ export type ErrorCode =
   | 'duplicate_pan_vat'
   | 'duplicate_found'
   | 'primary_contact_exists'
+  | 'contact_email_required'
   | 'quotation_not_sent'
   | 'quotation_expired'
   | 'quotation_pdf_not_ready'
@@ -46,6 +47,7 @@ export type ErrorCode =
   | 'no_verified_bank_account'
   | 'callback_evidence_not_clean'
   | 'NO_ELIGIBLE_APPROVER'
+  | 'APPROVER_NOT_ELIGIBLE'
   | 'evidence_policy_unmet'
   | 'decided_on_in_future'
   // P3 sales orders, payments and invoices.
@@ -150,6 +152,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   duplicate_pan_vat: 'Another customer already has this PAN/VAT number',
   duplicate_found: 'This looks like a record that already exists',
   primary_contact_exists: 'This customer already has a primary contact',
+  contact_email_required: 'This customer needs a contact with an email',
   quotation_not_sent: 'This quotation is not open for an answer',
   quotation_expired: 'This quotation has expired',
   quotation_pdf_not_ready: 'The PDF of this quotation version is not ready to download',
@@ -165,6 +168,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   no_verified_bank_account: 'The vendor has no verified bank account',
   callback_evidence_not_clean: 'The call-back evidence has not passed the virus scan',
   NO_ELIGIBLE_APPROVER: 'No one is eligible to approve this; an administrator has been told',
+  APPROVER_NOT_ELIGIBLE: 'The chosen approver cannot approve this',
   evidence_policy_unmet: 'The evidence given does not meet the policy',
   decided_on_in_future: 'The decision date is in the future',
   quotation_not_accepted: 'Only an accepted quotation can be confirmed',
@@ -364,7 +368,10 @@ function conflictCodeOf(exception: HttpException): ErrorCode | undefined {
 const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   // The ledger refuses allocations across parties/currencies or closed items.
   'MISMATCHED_ITEMS',
+  'contact_email_required',
   'NO_ELIGIBLE_APPROVER',
+  // A quotation submit named an approver who may not decide its first step (or the author themselves).
+  'APPROVER_NOT_ELIGIBLE',
   'evidence_policy_unmet',
   'decided_on_in_future',
   // U7 payments: a proof that is not a clean file for this customer, an unknown customer or withholding code,

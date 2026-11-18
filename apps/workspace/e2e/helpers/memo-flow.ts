@@ -75,11 +75,24 @@ export async function createDraftMemo(
     // Match the option's own name line, whole. A prefix match also picks "Dev Management Two" when
     // "Dev Management" is asked for. The line is the person's name, or "Name (title)" when two people share a name.
     const name = signers[i]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    await page
+    const option = page
       .getByRole('option')
-      .filter({ has: page.getByText(new RegExp(`^${name}(?: \\(.+\\))?$`)) })
-      .click();
+      .filter({ has: page.getByText(new RegExp(`^${name}(?: \\(.+\\))?$`)) });
+    await expect(option).toBeEnabled();
+    await option.click();
     await expect(box).toHaveValue(signers[i]!);
+    if (i === 0 && !approver) {
+      // A typed label alone cannot submit a signer. Check the real form field, then verify
+      // the same signer is unavailable for a second step of this memo.
+      const template = JSON.parse(await page.locator('input[name="template"]').inputValue()) as {
+        recommenderUserIds: string[];
+      };
+      expect(template.recommenderUserIds).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/i)]);
+      const finalSigner = page.getByRole('combobox', { name: 'Approved by', exact: true });
+      await finalSigner.fill(signers[i]!);
+      await expect(option).toBeDisabled();
+      await finalSigner.press('Escape');
+    }
   }
 
   await page.getByRole('button', { name: 'Next', exact: true }).click();

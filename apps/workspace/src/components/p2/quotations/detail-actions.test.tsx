@@ -1,4 +1,9 @@
-import type { QuotationContact, QuotationStatus, QuotationVersionDto } from '@bos/contracts';
+import type {
+  QuotationCapabilities,
+  QuotationContact,
+  QuotationStatus,
+  QuotationVersionDto,
+} from '@bos/contracts';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -44,9 +49,13 @@ function current(over: Partial<QuotationVersionDto> = {}): QuotationVersionDto {
   } as QuotationVersionDto;
 }
 
+/** The server's answer for an owner who may edit and revise; each test narrows it where it matters. */
+const ALLOWED: QuotationCapabilities = { canEdit: true, canRevise: true };
+
 function render(
   over: Partial<QuotationVersionDto> = {},
   list: QuotationContact[] = contacts,
+  capabilities: QuotationCapabilities = ALLOWED,
 ): string {
   return renderToStaticMarkup(
     <DetailActions
@@ -54,6 +63,7 @@ function render(
       number="QT-2082-0042"
       current={current(over)}
       contacts={list}
+      capabilities={capabilities}
       reloadHref={`/quotations/${Q}`}
       today={TODAY}
     />,
@@ -86,6 +96,49 @@ describe('which actions a status offers', () => {
 
   it('renders nothing at all when no action applies, so the slot stays empty', () => {
     expect(render({ status: 'accepted' })).toBe('');
+  });
+});
+
+describe('Edit (demo feedback: a Returned quotation had no way back into the editor)', () => {
+  const editLink = (html: string) =>
+    /<a[^>]*href="([^"]*)"[^>]*aria-label="Edit QT-2082-0042"[^>]*>Edit<\/a>/.exec(html)?.[1];
+
+  it.each(['draft', 'returned'] as const)(
+    'links a %s quotation the caller may edit to its editor',
+    (status) => {
+      expect(editLink(render({ status }))).toBe(`/quotations/${Q}/edit`);
+    },
+  );
+
+  it('is not offered when the server says the caller may not edit', () => {
+    expect(render({ status: 'returned' }, contacts, { canEdit: false, canRevise: false })).toBe('');
+  });
+
+  it.each(['submitted', 'approved', 'sent', 'rejected', 'accepted'] as const)(
+    'is not offered for a %s quotation, whatever the capability says',
+    (status) => {
+      const html = render({ status, rejectionSource: status === 'rejected' ? 'customer' : null });
+      expect(editLink(html)).toBeUndefined();
+    },
+  );
+});
+
+describe('Revise follows the server capability (demo feedback: Revise answered 403)', () => {
+  it.each(['approved', 'sent', 'rejected', 'expired'] as const)(
+    'hides Revise on a %s quotation the caller may not revise',
+    (status) => {
+      const html = render(
+        { status, rejectionSource: status === 'rejected' ? 'customer' : null },
+        contacts,
+        { canEdit: false, canRevise: false },
+      );
+      expect(triggers(html)).not.toContain('Revise');
+      expect(html).not.toContain('Why are you revising it?');
+    },
+  );
+
+  it('still hides Revise on a draft even if the capability were true', () => {
+    expect(triggers(render({ status: 'draft' }))).not.toContain('Revise');
   });
 });
 

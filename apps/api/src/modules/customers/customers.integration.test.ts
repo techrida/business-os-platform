@@ -223,9 +223,15 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------------------------- helpers
 
 const address = { line1: 'Ring Road', city: 'Kathmandu', country: 'NP' };
+/** Every new customer comes with its first contact, which needs an email. */
+const firstContact = () => ({
+  fullName: 'First Contact',
+  email: `first-${randomUUID().slice(0, 8)}@example.com`,
+});
 const customerBody = (over: Record<string, unknown> = {}) => ({
   legalName: `Customer ${randomUUID().slice(0, 8)} Pvt. Ltd.`,
   address,
+  contact: firstContact(),
   ...over,
 });
 let keySeq = 0;
@@ -427,7 +433,13 @@ describe('a duplicate PAN/VAT number', () => {
     const existing = await createCustomer({ panVatNo: pan });
     const error: unknown = await service
       .create(
-        { legalName: 'Race Pvt. Ltd.', panVatNo: pan, relationship: 'prospect', address },
+        {
+          legalName: 'Race Pvt. Ltd.',
+          panVatNo: pan,
+          relationship: 'prospect',
+          address,
+          contact: firstContact(),
+        },
         newKey(),
       )
       .catch((e: unknown) => e);
@@ -570,14 +582,17 @@ describe('contacts', () => {
       isPrimary: false,
       version: 1,
     });
-    const primary = await post({ fullName: 'Sita Rai', phone: '+9779812345678', isPrimary: true });
-    expect(primary.status).toBe(201);
+    // A later contact may have no email: the customer already has one with an address.
+    const phoneOnly = await post({ fullName: 'Sita Rai', phone: '+9779812345678' });
+    expect(phoneOnly.status, JSON.stringify(phoneOnly.body)).toBe(201);
 
     const list = await request(baseUrl).get(`/v1/customers/${customer.id}/contacts`);
     expect(list.status).toBe(200);
+    // The first contact (made with the customer) is the primary one, then the rest by name.
     expect((list.body as { fullName: string }[]).map((c) => c.fullName)).toEqual([
-      'Sita Rai',
+      'First Contact',
       'Anil Shrestha',
+      'Sita Rai',
     ]);
 
     // Contacts are audited too.
@@ -602,7 +617,8 @@ describe('contacts', () => {
         .select()
         .from(customerContacts)
         .where(eq(customerContacts.customerId, customer.id));
-      expect(rows).toEqual([]);
+      // Only the first contact made with the customer.
+      expect(rows.map((r) => r.fullName)).toEqual(['First Contact']);
     },
   );
 
@@ -629,9 +645,10 @@ describe('contacts', () => {
         .post(`/v1/customers/${id}/contacts`)
         .set('Idempotency-Key', newKey())
         .send(body);
-    expect((await post(customer.id, { fullName: 'One', isPrimary: true })).status).toBe(201);
+    // The first contact, made with the customer, is already the primary one.
     const second = await post(customer.id, { fullName: 'Two', isPrimary: true });
     expect(second.status).toBe(409);
+    expect(errorOf(second.body).code).toBe('primary_contact_exists');
     expect((await post(randomUUID(), { fullName: 'Nobody' })).status).toBe(404);
   });
 
@@ -650,7 +667,89 @@ describe('contacts', () => {
       .select()
       .from(customerContacts)
       .where(eq(customerContacts.customerId, customer.id));
+    expect(rows.map((r) => r.fullName).sort()).toEqual(['First Contact', 'Once Only']);
+  });
+});
+
+describe('a customer always has a contact with an email (quotations are emailed)', () => {
+  const post = (customerId: string, body: object) =>
+    request(baseUrl)
+      .post(`/v1/customers/${customerId}/contacts`)
+      .set('Idempotency-Key', newKey())
+      .send(body);
+  const contactsOf = (customerId: string) =>
+    db.select().from(customerContacts).where(eq(customerContacts.customerId, customerId));
+
+  it('creates the customer and its first contact together; the contact is the primary one', async () => {
+    const res = await request(baseUrl)
+      .post('/v1/customers')
+      .set('Idempotency-Key', newKey())
+      .send(
+        customerBody({
+          contact: { fullName: 'Maya Gurung', email: 'Maya@Example.COM', title: 'Director' },
+        }),
+      );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const created = CustomerDtoSchema.parse(res.body);
+    const rows = await contactsOf(created.id);
     expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      fullName: 'Maya Gurung',
+      emailNorm: 'maya@example.com',
+      title: 'Director',
+      isPrimary: true,
+    });
+  });
+
+  it('is 400 without a first contact, or with one that has no valid email, and writes nothing', async () => {
+    const legalName = `No Contact ${randomUUID().slice(0, 8)} Pvt. Ltd.`;
+    for (const contact of [undefined, { fullName: 'No Mail' }, { fullName: 'Bad', email: 'x' }]) {
+      const res = await request(baseUrl)
+        .post('/v1/customers')
+        .set('Idempotency-Key', newKey())
+        .send({ legalName, address, ...(contact === undefined ? {} : { contact }) });
+      expect(res.status, JSON.stringify(contact)).toBe(400);
+    }
+    expect(await db.select().from(customers).where(eq(customers.legalName, legalName))).toEqual([]);
+  });
+
+  it('leaves no customer behind when its first contact cannot be written', async () => {
+    const legalName = `Half Made ${randomUUID().slice(0, 8)} Pvt. Ltd.`;
+    const spy = vi
+      .spyOn(service, 'createContactInTx')
+      .mockRejectedValueOnce(new Error('contact insert failed'));
+    try {
+      await expect(service.create(customerBody({ legalName }) as never, newKey())).rejects.toThrow(
+        'contact insert failed',
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await db.select().from(customers).where(eq(customers.legalName, legalName))).toEqual([]);
+  });
+
+  it('refuses a contact without an email (422 contact_email_required) while the customer has none', async () => {
+    // A customer from before this rule: its only contact has no email.
+    const customer = await createCustomer();
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx
+        .update(customerContacts)
+        .set({ emailNorm: null })
+        .where(eq(customerContacts.customerId, customer.id)),
+    );
+
+    const refused = await post(customer.id, { fullName: 'Phone Only', phone: '+9779812345678' });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(422);
+    expect(errorOf(refused.body).code).toBe('contact_email_required');
+    expect((await contactsOf(customer.id)).map((r) => r.fullName)).toEqual(['First Contact']);
+
+    // A contact with an email is fine, and after it a contact without one is too.
+    expect(
+      (await post(customer.id, { fullName: 'Has Mail', email: 'mail@example.com' })).status,
+    ).toBe(201);
+    expect(
+      (await post(customer.id, { fullName: 'Phone Only', phone: '+9779812345678' })).status,
+    ).toBe(201);
   });
 });
 

@@ -1,4 +1,4 @@
-// LeadConvertService: turns a qualified lead into a customer (new or existing), an optional contact and an
+// LeadConvertService: turns a qualified lead into a customer (new or existing), a contact with an email and an
 // opportunity, in one transaction. Serves the NFRs:
 // - "no double effects": the Idempotency-Key is required (command `lead.convert`, the hashed body includes the lead
 //   id), and the lead row is locked, so two converts of one lead cannot both pass the stage guard;
@@ -14,7 +14,7 @@ import {
   type ConvertLeadBody,
   type ContactDto,
   type CreateContactBody,
-  type CreateCustomerBody,
+  type CustomerFields,
   type Permission,
 } from '@bos/contracts';
 import { activities, customerContacts, customers, leads, opportunities, scoped } from '@bos/db';
@@ -35,7 +35,12 @@ import { DB, type Db } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
-import { customerRef, CustomersService, duplicatePan } from '../../customers/customers.service';
+import {
+  contactEmailRequired,
+  customerRef,
+  CustomersService,
+  duplicatePan,
+} from '../../customers/customers.service';
 import { normalizeEmail, normalizeName, normalizePan } from '../../customers/customers.normalize';
 import { LeadsCaller } from '../leads.caller';
 import { type LeadRow } from '../leads.types';
@@ -119,17 +124,17 @@ export class LeadConvertService {
         : undefined;
     if (choice.mode === 'create') this.assertMayCreateCustomer(principal, scope, choice.customer);
     const contactChoice = body.contact;
-    if (contactChoice?.mode === 'existing' && existing === undefined) {
+    if (contactChoice.mode === 'existing' && existing === undefined) {
       throw new BadRequestException({
         code: 'bad_request',
         message: 'An existing contact needs an existing customer',
       });
     }
-    if (contactChoice?.mode === 'create' && existing !== undefined) {
+    if (contactChoice.mode === 'create' && existing !== undefined) {
       // A contact is customer data: reading the customer is not enough to add one (extra to the brief, named).
       this.assertCustomerVisible('customer.write', existing, principal);
     }
-    if (contactChoice?.mode === 'existing' && existing !== undefined) {
+    if (contactChoice.mode === 'existing' && existing !== undefined) {
       await this.assertContactBelongs(tx, scope, existing.id, contactChoice.contactId);
     }
 
@@ -140,7 +145,7 @@ export class LeadConvertService {
         tx,
         scope,
         choice,
-        contactChoice?.mode === 'create' ? contactChoice.contact : undefined,
+        contactChoice.mode === 'create' ? contactChoice.contact : undefined,
       );
       if (duplicates.length > 0) {
         throw new ConflictException({
@@ -158,8 +163,8 @@ export class LeadConvertService {
         : choice.customerId;
     let contactId: string | null = null;
     let createdContact: ContactDto | undefined;
-    if (contactChoice?.mode === 'existing') contactId = contactChoice.contactId;
-    if (contactChoice?.mode === 'create') {
+    if (contactChoice.mode === 'existing') contactId = contactChoice.contactId;
+    if (contactChoice.mode === 'create') {
       createdContact = await this.customersService.createContactInTx(
         tx,
         scope,
@@ -219,7 +224,7 @@ export class LeadConvertService {
       meta: {
         opportunityNumber: number,
         customerMode: choice.mode,
-        contactMode: contactChoice?.mode ?? null,
+        contactMode: contactChoice.mode,
         ...(body.duplicateOverride === undefined
           ? {}
           : { duplicateOverrideReason: body.duplicateOverride.reason }),
@@ -269,7 +274,7 @@ export class LeadConvertService {
   }
 
   /** A new customer needs customer.write; customers are written by staff only, as in CustomersService. */
-  private assertMayCreateCustomer(p: Principal, scope: TxScope, body: CreateCustomerBody): void {
+  private assertMayCreateCustomer(p: Principal, scope: TxScope, body: CustomerFields): void {
     if (p.orgKind !== 'staff') {
       throw new ForbiddenException({
         code: 'forbidden',
@@ -316,7 +321,7 @@ export class LeadConvertService {
     contactId: string,
   ): Promise<void> {
     const [row] = await tx
-      .select({ id: customerContacts.id })
+      .select({ id: customerContacts.id, emailNorm: customerContacts.emailNorm })
       .from(customerContacts)
       .where(
         and(
@@ -331,13 +336,15 @@ export class LeadConvertService {
         message: 'contactId is not a contact of this customer',
       });
     }
+    // The opportunity's quotations go to this contact by email, so one without an address cannot be linked.
+    if (row.emailNorm === null) throw contactEmailRequired();
   }
 
   /** 409 `duplicate_pan_vat`, whatever the override says: the unique index would refuse the insert anyway. */
   private async assertPanFree(
     tx: DbTransaction,
     scope: TxScope,
-    body: CreateCustomerBody,
+    body: CustomerFields,
   ): Promise<void> {
     if (body.panVatNo === undefined) return;
     const pan = normalizePan(body.panVatNo);

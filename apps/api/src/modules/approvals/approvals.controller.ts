@@ -148,7 +148,7 @@ export class ApprovalsController {
     auth: AuthIdentity | undefined,
     idToken: string | undefined,
   ): Promise<ApprovalRequestDto> {
-    // The service admits a generic approver or this PR's designated head, including an exact retry.
+    // Check the active assignment or an exact replay before requiring step-up.
     const request = await this.approvals.getForAction(id, action, idempotencyKey);
     if (needsStepUp(request, action.expectedVersion)) {
       // The ID token must belong to the access token's user (`sub`, held in `auth.userId`).

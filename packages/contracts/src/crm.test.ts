@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   ActivityDtoSchema,
   type ChecklistItem,
+  ContactWithEmailBodySchema,
   ConvertLeadBodySchema,
   CreateActivityBodySchema,
+  CreateContactBodySchema,
   CreateCustomerBodySchema,
+  CustomerFieldsSchema,
   CreateLeadBodySchema,
   LEAD_STAGES,
   LEAD_TRANSITIONS,
@@ -15,6 +18,7 @@ import {
   OPPORTUNITY_TRANSITIONS,
   OpportunityStageChangeBodySchema,
   STAGE_CATALOGUE,
+  UpdateCustomerBodySchema,
   VerificationCaseDtoSchema,
   findTransition,
   isChecklistComplete,
@@ -23,7 +27,8 @@ import {
 const address = { line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' };
 
 describe('CreateCustomerBodySchema', () => {
-  const ok = { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: '301234567', address };
+  const contact = { fullName: 'Sita Rai', email: 'sita@himal.example' };
+  const ok = { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: '301234567', address, contact };
 
   it('parses a customer and defaults the relationship to prospect', () => {
     const c = CreateCustomerBodySchema.parse(ok);
@@ -43,6 +48,39 @@ describe('CreateCustomerBodySchema', () => {
       organizationId: crypto.randomUUID(),
     });
     expect(parsed.success).toBe(false);
+  });
+
+  it('needs a first contact with an email (a quotation is sent by email)', () => {
+    const { contact: _none, ...noContact } = ok;
+    expect(CreateCustomerBodySchema.safeParse(noContact).success).toBe(false);
+    expect(
+      CreateCustomerBodySchema.safeParse({ ...ok, contact: { fullName: 'Sita Rai' } }).success,
+    ).toBe(false);
+    expect(
+      CreateCustomerBodySchema.safeParse({ ...ok, contact: { ...contact, email: 'nope' } }).success,
+    ).toBe(false);
+    // The first contact is always the main one: the client does not choose.
+    expect(
+      CreateCustomerBodySchema.safeParse({ ...ok, contact: { ...contact, isPrimary: false } })
+        .success,
+    ).toBe(false);
+  });
+
+  it('keeps the customer fields alone for an edit and a conversion', () => {
+    const { contact: _none, ...fields } = ok;
+    expect(CustomerFieldsSchema.safeParse(fields).success).toBe(true);
+    expect(CustomerFieldsSchema.safeParse(ok).success).toBe(false);
+    expect(UpdateCustomerBodySchema.safeParse({ expectedVersion: 1, contact }).success).toBe(false);
+  });
+});
+
+describe('CreateContactBodySchema and ContactWithEmailBodySchema', () => {
+  it('lets a later contact omit the email, but not a contact that must carry one', () => {
+    expect(CreateContactBodySchema.safeParse({ fullName: 'Ravi' }).success).toBe(true);
+    expect(ContactWithEmailBodySchema.safeParse({ fullName: 'Ravi' }).success).toBe(false);
+    expect(
+      ContactWithEmailBodySchema.safeParse({ fullName: 'Ravi', email: 'ravi@x.example' }).success,
+    ).toBe(true);
   });
 });
 
@@ -243,11 +281,16 @@ describe('ConvertLeadBodySchema', () => {
     mode: 'create',
     customer: { legalName: 'Himal Traders Pvt. Ltd.', address },
   } as const;
+  const newContact = {
+    mode: 'create',
+    contact: { fullName: 'Sita Rai', email: 'sita@himal.example' },
+  } as const;
 
   it('parses a conversion that creates a customer', () => {
     expect(
       ConvertLeadBodySchema.safeParse({
         customer: newCustomer,
+        contact: newContact,
         opportunityName: 'Rooftop',
         expectedVersion: 3,
       }).success,
@@ -259,14 +302,42 @@ describe('ConvertLeadBodySchema', () => {
     expect(
       ConvertLeadBodySchema.safeParse({
         customer: existing,
+        contact: { mode: 'existing', contactId: crypto.randomUUID() },
         opportunityName: 'Rooftop',
         expectedVersion: 3,
       }).success,
     ).toBe(true);
   });
 
-  it('needs a reason to "create anyway" over a duplicate warning', () => {
+  it('needs a contact, and a new contact needs an email', () => {
     const base = { customer: newCustomer, opportunityName: 'Rooftop', expectedVersion: 3 };
+    expect(ConvertLeadBodySchema.safeParse(base).success).toBe(false);
+    expect(
+      ConvertLeadBodySchema.safeParse({
+        ...base,
+        contact: { mode: 'create', contact: { fullName: 'Sita Rai' } },
+      }).success,
+    ).toBe(false);
+    // The new customer itself carries no contact: the conversion names it separately.
+    expect(
+      ConvertLeadBodySchema.safeParse({
+        ...base,
+        contact: newContact,
+        customer: {
+          ...newCustomer,
+          customer: { ...newCustomer.customer, contact: newContact.contact },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('needs a reason to "create anyway" over a duplicate warning', () => {
+    const base = {
+      customer: newCustomer,
+      contact: newContact,
+      opportunityName: 'Rooftop',
+      expectedVersion: 3,
+    };
     expect(ConvertLeadBodySchema.safeParse({ ...base, duplicateOverride: {} }).success).toBe(false);
     expect(
       ConvertLeadBodySchema.safeParse({ ...base, duplicateOverride: { reason: ' ' } }).success,

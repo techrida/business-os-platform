@@ -1,5 +1,6 @@
 import { ApiError, getPortalQuotationLink, openSignedFile } from '@/lib/api';
-import { getSession } from '@/lib/session';
+import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
+import { getSession, type Session } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,15 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    if (!(err instanceof SessionUnavailableError)) throw err;
+    const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
+    response.headers.set('retry-after', '1');
+    return response;
+  }
   if (!session) return plain('Sign in to download this quotation.', 401);
   // No layout runs here, so a vendor session is turned away with the same answer as a foreign id.
   if (session.orgKind !== 'customer') return plain(NOT_FOUND, 404);

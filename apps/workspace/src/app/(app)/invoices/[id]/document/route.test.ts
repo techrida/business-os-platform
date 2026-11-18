@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
+import { SESSION_UNAVAILABLE_MESSAGE, sessionUnavailableResponse } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 import { GET } from './route';
@@ -54,6 +55,16 @@ beforeEach(() => {
 });
 
 describe('GET /invoices/:id/document', () => {
+  it('returns a retryable session outage before accessing the API', async () => {
+    mocks.routeSession.mockResolvedValue(sessionUnavailableResponse());
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    expect(await res.text()).toBe(SESSION_UNAVAILABLE_MESSAGE);
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+  });
+
   it('asks the API for one link, then streams the file with its safe headers', async () => {
     const res = await call();
     expect(res.status).toBe(200);

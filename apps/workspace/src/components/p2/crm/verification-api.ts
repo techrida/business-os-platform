@@ -2,6 +2,8 @@ import 'server-only';
 
 import {
   VerificationCaseDtoSchema,
+  VerificationReviewHistorySchema,
+  type ReviewVerificationItemBody,
   type AttachVerificationDocumentBody,
   type RemoveVerificationDocumentBody,
   type VerificationCaseDto,
@@ -19,10 +21,6 @@ import { DocumentSchema, type DocumentDetail } from './verification-file';
  * decision are in `../customers/api.ts`. Every response is parsed with the contracts' schema, so an
  * API that drifts fails here (502) instead of rendering `undefined`.
  *
- * Only `decision` reads the Idempotency-Key header on the API today. The other writes still send
- * one (the API ignores it), so they are covered the moment the API starts honouring it. Until
- * then a retry after a landed 5xx is safe for a different reason: create answers 200 with the
- * existing case, a checklist write with the old `expectedVersion` is a 409, and a second submit is a 409.
  */
 
 async function readBody(res: Response): Promise<unknown> {
@@ -125,12 +123,13 @@ export function submitVerificationCase(
   session: Session,
   caseId: string,
   idempotencyKey: string,
+  expectedVersion: number,
 ): Promise<VerificationCaseDto> {
   return call(
     session,
     `/v1/verification-cases/${encodeURIComponent(caseId)}/submit`,
     VerificationCaseDtoSchema,
-    json('POST', {}, idempotencyKey),
+    json('POST', { expectedVersion }, idempotencyKey),
   );
 }
 
@@ -140,4 +139,26 @@ export function submitVerificationCase(
  */
 export function getDocument(session: Session, documentId: string): Promise<DocumentDetail> {
   return call(session, `/v1/documents/${encodeURIComponent(documentId)}`, DocumentSchema);
+}
+
+export function reviewVerificationItem(
+  session: Session,
+  id: string,
+  key: string,
+  body: ReviewVerificationItemBody,
+  retryKey: string,
+) {
+  return call(
+    session,
+    `/v1/verification-cases/${encodeURIComponent(id)}/checklist/${encodeURIComponent(key)}/decision`,
+    VerificationCaseDtoSchema,
+    json('POST', body, retryKey),
+  );
+}
+export function getVerificationReviewHistory(session: Session, id: string, before?: string) {
+  return call(
+    session,
+    `/v1/verification-cases/${encodeURIComponent(id)}/review-history${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    VerificationReviewHistorySchema,
+  );
 }

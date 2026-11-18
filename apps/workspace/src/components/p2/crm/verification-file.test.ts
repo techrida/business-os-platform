@@ -100,3 +100,16 @@ it('uses the same-origin P1 preview route for the selected version', () => {
     `/api/documents/${DOC}/versions/${V2}/preview`,
   );
 });
+
+it('opens the bound submitted version even behind an older clean current pointer', () => {
+  const doc = parse({
+    id: DOC,
+    currentVersionId: V1,
+    versions: [version(V1, 1, 'clean'), version(V2, 2, 'quarantined')],
+  });
+  const bound = fileOf(doc, V2);
+  expect(bound?.versionId).toBe(V2);
+  expect(bound?.status).toBe('quarantined');
+  expect(downloadHref(bound!)).toContain(`/versions/${V2}/download`);
+  expect(fileOf(doc, '44444444-4444-4444-8444-444444444444')).toBeNull();
+});

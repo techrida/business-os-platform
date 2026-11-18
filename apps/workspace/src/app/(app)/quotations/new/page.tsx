@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { CustomerDto, OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
 import { ContextCard } from '@/components/p2/quote-builder/context-card';
 import { LoadFailure } from '@/components/p2/quote-builder/load-failure';
@@ -11,6 +11,15 @@ import { defaultDates, emptyValues } from '@/components/p2/quote-builder/model';
 import { QuoteBuilder } from '@/components/p2/quote-builder/quote-builder';
 import * as api from '@/components/p2/quote-builder/api';
 import { describeQuoteFailure } from '@/components/p2/quote-builder/failure';
+import { listQuotations } from '@/components/p2/quotations/api';
+import {
+  editQuotationHref,
+  newQuotationHref,
+  opportunityQuotationsHref,
+  quotationEntryFor,
+  type QuotationEntry,
+} from '@/components/p2/quotations/resume';
+import { Alert } from '@/components/ui/alert';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -21,18 +30,21 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const first = (v: string | string[] | undefined): string | undefined =>
+  Array.isArray(v) ? v[0] : v;
+
 export default async function NewQuotationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ opportunityId?: string | string[] }>;
+  searchParams: Promise<{ opportunityId?: string | string[]; another?: string | string[] }>;
 }) {
   const query = await searchParams;
-  const raw = Array.isArray(query.opportunityId) ? query.opportunityId[0] : query.opportunityId;
+  const raw = first(query.opportunityId);
   const opportunityId = raw !== undefined && UUID.test(raw) ? raw : null;
+  // "Start another quotation", chosen on the opportunity's list: the person has seen the drafts.
+  const another = first(query.another) === '1';
   const path =
-    opportunityId !== null
-      ? `/quotations/new?opportunityId=${encodeURIComponent(opportunityId)}`
-      : '/quotations/new';
+    opportunityId !== null ? newQuotationHref(opportunityId, { another }) : '/quotations/new';
   const session = await requireStaffSession(path);
 
   if (opportunityId === null) {
@@ -62,6 +74,18 @@ export default async function NewQuotationPage({
     return <LoadFailure err={err} title="New quotation" retryHref={path} />;
   }
 
+  // A draft already saved for this opportunity is resumed, never duplicated: one editable quotation
+  // opens in its editor, several go to the opportunity's list to choose. A list that does not load
+  // does not block a new quotation (the person may simply have none to read).
+  const entry: QuotationEntry = await listQuotations(session, { opportunityId }).then(
+    quotationEntryFor,
+    (): QuotationEntry => ({ kind: 'new' }),
+  );
+  if (!another) {
+    if (entry.kind === 'resume') redirect(editQuotationHref(entry.quotationId));
+    if (entry.kind === 'choose') redirect(opportunityQuotationsHref(opportunityId));
+  }
+
   const [customerResult, lookups] = await Promise.all([
     api.getCustomer(session, opportunity.customerId).then(
       (c): CustomerDto | null => c,
@@ -83,6 +107,26 @@ export default async function NewQuotationPage({
         title="New quotation"
         description="Save a draft first. The platform then works out the totals and who must approve."
       />
+      {entry.kind !== 'new' ? (
+        <Alert
+          tone="info"
+          role="status"
+          title="This opportunity already has a draft"
+          actions={
+            entry.kind === 'resume' ? (
+              <LinkButton href={editQuotationHref(entry.quotationId)} variant="secondary">
+                Edit {entry.number}
+              </LinkButton>
+            ) : (
+              <LinkButton href={opportunityQuotationsHref(opportunityId)} variant="secondary">
+                View its quotations
+              </LinkButton>
+            )
+          }
+        >
+          Saving here starts another, separate quotation.
+        </Alert>
+      ) : null}
       <QuoteBuilder
         target={{ mode: 'create', opportunityId }}
         initial={initial}

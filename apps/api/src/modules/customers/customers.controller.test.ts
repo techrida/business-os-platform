@@ -41,7 +41,8 @@ describe('GET /v1/customers', () => {
 });
 
 describe('POST /v1/customers', () => {
-  const body = { legalName: 'Acme Pvt. Ltd.', panVatNo: 'ab-123456', address };
+  const contact = { fullName: 'Sita Rai', email: 'sita@acme.example' };
+  const body = { legalName: 'Acme Pvt. Ltd.', panVatNo: 'ab-123456', address, contact };
 
   it('is a 400 without an Idempotency-Key, before the service is called', () => {
     const { service, controller } = setup();
@@ -54,6 +55,20 @@ describe('POST /v1/customers', () => {
     expect(() => controller.create('k1', { ...body, legalName: '' })).toThrow(BadRequestException);
     expect(() => controller.create('k1', { ...body, panVatNo: 'x' })).toThrow(BadRequestException);
     expect(() => controller.create('k1', { ...body, tenantId: 'x' })).toThrow(BadRequestException);
+  });
+
+  it('is a 400 without a first contact, or with one that has no email or a bad one', () => {
+    const { service, controller } = setup();
+    const { contact: _omitted, ...noContact } = body;
+    for (const bad of [
+      noContact,
+      { ...body, contact: { fullName: 'Sita Rai' } },
+      { ...body, contact: { ...contact, email: 'not-an-email' } },
+      { ...body, contact: { ...contact, isPrimary: false } },
+    ]) {
+      expect(() => controller.create('k1', bad), JSON.stringify(bad)).toThrow(BadRequestException);
+    }
+    expect(service.create).not.toHaveBeenCalled();
   });
 
   it('hands the service the parsed body (relationship defaulted) and the key', async () => {

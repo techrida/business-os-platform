@@ -27,9 +27,14 @@ export interface ContactFormState {
   key: string;
   errors: FieldErrors<ContactField>;
   error?: string;
-  /** A short confirmation, such as "Sita Sharma was added." */
+  /** A short confirmation, such as "Sita Sharma was added." Shown as a toast. */
   saved?: string;
   savedCount: number;
+  /**
+   * Someone else made a main contact between this page loading and the save (409). Shown as a
+   * toast; the page is revalidated, so the checkbox comes back disabled with its reason.
+   */
+  primaryTaken?: string;
 }
 
 export type { ContactValues, CustomerValues };

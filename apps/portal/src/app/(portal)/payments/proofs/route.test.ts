@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callOf, ID, IDEM, json, session, stubPortalEnv } from '@/lib/billing-test-support';
+import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 vi.mock('server-only', () => ({}));
@@ -52,6 +53,16 @@ describe('proof upload route', () => {
     const res = await upload({ type: 'application/x-msdownload' });
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'Not found.' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a retryable session outage before accessing the API', async () => {
+    getSession.mockRejectedValue(new SessionUnavailableError());
+    const res = await upload();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    expect(await res.json()).toEqual({ error: SESSION_UNAVAILABLE_MESSAGE });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

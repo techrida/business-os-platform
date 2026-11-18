@@ -14,12 +14,12 @@
   gap: 12px;
   width: 100%;
   padding: 12px;
-  padding-inline-start: 16px;
   border: var(--border-width-thin) solid var(--toast-border);
+  border-inline-start: var(--border-width-thick) solid var(--toast-accent);
   border-radius: var(--radius-xl);
   background: var(--toast-bg);
   color: var(--toast-text);
-  box-shadow: var(--toast-shadow);
+  box-shadow: var(--shadow-section, var(--toast-shadow));
   font-family: inherit;
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
@@ -28,48 +28,23 @@
 
 .icon {
   flex: none;
+  color: var(--toast-accent);
 }
 
-.info .icon {
-  color: var(--status-info);
-}
-
-.success .icon {
-  color: var(--status-success);
-}
-
-.warning .icon {
-  color: var(--status-warning);
-}
-
-.error .icon {
-  color: var(--status-error);
-}
-
-/* The status edge: a 3px inset on the start side, so tone is not carried by colour alone (the
-   icon shape differs too). */
 .info {
-  box-shadow:
-    inset 3px 0 0 var(--status-info),
-    var(--toast-shadow);
+  --toast-accent: var(--status-info);
 }
 
 .success {
-  box-shadow:
-    inset 3px 0 0 var(--status-success),
-    var(--toast-shadow);
+  --toast-accent: var(--status-success);
 }
 
 .warning {
-  box-shadow:
-    inset 3px 0 0 var(--status-warning),
-    var(--toast-shadow);
+  --toast-accent: var(--status-warning);
 }
 
 .error {
-  box-shadow:
-    inset 3px 0 0 var(--status-error),
-    var(--toast-shadow);
+  --toast-accent: var(--status-error);
 }
 
 .body {
@@ -97,6 +72,7 @@
 .action {
   justify-self: start;
   margin-top: 4px;
+  min-height: 32px;
   padding: 4px 8px;
   margin-inline-start: -8px;
   border: 0;
@@ -118,9 +94,9 @@
   display: inline-grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  margin: -2px 0;
+  width: 32px;
+  height: 32px;
+  margin-block: -4px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-md);

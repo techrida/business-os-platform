@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
+import { sessionUnavailableResponse } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 import { GET } from './route';
@@ -76,6 +77,15 @@ describe('GET /quotations/:id/versions/:vid/document', () => {
     expect(res.status).toBe(400);
     expect(mocks.apiFetch).not.toHaveBeenCalled();
     expect(mocks.routeSession).not.toHaveBeenCalled();
+  });
+
+  it('preserves the session outage as a retryable plain-text response', async () => {
+    mocks.routeSession.mockResolvedValue(sessionUnavailableResponse());
+    const response = await call();
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('1');
+    expect(await response.text()).toContain('Session check temporarily unavailable. Retry.');
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
   });
 
   it('answers a signed-out visitor in plain text, without calling the API', async () => {

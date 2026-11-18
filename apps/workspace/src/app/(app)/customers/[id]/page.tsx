@@ -14,7 +14,7 @@ import {
   type Listing,
 } from '@/components/p2/customers/api';
 import { ContactForm } from '@/components/p2/customers/contact-form';
-import { addressLines } from '@/components/p2/customers/display';
+import { CustomerAddress } from '@/components/p2/customers/customer-address';
 import {
   checklistProgress,
   isGuid,
@@ -87,6 +87,11 @@ function Contacts({
   mayWrite: boolean;
   customerId: string;
 }) {
+  // What the add-contact form needs from the loaded list. Unknown (the list failed) reads as "no",
+  // and the API still refuses a second main contact (409) or a missing first email (422).
+  const loaded = result.status === 'fulfilled' ? result.value.items : [];
+  const hasPrimary = loaded.some((c) => c.isPrimary);
+  const requireEmail = result.status === 'fulfilled' && !loaded.some((c) => c.email !== null);
   return (
     <Panel
       title="Contacts"
@@ -160,6 +165,8 @@ function Contacts({
             customerId={customerId}
             // One key per render of this page, so a double click saves the contact once.
             idempotencyKey={randomUUID()}
+            hasPrimary={hasPrimary}
+            requireEmail={requireEmail}
           />
         </div>
       ) : null}
@@ -393,13 +400,7 @@ export default async function CustomerPage({
       key: 'address',
       label: 'Address',
       wide: true,
-      value: (
-        <span className={styles.address}>
-          {addressLines(customer.address).map((line) => (
-            <span key={line}>{line}</span>
-          ))}
-        </span>
-      ),
+      value: <CustomerAddress address={customer.address} className={styles.address} />,
     },
   ];
 

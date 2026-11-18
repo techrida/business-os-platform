@@ -29,7 +29,16 @@ export async function loadConversionContacts(customerId: string) {
   }
   try {
     const result = await listContacts(session, customerId);
-    return { options: result.items.map((c) => ({ id: c.id, label: c.fullName })), error: '' };
+    // A contact without an email cannot receive the opportunity's quotations, so it is shown but
+    // cannot be chosen (the API refuses it with 422 contact_email_required).
+    return {
+      options: result.items.map((c) => ({
+        id: c.id,
+        label: c.email === null ? `${c.fullName} (no email address)` : c.fullName,
+        disabled: c.email === null,
+      })),
+      error: '',
+    };
   } catch {
     return { options: [], error: 'Contacts could not be loaded. Check your access and try again.' };
   }

@@ -1,7 +1,15 @@
-// Unit tests of the PUT merge rule; the database path is covered by drafting.integration.test.ts.
+// Unit tests of the PUT merge rule and the capability rule; the database path is covered by
+// drafting.integration.test.ts.
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { mergeDraftPatch } from './drafting.service';
+import type { Principal } from '../../../platform/authz/principal';
+import { capabilitiesOf, mergeDraftPatch } from './drafting.service';
 
 const saved = {
   currency: 'NPR',
@@ -28,5 +36,77 @@ describe('mergeDraftPatch', () => {
 
   it('replaces the schedule with an empty one', () => {
     expect(mergeDraftPatch(saved, { paymentSchedule: [] }).paymentSchedule).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------------------------------------- capabilities
+
+const TENANT = '00000000-0000-4000-8000-000000000001';
+const ENTITY = '00000000-0000-4000-8000-000000000002';
+const ME = '00000000-0000-4000-8000-000000000003';
+const COLLEAGUE = '00000000-0000-4000-8000-000000000004';
+const CUSTOMER = '00000000-0000-4000-8000-000000000005';
+
+function principalOf(role: RoleKey, over: Partial<Principal> = {}): Principal {
+  return {
+    userId: ME,
+    zitadelUserId: 'z-me',
+    tenantId: TENANT,
+    organizationId: ENTITY,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: '00000000-0000-4000-8000-000000000009',
+    roles: [role],
+    departmentId: null,
+    status: 'active',
+    grants: new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>,
+    ...over,
+  };
+}
+
+const quotationOf = (ownerUserId: string | null) => ({
+  tenantId: TENANT,
+  organizationId: ENTITY,
+  ownerUserId,
+  customerPartyId: CUSTOMER,
+});
+
+describe('capabilitiesOf (the detail and list answer the same rules as the commands)', () => {
+  it('lets the owner edit a Draft or a Returned version, and nothing else', () => {
+    const sales = principalOf('sales');
+    expect(capabilitiesOf(sales, quotationOf(ME), 'draft').canEdit).toBe(true);
+    expect(capabilitiesOf(sales, quotationOf(ME), 'returned').canEdit).toBe(true);
+    for (const status of ['submitted', 'approved', 'sent', 'rejected', 'expired'] as const) {
+      expect(capabilitiesOf(sales, quotationOf(ME), status).canEdit, status).toBe(false);
+    }
+  });
+
+  it("refuses edit and revise on a colleague's quotation under own scope", () => {
+    const sales = principalOf('sales');
+    expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'returned')).toEqual({
+      canEdit: false,
+      canRevise: false,
+    });
+    expect(capabilitiesOf(sales, quotationOf(COLLEAGUE), 'approved').canRevise).toBe(false);
+  });
+
+  it('offers revise only for a revisable status the caller may revise', () => {
+    const sales = principalOf('sales');
+    expect(capabilitiesOf(sales, quotationOf(ME), 'approved').canRevise).toBe(true);
+    expect(capabilitiesOf(sales, quotationOf(ME), 'rejected').canRevise).toBe(true);
+    expect(capabilitiesOf(sales, quotationOf(ME), 'draft').canRevise).toBe(false);
+    // PMO drafts its own quotations but holds no quotation.revise: the button that answered 403.
+    const pmo = principalOf('pmo');
+    expect(capabilitiesOf(pmo, quotationOf(ME), 'approved').canRevise).toBe(false);
+    expect(capabilitiesOf(pmo, quotationOf(ME), 'draft').canEdit).toBe(true);
+  });
+
+  it('gives an inactive user nothing', () => {
+    const inactive = principalOf('sales', { status: 'inactive' });
+    expect(capabilitiesOf(inactive, quotationOf(ME), 'draft')).toEqual({
+      canEdit: false,
+      canRevise: false,
+    });
+    expect(capabilitiesOf(inactive, quotationOf(ME), 'approved').canRevise).toBe(false);
   });
 });
