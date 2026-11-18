@@ -66,6 +66,18 @@ export class TestMemoController {
     return this.memos.update(id, parseOr400(UpdateMemoBodySchema, body));
   }
 
+  /**
+   * 204 and no body: the creator discards their own draft or returned memo (soft: numbered history, audit and
+   * attachment evidence stay, and nothing reads or changes it afterwards). 404 outside scope or after a discard,
+   * 403 for a reader who is not the creator, 409 once the memo was submitted.
+   */
+  @Post(':id/discard')
+  @HttpCode(204)
+  @Can('memo.update')
+  discard(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.memos.discard(id);
+  }
+
   /** 200 (not 201: nothing is created at this URL) with `{ requestId, status: 'pending' | 'blocked' }`. */
   @Post(':id/submit')
   @HttpCode(200)
