@@ -108,11 +108,28 @@
 /* On a phone the primary action is easiest to reach when buttons stack full width, primary on top. */
 @media (max-width: 479px) {
   .footer {
-    flex-direction: column-reverse;
+    flex-direction: column;
   }
 
   .footer > * {
     width: 100%;
+  }
+}
+
+@media (max-height: 420px) {
+  .header {
+    max-height: 35dvh;
+    overflow: auto;
+    padding-block: 12px 8px;
+  }
+
+  .footer {
+    flex-direction: row;
+    padding-block: 8px;
+  }
+
+  .footer > * {
+    width: auto;
   }
 }
 
