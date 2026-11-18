@@ -14,7 +14,7 @@ import {
   type Listing,
 } from '@/components/p2/customers/api';
 import { ContactForm } from '@/components/p2/customers/contact-form';
-import { addressLines } from '@/components/p2/customers/display';
+import { CustomerAddress } from '@/components/p2/customers/customer-address';
 import {
   checklistProgress,
   isGuid,
@@ -385,13 +385,7 @@ export default async function CustomerPage({
       key: 'address',
       label: 'Address',
       wide: true,
-      value: (
-        <span className={styles.address}>
-          {addressLines(customer.address).map((line) => (
-            <span key={line}>{line}</span>
-          ))}
-        </span>
-      ),
+      value: <CustomerAddress address={customer.address} className={styles.address} />,
     },
   ];
 
