@@ -24,7 +24,12 @@ import {
 import { Can } from '../../platform/authz/decorators';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { TestMemoService } from './test-memo.service';
-import { UpdateMemoBodySchema, type MemoDetailDto, type SubmitMemoResult } from './test-memo.types';
+import {
+  SubmitMemoBodySchema,
+  UpdateMemoBodySchema,
+  type MemoDetailDto,
+  type SubmitMemoResult,
+} from './test-memo.types';
 
 @Controller('v1/test-memos')
 export class TestMemoController {
@@ -77,11 +82,23 @@ export class TestMemoController {
     return this.memos.update(id, parseOr400(UpdateMemoBodySchema, body));
   }
 
+  /**
+   * 204 and no body: the creator discards their own draft or returned memo (soft: numbered history, audit and
+   * attachment evidence stay, and nothing reads or changes it afterwards). 404 outside scope or after a discard,
+   * 403 for a reader who is not the creator, 409 once the memo was submitted.
+   */
+  @Post(':id/discard')
+  @HttpCode(204)
+  @Can('memo.update')
+  discard(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.memos.discard(id);
+  }
+
   /** 200 (not 201: nothing is created at this URL) with `{ requestId, status: 'pending' | 'blocked' }`. */
   @Post(':id/submit')
   @HttpCode(200)
   @Can('memo.update')
-  submit(@Param('id', ParseUUIDPipe) id: string): Promise<SubmitMemoResult> {
-    return this.memos.submit(id);
+  submit(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<SubmitMemoResult> {
+    return this.memos.submit(id, parseOr400(SubmitMemoBodySchema, body ?? {}).expectedVersion);
   }
 }

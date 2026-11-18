@@ -171,9 +171,9 @@ jobs:
       - name: Build the portal app (production)
         run: pnpm --filter '@bos/portal...' build
 
-  # Proves the three production images still build. Nothing is pushed anywhere.
+  # Proves the production images still build. Nothing is pushed anywhere.
   docker:
-    name: docker (build both images)
+    name: docker (build production images)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -225,3 +225,22 @@ jobs:
           push: false
           cache-from: type=gha,scope=portal
           cache-to: type=gha,scope=portal,mode=max
+
+      - name: Test Login V2 forms
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/login/Dockerfile
+          target: test
+          push: false
+          cache-from: type=gha,scope=login
+          cache-to: type=gha,scope=login-test,mode=max
+
+      - name: Build Login V2 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/login/Dockerfile
+          push: false
+          cache-from: type=gha,scope=login
+          cache-to: type=gha,scope=login,mode=max

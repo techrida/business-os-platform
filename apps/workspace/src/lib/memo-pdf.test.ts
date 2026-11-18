@@ -137,6 +137,29 @@ describe('renderMemoPdf', () => {
     expect(substituted).toBe(0);
   });
 
+  it('prints no developer note under the signers: product text only, named signer slots kept', async () => {
+    // Every character here is drawn by the page itself. The old note ("Names indicate the proposed approval
+    // route. Signatures are disabled.") is the only text that would add a lowercase g or an N, so neither may appear.
+    const plain = input({
+      organizationName: 'AAA',
+      departmentName: 'AAA',
+      title: 'AAA',
+      body: 'AAA',
+      closing: 'AAA',
+      preparedBy: person('AAA'),
+      recommenders: [person('AAA')],
+      approvedBy: person('AAA'),
+    });
+    const { bytes } = await renderMemoPdf(plain, await fonts());
+    const drawn = drawnCodePoints(inspect(bytes));
+    expect(drawn.has('g'.codePointAt(0)!)).toBe(false);
+    expect(drawn.has('N'.codePointAt(0)!)).toBe(false);
+    // The signer slot labels are still there ("Prepared by", "Recommended by 1", "Approved by").
+    for (const ch of 'Prepared by'.replace(/ /g, '')) {
+      expect(drawn.has(ch.codePointAt(0)!), ch).toBe(true);
+    }
+  });
+
   it('draws actual Unicode names: every Devanagari and Latin-extended character is mapped in an embedded font', async () => {
     const { bytes, substituted } = await renderMemoPdf(
       input({

@@ -19,6 +19,13 @@
   --checkbox-border: var(--neutral-500);
   --radio-border: var(--neutral-500);
   --date-picker-border: var(--neutral-500);
+
+  /* A neutral toast surface keeps text legible. The icon and edge carry the status colour. */
+  --toast-bg: var(--dropdown-bg);
+  --toast-border: var(--dropdown-border);
+  --toast-text: var(--text-primary);
+  --toast-shadow: 0 12px 32px color-mix(in srgb, var(--overlay-scrim) 14%, transparent);
+  --toast-width: 380px;
 }
 
 [data-theme='dark'] {
