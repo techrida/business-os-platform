@@ -187,7 +187,8 @@
 }
 
 .rowError,
-.rowForm {
+.rowForm,
+.rowStatus {
   grid-column: 1 / -1;
   min-width: 0;
 }
@@ -267,4 +268,8 @@
 .fieldError {
   color: var(--error-700);
   font-size: var(--font-size-caption);
+}
+
+.rowStatus:empty {
+  display: none;
 }

@@ -163,7 +163,9 @@ export function SettingForm({
           </div>
         </form>
       ) : null}
-      <FormStatus state={state} pending={pending} />
+      <div className={styles.rowStatus}>
+        <FormStatus state={state} pending={pending} inline={editing} />
+      </div>
     </>
   );
 }
