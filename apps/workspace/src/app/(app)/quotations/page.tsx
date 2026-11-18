@@ -9,10 +9,11 @@ import {
   quotationStatusMeta,
   STATUS_FILTER_OPTIONS,
 } from '@/components/p2/quotations/status';
+import { newQuotationHref } from '@/components/p2/quotations/resume';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
@@ -23,6 +24,21 @@ import { money, when } from '@/lib/kernel-format';
 
 export const metadata: Metadata = { title: 'Quotations · Business OS' };
 export const dynamic = 'force-dynamic';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The opportunity filter: one UUID, else none (a malformed id is ignored, never sent). */
+function parseOpportunityFilter(raw: string | string[] | undefined): string | undefined {
+  return typeof raw === 'string' && UUID.test(raw) ? raw : undefined;
+}
+
+/** This list's URL for the given filters, so the form, reload and links keep both. */
+function listHref(filter: { status?: string | undefined; opportunityId?: string | undefined }) {
+  const params = new URLSearchParams();
+  if (filter.opportunityId !== undefined) params.set('opportunityId', filter.opportunityId);
+  if (filter.status !== undefined) params.set('status', filter.status);
+  return params.size === 0 ? '/quotations' : `/quotations?${params.toString()}`;
+}
 
 function QuotationRow({ item }: { item: QuotationListItem }) {
   return (
@@ -59,17 +75,21 @@ export default async function QuotationsPage({
   searchParams,
 }: {
   // Next 16: searchParams is a Promise.
-  searchParams: Promise<{ status?: string | string[] }>;
+  searchParams: Promise<{ status?: string | string[]; opportunityId?: string | string[] }>;
 }) {
-  const { status: rawStatus } = await searchParams;
+  const { status: rawStatus, opportunityId: rawOpportunity } = await searchParams;
   const status = parseStatusFilter(rawStatus);
-  const here = status === undefined ? '/quotations' : `/quotations?status=${status}`;
+  const opportunityId = parseOpportunityFilter(rawOpportunity);
+  const here = listHref({ status, opportunityId });
   const session = await requireStaffSession(here);
 
   let items: QuotationListItem[] | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
-    items = await listQuotations(session, status);
+    items = await listQuotations(session, {
+      ...(status !== undefined ? { status } : {}),
+      ...(opportunityId !== undefined ? { opportunityId } : {}),
+    });
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
@@ -78,19 +98,36 @@ export default async function QuotationsPage({
   return (
     <Page>
       <PageHeader
-        title="Quotations"
-        description="Every quotation with its customer, status, total and the date it stops being valid."
+        title={opportunityId !== undefined ? 'Quotations for this opportunity' : 'Quotations'}
+        description={
+          opportunityId !== undefined
+            ? 'Open a draft to carry on with it, or start another quotation for the same opportunity.'
+            : 'Every quotation with its customer, status, total and the date it stops being valid.'
+        }
         actions={
-          items !== null && items.length > 0 ? (
-            <Badge tone="info" role="status" className={styles.count}>
-              {items.length} {items.length === 1 ? 'quotation' : 'quotations'}
-              {status !== undefined ? ` · ${quotationStatusMeta(status).label}` : ''}
-            </Badge>
-          ) : null
+          <>
+            {items !== null && items.length > 0 ? (
+              <Badge tone="info" role="status" className={styles.count}>
+                {items.length} {items.length === 1 ? 'quotation' : 'quotations'}
+                {status !== undefined ? ` · ${quotationStatusMeta(status).label}` : ''}
+              </Badge>
+            ) : null}
+            {opportunityId !== undefined ? (
+              <LinkButton
+                href={newQuotationHref(opportunityId, { another: true })}
+                variant="secondary"
+              >
+                New quotation
+              </LinkButton>
+            ) : null}
+          </>
         }
       />
 
       <form method="get" action="/quotations" className={styles.toolbar}>
+        {opportunityId !== undefined ? (
+          <input type="hidden" name="opportunityId" value={opportunityId} />
+        ) : null}
         <div className={styles.filterField}>
           <Field label="Status">
             {(control) => (
@@ -109,7 +146,14 @@ export default async function QuotationsPage({
           <Button type="submit" variant="secondary">
             Apply filter
           </Button>
-          {status !== undefined ? <Link href="/quotations">Show all quotations</Link> : null}
+          {status !== undefined || opportunityId !== undefined ? (
+            <Link href="/quotations">Show all quotations</Link>
+          ) : null}
+          {opportunityId !== undefined ? (
+            <Link href={`/opportunities/${encodeURIComponent(opportunityId)}`}>
+              Back to the opportunity
+            </Link>
+          ) : null}
         </div>
       </form>
 
@@ -135,6 +179,10 @@ export default async function QuotationsPage({
             title={`No quotations are ${quotationStatusMeta(status).label.toLowerCase()}.`}
           >
             Choose another status, or show all quotations.
+          </EmptyState>
+        ) : opportunityId !== undefined ? (
+          <EmptyState icon="file-text" title="No quotations for this opportunity yet.">
+            Start one with New quotation. It appears here once it is saved.
           </EmptyState>
         ) : (
           <EmptyState icon="file-text" title="No quotations yet.">

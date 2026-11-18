@@ -15,6 +15,14 @@ import {
 } from '@/components/p2/crm/server-bits';
 import styles from '@/components/p2/crm/crm.module.css';
 import { userMoves } from '@/components/p2/crm/stages';
+import { listQuotations } from '@/components/p2/quotations/api';
+import {
+  editQuotationHref,
+  newQuotationHref,
+  opportunityQuotationsHref,
+  quotationEntryFor,
+  type QuotationEntry,
+} from '@/components/p2/quotations/resume';
 import { Alert } from '@/components/ui/alert';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -68,9 +76,10 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   if (!UUID.test(id)) notFound();
   const session = await requireStaffSession(`/opportunities/${id}`);
 
-  const [oppResult, activityResult] = await Promise.allSettled([
+  const [oppResult, activityResult, quotationsResult] = await Promise.allSettled([
     getOpportunity(session, id),
     listActivities(session, { opportunityId: id, limit: 100 }),
+    listQuotations(session, { opportunityId: id }),
   ]);
 
   if (oppResult.status === 'rejected') {
@@ -97,8 +106,14 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   if (activityResult.status === 'fulfilled') activities = activityResult.value;
   else activityProblem = failureOf(activityResult.reason).message;
 
-  const quotesHref = `/quotations?opportunityId=${encodeURIComponent(opp.id)}`;
-  const newQuoteHref = `/quotations/new?opportunityId=${encodeURIComponent(opp.id)}`;
+  const quotesHref = opportunityQuotationsHref(opp.id);
+  const open = opp.stage !== 'lost' && opp.stage !== 'won';
+  // A saved draft is resumed rather than duplicated. A list that did not load falls back to New:
+  // the New page checks again before it shows the builder.
+  const entry: QuotationEntry =
+    quotationsResult.status === 'fulfilled'
+      ? quotationEntryFor(quotationsResult.value)
+      : { kind: 'new' };
 
   return (
     <Page>
@@ -110,14 +125,35 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         status={<StageBadge kind="opportunity" stage={opp.stage} />}
         description={opp.number}
         actions={
-          <>
-            <LinkButton href={quotesHref} variant="secondary">
-              View quotations
-            </LinkButton>
-            {opp.stage !== 'lost' && opp.stage !== 'won' ? (
-              <LinkButton href={newQuoteHref}>New quotation</LinkButton>
-            ) : null}
-          </>
+          entry.kind === 'resume' ? (
+            <>
+              <LinkButton href={quotesHref} variant="secondary">
+                View quotations
+              </LinkButton>
+              <LinkButton
+                href={editQuotationHref(entry.quotationId)}
+                aria-label={`Edit quotation ${entry.number}`}
+              >
+                Edit quotation
+              </LinkButton>
+            </>
+          ) : entry.kind === 'choose' ? (
+            <>
+              {open ? (
+                <LinkButton href={newQuotationHref(opp.id, { another: true })} variant="secondary">
+                  New quotation
+                </LinkButton>
+              ) : null}
+              <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
+            </>
+          ) : (
+            <>
+              <LinkButton href={quotesHref} variant="secondary">
+                View quotations
+              </LinkButton>
+              {open ? <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton> : null}
+            </>
+          )
         }
       />
 
