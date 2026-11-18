@@ -21,7 +21,6 @@ import { toast } from '@/components/ui/toast';
 import { memoPdfInputOf } from '@/lib/memo-pdf-input';
 import type { MemoDraftValues } from '@/lib/memo-working-draft-types';
 
-import styles from '../kit.module.css';
 import type { MemoFormState, MemoValues } from './actions';
 import { ConflictDialog, SaveState } from './draft-status';
 import { discardSavedMemo } from './draft-transport';
