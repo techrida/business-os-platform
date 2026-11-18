@@ -11,7 +11,11 @@ test('overview shows real assigned approvals and hides the widget when the inbox
   const subject = `Overview e2e ${new Date().toISOString()}`;
   const sales = await signInAs(browser, app, 'sales');
   try {
-    await createDraftMemo(sales.page, { title: subject, amount: '50000' });
+    await createDraftMemo(sales.page, {
+      title: subject,
+      recommenders: [],
+      approver: 'Dev Accountant',
+    });
     const approvalId = await submitMemo(sales.page);
     await sales.page.goto('/');
     await expect(sales.page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
