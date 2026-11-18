@@ -664,7 +664,10 @@ describe('versions, inbox and reading', () => {
     const { requestId } = await submit();
     grants = new Map([['approvals.requests.read', 'own']]);
     me = U.requester;
-    expect((await service.get(requestId)).requestId).toBe(requestId);
+    const detail = await service.get(requestId);
+    expect(detail.requestId).toBe(requestId);
+    // A role step names no individual. Other staff and role members stay out of this response.
+    expect(detail.people).toEqual([{ userId: U.requester, name: expect.any(String) }]);
     // R23: out of scope answers like an unknown id, so the id's existence does not leak.
     me = U.stranger;
     await expect(service.get(requestId)).rejects.toMatchObject({ status: 404 });
@@ -738,6 +741,9 @@ describe('admin: groups and delegations', () => {
     });
 
     me = U.founder;
+    const detail = await service.get(requestId);
+    expect(detail.steps[0]?.groupName).toBe('Treasury');
+    expect(detail.people?.map((person) => person.userId).sort()).toEqual([U.requester, U.mgmt].sort());
     await expect(admin.deleteGroup(id)).rejects.toMatchObject({ status: 409 });
     await expect(admin.removeMember(id, U.stranger)).rejects.toMatchObject({ status: 404 });
     await expect(admin.addMember(randomUUID(), U.stranger)).rejects.toMatchObject({ status: 404 });
