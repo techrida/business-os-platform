@@ -99,15 +99,22 @@ export class QuotationPreviewService {
     });
 
     // Read after the pricing transaction, on the committed workflow; it writes nothing either.
-    const route = await this.approvals.preview(
-      scope,
-      QUOTATION_OWNER_TYPE,
-      approvalFactsOf(priced.facts),
-      sodUserIds,
-    );
+    const facts = approvalFactsOf(priced.facts);
+    const route = await this.approvals.preview(scope, QUOTATION_OWNER_TYPE, facts, sodUserIds);
+    // Who the author may name for the first step of THIS quotation (never the author or the caller). Not
+    // redacted like the route: choosing one is the point. A lookup failure leaves the choice out.
+    const choice = await this.approvals
+      .assignableApprovers(scope, QUOTATION_OWNER_TYPE, facts, sodUserIds)
+      .catch(() => null);
     // ApprovalsService already redacted eligible IDs for requesters who cannot act on approvals.
-    const visibleIds = [...new Set(route.steps.flatMap((step) => step.eligibleUserIds))];
-    const staffNames = await this.staffNames(scope, visibleIds);
+    const visibleIds = [
+      ...new Set([
+        ...route.steps.flatMap((step) => step.eligibleUserIds),
+        ...(choice?.candidates.map((c) => c.userId) ?? []),
+      ]),
+    ];
+    const staff = await this.staffNames(scope, visibleIds);
+    const staffNames = new Map([...staff].map(([id, s]) => [id, s.name]));
     return {
       ...previewResultOf(priced, route),
       route: {
@@ -126,16 +133,42 @@ export class QuotationPreviewService {
           }),
         })),
       },
+      approverChoice:
+        choice === null
+          ? null
+          : {
+              seq: choice.seq,
+              options: choice.candidates.flatMap((c) => {
+                const person = staff.get(c.userId);
+                return person
+                  ? [
+                      {
+                        userId: c.userId,
+                        name: person.name,
+                        roleKey: c.roleKey,
+                        hasEmail: person.hasEmail,
+                      },
+                    ]
+                  : [];
+              }),
+            },
     };
   }
 
-  /** Match the workflow's active-staff and entity checks when resolving display names. */
-  private async staffNames(scope: TxScope, ids: string[]): Promise<ReadonlyMap<string, string>> {
-    const names = new Map<string, string>();
+  /**
+   * Match the workflow's active-staff and entity checks when resolving display names. A person without a display
+   * name is shown by the part of their address before the @; one with neither is left out. `hasEmail` only says
+   * whether an address exists, never what it is.
+   */
+  private async staffNames(
+    scope: TxScope,
+    ids: string[],
+  ): Promise<ReadonlyMap<string, { name: string; hasEmail: boolean }>> {
+    const names = new Map<string, { name: string; hasEmail: boolean }>();
     if (ids.length === 0) return names;
     try {
       const rows = await this.db
-        .select({ id: users.id, name: users.displayName })
+        .select({ id: users.id, name: users.displayName, email: users.email })
         .from(userEntities)
         .innerJoin(
           users,
@@ -154,8 +187,9 @@ export class QuotationPreviewService {
           ),
         );
       for (const row of rows) {
-        const name = row.name?.trim();
-        if (name) names.set(row.id, name);
+        const email = row.email?.trim() ?? '';
+        const name = row.name?.trim() || email.split('@')[0]?.trim();
+        if (name) names.set(row.id, { name, hasEmail: email !== '' });
       }
     } catch {
       // Names are optional. A directory lookup failure should still return pricing and route status.

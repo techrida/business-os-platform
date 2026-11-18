@@ -130,6 +130,7 @@ describe('create and update customer', () => {
     legalName: 'Himalayan Construction Pvt. Ltd.',
     relationship: 'prospect' as const,
     address: { line1: 'Balaju', city: 'Kathmandu', country: 'NP' },
+    contact: { fullName: 'Sita Rai', email: 'sita@himalayan.example' },
   };
 
   it('POSTs the body with the idempotency key and parses the new customer', async () => {

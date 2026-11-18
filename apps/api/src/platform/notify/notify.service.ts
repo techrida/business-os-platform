@@ -93,9 +93,12 @@ export class NotifyService {
     if (n.email === undefined) return;
 
     const to = await this.users.emailOf(n.userId);
-    if (to === null) {
-      // The user keeps the bell notice; we only lose the email. Log the id, never the address.
-      this.log.warn(`no email address for user ${n.userId}: skipped ${n.email.template} email`);
+    if (!to?.trim()) {
+      this.log.warn({
+        event: 'notify.email_skipped',
+        reason: 'no_email_address',
+        template: n.email.template,
+      });
       return;
     }
 

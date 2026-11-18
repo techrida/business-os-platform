@@ -179,17 +179,26 @@ export const ApprovalActionKindSchema = z.enum([
   'cancel',
 ]);
 
+export const PersonNameSchema = z.object({ userId: z.string(), name: z.string().min(1) });
+export type PersonName = z.infer<typeof PersonNameSchema>;
+
 export const ApprovalStepDtoSchema = z.object({
   seq: z.number().int().min(1),
   kind: StepKindSchema,
   roleKey: RoleKeySchema.nullable(),
   groupId: z.string().nullable(),
+  groupName: z.string().nullable().optional(),
   userId: z.string().nullable(),
   reason: z.string(),
   status: ApprovalStepStatusSchema,
   activatedAt: isoDateTime.nullable(),
   decidedBy: z.string().nullable(),
   decidedOnBehalfOf: z.string().nullable(),
+  /**
+   * The one person the author named to decide this step, when they named one (only the first step of some
+   * document types). Then only they, or their delegate, see and decide it. Absent or null: anyone eligible.
+   */
+  assigneeUserId: z.string().nullable().optional(),
 });
 export type ApprovalStepDto = z.infer<typeof ApprovalStepDtoSchema>;
 
@@ -216,6 +225,7 @@ export const ApprovalRequestDtoSchema = z.object({
   snapshot: z.unknown(),
   steps: z.array(ApprovalStepDtoSchema),
   actions: z.array(ApprovalActionDtoSchema),
+  people: z.array(PersonNameSchema).optional(),
   submittedAt: isoDateTime,
   decidedAt: isoDateTime.nullable(),
 });

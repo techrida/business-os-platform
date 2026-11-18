@@ -157,6 +157,16 @@ export function describeQuoteFailure(
   if (status === 422 && f.code === 'NO_ELIGIBLE_APPROVER') {
     return { kind: 'error', message: NO_APPROVER_MESSAGE };
   }
+  if (status === 422 && f.code === 'APPROVER_NOT_ELIGIBLE') {
+    // The API's sentence says why (the author themselves, or someone who cannot approve this quotation).
+    return {
+      kind: 'error',
+      message:
+        f.message !== ''
+          ? `${f.message} Nothing was submitted.`
+          : 'The chosen approver cannot approve this quotation. Choose someone else. Nothing was submitted.',
+    };
+  }
   if (status === 422 && isIdempotency(f)) {
     return { kind: 'error', message: DIFFERENT_CONTENT_MESSAGE };
   }

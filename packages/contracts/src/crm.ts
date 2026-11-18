@@ -3,6 +3,7 @@
 // stages move only along the transition table, Won is set by the system alone, and money is a string.
 import { z } from 'zod';
 
+import { DocumentVersionDtoSchema } from './documents.js';
 import { CurrencySchema, DecimalString } from './money.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -54,10 +55,11 @@ export const AddressSchema = z.strictObject({
 export type Address = z.infer<typeof AddressSchema>;
 
 /**
- * A customer is a tenant-level party (ADR 0027, D17): no organizationId here. Terms that differ per
- * legal entity live in `PartyAccountDtoSchema`.
+ * The fields of a customer record. A customer is a tenant-level party (ADR 0027, D17): no
+ * organizationId here. Terms that differ per legal entity live in `PartyAccountDtoSchema`. Lead
+ * conversion and the edit form use these fields alone; `POST /v1/customers` adds the first contact.
  */
-export const CreateCustomerBodySchema = z.strictObject({
+export const CustomerFieldsSchema = z.strictObject({
   legalName: text(200),
   panVatNo: PanVatNoSchema.optional(),
   industry: text(100).optional(),
@@ -66,9 +68,31 @@ export const CreateCustomerBodySchema = z.strictObject({
   defaultCurrency: CurrencySchema.optional(),
   address: AddressSchema,
 });
+export type CustomerFields = z.infer<typeof CustomerFieldsSchema>;
+
+/**
+ * A contact that carries an email. A quotation is sent by email, so a customer must always have at
+ * least one contact with an address: its first contact, and a contact created by lead conversion.
+ */
+export const ContactWithEmailBodySchema = z.strictObject({
+  fullName: text(200),
+  email: EmailSchema,
+  phone: PhoneSchema.optional(),
+  title: text(100).optional(),
+  isPrimary: z.boolean().default(false),
+});
+export type ContactWithEmailBody = z.infer<typeof ContactWithEmailBodySchema>;
+
+/**
+ * `POST /v1/customers`: the customer and its first contact, created together (one transaction, so a
+ * refusal leaves neither). The first contact needs an email and becomes the main contact.
+ */
+export const CreateCustomerBodySchema = CustomerFieldsSchema.extend({
+  contact: ContactWithEmailBodySchema.omit({ isPrimary: true }),
+});
 export type CreateCustomerBody = z.infer<typeof CreateCustomerBodySchema>;
 
-export const UpdateCustomerBodySchema = CreateCustomerBodySchema.partial().extend({
+export const UpdateCustomerBodySchema = CustomerFieldsSchema.partial().extend({
   /** The row version the client saw; a different current version means 409. */
   expectedVersion: z.number().int().min(1),
 });
@@ -104,6 +128,10 @@ export const PartyAccountDtoSchema = z.object({
 });
 export type PartyAccountDto = z.infer<typeof PartyAccountDtoSchema>;
 
+/**
+ * `POST /v1/customers/:id/contacts`. The email is optional here only because a later contact may
+ * have none: the API refuses a contact without one while the customer has no contact with an email.
+ */
 export const CreateContactBodySchema = z.strictObject({
   fullName: text(200),
   email: EmailSchema.optional(),
@@ -413,21 +441,22 @@ export type LeadDto = z.infer<typeof LeadDtoSchema>;
 
 const ConvertCustomerChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), customerId: z.guid() }),
-  z.strictObject({ mode: z.literal('create'), customer: CreateCustomerBodySchema }),
+  z.strictObject({ mode: z.literal('create'), customer: CustomerFieldsSchema }),
 ]);
 const ConvertContactChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), contactId: z.guid() }),
-  z.strictObject({ mode: z.literal('create'), contact: CreateContactBodySchema }),
+  z.strictObject({ mode: z.literal('create'), contact: ContactWithEmailBodySchema }),
 ]);
 
 /**
  * Convert a qualified lead into a customer, a contact and an opportunity. The server warns about
  * duplicates (normalised email, phone, organisation name); "create anyway" is `duplicateOverride`
- * and needs a reason.
+ * and needs a reason. The contact is required and must have an email (a new one names it; an
+ * existing one is checked by the API), so the opportunity's quotations can be sent.
  */
 export const ConvertLeadBodySchema = z.strictObject({
   customer: ConvertCustomerChoiceSchema,
-  contact: ConvertContactChoiceSchema.optional(),
+  contact: ConvertContactChoiceSchema,
   opportunityName: text(200),
   duplicateOverride: z.strictObject({ reason: text(500) }).optional(),
   expectedVersion: z.number().int().min(1),
@@ -576,6 +605,45 @@ export const ChecklistItemKeySchema = z.enum(CHECKLIST_ITEM_KEYS);
 export const CHECKLIST_ITEM_STATUSES = ['missing', 'provided', 'accepted', 'rejected'] as const;
 export const ChecklistItemStatusSchema = z.enum(CHECKLIST_ITEM_STATUSES);
 
+export const VerificationEvidenceSchema = z.object({
+  documentId: z.guid(),
+  documentVersionId: z.guid(),
+  versionNumber: z.number().int().positive(),
+  expiresOn: isoDate.nullable(),
+});
+export const VerificationReviewSchema = z.object({
+  id: z.guid(),
+  decision: z.enum(['approve', 'reject']),
+  comment: z.string().nullable(),
+  reviewedBy: z.guid(),
+  reviewedAt: isoDateTime,
+  round: z.number().int().nonnegative(),
+  evidence: VerificationEvidenceSchema.nullable(),
+});
+export const ReviewVerificationItemBodySchema = z.discriminatedUnion('decision', [
+  z.strictObject({ decision: z.literal('approve'), expectedVersion: z.number().int().positive() }),
+  z.strictObject({
+    decision: z.literal('reject'),
+    comment: z.string().trim().min(1).max(2000),
+    expectedVersion: z.number().int().positive(),
+  }),
+]);
+export type ReviewVerificationItemBody = z.infer<typeof ReviewVerificationItemBodySchema>;
+export const VerificationVersionBodySchema = z.strictObject({
+  expectedVersion: z.number().int().positive(),
+});
+export const VerificationReviewHistorySchema = z.object({
+  items: z.array(
+    VerificationReviewSchema.extend({
+      reviewerName: z.string().nullable().optional(),
+      itemKey: ChecklistItemKeySchema.nullable(),
+      kind: z.enum(['item_decided', 'case_decided', 'legacy_case_decided']),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+});
+export type VerificationReviewHistory = z.infer<typeof VerificationReviewHistorySchema>;
+
 export const ChecklistItemSchema = z
   .object({
     key: ChecklistItemKeySchema,
@@ -584,6 +652,8 @@ export const ChecklistItemSchema = z
     /** The kernel document that backs the item; null exactly while the item is missing. */
     documentId: z.guid().nullable(),
     expiresOn: isoDate.nullable(),
+    evidence: VerificationEvidenceSchema.nullable().optional(),
+    review: VerificationReviewSchema.nullable().optional(),
   })
   .refine((i) => (i.status === 'missing') === (i.documentId === null), {
     path: ['documentId'],
@@ -600,6 +670,13 @@ export function isChecklistComplete(
 }
 
 export const VerificationCaseDtoSchema = z.object({
+  reviewerNames: z.array(z.string()).optional(),
+  looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
+  reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),
+  approvalBlockedReason: z.string().nullable().optional(),
+  reviewBlockedReason: z.string().nullable().optional(),
+  reviewRound: z.number().int().nonnegative().optional(),
+  submittedBy: z.guid().nullable().optional(),
   id: z.guid(),
   partyId: z.guid(),
   status: VerificationStatusSchema,

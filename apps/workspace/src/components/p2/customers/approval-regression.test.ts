@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CHECKLIST,
   attachDocument,
-  acceptProvided,
   missingRequired,
   documentProblems,
 } from '../../../../../api/src/modules/verification/verification.rules';
@@ -22,7 +21,11 @@ const checklist = DEFAULT_CHECKLIST.reduce(
       : items,
   [...DEFAULT_CHECKLIST],
 );
-const submitted = { status: 'submitted' as const, checklist };
+const submitted = {
+  status: 'submitted' as const,
+  checklist,
+  reviewPolicy: 'document_review_v1' as const,
+};
 const clean = new Map<string, { status: DocumentVersionDto['status'] }>(
   checklist.flatMap((i) =>
     i.documentId ? [[i.documentId, { status: 'clean' as const }] as const] : [],
@@ -30,18 +33,17 @@ const clean = new Map<string, { status: DocumentVersionDto['status'] }>(
 );
 
 describe('approval from upload producer state', () => {
-  it('opens approval with zero accepted items and accepts only after deciding', () => {
+  it('requires a decision on each provided item even after all scans pass', () => {
     expect(checklistProgress(checklist)).toEqual({ accepted: 0, required: 3, complete: false });
     expect(missingRequired(checklist)).toEqual([]);
-    expect(canApprove(submitted, clean)).toBe(true);
-    expect(approveBlockedReason(submitted, clean)).toBeNull();
+    expect(canApprove(submitted, clean)).toBe(false);
+    expect(approveBlockedReason(submitted, clean)).toContain('needs approval');
     expect(
       documentProblems(
         checklist,
         [...clean].map(([documentId, v]) => ({ documentId, version: 1, ...v })),
       ),
     ).toEqual([]);
-    expect(checklistProgress(acceptProvided(checklist)).complete).toBe(true);
   });
 
   it.each([

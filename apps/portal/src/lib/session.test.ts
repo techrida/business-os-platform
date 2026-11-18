@@ -23,6 +23,8 @@ import {
 } from './session';
 import { type Keyring, openSessionValue, sealSessionValue } from './session-crypto';
 
+import { SessionUnavailableError } from './session-unavailable';
+
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
 
@@ -386,8 +388,6 @@ describe('getSession token refresh', () => {
   });
 });
 
-// CR-03: Valkey runs noeviction, so a full instance rejects every write. Pages must then see a
-// signed-out user, not a 500.
 describe('getSession when Valkey errors', () => {
   /** Shaped like an ioredis ReplyError, which carries the command and its arguments. */
   function replyError(args: unknown[]): Error {
@@ -397,33 +397,107 @@ describe('getSession when Valkey errors', () => {
     });
   }
 
-  it('returns null when the read rejects', async () => {
+  /** The parsed JSON of every console.warn line. */
+  function warned(warn: { mock: { calls: unknown[][] } }): Record<string, unknown>[] {
+    return warn.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+  }
+
+  it('is unavailable, not signed out, when the read rejects twice, and keeps the record', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await signedIn();
-    vi.spyOn(redis, 'get').mockRejectedValue(new Error('connect ECONNREFUSED'));
-    await expect(getSession()).resolves.toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
+    const id = await signedIn();
+    const get = vi.spyOn(redis, 'get').mockRejectedValue(new Error('connect ECONNREFUSED'));
+    await expect(getSession()).rejects.toBeInstanceOf(SessionUnavailableError);
+    // One readiness-aware retry, no more.
+    expect(get).toHaveBeenCalledTimes(2);
+    get.mockRestore();
+    expect(await stored(id)).not.toBeNull();
+    expect(jar.store.set).not.toHaveBeenCalled();
+    expect(warned(warn)).toEqual([
+      {
+        event: 'session.valkey_error',
+        stage: 'read',
+        outcome: 'unavailable',
+        elapsedMs: expect.any(Number) as number,
+        clientStatus: expect.any(String) as string,
+        category: 'connection',
+      },
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(keyFor(id));
   });
 
-  it('returns null when the sliding write rejects, and never logs the record', async () => {
+  it('retries the read once and returns the session when the retry answers', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn();
+    vi.spyOn(redis, 'get').mockRejectedValueOnce(new Error('Connection is closed.'));
+    await expect(getSession()).resolves.toMatchObject({ id, sub: 'user-1' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session when the sliding write rejects, and never logs the record', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const id = await signedIn();
     const raw = await redis.get(keyFor(id));
     vi.spyOn(redis, 'eval').mockRejectedValue(replyError([keyFor(id), raw]));
-    await expect(getSession()).resolves.toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
+    await expect(getSession()).resolves.toMatchObject({ id, sub: 'user-1', roles: ['founder'] });
+    expect(warned(warn)).toMatchObject([{ stage: 'slide', outcome: 'kept', category: 'other' }]);
     const logged = JSON.stringify(warn.mock.calls);
-    for (const secret of [BASE.accessToken, BASE.refreshToken, id]) {
+    for (const secret of [BASE.accessToken, BASE.refreshToken, id, keyFor(id)]) {
       expect(logged).not.toContain(secret);
     }
   });
 
-  it('returns null when the refresh path rejects', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await signedIn({ accessExp: T0_SECONDS + 10 });
+  it('keeps the current token when the refresh path rejects while it is still valid', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn({ accessExp: T0_SECONDS + 10 });
     vi.spyOn(redis, 'set').mockRejectedValue(replyError([]));
-    await expect(getSession()).resolves.toBeNull();
+    await expect(getSession()).resolves.toMatchObject({ id, accessToken: 'access-1' });
     expect(refreshTokens).not.toHaveBeenCalled();
+    expect(warned(warn)).toMatchObject([{ stage: 'rotate', outcome: 'kept' }]);
+  });
+
+  it('stores the rotated tokens when the first write after a refresh rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn({ accessExp: T0_SECONDS + 10 });
+    vi.mocked(refreshTokens).mockResolvedValue({
+      accessToken: 'access-2',
+      refreshToken: 'refresh-2',
+      accessExp: T0_SECONDS + 300,
+    });
+    const realSet = redis.set.bind(redis) as unknown as (...args: unknown[]) => Promise<unknown>;
+    let writes = 0;
+    // The lock (NX) goes through; the first write of the refreshed record (XX) drops.
+    vi.spyOn(redis, 'set').mockImplementation((async (...args: unknown[]) => {
+      if (args.includes('XX') && writes++ === 0) throw new Error('Connection is closed.');
+      return realSet(...args);
+    }) as unknown as typeof redis.set);
+
+    await expect(getSession()).resolves.toMatchObject({ id, accessToken: 'access-2' });
+    vi.mocked(redis.set).mockRestore();
+    expect(refreshTokens).toHaveBeenCalledTimes(1);
+    // The spent refresh token is not left in the store.
+    expect(await stored(id)).toMatchObject({ accessToken: 'access-2', refreshToken: 'refresh-2' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('is unavailable when the refresh path rejects and the token has expired', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn({ accessExp: T0_SECONDS - 5 });
+    vi.spyOn(redis, 'set').mockRejectedValue(replyError([]));
+    await expect(getSession()).rejects.toBeInstanceOf(SessionUnavailableError);
+    expect(refreshTokens).not.toHaveBeenCalled();
+    vi.mocked(redis.set).mockRestore();
+    expect(await stored(id)).not.toBeNull();
+  });
+
+  it('still signs out a corrupt record whose delete fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn();
+    await redis.set(keyFor(id), 'not an envelope');
+    vi.spyOn(redis, 'del').mockRejectedValue(new Error('Command timed out'));
+    await expect(getSession()).resolves.toBeNull();
+    expect(warned(warn).filter((line) => line.event === 'session.valkey_error')).toMatchObject([
+      { stage: 'cleanup', outcome: 'signed_out', category: 'timeout' },
+    ]);
   });
 });
 

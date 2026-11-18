@@ -142,6 +142,7 @@ function detail(over: Record<string, unknown> = {}): QuotationDetail {
     ],
     customerName: 'Big Kahuna Burger Ltd.',
     contacts: [],
+    capabilities: { canEdit: false, canRevise: true },
     ...over,
   });
 }

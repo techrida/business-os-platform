@@ -9,7 +9,6 @@ import '@fontsource-variable/outfit';
 import '@/styles/globals.css';
 
 import { WorkspaceToaster } from '@/components/ui/toast';
-import { WebVitals } from '@/components/web-vitals';
 
 export const metadata: Metadata = {
   title: 'Business OS',
@@ -19,7 +18,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <WebVitals />
         {children}
         <WorkspaceToaster />
       </body>

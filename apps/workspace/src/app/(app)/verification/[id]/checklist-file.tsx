@@ -374,7 +374,9 @@ export function ChecklistFile({
                       problem?.reload ||
                       problem?.reupload ||
                       (!edit.staged &&
-                        (!edit.originalId || edit.expiresOn === (item.expiresOn ?? '')))
+                        (item.status === 'rejected' ||
+                          !edit.originalId ||
+                          edit.expiresOn === (item.expiresOn ?? '')))
                     }
                     aria-busy={phase === 'saving' || undefined}
                   >
@@ -419,7 +421,11 @@ export function ChecklistFile({
                   <ScanBadge file={preview} animate={previewScan.drewCheck} />
                 ) : null}
                 {caseStatus === 'rejected' ? (
-                  <p className={styles.note}>Saving reopens this case as a draft.</p>
+                  <p className={styles.note}>
+                    {item.status === 'rejected'
+                      ? 'Replace the rejected file to reopen this case.'
+                      : 'Saving reopens this case as a draft.'}
+                  </p>
                 ) : null}
                 <div ref={dateFieldRef} className={styles.dateField}>
                   <Field label="Expiry date">

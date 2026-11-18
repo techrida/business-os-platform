@@ -100,7 +100,7 @@ export default async function SalesOrdersPage({
       () => null,
     ),
     canConfirm
-      ? listQuotations(session, 'accepted').then(
+      ? listQuotations(session, { status: 'accepted' }).then(
           (items): ConfirmOption[] =>
             items.map((q) => ({
               versionId: q.currentVersionId,

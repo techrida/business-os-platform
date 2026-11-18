@@ -153,7 +153,7 @@ export async function submitCaseAction(
   const session = await requireStaffSession(`/verification/${caseId}`);
 
   try {
-    await submitVerificationCase(session, caseId, key);
+    await submitVerificationCase(session, caseId, key, Number(form.get('expectedVersion')));
   } catch (err) {
     const f = kybFailure(err, 'submit');
     return { key: nextKey(err, key), error: f.message, ...(f.reload ? { reload: true } : {}) };

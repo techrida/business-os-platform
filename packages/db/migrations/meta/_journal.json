@@ -190,6 +190,13 @@
       "when": 1783000000039,
       "tag": "0039_discard_memo_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1783000000040,
+      "tag": "0040_verification_document_review",
+      "breakpoints": true
     }
   ]
 }

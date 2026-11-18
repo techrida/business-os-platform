@@ -4,6 +4,7 @@
 import { z } from 'zod';
 
 import { RoutePlanSchema } from './approvals.js';
+import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
 
@@ -306,7 +307,14 @@ export type QuotationPreviewBody = z.infer<typeof QuotationPreviewBodySchema>;
 
 const expectedVersion = z.number().int().min(1);
 
-export const SubmitQuotationBodySchema = z.strictObject({ expectedVersion });
+export const SubmitQuotationBodySchema = z.strictObject({
+  expectedVersion,
+  /**
+   * Optional: the one person who decides the first approval step, from the preview's `approverChoice`.
+   * Absent: every eligible approver of that step sees it, as before. The server checks it again at submit.
+   */
+  approverUserId: z.guid().optional(),
+});
 export type SubmitQuotationBody = z.infer<typeof SubmitQuotationBodySchema>;
 
 /** The creator pulls a Submitted version back to Returned to improve it. */
@@ -531,8 +539,37 @@ export const QuotationListItemSchema = QuotationDtoSchema.extend({
   total: NonNegativeDecimalString,
   validUntil: isoDate,
   ownerName: z.string().nullable(),
+  /**
+   * The caller may edit the current version now: it is Draft or Returned and the server's
+   * `quotation.draft` rule allows this caller on this record. Lets a screen resume a draft instead of
+   * starting a second quotation.
+   */
+  canEdit: z.boolean(),
 });
 export type QuotationListItem = z.infer<typeof QuotationListItemSchema>;
+
+/**
+ * `GET /v1/quotations` query. Both filters are optional and combine; `opportunityId` limits the
+ * list to one opportunity's quotations (still only those the caller may read). Unknown keys are
+ * ignored, as before.
+ */
+export const ListQuotationsQuerySchema = z.object({
+  status: QuotationStatusSchema.optional(),
+  opportunityId: z.guid().optional(),
+});
+export type ListQuotationsQuery = z.infer<typeof ListQuotationsQuerySchema>;
+
+/**
+ * What the caller may do with a quotation now, decided by the server with the same rules its
+ * commands enforce, so a screen never offers an action that would answer 403 or 409.
+ */
+export const QuotationCapabilitiesSchema = z.object({
+  /** Edit the current version: Draft or Returned, and `quotation.draft` on this record. */
+  canEdit: z.boolean(),
+  /** Start a revision: a revisable status, and `quotation.revise` on this record. */
+  canRevise: z.boolean(),
+});
+export type QuotationCapabilities = z.infer<typeof QuotationCapabilitiesSchema>;
 
 /** A customer contact the send dialog can offer as a recipient. */
 export const QuotationContactSchema = z.object({
@@ -550,6 +587,7 @@ export const QuotationDetailSchema = z.object({
   statusHistory: z.array(QuotationStatusHistoryDtoSchema),
   customerName: z.string().min(1),
   contacts: z.array(QuotationContactSchema),
+  capabilities: QuotationCapabilitiesSchema,
 });
 export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
 
@@ -611,8 +649,29 @@ export const PreviewResultSchema = z.object({
       }),
     ),
   }),
+  /**
+   * Who the author may name as the approver of step `seq` (the first step) of this quotation, or null when that
+   * step has nobody to choose between. The author and the caller are never offered.
+   */
+  approverChoice: z
+    .object({
+      seq: z.number().int().min(1),
+      options: z.array(
+        z.object({
+          userId: z.guid(),
+          name: z.string().min(1),
+          /** The role that lets them approve the step (for example accountant, or sales when allowed). */
+          roleKey: RoleKeySchema,
+          /** False when the person has no email address: they get the bell notice and the inbox item only. */
+          hasEmail: z.boolean(),
+        }),
+      ),
+    })
+    .nullable()
+    .optional(),
 });
 export type PreviewResult = z.infer<typeof PreviewResultSchema>;
+export type ApproverOption = NonNullable<PreviewResult['approverChoice']>['options'][number];
 
 /** The tax code kinds of the `tax_codes` table. */
 export const TAX_CODE_KINDS = ['vat', 'exempt', 'zero', 'reverse_charge'] as const;

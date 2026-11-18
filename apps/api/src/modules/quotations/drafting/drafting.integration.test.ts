@@ -21,12 +21,14 @@ import {
 } from '@bos/contracts';
 import {
   createParty,
+  opportunities,
   quotationLines,
   quotations,
   quotationStatusHistory,
   quotationTaxSummary,
   quotationVersions,
   runMigrations,
+  verificationCases,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -35,7 +37,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -401,8 +403,10 @@ describe('DraftingService reads', () => {
       ownerUserId: f.ownerUserId,
     });
     expect(typeof item!.ownerName).toBe('string');
-    expect((await service.list('draft')).map((q) => q.id)).toContain(created.id);
-    expect((await service.list('submitted')).map((q) => q.id)).not.toContain(created.id);
+    expect((await service.list({ status: 'draft' })).map((q) => q.id)).toContain(created.id);
+    expect((await service.list({ status: 'submitted' })).map((q) => q.id)).not.toContain(
+      created.id,
+    );
 
     const detail = QuotationDetailSchema.parse(await service.detail(created.id));
     expect(detail.quotation).toMatchObject({ id: created.id, status: 'draft' });
@@ -664,5 +668,171 @@ describe('DraftingService.updateDraft', () => {
         }),
       ),
     ).toBe(404);
+  });
+});
+
+// ----------------------------------------------------------------- demo feedback (2026-11-17) guards
+
+/** A second opportunity of entity A for the fixture's customer, so a per-opportunity filter has something to drop. */
+async function seedSecondOpportunity(): Promise<string> {
+  const [row] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+    tx
+      .insert(opportunities)
+      .values({
+        ...scopeA,
+        number: `DEAL-${randomUUID().slice(0, 8)}`,
+        name: 'Second deal',
+        customerId: f.customerPartyId,
+        ownerUserId: f.ownerUserId,
+        stage: 'qualified',
+      })
+      .returning({ id: opportunities.id }),
+  );
+  return row!.id;
+}
+
+/** Moves a Draft version to Approved the way the workflow leaves it (submitted first), without an approval round trip. */
+async function approve(versionId: string): Promise<void> {
+  await withTx(db, scopeA, systemActor('test'), async (tx) => {
+    await tx.execute(
+      sql`UPDATE app.quotation_versions
+             SET status = 'submitted', submitted_at = now(), version = version + 1,
+                 content_sha256 = sha256('content'::bytea), snapshot_sha256 = sha256('snapshot'::bytea)
+           WHERE id = ${versionId}`,
+    );
+    await tx.execute(
+      sql`UPDATE app.quotation_versions SET status = 'approved', approved_at = now(), version = version + 1
+           WHERE id = ${versionId}`,
+    );
+  });
+}
+
+describe('demo feedback guards', () => {
+  it('lets Sales draft a quotation for a customer whose KYB is not verified', async () => {
+    const approved = await db
+      .select({ id: verificationCases.id })
+      .from(verificationCases)
+      .where(
+        and(
+          eq(verificationCases.partyId, f.customerPartyId),
+          eq(verificationCases.status, 'approved'),
+        ),
+      );
+    expect(approved).toEqual([]);
+    const created = await service.create(goldenCreateBody(f), 'unverified-customer');
+    expect(created).toMatchObject({ status: 'draft', customerId: f.customerPartyId });
+  });
+
+  it("lists one opportunity's quotations with opportunityId, and nothing for an unknown one", async () => {
+    const second = await seedSecondOpportunity();
+    const onFixture = await service.create(goldenCreateBody(f), 'filter-fixture-opp');
+    const onSecond = await service.create(
+      goldenCreateBody(f, { opportunityId: second }),
+      'filter-second-opp',
+    );
+
+    const all = (await service.list()).map((q) => q.id);
+    expect(all).toEqual(expect.arrayContaining([onFixture.id, onSecond.id]));
+
+    const filtered = QuotationListItemSchema.array().parse(
+      await service.list({ opportunityId: second }),
+    );
+    expect(filtered.map((q) => q.id)).toEqual([onSecond.id]);
+    expect(
+      (await service.list({ opportunityId: f.opportunityId })).every(
+        (q) => q.opportunityId === f.opportunityId,
+      ),
+    ).toBe(true);
+    expect(await service.list({ opportunityId: randomUUID() })).toEqual([]);
+    // Combined with a status filter.
+    expect(
+      (await service.list({ opportunityId: second, status: 'draft' })).map((q) => q.id),
+    ).toEqual([onSecond.id]);
+    expect(await service.list({ opportunityId: second, status: 'sent' })).toEqual([]);
+  });
+
+  it("never widens the read scope: another owner's quotation stays out of a filtered list", async () => {
+    const second = await seedSecondOpportunity();
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const theirs = await asCaller({ userId: otherUserId }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: second }), 'filter-other-owner'),
+    );
+    expect((await service.list({ opportunityId: second })).map((q) => q.id)).not.toContain(
+      theirs.id,
+    );
+  });
+
+  it('marks a list row canEdit only for a Draft or Returned quotation the caller may edit', async () => {
+    const second = await seedSecondOpportunity();
+    const draft = await service.create(
+      goldenCreateBody(f, { opportunityId: second }),
+      'edit-row-1',
+    );
+    const approvedQ = await service.create(
+      goldenCreateBody(f, { opportunityId: second }),
+      'edit-row-2',
+    );
+    await approve(approvedQ.currentVersionId);
+
+    const rows = new Map(
+      (await service.list({ opportunityId: second })).map((q) => [q.id, q.canEdit]),
+    );
+    expect(rows.get(draft.id)).toBe(true);
+    expect(rows.get(approvedQ.id)).toBe(false);
+
+    // Management reads every quotation but drafts none: nothing is editable for it.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      const seen = await service.list({ opportunityId: second });
+      expect(seen.map((q) => q.id)).toContain(draft.id);
+      expect(seen.every((q) => !q.canEdit)).toBe(true);
+    });
+  });
+
+  it('answers detail capabilities with the same rules as edit and revise', async () => {
+    const created = await service.create(goldenCreateBody(f), 'caps-1');
+    expect((await service.detail(created.id)).capabilities).toEqual({
+      canEdit: true,
+      canRevise: false,
+    });
+
+    await approve(created.currentVersionId);
+    expect((await service.detail(created.id)).capabilities).toEqual({
+      canEdit: false,
+      canRevise: true,
+    });
+
+    // PMO reads all and drafts its own, but holds no quotation.revise: Revise would answer 403, so it is not offered.
+    await asCaller({ grants: grantsOf('pmo') }, async () => {
+      expect((await service.detail(created.id)).capabilities).toEqual({
+        canEdit: false,
+        canRevise: false,
+      });
+    });
+  });
+
+  it('offers Edit for a Returned version and the edit succeeds', async () => {
+    const created = await service.create(goldenCreateBody(f), 'caps-returned');
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.execute(
+        sql`UPDATE app.quotation_versions
+               SET status = 'submitted', submitted_at = now(), version = version + 1,
+                   content_sha256 = sha256('content'::bytea), snapshot_sha256 = sha256('snapshot'::bytea)
+             WHERE id = ${created.currentVersionId}`,
+      );
+      await tx.execute(
+        sql`UPDATE app.quotation_versions SET status = 'returned', version = version + 1
+             WHERE id = ${created.currentVersionId}`,
+      );
+    });
+    const detail = await service.detail(created.id);
+    expect(detail.quotation.status).toBe('returned');
+    expect(detail.capabilities.canEdit).toBe(true);
+    const current = detail.versions.find((v) => v.id === created.currentVersionId)!;
+    await expect(
+      service.updateDraft(created.id, current.id, {
+        expectedVersion: current.version,
+        scope: 'Returned and fixed',
+      }),
+    ).resolves.toMatchObject({ version: current.version + 1 });
   });
 });

@@ -41,15 +41,25 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
+import type { Principal } from '../../platform/authz/principal';
 import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
+import { personNames } from '../../platform/users/person-names';
+import {
+  ASSIGNABLE_SEQ,
+  assigneeOf,
+  effectiveAssignee,
+  outsideRoleAssigneeRoles,
+  withAssignee,
+} from './assignee';
 import { ConditionError } from './conditions';
 import {
   APPROVALS_CLOCK,
@@ -60,6 +70,7 @@ import {
 } from './ports';
 import {
   buildDirectory,
+  delegationActive,
   route,
   type BuiltDirectory,
   type DirectoryData,
@@ -118,6 +129,19 @@ export interface SubmitInput {
    * route for an administrator to repair.
    */
   explicitSteps?: ExplicitRouteStep[];
+  /**
+   * Optional: the one person who decides the first (role) step, chosen by the author. Must be one of
+   * assignableApprovers(); checked again here, in the submit transaction. Only they (or their delegate, when
+   * they hold the step's role) then see and decide that step. Not combined with explicitSteps.
+   */
+  assigneeUserId?: string;
+}
+
+/** Someone the author may name as the approver of the first step. */
+export interface AssignableApprover {
+  userId: string;
+  /** The role that qualifies them: the step's own role, or a widened one (assignee.ts). */
+  roleKey: RoleKey;
 }
 
 /** One named signer of an explicit route. `reason` is shown to the approver and kept in the audit trail. */
@@ -220,6 +244,56 @@ export class ApprovalsService {
     return { ...plan, steps: plan.steps.map((s) => ({ ...s, eligibleUserIds: [] })) };
   }
 
+  /**
+   * Who the author may name as the approver of the first step of this document's route, or null when that
+   * step is not a role step (nothing to choose). Active staff of this entity holding the step's role, plus
+   * the widened roles of assignee.ts, minus `sodUserIds` (the author and whoever submits). Unlike preview(),
+   * not redacted: the author needs the people to choose one. Read-only.
+   */
+  async assignableApprovers(
+    scope: TxScope,
+    documentType: string,
+    facts: Record<string, unknown>,
+    sodUserIds: readonly string[],
+    q: Q = this.db,
+  ): Promise<{ seq: number; candidates: AssignableApprover[] } | null> {
+    const { spec } = await this.publishedSpec(q, scope, documentType);
+    const data = await this.loadDirectory(q, scope, spec);
+    return this.assignableFrom(q, scope, spec, facts, data, sodUserIds);
+  }
+
+  private async assignableFrom(
+    q: Q,
+    scope: TxScope,
+    spec: WorkflowSpec,
+    facts: Record<string, unknown>,
+    data: DirectoryData,
+    sodUserIds: readonly string[],
+  ): Promise<{ seq: number; candidates: AssignableApprover[] } | null> {
+    const first = this.plan(spec, facts, data, sodUserIds).steps.find(
+      (s) => s.seq === ASSIGNABLE_SEQ,
+    );
+    if (first?.kind !== 'role' || first.roleKey === undefined) return null;
+    const sod = new Set(sodUserIds);
+    const byUser = new Map<string, RoleKey>();
+    for (const role of [first.roleKey, ...outsideRoleAssigneeRoles(spec.documentType)]) {
+      for (const id of data.roleMembers.get(role) ?? []) {
+        if (!sod.has(id) && !byUser.has(id)) byUser.set(id, role);
+      }
+    }
+    // The role lists come from the directory; the tenant, entity, staff and active checks are made here too.
+    const active =
+      byUser.size === 0
+        ? new Set<string>()
+        : new Set(await activeEntityStaff(q, scope, [...byUser.keys()]));
+    return {
+      seq: first.seq,
+      candidates: [...byUser]
+        .filter(([id]) => active.has(id))
+        .map(([userId, roleKey]) => ({ userId, roleKey })),
+    };
+  }
+
   async submit(
     tx: DbTransaction,
     i: SubmitInput,
@@ -236,12 +310,22 @@ export class ApprovalsService {
         ? published.spec
         : explicitSpecOf(published.spec, i.explicitSteps);
     // What is stored on the request: for an explicit route, the marker decision time keys on.
-    const facts =
+    const routed =
       i.explicitSteps === undefined
         ? i.facts
         : { ...i.facts, [EXPLICIT_ROUTE_FACT]: EXPLICIT_ROUTE_VALUE };
     const data = await this.loadDirectory(tx, scope, spec);
-    const plan = this.plan(spec, facts, data, i.sodUserIds);
+    const plan = this.plan(spec, routed, data, i.sodUserIds);
+    if (i.assigneeUserId !== undefined) {
+      if (i.explicitSteps !== undefined) {
+        throw new Error('submit() takes an assignee or explicit steps, not both');
+      }
+      const choice = await this.assignableFrom(tx, scope, spec, routed, data, i.sodUserIds);
+      if (!choice?.candidates.some((c) => c.userId === i.assigneeUserId)) {
+        throw approverNotEligible(i.sodUserIds.includes(i.assigneeUserId));
+      }
+    }
+    const facts = i.assigneeUserId === undefined ? routed : withAssignee(routed, i.assigneeUserId);
     if (i.explicitSteps !== undefined && plan.blocked) {
       const seq = plan.steps.find((s) => s.blocked)?.seq;
       throw new ConflictException(
@@ -332,7 +416,15 @@ export class ApprovalsService {
       action: 'approvals.submit',
       entityType: 'approval_request',
       entityId: requestId,
-      after: { status, documentType: i.documentType, documentId: i.documentId, steps: plan.steps },
+      after: {
+        status,
+        documentType: i.documentType,
+        documentId: i.documentId,
+        steps: plan.steps,
+        ...(i.assigneeUserId === undefined
+          ? {}
+          : { assignee: { seq: ASSIGNABLE_SEQ, userId: i.assigneeUserId } }),
+      },
       meta: { workflowVersionId: versionId },
     });
 
@@ -344,7 +436,15 @@ export class ApprovalsService {
         requestId,
         documentNumber,
         i.title,
-        plan.steps[0]!.eligibleUserIds,
+        // A named approver (and their delegates) are the only ones told: the step is theirs alone.
+        i.assigneeUserId === undefined
+          ? plan.steps[0]!.eligibleUserIds
+          : (this.assignedApprovers(
+              { facts, documentType: i.documentType, sodUserIds: i.sodUserIds },
+              { seq: 1, kind: plan.steps[0]!.kind, roleKey: plan.steps[0]!.roleKey ?? null },
+              data,
+              now,
+            ) ?? plan.steps[0]!.eligibleUserIds),
         1,
         'pending',
       );
@@ -363,6 +463,7 @@ export class ApprovalsService {
       throw new BadRequestException(parsed.error.issues.map((x) => x.message).join('; '));
     const action = parsed.data;
     const { scope, actor, principal } = this.caller.current();
+    this.requireStaff(scope, principal);
     const userId = principal.userId;
 
     return withTx(this.db, scope, actor, async (tx) => {
@@ -373,7 +474,7 @@ export class ApprovalsService {
       // 2. Idempotency: a retried click returns what the first one returned.
       const requestHash = canonicalSha256({ requestId, ...action });
       const [previous] = await tx
-        .select({ requestHash: approvalActions.requestHash, result: approvalActions.result })
+        .select()
         .from(approvalActions)
         .where(
           and(
@@ -383,6 +484,12 @@ export class ApprovalsService {
           ),
         );
       if (previous !== undefined) {
+        if (
+          !can(principal, 'approvals.requests.act').allowed &&
+          !(await this.outsideRoleReplay(tx, principal, request, previous, requestHash))
+        ) {
+          throw forbidden('out_of_scope', 'You are not an approver for this request');
+        }
         if (previous.requestHash?.equals(requestHash) === true)
           return previous.result as ApprovalRequestDto;
         throw new ConflictException('This Idempotency-Key was already used for a different action');
@@ -401,19 +508,31 @@ export class ApprovalsService {
         steps,
       );
       const data = await this.loadDirectory(tx, scope, spec);
+      if (
+        !can(principal, 'approvals.requests.act').allowed &&
+        !(
+          request.status === 'pending' &&
+          current.status === 'active' &&
+          this.outsideRoleAssignment(principal, request, current, data)
+        )
+      ) {
+        throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      }
       const sod = new Set(request.sodUserIds);
       const earlier = spec.distinctApprovers
         ? earlierDeciders(decisionsOf(steps), current.seq)
         : new Set<string>();
       // A delegate for several approvers acts for one who may decide: not an SoD person and, under
       // distinctApprovers, not someone who decided an earlier step (else the check below refuses them).
-      const who = this.directory(data, now, request.documentType).resolveActor(
-        stepSpecOf(current, data),
-        userId,
-        new Set([...sod, ...earlier]),
-      );
-      if (!who.eligible)
-        throw forbidden('out_of_scope', 'You are not an approver for the active step');
+      const who = this.decider(request, current, data, now, userId, new Set([...sod, ...earlier]));
+      if (!who.eligible) {
+        throw forbidden(
+          'out_of_scope',
+          who.assigned
+            ? 'The author named a different approver for this step'
+            : 'You are not an approver for the active step',
+        );
+      }
       if (request.documentType === 'test_memo') {
         const memo = z.object({ template: MemoTemplateSnapshotSchema }).safeParse(request.snapshot);
         if (memo.success) {
@@ -431,11 +550,7 @@ export class ApprovalsService {
       // The role mirror lags ZITADEL: a revoked role stays in app.user_roles until the sync runs. The
       // token's roles are the truth for a direct approver. A delegate acts on the delegator's mirror roles
       // (the delegator is not the caller, so there is no token to check): an accepted limit.
-      if (
-        who.onBehalfOf === null &&
-        current.kind === 'role' &&
-        !principal.roles.includes(current.roleKey as RoleKey)
-      ) {
+      if (!holdsStepRole(principal, request.documentType, current, who)) {
         throw forbidden('out_of_scope', 'You no longer hold the role this step needs');
       }
       if (sod.has(userId) || (who.onBehalfOf !== null && sod.has(who.onBehalfOf))) {
@@ -632,7 +747,7 @@ export class ApprovalsService {
           requestId,
           request.documentNumber,
           request.title,
-          nextEligible,
+          this.assignedApprovers(request, next, data, now) ?? nextEligible,
           next.seq,
           'pending',
         );
@@ -715,6 +830,11 @@ export class ApprovalsService {
   /** Pending requests whose active step the caller may decide now. */
   async inbox(): Promise<InboxItemDto[]> {
     const { scope, principal } = this.caller.current();
+    this.requireStaff(scope, principal);
+    const genericApprover = can(principal, 'approvals.requests.act').allowed;
+    if (!genericApprover && !mayBeNamedOutsideRole(principal)) {
+      throw forbidden('out_of_scope', 'You have no approval assignment');
+    }
     const now = this.clock();
     const rows = await this.db
       .select({ request: approvalRequests, step: approvalSteps })
@@ -770,6 +890,9 @@ export class ApprovalsService {
         };
         specs.set(request.workflowVersionId, entry);
       }
+      if (!genericApprover && !this.outsideRoleAssignment(principal, request, step, entry.data)) {
+        continue;
+      }
       // The same checks as act() step 3, in the same order and with the same directory, so the inbox
       // never lists an item act() would refuse (and both pick the same principal for a delegate).
       const userId = principal.userId;
@@ -777,20 +900,17 @@ export class ApprovalsService {
       const earlier = entry.spec.distinctApprovers
         ? earlierDeciders(decided.get(request.id) ?? [], step.seq)
         : new Set<string>();
-      const who = this.directory(entry.data, now, request.documentType).resolveActor(
-        stepSpecOf(step, entry.data),
+      const who = this.decider(
+        request,
+        step,
+        entry.data,
+        now,
         userId,
         new Set([...sod, ...earlier]),
       );
       if (!who.eligible) continue;
       // The token's roles, not the lagging mirror, decide a direct approver of a role step.
-      if (
-        who.onBehalfOf === null &&
-        step.kind === 'role' &&
-        !principal.roles.includes(step.roleKey as RoleKey)
-      ) {
-        continue;
-      }
+      if (!holdsStepRole(principal, request.documentType, step, who)) continue;
       if (sod.has(userId) || (who.onBehalfOf !== null && sod.has(who.onBehalfOf))) continue;
       if (earlier.has(userId) || (who.onBehalfOf !== null && earlier.has(who.onBehalfOf))) {
         continue;
@@ -804,7 +924,7 @@ export class ApprovalsService {
         title: request.title,
         amountNpr: DecimalString.safeParse(amount).success ? (amount as string) : null,
         reason: step.reason,
-        activeStep: stepDto(step),
+        activeStep: stepDto(step, request.facts),
         submittedAt: request.submittedAt.toISOString(),
         version: request.version,
       });
@@ -814,25 +934,254 @@ export class ApprovalsService {
 
   /** One request, if the caller may read it: the requester (own scope) or an approver (all scope). */
   async get(requestId: string): Promise<ApprovalRequestDto> {
-    const { scope, principal } = this.caller.current();
+    return this.readRequest(requestId);
+  }
+
+  /** Internal pre-action read; an exact own retry does not grant a public historical read. */
+  async getForAction(
+    requestId: string,
+    action: ApprovalActionBody,
+    idempotencyKey: string,
+  ): Promise<ApprovalRequestDto> {
+    return this.readRequest(requestId, { action, idempotencyKey });
+  }
+
+  private async readRequest(
+    requestId: string,
+    replay?: { action: ApprovalActionBody; idempotencyKey: string },
+  ): Promise<ApprovalRequestDto> {
+    await this.eligibleRequest(requestId, replay);
+    const { scope } = this.caller.current();
     const dto = await this.loadDto(this.db, scope, requestId);
-    const decision = can(principal, 'approvals.requests.read', {
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-      ownerUserId: dto.requesterUserId,
-    });
-    // Out of scope answers like an unknown id, so probing ids tells nobody which requests exist.
-    if (!decision.allowed && decision.reason === 'out_of_scope') {
+    const people = await personNames(this.db, scope.tenantId, [
+      dto.requesterUserId,
+      ...dto.steps.flatMap((step) => [
+        step.userId,
+        step.assigneeUserId,
+        step.decidedBy,
+        step.decidedOnBehalfOf,
+      ]),
+      ...dto.actions.flatMap((action) => [
+        action.actorUserId === 'system' ? null : action.actorUserId,
+        action.onBehalfOfUserId,
+      ]),
+    ]);
+    const groupIds = dto.steps.flatMap((step) => (step.groupId ? [step.groupId] : []));
+    const groups = groupIds.length
+      ? await this.db
+          .select({ id: approvalGroups.id, name: approvalGroups.name })
+          .from(approvalGroups)
+          .where(
+            and(
+              eq(approvalGroups.tenantId, scope.tenantId),
+              eq(approvalGroups.organizationId, scope.organizationId),
+              inArray(approvalGroups.id, groupIds),
+            ),
+          )
+      : [];
+    const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+    return {
+      ...dto,
+      people,
+      steps: dto.steps.map((step) => ({
+        ...step,
+        groupName: step.groupId ? (groupNames.get(step.groupId) ?? null) : null,
+      })),
+    };
+  }
+
+  private requireStaff(scope: TxScope, p: Principal): void {
+    if (
+      p.status !== 'active' ||
+      p.orgKind !== 'staff' ||
+      p.tenantId !== scope.tenantId ||
+      p.organizationId !== scope.organizationId
+    ) {
       throw new NotFoundException('Approval request not found');
     }
-    if (!decision.allowed) {
-      throw new ForbiddenException({
-        code: 'forbidden',
-        reason: decision.reason,
-        message: 'You may not read this request',
-      });
+  }
+
+  /** No DTO or lock until the caller's read, current assignment, or exact own retry is proven. */
+  private async eligibleRequest(
+    requestId: string,
+    replay?: { action: ApprovalActionBody; idempotencyKey: string },
+  ): Promise<void> {
+    const { scope, principal } = this.caller.current();
+    this.requireStaff(scope, principal);
+    const [request] = await this.db
+      .select()
+      .from(approvalRequests)
+      .where(requestInScope(scope, requestId));
+    if (request === undefined) throw new NotFoundException('Approval request not found');
+    const allowed =
+      replay === undefined
+        ? can(principal, 'approvals.requests.read', {
+            tenantId: scope.tenantId,
+            organizationId: scope.organizationId,
+            ownerUserId: request.requesterUserId,
+          }).allowed
+        : can(principal, 'approvals.requests.act').allowed;
+    if (allowed) return;
+    if (outsideRoleAssigneeRoles(request.documentType).length > 0) {
+      // A user named outside the step's role (assignee.ts) reads the request they were named on while it waits
+      // on them, and replays their own decision; nothing else.
+      const steps = await this.stepsOf(this.db, requestId);
+      const current = steps.find((s) => s.seq === request.currentSeq);
+      if (request.status === 'pending' && current?.status === 'active') {
+        const spec = await this.frozenSpec(this.db, request.workflowVersionId);
+        const data = await this.loadDirectory(this.db, scope, spec);
+        if (this.outsideRoleAssignment(principal, request, current, data)) return;
+      }
+      if (replay !== undefined) {
+        const previous = await this.ownAction(this.db, scope, requestId, principal.userId, replay);
+        if (
+          previous !== undefined &&
+          (await this.outsideRoleReplay(
+            this.db,
+            principal,
+            request,
+            previous,
+            canonicalSha256({ requestId, ...replay.action }),
+          ))
+        ) {
+          return;
+        }
+      }
     }
-    return dto;
+    throw new NotFoundException('Approval request not found');
+  }
+
+  /** The caller's own earlier action on the request under `replay`'s Idempotency-Key, if any. */
+  private async ownAction(
+    q: Q,
+    scope: TxScope,
+    requestId: string,
+    userId: string,
+    replay: { idempotencyKey: string },
+  ): Promise<typeof approvalActions.$inferSelect | undefined> {
+    const [previous] = await q
+      .select()
+      .from(approvalActions)
+      .where(
+        and(
+          eq(approvalActions.tenantId, scope.tenantId),
+          eq(approvalActions.organizationId, scope.organizationId),
+          eq(approvalActions.requestId, requestId),
+          eq(approvalActions.actorUserId, userId),
+          eq(approvalActions.idempotencyKey, replay.idempotencyKey),
+        ),
+      );
+    return previous;
+  }
+
+  /**
+   * The narrow grant of assignee.ts: `p` holds no approvals.requests.act, but the author named them (holding a
+   * widened role such as Sales) as the approver of this one step. Grants nothing on any other request or step.
+   */
+  private outsideRoleAssignment(
+    p: Principal,
+    request: RequestRow,
+    step: StepRow,
+    data: DirectoryData,
+  ): boolean {
+    if (
+      p.status !== 'active' ||
+      p.orgKind !== 'staff' ||
+      p.tenantId !== request.tenantId ||
+      p.organizationId !== request.organizationId
+    ) {
+      return false;
+    }
+    const assigned = effectiveAssignee(request.facts, request.documentType, step, data);
+    return (
+      assigned !== null &&
+      assigned.outsideRole &&
+      assigned.userId === p.userId &&
+      outsideRoleAssigneeRoles(request.documentType).some((r) => p.roles.includes(r))
+    );
+  }
+
+  /** An exact retry by a user named outside the step's role, of the decision they made on that step. */
+  private async outsideRoleReplay(
+    q: Q,
+    p: Principal,
+    request: RequestRow,
+    previous: typeof approvalActions.$inferSelect,
+    hash: Buffer,
+  ): Promise<boolean> {
+    const widened = outsideRoleAssigneeRoles(request.documentType);
+    if (
+      widened.length === 0 ||
+      !widened.some((r) => p.roles.includes(r)) ||
+      previous.requestId !== request.id ||
+      previous.actorUserId !== p.userId ||
+      !previous.requestHash?.equals(hash) ||
+      previous.stepId === null
+    ) {
+      return false;
+    }
+    const step = (await this.stepsOf(q, request.id)).find((s) => s.id === previous.stepId);
+    return step !== undefined && assigneeOf(request.facts, step.seq) === p.userId;
+  }
+
+  /**
+   * Whether `userId` may decide `step`, and for whom. Without a named approver this is the directory's answer
+   * for the step. With one (assignee.ts), only they may, or a delegate acting for them when they hold the
+   * step's own role; `assigned` says the step was narrowed, for the refusal message.
+   */
+  private decider(
+    request: Pick<RequestRow, 'facts' | 'documentType'>,
+    step: StepRow,
+    data: DirectoryData,
+    now: Date,
+    userId: string,
+    preferNot: ReadonlySet<string>,
+  ): { eligible: boolean; onBehalfOf: string | null; outsideRole: boolean; assigned: boolean } {
+    const assigned = effectiveAssignee(request.facts, request.documentType, step, data);
+    if (assigned === null) {
+      const who = this.directory(data, now, request.documentType).resolveActor(
+        stepSpecOf(step, data),
+        userId,
+        preferNot,
+      );
+      return { ...who, outsideRole: false, assigned: false };
+    }
+    const named = { outsideRole: assigned.outsideRole, assigned: true };
+    if (userId === assigned.userId) return { eligible: true, onBehalfOf: null, ...named };
+    const delegate =
+      !assigned.outsideRole &&
+      data.delegations.some(
+        (d) =>
+          d.fromUserId === assigned.userId &&
+          d.toUserId === userId &&
+          delegationActive(d, now, request.documentType),
+      );
+    return { eligible: delegate, onBehalfOf: delegate ? assigned.userId : null, ...named };
+  }
+
+  /**
+   * The people told about `step` when it names an approver: that person, plus their active delegates when they
+   * hold the step's own role, minus the request's SoD users. Undefined when the step names nobody (the caller
+   * then uses the step's normal eligible people).
+   */
+  assignedApprovers(
+    request: { facts: unknown; documentType: string; sodUserIds: readonly string[] },
+    step: { seq: number; kind: string; roleKey: string | null },
+    data: DirectoryData,
+    now: Date,
+  ): string[] | undefined {
+    const assigned = effectiveAssignee(request.facts, request.documentType, step, data);
+    if (assigned === null) return undefined;
+    const sod = new Set(request.sodUserIds);
+    const delegates = assigned.outsideRole
+      ? []
+      : data.delegations
+          .filter(
+            (d) =>
+              d.fromUserId === assigned.userId && delegationActive(d, now, request.documentType),
+          )
+          .map((d) => d.toUserId);
+    return [...new Set([assigned.userId, ...delegates])].filter((id) => !sod.has(id));
   }
 
   /**
@@ -904,7 +1253,10 @@ export class ApprovalsService {
         after: { status: blocked ? 'blocked' : 'pending', version: newVersion, blockReason },
       });
       if (!blocked && request.status === 'blocked') {
-        const eligible = plan.steps.find((s) => s.seq === current.seq)?.eligibleUserIds ?? [];
+        const eligible =
+          this.assignedApprovers(request, current, data, now) ??
+          plan.steps.find((s) => s.seq === current.seq)?.eligibleUserIds ??
+          [];
         await this.notifyApprovers(
           tx,
           requestId,
@@ -967,9 +1319,10 @@ export class ApprovalsService {
     extraUserIds: readonly string[] = [],
   ): Promise<DirectoryData> {
     const all = [...spec.steps, ...spec.rules.map((r) => r.add)];
-    const roles = [
-      ...new Set(all.flatMap((s) => (s.kind === 'role' && s.role !== undefined ? [s.role] : []))),
-    ];
+    const roles = new Set([
+      ...all.flatMap((s) => (s.kind === 'role' && s.role !== undefined ? [s.role] : [])),
+      ...outsideRoleAssigneeRoles(spec.documentType),
+    ]);
     const groupKeys = [
       ...new Set(
         all.flatMap((s) => (s.kind === 'group' && s.group !== undefined ? [s.group] : [])),
@@ -1190,7 +1543,7 @@ export class ApprovalsService {
       version: request.version,
       requesterUserId: request.requesterUserId,
       snapshot: request.snapshot,
-      steps: steps.map(stepDto),
+      steps: steps.map((s) => stepDto(s, request.facts)),
       actions: actions.map((a) => ({
         action: a.action,
         actorUserId: a.actorUserId ?? 'system',
@@ -1396,7 +1749,44 @@ export function stepSpecOf(step: StepRow, data: DirectoryData): StepSpec {
   return { ...base, kind: 'group', group: key ?? `missing:${step.groupId ?? ''}` };
 }
 
-function stepDto(s: StepRow): ApprovalRequestDto['steps'][number] {
+/**
+ * Whether the decider holds the role the step needs, from the token (the role mirror lags ZITADEL). A delegate
+ * acts on the delegator's mirror roles (there is no token to check), and a user named outside the step's role
+ * (assignee.ts) must hold one of the widened roles instead.
+ */
+function holdsStepRole(
+  p: Principal,
+  documentType: string,
+  step: StepRow,
+  who: { onBehalfOf: string | null; outsideRole: boolean },
+): boolean {
+  if (who.onBehalfOf !== null || step.roleKey === null) return true;
+  if (who.outsideRole)
+    return outsideRoleAssigneeRoles(documentType).some((r) => p.roles.includes(r));
+  return p.roles.includes(step.roleKey as RoleKey);
+}
+
+/** A staff user who may be named on a step outside its role: their empty inbox is a list, not a 403. */
+function mayBeNamedOutsideRole(p: Principal): boolean {
+  return (
+    p.status === 'active' &&
+    p.orgKind === 'staff' &&
+    // Any document type with a widening; today only quotation_version (assignee.ts).
+    outsideRoleAssigneeRoles('quotation_version').some((r) => p.roles.includes(r))
+  );
+}
+
+/** 422 for a named approver who may not decide the first step (or is the author). */
+function approverNotEligible(self: boolean): UnprocessableEntityException {
+  return new UnprocessableEntityException({
+    code: 'APPROVER_NOT_ELIGIBLE',
+    message: self
+      ? 'You prepared this document, so you cannot approve it. Choose someone else.'
+      : 'The chosen approver cannot approve this document. Choose someone from the list.',
+  });
+}
+
+function stepDto(s: StepRow, facts: unknown): ApprovalRequestDto['steps'][number] {
   return {
     seq: s.seq,
     kind: s.kind,
@@ -1408,5 +1798,6 @@ function stepDto(s: StepRow): ApprovalRequestDto['steps'][number] {
     activatedAt: s.activatedAt?.toISOString() ?? null,
     decidedBy: s.decidedBy,
     decidedOnBehalfOf: s.decidedOnBehalfOf,
+    assigneeUserId: assigneeOf(facts, s.seq),
   };
 }

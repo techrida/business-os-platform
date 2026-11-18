@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { apiCodeOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 
@@ -12,6 +13,7 @@ import { createContact, createCustomer, getCustomer, listCustomers, updateCustom
 import { duplicateQueries, matchDuplicates, type DuplicateMatch } from './duplicate-check';
 import type { ContactFormState, CustomerFormState } from './form-state';
 import {
+  CONTACT_EMAIL_REQUIRED,
   CUSTOMER_FIELDS,
   parseContact,
   parseCreateCustomer,
@@ -189,19 +191,32 @@ export async function addContactAction(
     phone: text(form, 'phone'),
     isPrimary: text(form, 'isPrimary') === 'on',
   };
-  const parsed = parseContact(values);
+  // The page says whether the customer still lacks a contact with an email; the API decides anyway.
+  const parsed = parseContact(values, { requireEmail: text(form, 'requireEmail') === 'yes' });
   if (!parsed.ok) return { key, errors: parsed.errors, ...same };
 
   try {
     await createContact(session, customerId, parsed.data, key);
   } catch (err) {
     const failure = failureOf(err);
-    return {
-      key: failure.definite ? randomUUID() : key,
-      errors: {},
-      error: failure.message,
-      ...same,
-    };
+    const code = apiCodeOf(err);
+    const next = failure.definite ? randomUUID() : key;
+    if (code === 'contact_email_required') {
+      revalidatePath(`/customers/${customerId}`);
+      return { key: next, errors: { email: CONTACT_EMAIL_REQUIRED }, ...same };
+    }
+    if (code === 'primary_contact_exists') {
+      // Someone made a main contact after this page loaded: reload the page data so the checkbox
+      // shows as taken, and say so in a toast. What was typed stays.
+      revalidatePath(`/customers/${customerId}`);
+      return {
+        key: next,
+        errors: {},
+        primaryTaken: 'This customer already has a main contact. Untick it and save again.',
+        ...same,
+      };
+    }
+    return { key: next, errors: {}, error: failure.message, ...same };
   }
 
   revalidatePath(`/customers/${customerId}`);
