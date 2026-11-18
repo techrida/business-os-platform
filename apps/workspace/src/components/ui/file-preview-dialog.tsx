@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button, LinkButton } from './button';
 import { Dialog, DialogClose } from './dialog';
@@ -62,6 +62,7 @@ export function FilePreviewDialog({
   onDownload,
 }: FilePreviewDialogProps) {
   const [failed, setFailed] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const dialog = {
     ...(trigger ? { trigger } : {}),
     ...(open !== undefined ? { open } : {}),
@@ -76,6 +77,7 @@ export function FilePreviewDialog({
       }}
       title={name}
       size="full"
+      initialFocusRef={closeRef}
       bodyClassName={styles.body}
       footer={
         <Footer
@@ -84,6 +86,7 @@ export function FilePreviewDialog({
           previewUrl={previewUrl}
           downloadUrl={downloadUrl}
           failed={failed}
+          closeRef={closeRef}
           onDownload={onDownload}
         />
       }
@@ -106,12 +109,14 @@ function Footer({
   previewUrl,
   downloadUrl,
   failed,
+  closeRef,
   onDownload,
 }: Pick<
   FilePreviewDialogProps,
   'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload'
 > & {
   failed: boolean;
+  closeRef: RefObject<HTMLButtonElement | null>;
 }) {
   const origin = window.location.origin;
   const canPreview =
@@ -119,7 +124,7 @@ function Footer({
   return (
     <>
       <DialogClose asChild>
-        <Button variant="secondary">Close</Button>
+        <Button ref={closeRef} variant="secondary">Close</Button>
       </DialogClose>
       {isSameOriginUrl(downloadUrl, origin) ? (
         <LinkButton
