@@ -4,7 +4,7 @@ import { Icon } from './icon';
 import styles from './search-input.module.css';
 
 type SearchInputProps = Omit<ComponentPropsWithRef<'input'>, 'type'> & {
-  wrapperClassName?: string;
+  wrapperClassName?: string | undefined;
 };
 
 /** A native search input. Supply an accessible name and let the caller own the search. */
