@@ -152,7 +152,7 @@ async function render(id: string = ID): Promise<string> {
 }
 
 beforeEach(() => {
-  mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
+  mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
   mocks.notFound.mockClear();
 });
