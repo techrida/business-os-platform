@@ -183,7 +183,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             status: stage === opp.stage ? 'Current' : '',
             tone: stage === opp.stage ? 'current' : 'upcoming',
           }))}
-          className={styles.pipeline}
+          className={styles.pipeline ?? ''}
         />
         {opp.stage !== 'won' ? (
           <div className={styles.stageControls}>
@@ -208,7 +208,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       </Card>
 
       <Panel title="Deal summary" className={styles.summary}>
-        <FactList facts={facts(opp)} className={styles.facts} />
+        <FactList facts={facts(opp)} className={styles.facts ?? ''} />
       </Panel>
 
       <Panel title="Quotations" className={styles.records}>
@@ -220,7 +220,11 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
             reloadHref={`/opportunities/${id}`}
           />
         ) : quotations.length ? (
-          <Table caption="Opportunity quotations" minWidth={500} className={styles.quotesTable}>
+          <Table
+            caption="Opportunity quotations"
+            minWidth={500}
+            className={styles.quotesTable ?? ''}
+          >
             <thead>
               <tr>
                 <Th>Quotation</Th>

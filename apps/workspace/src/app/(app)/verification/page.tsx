@@ -179,7 +179,7 @@ export default async function VerificationQueuePage({
           </EmptyState>
         ) : cases !== null ? (
           <Card className={styles.queueResults}>
-            <Table caption="Verification cases" minWidth={610} className={styles.queueTable}>
+            <Table caption="Verification cases" minWidth={610} className={styles.queueTable ?? ''}>
               <thead>
                 <tr>
                   <Th>Customer</Th>

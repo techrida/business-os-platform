@@ -184,7 +184,7 @@ export default async function OpportunitiesPage({
           className={styles.board}
         />
       ) : items !== null ? (
-        <Table caption="Opportunities" minWidth={740} className={styles.listTable}>
+        <Table caption="Opportunities" minWidth={740} className={styles.listTable ?? ''}>
           <thead>
             <tr>
               <Th>Opportunity</Th>
