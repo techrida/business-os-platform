@@ -55,10 +55,10 @@ import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { can } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
-import { personLabel } from '../../platform/users/person-names';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
+import { personLabel } from '../../platform/users/person-names';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { NotifyService } from '../../platform/notify/notify.service';
 import { MoneyService } from '../../platform/settings/money.service';
@@ -278,12 +278,14 @@ export class TestMemoService implements OnModuleInit {
       people: people.flatMap((p) => {
         const name = personLabel(p.displayName, p.email);
         if (!name) return [];
-        return [{
-          userId: p.userId,
-          name,
-          jobTitle: p.jobTitle,
-          department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
-        }];
+        return [
+          {
+            userId: p.userId,
+            name,
+            jobTitle: p.jobTitle,
+            department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
+          },
+        ];
       }),
     };
   }
