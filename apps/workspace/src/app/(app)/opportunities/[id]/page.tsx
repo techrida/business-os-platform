@@ -1,9 +1,8 @@
-import type { ActivityDto, OpportunityDto } from '@bos/contracts';
+import { OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
-import { ActivityForm } from '@/components/p2/crm/activity-form';
 import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MoveForm } from '@/components/p2/crm/move-form';
@@ -13,8 +12,7 @@ import {
   LoadProblem,
   StageBadge,
 } from '@/components/p2/crm/server-bits';
-import styles from '@/components/p2/crm/crm.module.css';
-import { userMoves } from '@/components/p2/crm/stages';
+import { stageLabel, userMoves } from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
   editQuotationHref,
@@ -23,16 +21,20 @@ import {
   quotationEntryFor,
   type QuotationEntry,
 } from '@/components/p2/quotations/resume';
-import { Alert } from '@/components/ui/alert';
+import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { LinkButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { StatusTimeline } from '@/components/ui/status-timeline';
+import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { when } from '@/lib/kernel-format';
+import { money, when } from '@/lib/kernel-format';
 
-import { logActivityAction } from '../../activities/actions';
 import { moveOpportunityStageAction } from '../actions';
+import { OpportunityActivities } from './activity-panel';
+import styles from './detail.module.css';
 
 export const metadata: Metadata = { title: 'Opportunity · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -42,7 +44,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function facts(o: OpportunityDto): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
-    { key: 'value', label: 'Value', value: moneyOrNull(o.value, o.currency) ?? dash },
+    { key: 'value', label: 'Estimated value', value: moneyOrNull(o.value, o.currency) ?? dash },
     {
       key: 'probability',
       label: 'Probability',
@@ -50,17 +52,21 @@ function facts(o: OpportunityDto): Fact[] {
     },
     {
       key: 'close',
-      label: 'Expected close',
-      value: o.expectedClose ? when(o.expectedClose, 'date') : dash,
+      label: 'Expected closing date',
+      value: o.expectedClose ? (
+        <time dateTime={o.expectedClose}>{when(o.expectedClose, 'date')}</time>
+      ) : (
+        dash
+      ),
     },
     {
       key: 'customer',
-      label: 'Customer record',
-      value: <Link href={`/customers/${o.customerId}`}>Open customer</Link>,
+      label: 'Organization',
+      value: <Link href={`/customers/${o.customerId}`}>View organization</Link>,
     },
     {
       key: 'lead',
-      label: 'From lead',
+      label: 'Source lead',
       value: o.leadId ? (
         <Link href={`/leads/${o.leadId}`}>Open the lead</Link>
       ) : (
@@ -101,125 +107,174 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   }
   const opp = oppResult.value;
   const moves = userMoves('opportunity', opp.stage);
-  let activities: ActivityDto[] | null = null;
-  let activityProblem: string | null = null;
-  if (activityResult.status === 'fulfilled') activities = activityResult.value;
-  else activityProblem = failureOf(activityResult.reason).message;
-
+  const activityProblem =
+    activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
+  const quotationProblem =
+    quotationsResult.status === 'rejected' ? failureOf(quotationsResult.reason) : null;
+  const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
   const quotesHref = opportunityQuotationsHref(opp.id);
   const open = opp.stage !== 'lost' && opp.stage !== 'won';
-  // A saved draft is resumed rather than duplicated. A list that did not load falls back to New:
+  // A list that did not load falls back to New:
   // the New page checks again before it shows the builder.
-  const entry: QuotationEntry =
-    quotationsResult.status === 'fulfilled'
-      ? quotationEntryFor(quotationsResult.value)
-      : { kind: 'new' };
+  const entry: QuotationEntry = quotationEntryFor(quotations);
+  const stages = OPPORTUNITY_STAGES.filter(
+    (stage) => (stage !== 'lost' && stage !== 'on_hold') || stage === opp.stage,
+  );
 
   return (
     <Page>
-      <Breadcrumb
-        items={[{ label: 'Opportunities', href: '/opportunities' }, { label: opp.number }]}
-      />
-      <PageHeader
-        title={opp.name}
-        status={<StageBadge kind="opportunity" stage={opp.stage} />}
-        description={opp.number}
-        actions={
-          entry.kind === 'resume' ? (
-            <>
-              <LinkButton href={quotesHref} variant="secondary">
-                View quotations
-              </LinkButton>
-              <LinkButton
-                href={editQuotationHref(entry.quotationId)}
-                aria-label={`Edit quotation ${entry.number}`}
-              >
-                Edit quotation
-              </LinkButton>
-            </>
-          ) : entry.kind === 'choose' ? (
-            <>
-              {open ? (
-                <LinkButton href={newQuotationHref(opp.id, { another: true })} variant="secondary">
-                  New quotation
-                </LinkButton>
-              ) : null}
-              <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
-            </>
-          ) : (
-            <>
-              <LinkButton href={quotesHref} variant="secondary">
-                View quotations
-              </LinkButton>
-              {open ? <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton> : null}
-            </>
-          )
-        }
-      />
-
-      <div className={styles.columns}>
-        <div className={styles.main}>
-          <Panel title="Overview">
-            <FactList facts={facts(opp)} />
-          </Panel>
-
-          <Panel
-            title="Activity"
-            description="Calls, meetings, emails, notes and tasks for this opportunity."
-          >
-            <ActivityForm
-              action={logActivityAction}
-              kinds={LOGGABLE_KINDS}
-              subjectKind="opportunityId"
-              subjectId={opp.id}
-            />
-            {activityProblem !== null ? (
-              <Alert
-                tone="error"
-                role="alert"
-                title="Activity did not load"
-                actions={<Link href={`/opportunities/${id}`}>Reload</Link>}
-              >
-                {activityProblem}
-              </Alert>
-            ) : (
-              <ActivityList
-                items={activities ?? []}
-                empty="Log the first call or note above and it appears here."
-              />
-            )}
-          </Panel>
-        </div>
-
-        <div className={styles.side}>
-          <Panel title="Stage" as="aside">
-            <div>
+      <div className={styles.intro}>
+        <Breadcrumb
+          items={[{ label: 'Opportunities', href: '/opportunities' }, { label: opp.number }]}
+        />
+        <PageHeader
+          title={opp.name}
+          description={
+            <span className={styles.metadata}>
               <StageBadge kind="opportunity" stage={opp.stage} />
-            </div>
+              <span>{opp.number}</span>
+            </span>
+          }
+          actions={
+            entry.kind === 'resume' ? (
+              <>
+                <LinkButton href={quotesHref} variant="secondary">
+                  View quotations
+                </LinkButton>
+                <LinkButton
+                  href={editQuotationHref(entry.quotationId)}
+                  aria-label={`Edit quotation ${entry.number}`}
+                >
+                  Edit quotation
+                </LinkButton>
+              </>
+            ) : entry.kind === 'choose' ? (
+              <>
+                {open ? (
+                  <LinkButton
+                    href={newQuotationHref(opp.id, { another: true })}
+                    variant="secondary"
+                  >
+                    New quotation
+                  </LinkButton>
+                ) : null}
+                <LinkButton href={quotesHref}>Choose a draft ({entry.count})</LinkButton>
+              </>
+            ) : (
+              <>
+                <LinkButton href={quotesHref} variant="secondary">
+                  View quotations
+                </LinkButton>
+                {open ? (
+                  <LinkButton href={newQuotationHref(opp.id)}>New quotation</LinkButton>
+                ) : null}
+              </>
+            )
+          }
+        />
+      </div>
+
+      <Card as="aside" aria-label="Stage" className={styles.stageCard}>
+        <StatusTimeline
+          label="Opportunity stages"
+          steps={stages.map((stage) => ({
+            key: stage,
+            title: <span>{stageLabel('opportunity', stage)}</span>,
+            status: stage === opp.stage ? 'Current' : '',
+            tone: stage === opp.stage ? 'current' : 'upcoming',
+          }))}
+          className={styles.pipeline}
+        />
+        {opp.stage !== 'won' ? (
+          <div className={styles.stageControls}>
             {opp.stageReason ? (
               <div className={styles.reasonBox}>
                 <strong>{opp.stageReason}</strong>
                 {opp.stageNote ? <span>{opp.stageNote}</span> : null}
               </div>
             ) : null}
+            {moves.length > 0 ? (
+              <p className={styles.quiet}>Sending and accepting quotations update the stage.</p>
+            ) : null}
             <MoveForm
               action={moveOpportunityStageAction}
               recordId={opp.id}
               version={opp.version}
               moves={moves}
-              emptyText={
-                opp.stage === 'won'
-                  ? 'Won. The system set this when a quotation was accepted.'
-                  : 'No further moves from here. A manager can reopen a lost opportunity.'
-              }
+              emptyText="A manager can reopen a lost opportunity."
             />
-            <p className={styles.quiet}>
-              Quotation Sent and Won are set by the system as quotations are sent and accepted. You
-              cannot set them by hand.
-            </p>
-          </Panel>
-        </div>
-      </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <Panel title="Deal summary" className={styles.summary}>
+        <FactList facts={facts(opp)} className={styles.facts} />
+      </Panel>
+
+      <Panel title="Quotations" className={styles.records}>
+        {quotationProblem ? (
+          <LoadProblem
+            status={quotationProblem.status}
+            message={quotationProblem.message}
+            what="quotations"
+            reloadHref={`/opportunities/${id}`}
+          />
+        ) : quotations.length ? (
+          <Table caption="Opportunity quotations" minWidth={500} className={styles.quotesTable}>
+            <thead>
+              <tr>
+                <Th>Quotation</Th>
+                <Th>Status</Th>
+                <Th align="end">Total</Th>
+                <Th>Valid until</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {quotations.map((quote) => (
+                <tr
+                  key={quote.id}
+                  data-accepted={
+                    (quote.status === 'accepted' &&
+                      quote.currentVersionId === opp.wonQuotationVersionId) ||
+                    undefined
+                  }
+                >
+                  <Td nowrap>
+                    <Link href={`/quotations/${quote.id}`}>{quote.number}</Link>
+                  </Td>
+                  <Td nowrap>
+                    <QuotationStatusBadge status={quote.status} />
+                  </Td>
+                  <Td align="end" nowrap>
+                    {money(quote.total, quote.currency)}
+                  </Td>
+                  <Td nowrap>
+                    <time dateTime={quote.validUntil}>{when(quote.validUntil, 'date')}</time>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        ) : (
+          <p className={styles.quiet}>No quotations for this opportunity yet.</p>
+        )}
+      </Panel>
+
+      <OpportunityActivities opportunityId={opp.id} kinds={LOGGABLE_KINDS}>
+        {activityProblem ? (
+          <LoadProblem
+            status={activityProblem.status}
+            message={activityProblem.message}
+            what="activities"
+            reloadHref={`/opportunities/${id}`}
+          />
+        ) : (
+          <ActivityList
+            items={activityResult.status === 'fulfilled' ? activityResult.value : []}
+            empty="Add a call, meeting, email, note or task for this opportunity."
+          />
+        )}
+      </OpportunityActivities>
     </Page>
   );
 }

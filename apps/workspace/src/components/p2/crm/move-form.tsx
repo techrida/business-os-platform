@@ -1,15 +1,23 @@
 'use client';
 
-import { useActionState, useId, useState, useSyncExternalStore } from 'react';
+import { useActionState, useEffect, useId, useState, useSyncExternalStore } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
 
 import styles from './crm.module.css';
 import type { Move, MoveAction, MoveState } from './types';
 
 const noopSubscribe = () => () => {};
+
+/** Announce a stage move's outcome. Field errors also stay inline; a stale page keeps its alert. */
+export function toastMoveResult(state: MoveState, id: string): void {
+  if (state.ok) toast.success(`Moved to ${state.movedTo}.`, { id });
+  else if (state.error && !state.reload) toast.error(state.error, { id });
+  else if (state.fieldErrors) toast.error('Check the highlighted fields.', { id });
+}
 
 /**
  * Move a lead or an opportunity to another stage. A real form with a native select and a submit
@@ -28,6 +36,7 @@ export function MoveForm({
   emptyText,
   compact = false,
   label = 'Move to',
+  toasts = true,
 }: {
   action: MoveAction;
   recordId: string;
@@ -38,18 +47,26 @@ export function MoveForm({
   emptyText: string;
   compact?: boolean;
   label?: string;
+  /** False when the caller toasts the result itself (the board). */
+  toasts?: boolean;
 }) {
   const [state, formAction, pending] = useActionState<MoveState, FormData>(action, {});
   const [stage, setStage] = useState(presetStage ?? moves[0]?.stage ?? '');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
+  const statusId = useId();
+  // The board passes its own toasting action (`toasts={false}`): a successful move re-renders the
+  // card in another column, so this instance unmounts before an effect could announce it.
+  useEffect(() => {
+    if (!toasts) return;
+    toastMoveResult(state, statusId);
+  }, [state, statusId, toasts]);
   // Until the page hydrates the reason fields stay visible, so the form still works as plain HTML.
   const hydrated = useSyncExternalStore(
     noopSubscribe,
     () => true,
     () => false,
   );
-  const statusId = useId();
 
   // Adjust state while rendering when a prop changes (React's pattern for derived state): the
   // board's drop picks a stage, and a new version means the record moved, so start the form clean.
@@ -74,24 +91,19 @@ export function MoveForm({
   const errors = state.fieldErrors ?? {};
 
   return (
-    <form action={formAction} noValidate className={compact ? styles.moveCompact : styles.moveForm}>
+    <form
+      action={formAction}
+      noValidate
+      className={compact ? styles.moveCompact : styles.moveForm}
+      data-needs-reason={showReason || undefined}
+    >
       <input type="hidden" name="recordId" value={recordId} />
       <input type="hidden" name="expectedVersion" value={version} />
 
-      {state.error ? (
+      {state.error && state.reload ? (
         <Alert tone="error" role="alert" id={statusId}>
-          {state.error}
-          {state.reload ? (
-            <>
-              {' '}
-              <a href="">Reload this page</a>
-            </>
-          ) : null}
+          {state.error} <a href="">Reload this page</a>
         </Alert>
-      ) : state.ok ? (
-        <p role="status" className={styles.moved}>
-          Moved to {state.movedTo}.
-        </p>
       ) : null}
 
       <Field label={label} error={errors['stage']}>
