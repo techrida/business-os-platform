@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
+
 import { CUSTOMER_ID } from '../_lib/fixtures';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -72,6 +74,17 @@ afterEach(() => {
 });
 
 describe('proof upload route', () => {
+  it('returns a retryable session outage the form can show, before accessing the API', async () => {
+    getSession.mockRejectedValue(new SessionUnavailableError());
+    const res = await upload();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    // payment-form.tsx shows `error.message` beside the file name.
+    expect(await messageOf(res)).toBe(SESSION_UNAVAILABLE_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('announces the file for the customer, streams the bytes, and returns the document id', async () => {
     fetchMock
       .mockResolvedValueOnce(started())
