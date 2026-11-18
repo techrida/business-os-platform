@@ -7,6 +7,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/lib/api';
 import { getSession } from '@/lib/session';
+import { SessionUnavailableError } from '@/lib/session-unavailable';
 
 import { POST } from './route';
 
@@ -31,6 +32,13 @@ describe('POST /telemetry/vitals', () => {
     getSessionMock.mockResolvedValue(null);
     const res = await POST(post(JSON.stringify(good)));
     expect(res.status).toBe(401);
+    expect(apiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a retryable 503 when the session store cannot answer, and does not forward', async () => {
+    getSessionMock.mockRejectedValue(new SessionUnavailableError());
+    const res = await POST(post(JSON.stringify(good)));
+    expect(res.status).toBe(503);
     expect(apiFetchMock).not.toHaveBeenCalled();
   });
 
