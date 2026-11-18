@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callOf, ID, IDEM, json, session, stubPortalEnv } from '@/lib/billing-test-support';
+import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 vi.mock('server-only', () => ({}));
@@ -47,6 +48,16 @@ afterEach(() => {
 });
 
 describe('proof upload route', () => {
+  it('returns a retryable session outage before accessing the API', async () => {
+    getSession.mockRejectedValue(new SessionUnavailableError());
+    const res = await upload();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    expect(await res.json()).toEqual({ error: SESSION_UNAVAILABLE_MESSAGE });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('stores the file through the API and returns only the document id and name', async () => {
     fetchMock
       .mockResolvedValueOnce(json({ documentId: ID, versionId: IDEM, uploadPath: PATH }, 201))
