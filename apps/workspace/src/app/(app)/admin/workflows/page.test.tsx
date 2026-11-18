@@ -16,7 +16,7 @@ vi.mock('@/lib/api', async (original) => ({
 }));
 vi.mock('../guard', () => ({ requireSession: () => Promise.resolve(session) }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-const session = { accessToken: 'caller-token', orgKind: 'staff' } as Session;
+let session: Session;
 const first = '11111111-1111-4111-8111-000000000200';
 const second = '22222222-2222-4222-8222-222222222222';
 const group = '33333333-3333-4333-8333-333333333333';
@@ -45,6 +45,7 @@ function jsonBody(body: unknown): unknown {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  session = { accessToken: 'caller-token', orgKind: 'staff', roles: ['management'] } as Session;
   const respond = (caller: Session, path: string, init?: RequestInit): Response => {
     expect(caller).toBe(session);
     const url = new URL(path, 'http://api.test');
@@ -142,6 +143,7 @@ it('offers and saves a new approver from the second API page through the normal 
 });
 
 it('includes second-page users in workflow page selectors when the general directory is allowed', async () => {
+  session = { ...session, roles: ['founder'] };
   const respond = vi.mocked(apiFetch).getMockImplementation()!;
   vi.mocked(apiFetch).mockImplementation((caller, path, init) => {
     if (path.startsWith('/v1/admin/users?')) {
