@@ -1,4 +1,5 @@
 import { QuotationDetailSchema, type QuotationDetail } from '@bos/contracts';
+import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +22,16 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+
+// Open the revision drawer and render its portal inline for assertions on server-provided rows.
+vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
+  const radix = await importOriginal<typeof import('@radix-ui/react-dialog')>();
+  return {
+    ...radix,
+    Root: (props: ComponentProps<typeof radix.Root>) => <radix.Root {...props} defaultOpen />,
+    Portal: ({ children }: ComponentProps<typeof radix.Portal>) => children,
+  };
+});
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const V1 = '22222222-2222-4222-8222-222222222221';

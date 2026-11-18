@@ -37,6 +37,15 @@ export interface SnapshotEntry {
   block: boolean;
 }
 
+/** No value to show: nothing, blank text, or a container with nothing in it (`[]`, `{}`). */
+export function isEmptyValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  return false;
+}
+
 const referenceKeys = new Set([
   'ownerUserId',
   'customerPartyId',
@@ -95,8 +104,8 @@ export function snapshotEntries(
   snapshot: unknown,
   references: ReadonlyMap<string, string> = new Map(),
 ): SnapshotEntry[] {
-  if (snapshot === undefined || snapshot === null) return [];
-  if (typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+  if (isEmptyValue(snapshot)) return [];
+  if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
     return [
       {
         key: 'value',
@@ -108,24 +117,25 @@ export function snapshotEntries(
   }
   const record = snapshotValue(snapshot, references) as Record<string, unknown>;
   const currency = asCurrency(record['currency']);
-  return Object.entries(record).map(([key, raw]): SnapshotEntry => {
-    const label = humanizeKey(key);
-    if (typeof raw === 'string') {
-      if (/Npr$/.test(key) && DECIMAL.test(raw)) {
-        return { key, label, value: money(raw, 'NPR'), block: false };
+  return Object.entries(record)
+    .filter(([, raw]) => !isEmptyValue(raw))
+    .map(([key, raw]): SnapshotEntry => {
+      const label = humanizeKey(key);
+      if (typeof raw === 'string') {
+        if (/Npr$/.test(key) && DECIMAL.test(raw)) {
+          return { key, label, value: money(raw, 'NPR'), block: false };
+        }
+        if (key === 'amount' && currency !== null && DECIMAL.test(raw)) {
+          return { key, label, value: money(raw, currency), block: false };
+        }
+        if (ISO_INSTANT.test(raw)) return { key, label, value: when(raw), block: false };
+        return { key, label, value: raw, block: raw.includes('\n') || raw.length > 120 };
       }
-      if (key === 'amount' && currency !== null && DECIMAL.test(raw)) {
-        return { key, label, value: money(raw, currency), block: false };
+      if (typeof raw === 'number' || typeof raw === 'boolean') {
+        return { key, label, value: String(raw), block: false };
       }
-      if (ISO_INSTANT.test(raw)) return { key, label, value: when(raw), block: false };
-      return { key, label, value: raw, block: raw.includes('\n') || raw.length > 120 };
-    }
-    if (typeof raw === 'number' || typeof raw === 'boolean') {
-      return { key, label, value: String(raw), block: false };
-    }
-    if (raw === null || raw === undefined) return { key, label, value: 'None', block: false };
-    return { key, label, value: JSON.stringify(raw, null, 2), block: true };
-  });
+      return { key, label, value: JSON.stringify(raw, null, 2), block: true };
+    });
 }
 
 /**

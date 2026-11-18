@@ -6,7 +6,7 @@
 // customer case is written with customer.write (sales) and a vendor case with vendor.write (procurement). The
 // service is the gate and denies by default: a caller holding neither gets 403 before any record is read, and
 // one holding the other kind's permission gets 403 on the case. Deny by default: a route with no marker is refused.
-import type { VerificationCaseDto } from '@bos/contracts';
+import { RemoveVerificationDocumentBodySchema, type VerificationCaseDto } from '@bos/contracts';
 import {
   BadRequestException,
   Body,
@@ -72,6 +72,20 @@ export class VerificationController {
     @Body() body: unknown,
   ): Promise<VerificationCaseDto> {
     return this.cases.setChecklistItem(id, parseOr400(SetChecklistBodySchema, body));
+  }
+
+  /** 200 with the updated case. The checklist item is emptied and its document is retained. */
+  @Post(':id/checklist/remove')
+  @HttpCode(200)
+  @AnyAuthenticated()
+  removeChecklist(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<VerificationCaseDto> {
+    return this.cases.removeChecklistDocument(
+      id,
+      parseOr400(RemoveVerificationDocumentBodySchema, body),
+    );
   }
 
   /** 200 (nothing is created at this URL). 409 unless draft, or while a required item has no document. */

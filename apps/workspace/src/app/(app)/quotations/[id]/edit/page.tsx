@@ -81,9 +81,9 @@ export default async function EditQuotationPage({
         <Breadcrumb items={crumbs} />
         <PageHeader title={title} status={<Badge tone="info">{version.status}</Badge>} />
         <Alert
-          tone={justSubmitted ? 'success' : 'info'}
+          tone="info"
           role="status"
-          title={justSubmitted ? 'Submitted for approval' : 'This version can no longer be edited'}
+          title={justSubmitted ? 'Approval pending' : 'This version can no longer be edited'}
           actions={
             <LinkButton href="/quotations" variant="secondary">
               Back to quotations
@@ -126,7 +126,6 @@ export default async function EditQuotationPage({
           expectedVersion: version.version,
         }}
         initial={valuesFromVersion(version)}
-        numberLabel={title}
         context={<ContextCard customer={customer} opportunity={opportunity} />}
         contacts={lookups.contacts}
         taxCodes={lookups.taxCodes}

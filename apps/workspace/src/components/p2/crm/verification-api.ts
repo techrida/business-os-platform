@@ -3,6 +3,7 @@ import 'server-only';
 import {
   VerificationCaseDtoSchema,
   type AttachVerificationDocumentBody,
+  type RemoveVerificationDocumentBody,
   type VerificationCaseDto,
 } from '@bos/contracts';
 import { z } from 'zod';
@@ -21,7 +22,7 @@ import { DocumentSchema, type DocumentDetail } from './verification-file';
  * Only `decision` reads the Idempotency-Key header on the API today. The other writes still send
  * one (the API ignores it), so they are covered the moment the API starts honouring it. Until
  * then a retry after a landed 5xx is safe for a different reason: create answers 200 with the
- * existing case, an attach with the old `expectedVersion` is a 409, and a second submit is a 409.
+ * existing case, a checklist write with the old `expectedVersion` is a 409, and a second submit is a 409.
  */
 
 async function readBody(res: Response): Promise<unknown> {
@@ -94,6 +95,25 @@ export function attachChecklistDocument(
     `/v1/verification-cases/${encodeURIComponent(caseId)}/checklist`,
     VerificationCaseDtoSchema,
     json('PATCH', body, idempotencyKey),
+  );
+}
+
+/**
+ * `POST /v1/verification-cases/:id/checklist/remove` requires `customer.write` and case read access.
+ * Detaches a file from a draft or rejected case and returns the updated case (200).
+ * A stale version, frozen case or already-empty row is a 409.
+ */
+export function removeChecklistDocument(
+  session: Session,
+  caseId: string,
+  body: RemoveVerificationDocumentBody,
+  idempotencyKey: string,
+): Promise<VerificationCaseDto> {
+  return call(
+    session,
+    `/v1/verification-cases/${encodeURIComponent(caseId)}/checklist/remove`,
+    VerificationCaseDtoSchema,
+    json('POST', body, idempotencyKey),
   );
 }
 

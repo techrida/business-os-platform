@@ -18,6 +18,12 @@ export const AuditEventDtoSchema = z.object({
   occurredAt: z.iso.datetime({ offset: true }),
   actorKind: AuditActorKindSchema,
   actorId: z.string(),
+  /**
+   * The actor's display name, looked up at read time from app.users in the caller's tenant. It is not part of
+   * the stored row or the hash. null when the actor is not a person (system, zitadel, seed), the id is not a
+   * user of this tenant, or the person has no name; optional so older API responses still parse.
+   */
+  actorDisplayName: z.string().nullable().optional(),
   action: z.string(),
   entityType: z.string(),
   entityId: z.string(),

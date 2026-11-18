@@ -9,7 +9,7 @@ import {
   PendingLine,
   useFocusOnProblem,
   useReloadWhenClosed,
-} from '@/components/p2/quotations/action-dialog';
+} from '@/components/ui/transaction-dialog';
 import actions from '@/components/p2/quotations/actions.module.css';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';

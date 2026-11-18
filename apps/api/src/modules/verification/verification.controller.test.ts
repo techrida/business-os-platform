@@ -25,6 +25,7 @@ const service = {
   get: vi.fn(),
   create: vi.fn(),
   setChecklistItem: vi.fn(),
+  removeChecklistDocument: vi.fn(),
   submit: vi.fn(),
   decide: vi.fn(),
 };
@@ -70,7 +71,7 @@ describe('route policy', () => {
   // A customer case is written with customer.write and a vendor case with vendor.write, so no single route-level
   // permission fits: the service checks the party kind's write permission before it reads anything.
   it('leaves the write routes to the service, with no single route-level permission', () => {
-    for (const method of ['create', 'setChecklist', 'submit']) {
+    for (const method of ['create', 'setChecklist', 'removeChecklist', 'submit']) {
       expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, proto[method]!), method).toBe(true);
       expect(Reflect.getMetadata(CAN_KEY, proto[method]!), method).toBeUndefined();
     }
@@ -162,5 +163,33 @@ describe('GET and PATCH', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual([dto]);
     expect(service.list).toHaveBeenCalledWith({ status: 'draft' });
+  });
+});
+
+describe('POST /v1/verification-cases/:id/checklist/remove', () => {
+  const url = `/v1/verification-cases/${ID}/checklist/remove`;
+  const body = { key: 'other', expectedVersion: 2 };
+
+  it('returns the updated case from the removal operation', async () => {
+    service.removeChecklistDocument.mockResolvedValue(dto);
+    const res = await request(baseUrl).post(url).send(body);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(dto);
+    expect(service.removeChecklistDocument).toHaveBeenCalledWith(ID, body);
+    expect(service.setChecklistItem).not.toHaveBeenCalled();
+  });
+
+  it('requires a checklist key and a positive integer version', async () => {
+    for (const invalid of [
+      {},
+      { key: 'other' },
+      { ...body, key: 'unknown' },
+      { ...body, expectedVersion: 0 },
+      { ...body, expectedVersion: 1.5 },
+      { ...body, documentId: randomUUID() },
+    ]) {
+      expect((await request(baseUrl).post(url).send(invalid)).status).toBe(400);
+    }
+    expect(service.removeChecklistDocument).not.toHaveBeenCalled();
   });
 });

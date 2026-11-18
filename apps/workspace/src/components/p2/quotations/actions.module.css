@@ -1,5 +1,4 @@
-/* Pieces of the quotation actions that no shared component covers. The dialog frame itself reuses the
-   `.dialog*` classes of detail.module.css. Colours are Figma tokens. */
+/* Fields and feedback for quotation actions. */
 
 /* A trigger with the sentence that explains why it is off, kept together when the row wraps. */
 .group {
@@ -20,20 +19,10 @@
 .form {
   display: grid;
   gap: 16px;
-}
-
-.intro {
+  min-width: 0;
   margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-}
-
-.buttons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
+  padding: 0;
+  border: 0;
 }
 
 .status {
@@ -88,10 +77,4 @@
 
 .wrap {
   overflow-wrap: anywhere;
-}
-
-/* The forms are short: a narrower dialog than the revisions table. The element selector outranks
-   detail.module.css's `.dialog` whichever stylesheet loads first. */
-dialog.dialogNarrow {
-  width: min(560px, calc(100vw - 32px));
 }

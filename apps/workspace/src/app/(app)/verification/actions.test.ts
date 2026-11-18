@@ -1,14 +1,10 @@
+import { revalidatePath } from 'next/cache';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
-vi.mock('next/navigation', () => ({
-  redirect: vi.fn((to: string) => {
-    throw new Error(`NEXT_REDIRECT ${to}`);
-  }),
-}));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: vi.fn(() => Promise.resolve({ accessToken: 't', roles: ['pmo'] })),
 }));
@@ -41,9 +37,8 @@ beforeEach(() => vi.clearAllMocks());
 describe('reviewAction idempotency key', () => {
   it('sends the page key with the decision', async () => {
     api.decideVerification.mockResolvedValue({ id: CASE });
-    await expect(reviewAction({ key: KEY }, form())).rejects.toThrow(
-      'NEXT_REDIRECT /verification?decided=reject',
-    );
+    expect((await reviewAction({ key: KEY }, form())).error).toBeUndefined();
+    expect(revalidatePath).toHaveBeenCalledWith(`/verification/${CASE}`);
     expect(api.decideVerification).toHaveBeenCalledWith(
       expect.anything(),
       CASE,
@@ -82,4 +77,24 @@ describe('reviewAction idempotency key', () => {
     expect(res.key).toBe(KEY);
     expect(api.decideVerification).not.toHaveBeenCalled();
   });
+});
+
+it('forwards a clean provided-case approval with the reviewed version, preserving API refusals', async () => {
+  api.decideVerification.mockResolvedValueOnce({ id: CASE });
+  const success = await reviewAction(
+    { key: KEY },
+    form({ intent: 'approve', comment: 'Documents checked.' }),
+  );
+  expect(success.error).toBeUndefined();
+  expect(api.decideVerification).toHaveBeenCalledWith(
+    expect.anything(),
+    CASE,
+    { decision: 'approve', comment: 'Documents checked.', expectedVersion: 3 },
+    KEY,
+  );
+  for (const status of [403, 409]) {
+    api.decideVerification.mockRejectedValueOnce(new ApiError(status, 'Decision refused'));
+    const result = await reviewAction({ key: KEY }, form({ intent: 'approve' }));
+    expect(result.error).toBeTruthy();
+  }
 });

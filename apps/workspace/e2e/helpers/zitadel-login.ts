@@ -4,12 +4,8 @@ import { generate } from 'otplib';
 import type { Persona } from './personas';
 
 /**
- * The only place that knows ZITADEL Login V2's markup (risk R8). When a ZITADEL upgrade breaks
- * the persona tests, this is the one file to fix. Selectors are by role and visible label, which
- * the pages expose (checked against the v4.20.1 login on 2026-11-08):
- *   - login name page (`/ui/v2/login/loginname`): label "Loginname", button "Continue"
- *   - password page (`/ui/v2/login/password`):    label "Password",  button "Continue"
- * Both "Continue" buttons are disabled until the field has text.
+ * Credential selectors for stock ZITADEL Login V2 and the Business OS login image.
+ * Stock v4.20.1 varies the login-name label by policy. The branded form uses "Email or username".
  *
  * Starting a login with `login_hint` (the switcher links do) makes ZITADEL skip the login name
  * page and open the password page directly, so this handles both starting points.
@@ -20,7 +16,10 @@ import type { Persona } from './personas';
  * UI differs, `findOtpInput` and `looksLikeTotpSetup` are the two places to adjust.
  */
 
-const loginName = (page: Page) => page.getByLabel(/^\s*login ?name\s*$/i);
+const loginName = (page: Page) =>
+  page.getByLabel(
+    /^\s*(login ?name|username(?: or (?:email|phone number))?|email or username)\s*$/i,
+  );
 const password = (page: Page) => page.getByLabel(/^\s*password\s*$/i);
 const continueButton = (page: Page) => page.getByRole('button', { name: /^\s*continue\s*$/i });
 
@@ -79,9 +78,51 @@ export async function freshTotpCode(secret: string, page: Page): Promise<string>
   });
 }
 
-/** True while the browser shows a ZITADEL credential form (login name or password). */
-export async function expectZitadelCredentialForm(page: Page): Promise<void> {
-  await expect(loginName(page).or(password(page))).toBeVisible({ timeout: 30_000 });
+async function submitCredential(page: Page, field: Locator, value: string): Promise<void> {
+  const submit = continueButton(page);
+  // The server-rendered input can accept text before Login V2 starts handling input events.
+  // Retry entry until the form acknowledges it. Click only once, after it becomes enabled.
+  await expect(async () => {
+    await field.clear();
+    await field.fill(value);
+    await expect(submit).toBeEnabled({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
+  await submit.click();
+}
+
+/** Wait for a credential screen, choosing a remembered account first when supplied after logout. */
+export async function expectZitadelCredentialForm(page: Page, account?: Persona): Promise<void> {
+  const credentials = loginName(page).or(password(page));
+  if (account) {
+    const chooser = page.getByRole('heading', {
+      name: /^(Accounts|Choose an account)$/i,
+      level: 1,
+    });
+    await expect(chooser.or(credentials)).toBeVisible({ timeout: 30_000 });
+    if (await chooser.isVisible()) {
+      const rememberedAccount = page.getByRole('button').filter({ hasText: account.username });
+      // The chooser can render before the login form handles its first click.
+      await expect(async () => {
+        if (await chooser.isVisible()) await rememberedAccount.click({ timeout: 2_000 });
+        await expect(credentials).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 15_000 });
+    }
+  }
+  await expect(credentials).toBeVisible({ timeout: 30_000 });
+}
+
+/** Submit a real code in phases that enroll personas in authenticator verification. */
+export async function submitZitadelOtp(page: Page, input: Locator, code: string): Promise<void> {
+  // input-otp owns the six-slot field. Read its marker before filling, since filling can navigate.
+  const autoSubmits = (await input.getAttribute('data-input-otp')) !== null;
+  await input.fill(code);
+  if (autoSubmits) return;
+
+  const submit = page
+    .getByRole('button', { name: /^\s*(continue|verify|submit|next|authenticate)\s*$/i })
+    .first();
+  if (await submit.isVisible()) await submit.click();
+  else await input.press('Enter');
 }
 
 /**
@@ -141,13 +182,11 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
   await expectZitadelCredentialForm(page);
 
   if (await loginName(page).isVisible()) {
-    await loginName(page).fill(who.username);
-    await continueButton(page).click();
+    await submitCredential(page, loginName(page), who.username);
   }
 
   await expect(password(page)).toBeVisible({ timeout: 30_000 });
-  await password(page).fill(who.password);
-  await continueButton(page).click();
+  await submitCredential(page, password(page), who.password);
 
   // After the password ZITADEL goes to one of: the authenticator-code page (expected), the
   // "set up 2FA" page (the seed did not register TOTP), or straight back to the app (MFA off).
@@ -169,12 +208,7 @@ export async function signInOnZitadel(page: Page, who: Persona, appOrigin: strin
         const waitingSince = Date.now();
         const code = await freshTotpCode(who.totpSecret, page);
         deadline += Date.now() - waitingSince;
-        await input.fill(code);
-        const submit = continueButton(page)
-          .or(page.getByRole('button', { name: /^\s*(verify|submit|next|authenticate)\s*$/i }))
-          .first();
-        if (await submit.isVisible()) await submit.click();
-        else await input.press('Enter');
+        await submitZitadelOtp(page, input, code);
         otpDone = true;
       }
     }

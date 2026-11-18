@@ -506,6 +506,10 @@ describe('a vendor case, once the vendor adapter is registered', () => {
     const write = {
       create: (partyId: string) => api().post('/v1/verification-cases').send({ partyId }),
       checklist: (caseId: string) => putDocument(caseId, 'pan_certificate', randomUUID(), 1),
+      remove: (caseId: string, expectedVersion: number, key = 'pan_certificate') =>
+        api()
+          .post(`/v1/verification-cases/${caseId}/checklist/remove`)
+          .send({ key, expectedVersion }),
       submit: (caseId: string) => api().post(`/v1/verification-cases/${caseId}/submit`),
     };
 
@@ -523,6 +527,20 @@ describe('a vendor case, once the vendor adapter is registered', () => {
       expect((list.body as VerificationCaseDto[]).map((c) => c.id)).toEqual([filled.id]);
     });
 
+    it('permits removing an active vendor checklist file only with the vendor write permission', async () => {
+      as(U.procurement, 'procurement');
+      const c = await fillRequired(await openCase(await newVendor(U.procurement)));
+      const item = c.checklist.find((entry) => entry.required && entry.documentId !== null)!;
+      as(U.sales, 'sales');
+      expect((await write.remove(c.id, c.version, item.key)).status).toBe(404);
+      as(U.procurement, 'procurement');
+      const removed = await write.remove(c.id, c.version, item.key);
+      expect(removed.status).toBe(200);
+      expect(VerificationCaseDtoSchema.parse(removed.body).checklist).toContainEqual(
+        expect.objectContaining({ key: item.key, status: 'missing', documentId: null }),
+      );
+    });
+
     it('refuses procurement on a customer case with 403, and writes nothing', async () => {
       const partyId = await newCustomer(U.sales);
       const c = await openCase(partyId);
@@ -530,6 +548,7 @@ describe('a vendor case, once the vendor adapter is registered', () => {
       for (const res of [
         await write.create(partyId),
         await write.checklist(c.id),
+        await write.remove(c.id, c.version),
         await write.submit(c.id),
       ]) {
         expect(res.status, JSON.stringify(res.body)).toBe(403);
@@ -551,6 +570,7 @@ describe('a vendor case, once the vendor adapter is registered', () => {
       for (const res of [
         await write.create(vendorParty),
         await write.checklist(vendorCase.id),
+        await write.remove(vendorCase.id, vendorCase.version),
         await write.submit(vendorCase.id),
       ]) {
         expect(res.status, JSON.stringify(res.body)).toBe(403);

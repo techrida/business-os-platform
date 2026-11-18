@@ -1,78 +1,86 @@
 'use client';
 
-import { useActionState, useEffect, useRef } from 'react';
+import { useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/dialog';
+import { HeaderAction } from '@/components/ui/header-action';
+import { toast } from '@/components/ui/toast';
 
 import { submitCaseAction, type SubmitCaseState } from './case-actions';
-import styles from './verification.module.css';
 
-/**
- * Send a draft case to the reviewer. The server worked out `blockedReason` (a required item has no
- * file yet) and the API checks it again; the button stays closed while it is set, and the reason is
- * written beside it so it is not a mystery.
- */
 export function SubmitForm({
   caseId,
   idempotencyKey,
-  blockedReason,
+  missing,
   reloadHref,
 }: {
   caseId: string;
-  /** A UUID the server generated for this render. */
   idempotencyKey: string;
-  blockedReason: string | null;
+  missing: string[];
   reloadHref: string;
 }) {
-  const [state, formAction, pending] = useActionState<SubmitCaseState, FormData>(submitCaseAction, {
-    key: idempotencyKey,
-  });
-  const summaryRef = useRef<HTMLDivElement>(null);
+  const [state, setState] = useState<SubmitCaseState>({ key: idempotencyKey });
+  const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement>(null);
+  const inFlight = useRef(false);
 
-  useEffect(() => {
-    if (state.error) summaryRef.current?.focus();
-  }, [state]);
+  async function submit() {
+    if (inFlight.current || missing.length > 0 || state.reload) return false;
+    inFlight.current = true;
+    const form = new FormData();
+    form.set('caseId', caseId);
+    form.set('idempotencyKey', state.key);
+    try {
+      const result = await submitCaseAction(state, form);
+      setState(result);
+      if (result.error) return false;
+      toast.success('Submitted for review');
+      return true;
+    } catch {
+      setState({ key: state.key, error: 'Submission could not be confirmed. Try again.' });
+      return false;
+    } finally {
+      inFlight.current = false;
+    }
+  }
 
   return (
-    <form action={formAction} className={styles.decision}>
-      <input type="hidden" name="caseId" value={caseId} />
-      <input type="hidden" name="idempotencyKey" value={state.key} />
-
-      {state.error ? (
-        <Alert
-          ref={summaryRef}
-          tabIndex={-1}
-          tone="error"
-          role="alert"
-          actions={state.reload ? <a href={reloadHref}>Reload this case</a> : null}
-        >
-          {state.error}
-        </Alert>
-      ) : null}
-
-      <div className={styles.buttons}>
-        <Button
-          type="submit"
-          disabled={pending || blockedReason !== null}
-          aria-describedby={blockedReason !== null ? 'submit-blocked' : undefined}
-        >
-          Submit for review
-        </Button>
-      </div>
-      {blockedReason !== null ? (
-        <p id="submit-blocked" className={styles.note}>
-          {blockedReason}
-        </p>
-      ) : (
-        <p className={styles.note}>
-          After you submit, the documents are frozen for the reviewer. You cannot change them unless
-          the case is rejected.
-        </p>
-      )}
-      <p className={styles.status} role="status">
-        {pending ? 'Submitting for review' : ''}
-      </p>
-    </form>
+    <>
+      <HeaderAction
+        ref={opener}
+        missing={missing}
+        missingTitle="Required before submitting"
+        onClick={() => setOpen(true)}
+      >
+        Submit for review
+      </HeaderAction>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) requestAnimationFrame(() => opener.current?.focus());
+        }}
+        title="Submit for review?"
+        description="The documents will be locked while the case is under review. You can edit them again if the case is rejected."
+        confirmLabel="Submit for review"
+        onConfirm={submit}
+      >
+        {missing.length > 0 ? (
+          <Alert tone="warning" role="status">
+            Required before submitting: {missing.join(', ')}.
+          </Alert>
+        ) : null}
+        {state.error ? (
+          <Alert
+            tone="error"
+            role="alert"
+            actions={state.reload ? <a href={reloadHref}>Reload this case</a> : null}
+          >
+            {state.error}
+          </Alert>
+        ) : null}
+      </ConfirmDialog>
+    </>
   );
 }

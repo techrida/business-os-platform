@@ -35,16 +35,24 @@ beforeEach(() => {
   vi.clearAllMocks();
   submitted = [];
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  HTMLDialogElement.prototype.showModal = function () {
-    this.setAttribute('open', '');
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.removeAttribute('open');
-  };
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
 });
 afterEach(async () => {
   await mounted?.unmount();
+  vi.unstubAllGlobals();
 });
+
+function dialog(): HTMLElement {
+  const element = document.querySelector<HTMLElement>('[role="dialog"]');
+  if (!element) throw new Error('Conversion dialog is not open');
+  return element;
+}
 
 async function showDuplicate(duplicate: DuplicateInfo) {
   api.convertLead
@@ -74,11 +82,11 @@ async function showDuplicate(duplicate: DuplicateInfo) {
     />,
   );
   await click(mounted.container.querySelector('button'));
-  await fill(mounted.container.querySelector('[name="line1"]'), 'Balaju');
-  await fill(mounted.container.querySelector('[name="city"]'), 'Kathmandu');
-  await submit(mounted.container);
+  await fill(dialog().querySelector('[name="line1"]'), 'Balaju');
+  await fill(dialog().querySelector('[name="city"]'), 'Kathmandu');
+  await submit(dialog());
   expect(api.convertLead).toHaveBeenCalledTimes(1);
-  const useExisting = [...mounted.container.querySelectorAll('button')].find((b) =>
+  const useExisting = [...dialog().querySelectorAll('button')].find((b) =>
     b.textContent?.startsWith('Use existing'),
   );
   await click(useExisting ?? null);
@@ -92,7 +100,7 @@ it('clicking Use existing on a contact match submits its customer and contact th
     label: 'Mina',
     matchedOn: 'email',
   });
-  await submit(mounted.container);
+  await submit(dialog());
   expect(submitted[1]?.get('customerId')).toBe(CUSTOMER);
   expect(submitted[1]?.get('contactId')).toBe(CONTACT);
   expect(api.convertLead).toHaveBeenLastCalledWith(
@@ -114,11 +122,11 @@ it('selects a named contact with neither email nor phone for an existing custome
     matchedOn: 'name',
   });
   expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
-  await click(mounted.container.querySelector('input[name="contactMode"][value="existing"]'));
-  const select = mounted.container.querySelector('select[name="contactId"]');
+  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  const select = dialog().querySelector('select[name="contactId"]');
   expect(select?.textContent).toContain('Mina');
   await fill(select, CONTACT);
-  await submit(mounted.container);
+  await submit(dialog());
   expect(submitted[1]?.get('contactId')).toBe(CONTACT);
   expect(api.convertLead).toHaveBeenLastCalledWith(
     expect.anything(),
@@ -129,8 +137,8 @@ it('selects a named contact with neither email nor phone for an existing custome
     }),
     expect.any(String),
   );
-  expect(mounted.container.textContent).not.toContain(CONTACT);
-  expect(mounted.container.textContent).not.toContain('customer screens');
+  expect(dialog().textContent).not.toContain(CONTACT);
+  expect(dialog().textContent).not.toContain('customer screens');
 });
 
 it('searches a different legal name and links the selected customer without duplicate detection', async () => {
@@ -158,24 +166,23 @@ it('searches a different legal name and links the selected customer without dupl
     />,
   );
   await click(mounted.container.querySelector('button'));
-  await click(mounted.container.querySelector('input[name="customerMode"][value="existing"]'));
-  await fill(mounted.container.querySelector('input[maxlength="100"]'), 'Mountain');
+  await click(dialog().querySelector('input[name="customerMode"][value="existing"]'));
+  await fill(dialog().querySelector('input[maxlength="100"]'), 'Mountain');
   await click(
-    [...mounted.container.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Search customers',
-    ) ?? null,
+    [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Search customers') ??
+      null,
   );
   expect(api.listCustomers).toHaveBeenLastCalledWith(expect.anything(), {
     q: 'Mountain',
     limit: 20,
   });
-  const customers = mounted.container.querySelector('select[name="customerId"]');
+  const customers = dialog().querySelector('select[name="customerId"]');
   expect(customers?.textContent).toContain('Mountain Legal Ltd');
   await fill(customers, CUSTOMER);
   expect(api.listContacts).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
-  await click(mounted.container.querySelector('input[name="contactMode"][value="existing"]'));
-  await fill(mounted.container.querySelector('select[name="contactId"]'), CONTACT);
-  await submit(mounted.container);
+  await click(dialog().querySelector('input[name="contactMode"][value="existing"]'));
+  await fill(dialog().querySelector('select[name="contactId"]'), CONTACT);
+  await submit(dialog());
   expect(submitted[0]?.get('customerId')).toBe(CUSTOMER);
   expect(submitted[0]?.getAll('customerMode')).toEqual(['existing']);
   expect(api.convertLead).toHaveBeenCalledTimes(1);
@@ -188,7 +195,7 @@ it('searches a different legal name and links the selected customer without dupl
     }),
     expect.any(String),
   );
-  expect(mounted.container.textContent).not.toContain(CUSTOMER);
+  expect(dialog().textContent).not.toContain(CUSTOMER);
 });
 
 it('keeps refused customer searches empty and does not issue blank or oversized reads', async () => {
@@ -220,9 +227,9 @@ it('creates a new customer and contact through the real action', async () => {
     />,
   );
   await click(mounted.container.querySelector('button'));
-  await fill(mounted.container.querySelector('[name="line1"]'), 'Balaju');
-  await fill(mounted.container.querySelector('[name="city"]'), 'Kathmandu');
-  await submit(mounted.container);
+  await fill(dialog().querySelector('[name="line1"]'), 'Balaju');
+  await fill(dialog().querySelector('[name="city"]'), 'Kathmandu');
+  await submit(dialog());
   expect(api.convertLead).toHaveBeenCalledTimes(1);
   expect(api.convertLead.mock.calls[0]?.[1]).toBe(LEAD);
   expect(api.convertLead.mock.calls[0]?.[2]).toMatchObject({

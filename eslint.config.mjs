@@ -34,6 +34,8 @@ export default defineConfig([
     '**/test-results/**',
     '**/.dev/**',
     '**/next-env.d.ts',
+    // Login overlay files are type-checked by the pinned upstream Next.js build.
+    'infra/login/overlay/**',
   ]),
 
   {

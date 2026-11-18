@@ -666,6 +666,28 @@ describe('the customer of a memo is a party (ADR 0027 section 5)', () => {
 });
 
 describe('PATCH /v1/test-memos/:id', () => {
+  it('keeps a newer saved version when a stale tab edits or submits', async () => {
+    const { id } = await createMemo();
+    const newer = await request(baseUrl)
+      .patch(`/v1/test-memos/${id}`)
+      .send({ title: 'Newer version', expectedVersion: 1 });
+    expect(newer.status).toBe(200);
+
+    const staleEdit = await request(baseUrl)
+      .patch(`/v1/test-memos/${id}`)
+      .send({ title: 'Stale version', expectedVersion: 1 });
+    expect(staleEdit.status).toBe(409);
+    const staleSubmit = await request(baseUrl)
+      .post(`/v1/test-memos/${id}/submit`)
+      .send({ expectedVersion: 1 });
+    expect(staleSubmit.status).toBe(409);
+    for (const result of [staleEdit, staleSubmit]) {
+      expect(result.body).toMatchObject({ error: { reason: 'stale_memo' } });
+    }
+    const memo = await request(baseUrl).get(`/v1/test-memos/${id}`);
+    expect(memo.body).toMatchObject({ title: 'Newer version', status: 'draft', version: 2 });
+  });
+
   it('lets the owner edit a draft, bumps the version and re-freezes the NPR value', async () => {
     const { id } = await createMemo();
     const res = await request(baseUrl)
@@ -1788,5 +1810,228 @@ describe('GET /v1/test-memos (the Memos list)', () => {
     expect((await list('?limit=abc')).status).toBe(400);
     expect((await list('?ownerUserId=' + U.boss)).status).toBe(400);
     expect((await list('?status=weird')).status).toBe(400);
+  });
+});
+
+// ----------------------------------------------------------------------------------- discard (soft)
+
+describe('POST /v1/test-memos/:id/discard (Delete draft)', () => {
+  const discard = (id: string) => request(baseUrl).post(`/v1/test-memos/${id}/discard`);
+  const listedIds = async () => {
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const res = await request(baseUrl)
+        .get('/v1/test-memos')
+        .query(cursor === null ? { limit: 50 } : { limit: 50, cursor });
+      const page = MemoListSchema.parse(res.body);
+      ids.push(...page.items.map((memo) => memo.id));
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    return ids;
+  };
+  /** Audit rows of the memo itself (the row trigger writes one per change), oldest first. */
+  const auditOf = async (id: string) =>
+    (
+      await ownerPool.query<{ action: string; actor_id: string; after: Record<string, unknown> }>(
+        `SELECT action, actor_id, after FROM audit.audit_events WHERE entity_type = 'test_memos' AND entity_id = $1 ORDER BY id`,
+        [id],
+      )
+    ).rows;
+  const requestCount = async (id: string) =>
+    (
+      await ownerPool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM app.approval_requests WHERE document_id = $1',
+        [id],
+      )
+    ).rows[0]!.n;
+  /** A memo the approver sent back: status returned, one decided approval request on record. */
+  const returnedMemo = async () => {
+    const { id } = await createMemo({ title: 'Needs a quote' });
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    as(U.acc, 'founder');
+    await approvals.act(
+      requestId,
+      { action: 'return', comment: 'add a quote', expectedVersion: 1 },
+      randomUUID(),
+    );
+    as(U.salesA, 'sales');
+    expect((await statusOf(id)).status).toBe('returned');
+    return id;
+  };
+
+  it('lets the creator discard a draft: 204, then it is gone from reads and writes, and only the discard is written', async () => {
+    const { id } = await createMemo({ title: 'Discard me' });
+    const file = await attach(id, 'clean');
+    const before = await statusOf(id);
+    const auditBefore = (await auditOf(id)).length;
+    now = new Date('2026-11-08T05:00:00Z');
+
+    const res = await discard(id);
+    expect(res.status, JSON.stringify(res.body)).toBe(204);
+    expect(res.text).toBe('');
+
+    // Soft: the row, its number and its status stay; only the discard columns and the version change.
+    const after = await statusOf(id);
+    expect(after).toMatchObject({
+      status: 'draft',
+      number: before.number,
+      title: before.title,
+      body: before.body,
+      amount: before.amount,
+      ownerUserId: U.salesA,
+      discardedByUserId: U.salesA,
+      version: before.version + 1,
+    });
+    expect(after.discardedAt).toEqual(now);
+    // Audited: exactly one new row event, by the creator, carrying the discard.
+    const events = await auditOf(id);
+    expect(events).toHaveLength(auditBefore + 1);
+    expect(events.at(-1)).toMatchObject({
+      action: 'test_memos.update',
+      actor_id: U.salesA,
+      after: { discarded_by_user_id: U.salesA },
+    });
+
+    // Private even to the creator: as absent as a random id, in the list and in every route.
+    expect(await listedIds()).not.toContain(id);
+    expect((await request(baseUrl).get(`/v1/test-memos/${id}`)).status).toBe(404);
+    expect(
+      (await request(baseUrl).patch(`/v1/test-memos/${id}`).send({ title: 'Back again' })).status,
+    ).toBe(404);
+    expect((await submitMemo(id)).status).toBe(404);
+    expect((await discard(id)).status).toBe(404);
+    // Attachments: no new upload, no download link; the stored evidence itself is untouched.
+    await expect(attach(id, 'clean')).rejects.toMatchObject({ status: 404 });
+    await expect(documents.issueLink(scope, file.versionId)).rejects.toMatchObject({
+      status: 404,
+    });
+    const [version] = await db
+      .select()
+      .from(documentVersions)
+      .where(eq(documentVersions.id, file.versionId));
+    expect(version).toMatchObject({ status: 'clean' });
+
+    // The refused attempts above wrote nothing: same row, same audit trail, no approval request.
+    expect(await statusOf(id)).toEqual(after);
+    expect(await auditOf(id)).toHaveLength(auditBefore + 1);
+    expect(await requestCount(id)).toBe(0);
+  });
+
+  it('discards a returned memo too, and keeps its number, its decided request and its history', async () => {
+    const id = await returnedMemo();
+    const before = await statusOf(id);
+    expect(await requestCount(id)).toBe(1);
+
+    expect((await discard(id)).status).toBe(204);
+
+    expect(await statusOf(id)).toMatchObject({
+      status: 'returned',
+      number: before.number,
+      discardedByUserId: U.salesA,
+    });
+    const [request1] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.documentId, id));
+    expect(request1).toMatchObject({ status: 'returned' });
+    expect(await requestCount(id)).toBe(1);
+    expect(await listedIds()).not.toContain(id);
+    expect((await request(baseUrl).get(`/v1/test-memos/${id}`)).status).toBe(404);
+    expect(
+      (await request(baseUrl).patch(`/v1/test-memos/${id}`).send({ body: 'edit' })).status,
+    ).toBe(404);
+    expect((await submitMemo(id)).status).toBe(404);
+    // The next memo does not reuse the discarded number.
+    const next = await createMemo({ title: 'Next' });
+    expect(
+      MemoDtoSchema.parse((await request(baseUrl).get(`/v1/test-memos/${next.id}`)).body).number,
+    ).not.toBe(before.number);
+  });
+
+  it('is creator-only: another user gets 404 on a private draft, 403 on a memo they can read, and nothing changes', async () => {
+    const draft = await createMemo({ title: 'Mine' });
+    const submitted = await createMemo({ title: 'Sent' });
+    expect((await submitMemo(submitted.id)).status).toBe(200);
+
+    for (const [user, role] of [
+      [U.salesB, 'sales'],
+      [U.boss, 'founder'],
+    ] as const) {
+      as(user, role);
+      // Someone else's draft is private, whatever the grant: 404 (it is not even known to exist).
+      expect((await discard(draft.id)).status).toBe(404);
+    }
+    as(U.salesB, 'sales');
+    expect((await discard(submitted.id)).status).toBe(404); // outside scope own
+    as(U.boss, 'founder');
+    expect((await discard(submitted.id)).status).toBe(403); // can read it, did not create it
+    as(U.acc, 'accountant');
+    expect((await discard(submitted.id)).status).toBe(403); // no memo.update grant at all
+
+    // A creator cannot discard a submitted memo: it is evidence of a pending decision.
+    as(U.salesA, 'sales');
+    expect((await discard(submitted.id)).status).toBe(409);
+    for (const id of [draft.id, submitted.id]) {
+      expect((await statusOf(id)).discardedAt).toBeNull();
+    }
+    expect((await statusOf(submitted.id)).status).toBe('submitted');
+    expect(await listedIds()).toEqual(expect.arrayContaining([draft.id, submitted.id]));
+  });
+
+  it('refuses an approved memo, an unknown id and a bad id, and a portal customer', async () => {
+    const { id } = await createMemo();
+    const { requestId } = (await submitMemo(id)).body as { requestId: string };
+    let version = 1;
+    for (const user of [U.acc, U.fin]) {
+      as(user, 'founder');
+      version = (
+        await approvals.act(
+          requestId,
+          { action: 'approve', expectedVersion: version },
+          randomUUID(),
+        )
+      ).version;
+    }
+    as(U.salesA, 'sales');
+    expect((await statusOf(id)).status).toBe('approved');
+    expect((await discard(id)).status).toBe(409);
+    expect((await discard(randomUUID())).status).toBe(404);
+    expect((await discard('not-a-uuid')).status).toBe(400);
+    asCustomer(p1);
+    expect((await discard(id)).status).toBe(403);
+    expect((await statusOf(id)).discardedAt).toBeNull();
+  });
+
+  it('is final in the database too: a discarded memo cannot change, and only an unsubmitted memo can be marked discarded', async () => {
+    const { id } = await createMemo();
+    expect((await discard(id)).status).toBe(204);
+    // Even the table owner cannot edit or restore it (trigger test_memos_discarded_guard).
+    await expect(
+      ownerPool.query(`UPDATE app.test_memos SET title = 'Changed' WHERE id = $1`, [id]),
+    ).rejects.toMatchObject({ code: '23514' });
+    await expect(
+      ownerPool.query(
+        `UPDATE app.test_memos SET discarded_at = NULL, discarded_by_user_id = NULL WHERE id = $1`,
+        [id],
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+
+    const sent = await createMemo({ title: 'Sent' });
+    expect((await submitMemo(sent.id)).status).toBe(200);
+    await expect(
+      ownerPool.query(
+        `UPDATE app.test_memos SET discarded_at = now(), discarded_by_user_id = owner_user_id WHERE id = $1`,
+        [sent.id],
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'test_memos_discarded_status_check' });
+    // Creator only: someone else cannot be recorded as the discarder, even by a direct write.
+    const draft = await createMemo({ title: 'Other' });
+    await expect(
+      ownerPool.query(
+        `UPDATE app.test_memos SET discarded_at = now(), discarded_by_user_id = $2 WHERE id = $1`,
+        [draft.id, U.salesB],
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'test_memos_discarded_by_owner_check' });
   });
 });

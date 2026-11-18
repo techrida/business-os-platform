@@ -3,6 +3,7 @@
 // is called (won and quotation_sent never reach it). The rules behind the routes are in the integration test.
 import 'reflect-metadata';
 
+import { OPPORTUNITY_STAGES } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
@@ -50,6 +51,24 @@ describe('OpportunitiesController', () => {
     expect(service.list).toHaveBeenLastCalledWith({ limit: 50 });
     expect(() => controller.list({ stage: 'nonsense' })).toThrow(BadRequestException);
     expect(() => controller.list({ limit: '5000' })).toThrow(BadRequestException);
+  });
+
+  it('accepts all stages and rejects empty, invalid or excessive stage lists', async () => {
+    const { service, moduleRef, controller } = await setup();
+    await controller.list({ stage: OPPORTUNITY_STAGES });
+    expect(service.list).toHaveBeenCalledWith({ stage: OPPORTUNITY_STAGES, limit: 50 });
+    service.list.mockClear();
+
+    for (const stage of [
+      [],
+      ['qualified', 'nonsense'],
+      ['qualified', ''],
+      [...OPPORTUNITY_STAGES, 'qualified'],
+    ]) {
+      expect(() => controller.list({ stage })).toThrow(BadRequestException);
+    }
+    expect(service.list).not.toHaveBeenCalled();
+    await moduleRef.close();
   });
 
   it('never passes won or quotation_sent to the service, nor a lost without reason and note', async () => {
