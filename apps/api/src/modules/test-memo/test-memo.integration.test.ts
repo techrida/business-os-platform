@@ -1523,10 +1523,9 @@ describe('a template memo routes through exactly the people the author named', (
     const decide = (version: number) =>
       approvals.act(requestId, { action: 'approve', expectedVersion: version }, randomUUID());
 
-    // A user who is not a named signer and holds no approval permission: nothing in the inbox, and the
-    // service refuses to act (NotFound, so it does not confirm the request exists).
-    as(ops.sales, 'sales');
-    await expect(approvals.inbox()).rejects.toBeInstanceOf(ForbiddenException);
+    // Sales can open the quotation inbox, but cannot see or decide this memo.
+    as(U.salesB, 'sales');
+    expect((await approvals.inbox()).map((item) => item.requestId)).not.toContain(requestId);
     await expect(decide(1)).rejects.toBeInstanceOf(NotFoundException);
     expect(await requestRow(requestId)).toMatchObject({
       status: 'pending',
