@@ -25,8 +25,9 @@ export function NavLink({
   count?: number | undefined;
 }) {
   const pathname = usePathname();
-  const { closeDrawer } = useShell();
-  const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
+  const { closeDrawer, setNavQuery } = useShell();
+  const active =
+    href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
 
   return (
     <Link
@@ -34,7 +35,10 @@ export function NavLink({
       className={`${styles.item} ${styles.link}${active ? ` ${styles.active}` : ''}`}
       aria-current={active ? 'page' : undefined}
       title={label}
-      onClick={closeDrawer}
+      onClick={() => {
+        setNavQuery('');
+        closeDrawer();
+      }}
     >
       <Icon name={icon} className={styles.icon} />
       <span className={styles.label}>{label}</span>

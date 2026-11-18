@@ -1,4 +1,4 @@
-/* Sidebar. 220px wide, 108px as the rail. Pale (surface-subtle), with a right border (Figma 388:32689, 65:9705).
+/* Sidebar. 220px wide, 108px as the rail. White (surface-default), with a right border (Figma 388:32689, 65:9705).
    The sidebar is a size container: when its column is narrow (the rail), the container query at
    the bottom hides labels, so the toggle and the breakpoints only have to set the column width. */
 
@@ -11,11 +11,11 @@
   height: 100vh;
   height: 100dvh;
   min-width: 0;
-  /* The sidebar itself never scrolls. Only .nav does, so the brand, the search field and the
+  /* The sidebar itself never scrolls. Only .nav does, so the brand and the
      user card stay put and the scrollbar sits between them. */
   overflow: hidden;
   border-right: var(--border-width-thin) solid var(--border-default);
-  background: var(--surface-subtle);
+  background: var(--surface-default);
 }
 
 .top {
@@ -29,45 +29,8 @@
   border-bottom: var(--border-width-thin) solid var(--border-default);
 }
 
-/* "Search menu": a quiet field above the groups. It stays disabled until menu search exists,
-   but is drawn like the live one so the layout does not move when it is switched on. */
-.searchWrap {
-  position: relative;
-  flex: none;
-  padding: 12px 12px 11px;
-}
-
-.searchIcon {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-start: 26px;
-  color: var(--icon-default);
-  /* The wrapper has 12px above and 11px below the field: shift by the half difference. */
-  transform: translateY(calc(-50% + 0.5px));
-  pointer-events: none;
-}
-
-.search {
-  display: block;
-  width: 100%;
-  height: 34px;
-  padding: 0 12px 0 37px;
-  border: var(--border-width-thin) solid var(--search-border);
-  border-radius: var(--radius-lg);
-  background: var(--search-bg);
-  color: var(--search-text);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-caption);
-}
-
-.search::placeholder {
-  color: var(--search-placeholder);
-  opacity: 1;
-}
-
-.search:disabled {
-  cursor: not-allowed;
+.drawerSearch {
+  display: none;
 }
 
 /* The one scroll region. min-height: 0 lets a flex child shrink below its content so it can
@@ -76,7 +39,7 @@
 .nav {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 12px 16px;
+  padding: 4px 12px 16px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -154,16 +117,6 @@
   background: var(--action-primary);
 }
 
-/* Not built yet: dimmed, not a link. Tertiary text still reads at 4.5:1 on white. */
-.planned {
-  color: var(--text-tertiary);
-  cursor: not-allowed;
-}
-
-.planned .icon {
-  color: var(--icon-disabled);
-}
-
 /* Count pill, as in Figma: a small solid blue circle that stretches for two or more digits. */
 .count {
   display: inline-grid;
@@ -198,21 +151,6 @@
   border-radius: var(--radius-xl);
 }
 
-/* Figma shows a rounded square with initials, not a circle. */
-.avatar {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-brand);
-  color: var(--action-primary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-caption);
-}
-
 .userText {
   display: grid;
   flex: 1 1 auto;
@@ -238,12 +176,6 @@
   text-transform: capitalize;
 }
 
-/* Decorative: the card is not a control in P0 (Sign out lives in the header). */
-.userChevron {
-  flex: none;
-  color: var(--icon-secondary);
-}
-
 /* The rail: icons only. Names stay available to assistive technology. */
 @container sidebar (max-width: 160px) {
   /* Mark and toggle sit side by side so the top block stays 65px and its rule lines up with the
@@ -266,8 +198,7 @@
     white-space: nowrap;
   }
 
-  .searchWrap,
-  .groupLabel {
+  .groupLabel[id] {
     display: none;
   }
 
@@ -290,10 +221,6 @@
     padding: 0;
   }
 
-  .userChevron {
-    display: none;
-  }
-
   .userCard {
     justify-content: center;
     padding: 8px 0;
@@ -304,6 +231,11 @@
 /* Phones: the sidebar becomes a drawer over the page. Closed, it is hidden so its links cannot
    be reached with the keyboard. */
 @media (max-width: 767.98px) {
+  .sidebar .drawerSearch {
+    display: block;
+    margin: 12px 12px 0;
+  }
+
   .sidebar {
     position: fixed;
     inset-block: 0;
