@@ -1,6 +1,7 @@
 import { ApiError, openSignedFile } from '@/lib/api';
 import { getPortalInvoiceLink } from '@/lib/api.billing';
-import { getSession } from '@/lib/session';
+import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
+import { getSession, type Session } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,15 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    if (!(err instanceof SessionUnavailableError)) throw err;
+    const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
+    response.headers.set('retry-after', '1');
+    return response;
+  }
   if (!session) return plain('Sign in to download this invoice.', 401);
 
   const { id } = await params;

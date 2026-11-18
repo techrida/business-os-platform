@@ -1,7 +1,8 @@
 import { ApiError } from '@/lib/api';
 import { uploadPaymentProof } from '@/lib/api.billing';
 import { getEnv } from '@/lib/env';
-import { getSession } from '@/lib/session';
+import { SessionUnavailableError, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
+import { getSession, type Session } from '@/lib/session';
 
 import { proofProblem } from '../_components/proof-rules';
 
@@ -27,7 +28,15 @@ export async function POST(req: Request): Promise<Response> {
   if (req.headers.get('origin') !== new URL(getEnv().PORTAL_PUBLIC_URL).origin) {
     return reply({ error: 'Forbidden' }, 403);
   }
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    if (!(err instanceof SessionUnavailableError)) throw err;
+    const response = reply({ error: SESSION_UNAVAILABLE_MESSAGE }, 503);
+    response.headers.set('retry-after', '1');
+    return response;
+  }
   if (!session) return reply({ error: 'Sign in to upload proof of payment.' }, 401);
 
   let filename = '';
