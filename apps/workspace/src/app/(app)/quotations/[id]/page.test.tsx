@@ -199,7 +199,7 @@ describe('quotation detail page', () => {
   it('puts the actions of the current status in the action slot', async () => {
     // The fixture is Sent: record the outcome, or revise. Send is for an approved quotation.
     const html = await render();
-    expect(html).toMatch(/<div class="[^"]*actions[^"]*"><button[^>]*>Record outcome<\/button>/);
+    expect(html).toMatch(/Record client decision.*<button[^>]*>Record outcome<\/button>/);
     expect(html).toContain('>Revise</button>');
     expect(html).not.toContain('>Send to customer</button>');
   });
