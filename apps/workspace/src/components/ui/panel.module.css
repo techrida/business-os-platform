@@ -1,8 +1,9 @@
 .panel {
   display: grid;
   align-content: start;
-  gap: 16px;
+  gap: max(16px, var(--spacing-content-gap));
   min-width: 0;
+  box-shadow: var(--shadow-section, var(--toast-shadow));
 }
 
 .head {
@@ -16,20 +17,23 @@
 .headText {
   display: grid;
   flex: 1 1 200px;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 .title {
   font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body-large);
+  letter-spacing: var(--letter-spacing-tight);
   overflow-wrap: anywhere;
 }
 
 .description {
   color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  line-height: var(--line-height-caption);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
 }
 
 .actions {
@@ -40,8 +44,8 @@
 
 .facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-  gap: 20px 24px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 16px 20px;
 }
 
 .fact {
@@ -60,6 +64,8 @@
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-medium);
+  overflow-wrap: anywhere;
 }
 
 .value {

@@ -2,8 +2,8 @@
   display: grid;
   justify-items: center;
   gap: 8px;
-  padding: 48px 24px;
-  border: var(--border-width-thin) solid var(--empty-state-border);
+  padding: var(--spacing-section) 24px;
+  border: var(--border-width-thin) solid var(--card-border);
   border-radius: var(--radius-xl);
   background: var(--empty-state-bg);
   text-align: center;
@@ -14,16 +14,18 @@
   place-items: center;
   width: 48px;
   height: 48px;
-  margin-bottom: 4px;
-  border-radius: var(--radius-full);
-  background: var(--surface-default);
-  color: var(--empty-state-icon);
+  margin-block-end: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-brand);
+  color: var(--icon-brand);
 }
 
 .title {
   color: var(--text-primary);
   font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body-large);
+  overflow-wrap: anywhere;
 }
 
 .text {
@@ -31,6 +33,7 @@
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
   text-wrap: balance;
 }
 

@@ -12,14 +12,14 @@
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 40px;
-  padding-inline: 12px 4px;
+  min-height: 42px;
+  padding-inline: 10px 6px;
   border: var(--border-width-thin) solid var(--date-picker-border);
   border-radius: var(--radius-lg);
   background: var(--date-picker-bg);
   color: var(--date-picker-text);
-  font-size: var(--font-size-body);
-  line-height: var(--line-height-body);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
   transition: border-color 120ms ease;
 }
 
@@ -48,6 +48,16 @@
   cursor: not-allowed;
 }
 
+.picker[data-disabled] .segment {
+  color: inherit;
+}
+
+@media (pointer: coarse) {
+  .group {
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}
+
 .input {
   display: flex;
   flex: 1;
@@ -58,7 +68,7 @@
 
 .segment {
   padding: 1px 2px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-xs);
   font-variant-numeric: tabular-nums;
   caret-color: transparent;
   outline: none;
@@ -90,7 +100,7 @@
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--icon-secondary);
+  color: var(--icon-default);
   cursor: pointer;
 }
 
@@ -119,7 +129,7 @@
   border: var(--border-width-thin) solid var(--dropdown-border);
   border-radius: var(--radius-lg);
   background: var(--dropdown-bg);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  box-shadow: var(--shadow-section, var(--toast-shadow));
   color: var(--dropdown-text);
 }
 
