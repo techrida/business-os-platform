@@ -48,7 +48,7 @@ export function OpportunityFilters({
       {stages.map((stage) => (
         <input key={stage} type="hidden" name="stage" value={stage} />
       ))}
-      <Field label="Search opportunities" className={styles.search}>
+      <Field label="Search opportunities" className={styles.search ?? ''}>
         {(control) => (
           <Input
             key={query}
