@@ -83,7 +83,7 @@ export async function createDraftMemo(
   const department = page.getByLabel('Department', { exact: true });
   if (!(await department.inputValue())) await department.selectOption({ index: 1 });
   // These are real seeded directory names, never synthetic entries injected into the form.
-  const signers = ['Dev Accountant', 'Dev Finance'];
+  const signers = [persona('accountant').label, persona('finance').label];
   const amountNpr = Number(input.amount.replace(/[,\s]/g, ''));
   if (amountNpr > 100000) signers.push('Dev Management');
   if (amountNpr > 1000000) signers.push('Dev Founder');
@@ -100,8 +100,27 @@ export async function createDraftMemo(
     });
     await box.click();
     await box.fill(signers[i]!);
-    await page.getByRole('option', { name: new RegExp(`^${signers[i]}(?: |$)`) }).click();
+    // Match the option's own name line, whole. A prefix match also picks "Dev Management Two" when
+    // "Dev Management" is asked for. The line is the person's name, or "Name (title)" when two people share a name.
+    const name = signers[i]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const option = page
+      .getByRole('option')
+      .filter({ has: page.getByText(new RegExp(`^${name}(?: \\(.+\\))?$`)) });
+    await expect(option).toBeEnabled();
+    await option.click();
     await expect(box).toHaveValue(signers[i]!);
+    if (i === 0) {
+      // A typed label alone cannot submit a signer. Check the real form field, then verify
+      // the same accountant is unavailable for a second step of this memo.
+      const template = JSON.parse(await page.locator('input[name="template"]').inputValue()) as {
+        recommenderUserIds: string[];
+      };
+      expect(template.recommenderUserIds).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/i)]);
+      const finalSigner = page.getByRole('combobox', { name: 'Approved by', exact: true });
+      await finalSigner.fill(signers[i]!);
+      await expect(option).toBeDisabled();
+      await finalSigner.press('Escape');
+    }
   }
 
   await page.getByRole('button', { name: 'Next', exact: true }).click();
