@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LinkButton } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { Skeleton } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf, listMemos } from '@/lib/api-kernel';
@@ -11,9 +12,10 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { memoRowNote, MEMO_PAGE_SIZE, MEMO_STATUS_FILTERS } from '@/lib/memo-list-view';
 
-import { StatusBadge } from '../kit';
 import styles from '../kit.module.css';
 import { PlusIcon } from './memo-icons';
+import pageStyles from './memo-pages.module.css';
+import { MemoStatus } from './memo-status';
 
 /** The page's list: loads one page of the memos this person may open. Rendered inside Suspense by page.tsx. */
 export async function MemoList({
@@ -96,8 +98,8 @@ export async function MemoList({
   if (filter !== undefined) next.set('status', filter);
 
   return (
-    <>
-      <Table caption="Memos, newest first" minWidth={520}>
+    <div className={pageStyles.tableCard}>
+      <Table caption="Memos, newest first" minWidth={520} className={pageStyles.table ?? ''}>
         <thead>
           <tr>
             <Th>Memo</Th>
@@ -111,21 +113,30 @@ export async function MemoList({
           ))}
         </tbody>
       </Table>
-      {page.nextCursor !== null || cursor !== undefined ? (
-        <nav className={styles.pager} aria-label="Memo pages">
-          {cursor !== undefined ? (
-            <LinkButton href={filter ? `/memos?status=${filter}` : '/memos'} variant="secondary">
-              Newest memos
-            </LinkButton>
-          ) : null}
-          {page.nextCursor !== null ? (
-            <LinkButton href={`/memos?${next.toString()}`} variant="secondary">
-              Older memos
-            </LinkButton>
-          ) : null}
-        </nav>
-      ) : null}
-    </>
+      <div className={pageStyles.tableFooter}>
+        <p>
+          Showing {page.items.length} {page.items.length === 1 ? 'memo' : 'memos'}
+        </p>
+        {page.nextCursor !== null || cursor !== undefined ? (
+          <nav className={pageStyles.pager} aria-label="Memo pages">
+            {cursor !== undefined ? (
+              <LinkButton
+                href={filter ? `/memos?status=${filter}` : '/memos'}
+                size="small"
+                variant="ghost"
+              >
+                Newest memos
+              </LinkButton>
+            ) : null}
+            {page.nextCursor !== null ? (
+              <LinkButton href={`/memos?${next.toString()}`} size="small" variant="tertiary">
+                Older memos <Icon name="chevron-right" size={16} />
+              </LinkButton>
+            ) : null}
+          </nav>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -134,19 +145,24 @@ function MemoRow({ memo }: { memo: MemoListItem }) {
   return (
     <tr>
       <Td>
-        <CellTitle
-          title={<Link href={`/memos/${encodeURIComponent(memo.id)}`}>{memo.title}</Link>}
-          meta={
-            <>
-              <span className="sr-only">Memo number: </span>
-              {memo.number}
-            </>
-          }
-          note={note}
-        />
+        <div className={pageStyles.memoIdentity}>
+          <span className={pageStyles.fileIcon}>
+            <Icon name="file-text" size={18} />
+          </span>
+          <CellTitle
+            title={<Link href={`/memos/${encodeURIComponent(memo.id)}`}>{memo.title}</Link>}
+            meta={
+              <>
+                <span className="sr-only">Memo number: </span>
+                {memo.number}
+              </>
+            }
+            note={note}
+          />
+        </div>
       </Td>
       <Td nowrap>
-        <StatusBadge status={memo.status} />
+        <MemoStatus status={memo.status} />
       </Td>
       <Td nowrap>
         <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>

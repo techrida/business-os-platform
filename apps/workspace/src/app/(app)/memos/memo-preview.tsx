@@ -104,7 +104,9 @@ export function MemoPreview({
             <PrintIcon size={18} />
           </button>
         </div>
-      ) : null}
+      ) : (
+        <h2 className={styles.previewHeading}>Live preview</h2>
+      )}
       <MemoPaper id={id} template={template} title={title} body={body} />
     </div>
   );
