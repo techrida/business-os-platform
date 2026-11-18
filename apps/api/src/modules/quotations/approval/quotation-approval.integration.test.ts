@@ -27,6 +27,7 @@ import {
   approvalRequests,
   approvalSteps,
   createStaffUser,
+  createTenantWithEntity,
   idempotencyKeys,
   quotationLines,
   quotationStatusHistory,
@@ -718,5 +719,156 @@ describe('quotation approval: tamper after submit', () => {
     expect((await versionRow(d.versionId)).status).toBe('submitted');
     const [after] = await requestsOf(d.versionId);
     expect(after!.status).toBe('pending');
+  });
+});
+
+// ------------------------------------------------------------------- named first-step approver (demo 2026-11-17)
+
+describe('quotation approval: the author names the first-step approver', () => {
+  /** More people: a second accountant and a Sales colleague of entity A, and people who must be refused. */
+  const X = { acc2: '', mate: '', wh: '', accB: '', otherTenant: '' };
+
+  beforeAll(async () => {
+    const [owner] = await read((tx) =>
+      tx
+        .select({ idpOrgId: users.idpOrgId })
+        .from(users)
+        .where(and(eq(users.tenantId, f.tenantId), eq(users.id, f.ownerUserId))),
+    );
+    const staffOf = async (scope: TxScope, roleKey: RoleKey, idpOrgId = owner!.idpOrgId) =>
+      (await createStaffUser(appPool, { ...scope, idpOrgId, roleKeys: [roleKey] })).userId;
+    X.acc2 = await staffOf(scopeA, 'accountant');
+    X.mate = await staffOf(scopeA, 'sales');
+    X.wh = await staffOf(scopeA, 'warehouse');
+    X.accB = await staffOf(scopeB, 'accountant');
+    const other = await createTenantWithEntity(appPool, { code: 'OTHER-T' });
+    X.otherTenant = await staffOf(
+      { tenantId: other.tenantId, organizationId: other.organizationId },
+      'accountant',
+      other.idpOrgId,
+    );
+  });
+
+  beforeEach(() => {
+    roles.accountant = [U.acc, X.acc2];
+    roles.sales = [f.ownerUserId, X.mate];
+    roles.warehouse = [X.wh];
+  });
+
+  const submitNaming = (
+    d: { quotationId: string; versionId: string; rowVersion: number },
+    approverUserId?: string,
+  ) =>
+    submitter.submit(
+      d.quotationId,
+      d.versionId,
+      { expectedVersion: d.rowVersion, ...(approverUserId ? { approverUserId } : {}) },
+      randomUUID(),
+    );
+
+  /** The request ids in `user`'s inbox, or 'denied' when the inbox answers 403. */
+  async function inboxIds(user: string, role: RoleKey): Promise<string[] | 'denied'> {
+    as(user, role);
+    try {
+      return (await approvals.inbox()).map((i) => i.requestId);
+    } catch (error) {
+      if (error instanceof HttpException && error.getStatus() === 403) return 'denied';
+      throw error;
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+  }
+
+  const toldAboutApproval = () =>
+    notify.notifyUser.mock.calls
+      .filter(
+        ([, n]) => (n as { email?: { template: string } }).email?.template === 'approval.pending',
+      )
+      .map(([, n]) => (n as unknown as { userId: string }).userId)
+      .sort();
+
+  it('without a choice, every eligible accountant sees, is told about and may decide the step (unchanged)', async () => {
+    const d = await draft('50000.00');
+    await submitNaming(d);
+    const [request] = await requestsOf(d.versionId);
+    expect(await inboxIds(U.acc, 'accountant')).toContain(request!.id);
+    expect(await inboxIds(X.acc2, 'accountant')).toContain(request!.id);
+    expect(toldAboutApproval()).toEqual([U.acc, X.acc2].sort());
+    const decided = await act(U.acc, 'accountant', request!.id, 'approve');
+    expect(decided.steps[0]).toMatchObject({ status: 'approved', decidedBy: U.acc });
+    expect(decided.steps[0]!.assigneeUserId ?? null).toBeNull();
+  });
+
+  it('a Sales author names one accountant: only they see it, are told and may decide it', async () => {
+    const d = await draft('50000.00');
+    await submitNaming(d, X.acc2);
+    const [request] = await requestsOf(d.versionId);
+    expect(request!.status).toBe('pending');
+
+    expect(await inboxIds(U.acc, 'accountant')).not.toContain(request!.id);
+    expect(await inboxIds(X.acc2, 'accountant')).toContain(request!.id);
+    expect(toldAboutApproval()).toEqual([X.acc2]);
+
+    const refused = await httpErrorOf(act(U.acc, 'accountant', request!.id, 'approve'));
+    expect(refused.getStatus()).toBe(403);
+
+    const decided = await act(X.acc2, 'accountant', request!.id, 'approve');
+    expect(decided.steps[0]).toMatchObject({
+      status: 'approved',
+      decidedBy: X.acc2,
+      assigneeUserId: X.acc2,
+    });
+    // The later steps are unchanged: finance is next, open to finance as before.
+    expect(decided.steps[1]).toMatchObject({ roleKey: 'finance', status: 'active' });
+    expect(decided.steps[1]!.assigneeUserId ?? null).toBeNull();
+
+  });
+
+  it('a named Sales colleague sees and decides only that step, and nothing else', async () => {
+    const named = await draft('50000.00');
+    await submitNaming(named, X.mate);
+    const [request] = await requestsOf(named.versionId);
+    const open = await draft('50000.00');
+    await submitNaming(open);
+    const [other] = await requestsOf(open.versionId);
+
+    // The inbox lists the one assigned request, not the open one.
+    expect(await inboxIds(X.mate, 'sales')).toEqual([request!.id]);
+    // The accountants no longer see the named one.
+    expect(await inboxIds(U.acc, 'accountant')).not.toContain(request!.id);
+
+    // They cannot read or decide the other request.
+    as(X.mate, 'sales');
+    try {
+      expect((await httpErrorOf(approvals.get(other!.id))).getStatus()).toBe(404);
+      expect((await approvals.get(request!.id)).requestId).toBe(request!.id);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+    const otherRefused = await httpErrorOf(act(X.mate, 'sales', other!.id, 'approve'));
+    expect([403, 404]).toContain(otherRefused.getStatus());
+
+    const decided = await act(X.mate, 'sales', request!.id, 'approve');
+    expect(decided.steps[0]).toMatchObject({ status: 'approved', decidedBy: X.mate });
+    expect(decided.steps[1]).toMatchObject({ roleKey: 'finance', status: 'active' });
+
+    // The finance step is not theirs: no inbox row, no decision.
+    expect(await inboxIds(X.mate, 'sales')).toEqual([]);
+    const later = await httpErrorOf(act(X.mate, 'sales', request!.id, 'approve'));
+    expect([403, 404]).toContain(later.getStatus());
+  });
+
+  it('refuses the author, another entity, another tenant and an ineligible user at submit, writing nothing', async () => {
+    // A directory that (wrongly) lists people of entity B and of another tenant as accountants: the server's own
+    // tenant, entity and active-staff check must still refuse them.
+    roles.accountant = [U.acc, X.acc2, X.accB, X.otherTenant];
+    for (const who of [f.ownerUserId, X.accB, X.otherTenant, X.wh, U.fin]) {
+      const d = await draft('50000.00');
+      const error = await httpErrorOf(submitNaming(d, who));
+      expect(error.getStatus()).toBe(422);
+      expect(error.getResponse()).toMatchObject({ code: 'APPROVER_NOT_ELIGIBLE' });
+      expect((await versionRow(d.versionId)).status).toBe('draft');
+      expect(await requestsOf(d.versionId)).toEqual([]);
+    }
   });
 });
