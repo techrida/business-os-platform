@@ -181,8 +181,7 @@ it('searches a different legal name and links the selected customer without dupl
   await click(dialog().querySelector('input[name="customerMode"][value="existing"]'));
   await fill(dialog().querySelector('input[maxlength="100"]'), 'Mountain');
   await click(
-    [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Search customers') ??
-      null,
+    [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Search') ?? null,
   );
   expect(api.listCustomers).toHaveBeenLastCalledWith(expect.anything(), {
     q: 'Mountain',
