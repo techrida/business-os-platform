@@ -11,6 +11,7 @@ import { getInbox, failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 
+import { INBOX_DENIED, inboxDenialMessage } from './denial';
 import styles from './inbox.module.css';
 
 export const metadata: Metadata = { title: 'Inbox · Business OS' };
@@ -74,7 +75,7 @@ export default async function InboxPage({
     items = await getInbox(session);
   } catch (err) {
     const f = failureOf(err);
-    problem = { message: f.message, status: f.status };
+    problem = { message: f.status === 403 ? inboxDenialMessage(err) : f.message, status: f.status };
   }
 
   return (
@@ -101,15 +102,11 @@ export default async function InboxPage({
         <Alert
           tone={problem.status === 403 ? 'info' : 'error'}
           role="alert"
-          title={
-            problem.status === 403
-              ? 'Your roles do not include approvals'
-              : 'The inbox did not load'
-          }
+          title={problem.status === 403 ? "You can't open the inbox" : 'The inbox did not load'}
           actions={problem.status !== 403 ? <Link href="/inbox">Reload the inbox</Link> : null}
         >
-          {problem.status === 403
-            ? 'The inbox is for people who approve documents. If you prepare documents, open Memos to follow yours.'
+          {problem.status === 403 && problem.message === INBOX_DENIED
+            ? 'If you expect documents to approve here, ask an administrator to check your account.'
             : problem.message}
         </Alert>
       ) : items !== null && items.length === 0 ? (
