@@ -3,8 +3,8 @@
  * screen map. Pure data with no React import, so unit tests and the header title lookup can use
  * it anywhere.
  *
- * An item is "built" when it has an `href`: it renders as a link. Other items render as
- * plain disabled rows. `phase` and SHIPPED_PHASES are internal and never shown to users.
+ * An item is "built" when it has an `href`: it renders as a link. Unbuilt items stay out of
+ * navigation. `phase` and SHIPPED_PHASES are internal and never shown to users.
  * When an item ships, give it an `href` and a phase in SHIPPED_PHASES; nav.test.ts keeps
  * the two in step.
  *
@@ -238,4 +238,19 @@ export function titleForPath(pathname: string): string {
     }
   }
   return best?.label ?? APP_NAME;
+}
+
+/** Filter already-authorized, built navigation by group or destination name. */
+export function searchNavGroups(groups: readonly NavGroup[], query: string): readonly NavGroup[] {
+  const term = query.trim().toLowerCase();
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) =>
+          isBuilt(item) &&
+          (group.label.toLowerCase().includes(term) || item.label.toLowerCase().includes(term)),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
 }
