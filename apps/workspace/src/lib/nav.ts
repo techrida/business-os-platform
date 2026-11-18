@@ -3,9 +3,8 @@
  * with no React import, so unit tests and the header title lookup can use it anywhere.
  *
  * An item is "built" when its phase is BUILT_PHASE. Built items have an `href` and render as
- * links. Every other item has no `href` and renders as a plain disabled row. `phase` is internal
- * data (which phase will enable the item) and is never shown to users: no label, tag or text on
- * screen may mention it. When a phase ships, give its items an `href` and move BUILT_PHASE.
+ * links. Phase metadata is internal. When a phase ships, give its items an `href` and move
+ * BUILT_PHASE.
  *
  * "Estimates" is left out on purpose: decision D3 merged it into Quotations.
  */
@@ -125,4 +124,19 @@ export function titleForPath(pathname: string): string {
     }
   }
   return APP_NAME;
+}
+
+/** Filter already-authorized, built navigation by group or destination name. */
+export function searchNavGroups(groups: readonly NavGroup[], query: string): readonly NavGroup[] {
+  const term = query.trim().toLowerCase();
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) =>
+          isBuilt(item) &&
+          (group.label.toLowerCase().includes(term) || item.label.toLowerCase().includes(term)),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
 }
