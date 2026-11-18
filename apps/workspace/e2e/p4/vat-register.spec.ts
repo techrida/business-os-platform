@@ -1,8 +1,22 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
 
 test.skip(process.env.BOS_E2E_P4 !== '1', 'set BOS_E2E_P4=1 to run the P4 VAT register');
+
+async function enterDate(page: Page, label: 'From' | 'To', month: string, day: string) {
+  const segments: [string, string][] = [
+    ['month', month],
+    ['day', day],
+    ['year', '2026'],
+  ];
+  for (const [segment, value] of segments) {
+    const field = page.getByRole('spinbutton', {
+      name: new RegExp(`${segment}.*${label} \\(AD\\)`, 'i'),
+    });
+    await field.pressSequentially(value);
+  }
+}
 
 test('the VAT register validates its date range before offering an export', async ({
   browser,
@@ -17,8 +31,8 @@ test('the VAT register validates its date range before offering an export', asyn
     ).toBeVisible();
     await expect(signed.page.getByRole('heading', { name: 'Choose a period.' })).toBeVisible();
     await expect(signed.page.getByRole('link', { name: 'Export CSV' })).toHaveCount(0);
-    await signed.page.getByLabel('From (AD)', { exact: true }).fill('2026-11-30');
-    await signed.page.getByLabel('To (AD)', { exact: true }).fill('2026-11-01');
+    await enterDate(signed.page, 'From', '11', '30');
+    await enterDate(signed.page, 'To', '11', '01');
     await signed.page.getByRole('button', { name: 'Show register' }).click();
     await expect(signed.page.getByRole('main').getByRole('alert')).toContainText(
       'the end on or after the start',
@@ -37,8 +51,8 @@ test('a valid period shows VAT results and downloads the matching CSV', async ({
   const signed = await signInAs(browser, baseURL ?? 'https://app.localhost', 'founder');
   try {
     await signed.page.goto('/payables/vat-register');
-    await signed.page.getByLabel('From (AD)', { exact: true }).fill('2026-11-01');
-    await signed.page.getByLabel('To (AD)', { exact: true }).fill('2026-11-30');
+    await enterDate(signed.page, 'From', '11', '01');
+    await enterDate(signed.page, 'To', '11', '30');
     await signed.page.getByRole('button', { name: 'Show register' }).click();
     await expect(signed.page).toHaveURL(/from=2026-11-01&to=2026-11-30/);
     await expect(
