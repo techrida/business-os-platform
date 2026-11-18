@@ -51,10 +51,11 @@ export const AddressSchema = z.strictObject({
 export type Address = z.infer<typeof AddressSchema>;
 
 /**
- * A customer is a tenant-level party (ADR 0027, D17): no organizationId here. Terms that differ per
- * legal entity live in `PartyAccountDtoSchema`.
+ * The fields of a customer record. A customer is a tenant-level party (ADR 0027, D17): no
+ * organizationId here. Terms that differ per legal entity live in `PartyAccountDtoSchema`. Lead
+ * conversion and the edit form use these fields alone; `POST /v1/customers` adds the first contact.
  */
-export const CreateCustomerBodySchema = z.strictObject({
+export const CustomerFieldsSchema = z.strictObject({
   legalName: text(200),
   panVatNo: PanVatNoSchema.optional(),
   industry: text(100).optional(),
@@ -63,9 +64,31 @@ export const CreateCustomerBodySchema = z.strictObject({
   defaultCurrency: CurrencySchema.optional(),
   address: AddressSchema,
 });
+export type CustomerFields = z.infer<typeof CustomerFieldsSchema>;
+
+/**
+ * A contact that carries an email. A quotation is sent by email, so a customer must always have at
+ * least one contact with an address: its first contact, and a contact created by lead conversion.
+ */
+export const ContactWithEmailBodySchema = z.strictObject({
+  fullName: text(200),
+  email: EmailSchema,
+  phone: PhoneSchema.optional(),
+  title: text(100).optional(),
+  isPrimary: z.boolean().default(false),
+});
+export type ContactWithEmailBody = z.infer<typeof ContactWithEmailBodySchema>;
+
+/**
+ * `POST /v1/customers`: the customer and its first contact, created together (one transaction, so a
+ * refusal leaves neither). The first contact needs an email and becomes the main contact.
+ */
+export const CreateCustomerBodySchema = CustomerFieldsSchema.extend({
+  contact: ContactWithEmailBodySchema.omit({ isPrimary: true }),
+});
 export type CreateCustomerBody = z.infer<typeof CreateCustomerBodySchema>;
 
-export const UpdateCustomerBodySchema = CreateCustomerBodySchema.partial().extend({
+export const UpdateCustomerBodySchema = CustomerFieldsSchema.partial().extend({
   /** The row version the client saw; a different current version means 409. */
   expectedVersion: z.number().int().min(1),
 });
@@ -101,6 +124,10 @@ export const PartyAccountDtoSchema = z.object({
 });
 export type PartyAccountDto = z.infer<typeof PartyAccountDtoSchema>;
 
+/**
+ * `POST /v1/customers/:id/contacts`. The email is optional here only because a later contact may
+ * have none: the API refuses a contact without one while the customer has no contact with an email.
+ */
 export const CreateContactBodySchema = z.strictObject({
   fullName: text(200),
   email: EmailSchema.optional(),
@@ -410,21 +437,22 @@ export type LeadDto = z.infer<typeof LeadDtoSchema>;
 
 const ConvertCustomerChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), customerId: z.guid() }),
-  z.strictObject({ mode: z.literal('create'), customer: CreateCustomerBodySchema }),
+  z.strictObject({ mode: z.literal('create'), customer: CustomerFieldsSchema }),
 ]);
 const ConvertContactChoiceSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('existing'), contactId: z.guid() }),
-  z.strictObject({ mode: z.literal('create'), contact: CreateContactBodySchema }),
+  z.strictObject({ mode: z.literal('create'), contact: ContactWithEmailBodySchema }),
 ]);
 
 /**
  * Convert a qualified lead into a customer, a contact and an opportunity. The server warns about
  * duplicates (normalised email, phone, organisation name); "create anyway" is `duplicateOverride`
- * and needs a reason.
+ * and needs a reason. The contact is required and must have an email (a new one names it; an
+ * existing one is checked by the API), so the opportunity's quotations can be sent.
  */
 export const ConvertLeadBodySchema = z.strictObject({
   customer: ConvertCustomerChoiceSchema,
-  contact: ConvertContactChoiceSchema.optional(),
+  contact: ConvertContactChoiceSchema,
   opportunityName: text(200),
   duplicateOverride: z.strictObject({ reason: text(500) }).optional(),
   expectedVersion: z.number().int().min(1),
