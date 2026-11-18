@@ -19,7 +19,7 @@ export default async function NewVendorPage() {
   const mayWrite = vendorGrants(session.roles).write;
 
   return (
-    <Page width="narrow">
+    <Page>
       <Breadcrumb items={[{ label: 'Vendors', href: '/vendors' }, { label: 'Add vendor' }]} />
       <PageHeader
         title="Add vendor"

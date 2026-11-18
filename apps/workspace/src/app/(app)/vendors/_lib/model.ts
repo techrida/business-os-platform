@@ -12,7 +12,7 @@ export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 
 export const VENDOR_STATUS_LABEL: Record<VendorStatus, { tone: BadgeTone; text: string }> = {
   draft: { tone: 'neutral', text: 'Draft' },
-  pending_kyc: { tone: 'info', text: 'Waiting for KYC' },
+  pending_kyc: { tone: 'info', text: 'KYC pending' },
   under_review: { tone: 'warning', text: 'Under review' },
   approved: { tone: 'success', text: 'Approved' },
   suspended: { tone: 'warning', text: 'Suspended' },

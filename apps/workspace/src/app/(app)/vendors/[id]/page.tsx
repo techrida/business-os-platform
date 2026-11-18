@@ -17,6 +17,7 @@ import { listVerificationCases, type Listing } from '@/components/p2/customers/a
 import { isGuid, VERIFICATION_STATUS_LABEL } from '@/components/p2/customers/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
+import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -463,18 +464,13 @@ export default async function VendorPage({
       />
 
       {flags.created !== undefined ? (
-        <Alert tone="success" role="status" title="Vendor added.">
-          Add a contact and a bank account below, then start the KYB review.
-        </Alert>
+        <SuccessNotice message="Vendor added. Add a contact and a bank account before starting review." />
       ) : flags.saved !== undefined ? (
-        <Alert tone="success" role="status" title="Changes saved." />
+        <SuccessNotice message="Changes saved." />
       ) : null}
 
       <div className={styles.columns}>
         <div className={styles.main}>
-          <Panel title="Profile">
-            <FactList facts={facts} />
-          </Panel>
           <Contacts
             result={contacts}
             here={here}
@@ -486,6 +482,9 @@ export default async function VendorPage({
         </div>
 
         <div className={styles.sideStack}>
+          <Panel title="Profile" className={styles.profile}>
+            <FactList facts={facts} />
+          </Panel>
           <Panel
             title="Status"
             as="aside"
