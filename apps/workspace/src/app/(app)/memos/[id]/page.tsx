@@ -197,7 +197,11 @@ export default async function MemoPage({
               {memo.number} · created <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>
             </>
           }
-          actions={editable ? <SubmitForm memoId={memo.id} missing={missing} /> : undefined}
+          actions={
+            editable ? (
+              <SubmitForm memoId={memo.id} version={memo.version} missing={missing} />
+            ) : undefined
+          }
         />
 
         {attachHint ? (
@@ -243,6 +247,7 @@ export default async function MemoPage({
                 template={memo.template}
                 action={updateMemoAction}
                 memoId={memo.id}
+                memoVersion={memo.version}
                 draftAccount={memoDraftAccount(session)}
                 initial={{
                   title: memo.title,

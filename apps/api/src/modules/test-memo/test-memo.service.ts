@@ -485,6 +485,7 @@ export class TestMemoService implements OnModuleInit {
       // Scope first (404), then state (409): someone who may not edit learns nothing about the status.
       this.assertVisible('memo.update', row);
       this.assertEditable(row);
+      this.assertVersion(row, body.expectedVersion);
 
       const money: Money = {
         amount: body.amount ?? row.amount,
@@ -516,6 +517,16 @@ export class TestMemoService implements OnModuleInit {
         .returning();
       return toMemoDto(updated!);
     });
+  }
+
+  private assertVersion(row: MemoRow, expected: number | undefined): void {
+    if (expected !== undefined && row.version !== expected) {
+      throw new ConflictException({
+        code: 'conflict',
+        message: 'The memo has changed since you opened it',
+        reason: 'stale_memo',
+      });
+    }
   }
 
   // ----------------------------------------------------------------------------------------------- discard
@@ -555,13 +566,14 @@ export class TestMemoService implements OnModuleInit {
 
   // ------------------------------------------------------------------------------------------------ submit
 
-  async submit(id: string): Promise<SubmitMemoResult> {
+  async submit(id: string, expectedVersion?: number): Promise<SubmitMemoResult> {
     const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
     const result = await withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       this.assertVisible('memo.update', row);
       this.assertEditable(row);
+      this.assertVersion(row, expectedVersion);
       // allClean reads committed document rows: a scan that finishes after this point only makes a file
       // clean sooner, and an upload that starts after it belongs to the next submit.
       if (!(await this.documents.allClean(scope, MEMO_OWNER_TYPE, id))) throw notAllClean();

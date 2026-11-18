@@ -23,7 +23,12 @@ import {
 import { Can } from '../../platform/authz/decorators';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { TestMemoService } from './test-memo.service';
-import { UpdateMemoBodySchema, type MemoDetailDto, type SubmitMemoResult } from './test-memo.types';
+import {
+  SubmitMemoBodySchema,
+  UpdateMemoBodySchema,
+  type MemoDetailDto,
+  type SubmitMemoResult,
+} from './test-memo.types';
 
 @Controller('v1/test-memos')
 export class TestMemoController {
@@ -82,7 +87,7 @@ export class TestMemoController {
   @Post(':id/submit')
   @HttpCode(200)
   @Can('memo.update')
-  submit(@Param('id', ParseUUIDPipe) id: string): Promise<SubmitMemoResult> {
-    return this.memos.submit(id);
+  submit(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<SubmitMemoResult> {
+    return this.memos.submit(id, parseOr400(SubmitMemoBodySchema, body ?? {}).expectedVersion);
   }
 }

@@ -12,9 +12,16 @@ export const UpdateMemoBodySchema = z
     body: CreateMemoBodySchema.shape.body.optional(),
     amount: CreateMemoBodySchema.shape.amount.optional(),
     currency: CreateMemoBodySchema.shape.currency.optional(),
+    expectedVersion: z.int().positive().optional(),
   })
-  .refine((b) => Object.values(b).some((v) => v !== undefined), 'at least one field is required');
+  .refine(
+    (b) =>
+      Object.entries(b).some(([key, value]) => key !== 'expectedVersion' && value !== undefined),
+    'at least one field is required',
+  );
 export type UpdateMemoBody = z.infer<typeof UpdateMemoBodySchema>;
+
+export const SubmitMemoBodySchema = z.object({ expectedVersion: z.int().positive().optional() });
 
 export const MEMO_OWNER_TYPE = 'test_memo';
 
