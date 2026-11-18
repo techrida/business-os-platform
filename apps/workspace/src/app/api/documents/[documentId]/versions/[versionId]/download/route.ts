@@ -1,3 +1,4 @@
+import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 import { failureOf, issueDocumentLink, openSignedFile } from '@/lib/api-kernel';
 import { routeSession } from '@/lib/bff';
 
@@ -27,6 +28,11 @@ export async function GET(
 ): Promise<Response> {
   const session = await routeSession();
   if (session instanceof Response) {
+    if (session.status === 503) {
+      const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
+      response.headers.set('retry-after', '1');
+      return response;
+    }
     return plain(
       session.status === 401 ? 'Sign in to download this file.' : 'Staff only.',
       session.status,
