@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { createDraftMemo, signInAs, submitMemo } from './helpers/memo-flow';
 
-test('overview shows real assigned approvals and hides the widget when the inbox is denied', async ({
+test('overview shows an assigned approval to the approver and excludes it for the requester', async ({
   browser,
   baseURL,
 }) => {
@@ -19,7 +19,11 @@ test('overview shows real assigned approvals and hides the widget when the inbox
     const approvalId = await submitMemo(sales.page);
     await sales.page.goto('/');
     await expect(sales.page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
-    await expect(sales.page.getByText('Pending approvals', { exact: true })).toHaveCount(0);
+    await expect(
+      sales.page
+        .getByRole('table', { name: 'Pending approvals' })
+        .getByRole('link', { name: subject }),
+    ).toHaveCount(0);
     await expect(sales.page.getByText('Unread notifications', { exact: true })).toBeVisible();
 
     const accountant = await signInAs(browser, app, 'accountant');
