@@ -50,6 +50,7 @@ const opportunity = (stage = 'qualified') => ({
   currency: 'NPR',
   probability: null,
   expectedClose: null,
+  wonQuotationVersionId: null,
   version: 1,
   createdAt: WHEN,
   updatedAt: WHEN,
@@ -59,6 +60,9 @@ const quote = (id: string, over: Partial<QuotationListItem> = {}) =>
   ({
     id,
     number: `QT-${id.slice(-1)}`,
+    currency: 'NPR',
+    total: '12500.00',
+    validUntil: '2026-11-30',
     status: 'draft',
     canEdit: true,
     ...over,
@@ -131,5 +135,23 @@ describe('opportunity quotation actions (demo feedback: New quotation made four 
       'View quotations',
       'Edit quotation',
     ]);
+  });
+
+  it('links associated quotations and highlights the accepted version that won the deal', async () => {
+    mocks.getOpportunity.mockResolvedValue({
+      ...opportunity('won'),
+      wonQuotationVersionId: Q1,
+    });
+    mocks.listQuotations.mockResolvedValue([
+      quote(Q1, { currentVersionId: Q1, status: 'accepted', canEdit: false }),
+      quote(Q2, { currentVersionId: Q2, status: 'sent', canEdit: false }),
+    ]);
+
+    const html = await render();
+    expect(html).toContain('<caption class="sr-only">Opportunity quotations</caption>');
+    expect(html).toContain(`href="/quotations/${Q1}">QT-1</a>`);
+    expect(html).toContain(`href="/quotations/${Q2}">QT-2</a>`);
+    expect(html).toContain('data-accepted="true"');
+    expect(html).not.toContain('name="stage"');
   });
 });
