@@ -18,13 +18,16 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
+import { memoDraftAccount } from '@/lib/memo-working-draft';
 
 import { StatusBadge } from '../../kit';
 import styles from '../../kit.module.css';
 import { updateMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
 import { MemoPreview } from '../memo-preview';
+import { MemoReviewGate } from '../memo-review-gate';
 import { Attachments } from './attachments';
+import { submitMissing } from './detail-model';
 import { SubmitForm } from './submit-form';
 
 export const metadata: Metadata = { title: 'Memo · Business OS' };
@@ -101,6 +104,10 @@ export default async function MemoPage({
   const directory =
     editable && memo.template ? await getMemoDirectory(session).catch(() => undefined) : undefined;
 
+  // With an editor that has its own live preview, the saved render and fact list would only repeat it.
+  const showEditor = editable && (!memo.template || directory !== undefined);
+  const showMemoPanel = !(showEditor && memo.template);
+
   // The preview uses the same separation-of-duties list as the submit call (owner and editors),
   // so it shows the route submit will actually build, not the viewer's own.
   const entityIds = [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])];
@@ -139,16 +146,7 @@ export default async function MemoPage({
     );
 
   const attachments = memo.attachments.map(toAttachmentView);
-  const notClean = attachments.filter((a) => a.status !== 'clean');
-  const scanning = notClean.filter(
-    (a) => a.status === 'quarantined' || a.status === 'awaiting_content',
-  );
-  const submitBlocker =
-    scanning.length > 0
-      ? `Waiting for ${scanning.length} attachment${scanning.length === 1 ? '' : 's'} to finish scanning. This page updates by itself.`
-      : notClean.length > 0
-        ? 'An attachment did not pass the scan, so this memo cannot be submitted.'
-        : null;
+  const missing = submitMissing(attachments);
 
   const facts: Fact[] = [
     {
@@ -186,42 +184,83 @@ export default async function MemoPage({
   ];
 
   return (
-    <Page>
-      <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: memo.title }]} />
-      <PageHeader
-        title={memo.title}
-        status={<StatusBadge status={memo.status} />}
-        description={
-          <>
-            {memo.number} · created <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>
-          </>
-        }
-      />
+    <MemoReviewGate>
+      <Page>
+        <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: memo.title }]} />
+        <PageHeader
+          title={memo.title}
+          status={
+            <StatusBadge status={memo.approval?.status === 'blocked' ? 'blocked' : memo.status} />
+          }
+          description={
+            <>
+              {memo.number} · created <time dateTime={memo.createdAt}>{when(memo.createdAt)}</time>
+            </>
+          }
+          actions={editable ? <SubmitForm memoId={memo.id} missing={missing} /> : undefined}
+        />
 
-      {attachHint ? (
-        <Alert tone="success" role="status" title="Draft saved.">
-          Attach your files below. Each one is scanned before anyone can download it, and the memo
-          can be submitted once they are clean.
-        </Alert>
-      ) : saved ? (
-        <Alert tone="success" role="status">
-          Your changes were saved.
-        </Alert>
-      ) : submitted === 'blocked' ? (
-        <Alert tone="warning" role="status" title="Submitted, but it is blocked.">
-          No approver is available for a step of the route. An administrator can fix the route, then
-          reroute it.
-        </Alert>
-      ) : submitted === 'pending' ? (
-        <Alert tone="success" role="status">
-          Submitted for approval. You will get a notification when it is decided.
-        </Alert>
-      ) : null}
+        {attachHint ? (
+          <Alert tone="success" role="status" title="Draft saved.">
+            Attach your files below. Each one is scanned before anyone can download it, and the memo
+            can be submitted once they are clean.
+          </Alert>
+        ) : saved ? (
+          <Alert tone="success" role="status">
+            Your changes were saved.
+          </Alert>
+        ) : submitted === 'blocked' ? (
+          <Alert tone="warning" role="status" title="Submitted, but it is blocked.">
+            No approver is available for a step of the route. An administrator can fix the route,
+            then reroute it.
+          </Alert>
+        ) : submitted === 'pending' ? (
+          <Alert tone="success" role="status">
+            Submitted for approval. You will get a notification when it is decided.
+          </Alert>
+        ) : null}
 
-      <div className={styles.columns}>
         <div className={styles.main}>
+          {showMemoPanel ? (
+            <Panel title="Memo">
+              {memo.template ? (
+                <MemoPreview
+                  template={memo.template}
+                  title={memo.title}
+                  body={memo.body}
+                  source={{ kind: 'saved', memoId: memo.id }}
+                  noun="memo"
+                />
+              ) : null}
+              <FactList facts={facts} />
+            </Panel>
+          ) : null}
+
+          {showEditor ? (
+            <Panel title="Edit memo">
+              <MemoForm
+                directory={directory}
+                template={memo.template}
+                action={updateMemoAction}
+                memoId={memo.id}
+                draftAccount={memoDraftAccount(session)}
+                initial={{
+                  title: memo.title,
+                  body: memo.body,
+                  amount: memo.amount,
+                  currency: memo.currency,
+                }}
+              />
+            </Panel>
+          ) : null}
+
           <Panel
-            title="Memo"
+            title="Approval route"
+            description={
+              editable
+                ? 'This is who will be asked to approve, and why. It is worked out again when you submit.'
+                : undefined
+            }
             actions={
               memo.approval ? (
                 <Link
@@ -233,45 +272,80 @@ export default async function MemoPage({
               ) : null
             }
           >
-            {memo.template ? (
-              <MemoPreview
-                template={memo.template}
-                title={memo.title}
-                body={memo.body}
-                source={{ kind: 'saved', memoId: memo.id }}
-                noun="memo"
-              />
-            ) : null}
-            <FactList facts={facts} />
+            {editable ? (
+              <div className={styles.routeBody}>
+                {plan ? (
+                  <ol className={styles.steps}>
+                    {plan.steps.map((s) => (
+                      <li key={s.seq} className={styles.step}>
+                        <span className={styles.stepNo} aria-hidden="true">
+                          {s.seq}
+                        </span>
+                        <div className={styles.stepBody}>
+                          <div className={styles.stepHead}>
+                            <span className={styles.stepWho}>
+                              <span className="sr-only">Step {s.seq}: </span>
+                              {memo.template &&
+                              [...memo.template.recommenders, memo.template.approvedBy][s.seq - 1]
+                                ? [...memo.template.recommenders, memo.template.approvedBy][
+                                    s.seq - 1
+                                  ]!.name
+                                : s.kind === 'role' && s.roleKey
+                                  ? `Anyone with the ${s.roleKey} role`
+                                  : s.kind === 'group'
+                                    ? 'An approval group'
+                                    : 'A named person'}
+                            </span>
+                            {s.blocked ? <StatusBadge status="blocked" /> : null}
+                          </div>
+                          <p className={styles.stepReason}>{s.reason}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <Alert tone="warning" role="status">
+                    {previewFailure?.status === 403
+                      ? 'You cannot preview the route with your roles. Submitting still works if you may submit.'
+                      : 'The route preview did not load. You can still submit; the route is worked out then.'}
+                  </Alert>
+                )}
+                {plan?.blocked ? (
+                  <Alert
+                    tone="warning"
+                    title={`No one can approve step ${plan.steps.find((s) => s.blocked)?.seq ?? ''} yet.`}
+                  >
+                    {plan.blockReason ??
+                      'Everyone eligible prepared this memo, so they cannot approve it.'}{' '}
+                    You can still submit; it will wait as blocked until an administrator fixes the
+                    route.
+                  </Alert>
+                ) : null}
+              </div>
+            ) : (
+              <p className={styles.note}>
+                {memo.approval?.status === 'blocked'
+                  ? 'Approval is blocked. An administrator can update the approval route.'
+                  : memo.status === 'submitted'
+                    ? 'This memo is waiting for approval. It cannot be edited until it is returned.'
+                    : memo.status === 'approved'
+                      ? 'This memo was approved.'
+                      : 'This memo was rejected.'}
+              </p>
+            )}
           </Panel>
 
-          {editable && (!memo.template || directory) ? (
-            <Panel title="Edit memo">
-              <MemoForm
-                directory={directory}
-                template={memo.template}
-                action={updateMemoAction}
+          {editable || attachments.length > 0 ? (
+            <Panel title="Attachments" id="attachments">
+              <Attachments
                 memoId={memo.id}
-                submitLabel="Save changes"
-                initial={{
-                  title: memo.title,
-                  body: memo.body,
-                  amount: memo.amount,
-                  currency: memo.currency,
-                }}
+                initial={attachments}
+                canUpload={editable}
+                maxBytes={MAX_UPLOAD_BYTES}
+                allowedMime={[...ALLOWED_MIME]}
               />
             </Panel>
           ) : null}
-
-          <Panel title="Attachments" id="attachments">
-            <Attachments
-              memoId={memo.id}
-              initial={attachments}
-              canUpload={editable}
-              maxBytes={MAX_UPLOAD_BYTES}
-              allowedMime={[...ALLOWED_MIME]}
-            />
-          </Panel>
 
           <Panel title="Audit timeline" description="Times are Kathmandu time.">
             {auditDenied && events.length === 0 ? (
@@ -289,79 +363,7 @@ export default async function MemoPage({
             )}
           </Panel>
         </div>
-
-        <Panel
-          as="aside"
-          title="Approval route"
-          description={
-            editable
-              ? 'This is who will be asked to approve, and why. It is worked out again when you submit.'
-              : undefined
-          }
-          className={styles.side}
-        >
-          {editable ? (
-            <div className={styles.routeBody}>
-              {plan ? (
-                <ol className={styles.steps}>
-                  {plan.steps.map((s) => (
-                    <li key={s.seq} className={styles.step}>
-                      <span className={styles.stepNo} aria-hidden="true">
-                        {s.seq}
-                      </span>
-                      <div className={styles.stepBody}>
-                        <div className={styles.stepHead}>
-                          <span className={styles.stepWho}>
-                            <span className="sr-only">Step {s.seq}: </span>
-                            {memo.template &&
-                            [...memo.template.recommenders, memo.template.approvedBy][s.seq - 1]
-                              ? [...memo.template.recommenders, memo.template.approvedBy][
-                                  s.seq - 1
-                                ]!.name
-                              : s.kind === 'role' && s.roleKey
-                                ? `Anyone with the ${s.roleKey} role`
-                                : s.kind === 'group'
-                                  ? 'An approval group'
-                                  : 'A named person'}
-                          </span>
-                          {s.blocked ? <StatusBadge status="blocked" /> : null}
-                        </div>
-                        <p className={styles.stepReason}>{s.reason}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <Alert tone="warning" role="status">
-                  {previewFailure?.status === 403
-                    ? 'You cannot preview the route with your roles. Submitting still works if you may submit.'
-                    : 'The route preview did not load. You can still submit; the route is worked out then.'}
-                </Alert>
-              )}
-              {plan?.blocked ? (
-                <Alert
-                  tone="warning"
-                  title={`No one can approve step ${plan.steps.find((s) => s.blocked)?.seq ?? ''} yet.`}
-                >
-                  {plan.blockReason ??
-                    'Everyone eligible prepared this memo, so they cannot approve it.'}{' '}
-                  You can still submit; it will wait as blocked until an administrator fixes the
-                  route.
-                </Alert>
-              ) : null}
-              <SubmitForm memoId={memo.id} blocker={submitBlocker} />
-            </div>
-          ) : (
-            <p className={styles.note}>
-              {memo.status === 'submitted'
-                ? 'This memo is waiting for approval. It cannot be edited until it is returned.'
-                : memo.status === 'approved'
-                  ? 'This memo was approved.'
-                  : 'This memo was rejected.'}
-            </p>
-          )}
-        </Panel>
-      </div>
-    </Page>
+      </Page>
+    </MemoReviewGate>
   );
 }
