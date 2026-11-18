@@ -127,8 +127,8 @@ export function DatePicker({
         <Button className={styles.trigger ?? ''}>
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
+            width="20"
+            height="20"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -145,7 +145,7 @@ export function DatePicker({
           </svg>
         </Button>
       </Group>
-      <Popover placement="bottom start" offset={4} className={styles.popover ?? ''}>
+      <Popover placement="bottom start" offset={8} className={styles.popover ?? ''}>
         <Dialog className={styles.dialog ?? ''}>
           <Calendar className={styles.calendar ?? ''}>
             <header className={styles.calendarHeader ?? ''}>
