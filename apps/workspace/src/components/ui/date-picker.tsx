@@ -63,6 +63,8 @@ export interface DatePickerProps {
   /** Accessible name when there is no visible label. */
   'aria-label'?: string | undefined;
   className?: string | undefined;
+  /** For an enclosing modal, keep the calendar inside its focus and stacking boundary. */
+  popoverContainer?: HTMLElement | undefined;
 }
 
 /**
@@ -92,6 +94,7 @@ export function DatePicker({
   invalid,
   'aria-invalid': ariaInvalid,
   className,
+  popoverContainer,
   ...aria
 }: DatePickerProps) {
   const isInvalid = invalid === true || ariaInvalid === true || ariaInvalid === 'true';
@@ -145,7 +148,17 @@ export function DatePicker({
           </svg>
         </Button>
       </Group>
-      <Popover placement="bottom start" offset={4} className={styles.popover ?? ''}>
+      <Popover
+        placement="bottom start"
+        offset={4}
+        className={styles.popover ?? ''}
+        {...(popoverContainer
+          ? {
+              UNSTABLE_portalContainer: popoverContainer,
+              boundaryElement: popoverContainer,
+            }
+          : {})}
+      >
         <Dialog className={styles.dialog ?? ''}>
           <Calendar className={styles.calendar ?? ''}>
             <header className={styles.calendarHeader ?? ''}>

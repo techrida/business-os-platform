@@ -28,6 +28,16 @@ export interface FilePreviewDialogProps {
   onOpenChange?: ((open: boolean) => void) | undefined;
   /** Called when Download is activated, for example to show a "File downloaded" toast. */
   onDownload?: (() => void) | undefined;
+  /** Optional content below the preview, such as fields to edit an attachment. */
+  children?: ReactNode | undefined;
+  /** Replaces the media while there is no previewable version yet. */
+  placeholder?: ReactNode | undefined;
+  /** Additional control layered above the stage. */
+  stageOverlay?: ReactNode | undefined;
+  /** Replaces Close with the caller's actions, after the shared Download control. */
+  actions?: ReactNode | undefined;
+  locked?: boolean | undefined;
+  closeOnOutsideClick?: boolean | undefined;
 }
 
 /**
@@ -60,8 +70,25 @@ export function FilePreviewDialog({
   defaultOpen,
   onOpenChange,
   onDownload,
+  children,
+  placeholder,
+  stageOverlay,
+  actions,
+  locked,
+  closeOnOutsideClick,
 }: FilePreviewDialogProps) {
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const failed = failedUrl === previewUrl;
+  const hasStageSlot = placeholder !== undefined || stageOverlay !== undefined;
+  const stage = placeholder ?? (
+    <Stage
+      name={name}
+      mimeType={mimeType}
+      previewUrl={previewUrl}
+      failed={failed}
+      onFail={() => setFailedUrl(previewUrl)}
+    />
+  );
   const dialog = {
     ...(trigger ? { trigger } : {}),
     ...(open !== undefined ? { open } : {}),
@@ -71,12 +98,14 @@ export function FilePreviewDialog({
     <Dialog
       {...dialog}
       onOpenChange={(next) => {
-        if (!next) setFailed(false);
+        if (!next && !locked) setFailedUrl(null);
         onOpenChange?.(next);
       }}
       title={name}
       size="full"
-      bodyClassName={styles.body}
+      locked={locked}
+      closeOnOutsideClick={closeOnOutsideClick}
+      bodyClassName={children || hasStageSlot ? styles.editBody : styles.body}
       footer={
         <Footer
           name={name}
@@ -85,16 +114,19 @@ export function FilePreviewDialog({
           downloadUrl={downloadUrl}
           failed={failed}
           onDownload={onDownload}
+          actions={actions}
         />
       }
     >
-      <Stage
-        name={name}
-        mimeType={mimeType}
-        previewUrl={previewUrl}
-        failed={failed}
-        onFail={() => setFailed(true)}
-      />
+      {hasStageSlot ? (
+        <div className={styles.stageSlot}>
+          {placeholder !== undefined ? <div className={styles.stage}>{stage}</div> : stage}
+          {stageOverlay ? <div className={styles.overlaySlot}>{stageOverlay}</div> : null}
+        </div>
+      ) : (
+        stage
+      )}
+      {children}
     </Dialog>
   );
 }
@@ -107,9 +139,10 @@ function Footer({
   downloadUrl,
   failed,
   onDownload,
+  actions,
 }: Pick<
   FilePreviewDialogProps,
-  'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload'
+  'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
 > & {
   failed: boolean;
 }) {
@@ -118,12 +151,14 @@ function Footer({
     !failed && previewKind(mimeType) !== 'unsupported' && isSameOriginUrl(previewUrl, origin);
   return (
     <>
-      <DialogClose asChild>
-        <Button variant="secondary">Close</Button>
-      </DialogClose>
+      {actions === undefined ? (
+        <DialogClose asChild>
+          <Button variant="secondary">Close</Button>
+        </DialogClose>
+      ) : null}
       {isSameOriginUrl(downloadUrl, origin) ? (
         <LinkButton
-          variant={canPreview ? 'secondary' : 'primary'}
+          variant={canPreview || actions !== undefined ? 'secondary' : 'primary'}
           href={downloadUrl}
           download={name}
           onClick={() => onDownload?.()}
@@ -132,6 +167,7 @@ function Footer({
           Download
         </LinkButton>
       ) : null}
+      {actions}
     </>
   );
 }
