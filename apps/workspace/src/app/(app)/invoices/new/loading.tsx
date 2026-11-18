@@ -6,7 +6,7 @@ import { Skeleton } from '@/components/ui/panel';
 export default function NewInvoiceLoading() {
   return (
     <Page aria-busy="true">
-      <PageHeader title="New invoice" />
+      <PageHeader title="Create Invoice" />
       <p className="sr-only" role="status">
         Loading the invoice form
       </p>

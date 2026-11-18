@@ -4,6 +4,7 @@ import { ApiError } from '@/lib/api';
 import { SESSION_UNAVAILABLE_MESSAGE, sessionUnavailableResponse } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
+import { GET as preview } from './preview/route';
 import { GET } from './route';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -126,5 +127,44 @@ describe('GET /invoices/:id/document', () => {
     const res = await call();
     expect(res.status).toBe(502);
     expect(await res.text()).not.toContain(session.accessToken);
+  });
+});
+
+describe('GET /invoices/:id/document/preview', () => {
+  const request = () =>
+    preview(new Request('https://app.test/x'), { params: Promise.resolve({ id: INVOICE }) });
+
+  it('streams the same scan-approved PDF inline through a newly issued link', async () => {
+    const res = await request();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-disposition')).toBe('inline');
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(await res.text()).toBe('%PDF-1.7');
+    expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
+    expect(mocks.openSignedFile).toHaveBeenCalledWith(session, LINK);
+  });
+
+  it('does not display a non-PDF stream or expose signed-link material', async () => {
+    mocks.openSignedFile.mockResolvedValue(
+      new Response('<script>unexpected()</script>', {
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
+    const res = await request();
+    expect(res.status).toBe(415);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(await res.text()).toBe('This file cannot be previewed.');
+  });
+
+  it('retains staff and clean-file gates', async () => {
+    mocks.routeSession.mockResolvedValueOnce(json(403, {}));
+    expect((await request()).status).toBe(403);
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+
+    mocks.apiFetch.mockResolvedValueOnce(json(404, {}));
+    expect((await request()).status).toBe(404);
+    expect(mocks.openSignedFile).not.toHaveBeenCalled();
   });
 });

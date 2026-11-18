@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +10,28 @@ import { InvoiceNoteActions } from './note-actions';
 // The dialogs import the server actions, which import server-only modules.
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
+// Radix mounts its portal only when a browser opens it. Keep the footer separate while
+// rendering the producer's form data and button wiring in this server-rendered test.
+vi.mock('@/components/ui/dialog', () => ({
+  Dialog: ({
+    trigger,
+    title,
+    description,
+    children,
+    footer,
+  }: Record<'trigger' | 'title' | 'description' | 'children' | 'footer', ReactNode>) => (
+    <>
+      {trigger}
+      <section>
+        <h2>{title}</h2>
+        <p>{description}</p>
+        {children}
+        <footer>{footer}</footer>
+      </section>
+    </>
+  ),
+  DialogClose: ({ children }: { children: ReactNode }) => children,
+}));
 
 const lines = invoiceDetail().lines;
 const taxCodes = [{ id: TAX, label: 'VAT 13%' }];

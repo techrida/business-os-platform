@@ -26,7 +26,7 @@ import type { Session } from '@/lib/session';
  * already issued is a success (`already_issued`), never an error. Nothing here computes an amount, a
  * number or a date: the server sets all three.
  *
- * Every action returns `done` with a sentence; the dialog shows it and reloads the page when closed.
+ * Every action returns `done` with a toast message; closing its dialog reloads the page.
  * This file exports only async functions and types: a Server Actions file cannot export values.
  */
 

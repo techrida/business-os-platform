@@ -15,6 +15,8 @@ import { when } from '@/lib/kernel-format';
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
 import { DayValue, Lines, NprSnapshot, Totals } from '../_components/detail-parts';
 import { InvoiceActions } from '../_components/invoice-actions';
+import { InvoicePreview } from '../_components/invoice-preview';
+import { InvoiceProgress } from '../_components/invoice-progress';
 import styles from '../_components/invoice.module.css';
 import { InvoiceNoteActions } from '../_components/notes/note-actions';
 import { invoiceGates } from '../_lib/gates';
@@ -25,22 +27,10 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * The PDF of an issued invoice: a link, or words. The link is a plain anchor and never `next/link`:
- * the route behind it issues a single-use signed link on every call, and a prefetch would spend it
- * before the person clicks. A proforma is not a tax document and has no PDF here.
- */
-function Pdf({ invoice }: { invoice: InvoiceDetail['invoice'] }) {
-  if (invoice.status === 'issued' && invoice.kind !== 'proforma') {
-    return <a href={`/invoices/${encodeURIComponent(invoice.id)}/document`}>Download PDF</a>;
-  }
-  const words =
-    invoice.kind === 'proforma'
-      ? 'A proforma has no PDF here.'
-      : invoice.status === 'discarded'
-        ? 'A discarded invoice has no PDF.'
-        : 'The PDF is made when the invoice is issued.';
-  return <span className={styles.quiet}>{words}</span>;
+function pdfAvailability(invoice: InvoiceDetail['invoice']) {
+  if (invoice.kind === 'proforma') return 'A proforma has no PDF here.';
+  if (invoice.status === 'discarded') return 'A discarded invoice has no PDF.';
+  return 'The PDF is made when the invoice is issued.';
 }
 
 function facts(invoice: InvoiceDetail['invoice']): Fact[] {
@@ -128,10 +118,22 @@ function facts(invoice: InvoiceDetail['invoice']): Fact[] {
         </>
       ),
     },
-    { key: 'pdf', label: 'PDF', value: <Pdf invoice={invoice} /> },
     { key: 'fy', label: 'Fiscal year', value: invoice.fiscalYear ?? '—' },
     { key: 'currency', label: 'Currency', value: invoice.currency },
   );
+  if (invoice.status !== 'issued' || invoice.kind === 'proforma') {
+    out.push({ key: 'pdf', label: 'PDF', value: pdfAvailability(invoice) });
+  }
+  if (invoice.buyer?.address) {
+    out.push({ key: 'billingAddress', label: 'Billing address', value: invoice.buyer.address });
+  }
+  if (invoice.buyer?.panVatNo) {
+    out.push({
+      key: 'buyerTaxNumber',
+      label: 'Customer tax number',
+      value: invoice.buyer.panVatNo,
+    });
+  }
   if (invoice.manualReason !== null) {
     out.push({
       key: 'manual',
@@ -185,6 +187,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
   const { invoice } = detail;
   const gates = invoiceGates(invoice, session.roles);
+  const pdfNumber =
+    invoice.kind !== 'proforma' && invoice.status === 'issued' ? invoice.number : null;
   const kind = kindMeta(invoice.kind).label;
   // Only a debit note needs the tax codes, and only the people who may write one are shown the button.
   // A list that fails to load degrades the dialog (it says so); it never fails the page.
@@ -201,29 +205,24 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         title={<span className={styles.wrap}>{invoice.number ?? kind}</span>}
         status={
           <>
-            <InvoiceKindBadge kind={invoice.kind} /> <InvoiceStatusBadge status={invoice.status} />
+            {invoice.number ? <InvoiceKindBadge kind={invoice.kind} /> : null}
+            <InvoiceStatusBadge status={invoice.status} />
           </>
         }
-        description={
-          <span className={styles.wrap}>
-            {invoice.buyer?.legalName ?? 'Customer details unavailable'}
-          </span>
+        description={invoice.buyer?.legalName ?? undefined}
+        actions={
+          pdfNumber || gates.submit || gates.issue || gates.discard ? (
+            <>
+              <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
+              {pdfNumber ? (
+                <InvoicePreview documentUrl={`${path}/document`} number={pdfNumber} />
+              ) : null}
+            </>
+          ) : undefined
         }
       />
 
-      <div className={styles.actions}>
-        <InvoiceActions invoice={invoice} gates={gates} reloadHref={path} />
-        {gates.notes ? (
-          <div className={styles.noteSlot} data-slot="invoice-note-actions">
-            <InvoiceNoteActions
-              invoice={invoice}
-              lines={detail.lines}
-              taxCodes={taxCodes}
-              gates={gates}
-            />
-          </div>
-        ) : null}
-      </div>
+      <InvoiceProgress invoice={invoice} />
 
       {invoice.status === 'returned' ? (
         <Alert tone="info" title="This invoice was returned for changes.">
@@ -232,16 +231,29 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       ) : null}
 
       <div className={styles.columns}>
-        <Panel title="Invoice" description={`Last changed ${when(invoice.updatedAt)}`}>
-          <FactList facts={facts(invoice)} />
-        </Panel>
+        <div className={styles.detailMain}>
+          <Panel title="Invoice details" description={`Last changed ${when(invoice.updatedAt)}`}>
+            <FactList facts={facts(invoice)} />
+          </Panel>
+          <Lines detail={detail} />
+        </div>
         <div className={styles.side}>
           <Totals invoice={invoice} />
           <NprSnapshot invoice={invoice} />
+          {gates.notes ? (
+            <Panel as="aside" title="Adjustments">
+              <div className={styles.noteSlot} data-slot="invoice-note-actions">
+                <InvoiceNoteActions
+                  invoice={invoice}
+                  lines={detail.lines}
+                  taxCodes={taxCodes}
+                  gates={gates}
+                />
+              </div>
+            </Panel>
+          ) : null}
         </div>
       </div>
-
-      <Lines detail={detail} />
     </Page>
   );
 }

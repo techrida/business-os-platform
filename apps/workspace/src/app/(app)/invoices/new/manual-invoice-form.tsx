@@ -5,9 +5,13 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
-import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Field, Select, Textarea } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
+import { toast } from '@/components/ui/toast';
 
+import { DraftSummary } from './draft-summary';
 import type { InvoiceFormState } from './form-state';
 import { LinesEditor, useLines } from './lines-editor';
 import styles from './manual-invoice.module.css';
@@ -25,13 +29,7 @@ const CURRENCY_LABEL: Record<Currency, string> = {
   USD: 'USD (US dollar)',
 };
 
-/**
- * The manual invoice form: customer, currency, why it has no sales order, an optional due date and
- * the lines. No number, no issue date and no totals: the server sets the first two when the invoice
- * is issued and works out the totals on save, and the person reads them on the invoice page.
- * Inputs are controlled so a refusal does not wipe what was typed (React 19 resets uncontrolled
- * fields after every action).
- */
+/** The manual form keeps its inputs after a refusal. Numbering, issue date and tax are server-owned. */
 export function ManualInvoiceForm({
   action,
   customers,
@@ -40,12 +38,10 @@ export function ManualInvoiceForm({
   idempotencyKey,
 }: {
   action: (prev: InvoiceFormState, form: FormData) => Promise<InvoiceFormState>;
-  /** null when the customer list failed to load. */
   customers: readonly CustomerOption[] | null;
-  /** Said under the customer field when the list is cut short or empty. */
   customersNote?: string | undefined;
   taxCodes: readonly TaxCode[] | null;
-  /** A UUID the server made for this render: a double click or a retry creates the invoice once. */
+  /** One key per render, retained after an unknown result so a retry only creates one invoice. */
   idempotencyKey: string;
 }) {
   const [state, formAction, pending] = useActionState<InvoiceFormState, FormData>(action, {
@@ -60,13 +56,18 @@ export function ManualInvoiceForm({
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
 
-  // Send focus to what needs attention: the summary, else the first field that is wrong.
   useEffect(() => {
-    if (state.error || state.errors['form']) summaryRef.current?.focus();
-    else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    if (state.error || state.errors['form']) {
+      toast.error('Invoice draft was not saved');
+      summaryRef.current?.focus();
+    } else if (Object.keys(state.errors).length > 0) {
+      toast.error('Check the highlighted fields');
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
   }, [state]);
 
   const errors = state.errors;
+  const customer = customers?.find((c) => c.id === customerId);
   const choose = (id: string): void => {
     setCustomerId(id);
     const usual = customers?.find((c) => c.id === id)?.currency;
@@ -78,6 +79,21 @@ export function ManualInvoiceForm({
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <input type="hidden" name="lines" value={JSON.stringify(lines)} />
 
+      <PageHeader
+        title="Create Invoice"
+        description="Draft an invoice for work billed directly to a customer."
+        actions={
+          <>
+            <LinkButton variant="secondary" href="/invoices">
+              Cancel
+            </LinkButton>
+            <Button type="submit" disabled={pending}>
+              {pending ? 'Saving' : 'Save draft invoice'}
+            </Button>
+          </>
+        }
+      />
+
       {state.error || errors['form'] ? (
         <Alert
           ref={summaryRef}
@@ -87,8 +103,7 @@ export function ManualInvoiceForm({
           title="Nothing was saved"
           actions={
             state.reload ? (
-              // A plain anchor on purpose: a full page load clears the form and its idempotency key,
-              // which a client-side <Link> to the same URL would keep.
+              // A full page load clears out-of-date form state and its idempotency key.
               // eslint-disable-next-line @next/next/no-html-link-for-pages
               <a href="/invoices/new">Reload this page</a>
             ) : null
@@ -98,12 +113,14 @@ export function ManualInvoiceForm({
         </Alert>
       ) : null}
 
-      <Panel
-        title="Invoice"
-        description="The platform sets the number and the issue date when the invoice is issued."
-      >
+      <Panel title="Customer and source">
         <div className={styles.grid}>
-          <Field label="Customer" error={errors['customerId']} hint={customersNote}>
+          <Field
+            label="Organization legal name"
+            error={errors['customerId']}
+            hint={customersNote}
+            className={styles.wide ?? ''}
+          >
             {(control) => (
               <Select
                 name="customerId"
@@ -121,6 +138,31 @@ export function ManualInvoiceForm({
               </Select>
             )}
           </Field>
+          <Field
+            label="Why is there no sales order?"
+            hint="Shown to the approvers."
+            error={errors['manualReason']}
+            className={styles.wide ?? ''}
+          >
+            {(control) => (
+              <Textarea
+                name="manualReason"
+                rows={2}
+                maxLength={1000}
+                value={manualReason}
+                onChange={(e) => setManualReason(e.target.value)}
+                {...control}
+              />
+            )}
+          </Field>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Invoice details"
+        description="The invoice number and issue date are assigned at issue."
+      >
+        <div className={styles.grid}>
           <Field label="Currency" error={errors['currency']}>
             {(control) => (
               <Select
@@ -143,39 +185,13 @@ export function ManualInvoiceForm({
             error={errors['dueDate']}
           >
             {(control) => (
-              <Input
-                name="dueDate"
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                {...control}
-              />
-            )}
-          </Field>
-          <Field
-            label="Why is there no sales order?"
-            hint="Kept on the invoice and shown to the approvers."
-            error={errors['manualReason']}
-            className={styles.wide ?? ''}
-          >
-            {(control) => (
-              <Textarea
-                name="manualReason"
-                rows={3}
-                maxLength={1000}
-                value={manualReason}
-                onChange={(e) => setManualReason(e.target.value)}
-                {...control}
-              />
+              <DatePicker name="dueDate" value={dueDate} onChange={setDueDate} {...control} />
             )}
           </Field>
         </div>
       </Panel>
 
-      <Panel
-        title="Lines"
-        description="Quantity and price per unit. The platform works out the amounts, the tax and the totals."
-      >
+      <Panel title="Line Items" className={styles.lineItems}>
         <LinesEditor
           lines={lines}
           currency={currency}
@@ -184,20 +200,19 @@ export function ManualInvoiceForm({
           onChange={setLine}
           onAdd={add}
           onRemove={remove}
+          layout="invoice"
+        />
+        <DraftSummary
+          customer={customer?.label}
+          currency={currency}
+          lines={lines}
+          pending={pending}
         />
       </Panel>
 
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Saving' : 'Save draft invoice'}
-        </Button>
-        <LinkButton variant="secondary" href="/invoices">
-          Cancel
-        </LinkButton>
-        <p role="status" className={styles.status}>
-          {pending ? 'Saving the draft invoice' : ''}
-        </p>
-      </div>
+      <p role="status" className="sr-only">
+        {pending ? 'Saving the draft invoice' : ''}
+      </p>
     </form>
   );
 }

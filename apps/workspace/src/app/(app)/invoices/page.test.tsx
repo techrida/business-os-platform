@@ -62,13 +62,13 @@ describe('invoice list', () => {
     expect(html).not.toContain('null');
   });
 
-  it('offers New invoice to the people who may draft one, and to nobody else', async () => {
+  it('offers Create Invoice to the people who may draft one, and to nobody else', async () => {
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
-    expect(await render()).toMatch(/<a[^>]*href="\/invoices\/new"[^>]*>New invoice<\/a>/);
+    expect(await render()).toMatch(/<a[^>]*href="\/invoices\/new"[^>]*>.*Create Invoice<\/a>/);
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
-    expect(await render()).not.toContain('New invoice');
+    expect(await render()).not.toContain('Create Invoice');
     mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
-    expect(await render()).not.toContain('New invoice');
+    expect(await render()).not.toContain('Create Invoice');
   });
 
   it('passes only a valid kind and status to the API', async () => {
@@ -113,6 +113,27 @@ describe('invoice list', () => {
     const html = await render({ kind: 'proforma' });
     expect(html).toContain('The invoices did not load');
     expect(html).toContain('href="/invoices?kind=proforma"');
+  });
+
+  it('preserves the customer and search while paging the authorized result', async () => {
+    const scoped = Array.from({ length: 6 }, (_, index) =>
+      item({
+        id: `${index}1111111-1111-4111-8111-111111111111`,
+        number: `INV-2083/84-0000${index + 1}`,
+      }),
+    );
+    mocks.listInvoices
+      .mockResolvedValueOnce([...scoped, item({ number: 'INV-2082/83-OTHER' })])
+      .mockResolvedValueOnce(scoped);
+    const html = await render({ customerId: CUSTOMER, q: 'inv-2083/84', page: '2' });
+    expect(mocks.listInvoices).toHaveBeenNthCalledWith(1, expect.anything(), {
+      customerId: CUSTOMER,
+    });
+    expect(html).toContain('Showing 6–6 of 6');
+    expect(html).toContain('INV-2083/84-00006');
+    expect(html).not.toContain('INV-2083/84-00001');
+    expect(html).not.toContain('INV-2082/83-OTHER');
+    expect(html).toContain(`href="/invoices?customerId=${CUSTOMER}&amp;q=inv-2083%2F84"`);
   });
 
   it('keeps a very long customer name in the table cell, which wraps', async () => {

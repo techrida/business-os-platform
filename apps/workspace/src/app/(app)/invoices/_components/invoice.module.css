@@ -3,28 +3,132 @@
 
 /* ---- List ---- */
 
-.count {
-  white-space: nowrap;
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: var(--grid-gutter);
 }
 
-/* The filters are a plain GET form: it works without script, and the URL carries the choice. */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.search {
+  flex: 1 1 14rem;
+  max-width: 280px;
+}
+
+.filterFields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 12px;
+  min-width: 0;
 }
 
-.filterField {
-  flex: 0 1 220px;
-  min-width: min(100%, 180px);
+.filterFields > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
-.toolbarActions {
+.filterFields select {
+  max-width: 12.5rem;
+  border-color: var(--button-secondary-border);
+}
+
+.filterFields a {
+  align-self: center;
+}
+
+.addIcon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.tableCard {
+  min-width: 0;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--table-row-bg);
+}
+
+.listTable {
+  border: 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+.listTable tbody tr {
+  height: clamp(4rem, 6.2vw, 5.5rem);
+}
+
+.listTable tbody th {
+  color: var(--table-text);
+  font-size: inherit;
+  letter-spacing: normal;
+  border-bottom: 0;
+}
+
+.listTable tr > :nth-last-child(-n + 2) {
+  background: var(--surface-subtle);
+}
+
+.rowAction {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  color: var(--icon-secondary);
+}
+
+.rowAction:hover {
+  background: var(--action-primary-subtle);
+  color: var(--action-primary);
+}
+
+.tableFooter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  border-top: var(--border-width-thin) solid var(--card-border);
+}
+
+.tableFooter > :first-child {
+  flex: 1 1 20rem;
+}
+
+.rowsForm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.rowsForm label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+}
+
+.rowsForm select {
+  min-height: 34px;
+  width: auto;
+}
+
+@media (max-width: 767px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .search {
+    max-width: none;
+  }
 }
 
 .number {
@@ -49,19 +153,6 @@
 }
 
 /* ---- Detail ---- */
-
-/* The invoice actions, and the slot where the credit and debit note buttons mount. An empty slot takes no room. */
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.actions:empty,
-.noteSlot:empty {
-  display: none;
-}
 
 .noteSlot {
   display: flex;
@@ -88,6 +179,7 @@
   align-items: start;
 }
 
+.detailMain,
 .side {
   display: grid;
   gap: 24px;
@@ -96,7 +188,7 @@
 
 @media (min-width: 1200px) {
   .columns {
-    grid-template-columns: minmax(0, 1fr) 373px;
+    grid-template-columns: minmax(0, 2.15fr) minmax(280px, 1fr);
   }
 }
 
@@ -133,9 +225,12 @@
   overflow-wrap: anywhere;
 }
 
-/* The grand total is the one heavy line; weight and size carry it, no extra box. */
 .grandTotal {
-  padding-bottom: 0;
+  margin-top: 8px;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--action-primary-subtle);
 }
 
 .grandTotal .totalTerm {

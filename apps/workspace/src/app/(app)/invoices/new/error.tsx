@@ -19,7 +19,7 @@ export default function NewInvoiceError({
   if (isSessionUnavailable(error)) return <SessionUnavailableNotice retry={retry} />;
   return (
     <Page width="narrow">
-      <PageHeader title="New invoice" />
+      <PageHeader title="Create Invoice" />
       <Alert
         tone="error"
         role="alert"
