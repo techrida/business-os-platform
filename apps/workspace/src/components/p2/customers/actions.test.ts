@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve({ roles: ['sales'] }) }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+const { revalidatePath } = await import('next/cache');
 vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
@@ -45,6 +46,8 @@ const createForm = () =>
     country: 'NP',
     line1: 'Balaju',
     city: 'Kathmandu',
+    contactName: 'Sita Rai',
+    contactEmail: 'sita@himalayan.example',
     ackDuplicates: 'yes',
     idempotencyKey: IDEM,
   });
@@ -58,16 +61,68 @@ describe('createCustomerAction', () => {
     expect(res.error).toBe('Another customer already has this PAN/VAT number.');
     expect(res.key).not.toBe(IDEM);
   });
+
+  it('sends the customer and its first contact in one create', async () => {
+    api.createCustomer.mockResolvedValue({ id: ID });
+    await expect(createCustomerAction({ key: IDEM, errors: {} }, createForm())).rejects.toThrow(
+      `redirect /customers/${ID}?created=1`,
+    );
+    expect(api.createCustomer).toHaveBeenCalledTimes(1);
+    expect(api.createCustomer.mock.calls[0]?.[1]).toMatchObject({
+      legalName: 'Himalayan Construction Pvt. Ltd.',
+      contact: { fullName: 'Sita Rai', email: 'sita@himalayan.example' },
+    });
+  });
+
+  it('refuses a customer without a first contact email before calling the API', async () => {
+    const f = createForm();
+    f.delete('contactEmail');
+    const res = await createCustomerAction({ key: IDEM, errors: {} }, f);
+    expect(res.errors.contactEmail).toMatch(/email/i);
+    expect(api.createCustomer).not.toHaveBeenCalled();
+  });
 });
 
 describe('addContactAction', () => {
-  it('says the customer already has a primary contact', async () => {
+  it('turns a lost race for the main contact into a toast, keeps the form and reloads the page data', async () => {
     api.createContact.mockRejectedValue(apiError(409, 'primary_contact_exists'));
     const res = await addContactAction(
       { key: IDEM, errors: {}, savedCount: 0 },
       form({ customerId: ID, fullName: 'Sita Rai', isPrimary: 'on', idempotencyKey: IDEM }),
     );
-    expect(res.error).toBe('This customer already has a primary contact.');
+    expect(res.primaryTaken).toMatch(/already has a main contact/i);
+    expect(res.error).toBeUndefined();
+    expect(res.savedCount).toBe(0);
+    expect(revalidatePath).toHaveBeenCalledWith(`/customers/${ID}`);
+  });
+
+  it('needs an email while the page says the customer has none, before calling the API', async () => {
+    const res = await addContactAction(
+      { key: IDEM, errors: {}, savedCount: 0 },
+      form({ customerId: ID, fullName: 'Sita Rai', requireEmail: 'yes', idempotencyKey: IDEM }),
+    );
+    expect(res.errors.email).toMatch(/no contact with an email/i);
+    expect(api.createContact).not.toHaveBeenCalled();
+  });
+
+  it('puts the API refusal 422 contact_email_required on the email field', async () => {
+    api.createContact.mockRejectedValue(apiError(422, 'contact_email_required'));
+    const res = await addContactAction(
+      { key: IDEM, errors: {}, savedCount: 0 },
+      form({ customerId: ID, fullName: 'Sita Rai', idempotencyKey: IDEM }),
+    );
+    expect(res.errors.email).toMatch(/no contact with an email/i);
+    expect(res.error).toBeUndefined();
+  });
+
+  it('hands back a saved message (shown as a toast) and resets the form', async () => {
+    api.createContact.mockResolvedValue({ id: ID });
+    const res = await addContactAction(
+      { key: IDEM, errors: {}, savedCount: 2 },
+      form({ customerId: ID, fullName: 'Sita Rai', email: 'sita@x.example', idempotencyKey: IDEM }),
+    );
+    expect(res.saved).toBe('Sita Rai was added.');
+    expect(res.savedCount).toBe(3);
   });
 });
 
