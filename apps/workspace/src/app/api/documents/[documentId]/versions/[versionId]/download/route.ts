@@ -1,6 +1,6 @@
-import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 import { failureOf, issueDocumentLink, openSignedFile } from '@/lib/api-kernel';
 import { routeSession } from '@/lib/bff';
+import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,9 +29,10 @@ export async function GET(
   const session = await routeSession();
   if (session instanceof Response) {
     if (session.status === 503) {
-      const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
-      response.headers.set('retry-after', '1');
-      return response;
+      // The session store did not answer: not a sign-out and not a refusal. Say so, and let the browser retry.
+      const res = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
+      res.headers.set('retry-after', session.headers.get('retry-after') ?? '1');
+      return res;
     }
     return plain(
       session.status === 401 ? 'Sign in to download this file.' : 'Staff only.',

@@ -71,7 +71,7 @@ export async function GET(
   if (session instanceof Response) {
     if (session.status === 503) {
       const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
-      response.headers.set('retry-after', '1');
+      response.headers.set('retry-after', session.headers.get('retry-after') ?? '1');
       return response;
     }
     return plain(
