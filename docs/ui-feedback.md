@@ -1,4 +1,4 @@
-# UI feedback: toasts, the bell and inline messages
+# Toasts, the bell and inline messages
 
 Three channels tell people something happened. Pick by how long the information must stay available.
 
@@ -36,6 +36,6 @@ Tones: `info` (default `toast(...)`), `success`, `warning`, `error`. Options: `d
 
 ## Design and tokens
 
-Built on Sonner (headless `toast.custom`, which keeps its stacking, timers and swipe). The card matches the bell panel and `Alert`: elevated surface, thin border, `--radius-xl`, status-coloured icon, primary text colour. Tokens in `styles/tokens.css`: `--toast-bg`, `--toast-border`, `--toast-text`, `--toast-shadow`, `--toast-width`. The filled `--toast-<tone>-bg/-text` tokens from the Figma export are kept but unused by the card: white text on the 600-level status colours is acceptable, but a tinted-icon card matches the bell and alerts, and stacked solid colour blocks are loud. Figma has no toast frame matching this yet.
+Sonner provides stacking, timers and swipe through `toast.custom`. The card shares the bell panel's elevated surface and thin border with `Alert`'s status-coloured icons. It uses `--radius-xl` and the `--toast-bg`, `--toast-border`, `--toast-text`, `--toast-shadow` and `--toast-width` tokens from `styles/tokens.css`. The four tone variants live in the [Business OS Toast component set](https://www.figma.com/design/MUKqPum0rjFoqpBNY9jpC3/Business-OS--Copy-?node-id=2024-209).
 
 Package: `sonner` 2.0.8 (workspace catalog), client-only.
