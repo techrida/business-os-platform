@@ -61,7 +61,7 @@ export function TotalsPanel({ currency, state, preview, message }: TotalsPanelPr
               <dd>{fmt(t.taxAmount, currency)}</dd>
             </div>
             <div className={`${styles.totalRow} ${styles.grand}`}>
-              <dt>Total</dt>
+              <dt>Grand total</dt>
               <dd>{fmt(t.total, currency)}</dd>
             </div>
           </dl>

@@ -57,22 +57,18 @@ export function StatusHistory({
 }) {
   const rows = historyRows(history, versions);
   return (
-    <Panel title="Status history">
+    <Panel title="Status history" className={styles.detailPanel}>
       {rows.length === 0 ? (
         <p className={styles.note}>No status changes yet.</p>
       ) : (
         <ol className={styles.history}>
           {rows.map((row) => (
             <li key={row.key} className={styles.event}>
-              <div className={styles.eventHead}>
-                <span className={styles.eventName}>{row.title}</span>
-                {row.revision !== null ? (
-                  <span className={styles.eventMeta}>{row.revision}</span>
-                ) : null}
-                <span className={styles.eventMeta}>{row.actor}</span>
-                <time className={styles.eventMeta} dateTime={row.at}>
-                  {when(row.at)}
-                </time>
+              <span className={styles.eventName}>{row.title}</span>
+              <div className={styles.eventMeta}>
+                <time dateTime={row.at}>{when(row.at)}</time>
+                <span>{row.actor}</span>
+                {row.revision !== null ? <span>{row.revision}</span> : null}
               </div>
               {row.reason !== null ? <p className={styles.reason}>{row.reason}</p> : null}
             </li>

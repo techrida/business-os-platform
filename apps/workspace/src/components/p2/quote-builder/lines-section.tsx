@@ -196,6 +196,7 @@ export function LinesSection({
   errors,
   onSave,
   onRemove,
+  totals,
 }: {
   lines: readonly LineValues[];
   currency: Currency;
@@ -204,15 +205,29 @@ export function LinesSection({
   errors: Readonly<Record<string, string>>;
   onSave: (line: LineValues) => void;
   onRemove: (key: string) => void;
+  totals: ReactNode;
 }) {
   const addRef = useRef<HTMLButtonElement>(null);
   const atLimit = lines.length >= MAX_LINES;
   const codes = taxCodes ?? [];
-  const taxLabels = new Map(codes.map((tax) => [tax.id, tax.label]));
+  const taxById = new Map(codes.map((tax) => [tax.id, tax]));
   const canAdd = !atLimit && codes.length > 0;
 
   return (
     <div className={styles.sectionBody}>
+      <div className={styles.lineToolbar}>
+        <h2>Line items</h2>
+        <LineEditor
+          currency={currency}
+          taxCodes={codes}
+          onSave={onSave}
+          trigger={
+            <Button ref={addRef} variant="tertiary" disabled={!canAdd}>
+              <span aria-hidden="true">+</span> Add line
+            </Button>
+          }
+        />
+      </div>
       {codes.length === 0 ? (
         <Alert tone="warning" role="status">
           {taxCodes === null
@@ -221,39 +236,27 @@ export function LinesSection({
         </Alert>
       ) : null}
       {errors.lines ? <p className={styles.rowError}>{errors.lines}</p> : null}
-      <div className={styles.actions}>
-        <LineEditor
-          currency={currency}
-          taxCodes={codes}
-          onSave={onSave}
-          trigger={
-            <Button ref={addRef} variant="secondary" disabled={!canAdd}>
-              Add line
-            </Button>
-          }
-        />
-        {atLimit ? <span className={styles.muted}>Up to {MAX_LINES} lines.</span> : null}
-      </div>
+      {atLimit ? <span className={styles.muted}>Up to {MAX_LINES} lines.</span> : null}
       {lines.length === 0 ? (
-        <p className={styles.muted}>No lines yet.</p>
+        <p className={styles.linesEmpty}>Add a product or service to this quotation.</p>
       ) : (
-        <Table caption="Quotation lines" minWidth={570}>
+        <Table caption="Quotation lines" minWidth={640} className={styles.lineTable ?? ''}>
           <thead>
             <tr>
-              <Th>Description</Th>
+              <Th>#</Th>
+              <Th>Product / service</Th>
               <Th align="end">Quantity</Th>
-              <Th align="end">Rate ({currency})</Th>
+              <Th align="end">Unit price</Th>
               <Th>Tax code</Th>
               <Th align="end">Before discount</Th>
-              <Th>
-                <span className="sr-only">Line actions</span>
-              </Th>
+              <Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
             {lines.map((line, index) => {
               const no = index + 1;
               const amount = lineAmounts.get(no);
+              const tax = taxById.get(line.taxCodeId);
               const fieldErrors = Object.fromEntries(
                 Object.keys(LINE_ERRORS).flatMap((field) => {
                   const error = errors[`lines.${index}.${field}`];
@@ -262,8 +265,9 @@ export function LinesSection({
               );
               return (
                 <tr key={line.key}>
+                  <Td className={styles.lineNumber}>{no}</Td>
                   <Td className={styles.lineDescription}>
-                    {line.description}
+                    <span className={styles.lineItem}>{line.description}</span>
                     {Object.values(fieldErrors).map((error) => (
                       <span key={error} className={styles.rowError}>
                         {error}
@@ -274,7 +278,7 @@ export function LinesSection({
                     {line.quantity} {line.uom}
                   </Td>
                   <Td align="end">{formatMoney(line.unitPrice, currency)}</Td>
-                  <Td>{taxLabels.get(line.taxCodeId) ?? 'Current tax code'}</Td>
+                  <Td>{tax?.label ?? 'Current tax code'}</Td>
                   <Td align="end">
                     {amount === undefined ? (
                       <span aria-label="Amount unavailable">—</span>
@@ -307,7 +311,19 @@ export function LinesSection({
                             size="small"
                             aria-label={`Remove line ${no}: ${line.description}`}
                           >
-                            Remove
+                            <svg
+                              aria-hidden="true"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v6m4-6v6" />
+                            </svg>
                           </Button>
                         }
                         title="Remove line?"
@@ -329,6 +345,7 @@ export function LinesSection({
           </tbody>
         </Table>
       )}
+      <div className={styles.lineFooter}>{totals}</div>
     </div>
   );
 }

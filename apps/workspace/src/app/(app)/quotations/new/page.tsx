@@ -103,32 +103,33 @@ export default async function NewQuotationPage({
       <Breadcrumb
         items={[{ label: 'Opportunities', href: '/opportunities' }, { label: 'New quotation' }]}
       />
-      <PageHeader
-        title="New quotation"
-        description="Save a draft first. The platform then works out the totals and who must approve."
-      />
-      {entry.kind !== 'new' ? (
-        <Alert
-          tone="info"
-          role="status"
-          title="This opportunity already has a draft"
-          actions={
-            entry.kind === 'resume' ? (
-              <LinkButton href={editQuotationHref(entry.quotationId)} variant="secondary">
-                Edit {entry.number}
-              </LinkButton>
-            ) : (
-              <LinkButton href={opportunityQuotationsHref(opportunityId)} variant="secondary">
-                View its quotations
-              </LinkButton>
-            )
-          }
-        >
-          Saving here starts another, separate quotation.
-        </Alert>
-      ) : null}
       <QuoteBuilder
         target={{ mode: 'create', opportunityId }}
+        title="New quotation"
+        description="Prepare and save a draft to calculate totals and see the approval route."
+        cancelHref={`/opportunities/${encodeURIComponent(opportunityId)}`}
+        notice={
+          entry.kind !== 'new' ? (
+            <Alert
+              tone="info"
+              role="status"
+              title="This opportunity already has a draft"
+              actions={
+                entry.kind === 'resume' ? (
+                  <LinkButton href={editQuotationHref(entry.quotationId)} variant="secondary">
+                    Edit {entry.number}
+                  </LinkButton>
+                ) : (
+                  <LinkButton href={opportunityQuotationsHref(opportunityId)} variant="secondary">
+                    View its quotations
+                  </LinkButton>
+                )
+              }
+            >
+              Saving here starts another, separate quotation.
+            </Alert>
+          ) : null
+        }
         initial={initial}
         context={<ContextCard customer={customerResult} opportunity={opportunity} />}
         contacts={lookups.contacts}
