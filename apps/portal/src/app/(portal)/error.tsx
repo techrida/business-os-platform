@@ -1,5 +1,7 @@
 'use client';
 
+import { SessionUnavailableNotice } from '@/components/shell/session-unavailable-notice';
+import { isSessionUnavailable } from '@/lib/session-unavailable';
 import styles from '@/components/portal/page.module.css';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -9,11 +11,15 @@ import { EmptyState } from '@/components/ui/empty-state';
  * internal detail. Next passes only a digest to the client in production anyway.
  */
 export default function PortalError({
+  error,
   reset,
+  retry,
 }: {
-  error: Error & { digest?: string };
+  error: unknown;
+  retry: () => void;
   reset: () => void;
 }) {
+  if (isSessionUnavailable(error)) return <SessionUnavailableNotice retry={retry} />;
   return (
     <main className={styles.main}>
       <div className={styles.head}>
