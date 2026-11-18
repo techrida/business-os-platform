@@ -1,21 +1,24 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { unstable_rethrow, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Panel } from '@/components/ui/panel';
+import { toast } from '@/components/ui/toast';
 
 import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './actions';
-import { ApprovalPanel } from './approval-panel';
+import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
 import { LinesSection } from './lines-section';
 import {
   CURRENCY_OPTIONS,
-  newLine,
   newMilestone,
+  scheduleMessage,
+  scheduleState,
   submitBlocker,
   type BuilderValues,
   type Currency,
@@ -24,7 +27,7 @@ import {
   type MilestoneValues,
 } from './model';
 import styles from './quote-builder.module.css';
-import { ScheduleSection } from './schedule-section';
+import { ScheduleSection, type AmountDraft } from './schedule-section';
 import type { PaymentTerm, PreviewResult, TaxCode } from './schemas';
 import { TotalsPanel, type PreviewState } from './totals-panel';
 
@@ -43,15 +46,9 @@ export interface ContactOption {
   label: string;
 }
 
-interface Notice {
-  tone: 'error' | 'warning' | 'success';
-  title?: string | undefined;
-  text: string;
-  /** Offer a reload (a stale row version). */
-  reload?: boolean;
-}
-
 interface PreviewView {
+  key?: string;
+  currency?: Currency;
   state: PreviewState;
   preview: PreviewResult | null;
   message?: string | undefined;
@@ -88,15 +85,12 @@ const DISCOUNT_LABEL: Record<DiscountMode, string> = {
 };
 
 /**
- * The quotation builder: eight sections, one form. A client island because lines and milestones
- * are edited in place, but it holds no data of its own beyond what is typed: totals and the
- * approval route come back from the platform through `previewQuoteAction` after a short pause
- * and are shown as received. Saving is explicit; leaving with unsaved edits asks first.
+ * The builder holds edits locally and requests pricing and the approval route from the server.
+ * Saving is explicit; leaving with unsaved edits asks first.
  */
 export function QuoteBuilder({
   target,
   initial,
-  numberLabel,
   context,
   contacts,
   taxCodes,
@@ -106,8 +100,6 @@ export function QuoteBuilder({
 }: {
   target: BuilderTarget;
   initial: BuilderValues;
-  /** Display number such as "QT-2082-0042 Rev 2"; absent before the first save. */
-  numberLabel?: string | undefined;
   /** Section 1's read-only customer and opportunity facts (rendered on the server). */
   context: ReactNode;
   /** null when the contact list failed to load. */
@@ -123,20 +115,22 @@ export function QuoteBuilder({
   const [rowVersion, setRowVersion] = useState(target.mode === 'edit' ? target.expectedVersion : 0);
   // Kept when the outcome is unknown (the action threw), rotated by the action after a definite 4xx.
   const [key, setKey] = useState(idempotencyKey);
-  const savedRef = useRef(JSON.stringify(initial));
-  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState(() => JSON.stringify(initial));
+  const [pricedIssueDate, setPricedIssueDate] = useState(initial.issueDate);
+  const [amountDrafts, setAmountDrafts] = useState<Record<string, AmountDraft>>({});
+  const hasAmountError = Object.values(amountDrafts).some((draft) => Boolean(draft.error));
+  const dirty = JSON.stringify(values) !== saved || hasAmountError;
   const [busy, setBusy] = useState<null | 'save' | 'submit'>(null);
   const [confirming, setConfirming] = useState(false);
-  const [notice, setNotice] = useState<Notice | null>(
-    savedNotice ? { tone: 'success', text: 'Draft saved.' } : null,
-  );
+  const [stale, setStale] = useState(false);
+  const [scheduleAttempted, setScheduleAttempted] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [view, setView] = useState<PreviewView>(
-    target.mode === 'create'
-      ? { state: 'needs_save', preview: null }
-      : { state: 'loading', preview: null },
-  );
-  const noticeRef = useRef<HTMLDivElement>(null);
+  const [lastView, setLastView] = useState<PreviewView>({ state: 'loading', preview: null });
+
+  useEffect(() => {
+    if (savedNotice) toast.success('Draft saved.', { id: 'quotation-draft-saved' });
+  }, [savedNotice]);
+
   const keyCounter = useRef(1000);
   const leaving = useRef(false);
   const latest = useRef(values);
@@ -146,14 +140,19 @@ export function QuoteBuilder({
   const nextKey = (prefix: string) => `${prefix}${++keyCounter.current}`;
 
   const edit = useCallback((patch: (v: BuilderValues) => BuilderValues) => {
-    setValues((v) => {
-      const next = patch(v);
-      setDirty(JSON.stringify(next) !== savedRef.current);
-      return next;
-    });
-    setNotice((n) => (n?.tone === 'success' ? null : n));
+    setValues(patch);
     setConfirming(false);
   }, []);
+
+  function setAmountDraft(key: string, next: AmountDraft | undefined) {
+    setAmountDrafts((current) => {
+      if (next) return { ...current, [key]: next };
+      if (!Object.hasOwn(current, key)) return current;
+      const drafts = { ...current };
+      delete drafts[key];
+      return drafts;
+    });
+  }
 
   const set =
     <K extends keyof BuilderValues>(key: K) =>
@@ -163,38 +162,40 @@ export function QuoteBuilder({
   // ---- Totals and approval route: ask the platform, show what it says ----------------------
 
   const previewKey = JSON.stringify([
+    pricedIssueDate,
+    values.issueDate,
     values.currency,
     values.discountMode,
     values.discountValue,
-    values.lines.map((l) => [l.description, l.uom, l.quantity, l.unitPrice, l.taxCodeId]),
+    values.lines.map((l) => [
+      l.description,
+      l.uom,
+      l.quantity,
+      l.unitPrice,
+      l.taxCodeId,
+      l.unitCost,
+      l.catalogItemId,
+    ]),
   ]);
   const firstPreview = useRef(true);
 
   useEffect(() => {
-    if (target.mode !== 'edit') return;
-    if (latest.current.lines.length === 0) {
-      setView({
-        state: 'incomplete',
-        preview: null,
-        message: 'Add a line to see the totals and the approval route.',
-      });
+    const snapshot = latest.current;
+    if (
+      target.mode !== 'edit' ||
+      snapshot.lines.length === 0 ||
+      snapshot.issueDate !== pricedIssueDate
+    )
       return;
-    }
-    // A newer edit (or leaving the page) cancels this run, so a slow answer never overwrites a
-    // fresher one.
+
     let cancelled = false;
-    setView((prev) => ({ state: 'loading', preview: prev.preview }));
     const delay = firstPreview.current ? 0 : 600;
     firstPreview.current = false;
 
     async function run(quotationId: string, versionId: string) {
       let next: PreviewView;
       try {
-        const res = await previewQuoteAction({
-          quotationId,
-          versionId,
-          values: latest.current,
-        });
+        const res = await previewQuoteAction({ quotationId, versionId, values: snapshot });
         next = res.ok
           ? { state: 'ready', preview: res.preview }
           : {
@@ -206,22 +207,48 @@ export function QuoteBuilder({
         next = {
           state: 'error',
           preview: null,
-          message: 'The platform did not respond. The totals could not be worked out; try again.',
+          message: 'The totals could not load.',
         };
       }
-      if (!cancelled) setView(next);
+      if (!cancelled) setLastView({ ...next, key: previewKey, currency: snapshot.currency });
     }
 
-    const timer = setTimeout(() => {
-      void run(target.quotationId, target.versionId);
-    }, delay);
+    const timer = setTimeout(() => void run(target.quotationId, target.versionId), delay);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-    // `target` is stable for the life of the page; the key captures everything the preview reads.
+    // The key captures the pricing inputs, including the issue date saved on the server.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewKey]);
+
+  const view: PreviewView = useMemo(() => {
+    if (target.mode === 'create') return { state: 'needs_save', preview: null };
+    if (values.lines.length === 0) {
+      return { state: 'incomplete', preview: null, message: 'Add a line to see the totals.' };
+    }
+    if (values.issueDate !== pricedIssueDate) {
+      return {
+        state: 'incomplete',
+        preview: null,
+        message: 'Save the new issue date to update pricing.',
+      };
+    }
+    if (lastView.key === previewKey) return lastView;
+    return {
+      state: 'loading',
+      preview: lastView.currency === values.currency ? lastView.preview : null,
+    };
+  }, [
+    target.mode,
+    values.lines.length,
+    values.issueDate,
+    values.currency,
+    pricedIssueDate,
+    lastView,
+    previewKey,
+  ]);
+  const readyPreview = view.state === 'ready' ? view.preview : null;
 
   const lineAmounts = useMemo(() => {
     const map = new Map<number, string>();
@@ -263,27 +290,31 @@ export function QuoteBuilder({
 
   const fail = (kind: FailureKind, message: string, fields?: Record<string, string>) => {
     setErrors(friendlyErrors(fields));
-    setNotice({
-      tone: kind === 'stale' || kind === 'stale_fx' ? 'warning' : 'error',
-      title:
-        kind === 'stale'
-          ? 'This quotation changed'
-          : kind === 'stale_fx'
-            ? 'The exchange rate is out of date'
-            : kind === 'invalid'
-              ? 'Some fields need attention'
-              : undefined,
-      text: message,
-      reload: kind === 'stale',
-    });
-    requestAnimationFrame(() => noticeRef.current?.focus());
+    setStale(kind === 'stale');
+    toast.error(message, { id: 'quotation-action-error' });
   };
 
+  function checkSchedule() {
+    const problem = scheduleMessage(scheduleState(values.schedule));
+    if (problem) {
+      setScheduleAttempted(true);
+      toast.error(problem, { id: 'quotation-schedule-error' });
+      return false;
+    }
+    if (hasAmountError) {
+      toast.error('Correct the milestone amount before continuing.', {
+        id: 'quotation-schedule-error',
+      });
+      return false;
+    }
+    return true;
+  }
+
   async function save() {
-    if (busy) return;
+    if (busy || !checkSchedule()) return;
     setBusy('save');
     setErrors({});
-    setNotice(null);
+    setStale(false);
     try {
       const res = await saveDraftAction(
         target.mode === 'create'
@@ -298,18 +329,18 @@ export function QuoteBuilder({
       );
       if (res.ok) {
         setRowVersion(res.version);
-        savedRef.current = JSON.stringify(values);
-        setDirty(false);
-        setNotice({ tone: 'success', text: 'Draft saved.' });
+        setSaved(JSON.stringify(values));
+        setPricedIssueDate(values.issueDate);
+        setScheduleAttempted(false);
+        toast.success('Draft saved.', { id: 'quotation-draft-saved' });
       } else {
         if (res.key) setKey(res.key);
         fail(res.kind, res.message, res.fieldErrors);
       }
-    } catch {
-      // A create that succeeds redirects (Next throws to navigate); a real failure lands here.
-      if (target.mode === 'edit') {
-        fail('error', 'The platform did not respond. Nothing was saved; try again in a moment.');
-      }
+    } catch (error) {
+      // A successful create redirects through Next's server action transport.
+      unstable_rethrow(error);
+      fail('error', 'The save could not be confirmed. Try again.');
     } finally {
       setBusy(null);
     }
@@ -318,8 +349,7 @@ export function QuoteBuilder({
   async function submit() {
     if (target.mode !== 'edit' || busy) return;
     setBusy('submit');
-    setConfirming(false);
-    setNotice(null);
+    setStale(false);
     try {
       const res = await submitQuoteAction({
         quotationId: target.quotationId,
@@ -330,117 +360,90 @@ export function QuoteBuilder({
       });
       if (res.ok) {
         leaving.current = true;
+        toast.success('Submitted for approval.', { id: 'quotation-submitted' });
         router.push(`/quotations/${target.quotationId}/edit?submitted=1`);
         router.refresh();
       } else {
         if (res.key) setKey(res.key);
         fail(res.kind, res.message, res.fieldErrors);
       }
-    } catch {
-      fail('error', 'The platform did not respond. Nothing was submitted; try again in a moment.');
+    } catch (error) {
+      unstable_rethrow(error);
+      fail('error', 'Submission could not be confirmed. Try again.');
     } finally {
       setBusy(null);
     }
   }
 
-  const blocker = target.mode === 'edit' ? submitBlocker(values, { dirty }) : null;
-  const canSubmit = target.mode === 'edit' && blocker === null && !busy;
-  const routeBlocked = view.preview?.route.blocked ?? false;
-  const submitDisabled = !canSubmit || routeBlocked;
-  const hintText =
-    target.mode === 'create'
-      ? 'After the first save you can see the totals and the approval route, and submit.'
-      : (blocker ??
-        (routeBlocked
-          ? 'Nobody can approve a step of the route yet, so submitting is refused until an administrator fixes it.'
-          : null));
+  function openConfirmation(open: boolean) {
+    if (!open) {
+      setConfirming(false);
+      return;
+    }
+    if (busy || !checkSchedule()) return;
+    const blocker = submitBlocker(values, { dirty });
+    if (blocker) {
+      toast.error(blocker, { id: 'quotation-action-error' });
+    } else if (readyPreview?.route.blocked) {
+      toast.error('An approval step has no eligible approvers.', { id: 'quotation-action-error' });
+    } else {
+      setConfirming(true);
+    }
+  }
 
-  const actionBar = (where: 'top' | 'bottom') => (
-    <div className={styles.actionBar}>
-      <div className={styles.actions}>
+  return (
+    <div className={styles.layout}>
+      <div className={`${styles.actions} ${styles.actionBar}`}>
         <Button onClick={() => void save()} disabled={busy !== null} aria-busy={busy === 'save'}>
           {busy === 'save' ? 'Saving' : 'Save draft'}
         </Button>
         {target.mode === 'edit' ? (
-          <Button
-            variant="secondary"
-            onClick={() => setConfirming(true)}
-            disabled={submitDisabled}
-            aria-describedby={hintText ? `submit-hint-${where}` : undefined}
+          <ConfirmDialog
+            trigger={
+              <Button variant="secondary" disabled={busy !== null}>
+                {busy === 'submit' ? 'Submitting' : 'Submit for approval'}
+              </Button>
+            }
+            open={confirming}
+            onOpenChange={openConfirmation}
+            title="Submit this quotation for approval?"
+            description="Editing is locked while approval is pending. Recall the quotation if it needs changes."
+            confirmLabel="Submit quotation"
+            cancelLabel="Keep editing"
+            onConfirm={submit}
+            size="medium"
           >
-            {busy === 'submit' ? 'Submitting' : 'Submit for approval'}
-          </Button>
+            {readyPreview?.route.steps.length ? (
+              <ApprovalSteps steps={readyPreview.route.steps} />
+            ) : null}
+          </ConfirmDialog>
         ) : null}
         <span className={styles.status} role="status">
           {dirty ? 'Unsaved changes' : target.mode === 'edit' ? 'All changes saved' : ''}
         </span>
       </div>
-      {hintText ? (
-        <p id={`submit-hint-${where}`} className={styles.muted}>
-          {hintText}
-        </p>
-      ) : null}
-    </div>
-  );
 
-  return (
-    <div className={styles.layout}>
-      <div className={styles.main}>
-        {numberLabel ? (
-          <p className={styles.muted}>
-            Editing <strong>{numberLabel}</strong>
-          </p>
-        ) : null}
-
-        {notice ? (
+      <fieldset className={styles.main} disabled={busy !== null} aria-label="Quotation fields">
+        {stale ? (
           <Alert
-            ref={noticeRef}
-            tabIndex={-1}
-            tone={notice.tone}
-            title={notice.title}
-            role={notice.tone === 'success' ? 'status' : 'alert'}
+            tone="warning"
+            title="This quotation changed"
             actions={
-              notice.reload ? (
-                <Button
-                  size="small"
-                  variant="secondary"
-                  onClick={() => {
-                    leaving.current = true;
-                    window.location.reload();
-                  }}
-                >
-                  Reload the latest version
-                </Button>
-              ) : null
+              <Button
+                size="small"
+                variant="secondary"
+                onClick={() => {
+                  leaving.current = true;
+                  window.location.reload();
+                }}
+              >
+                Reload the latest version
+              </Button>
             }
           >
-            {notice.text}
+            Copy any unsaved changes you need before reloading.
           </Alert>
         ) : null}
-
-        {confirming ? (
-          <Alert
-            tone="info"
-            role="alertdialog"
-            aria-label="Confirm submit"
-            title="Submit this quotation for approval?"
-            actions={
-              <>
-                <Button size="small" onClick={() => void submit()}>
-                  Yes, submit
-                </Button>
-                <Button size="small" variant="secondary" onClick={() => setConfirming(false)}>
-                  Keep editing
-                </Button>
-              </>
-            }
-          >
-            It cannot be edited while approvers have it. You can pull it back to Returned if it
-            needs a change.
-          </Alert>
-        ) : null}
-
-        {actionBar('top')}
 
         <Panel title="1. Customer and opportunity">
           <div className={styles.sectionBody}>
@@ -536,14 +539,29 @@ export function QuoteBuilder({
             taxCodes={taxCodes}
             lineAmounts={lineAmounts}
             errors={errors}
-            onChange={(key, patch: Partial<LineValues>) =>
-              edit((v) => ({
-                ...v,
-                lines: v.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)),
-              }))
-            }
-            onAdd={() => edit((v) => ({ ...v, lines: [...v.lines, newLine(nextKey('l'))] }))}
-            onRemove={(key) => edit((v) => ({ ...v, lines: v.lines.filter((l) => l.key !== key) }))}
+            onSave={(line: LineValues) => {
+              if (line.key) {
+                const index = values.lines.findIndex((l) => l.key === line.key);
+                setErrors((current) =>
+                  Object.fromEntries(
+                    Object.entries(current).filter(([path]) => !path.startsWith(`lines.${index}.`)),
+                  ),
+                );
+                edit((v) => ({ ...v, lines: v.lines.map((l) => (l.key === line.key ? line : l)) }));
+              } else {
+                const key = nextKey('l');
+                setErrors(({ lines: _error, ...rest }) => rest);
+                edit((v) => ({ ...v, lines: [...v.lines, { ...line, key }] }));
+              }
+            }}
+            onRemove={(key) => {
+              setErrors((current) =>
+                Object.fromEntries(
+                  Object.entries(current).filter(([path]) => !path.startsWith('lines.')),
+                ),
+              );
+              edit((v) => ({ ...v, lines: v.lines.filter((l) => l.key !== key) }));
+            }}
           />
         </Panel>
 
@@ -602,20 +620,44 @@ export function QuoteBuilder({
             paymentTermId={values.paymentTermId}
             paymentTerms={paymentTerms}
             milestones={values.schedule}
+            currency={values.currency}
+            total={readyPreview?.totals.total ?? null}
+            amountDrafts={amountDrafts}
+            disabled={busy !== null}
+            showScheduleErrors={scheduleAttempted}
+            onAmountDraft={setAmountDraft}
             errors={errors}
             onTerm={set('paymentTermId')}
-            onChange={(key, patch: Partial<MilestoneValues>) =>
+            onChange={(key, patch: Partial<MilestoneValues>) => {
+              const index = values.schedule.findIndex((m) => m.key === key);
+              setErrors((current) =>
+                Object.fromEntries(
+                  Object.entries(current).filter(
+                    ([path]) =>
+                      !Object.keys(patch).some(
+                        (field) => path === `paymentSchedule.${index}.${field}`,
+                      ),
+                  ),
+                ),
+              );
               edit((v) => ({
                 ...v,
                 schedule: v.schedule.map((m) => (m.key === key ? { ...m, ...patch } : m)),
-              }))
-            }
-            onAdd={() =>
-              edit((v) => ({ ...v, schedule: [...v.schedule, newMilestone(nextKey('m'))] }))
-            }
-            onRemove={(key) =>
-              edit((v) => ({ ...v, schedule: v.schedule.filter((m) => m.key !== key) }))
-            }
+              }));
+            }}
+            onAdd={() => {
+              const milestone = newMilestone(nextKey('m'));
+              edit((v) => ({ ...v, schedule: [...v.schedule, milestone] }));
+            }}
+            onRemove={(key) => {
+              setAmountDraft(key, undefined);
+              setErrors((current) =>
+                Object.fromEntries(
+                  Object.entries(current).filter(([path]) => !path.startsWith('paymentSchedule')),
+                ),
+              );
+              edit((v) => ({ ...v, schedule: v.schedule.filter((m) => m.key !== key) }));
+            }}
           />
         </Panel>
 
@@ -668,23 +710,15 @@ export function QuoteBuilder({
           </div>
         </Panel>
 
-        {actionBar('bottom')}
-      </div>
+        <ApprovalPanel state={view.state} preview={readyPreview} message={view.message} />
+      </fieldset>
 
-      <div
-        className={styles.side}
-        role="region"
-        aria-label="Totals and approval requirements"
-        tabIndex={0}
-      >
-        <TotalsPanel
-          currency={values.currency}
-          state={view.state}
-          preview={view.preview}
-          message={view.message}
-        />
-        <ApprovalPanel state={view.state} preview={view.preview} message={view.message} />
-      </div>
+      <TotalsPanel
+        currency={values.currency}
+        state={view.state}
+        preview={view.preview}
+        message={view.message}
+      />
     </div>
   );
 }

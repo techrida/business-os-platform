@@ -603,7 +603,14 @@ export const PreviewResultSchema = z.object({
   /** The NPR equivalent and its rate, for INR and USD documents. */
   nprSnapshot: NprSnapshotSchema.nullable().optional(),
   /** Who must approve and why (`previewRoute` on the facts of this version). */
-  route: RoutePlanSchema,
+  route: RoutePlanSchema.extend({
+    steps: z.array(
+      RoutePlanSchema.shape.steps.element.extend({
+        /** Names only, when the caller may see the preview's eligible people. */
+        eligibleStaffNames: z.array(z.string().min(1)).optional(),
+      }),
+    ),
+  }),
 });
 export type PreviewResult = z.infer<typeof PreviewResultSchema>;
 

@@ -14,7 +14,7 @@ import {
   type PreviewResult,
   type QuotationPreviewBody,
 } from '@bos/contracts';
-import { quotations, quotationVersions, scoped } from '@bos/db';
+import { idpOrgs, quotations, quotationVersions, scoped, userEntities, users } from '@bos/db';
 import {
   ConflictException,
   ForbiddenException,
@@ -22,7 +22,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 import { AuthzService } from '../../../platform/authz/authz.service';
 import { type ResourceRef } from '../../../platform/authz/can';
@@ -105,7 +105,62 @@ export class QuotationPreviewService {
       approvalFactsOf(priced.facts),
       sodUserIds,
     );
-    return previewResultOf(priced, route);
+    // ApprovalsService already redacted eligible IDs for requesters who cannot act on approvals.
+    const visibleIds = [...new Set(route.steps.flatMap((step) => step.eligibleUserIds))];
+    const staffNames = await this.staffNames(scope, visibleIds);
+    return {
+      ...previewResultOf(priced, route),
+      route: {
+        blocked: route.blocked,
+        blockReason: route.blockReason,
+        steps: route.steps.map((step) => ({
+          seq: step.seq,
+          kind: step.kind,
+          roleKey: step.roleKey,
+          reason: step.reason,
+          blocked: step.blocked,
+          eligibleUserIds: [],
+          eligibleStaffNames: step.eligibleUserIds.flatMap((id) => {
+            const name = staffNames.get(id);
+            return name ? [name] : [];
+          }),
+        })),
+      },
+    };
+  }
+
+  /** Match the workflow's active-staff and entity checks when resolving display names. */
+  private async staffNames(scope: TxScope, ids: string[]): Promise<ReadonlyMap<string, string>> {
+    const names = new Map<string, string>();
+    if (ids.length === 0) return names;
+    try {
+      const rows = await this.db
+        .select({ id: users.id, name: users.displayName })
+        .from(userEntities)
+        .innerJoin(
+          users,
+          and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
+        )
+        .innerJoin(
+          idpOrgs,
+          and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)),
+        )
+        .where(
+          and(
+            scoped(scope).where(userEntities),
+            eq(users.status, 'active'),
+            eq(idpOrgs.kind, 'staff'),
+            inArray(users.id, ids),
+          ),
+        );
+      for (const row of rows) {
+        const name = row.name?.trim();
+        if (name) names.set(row.id, name);
+      }
+    } catch {
+      // Names are optional. A directory lookup failure should still return pricing and route status.
+    }
+    return names;
   }
 
   /** The version with its quotation, in the acting entity only; 404 when it is not there or not that quotation's. */

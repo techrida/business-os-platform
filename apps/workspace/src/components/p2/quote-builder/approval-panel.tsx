@@ -1,19 +1,146 @@
+'use client';
+
+import * as Popover from '@radix-ui/react-popover';
+import { useEffect, useRef, useState } from 'react';
+
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Panel } from '@/components/ui/panel';
 import { humanizeKey } from '@/lib/kernel-ui';
 
 import { discountAboveThreshold } from './model';
-import type { PreviewResult } from './schemas';
 import styles from './quote-builder.module.css';
+import type { PreviewResult } from './schemas';
 import type { PreviewState } from './totals-panel';
 
-/**
- * Section 8: who must approve this quotation, and why. The steps and their reasons are the
- * platform's dry run of the approval route on this draft; the page only lays them out. The one
- * thing it adds is the 12% flag: when the server's effective discount is above 12 it says so,
- * because that is the rule people ask about first.
- */
+type Step = PreviewResult['route']['steps'][number];
+
+function stepLabel({ kind, roleKey }: Step): string {
+  if (kind === 'group') return 'Any group member';
+  if (kind === 'user') return 'Designated approver';
+  switch (roleKey) {
+    case 'accountant':
+      return 'Any accountant';
+    case 'finance':
+      return 'Any finance approver';
+    case 'management':
+      return 'Any manager';
+    case 'founder':
+      return 'Any founder';
+    default:
+      return roleKey
+        ? `Any ${humanizeKey(roleKey).toLowerCase()} approver`
+        : 'Any eligible approver';
+  }
+}
+
+function ApproverNames({ names, group }: { names: readonly string[]; group: string }) {
+  const container = useRef<HTMLDivElement>(null);
+  const measureRow = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(0);
+
+  useEffect(() => {
+    const row = container.current;
+    const measure = measureRow.current;
+    if (!row || !measure) return;
+    function update() {
+      if (!row || !measure) return;
+      const chips = Array.from(measure.children, (chip) => chip.getBoundingClientRect().width);
+      const overflow = chips.pop() ?? 0;
+      const gap = parseFloat(getComputedStyle(measure).columnGap) || 0;
+      const available = row.clientWidth;
+      const all = chips.reduce((sum, width, index) => sum + width + (index ? gap : 0), 0);
+      if (all <= available) {
+        setVisibleCount(names.length);
+        return;
+      }
+
+      let used = overflow;
+      let count = 0;
+      for (const width of chips) {
+        if (used + gap + width > available) break;
+        used += gap + width;
+        count++;
+      }
+      setVisibleCount(count);
+    }
+
+    const observer = new ResizeObserver(update);
+    observer.observe(row);
+    observer.observe(measure);
+    update();
+    return () => observer.disconnect();
+  }, [names]);
+
+  const hidden = names.slice(visibleCount);
+  return (
+    <div ref={container} className={styles.nameChips}>
+      {names.slice(0, visibleCount).map((name, i) => (
+        <Badge key={i}>{name}</Badge>
+      ))}
+      {hidden.length > 0 ? (
+        <Popover.Root>
+          <Popover.Trigger asChild>
+            <Button
+              variant="ghost"
+              size="small"
+              className={styles.moreNames}
+              aria-label={`Show ${hidden.length} more for ${group}`}
+            >
+              +{hidden.length}
+            </Button>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content
+              className={styles.namesPopover}
+              align="start"
+              sideOffset={6}
+              aria-label={`More eligible staff for ${group}`}
+            >
+              <ul className={styles.nameList}>
+                {hidden.map((name, i) => (
+                  <li key={i}>{name}</li>
+                ))}
+              </ul>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
+      ) : null}
+      <div aria-hidden="true" className={styles.nameMeasureClip}>
+        <div ref={measureRow} className={styles.nameMeasure}>
+          {names.map((name, i) => (
+            <Badge key={i}>{name}</Badge>
+          ))}
+          <span className={styles.moreNames}>+{names.length}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ApprovalSteps({ steps }: { steps: readonly Step[] }) {
+  return (
+    <ol className={styles.steps} aria-label="Approval steps">
+      {steps.map((step) => {
+        const group = stepLabel(step);
+        return (
+          <li key={step.seq} className={styles.step}>
+            <div className={styles.stepHead}>
+              <span className={styles.stepWho}>{group}</span>
+              {step.blocked ? <Badge tone="warning">Unavailable</Badge> : null}
+            </div>
+            {step.eligibleStaffNames?.length ? (
+              <ApproverNames names={step.eligibleStaffNames} group={group} />
+            ) : null}
+            <p className={styles.muted}>{step.reason.replace(/^Base route: /, '')}</p>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function ApprovalPanel({
   state,
   preview,
@@ -23,71 +150,37 @@ export function ApprovalPanel({
   preview?: PreviewResult | null | undefined;
   message?: string | undefined;
 }) {
-  const plan = (state === 'ready' || state === 'loading') && preview ? preview.route : null;
+  const plan = state === 'ready' ? preview?.route : null;
   const discountTriggers =
-    plan !== null && preview ? discountAboveThreshold(preview.totals.effectiveDiscountPct) : false;
+    plan && preview && discountAboveThreshold(preview.totals.effectiveDiscountPct);
 
   return (
-    <Panel
-      as="aside"
-      title="8. Approval requirements"
-      description="Who will be asked to approve, and why. Worked out again when you submit."
-      className={styles.approval}
-    >
+    <Panel title="Approval requirements" className={styles.sectionBody}>
       {discountTriggers && preview ? (
         <Alert tone="warning" title="This discount needs approval">
-          The discount is {preview.totals.effectiveDiscountPct}%, which is above 12%. A manager has
-          to approve it before the quotation can be sent.
+          The discount is {preview.totals.effectiveDiscountPct}%, above the 12% threshold.
         </Alert>
       ) : null}
-
       {plan ? (
         plan.steps.length === 0 ? (
-          <p className={styles.muted}>
-            The platform found no approval step for this draft as it stands.
-          </p>
+          <p className={styles.muted}>No approval steps apply.</p>
         ) : (
-          <ol className={styles.steps}>
-            {plan.steps.map((s) => (
-              <li key={s.seq} className={styles.step}>
-                <span className={styles.stepNo} aria-hidden="true">
-                  {s.seq}
-                </span>
-                <div className={styles.stepBody}>
-                  <div className={styles.stepHead}>
-                    <span className={styles.stepWho}>
-                      <span className="sr-only">Step {s.seq}: </span>
-                      {s.kind === 'role' && s.roleKey
-                        ? `Anyone with the ${humanizeKey(s.roleKey).toLowerCase()} role`
-                        : s.kind === 'group'
-                          ? 'An approval group'
-                          : 'A named person'}
-                    </span>
-                    {s.blocked ? <Badge tone="warning">No one available</Badge> : null}
-                  </div>
-                  <p className={styles.stepReason}>{s.reason}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
+          <ApprovalSteps steps={plan.steps} />
         )
       ) : state === 'loading' ? (
         <p role="status" className={styles.muted}>
-          Checking the approval route
+          Checking approval requirements
         </p>
       ) : (
         <p className={styles.muted}>
           {state === 'needs_save'
-            ? 'Save the draft to see who will have to approve it.'
-            : (message ?? 'Complete every line to see who will have to approve it.')}
+            ? 'Save the draft to see who will approve it.'
+            : (message ?? 'Complete the lines to see who will approve.')}
         </p>
       )}
-
       {plan?.blocked ? (
-        <Alert tone="warning" title="Nobody can approve a step yet">
-          {plan.blockReason ??
-            'Everyone eligible prepared this quotation, so they cannot approve it.'}{' '}
-          Submitting is refused until an administrator fixes the route.
+        <Alert tone="warning" title="An approval step has no eligible approvers">
+          {plan.blockReason ?? 'Ask an administrator to review the approval rules.'}
         </Alert>
       ) : null}
     </Panel>

@@ -186,6 +186,11 @@ export type ScheduleState =
   | { kind: 'over'; by: string }
   | { kind: 'invalid' };
 
+/** The running total of valid entries, even while another row is incomplete. */
+export function scheduleProgress(milestones: readonly Pick<MilestoneValues, 'percent'>[]): string {
+  return fromHundredths(milestones.reduce((sum, m) => sum + (hundredths(m.percent) ?? 0), 0));
+}
+
 /** An empty schedule is allowed (the payment term applies); a filled one must total 100%. */
 export function scheduleState(
   milestones: readonly Pick<MilestoneValues, 'percent'>[],
