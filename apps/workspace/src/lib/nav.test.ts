@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BUILT_PHASE, NAV_GROUPS, isBuilt, titleForPath } from './nav';
+import { BUILT_PHASE, NAV_GROUPS, isBuilt, searchNavGroups, titleForPath } from './nav';
 
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
@@ -68,5 +68,28 @@ describe('titleForPath', () => {
 
   it('falls back to the app name for any other path', () => {
     expect(titleForPath('/somewhere-else')).toBe('Business OS');
+  });
+});
+
+describe('searchNavGroups', () => {
+  it('searches group and page labels without exposing unshipped routes', () => {
+    const groups = [
+      ...NAV_GROUPS,
+      {
+        label: 'Work',
+        items: [
+          { label: 'Inbox', icon: 'file-text', phase: 'P0', href: '/inbox' },
+          { label: 'Planned inbox', icon: 'file-text', phase: 'later' },
+        ],
+      },
+    ] as const;
+
+    expect(
+      searchNavGroups(groups, ' work ').flatMap((group) => group.items.map((item) => item.label)),
+    ).toEqual(['Inbox']);
+    expect(
+      searchNavGroups(groups, 'INBOX').flatMap((group) => group.items.map((item) => item.label)),
+    ).toEqual(['Inbox']);
+    expect(searchNavGroups(groups, 'Projects')).toEqual([]);
   });
 });
