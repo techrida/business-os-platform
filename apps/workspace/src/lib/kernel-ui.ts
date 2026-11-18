@@ -55,8 +55,13 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
       message = 'This request changed since you opened it.';
       reload = true;
     } else if (context === 'submit') {
-      message =
-        'Every attachment must finish its virus scan and come back clean before you can submit. Wait for the scan to finish, then try again.';
+      if (reason === 'stale_memo') {
+        message = 'This memo changed. Reload it and review the latest version before submitting.';
+        reload = true;
+      } else {
+        message =
+          'Every attachment must finish its virus scan and come back clean before you can submit. Wait for the scan to finish, then try again.';
+      }
     } else if (context === 'upload') {
       message = 'This memo can no longer take attachments because it is not a draft.';
     } else if (context === 'remove') {

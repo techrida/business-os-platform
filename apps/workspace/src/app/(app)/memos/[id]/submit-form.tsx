@@ -15,7 +15,15 @@ import { useMemoReviewNeeded } from '../memo-review-gate';
  * refusal (for example "an attachment is not clean yet") arrives as a toast, because the action has no field to
  * blame. Confirming submits the form with the memo id.
  */
-export function SubmitForm({ memoId, missing }: { memoId: string; missing: readonly string[] }) {
+export function SubmitForm({
+  memoId,
+  version,
+  missing,
+}: {
+  memoId: string;
+  version: number;
+  missing: readonly string[];
+}) {
   const form = useRef<HTMLFormElement>(null);
   const reviewNeeded = useMemoReviewNeeded();
   const [state, formAction, pending] = useActionState<SubmitState, FormData>(submitMemoAction, {});
@@ -28,6 +36,7 @@ export function SubmitForm({ memoId, missing }: { memoId: string; missing: reado
     <>
       <form ref={form} action={formAction}>
         <input type="hidden" name="memoId" value={memoId} />
+        <input type="hidden" name="expectedVersion" value={version} />
       </form>
       <ConfirmDialog
         trigger={

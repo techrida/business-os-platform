@@ -92,6 +92,7 @@ interface MemoFormProps {
   /** The primary button's text. Default: "Next" for a new memo, "Done" for an edit. */
   submitLabel?: string;
   memoId?: string;
+  memoVersion?: number;
   /**
    * The opaque account binding the server rendered this page with (`memoDraftAccount(session)`). It guards the
    * autosave routes and the server action against a tab left open from another account. Without it there is no
@@ -109,6 +110,7 @@ function MemoFormInner({
   initial,
   submitLabel,
   memoId,
+  memoVersion,
   directory,
   template,
   draftAccount,
@@ -290,6 +292,9 @@ function MemoFormInner({
           </>
         ) : null}
         {memoId ? <input type="hidden" name="memoId" value={memoId} /> : null}
+        {memoVersion !== undefined ? (
+          <input type="hidden" name="expectedVersion" value={memoVersion} />
+        ) : null}
         {draftAccount ? <input type="hidden" name="draftAccount" value={draftAccount} /> : null}
 
         {state.error && !hasFieldErrors ? (

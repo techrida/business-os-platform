@@ -152,6 +152,10 @@ export async function updateMemoAction(
   }
   const session = await requireStaffSession(`/memos/${memoId}`);
   if (!accountMatches(session, form)) return { values, fieldErrors: {}, error: ACCOUNT_CHANGED };
+  const expectedVersion = Number(text(form, 'expectedVersion'));
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    return { values, fieldErrors: {}, error: 'Reload this memo before saving changes.' };
+  }
   const checked = validate(values);
   if (!checked.ok)
     return {
@@ -161,7 +165,7 @@ export async function updateMemoAction(
     };
 
   try {
-    await updateMemo(session, memoId, checked.data);
+    await updateMemo(session, memoId, { ...checked.data, expectedVersion });
   } catch (err) {
     const f = failureOf(err);
     return {
@@ -169,7 +173,7 @@ export async function updateMemoAction(
       fieldErrors: {},
       error:
         f.status === 409
-          ? 'This memo can only be edited while it is a draft or returned. Reload to see where it stands.'
+          ? 'This memo changed. Reload it and review your changes before saving.'
           : f.message,
     };
   }
@@ -186,6 +190,10 @@ export async function submitMemoAction(_prev: SubmitState, form: FormData): Prom
   const memoId = text(form, 'memoId');
   if (!UUID.test(memoId)) return { error: 'This form is incomplete. Reload the page.' };
   const session = await requireStaffSession(`/memos/${memoId}`);
+  const expectedVersion = Number(text(form, 'expectedVersion'));
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    return { error: 'Reload this memo before submitting.' };
+  }
 
   // Submitting approves the saved memo. If this account holds a working copy with changes that were never saved into
   // the memo, the person is looking at something else than what would go for approval: ask them to review first.
@@ -201,7 +209,7 @@ export async function submitMemoAction(_prev: SubmitState, form: FormData): Prom
 
   let status: 'pending' | 'blocked';
   try {
-    status = (await submitMemo(session, memoId)).status;
+    status = (await submitMemo(session, memoId, expectedVersion)).status;
   } catch (err) {
     return { error: failureOf(err, 'submit').message };
   }
