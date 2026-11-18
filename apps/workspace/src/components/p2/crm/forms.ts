@@ -211,16 +211,17 @@ const CONVERT_MESSAGES: Record<string, string> = {
   country: 'Enter a two-letter country code such as NP.',
   contactId: 'Enter the id of the existing contact.',
   contactName: 'Enter the contact name.',
-  contactEmail: 'Enter an email address such as name@company.com.',
+  contactEmail: 'Enter the contact email, such as name@company.com. Quotations are sent to it.',
   contactPhone: PHONE,
   opportunityName: 'Name the opportunity, up to 200 characters.',
   overrideReason: 'Give the reason for creating a duplicate, up to 500 characters.',
   expectedVersion: RELOAD,
   customerMode: INCOMPLETE,
-  contactMode: INCOMPLETE,
+  contactMode: 'Choose a contact: create one from the lead, or link an existing one with an email.',
 };
 
 const CONVERT_KEY: Record<string, string> = {
+  contact: 'contactMode',
   fullName: 'contactName',
   email: 'contactEmail',
   phone: 'contactPhone',
@@ -229,7 +230,8 @@ const CONVERT_KEY: Record<string, string> = {
 
 export function parseConvert(form: FormData): Parsed<ConvertLeadBody> {
   const customerMode = field(form, 'customerMode');
-  const contactMode = field(form, 'contactMode') ?? 'none';
+  // A contact is required (its email receives the quotations); there is no "none" any more.
+  const contactMode = field(form, 'contactMode');
   const createAnyway = field(form, 'createAnyway') !== undefined;
   const overrideReason = field(form, 'overrideReason');
 
@@ -261,7 +263,9 @@ export function parseConvert(form: FormData): Parsed<ConvertLeadBody> {
         fullName: field(form, 'contactName'),
         email: field(form, 'contactEmail'),
         phone: field(form, 'contactPhone'),
-        isPrimary: true,
+        // The main contact of a new customer. An existing customer may already have one (a second
+        // would be a 409), so a contact added to it is an ordinary one.
+        isPrimary: customerMode !== 'existing',
       }),
     };
   }
