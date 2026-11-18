@@ -2,14 +2,17 @@
 
 import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
+import styles from '@/app/(app)/leads/leads.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select } from '@/components/ui/field';
 
-import styles from './crm.module.css';
-import type { ConvertAction, ConvertState } from './types';
+import { FactList, Panel } from '@/components/ui/panel';
+import { toast } from '@/components/ui/toast';
+
 import { loadConversionContacts, searchConversionCustomers } from './record-lookups';
+import type { ConvertAction, ConvertState } from './types';
 
 export interface ConvertLead {
   id: string;
@@ -20,6 +23,10 @@ export interface ConvertLead {
   contactName: string;
   email: string;
   phone: string;
+  requirement?: string | null;
+  value?: string | null;
+  probability?: number | null;
+  expectedClose?: string | null;
 }
 
 function initialValues(lead: ConvertLead): Record<string, string> {
@@ -98,9 +105,13 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
     try {
       const result = await searchConversionCustomers(query);
       setCustomers(result.options);
-      setLookupError(result.error || (result.options.length === 0 ? 'No matching customers.' : ''));
+      setLookupError(
+        !result.error && result.options.length === 0 ? 'No matching organizations.' : '',
+      );
+      if (result.error) toast.error(result.error);
     } catch {
-      setLookupError('Customers could not be loaded. Try again.');
+      setLookupError('');
+      toast.error('Organizations could not be loaded. Try again.');
     } finally {
       setSearching(false);
     }
@@ -123,6 +134,10 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
     else form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [open, pending, state]);
 
+  useEffect(() => {
+    if (Object.keys(state.fieldErrors).length) toast.error('Check the highlighted fields.');
+  }, [state]);
+
   const customerExisting = values['customerMode'] === 'existing';
   const contactMode = values['contactMode'];
 
@@ -138,7 +153,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
       description={`${lead.number} · ${lead.title}`}
       closeOnOutsideClick={false}
       locked={pending}
-      className={styles.convertDialog}
+      size="large"
       footer={
         <>
           <DialogClose asChild>
@@ -216,8 +231,23 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
             </Alert>
           ) : null}
 
-          <fieldset className={styles.section}>
-            <legend className={styles.legend}>Customer</legend>
+          <Panel title="Carried over from the lead" headingLevel={3} className={styles.dialogPanel}>
+            <FactList
+              className={styles.conversionFacts}
+              facts={[
+                { key: 'organization', label: 'Organization', value: lead.companyName },
+                { key: 'contact', label: 'Contact person', value: lead.contactName },
+              ]}
+            />
+            {lead.requirement ? (
+              <Alert tone="info">
+                <span className={styles.longText}>{lead.requirement}</span>
+              </Alert>
+            ) : null}
+          </Panel>
+
+          <fieldset className={styles.conversionSection}>
+            <legend className={styles.legend}>Organization</legend>
             <label className={styles.choice}>
               <input
                 type="radio"
@@ -226,7 +256,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 checked={!customerExisting}
                 onChange={set('customerMode')}
               />
-              Create a new customer
+              Create a new organization
             </label>
             <label className={styles.choice}>
               <input
@@ -236,33 +266,38 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                 checked={customerExisting}
                 onChange={set('customerMode')}
               />
-              Link to an existing customer
+              Link to an existing organization
             </label>
 
             {customerExisting ? (
               <>
-                <Field label="Find a customer" hint="Search by name, customer number or PAN/VAT.">
-                  {(c) => (
-                    <Input
-                      {...c}
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      maxLength={100}
-                    />
-                  )}
-                </Field>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={searching}
-                  onClick={() => {
-                    void searchCustomers();
-                  }}
-                >
-                  {searching ? 'Searching' : 'Search customers'}
-                </Button>
+                <div className={styles.customerSearch}>
+                  <Field
+                    label="Find an organization"
+                    hint="Search by name, customer number or PAN/VAT."
+                  >
+                    {(c) => (
+                      <Input
+                        {...c}
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        maxLength={100}
+                      />
+                    )}
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={searching}
+                    onClick={() => {
+                      void searchCustomers();
+                    }}
+                  >
+                    {searching ? 'Searching' : 'Search'}
+                  </Button>
+                </div>
                 {lookupError ? <p role="status">{lookupError}</p> : null}
-                <Field label="Customer" error={err['customerId']}>
+                <Field label="Organization" error={err['customerId']}>
                   {(c) => (
                     <Select
                       {...c}
@@ -294,6 +329,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       name="legalName"
                       value={values['legalName']}
                       onChange={set('legalName')}
+                      required
                       maxLength={200}
                       {...c}
                     />
@@ -316,6 +352,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       name="line1"
                       value={values['line1']}
                       onChange={set('line1')}
+                      required
                       maxLength={200}
                       {...c}
                     />
@@ -327,6 +364,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       name="city"
                       value={values['city']}
                       onChange={set('city')}
+                      required
                       maxLength={100}
                       {...c}
                     />
@@ -342,6 +380,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       name="country"
                       value={values['country']}
                       onChange={set('country')}
+                      required
                       maxLength={2}
                       {...c}
                     />
@@ -351,7 +390,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
             )}
           </fieldset>
 
-          <fieldset className={styles.section}>
+          <fieldset className={styles.conversionSection}>
             <legend className={styles.legend}>Contact</legend>
             <label className={styles.choice}>
               <input
@@ -382,6 +421,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
                       name="contactName"
                       value={values['contactName']}
                       onChange={set('contactName')}
+                      required
                       maxLength={200}
                       {...c}
                     />
@@ -463,21 +503,40 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
             ) : null}
           </fieldset>
 
-          <Field label="Opportunity name" error={err['opportunityName']}>
-            {(c) => (
-              <Input
-                name="opportunityName"
-                value={values['opportunityName']}
-                onChange={set('opportunityName')}
-                maxLength={200}
-                required
-                {...c}
-              />
-            )}
-          </Field>
+          <Panel title="Opportunity details" headingLevel={3} className={styles.dialogPanel}>
+            <Field label="Opportunity name" error={err['opportunityName']}>
+              {(c) => (
+                <Input
+                  name="opportunityName"
+                  value={values['opportunityName']}
+                  onChange={set('opportunityName')}
+                  maxLength={200}
+                  required
+                  {...c}
+                />
+              )}
+            </Field>
+            <FactList
+              className={styles.conversionFacts}
+              facts={[
+                { key: 'stage', label: 'Pipeline stage', value: 'Qualified' },
+                { key: 'value', label: 'Estimated value', value: lead.value ?? 'Not set' },
+                {
+                  key: 'probability',
+                  label: 'Probability',
+                  value: lead.probability == null ? 'Not set' : `${lead.probability}%`,
+                },
+                {
+                  key: 'close',
+                  label: 'Expected closing date',
+                  value: lead.expectedClose ?? 'Not set',
+                },
+              ]}
+            />
+          </Panel>
 
           {dupes.length > 0 ? (
-            <fieldset className={styles.section}>
+            <fieldset className={styles.conversionSection}>
               <legend className={styles.legend}>Or create anyway</legend>
               <label className={styles.choice}>
                 <input
