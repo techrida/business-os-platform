@@ -71,6 +71,14 @@ P1 keeps the amount and currency fields and the PDF upload controls so the whole
 
 `MemoPdf` input has no money fields, so the PDF export needs no change.
 
+Nov16 follow-up: the P1 attachment panel now uploads directly after a picker
+selection or one-file drop and exposes audited removal for editable memos. The
+P2 removal map also covers `memos/[id]/attachment-actions.ts` and its focused
+tests, and the P1 attachment-specific scenario in `e2e/exit.spec.ts`. Keep the
+generic `app/api/documents/[documentId]/route.ts` DELETE BFF for other document
+owners when applicable. Do not reintroduce the memo attachment panel or finance
+test fields into P2+ while carrying this source ancestry forward.
+
 ### Real directory support
 
 The picker reads the real directory only: active human staff of the acting company (service accounts and unsynchronized identities excluded), their membership job title, and the department from the membership. No staff or titles are invented. A company with 21 or more staff is grouped by those real departments; people without a department sit under "Unassigned". A company with no staff shows an honest empty message. A department must exist in the company directory before a memo can be created.

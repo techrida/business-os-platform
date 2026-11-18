@@ -302,6 +302,18 @@ export function issueDocumentLink(
   );
 }
 
+/** `DELETE /v1/documents/:id` answers 204 with no body (soft removal on an editable owner). */
+export async function removeDocument(session: Session, documentId: string): Promise<void> {
+  const res = await apiFetch(session, `/v1/documents/${seg(documentId)}`, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      `DELETE /v1/documents/${seg(documentId)} failed with ${res.status}`,
+      await readBody(res),
+    );
+  }
+}
+
 const SIGNED_PATH = /^\/v1\/files\/[A-Za-z0-9._~-]+$/;
 
 /**
