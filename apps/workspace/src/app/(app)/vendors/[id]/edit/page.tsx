@@ -80,7 +80,7 @@ export default async function EditVendorPage({ params }: { params: Promise<{ id:
   }
 
   return (
-    <Page width="narrow">
+    <Page>
       <Breadcrumb items={crumbs} />
       <PageHeader title="Edit vendor" description={vendor.legalName} />
       <VendorForm

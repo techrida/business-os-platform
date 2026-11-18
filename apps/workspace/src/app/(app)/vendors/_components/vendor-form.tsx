@@ -101,7 +101,7 @@ export function VendorForm({
         </Alert>
       ) : null}
 
-      <Panel title="Vendor">
+      <Panel title="Vendor details">
         <div className={styles.grid}>
           <Field
             label="Legal name"
@@ -111,7 +111,6 @@ export function VendorForm({
                 : undefined
             }
             error={err.legalName}
-            className={WIDE}
           >
             {(control) => (
               <Input
@@ -131,7 +130,6 @@ export function VendorForm({
               label="Trade name"
               hint="Optional. The name the vendor is known by."
               error={err.tradeName}
-              className={WIDE}
             >
               {(control) => (
                 <Input
@@ -162,6 +160,10 @@ export function VendorForm({
               )}
             </Field>
           ) : null}
+        </div>
+      </Panel>
+      <Panel title="Tax registration">
+        <div className={styles.grid}>
           {foreign ? null : (
             <Field
               label="PAN"

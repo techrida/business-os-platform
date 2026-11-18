@@ -1,16 +1,13 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useActionState, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
-import {
-  ActionDialog,
-  DialogCloseButton,
-  useReloadWhenClosed,
-} from '@/components/ui/transaction-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
 import { formatBytes, guessMime } from '@/lib/kernel-ui';
 
 import {
@@ -42,36 +39,31 @@ function Notice({
   state,
   reloadHref,
   title,
+  announce = true,
 }: {
   state: PanelState;
   reloadHref: string;
   title: string;
+  /** False when the action itself toasts, because a success can unmount this form. */
+  announce?: boolean;
 }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (state.error) ref.current?.focus();
-  }, [state]);
-  return (
-    <>
-      {state.error ? (
-        <Alert
-          ref={ref}
-          tabIndex={-1}
-          tone="error"
-          role="alert"
-          title={title}
-          actions={state.reload ? <a href={reloadHref}>Reload this vendor</a> : null}
-        >
-          {state.error}
-        </Alert>
-      ) : null}
-      {state.saved ? (
-        <Alert tone="success" role="status">
-          {state.saved}
-        </Alert>
-      ) : null}
-    </>
-  );
+    if (announce && state.saved) toast.success(state.saved);
+  }, [state, announce]);
+  return state.error ? (
+    <Alert
+      ref={ref}
+      tabIndex={-1}
+      tone="error"
+      role="alert"
+      title={title}
+      actions={state.reload ? <a href={reloadHref}>Reload this vendor</a> : null}
+    >
+      {state.error}
+    </Alert>
+  ) : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -181,7 +173,58 @@ function ContactFields({ errors }: { errors: PanelState<ContactField>['errors'] 
 // Lifecycle
 // ---------------------------------------------------------------------------------------------
 
-/** Block and Archive ask for confirmation before submitting their reason. */
+/**
+ * A lifecycle command changes which commands the page offers, so a success usually unmounts the
+ * form that sent it. The toast is raised here, where the result arrives, not from an effect.
+ */
+function useLifecycle(idempotencyKey: string, onSaved?: () => void) {
+  const [state, formAction, pending] = useActionState<PanelState, FormData>(async (prev, form) => {
+    const next = await lifecycleAction(prev, form);
+    if (next.saved) {
+      toast.success(next.saved);
+      onSaved?.();
+    }
+    return next;
+  }, panelStart(idempotencyKey));
+  const [reason, setReason] = useState('');
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (state.errors.reason) {
+      formRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+    }
+  }, [state]);
+  return { state, formAction, pending, reason, setReason, formRef };
+}
+
+function ReasonField({
+  error,
+  hint,
+  reason,
+  setReason,
+}: {
+  error: string | undefined;
+  hint: string | undefined;
+  reason: string;
+  setReason: (value: string) => void;
+}) {
+  return (
+    <Field label="Reason" hint={hint} error={error}>
+      {(c) => (
+        <Textarea
+          name="reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={500}
+          rows={2}
+          required
+          {...c}
+        />
+      )}
+    </Field>
+  );
+}
+
+/** Block and Archive confirm in a dialog, with the reason in its body and the actions in its footer. */
 export function LifecycleForm(props: {
   vendorId: string;
   option: LifecycleOption;
@@ -189,17 +232,69 @@ export function LifecycleForm(props: {
 }) {
   const { option } = props;
   const confirm = option.command === 'block' || option.command === 'archive';
-  return confirm ? (
-    <ActionDialog
-      triggerLabel={option.label}
-      triggerVariant={option.tone}
+  return confirm ? <LifecycleDialog {...props} /> : <LifecycleBody {...props} />;
+}
+
+function LifecycleDialog({
+  vendorId,
+  option,
+  idempotencyKey,
+}: {
+  vendorId: string;
+  option: LifecycleOption;
+  idempotencyKey: string;
+}) {
+  const [open, setOpen] = useState(false);
+  // On success the action has toasted and revalidated the page; close over the new status.
+  const { state, formAction, pending, reason, setReason, formRef } = useLifecycle(
+    idempotencyKey,
+    () => setOpen(false),
+  );
+  const formId = useId();
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      trigger={<Button variant={option.tone}>{option.label}</Button>}
       title={`${option.label}?`}
-      intro={option.help}
+      description={option.help}
+      size="small"
+      tone="destructive"
+      locked={pending}
+      closeOnOutsideClick={false}
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? 'Working' : option.label}
+          </Button>
+        </>
+      }
     >
-      <LifecycleBody {...props} confirm />
-    </ActionDialog>
-  ) : (
-    <LifecycleBody {...props} />
+      <form id={formId} ref={formRef} action={formAction} noValidate className={styles.lifecycle}>
+        <input type="hidden" name="vendorId" value={vendorId} />
+        <input type="hidden" name="command" value={option.command} />
+        <input type="hidden" name="idempotencyKey" value={state.key} />
+        <Notice
+          state={state}
+          reloadHref={`/vendors/${vendorId}`}
+          title="Nothing changed"
+          announce={false}
+        />
+        {option.needsReason ? (
+          <ReasonField
+            error={state.errors.reason}
+            hint={undefined}
+            reason={reason}
+            setReason={setReason}
+          />
+        ) : null}
+      </form>
+    </Dialog>
   );
 }
 
@@ -207,64 +302,38 @@ function LifecycleBody({
   vendorId,
   option,
   idempotencyKey,
-  confirm = false,
 }: {
   vendorId: string;
   option: LifecycleOption;
   idempotencyKey: string;
-  confirm?: boolean;
 }) {
-  const [state, formAction, pending] = useActionState<PanelState, FormData>(
-    lifecycleAction,
-    panelStart(idempotencyKey),
-  );
-  const [reason, setReason] = useState('');
-  const formRef = useRef<HTMLFormElement>(null);
-  useReloadWhenClosed(confirm && state.saved !== undefined, formRef);
-  useEffect(() => {
-    if (state.errors.reason) {
-      formRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
-    }
-  }, [state]);
+  const { state, formAction, pending, reason, setReason, formRef } = useLifecycle(idempotencyKey);
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.lifecycle}>
       <input type="hidden" name="vendorId" value={vendorId} />
       <input type="hidden" name="command" value={option.command} />
       <input type="hidden" name="idempotencyKey" value={state.key} />
-      <Notice state={state} reloadHref={`/vendors/${vendorId}`} title="Nothing changed" />
-      {confirm && state.saved ? (
-        <DialogCloseButton variant="primary">Done</DialogCloseButton>
+      <Notice
+        state={state}
+        reloadHref={`/vendors/${vendorId}`}
+        title="Nothing changed"
+        announce={false}
+      />
+      {option.needsReason ? (
+        <ReasonField
+          error={state.errors.reason}
+          hint={option.help}
+          reason={reason}
+          setReason={setReason}
+        />
       ) : (
-        <>
-          {option.needsReason ? (
-            <Field
-              label="Reason"
-              hint={confirm ? undefined : option.help}
-              error={state.errors.reason}
-            >
-              {(c) => (
-                <Textarea
-                  name="reason"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  maxLength={500}
-                  rows={2}
-                  required
-                  {...c}
-                />
-              )}
-            </Field>
-          ) : (
-            <p className={styles.note}>{option.help}</p>
-          )}
-          <div className={styles.actions}>
-            <Button type="submit" variant={option.tone} disabled={pending}>
-              {pending ? 'Working' : option.label}
-            </Button>
-            {confirm ? <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton> : null}
-          </div>
-        </>
+        <p className={styles.note}>{option.help}</p>
       )}
+      <div className={styles.actions}>
+        <Button type="submit" variant={option.tone} disabled={pending}>
+          {pending ? 'Working' : option.label}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -407,7 +476,6 @@ export function BankDecision({
   } | null>(null);
   const [fileError, setFileError] = useState<string | undefined>();
   const [problem, setProblem] = useState<Problem | null>(null);
-  const [done, setDone] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
   const [rejecting, setRejecting] = useState(false);
@@ -464,7 +532,6 @@ export function BankDecision({
     if (busy !== 'idle') return;
     const file = fileRef.current?.files?.[0];
     setProblem(null);
-    setDone(null);
     const mime = file ? guessMime(file.name, file.type) : '';
     let error: string | undefined;
     if (!file) error = 'Choose the call-back evidence to attach.';
@@ -509,7 +576,7 @@ export function BankDecision({
         if (res.error?.includes('virus scan')) setUploaded(null);
         return;
       }
-      setDone(res.saved ?? 'The bank account is verified.');
+      toast.success(res.saved ?? 'The bank account is verified.');
       setUploaded(null);
       router.refresh();
     } catch {
@@ -557,8 +624,6 @@ export function BankDecision({
           {problem.message}
         </Alert>
       ) : null}
-      <div aria-live="polite">{done !== null ? <Alert tone="success">{done}</Alert> : null}</div>
-
       <div className={styles.decideButtons}>
         <Button type="button" disabled={busy !== 'idle'} onClick={() => void onVerify()}>
           {busy === 'uploading'

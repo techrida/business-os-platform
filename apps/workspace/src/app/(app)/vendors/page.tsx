@@ -9,11 +9,14 @@ import Link from 'next/link';
 
 import { parsePage } from '@/components/p2/customers/duplicates';
 import { Alert } from '@/components/ui/alert';
+import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
+import { Pagination } from '@/components/ui/pagination';
+import { SearchInput } from '@/components/ui/search-input';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listVendors } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
@@ -43,21 +46,24 @@ function Row({ v }: { v: VendorDto }) {
   return (
     <tr>
       <Td>
-        <CellTitle
-          title={
-            <Link href={`/vendors/${encodeURIComponent(v.id)}`} className={styles.name}>
-              {v.legalName}
-            </Link>
-          }
-          meta={
-            v.tradeName !== null ? (
-              <span className={styles.long}>
-                <span className="sr-only">Trade name: </span>
-                {v.tradeName}
-              </span>
-            ) : null
-          }
-        />
+        <div className={styles.identity}>
+          <Avatar name={v.legalName} shape="circle" />
+          <CellTitle
+            title={
+              <Link href={`/vendors/${encodeURIComponent(v.id)}`} className={styles.name}>
+                {v.legalName}
+              </Link>
+            }
+            note={
+              v.tradeName !== null ? (
+                <span className={styles.long}>
+                  <span className="sr-only">Trade name: </span>
+                  {v.tradeName}
+                </span>
+              ) : null
+            }
+          />
+        </div>
       </Td>
       <Td nowrap>{VENDOR_KIND_LABEL[v.kind]}</Td>
       <Td nowrap>
@@ -121,24 +127,22 @@ export default async function VendorsPage({
     <Page>
       <PageHeader
         title="Vendors"
-        description="Companies and people you buy from. A vendor is approved only after its KYB review, and is paid only to a verified bank account."
-        actions={
-          <>
-            {total !== null ? (
-              <Badge tone="info" role="status" className={styles.count}>
-                {total} {total === 1 ? 'vendor' : 'vendors'}
-              </Badge>
-            ) : null}
-            {addButton}
-          </>
+        description="Manage vendor profiles, verification and payment accounts."
+        status={
+          total !== null ? (
+            <Badge tone="info" role="status" className={styles.count}>
+              {total} {total === 1 ? 'vendor' : 'vendors'}
+            </Badge>
+          ) : null
         }
+        actions={addButton}
       />
 
       <form method="get" action="/vendors" role="search" className={styles.filters}>
-        <Field label="Search vendors" hint="By legal name, trade name or PAN.">
+        <Field label="Search vendors">
           {(control) => (
-            <Input
-              type="search"
+            <SearchInput
+              placeholder="Legal name, trade name or PAN"
               name="q"
               defaultValue={q}
               maxLength={MAX_QUERY}
@@ -226,24 +230,12 @@ export default async function VendorsPage({
               ))}
             </tbody>
           </Table>
-          <nav aria-label="Pages" className={styles.pager}>
-            <span className={styles.note}>
-              Showing {first} to {first + vendors.length - 1}
-              {total !== null ? ` of ${total}` : ''}
-            </span>
-            <span className={styles.pagerLinks}>
-              {page > 1 ? (
-                <LinkButton href={href(q, status, page - 1)} variant="secondary" size="small">
-                  Previous
-                </LinkButton>
-              ) : null}
-              {hasNext ? (
-                <LinkButton href={href(q, status, page + 1)} variant="secondary" size="small">
-                  Next
-                </LinkButton>
-              ) : null}
-            </span>
-          </nav>
+          <Pagination
+            label="Pages"
+            summary={`Showing ${first} to ${first + vendors.length - 1}${total !== null ? ` of ${total}` : ''}`}
+            {...(page > 1 ? { previousHref: href(q, status, page - 1) } : {})}
+            {...(hasNext ? { nextHref: href(q, status, page + 1) } : {})}
+          />
         </>
       ) : null}
     </Page>
