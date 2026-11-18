@@ -10,8 +10,7 @@ import type { RoleKey } from '@bos/contracts';
 import type { DirectoryData } from './router';
 
 /**
- * PERMISSION WIDENING, PENDING KUU'S CONFIRMATION (demo feedback 2026-11-17: "quotation approve can be
- * accountant/sales"). While true, a user holding the Sales role may be chosen as the named approver of the
+ * When enabled, a user holding the Sales role may be chosen as the named approver of the
  * first step of a quotation approval, and may then see and decide ONLY that one assigned step. It grants no
  * `approvals.requests.act`, lists no other request in their inbox and lets them decide nothing else.
  * Set to false to switch it off: Sales users can no longer be chosen, and an open request already assigned to
