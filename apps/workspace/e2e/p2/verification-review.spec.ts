@@ -82,6 +82,7 @@ test('Sales replaces rejected evidence and the reviewer approves the new round',
     }
     await submit(create);
     await review.goto(url);
+    await review.waitForLoadState('networkidle');
     const finalApproval = review.getByRole('button', { name: 'Approve customer', exact: true });
     await expect(finalApproval).toHaveAttribute('aria-disabled', 'true');
     await row(review, pan)
@@ -110,6 +111,7 @@ test('Sales replaces rejected evidence and the reviewer approves the new round',
     expect(replacement).not.toBe(firstPreview);
     await submit(create);
     await review.reload();
+    await review.waitForLoadState('networkidle');
     await row(review, pan)
       .getByRole('button', { name: `View ${pan}` })
       .click();
