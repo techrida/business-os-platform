@@ -54,7 +54,7 @@ test('P0 shell keeps its fixed edges and exposes real session facts without hydr
     const footer = sidebar.locator(':scope > div').last();
     await expect(brand).toBeVisible();
     await expect(brand).toBeInViewport({ ratio: 1 });
-    await expect(footer).toContainText(who.role);
+    await expect(footer).toContainText(new RegExp(who.role.replace(/[_-]/g, ' '), 'i'));
     await expect(footer.getByText('staff', { exact: true })).toBeVisible();
     await expect(footer).toBeInViewport({ ratio: 1 });
     const before = { brand: await brand.boundingBox(), footer: await footer.boundingBox() };
@@ -80,6 +80,18 @@ test('P0 shell keeps its fixed edges and exposes real session facts without hydr
     expect(after.footer?.y).toBe(before.footer?.y);
     expect(await sidebar.evaluate((node) => node.scrollTop)).toBe(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  });
+
+  await test.step('menu search only returns destinations the user can open', async () => {
+    const nav = page.getByRole('navigation', { name: 'Main', exact: true });
+    const search = page.getByRole('searchbox', { name: 'Search menu' });
+    await search.fill('Department');
+    await expect(nav.getByText('No matching pages')).toBeVisible();
+    await search.fill('Users');
+    await expect(nav.getByRole('link')).toHaveCount(1);
+    await expect(nav.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/admin/users');
+    await search.clear();
+    await expect(nav.getByRole('link', { name: 'Inbox' })).toBeVisible();
   });
 
   await test.step('the Dev pill loads the actual authenticated whoami response', async () => {
