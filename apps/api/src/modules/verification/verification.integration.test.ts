@@ -294,6 +294,12 @@ const putDocument = (
     .patch(`/v1/verification-cases/${caseId}/checklist`)
     .send({ key, documentId, expectedVersion, ...(expiresOn ? { expiresOn } : {}) });
 
+const removeDocument = (
+  caseId: string,
+  key: (typeof CHECKLIST_ITEM_KEYS)[number],
+  expectedVersion: number,
+) => api().post(`/v1/verification-cases/${caseId}/checklist/remove`).send({ key, expectedVersion });
+
 /** Every required item gets its own document in `status`; returns the case after the last change. */
 async function fillRequired(
   c: VerificationCaseDto,
@@ -503,6 +509,98 @@ describe('PATCH /v1/verification-cases/:id/checklist', () => {
   });
 });
 
+describe('POST /v1/verification-cases/:id/checklist/remove', () => {
+  it('detaches as the owner, preserves the document and shows the empty row in the case list', async () => {
+    const key = 'address_proof';
+    const partyId = await newCustomer(scope, U.salesA);
+    as(U.salesA, 'sales');
+    const draft = await openCase(partyId);
+    const first = await attach(draft.id, 'clean');
+    const initial = await putDocument(draft.id, key, first.documentId, draft.version);
+    expect(initial.status).toBe(200);
+    const initialDto = VerificationCaseDtoSchema.parse(initial.body);
+
+    const next = await attach(draft.id, 'clean');
+    const replacement = await putDocument(
+      draft.id,
+      key,
+      next.documentId,
+      initialDto.version,
+      '2027-01-31',
+    );
+    expect(replacement.status).toBe(200);
+    const replaced = VerificationCaseDtoSchema.parse(replacement.body);
+    const documentBefore = await documents.get(scope, next.documentId);
+
+    as(U.salesB, 'sales');
+    expect((await removeDocument(draft.id, key, replaced.version)).status).toBe(404);
+    as(U.pmo, 'pmo');
+    expect((await removeDocument(draft.id, key, replaced.version)).status).toBe(403);
+    as(U.salesA, 'sales');
+    expect((await removeDocument(draft.id, key, initialDto.version)).status).toBe(409);
+    expect((await api().get(`/v1/verification-cases/${draft.id}`)).body).toEqual(replaced);
+
+    const res = await removeDocument(draft.id, key, replaced.version);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const dto = VerificationCaseDtoSchema.parse(res.body);
+    const emptyRow = { key, required: false, status: 'missing', documentId: null, expiresOn: null };
+    expect(dto).toEqual({
+      ...replaced,
+      version: replaced.version + 1,
+      checklist: replaced.checklist.map((item) => (item.key === key ? emptyRow : item)),
+    });
+    const list = await api().get('/v1/verification-cases').query({ partyId, status: 'draft' });
+    expect(list.status).toBe(200);
+    expect(list.body).toEqual([dto]);
+    expect(await documents.get(scope, next.documentId)).toEqual(documentBefore);
+    expect((await removeDocument(draft.id, key, dto.version)).status).toBe(409);
+    expect(await domainEvents(draft.id)).toEqual([
+      'verification.created',
+      'verification.checklist_updated',
+      'verification.checklist_updated',
+      'verification.checklist_document_detached',
+    ]);
+  });
+
+  it('refuses a submitted case, reopens a rejected case and keeps the removed row required', async () => {
+    const key = 'registration_certificate';
+    const submitted = await submittedCase();
+    expect((await removeDocument(submitted.id, key, submitted.version)).status).toBe(409);
+
+    as(U.pmo, 'pmo');
+    const rejected = await decide(submitted.id, {
+      decision: 'reject',
+      comment: 'Please provide a newer certificate',
+      expectedVersion: submitted.version,
+    });
+    expect(rejected.status).toBe(200);
+    const rejectedDto = VerificationCaseDtoSchema.parse(rejected.body);
+
+    as(U.founder, 'founder');
+    const res = await removeDocument(submitted.id, key, rejectedDto.version);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const dto = VerificationCaseDtoSchema.parse(res.body);
+    expect(dto).toMatchObject({
+      status: 'draft',
+      version: rejectedDto.version + 1,
+      reviewedBy: null,
+      decidedAt: null,
+      decisionNote: null,
+    });
+    expect(dto.checklist.find((item) => item.key === key)).toEqual({
+      key,
+      required: true,
+      status: 'missing',
+      documentId: null,
+      expiresOn: null,
+    });
+    expect(await domainEvents(dto.id)).toContain('verification.rejected');
+    const resubmit = await submitCase(dto.id);
+    expect(resubmit.status).toBe(409);
+    expect(ErrorBodySchema.parse(resubmit.body).error.message).toContain(key);
+  });
+});
+
 describe('POST /v1/verification-cases/:id/submit', () => {
   it('is 409 while a required item has no document', async () => {
     const c = await openCase();
@@ -526,6 +624,70 @@ describe('POST /v1/verification-cases/:id/submit', () => {
 });
 
 describe('POST /v1/verification-cases/:id/decision', () => {
+  it('approves clean current files after a replacement, a detach, and an unused upload', async () => {
+    const draft = await fillRequired(await openCase());
+    const old = await attach(draft.id, 'infected');
+    const withOld = await putDocument(
+      draft.id,
+      'registration_certificate',
+      old.documentId,
+      draft.version,
+    );
+    expect(withOld.status).toBe(200);
+    const replacement = await attach(draft.id, 'clean');
+    const replaced = await putDocument(
+      draft.id,
+      'registration_certificate',
+      replacement.documentId,
+      VerificationCaseDtoSchema.parse(withOld.body).version,
+    );
+    expect(replaced.status).toBe(200);
+    const optional = await attach(draft.id, 'infected');
+    const attached = await putDocument(
+      draft.id,
+      'address_proof',
+      optional.documentId,
+      VerificationCaseDtoSchema.parse(replaced.body).version,
+    );
+    expect(attached.status).toBe(200);
+    const detached = await removeDocument(
+      draft.id,
+      'address_proof',
+      VerificationCaseDtoSchema.parse(attached.body).version,
+    );
+    expect(detached.status).toBe(200);
+    await attach(draft.id, 'quarantined');
+
+    const submitted = await submitCase(draft.id);
+    expect(submitted.status).toBe(200);
+    as(U.pmo, 'pmo');
+    const decision = await decide(draft.id, {
+      decision: 'approve',
+      comment: 'Reviewed the replacement and remaining documents',
+      expectedVersion: VerificationCaseDtoSchema.parse(submitted.body).version,
+    });
+    expect(decision.status, JSON.stringify(decision.body)).toBe(200);
+    expect(VerificationCaseDtoSchema.parse(decision.body).status).toBe('approved');
+  });
+
+  it('blocks approval when a currently attached optional file is still scanning', async () => {
+    const draft = await fillRequired(await openCase());
+    const optional = await attach(draft.id, 'quarantined');
+    expect(
+      (await putDocument(draft.id, 'address_proof', optional.documentId, draft.version)).status,
+    ).toBe(200);
+    const submitted = await submitCase(draft.id);
+    expect(submitted.status).toBe(200);
+    as(U.pmo, 'pmo');
+    const decision = await decide(draft.id, {
+      decision: 'approve',
+      comment: 'Checked the documents',
+      expectedVersion: VerificationCaseDtoSchema.parse(submitted.body).version,
+    });
+    expect(decision.status).toBe(409);
+    expect(ErrorBodySchema.parse(decision.body).error.message).toContain('address_proof');
+  });
+
   it('runs the flow draft -> submit -> approve, and every write leaves a domain event', async () => {
     const submitted = await submittedCase();
     as(U.pmo, 'pmo');
@@ -559,6 +721,11 @@ describe('POST /v1/verification-cases/:id/decision', () => {
       'verification.approved',
     ]);
     // An approved case is frozen.
+    as(U.founder, 'founder');
+    expect((await removeDocument(dto.id, 'registration_certificate', dto.version)).status).toBe(
+      409,
+    );
+    as(U.pmo, 'pmo');
     expect(
       (await decide(dto.id, { decision: 'reject', comment: 'x', expectedVersion: dto.version }))
         .status,
@@ -792,6 +959,7 @@ describe('reading', () => {
     const foreignId = rows[0]!.id;
     expect((await api().get(`/v1/verification-cases/${foreignId}`)).status).toBe(404);
     expect((await putDocument(foreignId, 'other', randomUUID(), 1)).status).toBe(404);
+    expect((await removeDocument(foreignId, 'other', 1)).status).toBe(404);
     expect((await submitCase(foreignId)).status).toBe(404);
     as(U.pmo, 'pmo');
     expect(
