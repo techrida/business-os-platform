@@ -22,14 +22,20 @@ async function moveStage(page: Page, value: string, label: string) {
 
 async function createOpportunity(page: Page, name: string) {
   await page.goto('/leads/new');
-  await page.getByLabel('Title').fill(name);
-  await page.getByLabel('Source').selectOption('referral');
-  await page.getByLabel('Company').fill(`${name} Company`);
+  await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(name);
+  await page.getByRole('combobox', { name: 'Lead source', exact: true }).selectOption('referral');
+  await page
+    .getByRole('textbox', { name: 'Company or organization', exact: true })
+    .fill(`${name} Company`);
   await page.getByLabel('Contact person').fill(name);
   await page.getByRole('button', { name: 'Save lead' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
   await moveStage(page, 'contacted', 'Contacted');
-  await moveStage(page, 'qualified', 'Qualified');
+  await page.getByRole('button', { name: 'Qualify lead', exact: true }).click();
+  const qualification = page.getByRole('dialog', { name: 'Qualify this lead?' });
+  await qualification.getByRole('button', { name: 'Qualify lead', exact: true }).click();
+  await expect(qualification).toBeHidden();
+  await expect(page.getByText('Moved to Qualified.', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Convert to opportunity', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });

@@ -1,16 +1,11 @@
 /* Layout and small pieces that belong to the quotation detail only. Everything else comes from
    components/ui. Colours are Figma tokens. */
 
-/* Part C puts its action buttons here. An empty slot takes no room: a JSX comment leaves no node. */
 .actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-.actions:empty {
-  display: none;
 }
 
 .note {
@@ -19,26 +14,80 @@
   line-height: var(--line-height-body-small);
 }
 
-.quiet {
-  color: var(--text-secondary);
-}
-
 /* Customer names and reasons are free text: they wrap instead of widening the page. */
 .wrap {
   overflow-wrap: anywhere;
 }
 
-/* ---- Summary: the current revision's facts, with its totals beside them on a wide screen ---- */
+.headerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  overflow-wrap: anywhere;
+}
+
+.headerFact {
+  font-variant-numeric: tabular-nums;
+}
+
+.columns,
+.stack {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-width: 0;
+}
 
 .columns {
-  display: grid;
-  gap: 24px;
   align-items: start;
 }
 
-@media (min-width: 1200px) {
+@media (min-width: 1024px) {
   .columns {
-    grid-template-columns: minmax(0, 1fr) 373px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.07fr);
+  }
+
+  .historyStack {
+    grid-area: 1 / 1;
+  }
+
+  .revisionStack {
+    grid-area: 1 / 2;
+  }
+}
+
+.detailPanel {
+  box-shadow: none;
+}
+
+.facts {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+}
+
+.records {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.records li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.records svg {
+  flex: none;
+  color: var(--icon-secondary);
+}
+
+@media (max-width: 600px) {
+  .detailPanel {
+    padding: 16px;
   }
 }
 
@@ -108,20 +157,8 @@
   border-top: var(--border-width-thin) solid var(--divider-color);
 }
 
-.event:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
 .event:last-child {
   padding-bottom: 0;
-}
-
-.eventHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 12px;
 }
 
 .eventName {
@@ -129,6 +166,9 @@
 }
 
 .eventMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);

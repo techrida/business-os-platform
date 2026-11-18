@@ -1,0 +1,101 @@
+.hero,
+.stats,
+.widgets {
+  display: grid;
+  gap: var(--grid-gutter);
+  min-width: 0;
+}
+
+.hero,
+.widgets {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+}
+
+.stats {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+}
+
+.nudge.nudge {
+  display: flex;
+  min-height: 176px;
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+  background: var(--surface-brand);
+  background-image:
+    linear-gradient(to right, var(--border-default) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-default) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.eyebrow {
+  margin-block-end: 8px;
+  color: var(--action-primary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+}
+
+.nudge h2 {
+  max-width: 24ch;
+  font-size: var(--font-size-h3);
+  line-height: var(--line-height-h3);
+  text-wrap: balance;
+}
+
+.inboxLink.inboxLink {
+  padding-inline: 0 8px;
+  background: transparent;
+}
+
+.quickActions.quickActions {
+  background: linear-gradient(120deg, var(--surface-brand), var(--surface-subtle));
+}
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+  gap: 12px;
+}
+
+.shortcut.shortcut {
+  height: auto;
+  min-height: 72px;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border-default);
+}
+
+.activity {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding-block: 12px;
+  border-block-start: 1px solid var(--border-default);
+  overflow-wrap: anywhere;
+}
+
+.activityDot {
+  width: 7px;
+  height: 7px;
+  margin-block-start: 7px;
+  border-radius: var(--radius-full);
+  background: var(--action-primary);
+}
+
+.activity li p,
+.activity time {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+}
+
+.activity time {
+  font-size: var(--font-size-caption);
+}

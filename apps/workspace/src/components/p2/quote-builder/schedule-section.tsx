@@ -4,7 +4,7 @@ import { Dec, formatMoney } from '@bos/locale';
 
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Field, Input, Select } from '@/components/ui/field';
+import { Field, Input } from '@/components/ui/field';
 
 import {
   milestoneAmount,
@@ -17,7 +17,6 @@ import {
   type MilestoneValues,
 } from './model';
 import styles from './quote-builder.module.css';
-import type { PaymentTerm } from './schemas';
 
 const MAX_MILESTONES = 12;
 
@@ -28,8 +27,6 @@ export interface AmountDraft {
 }
 
 export function ScheduleSection({
-  paymentTermId,
-  paymentTerms,
   milestones,
   currency,
   total,
@@ -37,14 +34,11 @@ export function ScheduleSection({
   disabled,
   showScheduleErrors,
   errors,
-  onTerm,
   onChange,
   onAmountDraft,
   onAdd,
   onRemove,
 }: {
-  paymentTermId: string;
-  paymentTerms: readonly PaymentTerm[] | null;
   milestones: readonly MilestoneValues[];
   currency: Currency;
   /** The final total from the current, ready server preview. */
@@ -53,7 +47,6 @@ export function ScheduleSection({
   disabled: boolean;
   showScheduleErrors: boolean;
   errors: Readonly<Record<string, string>>;
-  onTerm: (id: string) => void;
   onChange: (key: string, patch: Partial<MilestoneValues>) => void;
   onAmountDraft: (key: string, draft: AmountDraft | undefined) => void;
   onAdd: () => void;
@@ -96,32 +89,6 @@ export function ScheduleSection({
 
   return (
     <div className={styles.sectionBody}>
-      <Field
-        label="Payment term"
-        hint={
-          paymentTerms === null
-            ? 'Reload to choose a payment term.'
-            : "Defaults to the customer's term when left empty."
-        }
-        error={errors.paymentTermId}
-      >
-        {(control) => (
-          <Select
-            {...control}
-            value={paymentTermId}
-            onChange={(e) => onTerm(e.target.value)}
-            disabled={paymentTerms === null}
-          >
-            <option value="">Customer default</option>
-            {(paymentTerms ?? []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
-        )}
-      </Field>
-
       {milestones.length === 0 ? (
         <p className={styles.muted}>Add milestones to split the payment.</p>
       ) : (

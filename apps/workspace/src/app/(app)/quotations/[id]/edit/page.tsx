@@ -139,12 +139,11 @@ export default async function EditQuotationPage({
   return (
     <Page>
       <Breadcrumb items={crumbs} />
-      <PageHeader
+      <QuoteBuilder
         title={title}
         status={<Badge tone="neutral">{version.status}</Badge>}
-        description="Save the draft when you are happy with it, then submit it for approval."
-      />
-      <QuoteBuilder
+        description="Save the draft, then submit it for approval."
+        cancelHref={`/quotations/${encodeURIComponent(quotation.id)}`}
         target={{
           mode: 'edit',
           quotationId: quotation.id,

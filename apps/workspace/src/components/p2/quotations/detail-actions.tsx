@@ -10,9 +10,11 @@ import {
 } from '@bos/contracts';
 
 import { LinkButton } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
 
 import { canRecordOutcome, kathmanduToday, preselectedContactId, sendGate } from './eligibility';
-import { OutcomeDialog } from './outcome-dialog';
+import { OutcomeDialog, type OutcomeDialogProps } from './outcome-dialog';
+import styles from './detail.module.css';
 import { ReviseForm } from './revise-form';
 import { SendDialog } from './send-dialog';
 
@@ -33,6 +35,7 @@ export function DetailActions({
   capabilities,
   reloadHref,
   today = kathmanduToday(),
+  includeOutcome = true,
 }: {
   quotationId: string;
   number: string;
@@ -44,6 +47,7 @@ export function DetailActions({
   reloadHref: string;
   /** `YYYY-MM-DD` in Kathmandu. A prop so a test can pin the clock. */
   today?: string;
+  includeOutcome?: boolean;
 }) {
   const { status } = current;
   const ids = { quotationId, versionId: current.id, version: current.version, number, reloadHref };
@@ -75,7 +79,7 @@ export function DetailActions({
           blocker={gate.ok ? null : gate.reason}
         />
       ) : null}
-      {canRecordOutcome(status) ? (
+      {includeOutcome && canRecordOutcome(status) ? (
         <OutcomeDialog {...ids} today={today} idempotencyKey={randomUUID()} />
       ) : null}
       {showRevise ? (
@@ -88,5 +92,31 @@ export function DetailActions({
         />
       ) : null}
     </>
+  );
+}
+
+export function ClientDecision({
+  current,
+  ...quotation
+}: Pick<OutcomeDialogProps, 'quotationId' | 'number' | 'reloadHref'> & {
+  current: QuotationVersionDto;
+}) {
+  if (!canRecordOutcome(current.status)) return null;
+  return (
+    <Panel
+      title="Record client decision"
+      className={styles.detailPanel}
+      description="Record whether the customer accepted or declined this quotation."
+    >
+      <div className={styles.actions}>
+        <OutcomeDialog
+          {...quotation}
+          versionId={current.id}
+          version={current.version}
+          today={kathmanduToday()}
+          idempotencyKey={randomUUID()}
+        />
+      </div>
+    </Panel>
   );
 }

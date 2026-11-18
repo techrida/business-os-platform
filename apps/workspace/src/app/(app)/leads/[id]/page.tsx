@@ -14,18 +14,22 @@ import {
   LoadProblem,
   StageBadge,
 } from '@/components/p2/crm/server-bits';
-import styles from '@/components/p2/crm/crm.module.css';
-import { userMoves } from '@/components/p2/crm/stages';
+import { stageLabel, userMoves } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
-import { LinkButton } from '@/components/ui/button';
+import { Button, LinkButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
 import { logActivityAction } from '../../activities/actions';
 import { convertLeadAction, moveLeadStageAction } from '../actions';
+import styles from '../leads.module.css';
+import { QualifyLead } from '../qualify-lead';
 
 export const metadata: Metadata = { title: 'Lead · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -37,23 +41,27 @@ function facts(l: LeadDto): Fact[] {
   return [
     {
       key: 'company',
-      label: 'Company',
-      value: <span className={styles.long}>{l.companyName}</span>,
+      label: 'Organization',
+      value: l.customerId ? (
+        <Link href={`/customers/${l.customerId}`}>{l.companyName}</Link>
+      ) : (
+        l.companyName
+      ),
     },
     {
       key: 'contact',
-      label: 'Contact',
-      value: <span className={styles.long}>{l.contactName}</span>,
+      label: 'Contact person',
+      value: l.contactName,
     },
     {
       key: 'email',
       label: 'Email',
-      value: l.email ? <span className={styles.long}>{l.email}</span> : dash,
+      value: l.email ?? dash,
     },
     { key: 'phone', label: 'Phone', value: l.phone ?? dash },
     {
       key: 'source',
-      label: 'Source',
+      label: 'Lead source',
       value: l.campaign ? `${sentence(l.source)} · ${l.campaign}` : sentence(l.source),
     },
     {
@@ -71,27 +79,48 @@ function facts(l: LeadDto): Fact[] {
       label: 'Expected close',
       value: l.expectedClose ? when(l.expectedClose, 'date') : dash,
     },
-    {
-      key: 'followup',
-      label: 'Next follow-up',
-      value: l.nextFollowUpAt ? (
-        when(l.nextFollowUpAt)
-      ) : (
-        <span className={styles.quiet}>None planned</span>
-      ),
-    },
     { key: 'created', label: 'Created', value: when(l.createdAt) },
     ...(l.requirement
       ? [
           {
             key: 'requirement',
             label: 'Requirement',
-            value: <span className={styles.long}>{l.requirement}</span>,
+            value: <span className={styles.longText}>{l.requirement}</span>,
             wide: true,
           },
         ]
       : []),
   ];
+}
+
+const milestones = ['new', 'contacted', 'qualified', 'converted'] as const;
+
+function leadTimeline(lead: LeadDto, activity: readonly ActivityDto[]): TimelineStep[] {
+  const current = milestones.findIndex((stage) => stage === lead.stage);
+  const steps = milestones.map((stage, index): TimelineStep => {
+    const change = activity.find(
+      (item) => item.kind === 'stage_change' && item.subject.endsWith(` to ${stage}`),
+    );
+    const date = stage === 'new' ? lead.createdAt : change?.occurredAt;
+    const isCurrent = stage === lead.stage;
+    const done = index < current || date !== undefined;
+    return {
+      key: stage,
+      title: stageLabel('lead', stage),
+      status: date ? when(date, 'date') : isCurrent ? 'Current' : done ? 'Reached' : 'Not yet',
+      tone: isCurrent ? 'current' : done ? 'done' : 'upcoming',
+    };
+  });
+
+  if (current === -1) {
+    steps.push({
+      key: lead.stage,
+      title: stageLabel('lead', lead.stage),
+      status: 'Current',
+      tone: lead.stage === 'lost' ? 'error' : 'warning',
+    });
+  }
+  return steps;
 }
 
 export default async function LeadPage({ params }: { params: Promise<{ id: string }> }) {
@@ -126,52 +155,46 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   if (activityResult.status === 'fulfilled') activities = activityResult.value;
   else activityProblem = failureOf(activityResult.reason).message;
 
+  const canQualify = moves.some((move) => move.stage === 'qualified');
+  const followUps = (activities ?? []).filter(
+    (item) => item.kind === 'task' && item.dueAt && !item.completedAt,
+  );
+
   return (
-    <Page>
+    <Page className={styles.detail}>
       <Breadcrumb items={[{ label: 'Leads', href: '/leads' }, { label: lead.number }]} />
       <PageHeader
         title={lead.title}
-        status={<StageBadge kind="lead" stage={lead.stage} />}
-        description={`${lead.number} · ${lead.companyName}`}
+        description={
+          <span className={styles.detailMeta}>
+            <StageBadge kind="lead" stage={lead.stage} />
+            <span className={styles.recordNumber}>{lead.number}</span>
+            <span>{lead.companyName}</span>
+          </span>
+        }
         actions={
-          lead.stage === 'qualified' ? (
-            <ConvertDialog
-              action={convertLeadAction}
-              lead={{
-                id: lead.id,
-                version: lead.version,
-                number: lead.number,
-                title: lead.title,
-                companyName: lead.companyName,
-                contactName: lead.contactName,
-                email: lead.email ?? '',
-                phone: lead.phone ?? '',
-              }}
-            />
-          ) : lead.convertedOpportunityId ? (
-            <LinkButton href={`/opportunities/${lead.convertedOpportunityId}`}>
-              Open the opportunity
+          <>
+            {canQualify ? (
+              <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
+            ) : null}
+            <LinkButton href="#lead-activity-form" variant="secondary">
+              Log activity
             </LinkButton>
-          ) : null
+          </>
         }
       />
 
-      <div className={styles.columns}>
-        <div className={styles.main}>
-          <Panel title="Overview">
-            <FactList facts={facts(lead)} />
+      <Card className={styles.timelineCard}>
+        <StatusTimeline label="Lead progression" steps={leadTimeline(lead, activities ?? [])} />
+      </Card>
+
+      <div className={styles.detailColumns}>
+        <div className={styles.detailStack}>
+          <Panel title="Lead overview" className={styles.detailPanel}>
+            <FactList facts={facts(lead)} className={styles.overviewFacts ?? ''} />
           </Panel>
 
-          <Panel
-            title="Activity"
-            description="Calls, meetings, emails, notes and tasks for this lead."
-          >
-            <ActivityForm
-              action={logActivityAction}
-              kinds={LOGGABLE_KINDS}
-              subjectKind="leadId"
-              subjectId={lead.id}
-            />
+          <Panel title="History" className={styles.detailPanel}>
             {activityProblem !== null ? (
               <Alert
                 tone="error"
@@ -184,22 +207,82 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             ) : (
               <ActivityList
                 items={activities ?? []}
-                empty="Log the first call or note above and it appears here."
+                empty="Calls, meetings and stage changes appear here."
               />
             )}
           </Panel>
         </div>
 
-        <div className={styles.side}>
-          <Panel title="Stage" as="aside">
+        <div className={styles.detailStack}>
+          <Panel
+            id="lead-conversion"
+            title={lead.convertedOpportunityId ? 'Opportunity' : 'Convert to opportunity'}
+            className={styles.detailPanel}
+            as="aside"
+          >
+            {lead.stage === 'qualified' ? (
+              <>
+                <p className={styles.quiet}>
+                  Create an opportunity using this lead’s details. The lead will link to the new
+                  opportunity.
+                </p>
+                <ConvertDialog
+                  action={convertLeadAction}
+                  lead={{
+                    id: lead.id,
+                    version: lead.version,
+                    number: lead.number,
+                    title: lead.title,
+                    companyName: lead.companyName,
+                    contactName: lead.contactName,
+                    email: lead.email ?? '',
+                    phone: lead.phone ?? '',
+                    requirement: lead.requirement,
+                    value: moneyOrNull(lead.expectedValue, lead.currency),
+                    probability: lead.probability,
+                    expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
+                  }}
+                />
+              </>
+            ) : lead.convertedOpportunityId ? (
+              <LinkButton href={`/opportunities/${lead.convertedOpportunityId}`}>
+                Open the opportunity <Icon name="chevron-right" size={16} />
+              </LinkButton>
+            ) : (
+              <>
+                <p className={styles.quiet}>Qualify this lead to unlock conversion.</p>
+                <Button disabled>Convert to opportunity</Button>
+              </>
+            )}
+          </Panel>
+
+          <Panel title="Follow-ups" className={styles.detailPanel} as="aside">
+            {lead.nextFollowUpAt ? (
+              <p>
+                <strong>Next follow-up</strong>
+                <br />
+                <time className={styles.quiet} dateTime={lead.nextFollowUpAt}>
+                  {when(lead.nextFollowUpAt)}
+                </time>
+              </p>
+            ) : null}
+            {followUps.length ? (
+              <ActivityList items={followUps} empty={null} />
+            ) : !lead.nextFollowUpAt ? (
+              <p className={styles.quiet}>
+                {activityProblem ? 'Follow-up tasks could not be loaded.' : 'No follow-up planned.'}
+              </p>
+            ) : null}
+          </Panel>
+
+          <Panel title="Stage" className={styles.detailPanel} as="aside">
             <div>
               <StageBadge kind="lead" stage={lead.stage} />
             </div>
             {lead.stageReason ? (
-              <div className={styles.reasonBox}>
-                <strong>{lead.stageReason}</strong>
-                {lead.stageNote ? <span>{lead.stageNote}</span> : null}
-              </div>
+              <Alert tone={lead.stage === 'lost' ? 'error' : 'warning'} title={lead.stageReason}>
+                {lead.stageNote ? <span className={styles.longText}>{lead.stageNote}</span> : null}
+              </Alert>
             ) : null}
             <MoveForm
               action={moveLeadStageAction}
@@ -212,12 +295,18 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                   : 'No further moves from here. A manager can reopen a lost lead.'
               }
             />
-            {lead.stage !== 'qualified' && lead.stage !== 'converted' ? (
-              <p className={styles.quiet}>Only a Qualified lead can be converted.</p>
-            ) : null}
           </Panel>
         </div>
       </div>
+
+      <Panel id="lead-activity-form" title="Log activity" className={styles.detailPanel}>
+        <ActivityForm
+          action={logActivityAction}
+          kinds={LOGGABLE_KINDS}
+          subjectKind="leadId"
+          subjectId={lead.id}
+        />
+      </Panel>
     </Page>
   );
 }

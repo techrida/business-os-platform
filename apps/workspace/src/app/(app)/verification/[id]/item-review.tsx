@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useId, useRef, useState } from 'react';
 
 import styles from '../verification.module.css';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
@@ -72,55 +73,70 @@ export function ItemReview({
     }
   }
   return (
-    <div className={styles.headerActions}>
-      <Button
-        size="small"
-        variant="secondary"
-        aria-label={`Approve ${label}`}
-        aria-disabled={!canApprove || pending}
-        aria-describedby={!canApprove ? hintId : undefined}
-        onClick={() => void decide('approve')}
-      >
-        Approve
-      </Button>
-      {!canApprove && <span id={hintId}>Approval requires a clean, unexpired file.</span>}
-      <ConfirmDialog
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next);
-          if (!next) {
-            setReason('');
-            setReasonError('');
+    <div className={styles.itemReview}>
+      <div className={styles.headerActions}>
+        <Button
+          size="small"
+          variant="secondary"
+          aria-label={`Approve ${label}`}
+          aria-disabled={!canApprove || pending}
+          aria-describedby={!canApprove ? hintId : undefined}
+          onClick={() => void decide('approve')}
+        >
+          Approve
+        </Button>
+        <ConfirmDialog
+          open={open}
+          onOpenChange={(next) => {
+            setOpen(next);
+            if (!next) {
+              setReason('');
+              setReasonError('');
+            }
+          }}
+          trigger={
+            <Button
+              size="small"
+              variant="tertiary"
+              className={styles.reject}
+              disabled={pending}
+              aria-label={`Reject ${label}`}
+            >
+              Reject
+            </Button>
           }
-        }}
-        trigger={
-          <Button size="small" variant="ghost" disabled={pending} aria-label={`Reject ${label}`}>
-            Reject
-          </Button>
-        }
-        title={`Reject ${label}?`}
-        description="Sales will see your reason."
-        destructive
-        confirmLabel="Reject document"
-        onConfirm={() => decide('reject')}
-      >
-        <Field label="Rejection reason" error={reasonError || undefined}>
-          {(control) => (
-            <Textarea
-              {...control}
-              ref={reasonRef}
-              required
-              maxLength={2000}
-              value={reason}
-              onChange={(event) => {
-                setReason(event.target.value);
-                setReasonError('');
-              }}
-              rows={4}
-            />
-          )}
-        </Field>
-      </ConfirmDialog>
+          title={`Reject ${label}?`}
+          description="Sales can replace the file after the case is returned."
+          destructive
+          confirmLabel="Reject document"
+          onConfirm={() => decide('reject')}
+        >
+          <div className={styles.decision}>
+            <Alert tone="error">Sales will see your reason.</Alert>
+            <Field label="Rejection reason" error={reasonError || undefined}>
+              {(control) => (
+                <Textarea
+                  {...control}
+                  ref={reasonRef}
+                  required
+                  maxLength={2000}
+                  value={reason}
+                  onChange={(event) => {
+                    setReason(event.target.value);
+                    setReasonError('');
+                  }}
+                  rows={4}
+                />
+              )}
+            </Field>
+          </div>
+        </ConfirmDialog>
+      </div>
+      {!canApprove && (
+        <p id={hintId} className={styles.note}>
+          Approval requires a clean, unexpired file.
+        </p>
+      )}
     </div>
   );
 }

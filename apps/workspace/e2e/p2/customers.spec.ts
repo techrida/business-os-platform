@@ -33,15 +33,17 @@ test('the customer list loads and searches', async ({ browser, baseURL }) => {
     await test.step('the list shows a table or an empty state, and the search keeps its text', async () => {
       await founder.page.goto('/customers');
       await expect(
-        founder.page.getByRole('heading', { level: 1, name: 'Customers' }),
+        founder.page.getByRole('heading', { level: 1, name: 'Organizations' }),
       ).toBeVisible();
-      await founder.page.getByLabel('Search customers').fill('no-such-customer-xyz');
+      await founder.page.getByLabel('Search organizations').fill('no-such-customer-xyz');
       await founder.page.getByRole('button', { name: 'Search' }).click();
       await expect(founder.page).toHaveURL(/q=no-such-customer-xyz/);
       await expect(
-        founder.page.getByText('No customers match "no-such-customer-xyz".'),
+        founder.page.getByText('No organizations match "no-such-customer-xyz".'),
       ).toBeVisible();
-      await expect(founder.page.getByLabel('Search customers')).toHaveValue('no-such-customer-xyz');
+      await expect(founder.page.getByLabel('Search organizations')).toHaveValue(
+        'no-such-customer-xyz',
+      );
     });
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
@@ -107,13 +109,13 @@ test('verification uploads immediately and only saves changes confirmed in the p
   try {
     await page.goto('/customers/new');
     await page.waitForLoadState('networkidle');
-    await page.getByLabel('Legal name').fill(name);
+    await page.getByLabel('Organization legal name').fill(name);
     await page.getByLabel('Address line 1').fill('Fixture road');
     await page.getByLabel('City', { exact: true }).fill('Kathmandu');
     // Every customer starts with a main contact who has an email (quotations are sent by email).
     await page.getByLabel('Full name').fill('Fixture Contact');
     await page.getByLabel('Email', { exact: true }).fill(`fixture.${Date.now()}@example.test`);
-    await page.getByRole('button', { name: 'Add customer', exact: true }).click();
+    await page.getByRole('button', { name: 'Create Organization', exact: true }).click();
     await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}(?:\?created=1)?$/);
     await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
     await page.getByRole('button', { name: 'Start verification' }).click();

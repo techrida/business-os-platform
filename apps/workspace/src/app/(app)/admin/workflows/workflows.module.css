@@ -34,6 +34,7 @@
 
 .section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   /* Room for the sticky header when a jump link lands here. */
   scroll-margin-top: 88px;
@@ -59,7 +60,8 @@
 
 .list {
   display: grid;
-  gap: 32px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -76,6 +78,12 @@
 /* ---- one workflow ----------------------------------------------------------------------------- */
 
 .workflow {
+  padding: clamp(16px, 2vw, 24px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-section);
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -274,20 +282,6 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.avatar {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-full);
-  background: var(--action-primary-subtle);
-  color: var(--action-primary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1;
 }
 
 .personText {

@@ -10,7 +10,7 @@ import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
 
-export const metadata: Metadata = { title: 'Add customer · Business OS' };
+export const metadata: Metadata = { title: 'Create Organization · Business OS' };
 export const dynamic = 'force-dynamic';
 
 export default async function NewCustomerPage() {
@@ -18,11 +18,9 @@ export default async function NewCustomerPage() {
   const mayWrite = hasPermission(session.roles, 'customer.write');
 
   return (
-    <Page width="narrow">
-      <Breadcrumb items={[{ label: 'Customers', href: '/customers' }, { label: 'Add customer' }]} />
-      <PageHeader
-        title="Add customer"
-        description="A customer is shared by every legal entity. Payment terms are set per entity afterwards."
+    <Page>
+      <Breadcrumb
+        items={[{ label: 'Organizations', href: '/customers' }, { label: 'Create Organization' }]}
       />
       {mayWrite ? (
         <CustomerForm
@@ -33,11 +31,15 @@ export default async function NewCustomerPage() {
           idempotencyKey={randomUUID()}
           cancelHref="/customers"
           reloadHref="/customers/new"
+          description="Add a company record and the primary contact for quotations."
         />
       ) : (
-        <Alert tone="info" role="status" title="Your roles do not include adding customers">
-          Ask an administrator if you need to. You can still read customers.
-        </Alert>
+        <>
+          <PageHeader title="Create Organization" />
+          <Alert tone="info" role="status" title="Your roles do not include adding organizations">
+            You can still view organizations. Ask an administrator if you need edit access.
+          </Alert>
+        </>
       )}
     </Page>
   );

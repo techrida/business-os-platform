@@ -1,28 +1,33 @@
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: center;
   gap: 8px;
-  width: min(100%, 30rem);
+  flex: 1 1 26rem;
+  min-width: 0;
 }
 
 .search {
-  flex: 1 1 12rem;
+  display: flex;
+  align-items: center;
+  flex: 1 1 18rem;
+  max-width: 22rem;
+  min-width: 0;
+  gap: 4px;
+}
+
+.searchInput {
+  flex: 1 1 0;
 }
 
 .toolbar .trigger {
-  border-color: var(--border-default);
-  background: var(--surface-default);
-  color: var(--text-primary);
+  margin-inline-start: auto;
 }
 
-.toolbar .trigger:hover,
-.toolbar .trigger[data-state='open'] {
-  background: var(--surface-muted);
-}
-
+.toolbar .trigger[data-state='open'],
 .toolbar .trigger[data-filtered='true'] {
   border-color: var(--interactive-selected-border);
+  background: var(--surface-brand);
 }
 
 .popover {
@@ -35,7 +40,7 @@
   border: var(--border-width-thin) solid var(--dropdown-border);
   border-radius: var(--radius-lg);
   background: var(--dropdown-bg);
-  box-shadow: var(--toast-shadow);
+  box-shadow: var(--shadow-section);
   color: var(--text-primary);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
@@ -57,6 +62,11 @@
   background: var(--surface-muted);
 }
 
+.option:has(input:checked) {
+  background: var(--surface-brand);
+  color: var(--action-primary);
+}
+
 .option input {
   flex: none;
   width: 1rem;
@@ -69,4 +79,15 @@
   margin-top: 4px;
   padding-top: 4px;
   border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+@media (max-width: 600px) {
+  .search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .toolbar .trigger {
+    margin-inline-start: 0;
+  }
 }

@@ -6,9 +6,9 @@ import { Skeleton } from '@/components/ui/panel';
 export default function CustomerLoading() {
   return (
     <Page aria-busy="true">
-      <PageHeader title="Customer" />
+      <PageHeader title="Organization" />
       <p className="sr-only" role="status">
-        Loading the customer
+        Loading the organization
       </p>
       <Card aria-hidden="true">
         <Skeleton height={20} width="30%" />

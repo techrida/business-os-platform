@@ -6,6 +6,7 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
 import type { CustomerFormState } from './form-state';
@@ -13,9 +14,9 @@ import type { CustomerField, CustomerValues } from './forms';
 import styles from './customer-form.module.css';
 
 const RELATIONSHIP_LABEL: Record<(typeof CUSTOMER_RELATIONSHIPS)[number], string> = {
-  prospect: 'Prospect: not buying yet',
-  active: 'Active: buying now',
-  inactive: 'Inactive: no longer buying',
+  prospect: 'Prospect',
+  active: 'Active',
+  inactive: 'Inactive',
 };
 
 const CURRENCY_LABEL: Record<(typeof CURRENCIES)[number], string> = {
@@ -49,6 +50,7 @@ export function CustomerForm({
   version,
   cancelHref,
   reloadHref,
+  description,
 }: {
   action: (prev: CustomerFormState, form: FormData) => Promise<CustomerFormState>;
   initial: CustomerValues;
@@ -60,6 +62,7 @@ export function CustomerForm({
   version?: number;
   cancelHref: string;
   reloadHref: string;
+  description?: string;
 }) {
   const [state, formAction, pending] = useActionState<CustomerFormState, FormData>(action, {
     key: idempotencyKey ?? '',
@@ -92,10 +95,29 @@ export function CustomerForm({
       ? 'Save changes'
       : acknowledged
         ? 'Create anyway'
-        : 'Add customer';
+        : 'Create Organization';
+
+  const actions = (
+    <div className={styles.actions}>
+      <LinkButton href={cancelHref} variant="secondary">
+        Cancel
+      </LinkButton>
+      <Button type="submit" disabled={pending}>
+        {submitLabel}
+      </Button>
+    </div>
+  );
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <PageHeader
+        title={mode === 'create' ? 'Create Organization' : 'Edit Organization'}
+        description={description}
+        actions={<div className={styles.topActions}>{actions}</div>}
+      />
+      <span className="sr-only" role="status">
+        {pending ? 'Saving the organization' : ''}
+      </span>
       {mode === 'create' ? (
         <>
           <input type="hidden" name="idempotencyKey" value={state.key} />
@@ -115,7 +137,7 @@ export function CustomerForm({
           tone="error"
           role="alert"
           title={state.reload ? 'This page is out of date' : 'Nothing was saved'}
-          actions={state.reload ? <a href={reloadHref}>Reload this customer</a> : null}
+          actions={state.reload ? <a href={reloadHref}>Reload this organization</a> : null}
         >
           {state.error}
         </Alert>
@@ -129,8 +151,8 @@ export function CustomerForm({
           role="alert"
           title={
             state.duplicates.length === 1
-              ? 'This may be a customer you already have'
-              : 'These may be customers you already have'
+              ? 'This may be an organization you already have'
+              : 'These may be organizations you already have'
           }
         >
           <ul className={styles.matches}>
@@ -150,9 +172,9 @@ export function CustomerForm({
         </Alert>
       ) : null}
 
-      <Panel title="Company">
+      <Panel title="Basic Company Information" className={styles.formSection}>
         <div className={styles.grid}>
-          <Field label="Legal name" error={err.legalName} className={WIDE}>
+          <Field label="Organization legal name" error={err.legalName} className={WIDE}>
             {(control) => (
               <Input
                 name="legalName"
@@ -160,24 +182,8 @@ export function CustomerForm({
                 onChange={set('legalName')}
                 maxLength={200}
                 autoComplete="organization"
+                placeholder="e.g. Acme Technologies Corporation"
                 required
-                {...control}
-              />
-            )}
-          </Field>
-          <Field
-            label="PAN or VAT number"
-            hint="Optional. Letters, digits and hyphens."
-            error={err.panVatNo}
-          >
-            {(control) => (
-              <Input
-                name="panVatNo"
-                value={values.panVatNo}
-                onChange={set('panVatNo')}
-                maxLength={20}
-                autoComplete="off"
-                className={styles.numeric}
                 {...control}
               />
             )}
@@ -209,31 +215,79 @@ export function CustomerForm({
               </Select>
             )}
           </Field>
-          <Field
-            label="Default currency"
-            hint="Used when a quotation does not say otherwise."
-            error={err.defaultCurrency}
-          >
-            {(control) => (
-              <Select
-                name="defaultCurrency"
-                value={values.defaultCurrency}
-                onChange={set('defaultCurrency')}
-                {...control}
-              >
-                <option value="">Not set</option>
-                {CURRENCIES.map((c) => (
-                  <option key={c} value={c}>
-                    {CURRENCY_LABEL[c]}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
         </div>
       </Panel>
 
-      <Panel title="Address">
+      {mode === 'create' ? (
+        <Panel
+          title="Primary Contact"
+          className={styles.formSection}
+          description="Quotations are sent to this person by email. You can add more contacts later."
+        >
+          <div className={styles.grid}>
+            <Field label="Full name" error={err.contactName}>
+              {(control) => (
+                <Input
+                  name="contactName"
+                  value={values.contactName}
+                  onChange={set('contactName')}
+                  maxLength={200}
+                  autoComplete="off"
+                  required
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field label="Email" error={err.contactEmail}>
+              {(control) => (
+                <Input
+                  type="email"
+                  name="contactEmail"
+                  value={values.contactEmail}
+                  onChange={set('contactEmail')}
+                  maxLength={254}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field
+              label="Phone"
+              hint="Optional. Start with + and the country code, for example +9779812345678."
+              error={err.contactPhone}
+            >
+              {(control) => (
+                <Input
+                  type="tel"
+                  name="contactPhone"
+                  value={values.contactPhone}
+                  onChange={set('contactPhone')}
+                  maxLength={30}
+                  autoComplete="off"
+                  className={styles.numeric}
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field label="Job title" hint="Optional." error={err.contactTitle}>
+              {(control) => (
+                <Input
+                  name="contactTitle"
+                  value={values.contactTitle}
+                  onChange={set('contactTitle')}
+                  maxLength={100}
+                  autoComplete="off"
+                  {...control}
+                />
+              )}
+            </Field>
+          </div>
+        </Panel>
+      ) : null}
+
+      <Panel title="Business Address" className={styles.formSection}>
         <div className={styles.grid}>
           <Field label="Address line 1" error={err.line1} className={WIDE}>
             {(control) => (
@@ -331,85 +385,49 @@ export function CustomerForm({
         </div>
       </Panel>
 
-      {mode === 'create' ? (
-        <Panel
-          title="Main contact"
-          description="Quotations are sent to this person by email. You can add more contacts later."
-        >
-          <div className={styles.grid}>
-            <Field label="Full name" error={err.contactName}>
-              {(control) => (
-                <Input
-                  name="contactName"
-                  value={values.contactName}
-                  onChange={set('contactName')}
-                  maxLength={200}
-                  autoComplete="off"
-                  required
-                  {...control}
-                />
-              )}
-            </Field>
-            <Field label="Email" error={err.contactEmail}>
-              {(control) => (
-                <Input
-                  type="email"
-                  name="contactEmail"
-                  value={values.contactEmail}
-                  onChange={set('contactEmail')}
-                  maxLength={254}
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                  {...control}
-                />
-              )}
-            </Field>
-            <Field
-              label="Phone"
-              hint="Optional. Start with + and the country code, for example +9779812345678."
-              error={err.contactPhone}
-            >
-              {(control) => (
-                <Input
-                  type="tel"
-                  name="contactPhone"
-                  value={values.contactPhone}
-                  onChange={set('contactPhone')}
-                  maxLength={30}
-                  autoComplete="off"
-                  className={styles.numeric}
-                  {...control}
-                />
-              )}
-            </Field>
-            <Field label="Job title" hint="Optional." error={err.contactTitle}>
-              {(control) => (
-                <Input
-                  name="contactTitle"
-                  value={values.contactTitle}
-                  onChange={set('contactTitle')}
-                  maxLength={100}
-                  autoComplete="off"
-                  {...control}
-                />
-              )}
-            </Field>
-          </div>
-        </Panel>
-      ) : null}
-
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
-          {submitLabel}
-        </Button>
-        <LinkButton href={cancelHref} variant="secondary">
-          Cancel
-        </LinkButton>
-        <span className={styles.status} role="status">
-          {pending ? (mode === 'edit' ? 'Saving your changes' : 'Saving the customer') : ''}
-        </span>
-      </div>
+      <Panel title="Commercial & Compliance" className={styles.formSection}>
+        <div className={styles.grid}>
+          <Field
+            label="Default currency"
+            hint="Used when a quotation does not say otherwise."
+            error={err.defaultCurrency}
+          >
+            {(control) => (
+              <Select
+                name="defaultCurrency"
+                value={values.defaultCurrency}
+                onChange={set('defaultCurrency')}
+                {...control}
+              >
+                <option value="">Not set</option>
+                {CURRENCIES.map((c) => (
+                  <option key={c} value={c}>
+                    {CURRENCY_LABEL[c]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field
+            label="PAN or VAT number"
+            hint="Optional. Letters, digits and hyphens."
+            error={err.panVatNo}
+          >
+            {(control) => (
+              <Input
+                name="panVatNo"
+                value={values.panVatNo}
+                onChange={set('panVatNo')}
+                maxLength={20}
+                autoComplete="off"
+                className={styles.numeric}
+                {...control}
+              />
+            )}
+          </Field>
+        </div>
+      </Panel>
+      <div className={styles.bottomActions}>{actions}</div>
     </form>
   );
 }

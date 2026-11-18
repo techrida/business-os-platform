@@ -9,6 +9,7 @@ export interface ActionState {
    * comma-joined.
    */
   fields?: Record<string, string>;
+  fieldErrors?: Record<string, string>;
 }
 
 export const IDLE: ActionState = { status: 'idle', message: '' };

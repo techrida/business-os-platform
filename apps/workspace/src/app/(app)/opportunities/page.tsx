@@ -5,19 +5,21 @@ import Link from 'next/link';
 import { Board } from '@/components/p2/crm/board';
 import { listOpportunities } from '@/components/p2/crm/crm-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
-import { LoadProblem, StageBadge, ViewSwitch } from '@/components/p2/crm/server-bits';
-import styles from '@/components/p2/crm/crm.module.css';
+import { LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
 import { OpportunityFilters } from '@/components/p2/crm/stage-filter';
 import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
+import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
 import { moveOpportunityStageAction } from './actions';
+import styles from './opportunities.module.css';
 
 export const metadata: Metadata = { title: 'Opportunities · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -68,6 +70,31 @@ function columnsFor(items: OpportunityDto[]): BoardColumnData[] {
   }));
 }
 
+function PipelineSummary({ items }: { items: readonly OpportunityDto[] }) {
+  const counts = { active: 0, qualified: 0, negotiation: 0, on_hold: 0, won: 0 };
+  for (const { stage } of items) {
+    if (stage !== 'lost' && stage !== 'won' && stage !== 'on_hold') counts.active++;
+    if (
+      stage === 'qualified' ||
+      stage === 'negotiation' ||
+      stage === 'on_hold' ||
+      stage === 'won'
+    ) {
+      counts[stage]++;
+    }
+  }
+
+  return (
+    <section className={styles.metrics} aria-label="Pipeline summary">
+      <StatCard label="Active pipeline" value={counts.active} icon="briefcase" />
+      <StatCard label="Qualified" value={counts.qualified} icon="target" />
+      <StatCard label="Negotiation" value={counts.negotiation} icon="trending-up" />
+      <StatCard label="On hold" value={counts.on_hold} icon="info" tone="warning" />
+      <StatCard label="Won" value={counts.won} icon="check-circle" tone="success" />
+    </section>
+  );
+}
+
 export default async function OpportunitiesPage({
   searchParams,
 }: {
@@ -99,18 +126,28 @@ export default async function OpportunitiesPage({
     <Page>
       <PageHeader
         title="Opportunities"
-        description="Qualified deals on their way to a quotation. Quotation Sent and Won are set by the system as quotations are sent and accepted."
+        description="Track qualified deals from discovery through quotation and close."
       />
+
+      {items !== null && items.length < LIMIT && !filtered ? (
+        <PipelineSummary items={items} />
+      ) : null}
 
       <div className={styles.toolbar}>
         <OpportunityFilters view={view} query={q ?? ''} selection={stages} options={stageOptions} />
-        <ViewSwitch
-          current={view}
-          hrefs={{
-            table: href({ q, stages }),
-            board: href({ view: 'board', q, stages }),
-          }}
-        />
+        <nav aria-label="View" className={styles.views}>
+          <Link href={href({ q, stages })} aria-current={view === 'table' ? 'page' : undefined}>
+            <Icon name="list-checks" size={16} />
+            Table
+          </Link>
+          <Link
+            href={href({ view: 'board', q, stages })}
+            aria-current={view === 'board' ? 'page' : undefined}
+          >
+            <Icon name="kanban" size={16} />
+            Board
+          </Link>
+        </nav>
       </div>
 
       {problem !== null ? (
@@ -140,9 +177,14 @@ export default async function OpportunitiesPage({
           </EmptyState>
         )
       ) : items !== null && view === 'board' ? (
-        <Board columns={columnsFor(items)} action={moveOpportunityStageAction} noun="opportunity" />
+        <Board
+          columns={columnsFor(items)}
+          action={moveOpportunityStageAction}
+          noun="opportunity"
+          className={styles.board}
+        />
       ) : items !== null ? (
-        <Table caption="Opportunities" minWidth={720}>
+        <Table caption="Opportunities" minWidth={740} className={styles.listTable ?? ''}>
           <thead>
             <tr>
               <Th>Opportunity</Th>
@@ -150,19 +192,20 @@ export default async function OpportunitiesPage({
               <Th align="end">Value</Th>
               <Th align="end">Probability</Th>
               <Th>Expected close</Th>
+              <Th>Quick action</Th>
             </tr>
           </thead>
           <tbody>
             {items.map((o) => (
-              <tr key={o.id}>
+              <tr key={o.id} data-won={o.stage === 'won' || undefined}>
                 <Td>
                   <CellTitle
                     title={<Link href={`/opportunities/${o.id}`}>{o.name}</Link>}
-                    meta={
-                      <>
+                    note={
+                      <span className={styles.recordNumber}>
                         <span className="sr-only">Opportunity number: </span>
                         {o.number}
-                      </>
+                      </span>
                     }
                   />
                 </Td>
@@ -188,18 +231,29 @@ export default async function OpportunitiesPage({
                     <span className={styles.quiet}>Not set</span>
                   )}
                 </Td>
+                <Td nowrap>
+                  <Link href={`/opportunities/${o.id}`} className={styles.rowAction}>
+                    View details<span className="sr-only"> for {o.number}</span>
+                    <Icon name="chevron-right" size={16} />
+                  </Link>
+                </Td>
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <Td colSpan={6} className={styles.tableSummary}>
+                {items.length >= LIMIT ? `Showing the first ${LIMIT}` : `Showing ${items.length}`}{' '}
+                {items.length === 1 ? 'opportunity' : 'opportunities'}
+              </Td>
+            </tr>
+          </tfoot>
         </Table>
       ) : null}
 
-      {items !== null && items.length >= LIMIT ? (
+      {items !== null && view === 'board' && items.length >= LIMIT ? (
         <p className={styles.quiet}>
-          Showing the first {LIMIT} opportunities.{' '}
-          {view === 'table'
-            ? 'Search or filter by stage to narrow the list.'
-            : 'Search to narrow the board.'}
+          Showing the first {LIMIT} opportunities. Search to narrow the board.
         </p>
       ) : null}
     </Page>
