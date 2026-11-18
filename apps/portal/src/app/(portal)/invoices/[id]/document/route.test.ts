@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ID, json, session, stubPortalEnv } from '@/lib/billing-test-support';
+import { SESSION_UNAVAILABLE_MESSAGE, SessionUnavailableError } from '@/lib/session-unavailable';
 import type { Session } from '@/lib/session';
 
 vi.mock('server-only', () => ({}));
@@ -27,6 +28,16 @@ afterEach(() => {
 });
 
 describe('invoice PDF route', () => {
+  it('returns a retryable session outage before accessing the API', async () => {
+    getSession.mockRejectedValue(new SessionUnavailableError());
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('1');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    expect(await res.text()).toBe(SESSION_UNAVAILABLE_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('streams the PDF with only the safe headers', async () => {
     fetchMock
       .mockResolvedValueOnce(json({ url: '/v1/files/tok-1', expiresAt: '2026-11-09T10:00:00Z' }))
