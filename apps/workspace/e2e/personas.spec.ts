@@ -47,7 +47,8 @@ test('branded sign-in exposes the product name and accepts a real persona', asyn
   const appOrigin = new URL(baseURL ?? '').origin;
   await page.goto('/');
   await expect(page).toHaveURL((url) => url.origin === authOrigin);
-  await expect(page.getByText('Business OS', { exact: true })).toBeVisible();
+  // The sign-in page streams behind a loading shell, so the lockup can exist twice for a moment.
+  await expect(page.getByText('Business OS', { exact: true }).first()).toBeVisible();
   await expect(page.getByLabel('Email or username', { exact: true })).toBeVisible();
 
   await signInOnZitadel(page, persona('sales'), appOrigin);
