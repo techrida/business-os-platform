@@ -88,6 +88,36 @@ index ddc9da0..2aee3cc 100644
    });
 
    test("should display translated fallback error when OTP challenge request rejects", async () => {
+diff --git i/apps/login/src/components/totp-register.test.tsx w/apps/login/src/components/totp-register.test.tsx
+index afc42c1..2e686ba 100644
+--- i/apps/login/src/components/totp-register.test.tsx
++++ w/apps/login/src/components/totp-register.test.tsx
+@@ -1,4 +1,6 @@
+-import { cleanup, render } from "@testing-library/react";
++import { completeFlowOrGetUrl } from "@/lib/client";
++import { verifyTOTP } from "@/lib/server/verify";
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+ import { afterEach, describe, expect, test, vi } from "vitest";
+ import { TotpRegister } from "./totp-register";
+
+@@ -30,4 +32,17 @@ describe("TotpRegister", () => {
+     const { getByTestId } = render(<TotpRegister uri="otpauth://totp/test" secret="SECRET" />);
+     expect(getByTestId("code-text-input")).toHaveFocus();
+   });
++
++  test("sends the completed code to the enrollment action and surfaces a provider error before continuing", async () => {
++    vi.mocked(verifyTOTP).mockResolvedValueOnce({ error: "Enrollment was rejected" });
++    render(<TotpRegister uri="otpauth://totp/test" secret="SECRET" loginName="person" organization="org" />);
++    const input = screen.getByRole<HTMLInputElement>("textbox", { name: "set.labels.code" });
++    fireEvent.change(input, { target: { value: "000123" } });
++    fireEvent.submit(input.form!);
++    expect(await screen.findByRole("alert")).toHaveTextContent("Enrollment was rejected");
++    expect(verifyTOTP).toHaveBeenCalledExactlyOnceWith("000123", "person", "org");
++    expect(completeFlowOrGetUrl).not.toHaveBeenCalled();
++    expect(input).toHaveValue("");
++    expect(input).toHaveFocus();
++  });
+ });
 diff --git i/apps/login/test-setup.ts w/apps/login/test-setup.ts
 index f149f27..919e440 100644
 --- i/apps/login/test-setup.ts
