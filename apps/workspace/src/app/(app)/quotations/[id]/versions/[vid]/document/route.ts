@@ -1,3 +1,4 @@
+import { SESSION_UNAVAILABLE_MESSAGE } from '@/lib/session-unavailable';
 import { SignedLinkDtoSchema, type SignedLinkDto } from '@bos/contracts';
 
 import { ApiError, apiFetch } from '@/lib/api';
@@ -68,6 +69,11 @@ export async function GET(
 
   const session = await routeSession();
   if (session instanceof Response) {
+    if (session.status === 503) {
+      const response = plain(SESSION_UNAVAILABLE_MESSAGE, 503);
+      response.headers.set('retry-after', '1');
+      return response;
+    }
     return plain(
       session.status === 401 ? 'Sign in to download this file.' : 'Staff only.',
       session.status,
