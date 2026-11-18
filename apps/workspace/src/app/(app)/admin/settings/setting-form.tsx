@@ -59,7 +59,11 @@ export function SettingForm({
   if (settingKey === 'currency.enabled') {
     const on = (kept ?? current).split(/,\s*/);
     control = (
-      <fieldset className={styles.fieldset}>
+      <fieldset
+        className={styles.fieldset}
+        aria-invalid={state.fieldErrors?.value ? true : undefined}
+        aria-describedby={state.fieldErrors?.value ? `${id}-error` : undefined}
+      >
         <legend className={styles.legend}>{label}</legend>
         <div className={styles.checkGrid}>
           {CURRENCIES.map((currency) =>
@@ -92,11 +96,16 @@ export function SettingForm({
             ),
           )}
         </div>
+        {state.fieldErrors?.value && (
+          <p id={`${id}-error`} className={styles.fieldError}>
+            {state.fieldErrors.value}
+          </p>
+        )}
       </fieldset>
     );
   } else if (settingKey === 'approvals.sla_defaults' || settingKey === 'entity.address') {
     control = (
-      <Field label={`${label} (JSON)`}>
+      <Field label={`${label} (JSON)`} error={state.fieldErrors?.value}>
         {(field) => (
           <Textarea
             name="value"
@@ -125,10 +134,13 @@ export function SettingForm({
     );
   } else {
     control = (
-      <Field label={label}>
+      <Field label={label} error={state.fieldErrors?.value}>
         {(field) => (
           <Input
             name="value"
+            {...(settingKey === 'tax.vat_rate'
+              ? { type: 'number', min: 0, max: 100, step: '0.01' }
+              : {})}
             autoComplete="off"
             required={settingKey !== 'entity.pan_vat_no'}
             defaultValue={kept ?? current}
@@ -179,10 +191,7 @@ export function SettingForm({
         </form>
       ) : null}
       <div className={styles.rowStatus}>
-        {/* A rejected save's message goes away with the editor it belongs to. */}
-        {!editing && state.status === 'error' ? null : (
-          <FormStatus state={state} pending={pending} />
-        )}
+        <FormStatus state={state} pending={pending} inline={editing} />
       </div>
     </>
   );

@@ -1,7 +1,8 @@
+import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Icon } from '@/components/ui/icon';
-import { Page, PageHeader } from '@/components/ui/page';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import {
@@ -40,19 +41,6 @@ const STATUS: Record<
   retired: { tone: 'neutral', label: 'Retired' },
 };
 
-/** Up to two letters: first and last word of a name ("Leslie Alexander" is "LA"). */
-function initialsOf(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  const first = words[0];
-  if (!first) return '?';
-  const last = words.length > 1 ? words[words.length - 1] : undefined;
-  return [first, last]
-    .filter((word): word is string => word !== undefined)
-    .map((word) => Array.from(word)[0] ?? '')
-    .join('')
-    .toUpperCase();
-}
-
 /** An initials avatar, the name, and the email under it. The avatar is decoration. */
 function Person({
   name,
@@ -65,9 +53,7 @@ function Person({
 }) {
   return (
     <div className={styles.person}>
-      <span className={styles.avatar} aria-hidden="true">
-        {unknown ? '?' : initialsOf(name)}
-      </span>
+      <Avatar name={unknown ? '' : name} shape="circle" />
       <span className={styles.personText}>
         <span className={styles.personName}>{name}</span>
         {email ? <span className={styles.personEmail}>{email}</span> : null}
@@ -125,10 +111,11 @@ export default async function WorkflowsPage() {
   const documentTypes = workflows.ok ? [...new Set(workflows.data.map((w) => w.documentType))] : [];
 
   return (
-    <Page>
+    <Page className={adminStyles.page}>
+      <Breadcrumb items={[{ label: 'Administration', href: '/admin' }, { label: 'Workflows' }]} />
       <PageHeader
         title="Workflows"
-        description="Who approves what. A published version is frozen: to change a route, save a new draft and publish it. Requests already submitted keep the version they started with."
+        description="Manage approval routes, groups and delegations. Submitted requests keep the workflow version they started with."
       />
 
       <nav aria-label="On this page" className={styles.jump}>
@@ -228,7 +215,7 @@ export default async function WorkflowsPage() {
                                       label="Publish"
                                       hiddenLabel={`version ${v.version} of ${wf.name}`}
                                       variant="primary"
-                                      confirmText={`Publish version ${v.version} of "${wf.name}"? New requests will use it, and the version in use is retired.`}
+                                      confirmText="New requests will use this version, and the version in use will be retired."
                                     />
                                   ) : (
                                     <span className={styles.muted}>
@@ -323,7 +310,7 @@ export default async function WorkflowsPage() {
                           label="Delete group"
                           hiddenLabel={g.name}
                           variant="dangerOutline"
-                          confirmText={`Delete the group "${g.name}"?`}
+                          confirmText="The group and its memberships will be removed."
                         />
                       }
                     >
@@ -421,7 +408,7 @@ export default async function WorkflowsPage() {
                           label="Revoke"
                           hiddenLabel={`delegation from ${labelOf(d.fromUserId)} to ${labelOf(d.toUserId)}`}
                           variant="dangerOutline"
-                          confirmText="Revoke this delegation? The person taking over can no longer act for the other."
+                          confirmText="The person taking over will no longer be able to act for the other."
                         />
                       </Td>
                     </tr>

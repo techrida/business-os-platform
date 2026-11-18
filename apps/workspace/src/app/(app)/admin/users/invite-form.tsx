@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
@@ -37,8 +38,8 @@ export function InviteForm() {
   return (
     <form action={formAction} className={styles.form}>
       <PageHeader
-        title="Invite user"
-        description="Add a colleague and choose the roles they hold. They get an email to set up their sign-in."
+        title="Add New User"
+        description="Add a colleague and choose the roles they hold."
         actions={
           <>
             <LinkButton href="/admin/users" variant="secondary">
@@ -55,13 +56,15 @@ export function InviteForm() {
 
       <Panel
         className={styles.sectionPanel ?? ''}
-        title={<SectionTitle step="01 · The basics">User profile & identity</SectionTitle>}
+        title={<SectionTitle step="01 · The basics">User Profile & Identity</SectionTitle>}
       >
         <div className={styles.fieldGrid}>
-          <Field label="Given name">
+          <Field label="First name" error={state.fieldErrors?.givenName}>
             {(control) => (
               <Input
                 name="givenName"
+                maxLength={200}
+                placeholder="First name"
                 autoComplete="off"
                 required
                 defaultValue={kept.givenName ?? ''}
@@ -69,10 +72,12 @@ export function InviteForm() {
               />
             )}
           </Field>
-          <Field label="Family name">
+          <Field label="Last name" error={state.fieldErrors?.familyName}>
             {(control) => (
               <Input
                 name="familyName"
+                maxLength={200}
+                placeholder="Last name"
                 autoComplete="off"
                 required
                 defaultValue={kept.familyName ?? ''}
@@ -80,11 +85,13 @@ export function InviteForm() {
               />
             )}
           </Field>
-          <Field label="Email" className={styles.wide ?? ''}>
+          <Field label="Work email" error={state.fieldErrors?.email}>
             {(control) => (
               <Input
                 type="email"
                 name="email"
+                maxLength={320}
+                placeholder="name@company.com"
                 autoComplete="off"
                 required
                 defaultValue={kept.email ?? ''}
@@ -97,8 +104,8 @@ export function InviteForm() {
 
       <Panel
         className={styles.sectionPanel ?? ''}
-        title={<SectionTitle step="02 · Roles">Role & access configuration</SectionTitle>}
-        description="Tick every role this person holds. Roles can be changed later."
+        title={<SectionTitle step="02 · Roles">Role & Access Configuration</SectionTitle>}
+        description="Select the roles this person holds. You can change these later."
       >
         <RoleCheckboxes
           idPrefix="invite-role"
@@ -106,6 +113,18 @@ export function InviteForm() {
           hideLegend
           checked={(kept.roles ?? '').split(',').filter(Boolean)}
         />
+      </Panel>
+      <Panel
+        className={styles.sectionPanel ?? ''}
+        title={<SectionTitle step="03 · Onboarding">Onboarding &amp; Credentials</SectionTitle>}
+      >
+        <div className={styles.activation}>
+          <Icon name="inbox" size={20} />
+          <div>
+            <h3>Email invitation</h3>
+            <p>Your colleague receives an email to set up their sign-in.</p>
+          </div>
+        </div>
       </Panel>
     </form>
   );

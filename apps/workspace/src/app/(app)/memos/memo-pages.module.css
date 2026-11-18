@@ -1,0 +1,121 @@
+.results {
+  display: grid;
+  gap: var(--spacing-content-gap);
+  min-width: 0;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.filters nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.statusFilter {
+  min-width: min(100%, 10rem);
+}
+
+.statusFilter button:not(:disabled) {
+  border-color: var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--button-secondary-text);
+}
+
+.statusFilter button:hover:not(:disabled) {
+  background: var(--button-secondary-bg-hover);
+}
+
+.tableCard {
+  min-width: 0;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--table-row-bg);
+}
+
+.tableCard .table {
+  border: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.tableFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 60px;
+  padding: 12px 24px;
+  border-top: var(--border-width-thin) solid var(--pagination-border);
+  color: var(--pagination-text);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memoIdentity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fileIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  background: var(--attachment-bg);
+  color: var(--attachment-icon);
+}
+
+.formPage > nav + div,
+.detail > nav + div {
+  margin-block-start: -8px;
+}
+
+.columns {
+  display: grid;
+  grid-template-areas: 'main' 'route' 'history';
+  gap: 24px;
+  align-items: start;
+  min-width: 0;
+}
+
+.main {
+  display: grid;
+  grid-area: main;
+  gap: 24px;
+  min-width: 0;
+}
+
+.route {
+  grid-area: route;
+}
+
+.history {
+  grid-area: history;
+}
+
+.detail .detailPanel {
+  box-shadow: none;
+}
+
+@media (min-width: 1024px) {
+  .columns {
+    grid-template-areas: 'main route' 'history route';
+    grid-template-columns: minmax(0, 2fr) minmax(248px, 1fr);
+  }
+}
