@@ -743,7 +743,9 @@ describe('admin: groups and delegations', () => {
     me = U.founder;
     const detail = await service.get(requestId);
     expect(detail.steps[0]?.groupName).toBe('Treasury');
-    expect(detail.people?.map((person) => person.userId).sort()).toEqual([U.requester, U.mgmt].sort());
+    expect(detail.people?.map((person) => person.userId).sort()).toEqual(
+      [U.requester, U.mgmt].sort(),
+    );
     await expect(admin.deleteGroup(id)).rejects.toMatchObject({ status: 409 });
     await expect(admin.removeMember(id, U.stranger)).rejects.toMatchObject({ status: 404 });
     await expect(admin.addMember(randomUUID(), U.stranger)).rejects.toMatchObject({ status: 404 });

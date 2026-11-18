@@ -48,8 +48,10 @@ type Step = ApprovalRequestDto['steps'][number];
 /** Resolve step labels from the authorized request. */
 function stepWho(step: Step, names: Map<string, string>): string {
   if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
-  if (step.kind === 'group' && step.groupId) return step.groupName ?? 'Approval group name unavailable';
-  if (step.kind === 'user' && step.userId) return names.get(step.userId.toLowerCase()) ?? 'Approver name unavailable';
+  if (step.kind === 'group' && step.groupId)
+    return step.groupName ?? 'Approval group name unavailable';
+  if (step.kind === 'user' && step.userId)
+    return names.get(step.userId.toLowerCase()) ?? 'Approver name unavailable';
   return `Step ${step.seq}`;
 }
 
