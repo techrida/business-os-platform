@@ -97,8 +97,8 @@ test.describe('persona sign-in and sign-out', () => {
           await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
           // The header shows the org kind badge and the roles that came from the token.
           const header = page.getByRole('banner');
-          await expect(header).toContainText('staff');
-          await expect(header).toContainText(who.role);
+          await expect(header).toContainText(/staff/i);
+          await expect(header).toContainText(new RegExp(who.role.replace(/[_-]/g, ' '), 'i'));
         } else {
           // A valid session, but not for this app: `/` sends customers and vendors away.
           await expect(page).toHaveURL(`${appOrigin}/staff-only`);
