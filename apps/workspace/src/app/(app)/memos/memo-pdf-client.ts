@@ -6,13 +6,26 @@ export type PdfSource = { kind: 'saved'; memoId: string } | { kind: 'draft'; inp
 
 export interface PdfOutcome {
   ok: boolean;
+  /** The toast title. */
   message: string;
+  /** A second line for the toast, when there is something worth knowing. */
+  detail?: string;
+}
+
+/** The note shown when the PDF fonts could not draw some characters, or '' when they all could. */
+export function substitutionNote(replaced: number): string {
+  if (!(replaced > 0)) return '';
+  return `${replaced} character${replaced === 1 ? '' : 's'} the PDF fonts cannot draw (for example CJK or emoji) ${replaced === 1 ? 'was' : 'were'} replaced with "?".`;
 }
 
 /** The file name the server sent, else a safe default. */
 export function fileNameFrom(header: string | null, fallback = 'memo.pdf'): string {
-  const match = header && /filename="?([A-Za-z0-9._-]{1,120})"?/.exec(header);
-  return match ? match[1]! : fallback;
+  // The whole value must be a plain name: a path such as "../x" falls back instead of being cut to "..".
+  const match =
+    header &&
+    /filename=(?:"([A-Za-z0-9._-]{1,120})"|([A-Za-z0-9._-]{1,120}))\s*(?:;|$)/.exec(header);
+  const name = match ? (match[1] ?? match[2]) : undefined;
+  return name && !/^\.+$/.test(name) ? name : fallback;
 }
 
 /** Fetches the memo as a PDF and hands it to the browser's own save flow. Nothing leaves the workspace origin. */
@@ -34,6 +47,13 @@ export async function downloadMemoPdf(source: PdfSource): Promise<PdfOutcome> {
     };
   }
   if (res.status === 401) {
+    // An open editor holds text that may not be saved yet, so it is never navigated away from: sign in elsewhere.
+    if (source.kind === 'draft') {
+      return {
+        ok: false,
+        message: 'Your session ended. Sign in again in another tab, then retry.',
+      };
+    }
     // /auth/login is a Route Handler, not a page: it needs a real navigation.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
@@ -53,14 +73,8 @@ export async function downloadMemoPdf(source: PdfSource): Promise<PdfOutcome> {
   link.remove();
   // Revoked after the browser has taken the file; the delay only covers slow starts.
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  const replaced = Number(res.headers.get('x-memo-pdf-substituted') ?? '0');
-  return {
-    ok: true,
-    message:
-      replaced > 0
-        ? `PDF downloaded. ${replaced} character${replaced === 1 ? '' : 's'} the PDF fonts cannot draw (for example CJK or emoji) ${replaced === 1 ? 'was' : 'were'} replaced with "?".`
-        : 'PDF downloaded.',
-  };
+  const detail = substitutionNote(Number(res.headers.get('x-memo-pdf-substituted') ?? '0'));
+  return { ok: true, message: 'PDF downloaded', ...(detail ? { detail } : {}) };
 }
 
 /** Print rules for the cloned paper: A4, no frame, black on white, nothing but the paper. */
