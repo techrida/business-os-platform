@@ -80,31 +80,48 @@ export function approvalFile(
 }
 
 /** Pre-decision readiness. Acceptance is the result of approval, not its prerequisite. */
+export function approvalProblems(
+  c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
+  files: ApprovalFiles = new Map(),
+): string[] {
+  if (c.status !== 'submitted') return ['Only a case awaiting review can be approved.'];
+  if (!c.checklist.some((item) => item.required)) {
+    return ['Approval requires at least one required document.'];
+  }
+  return c.checklist.flatMap((item) => {
+    const label = CHECKLIST_LABEL[item.key];
+    if (
+      item.required &&
+      (item.documentId === null || !['provided', 'accepted'].includes(item.status))
+    ) {
+      return [
+        `${label}: a required document is missing or rejected. Reject the case to request a replacement.`,
+      ];
+    }
+    if (item.documentId === null) return [];
+    const file = files.get(item.documentId);
+    if (file === undefined || file === null || file === 'unavailable') {
+      return [`${label}: file or scan details are unavailable. Reload to check again.`];
+    }
+    switch (file.status) {
+      case 'clean':
+        return [];
+      case 'quarantined':
+      case 'awaiting_content':
+        return [`${label}: the scan is pending.`];
+      default:
+        return [
+          `${label}: the file did not pass its scan. Reject the case to request a replacement.`,
+        ];
+    }
+  });
+}
+
 export function approveBlockedReason(
   c: Pick<VerificationCaseDto, 'status' | 'checklist'>,
   files: ApprovalFiles = new Map(),
 ): string | null {
-  if (c.status !== 'submitted') return 'Only a case awaiting review can be approved.';
-  const required = c.checklist.filter((i) => i.required);
-  if (required.length === 0) return 'Approval requires at least one required document.';
-  for (const item of required) {
-    const label = CHECKLIST_LABEL[item.key];
-    if (item.documentId === null || !['provided', 'accepted'].includes(item.status)) {
-      return `${label}: a required document is missing or rejected. Reject the case to request a replacement.`;
-    }
-  }
-  // Include optional attachments: the API also requires all case attachments to be clean.
-  for (const item of c.checklist.filter((i) => i.documentId !== null)) {
-    const file = files.get(item.documentId!);
-    const label = CHECKLIST_LABEL[item.key];
-    if (file === undefined || file === null || file === 'unavailable') {
-      return `${label}: file or scan details are unavailable. Reload to check again.`;
-    }
-    if (file.status !== 'clean') {
-      return `${label}: scan status is ${file.status}. Approval requires clean documents. Reload after scanning, or reject to request a replacement.`;
-    }
-  }
-  return null;
+  return approvalProblems(c, files)[0] ?? null;
 }
 
 export function canApprove(

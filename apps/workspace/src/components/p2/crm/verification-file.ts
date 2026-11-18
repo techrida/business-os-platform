@@ -10,6 +10,8 @@ import { z } from 'zod';
  */
 export const DocumentSchema = z.object({
   id: z.guid(),
+  ownerType: z.string(),
+  ownerId: z.guid(),
   currentVersionId: z.guid().nullable(),
   versions: z.array(DocumentVersionDtoSchema),
 });
@@ -20,29 +22,37 @@ export interface FileView {
   versionId: string;
   filename: string;
   sizeBytes: number;
-  /** The scan status; only `clean` may be opened, and the download route checks it again. */
+  mimeType: string;
+  /** Only clean versions can be previewed or downloaded. Both routes enforce this. */
   status: DocumentVersionDto['status'];
 }
 
-/**
- * The version a reviewer should open: the document's current version, or when the API names none
- * the newest one that was not rejected. Null when the document has no usable version.
- */
-export function fileOf(doc: DocumentDetail): FileView | null {
-  const current =
-    doc.versions.find((v) => v.id === doc.currentVersionId) ??
-    doc.versions.filter((v) => v.status !== 'rejected').sort((a, b) => b.version - a.version)[0];
-  if (current === undefined) return null;
+export function projectVersion(v: DocumentVersionDto): FileView {
   return {
-    documentId: doc.id,
-    versionId: current.id,
-    filename: current.filename,
-    sizeBytes: current.sizeBytes,
-    status: current.status,
+    documentId: v.documentId,
+    versionId: v.id,
+    filename: v.filename,
+    sizeBytes: v.sizeBytes,
+    mimeType: v.detectedMime ?? v.declaredMime,
+    status: v.status,
   };
 }
 
-/** The same-origin route that streams a clean file (it issues the signed link when clicked). */
+/** The newest non-rejected version is also the evidence used for approval. */
+export function fileOf(doc: DocumentDetail): FileView | null {
+  const versions = [...doc.versions].sort((a, b) => b.version - a.version);
+  const version = versions.find((v) => v.status !== 'rejected') ?? versions[0];
+  return version === undefined ? null : projectVersion(version);
+}
+
+function versionHref(file: Pick<FileView, 'documentId' | 'versionId'>): string {
+  return `/api/documents/${encodeURIComponent(file.documentId)}/versions/${encodeURIComponent(file.versionId)}`;
+}
+
+export function previewHref(file: Pick<FileView, 'documentId' | 'versionId'>): string {
+  return `${versionHref(file)}/preview`;
+}
+
 export function downloadHref(file: Pick<FileView, 'documentId' | 'versionId'>): string {
-  return `/api/documents/${encodeURIComponent(file.documentId)}/versions/${encodeURIComponent(file.versionId)}/download`;
+  return `${versionHref(file)}/download`;
 }

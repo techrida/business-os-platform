@@ -74,3 +74,28 @@
   line-height: var(--line-height-body-small);
   overflow-wrap: anywhere;
 }
+
+.editBody {
+  composes: body;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stageSlot {
+  position: relative;
+  display: flex;
+  flex: 1 0 240px;
+  min-height: 0;
+}
+
+.overlaySlot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.overlaySlot > * {
+  pointer-events: auto;
+}
