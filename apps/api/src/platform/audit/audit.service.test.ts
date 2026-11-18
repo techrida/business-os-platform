@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { AuditEventDtoSchema } from '@bos/contracts';
-import { createTenantWithEntity, organizations, runMigrations } from '@bos/db';
+import { createStaffUser, createTenantWithEntity, organizations, runMigrations } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -269,5 +269,48 @@ describe('row-change events', () => {
       before: null,
       after: { id: organizationId, name: 'Second org' },
     });
+  });
+});
+
+describe('AuditService.list actor names', () => {
+  // Real producer, real consumer: the event is written by audit.record() under a real app.users id (as an
+  // approval decision is), and read back through list() exactly as GET /v1/audit serves it.
+  it('names a seeded person, and leaves unknown, other-tenant and non-user actors as null', async () => {
+    const mine = await createTenantWithEntity(appPool);
+    const theirs = await createTenantWithEntity(appPool);
+    const mineScope: TxScope = { tenantId: mine.tenantId, organizationId: mine.organizationId };
+    const { userId } = await createStaffUser(appPool, { ...mine, roleKeys: ['accountant'] });
+    const { userId: strangerId } = await createStaffUser(appPool, { ...theirs, roleKeys: [] });
+    const unknownId = randomUUID();
+    const seeded = await appPool.query<{ display_name: string }>(
+      'SELECT display_name FROM app.users WHERE id = $1',
+      [userId],
+    );
+    const seededName = seeded.rows[0]?.display_name;
+    expect(seededName).toBeTruthy();
+
+    const as = (kind: 'user' | 'system', id: string) => ({
+      kind,
+      id,
+      correlationId: `corr-${id}`,
+    });
+    const record = (actor: ReturnType<typeof as>, action: string) =>
+      withTx(db, mineScope, actor, (tx) =>
+        service.record(tx, { action, entityType: 'named', entityId: 'n-1' }),
+      );
+    await record(as('user', userId), 'named.by_person');
+    await record(as('user', strangerId), 'named.by_other_tenant_person');
+    await record(as('user', unknownId), 'named.by_unknown_person');
+    await record(as('system', 'system:seal'), 'named.by_system');
+
+    const events = await service.list(mineScope, { entityType: 'named', limit: 10 });
+    const nameOf = (action: string) => events.find((e) => e.action === action)?.actorDisplayName;
+    expect(nameOf('named.by_person')).toBe(seededName);
+    expect(nameOf('named.by_other_tenant_person')).toBeNull();
+    expect(nameOf('named.by_unknown_person')).toBeNull();
+    expect(nameOf('named.by_system')).toBeNull();
+    // Stored rows and the hash chain are unchanged by the lookup: the actor ids are as written.
+    expect(events.map((e) => e.actorId)).toEqual([userId, strangerId, unknownId, 'system:seal']);
+    for (const e of events) expect(AuditEventDtoSchema.parse(e)).toEqual(e);
   });
 });
