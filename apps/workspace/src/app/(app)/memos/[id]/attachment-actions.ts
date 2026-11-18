@@ -1,7 +1,5 @@
 import { type AttachmentView, formatBytes, guessMime } from '@/lib/kernel-ui';
 
-export type AttachmentMessage = { tone: 'ok' | 'bad'; text: string } | null;
-
 export interface AttachmentFileLike {
   name: string;
   size: number;
