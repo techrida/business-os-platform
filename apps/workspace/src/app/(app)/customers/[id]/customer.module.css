@@ -1,19 +1,11 @@
-/* Layout and small pieces that belong to the customer detail page only. Everything else comes from
-   components/ui. Colours are Figma tokens from styles/tokens.css. */
-
-.note {
-  color: var(--text-secondary);
-  font-size: var(--font-size-body-small);
-  line-height: var(--line-height-body-small);
-}
-
+.note,
 .quiet {
   color: var(--text-secondary);
 }
 
-/* Names, emails and titles can be long or have no spaces: wrap rather than push the page wider. */
-.long {
-  overflow-wrap: anywhere;
+.note {
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
 }
 
 .numeric {
@@ -21,54 +13,158 @@
 }
 
 .ref {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-caption);
+  font-size: var(--font-size-body-small);
 }
 
 .address {
   display: grid;
   gap: 2px;
-  overflow-wrap: anywhere;
 }
-
-/* ---- Main column, with the verification and activity cards beside it on wide screens ---- */
 
 .columns {
   display: grid;
-  gap: 24px;
+  gap: var(--grid-gutter);
   align-items: start;
+  margin-top: var(--spacing-page);
 }
 
 .main,
-.sideStack {
-  display: grid;
-  gap: 24px;
+.profile,
+.verification {
   min-width: 0;
 }
 
-@media (min-width: 1200px) {
-  .columns {
-    grid-template-columns: minmax(0, 1fr) 373px;
-  }
+.main > [role='tabpanel'] {
+  margin-top: 0;
 }
 
-/* ---- Add contact ---- */
-
-.addContact {
+.profile.profile {
   display: grid;
+  gap: var(--spacing-section);
+  padding: clamp(16px, 2vw, 28px);
+}
+
+.profileIdentity {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.profileIdentity .profileAvatar {
+  width: 76px;
+  height: 76px;
+  margin-bottom: 8px;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
+  font-size: 24px;
+}
+
+.profileName {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-h1);
+  letter-spacing: var(--letter-spacing-tight);
+  overflow-wrap: anywhere;
+}
+
+.editLink {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.info.info,
+.contacts.contacts {
+  box-shadow: none;
+}
+
+.infoHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.infoHeading svg {
+  flex: none;
+  color: var(--icon-brand);
+}
+
+.facts.facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  margin-top: 24px;
-  padding-top: 20px;
+  padding-top: 16px;
   border-top: var(--border-width-thin) solid var(--border-default);
 }
 
-.subhead {
-  font-size: var(--font-size-body);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-body);
+.facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  align-items: baseline;
+  gap: 8px;
 }
 
-/* ---- Verification cases ---- */
+.facts dt {
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: normal;
+}
+
+.facts dd {
+  text-align: end;
+}
+
+.contacts .contactTable {
+  border: 0;
+  border-top: var(--border-width-thin) solid var(--border-default);
+  border-radius: 0;
+}
+
+.contacts .contactTable td,
+.contacts .contactTable th {
+  padding-inline: 10px;
+}
+
+.contacts .contactTable td {
+  height: 88px;
+}
+
+.contacts .contactTable :is(td, th):first-child {
+  padding-inline-start: 0;
+}
+
+.contacts .contactTable :is(td, th):last-child {
+  padding-inline-end: 0;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.identityText,
+.contactTitle {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.contactName {
+  font-weight: var(--font-weight-medium);
+}
+
+.email {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  text-underline-offset: 0.2em;
+}
+
+.email:hover {
+  color: var(--action-primary);
+}
 
 .cases {
   display: grid;
@@ -82,4 +178,37 @@
   display: grid;
   justify-items: start;
   gap: 6px;
+}
+
+@media (min-width: 1200px) {
+  .columns {
+    grid-template-columns: minmax(0, 1.82fr) minmax(0, 1fr);
+    grid-template-areas:
+      'main profile'
+      'main verification';
+    grid-template-rows: auto 1fr;
+  }
+
+  .main {
+    grid-area: main;
+  }
+
+  .profile {
+    grid-area: profile;
+  }
+
+  .verification {
+    grid-area: verification;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .info.info,
+  .contacts.contacts {
+    padding: 16px;
+  }
+
+  .contacts .contactTable td {
+    height: 64px;
+  }
 }

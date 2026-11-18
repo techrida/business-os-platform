@@ -5,12 +5,13 @@ import { notFound } from 'next/navigation';
 
 import { getQuotation } from '@/components/p2/quotations/api';
 import styles from '@/components/p2/quotations/detail.module.css';
-import { DetailActions } from '@/components/p2/quotations/detail-actions';
+import { ClientDecision, DetailActions } from '@/components/p2/quotations/detail-actions';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { StatusHistory } from '@/components/p2/quotations/status-history';
 import { VersionDrawer, type RevisionRow } from '@/components/p2/quotations/version-drawer';
 import { Alert } from '@/components/ui/alert';
+import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { failureOf } from '@/lib/api-kernel';
@@ -54,7 +55,7 @@ function Totals({ version }: { version: QuotationVersionDto }) {
     { key: 'total', label: 'Total', value: totals.total, grand: true },
   ];
   return (
-    <Panel as="aside" title="Totals" description={`In ${currency}, as calculated by the server.`}>
+    <Panel as="aside" title="Totals" className={styles.detailPanel}>
       <dl className={styles.totals}>
         {rows.map((row) => (
           <div
@@ -190,27 +191,37 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
       />
       <PageHeader
         title={<span className={styles.wrap}>{quotation.number}</span>}
-        status={
-          <QuotationStatusBadge
-            status={quotation.status}
-            rejectionSource={current?.rejectionSource ?? null}
-          />
+        description={
+          <span className={styles.headerMeta}>
+            <span>{customerName}</span>
+            {current ? (
+              <>
+                <span className={styles.headerFact}>Revision {current.revisionNo}</span>
+                <span className={styles.headerFact}>
+                  {money(current.totals.total, current.currency)}
+                </span>
+              </>
+            ) : null}
+            <QuotationStatusBadge
+              status={quotation.status}
+              rejectionSource={current?.rejectionSource ?? null}
+            />
+          </span>
         }
-        description={<span className={styles.wrap}>{customerName}</span>}
+        actions={
+          current ? (
+            <DetailActions
+              quotationId={quotation.id}
+              number={quotation.number}
+              current={current}
+              contacts={contacts}
+              capabilities={detail.capabilities}
+              reloadHref={path}
+              includeOutcome={false}
+            />
+          ) : null
+        }
       />
-
-      <div className={styles.actions}>
-        {current !== null ? (
-          <DetailActions
-            quotationId={quotation.id}
-            number={quotation.number}
-            current={current}
-            contacts={contacts}
-            capabilities={detail.capabilities}
-            reloadHref={path}
-          />
-        ) : null}
-      </div>
 
       {current === null ? (
         <Alert
@@ -229,27 +240,58 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
         </Alert>
       ) : null}
 
-      {current !== null ? (
-        <div className={styles.columns}>
-          <Panel
-            title="Current revision"
-            description={`Last changed ${when(current.updatedAt)}`}
-            actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail)} />}
-          >
-            <FactList facts={facts} />
-          </Panel>
-          <Totals version={current} />
+      <div className={styles.columns}>
+        <div className={`${styles.stack} ${styles.revisionStack}`}>
+          {current !== null ? (
+            <>
+              <ClientDecision
+                quotationId={quotation.id}
+                number={quotation.number}
+                current={current}
+                reloadHref={path}
+              />
+              <Panel
+                className={styles.detailPanel}
+                title="Current revision"
+                description={`Last changed ${when(current.updatedAt)}`}
+                actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail)} />}
+              >
+                <FactList facts={facts} className={styles.facts ?? ''} />
+              </Panel>
+              <Totals version={current} />
+            </>
+          ) : versions.length > 0 ? (
+            <Panel
+              className={styles.detailPanel}
+              title="Revisions"
+              actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail)} />}
+            >
+              <p className={styles.note}>Open the list to see every revision.</p>
+            </Panel>
+          ) : null}
         </div>
-      ) : versions.length > 0 ? (
-        <Panel
-          title="Revisions"
-          actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail)} />}
-        >
-          <p className={styles.note}>Open the list to see every revision.</p>
-        </Panel>
-      ) : null}
 
-      <StatusHistory history={detail.statusHistory} versions={versions} people={people} />
+        <div className={`${styles.stack} ${styles.historyStack}`}>
+          <StatusHistory history={detail.statusHistory} versions={versions} people={people} />
+
+          <Panel title="Linked records" className={styles.detailPanel}>
+            <ul className={styles.records}>
+              <li>
+                <Icon name="building" size={18} />
+                <Link href={`/customers/${encodeURIComponent(quotation.customerId)}`}>
+                  {customerName}
+                </Link>
+              </li>
+              <li>
+                <Icon name="briefcase" size={18} />
+                <Link href={`/opportunities/${encodeURIComponent(quotation.opportunityId)}`}>
+                  View opportunity
+                </Link>
+              </li>
+            </ul>
+          </Panel>
+        </div>
+      </div>
     </Page>
   );
 }

@@ -29,7 +29,7 @@ const inputTag = (html: string, name: string): string =>
 describe('customer form', () => {
   it('asks for the main contact on create, with a typed, required email', () => {
     const html = render('create');
-    expect(html).toContain('Main contact');
+    expect(html).toContain('Primary Contact');
     expect(inputTag(html, 'contactName')).toContain('required=""');
     expect(inputTag(html, 'contactEmail')).toContain('type="email"');
     expect(inputTag(html, 'contactEmail')).toContain('required=""');
@@ -39,7 +39,7 @@ describe('customer form', () => {
 
   it('does not ask for a contact when editing the customer', () => {
     const html = render('edit');
-    expect(html).not.toContain('Main contact');
+    expect(html).not.toContain('Primary Contact');
     expect(html).not.toContain('name="contactEmail"');
   });
 });

@@ -7,6 +7,7 @@ import { useActionState, useMemo, useRef, useState } from 'react';
 import { PendingLine, useFocusOnProblem } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/field';
 import { Panel, FactList } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
@@ -103,7 +104,10 @@ function AllocateForm({
   const [state, formAction, pending] = useActionState<AllocateState, FormData>(
     async (prev, form) => {
       const next = await allocateAction(prev, form);
-      if (next.done === true) setAmounts({});
+      if (next.done === true) {
+        setAmounts({});
+        toast.success('Payment allocated');
+      }
       return next;
     },
     { key: idempotencyKey },
@@ -130,11 +134,6 @@ function AllocateForm({
             actions={state.reload ? <a href={reloadHref}>Reload this payment</a> : null}
           >
             {problem.error}
-          </Alert>
-        ) : null}
-        {state.done === true ? (
-          <Alert tone="success" role="status">
-            The payment was allocated. The allocations below show what changed.
           </Alert>
         ) : null}
         <Table caption="Open invoices to allocate this payment to" minWidth={600}>

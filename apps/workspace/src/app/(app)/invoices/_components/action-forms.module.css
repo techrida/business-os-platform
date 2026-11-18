@@ -1,19 +1,4 @@
-/* The form inside an invoice action dialog. The dialog frame itself comes from the shared ActionDialog.
-   Colours are Figma tokens. */
-
 .form {
   display: grid;
   gap: 16px;
-}
-
-.buttons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.wrap {
-  margin: 0;
-  overflow-wrap: anywhere;
 }

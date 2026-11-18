@@ -5,7 +5,7 @@ import { Skeleton } from '@/components/ui/panel';
 /** The form's shape while the customers load, so nothing jumps. */
 export default function NewPaymentLoading() {
   return (
-    <Page width="narrow" aria-busy="true">
+    <Page aria-busy="true">
       <PageHeader title="Record payment" />
       <p className="sr-only" role="status">
         Loading the payment form

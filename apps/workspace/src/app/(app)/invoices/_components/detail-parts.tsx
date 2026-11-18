@@ -21,7 +21,7 @@ export function Totals({ invoice }: { invoice: Invoice }) {
     { key: 'total', label: 'Total', value: totals.total, grand: true },
   ];
   return (
-    <Panel as="aside" title="Totals" description={`In ${currency}, as calculated by the server.`}>
+    <Panel as="aside" title="Totals" description={`Amounts in ${currency}`}>
       <dl className={styles.totals}>
         {rows.map((row) => (
           <div
@@ -62,7 +62,7 @@ export function NprSnapshot({ invoice }: { invoice: Invoice }) {
     { key: 'date', label: 'Rate date', value: <time dateTime={npr.rateDate}>{npr.rateDate}</time> },
   ];
   return (
-    <Panel as="aside" title="Value in NPR" description="Frozen at issue, so reports never drift.">
+    <Panel as="aside" title="Value in NPR" description="Exchange rate at issue">
       <FactList facts={facts} />
     </Panel>
   );
@@ -73,7 +73,7 @@ export function Lines({ detail }: { detail: InvoiceDetail }) {
   const { currency } = invoice;
   return (
     <>
-      <Panel title="Lines" description={`${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`}>
+      <Panel title="Line Items">
         <Table caption="Invoice lines" minWidth={860}>
           <thead>
             <tr>
@@ -120,7 +120,7 @@ export function Lines({ detail }: { detail: InvoiceDetail }) {
         </Table>
       </Panel>
       {taxSummary.length > 0 ? (
-        <Panel title="Tax summary" description="Tax is rounded once per tax code, not per line.">
+        <Panel title="Tax summary">
           <Table caption="Tax summary" minWidth={520}>
             <thead>
               <tr>

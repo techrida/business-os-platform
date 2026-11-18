@@ -65,7 +65,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(
       lines.getByText('HRMS implementation and training', { exact: true }),
     ).toBeVisible();
-    await expect(totals.getByText('Total', { exact: true })).toBeVisible();
+    await expect(totals.getByText('Grand total', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Approval requirements' })).toBeVisible();
     await expect(page.getByText('Any accountant', { exact: true })).toBeVisible();
     await expect(save).toHaveCount(1);
@@ -106,10 +106,24 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
   await test.step('changing the issue date clears an invalid draft amount and allows saving', async () => {
     await amount.fill('9999999999999999');
     await expect(amount).toHaveAttribute('aria-invalid', 'true');
-    const issueDate = page.getByLabel('Issue date');
-    const priorDay = new Date(await issueDate.inputValue());
+    const issueDate = page.getByRole('group', { name: 'Issue date', exact: true });
+    const year = Number(
+      await issueDate.locator('[data-type="year"]').getAttribute('aria-valuenow'),
+    );
+    const month = Number(
+      await issueDate.locator('[data-type="month"]').getAttribute('aria-valuenow'),
+    );
+    const day = Number(await issueDate.locator('[data-type="day"]').getAttribute('aria-valuenow'));
+    const priorDay = new Date(Date.UTC(year, month - 1, day));
     priorDay.setUTCDate(priorDay.getUTCDate() - 1);
-    await issueDate.fill(priorDay.toISOString().slice(0, 10));
+    const [newYear, newMonth, newDay] = priorDay.toISOString().slice(0, 10).split('-');
+    for (const [segment, digits] of [
+      ['year', newYear!],
+      ['month', newMonth!],
+      ['day', newDay!],
+    ] as const) {
+      await issueDate.locator(`[data-type="${segment}"]`).pressSequentially(digits);
+    }
     await expect(amount).toBeDisabled();
     await expect(percent).toHaveValue('100.00');
     await save.click();

@@ -83,3 +83,30 @@
 .quiet {
   color: var(--text-secondary);
 }
+
+.stack > * {
+  min-width: 0;
+}
+
+.advanceItem {
+  display: grid;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.advanceItem:last-child {
+  border-bottom: 0;
+}
+
+.advanceValue {
+  font-size: var(--font-size-h3);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 1200px) {
+  .stack {
+    grid-template-columns: minmax(0, 2.8fr) minmax(220px, 1fr);
+    align-items: start;
+  }
+}

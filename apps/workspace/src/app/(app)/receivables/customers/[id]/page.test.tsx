@@ -31,7 +31,10 @@ const OTHER_INVOICE = (n: number) => `66666666-6666-4666-8666-66666666666${n}`;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
-  mocks.getCustomer.mockResolvedValue({ legalName: 'Himalayan Traders Pvt. Ltd.' });
+  mocks.getCustomer.mockResolvedValue({
+    legalName: 'Himalayan Traders Pvt. Ltd.',
+    mergedIntoId: null,
+  });
   mocks.getCustomerStatement.mockResolvedValue([settlementRow()]);
   mocks.getCustomerAdvance.mockResolvedValue([advanceRow()]);
 });
@@ -56,6 +59,14 @@ describe('customer statement', () => {
     expect(html).toContain('Himalayan Traders Pvt. Ltd.');
     expect(html).toContain('href="/payments"');
     expect(html).toContain('href="/receivables/aging"');
+  });
+
+  it('opens payment entry for this customer only for a role allowed to record payments', async () => {
+    expect(await render()).toContain(`href="/payments/new?customerId=${CUSTOMER_ID}"`);
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    const readOnly = await render();
+    expect(readOnly).toContain('href="/payments"');
+    expect(readOnly).not.toContain('/payments/new');
   });
 
   it('shows the server open amount even when it is not total minus allocated', async () => {

@@ -46,41 +46,61 @@ const TITLES: Record<InvoiceRenderView['kind'], string> = {
 };
 
 const CSS = `
-  @page { size: A4; margin: 16mm 14mm 18mm; }
+  @page { size: A4; margin: 14mm 13mm 16mm; }
+  :root { color-scheme: light; --brand: #2563eb; --ink: #0f172a; --muted: #475569; --line: #e2e8f0; }
   * { box-sizing: border-box; }
-  html { font-size: 10pt; }
   body {
-    font-family: 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
-    color: #1a1a1a;
-    line-height: 1.4;
+    font: 9pt/1.5 'Noto Sans', 'Noto Sans Devanagari', sans-serif;
+    color: var(--ink);
     margin: 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    overflow-wrap: anywhere;
   }
-  h1 { font-size: 20pt; margin: 0; letter-spacing: 0.02em; }
-  h2 { font-size: 10pt; margin: 14pt 0 4pt; text-transform: uppercase; letter-spacing: 0.06em; color: #444; }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16pt; }
-  .head .doc { text-align: right; }
-  .head .number { font-size: 11pt; font-weight: 600; margin-top: 2pt; }
-  .badge { display: inline-block; margin-top: 4pt; padding: 1pt 8pt; border: 1pt solid #666; border-radius: 3pt; font-weight: 600; font-size: 8.5pt; }
-  .legal { font-weight: 600; font-size: 11pt; }
-  .muted { color: #555; }
-  .notice { margin-top: 10pt; padding: 4pt 8pt; border: 1pt solid #999; background: #f7f7f7; font-weight: 600; }
-  .parties { display: flex; gap: 24pt; margin-top: 14pt; }
-  .parties > div { flex: 1; }
-  .meta { width: 100%; border-collapse: collapse; margin-top: 12pt; }
-  .meta td { padding: 2pt 0; vertical-align: top; }
-  .meta td:first-child { width: 28%; color: #555; }
-  .bs { color: #555; font-size: 9pt; }
-  table.items { width: 100%; border-collapse: collapse; margin-top: 14pt; }
-  table.items thead { display: table-header-group; }
-  table.items th { text-align: left; background: #f1f1f1; border-bottom: 1pt solid #888; padding: 4pt 5pt; font-size: 9pt; }
-  table.items td { padding: 4pt 5pt; border-bottom: 0.5pt solid #ccc; vertical-align: top; }
-  tr { page-break-inside: avoid; }
-  .num { text-align: right; white-space: nowrap; }
-  .desc { white-space: pre-wrap; }
-  .totals { margin-top: 10pt; margin-left: auto; width: 60%; border-collapse: collapse; page-break-inside: avoid; }
-  .totals td { padding: 3pt 5pt; }
-  .totals tr.grand td { border-top: 1pt solid #333; font-weight: 700; font-size: 11pt; }
-  .foot { margin-top: 18pt; font-size: 8.5pt; color: #666; }
+  h1, h2, p { margin: 0; }
+  h1 { color: var(--brand); font-size: 22pt; text-transform: uppercase; letter-spacing: 0.045em; }
+  h2 { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.04em; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 18pt; }
+  .doc { text-align: right; }
+  .brand { max-width: 42%; padding: 14pt 16pt; background: var(--brand); color: #fff; }
+  .badge { display: inline-block; margin-top: 4pt; padding: 1pt 8pt; border: 1pt solid var(--line); font-weight: 600; }
+  .legal { font-weight: 700; font-size: 11pt; }
+  .muted { color: var(--muted); }
+  .notice { margin-top: 10pt; padding: 6pt 8pt; background: #eff6ff; font-weight: 600; }
+  .billing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28pt; margin-top: 24pt; break-inside: avoid; }
+  .billing h2 { margin-bottom: 4pt; }
+  .meta { width: 100%; border-collapse: collapse; }
+  .meta th, .meta td { padding: 1.5pt 0; vertical-align: top; }
+  .meta th { padding-right: 8pt; color: var(--muted); text-align: left; font-weight: 400; white-space: nowrap; }
+  .bs { color: var(--muted); font-size: 8pt; }
+  .items { width: 100%; border-collapse: collapse; margin-top: 20pt; }
+  .items thead { display: table-header-group; }
+  .items th { padding: 6pt 5pt; background: var(--brand); color: #fff; text-align: left; font-size: 7.5pt; text-transform: uppercase; }
+  .items td { padding: 6pt 5pt; vertical-align: top; }
+  .items tbody tr:nth-child(even) { background: #f1f5f9; }
+  tr { break-inside: avoid; }
+  .items .num, .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .desc { white-space: pre-wrap; max-width: 65mm; }
+  .balance { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 28pt; margin-top: 18pt; }
+  .balance > div { break-inside: avoid; }
+  .balance .amount { font-size: 14pt; font-weight: 700; }
+  .balance .due { font-size: 8pt; color: var(--muted); }
+  .totals { width: 100%; border-collapse: collapse; }
+  .totals td { padding: 4pt 6pt; border-bottom: .5pt solid var(--line); }
+  .totals .grand td { padding-block: 8pt; background: var(--brand); color: #fff; font-weight: 700; font-size: 10pt; }
+  .foot {
+    margin-top: 26pt;
+    padding: 8pt 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2pt 12pt;
+    justify-content: space-between;
+    border-top: .5pt solid var(--line);
+    border-bottom: 5pt solid var(--brand);
+    font-size: 8pt;
+    color: var(--muted);
+    break-inside: avoid;
+  }
 `;
 
 /** One party's block: legal name, PAN/VAT number and the address line frozen at issue. */
@@ -137,28 +157,21 @@ export function renderInvoiceHtml(view: InvoiceRenderView): string {
 <style>${CSS}</style>
 </head>
 <body>
-  <div class="head">
-    <div>
-      <div class="legal">${text(view.seller.legalName)}</div>
-      ${view.seller.panVatNo ? `<div class="muted">PAN/VAT ${text(view.seller.panVatNo)}</div>` : ''}
-      ${view.seller.address ? `<div>${text(view.seller.address)}</div>` : ''}
-    </div>
+  <header class="head">
+    <div class="brand legal">${text(view.seller.legalName)}</div>
     <div class="doc">
       <h1>${title}</h1>
-      <div class="number">${text(view.number)}</div>
       ${copy ? `<div class="badge">${copy}</div>` : ''}
     </div>
-  </div>
-  ${view.kind === 'proforma' ? '<div class="notice">Proforma Invoice - not a tax invoice.</div>' : ''}
+  </header>
+  ${view.kind === 'proforma' ? '<p class="notice">Proforma Invoice - not a tax invoice.</p>' : ''}
 
-  <div class="parties">
-    <div>${partyBlock('Billed to', view.buyer, text)}</div>
-    <div>${partyBlock('Seller', view.seller, text)}</div>
+  <div class="billing">
+    <section>${partyBlock('Invoice to', view.buyer, text)}</section>
+    <table class="meta">
+      ${meta.map(([k, v]) => `<tr><th scope="row">${k}</th><td>${v}</td></tr>`).join('')}
+    </table>
   </div>
-
-  <table class="meta">
-    ${meta.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}
-  </table>
 
   <table class="items">
     <thead>
@@ -171,7 +184,13 @@ export function renderInvoiceHtml(view: InvoiceRenderView): string {
     </tbody>
   </table>
 
-  <table class="totals">
+  <div class="balance">
+    <div>
+      <h2>${title} total</h2>
+      <p class="amount">${fmt(view.totals.total)}</p>
+      ${view.dueDate !== null ? `<p class="due">Due ${dateCell(view.dueDate, null)}</p>` : ''}
+    </div>
+    <table class="totals">
     <tr><td>Subtotal</td><td class="num">${fmt(view.totals.subtotal)}</td></tr>
     ${nonZero(view.totals.discountAmount) ? `<tr><td>Discount</td><td class="num">- ${fmt(view.totals.discountAmount)}</td></tr>` : ''}
     <tr><td>Taxable amount</td><td class="num">${fmt(view.totals.taxableAmount)}</td></tr>
@@ -179,9 +198,14 @@ export function renderInvoiceHtml(view: InvoiceRenderView): string {
     ${nonZero(view.totals.zeroRatedAmount) ? `<tr><td>Zero-rated amount</td><td class="num">${fmt(view.totals.zeroRatedAmount)}</td></tr>` : ''}
     ${taxRows}
     <tr class="grand"><td>Total</td><td class="num">${fmt(view.totals.total)}</td></tr>
-  </table>
+    </table>
+  </div>
 
-  <div class="foot">${title} ${text(view.number)} &middot; ${text(view.seller.legalName)}${copy ? ` &middot; ${copy}` : ''}</div>
+  <footer class="foot">
+    <span>${text(view.seller.legalName)}</span>
+    ${view.seller.address ? `<span>${text(view.seller.address)}</span>` : ''}
+    ${view.seller.panVatNo ? `<span>PAN/VAT ${text(view.seller.panVatNo)}</span>` : ''}
+  </footer>
 </body>
 </html>
 `;

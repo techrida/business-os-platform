@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import {
@@ -20,14 +21,16 @@ import { userNames } from '@/lib/business-labels';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
 import { memoDraftAccount } from '@/lib/memo-working-draft';
 
-import { StatusBadge } from '../../kit';
 import styles from '../../kit.module.css';
 import { updateMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
+import pageStyles from '../memo-pages.module.css';
 import { MemoPreview } from '../memo-preview';
 import { MemoReviewGate } from '../memo-review-gate';
+import { MemoStatus } from '../memo-status';
 import { submitMissing } from './detail-model';
 import { HistoricalAttachments } from './historical-attachments';
+import { MemoFeedback } from './memo-feedback';
 import { SubmitForm } from './submit-form';
 
 export const metadata: Metadata = { title: 'Memo · Business OS' };
@@ -41,6 +44,14 @@ type SearchParams = Promise<{
 /** Present the historical test-memo action namespace using the product document name. */
 const auditLabel = (action: string): string =>
   humanizeKey(action.replace(/^test_memos[.]/, 'memo.'));
+
+const MEMO_CONTEXT = {
+  draft: 'This memo is a draft.',
+  submitted: 'This memo is waiting for approval. It can be edited if it is returned.',
+  approved: 'This memo was approved.',
+  returned: 'This memo was returned for changes.',
+  rejected: 'This memo was rejected.',
+};
 
 function Timeline({ events, people }: { events: AuditEventDto[]; people: Map<string, string> }) {
   return (
@@ -187,14 +198,33 @@ export default async function MemoPage({
     },
   ];
 
+  const editor = showEditor ? (
+    <MemoForm
+      directory={directory}
+      template={memo.template}
+      action={updateMemoAction}
+      memoId={memo.id}
+      memoVersion={memo.version}
+      draftAccount={memoDraftAccount(session)}
+      initial={{
+        title: memo.title,
+        body: memo.body,
+      }}
+    />
+  ) : null;
+
   return (
     <MemoReviewGate>
-      <Page>
-        <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: memo.title }]} />
+      <Page className={pageStyles.detail}>
+        <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: memo.number }]} />
         <PageHeader
           title={memo.title}
           status={
-            <StatusBadge status={memo.approval?.status === 'blocked' ? 'blocked' : memo.status} />
+            memo.approval?.status === 'blocked' ? (
+              <Badge tone="error">Blocked</Badge>
+            ) : (
+              <MemoStatus status={memo.status} />
+            )
           }
           description={
             <>
@@ -208,61 +238,52 @@ export default async function MemoPage({
           }
         />
 
-        {saved ? (
-          <Alert tone="success" role="status">
-            Your changes were saved.
-          </Alert>
-        ) : submitted === 'blocked' ? (
-          <Alert tone="warning" role="status" title="Submitted, but it is blocked.">
-            No approver is available for a step of the route. An administrator can fix the route,
-            then reroute it.
-          </Alert>
-        ) : submitted === 'pending' ? (
-          <Alert tone="success" role="status">
-            Submitted for approval. You will get a notification when it is decided.
+        {saved || submitted === 'pending' ? (
+          <MemoFeedback notice={saved ? 'saved' : 'submitted'} />
+        ) : null}
+        {submitted === 'blocked' ? (
+          <Alert tone="warning" role="status" title="Approval blocked">
+            No approver is available for a step of the route. An administrator can update the route
+            and reroute the memo.
           </Alert>
         ) : null}
 
-        <div className={styles.main}>
-          {showMemoPanel ? (
-            <Panel title="Memo">
-              {memo.template ? (
-                <MemoPreview
-                  template={memo.template}
-                  title={memo.title}
-                  body={memo.body}
-                  source={{ kind: 'saved', memoId: memo.id }}
-                  noun="memo"
-                />
-              ) : null}
-              <FactList facts={facts} />
-            </Panel>
-          ) : null}
+        {showEditor && memo.template ? editor : null}
+        <div className={pageStyles.columns}>
+          <div className={pageStyles.main}>
+            {showMemoPanel ? (
+              <Panel title="Memo" className={pageStyles.detailPanel}>
+                {memo.template ? (
+                  <MemoPreview
+                    template={memo.template}
+                    title={memo.title}
+                    body={memo.body}
+                    source={{ kind: 'saved', memoId: memo.id }}
+                    noun="memo"
+                  />
+                ) : null}
+                <FactList facts={facts} />
+              </Panel>
+            ) : null}
 
-          {showEditor ? (
-            <Panel title="Edit memo">
-              <MemoForm
-                directory={directory}
-                template={memo.template}
-                action={updateMemoAction}
-                memoId={memo.id}
-                memoVersion={memo.version}
-                draftAccount={memoDraftAccount(session)}
-                initial={{
-                  title: memo.title,
-                  body: memo.body,
-                }}
-              />
-            </Panel>
-          ) : null}
+            {showEditor && !memo.template ? editor : null}
+
+            {attachments.length > 0 ? (
+              <Panel
+                title="Attachments"
+                description="Files attached in Phase 1. New files cannot be added to a memo."
+                id="attachments"
+                className={pageStyles.detailPanel}
+              >
+                <HistoricalAttachments files={attachments} />
+              </Panel>
+            ) : null}
+          </div>
 
           <Panel
             title="Approval route"
-            description={
-              editable
-                ? 'This is who will be asked to approve, and why. It is worked out again when you submit.'
-                : undefined
-            }
+            className={`${pageStyles.detailPanel} ${pageStyles.route}`}
+            description={editable ? 'The route is recalculated when you submit.' : undefined}
             actions={
               memo.approval ? (
                 <Link
@@ -295,7 +316,7 @@ export default async function MemoPage({
                                     ? 'An approval group'
                                     : 'A named person'}
                             </span>
-                            {s.blocked ? <StatusBadge status="blocked" /> : null}
+                            {s.blocked ? <Badge tone="error">Blocked</Badge> : null}
                           </div>
                           <p className={styles.stepReason}>{s.reason}</p>
                         </div>
@@ -326,26 +347,16 @@ export default async function MemoPage({
               <p className={styles.note}>
                 {memo.approval?.status === 'blocked'
                   ? 'Approval is blocked. An administrator can update the approval route.'
-                  : memo.status === 'submitted'
-                    ? 'This memo is waiting for approval. It cannot be edited until it is returned.'
-                    : memo.status === 'approved'
-                      ? 'This memo was approved.'
-                      : 'This memo was rejected.'}
+                  : MEMO_CONTEXT[memo.status]}
               </p>
             )}
           </Panel>
 
-          {attachments.length > 0 ? (
-            <Panel
-              title="Attachments"
-              description="Files attached in Phase 1. New files cannot be added to a memo."
-              id="attachments"
-            >
-              <HistoricalAttachments files={attachments} />
-            </Panel>
-          ) : null}
-
-          <Panel title="Audit timeline" description="Times are Kathmandu time.">
+          <Panel
+            title="Audit timeline"
+            description="Times are Kathmandu time."
+            className={`${pageStyles.detailPanel} ${pageStyles.history}`}
+          >
             {auditDenied && events.length === 0 ? (
               <p className={styles.note}>
                 The audit trail is only open to roles with audit access, so it is hidden for you.

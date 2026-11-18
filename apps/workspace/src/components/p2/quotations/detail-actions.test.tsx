@@ -229,9 +229,12 @@ describe('Record outcome', () => {
     expect(out).toContain('What did the customer say?');
     expect(out).toMatch(/type="radio" name="outcome" value="accepted"/);
     expect(out).toMatch(/type="radio" name="outcome" value="rejected"/);
-    expect(out).toMatch(/type="date"[^>]*name="decidedOn"[^>]*/);
-    expect(out).toContain(`value="${TODAY}"`);
-    expect(out).toContain(`max="${TODAY}"`);
+    // The shared date picker (React Aria) takes `max` as its maxValue, so later days are blocked in
+    // its calendar rather than by a native `max` attribute; the server refuses a future date too
+    // (forms.test.ts).
+    expect(out).toContain('role="group"');
+    expect(out).toContain('aria-label="Calendar"');
+    expect(out).toContain(`name="decidedOn" value="${TODAY}"`);
     for (const kind of ['signed_quote', 'purchase_order', 'contract']) {
       expect(out).toContain(`type="checkbox" name="evidenceKinds" value="${kind}"`);
     }

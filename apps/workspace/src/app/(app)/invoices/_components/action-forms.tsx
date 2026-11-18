@@ -1,6 +1,14 @@
 'use client';
 
-import { useActionState, useRef, useState, type ReactNode, type RefObject } from 'react';
+import {
+  useActionState,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 import {
   discardInvoiceAction,
@@ -8,16 +16,14 @@ import {
   submitInvoiceAction,
   type InvoiceActionState,
 } from '@/app/(app)/invoices/[id]/actions';
-import {
-  ActionDialog,
-  DialogCloseButton,
-  PendingLine,
-  useFocusOnProblem,
-  useReloadWhenClosed,
-} from '@/components/ui/transaction-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
+import { useFocusOnProblem } from '@/components/ui/transaction-dialog';
+
+import dialogStyles from '@/components/p3/transaction-form-dialog.module.css';
 
 import styles from './action-forms.module.css';
 
@@ -58,90 +64,112 @@ function ErrorSummary({
   );
 }
 
-/**
- * The body every invoice action shares: hidden ids, the page's key and version, the refusal
- * summary, the buttons and the line that tells a screen reader the request is on its way. When the
- * API accepts, it says so and reloads the page once the dialog is closed, so the new status shows.
- */
-function ActionBody({
+/** The invoice dialogs keep the original version and idempotency key through a refused action. */
+function InvoiceActionDialog({
   action,
   invoiceId,
   version,
   idempotencyKey,
   reloadHref,
+  triggerLabel,
   confirmLabel,
+  title,
+  description,
   pendingWords,
+  primary = false,
   fields,
 }: Omit<InvoiceActionProps, 'name'> & {
   action: (prev: InvoiceActionState, form: FormData) => Promise<InvoiceActionState>;
-  confirmLabel: string;
+  triggerLabel: string;
+  confirmLabel?: string;
+  title: string;
+  description: string;
   pendingWords: string;
-  /** Extra inputs, given the state so a field can show its own error. */
+  primary?: boolean;
   fields?: (state: InvoiceActionState) => ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<InvoiceActionState, FormData>(action, {
     key: idempotencyKey,
   });
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const formId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
-  useFocusOnProblem(state, wrapRef, summaryRef);
-  useReloadWhenClosed(state.done, wrapRef);
+  useFocusOnProblem(state, formRef, summaryRef);
+  useEffect(() => {
+    if (state.done) toast.success(state.message ?? 'Invoice updated', { id: state.key });
+    else if (state.error || state.errors?.reason) toast.error('Check the invoice action');
+  }, [state]);
 
   return (
-    <div ref={wrapRef}>
-      {state.done === true ? (
-        <div className={styles.form}>
-          <p role="status" className={styles.wrap}>
-            {state.message} Close this to see the new status.
-          </p>
-          <div className={styles.buttons}>
-            <DialogCloseButton variant="primary">Done</DialogCloseButton>
-          </div>
-        </div>
-      ) : (
-        <form action={formAction} className={styles.form}>
+    <Dialog
+      trigger={<Button variant={primary ? 'primary' : 'secondary'}>{triggerLabel}</Button>}
+      title={title}
+      description={state.done ? undefined : description}
+      tone={primary ? 'default' : 'destructive'}
+      size="small"
+      locked={pending}
+      closeOnOutsideClick={false}
+      onOpenChange={(open) => {
+        // A full reload after success replaces the detail and its expected version together.
+        if (!open && state.done) window.location.reload();
+      }}
+      footer={
+        state.done ? (
+          <DialogClose asChild>
+            <Button>Done</Button>
+          </DialogClose>
+        ) : (
+          <>
+            <DialogClose asChild>
+              <Button variant="secondary" disabled={pending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              type="submit"
+              form={formId}
+              disabled={pending}
+              className={primary ? undefined : dialogStyles.danger}
+            >
+              {pending ? pendingWords : (confirmLabel ?? triggerLabel)}
+            </Button>
+          </>
+        )
+      }
+    >
+      {state.done ? null : (
+        <form id={formId} ref={formRef} action={formAction} noValidate className={styles.form}>
           <input type="hidden" name="invoiceId" value={invoiceId} />
           <input type="hidden" name="expectedVersion" value={version} />
           <input type="hidden" name="idempotencyKey" value={state.key} />
-
           <ErrorSummary
             error={state.error}
             reload={state.reload}
             reloadHref={reloadHref}
             summaryRef={summaryRef}
           />
-
           {fields?.(state)}
-
-          <div className={styles.buttons}>
-            <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-            <Button type="submit" disabled={pending}>
-              {confirmLabel}
-            </Button>
-          </div>
-          <PendingLine pending={pending} words={pendingWords} />
+          <p className="sr-only" role="status">
+            {pending ? pendingWords : ''}
+          </p>
         </form>
       )}
-    </div>
+    </Dialog>
   );
 }
 
 /** Submit for approval: a draft or returned invoice goes to the approvers. */
 export function SubmitDialog({ name, ...rest }: InvoiceActionProps) {
   return (
-    <ActionDialog
+    <InvoiceActionDialog
+      {...rest}
+      action={submitInvoiceAction}
       triggerLabel="Submit for approval"
-      triggerVariant="primary"
+      primary
       title={`Submit ${name}`}
-      intro="The approvers are asked to review it. While it waits for their answer, its lines cannot be changed."
-    >
-      <ActionBody
-        {...rest}
-        action={submitInvoiceAction}
-        confirmLabel="Submit for approval"
-        pendingWords="Submitting the invoice"
-      />
-    </ActionDialog>
+      description="Send this invoice to the approvers. Its line items will be locked during review."
+      pendingWords="Submitting"
+    />
   );
 }
 
@@ -153,19 +181,15 @@ export function IssueDialog({
 }: InvoiceActionProps & { kindLabel: string }) {
   const label = `Issue ${kindLabel.toLowerCase()}`;
   return (
-    <ActionDialog
+    <InvoiceActionDialog
+      {...rest}
+      action={issueInvoiceAction}
       triggerLabel={label}
-      triggerVariant="primary"
+      primary
       title={`Issue ${name}`}
-      intro="Issuing gives it its number and today's date. The platform sets both, and neither can be changed afterwards."
-    >
-      <ActionBody
-        {...rest}
-        action={issueInvoiceAction}
-        confirmLabel={label}
-        pendingWords="Issuing the invoice"
-      />
-    </ActionDialog>
+      description="Issuing assigns the invoice number and today's date. Afterwards, neither can be changed."
+      pendingWords="Issuing"
+    />
   );
 }
 
@@ -175,31 +199,28 @@ export function DiscardDialog({ name, ...rest }: InvoiceActionProps) {
   // person typed when the API refuses.
   const [reason, setReason] = useState('');
   return (
-    <ActionDialog
+    <InvoiceActionDialog
+      {...rest}
+      action={discardInvoiceAction}
       triggerLabel="Discard"
+      confirmLabel="Discard invoice"
       title={`Discard ${name}`}
-      intro="A discarded invoice cannot be brought back. Say why, so the history makes sense."
-    >
-      <ActionBody
-        {...rest}
-        action={discardInvoiceAction}
-        confirmLabel="Discard invoice"
-        pendingWords="Discarding the invoice"
-        fields={(state) => (
-          <Field label="Reason" error={state.errors?.reason}>
-            {(control) => (
-              <Textarea
-                name="reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                rows={4}
-                maxLength={1000}
-                {...control}
-              />
-            )}
-          </Field>
-        )}
-      />
-    </ActionDialog>
+      description="A discarded invoice cannot be brought back. The reason stays in its history."
+      pendingWords="Discarding"
+      fields={(state) => (
+        <Field label="Reason" error={state.errors?.reason}>
+          {(control) => (
+            <Textarea
+              name="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={4}
+              maxLength={1000}
+              {...control}
+            />
+          )}
+        </Field>
+      )}
+    />
   );
 }

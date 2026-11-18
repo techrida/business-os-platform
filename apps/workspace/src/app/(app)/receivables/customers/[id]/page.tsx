@@ -60,7 +60,7 @@ function overdueText(days: number): string {
 
 function ItemsTable({ items }: { items: InvoiceSettlement[] }) {
   return (
-    <Table caption="Open items on this statement" minWidth={760}>
+    <Table caption="Open items on this statement" minWidth={620}>
       <thead>
         <tr>
           <Th>Invoice</Th>
@@ -119,7 +119,7 @@ function AdvanceList({ rows }: { rows: CustomerAdvance[] }) {
     <ul className={styles.advance}>
       {held.map((row) => (
         <li key={row.currency} className={styles.advanceItem}>
-          <span className={styles.amount}>{money(row.amount, row.currency)}</span>
+          <strong className={styles.advanceValue}>{money(row.amount, row.currency)}</strong>
           <span className={styles.quiet}>unallocated in {row.currency}</span>
         </li>
       ))}
@@ -191,19 +191,23 @@ export default async function CustomerStatementPage({
       <Breadcrumb items={[{ label: 'Receivables', href: AGING }, { label: customerName }]} />
       <PageHeader
         title={customerName}
-        description="Invoices that still have an open amount, and any advance the customer has paid ahead. Amounts are as the server works them out."
+        description="Customer statement of open invoices and available advances."
         actions={
-          <LinkButton href="/payments" variant="secondary">
-            View payments
-          </LinkButton>
+          <>
+            <LinkButton href="/payments" variant="secondary">
+              View payments
+            </LinkButton>
+            {customer?.mergedIntoId === null && hasPermission(session.roles, 'payment.record') && (
+              <LinkButton href={`/payments/new?customerId=${encodeURIComponent(id)}`}>
+                Record payment
+              </LinkButton>
+            )}
+          </>
         }
       />
 
       <div className={styles.stack}>
-        <Panel
-          title="Open items"
-          description="Each invoice with its status. Open an invoice for its lines and history."
-        >
+        <Panel title="Open items" description="Outstanding balances and due dates.">
           {items.length === 0 ? (
             <EmptyState icon="banknote" title="Nothing is open for this customer." headingLevel={3}>
               No invoice for this customer has an open amount.
@@ -214,6 +218,7 @@ export default async function CustomerStatementPage({
         </Panel>
 
         <Panel
+          as="aside"
           title="Customer advance"
           description="Money the customer has paid that is not yet allocated to an invoice."
         >

@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
+import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Page, PageHeader } from '@/components/ui/page';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
@@ -13,6 +14,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 
 import { BUCKET_LABEL, isZeroAmount } from '../_lib/aging';
+import layout from '@/components/p3/list.module.css';
 import styles from '../receivables.module.css';
 
 export const metadata: Metadata = { title: 'Receivables aging · Business OS' };
@@ -168,11 +170,22 @@ export default async function ReceivablesAgingPage() {
         title="Receivables aging"
         description={
           <>
-            What customers still owe, by how long it is past due, as of <AsOf date={report.asOf} />.
-            Each currency is shown on its own.
+            Open balances by customer and days past due as of <AsOf date={report.asOf} />.
           </>
         }
       />
+      {report.totals.length > 0 && (
+        <section aria-label="Outstanding balances by currency" className={layout.stats}>
+          {report.totals.map((total) => (
+            <StatCard
+              key={total.currency}
+              label={`Open balance · ${total.currency}`}
+              icon="banknote"
+              value={money(total.totalOpen, total.currency)}
+            />
+          ))}
+        </section>
+      )}
       {empty ? (
         <EmptyState icon="banknote" title="No open receivables.">
           Nothing was owed as of <AsOf date={report.asOf} />. An invoice appears here once it is

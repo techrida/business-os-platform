@@ -1,8 +1,7 @@
 import { SETTING_KEYS, type SettingKey } from '@bos/contracts';
 
-import { Alert } from '@/components/ui/alert';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Page, PageHeader } from '@/components/ui/page';
+import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import { getSetting, listFxRates, listNumberSeries } from '@/lib/api-admin';
@@ -28,7 +27,7 @@ const SETTING_COPY: Record<SettingKey, { label: string; help: string }> = {
   },
   'tax.vat_rate': {
     label: 'VAT rate (%)',
-    help: 'A percentage: 13 means 13%. From 0 to 100 with at most 2 decimals.',
+    help: 'Enter 0 to 100 with up to two decimal places.',
   },
   'numbering.memo_prefix': {
     label: 'Memo number prefix',
@@ -104,7 +103,8 @@ export default async function SettingsPage() {
   ]);
 
   return (
-    <Page>
+    <Page className={admin.page}>
+      <Breadcrumb items={[{ label: 'Administration', href: '/admin' }, { label: 'Settings' }]} />
       <PageHeader
         title="Settings"
         description="Rates, numbering and defaults. Every change is saved as a new version and recorded in the audit trail."
@@ -211,9 +211,8 @@ export default async function SettingsPage() {
             id="values"
             className={styles.anchor}
             title="Values"
-            description="Each save adds a new version; the latest one is in force."
+            description="The current version applies to new records. Saving a change creates a new version."
           >
-            <Alert tone="info">Only the current version is shown.</Alert>
             <ul className={styles.rows}>
               {settings.map(({ key, result }) => {
                 const copy = SETTING_COPY[key];
@@ -222,7 +221,6 @@ export default async function SettingsPage() {
                     <div className={styles.rowText}>
                       <h3 className={styles.rowTitle}>{copy.label}</h3>
                       <p className={styles.caption}>{copy.help}</p>
-                      <p className={`${styles.caption} ${styles.mono}`}>{key}</p>
                       {result.ok ? (
                         <p className={styles.caption}>
                           {result.data.version === null

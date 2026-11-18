@@ -15,7 +15,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { createManualInvoiceAction } from './actions';
 import { ManualInvoiceForm, type CustomerOption } from './manual-invoice-form';
 
-export const metadata: Metadata = { title: 'New invoice · Business OS' };
+export const metadata: Metadata = { title: 'Create Invoice · Business OS' };
 export const dynamic = 'force-dynamic';
 
 /** How many customers the picker holds. A longer list says so instead of silently cutting. */
@@ -23,13 +23,13 @@ const CUSTOMER_LIMIT = CUSTOMER_LIST_MAX_LIMIT;
 
 export default async function NewInvoicePage() {
   const session = await requireStaffSession('/invoices/new');
-  const crumbs = [{ label: 'Invoices', href: '/invoices' }, { label: 'New invoice' }];
+  const crumbs = [{ label: 'Invoices', href: '/invoices' }, { label: 'Create Invoice' }];
 
   if (!hasPermission(session.roles, 'invoice.draft')) {
     return (
       <Page width="narrow">
         <Breadcrumb items={crumbs} />
-        <PageHeader title="New invoice" />
+        <PageHeader title="Create Invoice" />
         <Alert tone="info" role="status" title="Your roles do not include drafting invoices">
           Ask an administrator if you need to. You can still read invoices.
         </Alert>
@@ -47,7 +47,7 @@ export default async function NewInvoicePage() {
     return (
       <Page width="narrow">
         <Breadcrumb items={crumbs} />
-        <PageHeader title="New invoice" />
+        <PageHeader title="Create Invoice" />
         <Alert
           tone={f.status === 403 ? 'info' : 'error'}
           role="alert"
@@ -78,14 +78,13 @@ export default async function NewInvoicePage() {
   return (
     <Page>
       <Breadcrumb items={crumbs} />
-      <PageHeader
-        title="New invoice"
-        description="For work billed without a sales order. Save it as a draft first: the platform then works out the totals, and it goes to the approvers from the invoice page."
-      />
       {customers.length === 0 ? (
-        <Alert tone="info" role="status" title="There are no customers to invoice yet">
-          Add the customer first, then come back here.
-        </Alert>
+        <>
+          <PageHeader title="Create Invoice" />
+          <Alert tone="info" role="status" title="There are no customers to invoice yet">
+            Add the customer first, then come back here.
+          </Alert>
+        </>
       ) : (
         <ManualInvoiceForm
           action={createManualInvoiceAction}

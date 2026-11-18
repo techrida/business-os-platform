@@ -1,7 +1,10 @@
 import type { CustomerDto, OpportunityDto } from '@bos/contracts';
 
 import { Alert } from '@/components/ui/alert';
+import { Avatar } from '@/components/ui/avatar';
 import { FactList, type Fact } from '@/components/ui/panel';
+
+import styles from './quote-builder.module.css';
 
 /**
  * Section 1's read-only facts: the customer and the opportunity this quotation is for. Either may
@@ -16,11 +19,6 @@ export function ContextCard({
   opportunity: OpportunityDto | null;
 }) {
   const facts: Fact[] = [
-    {
-      key: 'customer',
-      label: 'Customer',
-      value: customer ? `${customer.legalName} (${customer.number})` : 'Not available',
-    },
     {
       key: 'opportunity',
       label: 'Opportunity',
@@ -39,7 +37,19 @@ export function ContextCard({
           needed to save the quotation.
         </Alert>
       ) : null}
-      <FactList facts={facts} />
+      <div className={styles.identity}>
+        <Avatar
+          name={customer?.legalName ?? ''}
+          size="large"
+          shape="circle"
+          className={styles.customerAvatar}
+        />
+        <div>
+          <h2>{customer?.legalName ?? 'Customer details unavailable'}</h2>
+          {customer ? <span className={styles.muted}>{customer.number}</span> : null}
+        </div>
+      </div>
+      <FactList facts={facts} className={styles.contextFacts ?? ''} />
     </>
   );
 }

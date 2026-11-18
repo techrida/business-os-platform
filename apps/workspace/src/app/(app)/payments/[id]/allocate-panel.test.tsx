@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +10,16 @@ import { DeallocateDialog } from './deallocate-dialog';
 
 // The panel imports the server actions, which import server-only modules.
 vi.mock('server-only', () => ({}));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+// Include the dialog portal in the static render to verify its form fields and action footer.
+vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
+  const radix = await importOriginal<typeof import('@radix-ui/react-dialog')>();
+  return {
+    ...radix,
+    Root: (props: ComponentProps<typeof radix.Root>) => <radix.Root {...props} open />,
+    Portal: ({ children }: ComponentProps<typeof radix.Portal>) => children,
+  };
+});
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 

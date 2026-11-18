@@ -17,6 +17,7 @@ import PaymentDetailPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
@@ -125,13 +126,17 @@ describe('payment detail', () => {
     expect(html).not.toContain('>Reject<');
   });
 
-  it('links a clean proof and shows no link for one that is not clean', async () => {
+  it('opens a clean proof in a dialog and leaves an unsafe proof as plain text', async () => {
     const clean = await render();
-    expect(clean).toContain(`href="/api/documents/${PROOF_ID}/versions/${VERSION}/download"`);
+    expect(clean).toMatch(
+      /<button[^>]*aria-haspopup="dialog"[^>]*>(?:<svg[\s\S]*?<\/svg>)?bank-slip\.pdf<\/button>/,
+    );
+    expect(clean).not.toContain(`href="/api/documents/${PROOF_ID}/versions/${VERSION}/download"`);
     expect(clean).toContain('bank-slip.pdf');
     mocks.getDocument.mockResolvedValue(proofDoc('infected'));
     const infected = await render();
     expect(infected).toContain('bank-slip.pdf');
+    expect(infected).not.toMatch(/bank-slip\.pdf<\/button>/);
     expect(infected).not.toContain('/download"');
     expect(infected).toContain('Virus found');
   });
