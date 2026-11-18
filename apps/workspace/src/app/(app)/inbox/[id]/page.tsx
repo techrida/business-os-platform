@@ -231,7 +231,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             title="What was submitted"
             description="A frozen copy from the moment of submission. Later edits do not change it."
           >
-            {facts.length === 0 ? (
+            {facts.length === 0 && !memoTemplate.success ? (
               <p className={styles.note}>The snapshot is empty.</p>
             ) : (
               <>
