@@ -399,7 +399,7 @@ describe('one receipt', () => {
     );
     const out = await detail();
     expect(out).toContain('Reverse receipt');
-    expect(out).toContain('name="reason"');
+    expect(out).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>Reverse receipt<\/button>/);
     expect(out).not.toContain('Confirm receipt');
   });
 
@@ -449,8 +449,10 @@ describe('one receipt', () => {
     expect(out).not.toContain('Confirm receipt');
   });
 
-  it('says the draft was saved after creating it', async () => {
-    expect(await detail(RECEIPT, { created: '1' })).toContain('The draft receipt was saved');
+  it('explains when a draft affects the purchase order', async () => {
+    expect(await detail(RECEIPT, { created: '1' })).toContain(
+      'This draft counts as received on the purchase order once it is confirmed.',
+    );
     expect(await detail()).not.toContain('The draft receipt was saved');
   });
 
