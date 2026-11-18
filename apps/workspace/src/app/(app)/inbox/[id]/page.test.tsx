@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { __resetEnvForTests } from '@/lib/env';
 
+import InboxPage from '../page';
 import InboxDetailPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
@@ -129,7 +130,6 @@ describe('inbox detail page', () => {
       await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
     );
     const paths = fetchMock.mock.calls.map(([url]) => new URL(url as URL | string).pathname);
-    expect(paths).toContain(`/v1/approvals/requests/${RID}`);
     expect(paths.sort()).toEqual(['/v1/approvals/inbox', `/v1/approvals/requests/${RID}`]);
     expect(html).toContain('Ram Thapa');
     // The step the author assigned names that person; the group step its group's name.
@@ -137,4 +137,21 @@ describe('inbox detail page', () => {
     expect(html).toContain('Treasury desk');
     expect(html).not.toContain('name unavailable');
   });
+});
+
+it('renders the denial returned by the inbox endpoint', async () => {
+  fetchMock.mockResolvedValueOnce(
+    json(403, {
+      error: {
+        code: 'forbidden',
+        correlationId: 'request-1234',
+        message: 'You have no approval assignment',
+        reason: 'out_of_scope',
+      },
+    }),
+  );
+  const html = renderToStaticMarkup(await InboxPage({ searchParams: Promise.resolve({}) }));
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/v1/approvals/inbox');
+  expect(html).toContain('You have no approval assignment.');
 });
