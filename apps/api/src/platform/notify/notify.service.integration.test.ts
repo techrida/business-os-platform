@@ -10,11 +10,12 @@ import { randomUUID } from 'node:crypto';
 
 import type { RoleKey } from '@bos/contracts';
 import { createStaffUser, createTenantWithEntity, notifications, runMigrations } from '@bos/db';
+import { Logger } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { Principal } from '../authz/principal';
 import { UserDirectory } from '../authz/user-directory';
@@ -217,9 +218,19 @@ describe('NotifyService.notifyUser (the write path)', () => {
   });
 
   it('keeps the notification and writes no outbox row when the user has no email', async () => {
-    await withTx(db, scope, systemActor('test'), (tx) =>
-      service.notifyUser(tx, input(ids.noEmail, 'noemail:1')),
-    );
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      await withTx(db, scope, systemActor('test'), (tx) =>
+        service.notifyUser(tx, input(ids.noEmail, 'noemail:1')),
+      );
+      expect(warn).toHaveBeenCalledExactlyOnceWith({
+        event: 'notify.email_skipped',
+        reason: 'no_email_address',
+        template: 'approval.pending',
+      });
+    } finally {
+      warn.mockRestore();
+    }
 
     expect(await countRows('notifications', 'noemail:1')).toBe(1);
     expect(await countRows('outbox', 'noemail:1')).toBe(0);
