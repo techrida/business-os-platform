@@ -167,6 +167,10 @@
   --avatar-icon: var(--icon-default);
   --avatar-text: var(--text-secondary);
   /* Badge */
+  --accent-vibrant-blue: #0a99ff;
+  --shadow-section: 0 12px 32px #2c244018;
+  --radius-status: 10px;
+
   --badge-error-bg: var(--status-error-subtle);
   --badge-error-text: var(--status-error);
   --badge-info-bg: var(--status-info-subtle);
@@ -197,9 +201,9 @@
   --button-secondary-bg: var(--surface-default);
   --button-secondary-bg-active: var(--interactive-pressed);
   --button-secondary-bg-hover: var(--interactive-hover);
-  --button-secondary-border: var(--border-default);
+  --button-secondary-border: var(--button-primary-border);
   --button-secondary-disabled-text: var(--text-disabled);
-  --button-secondary-text: var(--text-primary);
+  --button-secondary-text: var(--button-primary-border);
   /* Card */
   --card-bg: var(--surface-elevated);
   --card-border: var(--border-default);

@@ -2,7 +2,7 @@ import type { HTMLAttributes } from 'react';
 
 import styles from './badge.module.css';
 
-type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'error' | 'disabled';
+type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'pending' | 'error' | 'disabled';
 
 /**
  * Figma status badge (node set 469:13451). Tones map to the Figma `status` prop: success is
@@ -16,6 +16,8 @@ export function Badge({
   className,
   ...rest
 }: HTMLAttributes<HTMLSpanElement> & { tone?: Tone }) {
-  const cls = [styles.badge, styles[tone], className].filter(Boolean).join(' ');
+  const cls = [styles.badge, styles[tone === 'pending' ? 'warning' : tone], className]
+    .filter(Boolean)
+    .join(' ');
   return <span className={cls} {...rest} />;
 }
