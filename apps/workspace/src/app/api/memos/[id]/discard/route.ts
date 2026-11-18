@@ -6,7 +6,7 @@ import {
   jsonResponse,
   routeSession,
 } from '@/lib/bff';
-import { memoDraftAccount } from '@/lib/memo-working-draft';
+import { memoDraftAccount, readDraft, tombstoneDraft } from '@/lib/memo-working-draft';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,6 +51,15 @@ export async function POST(
         // keep the raw text: failureOf only reads a body that matches the error contract
       }
       throw new ApiError(res.status, `POST discard failed with ${res.status}`, body);
+    }
+    // The saved memo is already discarded. Its checkpoint is inaccessible even if cleanup fails.
+    const owner = { orgId: session.orgId, sub: session.sub };
+    const scope = id.toLowerCase();
+    try {
+      const draft = await readDraft(owner, scope);
+      if (draft.values !== null) await tombstoneDraft(owner, scope, draft.revision);
+    } catch {
+      // The encrypted checkpoint has a bounded lifetime.
     }
     return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
   } catch (err) {
