@@ -28,7 +28,7 @@ describe('labels', () => {
     expect(fileStatusLabel('scan_failed').text).toBe('Scan failed');
     expect(fileStatusLabel('rejected').text).toBe('File rejected');
     expect(fileStatusLabel('scanning').tone).toBe('info');
-    expect(fileStatusLabel(null).text).toBe('Not scanned yet');
+    expect(fileStatusLabel(null).text).toBe('Unscanned');
   });
 });
 
