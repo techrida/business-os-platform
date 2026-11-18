@@ -767,7 +767,7 @@ describe('quotation approval: tamper after submit', () => {
 
 describe('quotation approval: the author names the first-step approver', () => {
   /** More people: a second accountant and a Sales colleague of entity A, and people who must be refused. */
-  const X = { acc2: '', mate: '', receiver: '', accB: '', otherTenant: '' };
+  const X = { acc2: '', mate: '', warehouse: '', accB: '', otherTenant: '' };
 
   beforeAll(async () => {
     const [owner] = await read((tx) =>
@@ -780,7 +780,7 @@ describe('quotation approval: the author names the first-step approver', () => {
       (await createStaffUser(appPool, { ...scope, idpOrgId, roleKeys: [roleKey] })).userId;
     X.acc2 = await staffOf(scopeA, 'accountant');
     X.mate = await staffOf(scopeA, 'sales');
-    X.receiver = await staffOf(scopeA, 'receiver');
+    X.warehouse = await staffOf(scopeA, 'warehouse');
     X.accB = await staffOf(scopeB, 'accountant');
     const other = await createTenantWithEntity(appPool, { code: 'OTHER-T' });
     X.otherTenant = await staffOf(
@@ -793,7 +793,7 @@ describe('quotation approval: the author names the first-step approver', () => {
   beforeEach(() => {
     roles.accountant = [U.acc, X.acc2];
     roles.sales = [f.ownerUserId, X.mate];
-    roles.receiver = [X.receiver];
+    roles.warehouse = [X.warehouse];
   });
 
   const submitNaming = (
@@ -923,7 +923,7 @@ describe('quotation approval: the author names the first-step approver', () => {
     // A directory that (wrongly) lists people of entity B and of another tenant as accountants: the server's own
     // tenant, entity and active-staff check must still refuse them.
     roles.accountant = [U.acc, X.acc2, X.accB, X.otherTenant];
-    for (const who of [f.ownerUserId, X.accB, X.otherTenant, X.receiver, U.fin]) {
+    for (const who of [f.ownerUserId, X.accB, X.otherTenant, X.warehouse, U.fin]) {
       const d = await draft('50000.00');
       const error = await httpErrorOf(submitNaming(d, who));
       expect(error.getStatus()).toBe(422);
