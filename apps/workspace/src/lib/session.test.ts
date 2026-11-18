@@ -450,6 +450,30 @@ describe('getSession when Valkey errors', () => {
     expect(warned(warn)).toMatchObject([{ stage: 'rotate', outcome: 'kept' }]);
   });
 
+  it('stores the rotated tokens when the first write after a refresh rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await signedIn({ accessExp: T0_SECONDS + 10 });
+    vi.mocked(refreshTokens).mockResolvedValue({
+      accessToken: 'access-2',
+      refreshToken: 'refresh-2',
+      accessExp: T0_SECONDS + 300,
+    });
+    const realSet = redis.set.bind(redis) as unknown as (...args: unknown[]) => Promise<unknown>;
+    let writes = 0;
+    // The lock (NX) goes through; the first write of the refreshed record (XX) drops.
+    vi.spyOn(redis, 'set').mockImplementation((async (...args: unknown[]) => {
+      if (args.includes('XX') && writes++ === 0) throw new Error('Connection is closed.');
+      return realSet(...args);
+    }) as unknown as typeof redis.set);
+
+    await expect(getSession()).resolves.toMatchObject({ id, accessToken: 'access-2' });
+    vi.mocked(redis.set).mockRestore();
+    expect(refreshTokens).toHaveBeenCalledTimes(1);
+    // The spent refresh token is not left in the store.
+    expect(await stored(id)).toMatchObject({ accessToken: 'access-2', refreshToken: 'refresh-2' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('is unavailable when the refresh path rejects and the token has expired', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const id = await signedIn({ accessExp: T0_SECONDS - 5 });
