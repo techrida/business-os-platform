@@ -1,51 +1,160 @@
-import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { click, mountForm } from '@/test/form-interactions';
 
 import { lifecycleOptions } from '../_lib/model';
 import { LifecycleForm } from './panel-forms';
 
-vi.mock('../actions', () => ({
+const actions = vi.hoisted(() => ({
   addContactAction: vi.fn(),
   decideBankAction: vi.fn(),
   grantPortalAction: vi.fn(),
   lifecycleAction: vi.fn(),
   proposeBankAction: vi.fn(),
 }));
+const toast = vi.hoisted(() => ({ success: vi.fn() }));
+
+vi.mock('../actions', () => actions);
+vi.mock('@/components/ui/toast', () => ({ toast }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-const render = (status: 'approved' | 'blocked', command: 'block' | 'archive') => {
+const optionFor = (status: 'approved' | 'blocked', command: 'block' | 'archive') => {
   const option = lifecycleOptions(status, { write: true, activate: true }).find(
     (candidate) => candidate.command === command,
   );
   if (!option) throw new Error(`Missing lifecycle option ${command}`);
-  return renderToStaticMarkup(
-    <LifecycleForm vendorId="vendor-id" option={option} idempotencyKey="request-key" />,
-  );
+  return option;
 };
+
+async function typeReason(value: string) {
+  const reason = document.querySelector<HTMLTextAreaElement>('textarea[name="reason"]');
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(reason, value);
+  await act(() => Promise.resolve(reason?.dispatchEvent(new Event('input', { bubbles: true }))));
+}
+
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 describe('vendor lifecycle confirmation', () => {
   it.each([
     ['approved', 'block', 'Block vendor'],
     ['blocked', 'archive', 'Archive vendor'],
   ] as const)(
-    'confirms %s to %s with the required reason inside a labelled dialog',
-    (status, command, label) => {
-      const html = render(status, command);
-      const dialog = html.match(/<dialog\b[^>]*>[\s\S]*?<\/dialog>/)?.[0];
-      expect(dialog).toBeDefined();
-      expect(dialog).toMatch(/aria-labelledby="[^"]+"/);
-      expect(dialog).toMatch(/aria-describedby="[^"]+"/);
-      expect(dialog).toContain('<h2');
-      expect(dialog).toContain(`${label}?`);
-      expect(dialog).toMatch(/<textarea[^>]*name="reason"[^>]*required=""/);
-      expect(dialog).toContain('name="command"');
-      expect(dialog).toContain(`value="${command}"`);
-      expect(dialog).toContain('name="idempotencyKey"');
-      expect(dialog).toContain('Cancel');
-      expect(dialog).toMatch(new RegExp(`<button[^>]*type="submit"[^>]*>${label}</button>`));
-      const beforeDialog = html.split('<dialog')[0];
-      expect(beforeDialog).toContain(label);
-      expect(beforeDialog).not.toContain('type="submit"');
+    'confirms %s to %s in a labelled dialog with the reason in its body and the actions in its footer',
+    async (status, command, label) => {
+      const mounted = await mountForm(
+        <LifecycleForm
+          vendorId="vendor-id"
+          option={optionFor(status, command)}
+          idempotencyKey="request-key"
+        />,
+      );
+      try {
+        const trigger = mounted.container.querySelector('button');
+        expect(trigger?.textContent).toBe(label);
+        expect(mounted.container.querySelector('[type="submit"]')).toBeNull();
+
+        await click(trigger);
+        const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+        expect(dialog).not.toBeNull();
+        expect(dialog?.getAttribute('aria-labelledby')).toBeTruthy();
+        expect(dialog?.textContent).toContain(`${label}?`);
+
+        const reason = dialog?.querySelector<HTMLTextAreaElement>('textarea[name="reason"]');
+        expect(reason?.required).toBe(true);
+        const form = reason?.form;
+        expect(form?.querySelector<HTMLInputElement>('[name="command"]')?.value).toBe(command);
+        expect(form?.querySelector<HTMLInputElement>('[name="idempotencyKey"]')?.value).toBe(
+          'request-key',
+        );
+
+        const footer = dialog?.querySelector('footer');
+        const submit = footer?.querySelector<HTMLButtonElement>('button[type="submit"]');
+        expect(submit?.textContent).toBe(label);
+        expect(submit?.form).toBe(form);
+        expect(footer?.textContent).toContain('Cancel');
+      } finally {
+        await mounted.unmount();
+      }
     },
   );
+
+  it('sends the reason, toasts the confirmation and closes after a success', async () => {
+    actions.lifecycleAction.mockResolvedValue({
+      key: 'next-key',
+      errors: {},
+      saved: 'The vendor was blocked.',
+      savedCount: 1,
+    });
+    const mounted = await mountForm(
+      <LifecycleForm
+        vendorId="vendor-id"
+        option={optionFor('approved', 'block')}
+        idempotencyKey="request-key"
+      />,
+    );
+    try {
+      await click(mounted.container.querySelector('button'));
+      await typeReason('Fraud alert from the bank');
+      await click(document.querySelector('footer button[type="submit"]'));
+
+      expect(actions.lifecycleAction).toHaveBeenCalledOnce();
+      const sent = actions.lifecycleAction.mock.calls[0]?.[1] as FormData;
+      expect(sent.get('vendorId')).toBe('vendor-id');
+      expect(sent.get('command')).toBe('block');
+      expect(sent.get('reason')).toBe('Fraud alert from the bank');
+      expect(sent.get('idempotencyKey')).toBe('request-key');
+      expect(toast.success).toHaveBeenCalledExactlyOnceWith('The vendor was blocked.');
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it('keeps the dialog open with the refusal and the typed reason', async () => {
+    actions.lifecycleAction.mockResolvedValue({
+      key: 'request-key',
+      errors: {},
+      error: 'Only an approver may block a vendor.',
+      savedCount: 0,
+    });
+    const mounted = await mountForm(
+      <LifecycleForm
+        vendorId="vendor-id"
+        option={optionFor('approved', 'block')}
+        idempotencyKey="request-key"
+      />,
+    );
+    try {
+      await click(mounted.container.querySelector('button'));
+      await typeReason('Duplicate record');
+      await click(document.querySelector('footer button[type="submit"]'));
+
+      const dialog = document.querySelector('[role="dialog"]');
+      expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain(
+        'Only an approver may block a vendor.',
+      );
+      expect(dialog?.querySelector<HTMLTextAreaElement>('textarea[name="reason"]')?.value).toBe(
+        'Duplicate record',
+      );
+      expect(toast.success).not.toHaveBeenCalled();
+    } finally {
+      await mounted.unmount();
+    }
+  });
 });
