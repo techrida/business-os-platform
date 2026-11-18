@@ -100,7 +100,19 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
       await expect(file).toBeVisible({ timeout: 30_000 });
       // The panel polls every 3 s while the file is "Scanning" and refreshes the page when done.
       await expect(file).toContainText('Scan passed', { timeout: SCAN_TIMEOUT_MS });
-      await expect(sales.getByRole('link', { name: 'Download exit-quote.pdf' })).toBeVisible();
+      const open = sales.getByRole('button', { name: 'Preview exit-quote.pdf' });
+      await expect(open).toBeVisible();
+      const previewResponse = sales.waitForResponse((response) =>
+        /\/api\/documents\/[^/]+\/versions\/[^/]+\/preview$/.test(response.url()),
+      );
+      await open.click();
+      const preview = sales.getByRole('dialog', { name: 'exit-quote.pdf', exact: true });
+      await expect(preview.getByTitle('Preview of exit-quote.pdf')).toBeVisible();
+      expect((await previewResponse).status()).toBe(200);
+      await expect(preview.getByRole('link', { name: 'Download', exact: true })).toBeVisible();
+      await sales.keyboard.press('Escape');
+      await expect(preview).toHaveCount(0);
+      await expect(open).toBeFocused();
     });
 
     // ------------------------------------------------------ 3. preview, then submit for approval
@@ -222,6 +234,9 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
       await expect(timeline.getByText('Test memos insert', { exact: true })).toHaveCount(1);
       await expect(timeline.getByText('Approvals submit', { exact: true })).toHaveCount(1);
       await expect(timeline.getByText('Approvals approve', { exact: true })).toHaveCount(2);
+      await expect(timeline.getByText('Dev Sales', { exact: true }).first()).toBeVisible();
+      await expect(timeline.getByText('Dev Accountant', { exact: true }).first()).toBeVisible();
+      await expect(timeline.getByText('Dev Finance', { exact: true }).first()).toBeVisible();
       // Created -> submitted -> approved on the memo, so at least two updates.
       expect(
         await timeline.getByText('Test memos update', { exact: true }).count(),
@@ -334,6 +349,12 @@ test('immediate picker/drop upload, removal recovery and submitted attachment lo
     await expect(
       page.getByRole('button', { name: 'Submit for approval', exact: true }),
     ).toBeDisabled();
+    await page.getByRole('button', { name: 'Submit for approval', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: 'Cannot submit yet' })).toContainText(
+      'Virus found',
+    );
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Remove blocked.csv', exact: true }).click();
     await expect(row('blocked.csv')).toHaveCount(0);
     await expect(
