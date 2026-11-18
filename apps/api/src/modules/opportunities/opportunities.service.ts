@@ -21,7 +21,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -95,7 +95,10 @@ export class OpportunitiesService {
   async list(q: ListOpportunitiesQuery): Promise<OpportunityDto[]> {
     const { scope, principal } = this.caller.current();
     const filters: SQL[] = [scopeWhereFor(principal, opportunities, 'crm.opportunity.read')];
-    if (q.stage !== undefined) filters.push(eq(opportunities.stage, q.stage));
+    if (q.stage !== undefined) {
+      const stages = Array.isArray(q.stage) ? q.stage : [q.stage];
+      filters.push(inArray(opportunities.stage, stages));
+    }
     if (q.q !== undefined) {
       const pattern = `%${escapeLike(q.q)}%`;
       filters.push(or(ilike(opportunities.name, pattern), ilike(opportunities.number, pattern))!);
