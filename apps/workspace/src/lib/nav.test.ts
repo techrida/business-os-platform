@@ -112,7 +112,7 @@ describe('visibleGroups', () => {
   });
 
   it('shows them to admins', () => {
-    expect(visibleGroups(true).map((g) => g.label)).toContain('Administration');
+    expect(visibleGroups(true).map((g) => g.label)).toContain('Organization');
     expect(labelsFor(true)).toEqual(expect.arrayContaining(['Users', 'Settings']));
   });
 });

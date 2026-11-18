@@ -122,6 +122,16 @@
   border-top: 0;
 }
 
+/* Confirmations (Figma 790:16324, 790:16245): no rules between header, body and actions. */
+.confirm .header,
+.confirm .footer {
+  border: 0;
+}
+
+.confirm .body:not(:empty) {
+  padding-block-start: 0;
+}
+
 /* On a phone the buttons use the full width and keep the same visual and keyboard order. */
 @media (max-width: 479px) {
   .content {

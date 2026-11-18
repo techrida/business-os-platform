@@ -39,6 +39,7 @@
 
 .link[aria-current='page'] {
   background: var(--pagination-bg-active);
+  color: var(--action-primary);
 }
 
 .disabled {
