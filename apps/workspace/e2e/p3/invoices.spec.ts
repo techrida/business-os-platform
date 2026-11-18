@@ -125,3 +125,33 @@ test('the new invoice form names every missing field and has no number or date t
     await expect(page.getByText('Line 2', { exact: true })).toHaveCount(0);
   });
 });
+
+test.describe('invoice document preview', () => {
+  // The full Chromium channel includes the PDF viewer used by the preview dialog.
+  test.use({ channel: 'chromium' });
+
+  test('opens the issued PDF in a dialog with a separate download', async ({
+    browser,
+    baseURL,
+  }) => {
+    const id = issuedId();
+    test.skip(id === undefined, 'BOS_E2E_INVOICE_ISSUED is not set');
+    await as(browser, baseURL, 'accountant', async ({ page }) => {
+      const path = `/invoices/${id ?? ''}/document`;
+      await page.goto(`/invoices/${id ?? ''}`);
+      const response = page.waitForResponse(
+        (res) => new URL(res.url()).pathname === path + '/preview',
+      );
+      await page.getByRole('button', { name: 'Preview invoice', exact: true }).click();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator('iframe')).toBeVisible();
+      await expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('href', path);
+      const preview = await response;
+      expect(preview.ok()).toBe(true);
+      expect(preview.headers()['content-type']).toBe('application/pdf');
+      expect(preview.headers()['content-disposition']).toMatch(/^inline/);
+    });
+  });
+});
