@@ -9,6 +9,7 @@ import { MEMO_STATUS_FILTERS, safeCursor } from '@/lib/memo-list-view';
 import { MemoStatusFilter } from './memo-status-filter';
 import { MemoList, MemoListSkeleton } from './memo-list';
 import { PlusIcon } from './memo-icons';
+import styles from './memo-pages.module.css';
 
 export const metadata: Metadata = { title: 'Memos · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -25,19 +26,20 @@ export default async function MemosPage({ searchParams }: { searchParams: Search
     <Page>
       <PageHeader
         title="Memos"
-        description="The memos you can open, newest first."
+        description="Create memos, continue drafts and track approvals."
         actions={
-          <LinkButton href="/memos/new">
+          <LinkButton href="/memos/new" size="large">
             <PlusIcon />
             New memo
           </LinkButton>
         }
       />
-      <MemoStatusFilter active={active} />
-      {/* The header stays put while a page loads; the key restarts the fallback when the page or filter changes. */}
-      <Suspense key={`${cursor ?? ''}|${active ?? ''}`} fallback={<MemoListSkeleton />}>
-        <MemoList cursor={cursor} status={active} />
-      </Suspense>
+      <div className={styles.results}>
+        <MemoStatusFilter active={active} />
+        <Suspense key={`${cursor ?? ''}|${active ?? ''}`} fallback={<MemoListSkeleton />}>
+          <MemoList cursor={cursor} status={active} />
+        </Suspense>
+      </div>
     </Page>
   );
 }

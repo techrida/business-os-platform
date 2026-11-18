@@ -2,13 +2,13 @@ import type { Metadata } from 'next';
 
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
-import { Panel } from '@/components/ui/panel';
 import { failureOf, getMemoDirectory } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { memoDraftAccount } from '@/lib/memo-working-draft';
 
 import { createMemoAction } from '../actions';
 import { MemoForm } from '../memo-form';
+import styles from '../memo-pages.module.css';
 
 export const metadata: Metadata = { title: 'New memo · Business OS' };
 
@@ -39,21 +39,19 @@ export default async function NewMemoPage() {
     );
   }
   return (
-    <Page>
+    <Page className={styles.formPage}>
       <Breadcrumb items={[{ label: 'Memos', href: '/memos' }, { label: 'New memo' }]} />
       <PageHeader
         title="New memo"
-        description="Your draft saves as you type. Next adds attachments and shows the approval route before you submit."
+        description="Prepare a draft, then add attachments and review its approval route."
       />
-      <Panel title="Memo details">
-        <MemoForm
-          directory={directory}
-          action={createMemoAction}
-          initial={{ title: '', body: '', amount: '', currency: 'NPR' }}
-          submitLabel="Next"
-          draftAccount={memoDraftAccount(session)}
-        />
-      </Panel>
+      <MemoForm
+        directory={directory}
+        action={createMemoAction}
+        initial={{ title: '', body: '', amount: '', currency: 'NPR' }}
+        submitLabel="Next"
+        draftAccount={memoDraftAccount(session)}
+      />
     </Page>
   );
 }
