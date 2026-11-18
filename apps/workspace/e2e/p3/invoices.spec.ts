@@ -4,19 +4,16 @@ import { signInAs, type Signed } from '../helpers/memo-flow';
 
 /**
  * The P3 invoice screens against the real stack: the list, the detail page with its credit-note and
- * debit-note buttons, and the manual invoice form's validation.
+ * debit-note buttons, and the manual invoice form's validation and draft creation.
  *
- * The invoice endpoints and their seed data are not in the stack yet, so each test reads what it needs
- * from the environment and skips itself when it is unset:
+ * Each test reads its fixture requirements from the environment:
  *
  *   BOS_E2E_INVOICES_READY   any value: the invoice endpoints answer and the tax-code and customer
  *                            lists are seeded. Needed by the list and the manual invoice tests.
  *   BOS_E2E_INVOICE_ISSUED   id of an issued tax invoice with at least one line, owned by the
  *                            `accountant` and `finance` personas' organization.
- *
- * Nothing here creates an invoice: the validation test stops at the refusals, which never reach the
- * API, so no test leaves a record behind. `playwright.config.ts` lists the specs of the `dev` project
- * by name; this one runs through `'p3/*.spec.ts'`.
+ *   BOS_E2E_INVOICE_DRAFT_CUSTOMER   legal name of a disposable customer the accountant can
+ *                            invoice. The draft creation test leaves one draft in that stack.
  */
 
 const ready = (): boolean => process.env.BOS_E2E_INVOICES_READY !== undefined;
@@ -40,7 +37,7 @@ async function heading(page: Page, name: RegExp | string): Promise<void> {
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
 }
 
-test('the list shows its filters and offers New invoice to the accountant', async ({
+test('the list shows its filters and offers Create Invoice to the accountant', async ({
   browser,
   baseURL,
 }) => {
@@ -50,7 +47,7 @@ test('the list shows its filters and offers New invoice to the accountant', asyn
     await heading(page, 'Invoices');
     await expect(page.getByLabel('Kind')).toBeVisible();
     await expect(page.getByLabel('Status')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'New invoice' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Create Invoice' })).toBeVisible();
   });
 });
 
@@ -64,7 +61,7 @@ test('the detail page shows the totals the server worked out, and Finance gets t
     await page.goto(`/invoices/${id ?? ''}`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Totals' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Lines' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Line Items' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Credit note', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: /^Credit note for / });
@@ -99,7 +96,7 @@ test('the new invoice form names every missing field and has no number or date t
   test.skip(!ready(), 'BOS_E2E_INVOICES_READY is not set');
   await as(browser, baseURL, 'accountant', async ({ page }) => {
     await page.goto('/invoices/new');
-    await heading(page, 'New invoice');
+    await heading(page, 'Create Invoice');
 
     // The number and the issue date are the platform's: there is no field for either.
     await expect(page.getByLabel(/^Number/)).toHaveCount(0);
@@ -122,7 +119,7 @@ test('the new invoice form names every missing field and has no number or date t
     await expect(page).toHaveURL(/\/invoices\/new$/);
 
     // A second line can be added and removed again.
-    await page.getByRole('button', { name: 'Add line' }).click();
+    await page.getByRole('button', { name: 'Add items' }).click();
     await expect(page.getByText('Line 2', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Remove line 2' }).click();
     await expect(page.getByText('Line 2', { exact: true })).toHaveCount(0);
