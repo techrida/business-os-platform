@@ -1,0 +1,108 @@
+.list,
+.activityForm {
+  display: grid;
+  min-width: 0;
+  gap: var(--spacing-content-gap);
+}
+
+.toolbar,
+.filters,
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbar {
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.toolbar h2 {
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.filters {
+  align-items: end;
+}
+
+.typeField {
+  min-width: min(180px, 100%);
+}
+
+.typeField select:not([aria-invalid='true']) {
+  border-color: var(--button-secondary-border);
+}
+
+.results.results {
+  min-width: 0;
+  padding: 0;
+}
+
+.table.table {
+  border: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.table tbody tr {
+  height: 88px;
+}
+
+.activity {
+  width: 45%;
+}
+
+.details {
+  white-space: pre-wrap;
+}
+
+.meta,
+.footer {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.footer {
+  padding: 16px 24px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.recordLink {
+  color: var(--action-primary);
+  text-underline-offset: 0.2em;
+}
+
+.activityFields {
+  display: grid;
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--grid-gutter);
+}
+
+.formFooter {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--spacing-content-gap);
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+@media (max-width: 767px) {
+  .filters {
+    width: 100%;
+  }
+
+  .typeField {
+    flex: 1 1 144px;
+  }
+
+  .table.table th,
+  .table.table td,
+  .footer {
+    padding-inline: 16px;
+  }
+}
