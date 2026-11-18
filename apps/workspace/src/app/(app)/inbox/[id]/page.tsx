@@ -23,7 +23,6 @@ import {
 import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { snapshotEntries, when } from '@/lib/kernel-format';
-import { shortId } from '@/lib/kernel-ui';
 
 import { StatusBadge, statusText } from '../../kit';
 import { DecisionForm } from './decision-form';
@@ -46,11 +45,11 @@ const ACTION_LABEL: Record<string, string> = {
 
 type Step = ApprovalRequestDto['steps'][number];
 
-/** Who a step belongs to, in words. Names are not available to staff without admin rights. */
-function stepWho(step: Step): string {
+/** Resolve step labels from the authorized request. */
+function stepWho(step: Step, names: Map<string, string>): string {
   if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
-  if (step.kind === 'group' && step.groupId) return `Approval group ${shortId(step.groupId)}`;
-  if (step.kind === 'user' && step.userId) return `Person ${shortId(step.userId)}`;
+  if (step.kind === 'group' && step.groupId) return step.groupName ?? 'Approval group name unavailable';
+  if (step.kind === 'user' && step.userId) return names.get(step.userId.toLowerCase()) ?? 'Approver name unavailable';
   return `Step ${step.seq}`;
 }
 
@@ -85,15 +84,6 @@ function titleOf(snapshot: unknown): string | null {
     if (typeof t === 'string' && t !== '') return t;
   }
   return null;
-}
-
-/**
- * Names for the people the memo's frozen signer list already knows (preparer, recommenders, approver),
- * keyed by lowercase user id. The approvals API returns bare ids and names are admin-only, so these are
- * the only names this page can show without a lookup of its own.
- */
-function signerNames(signers: readonly { userId: string; name: string }[]): Map<string, string> {
-  return new Map(signers.map((s) => [s.userId.toLowerCase(), s.name]));
 }
 
 export default async function InboxDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -161,8 +151,12 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const selectedSigners = memoTemplate.success
     ? [...memoTemplate.data.recommenders, memoTemplate.data.approvedBy]
     : [];
-  const names = signerNames(
-    memoTemplate.success ? [memoTemplate.data.preparedBy, ...selectedSigners] : [],
+  // Preserve the submitted memo's signer names if someone has since been renamed.
+  const names = new Map(
+    [
+      ...(request.people ?? []),
+      ...(memoTemplate.success ? [memoTemplate.data.preparedBy, ...selectedSigners] : []),
+    ].map((person) => [person.userId.toLowerCase(), person.name]),
   );
   const person = (id: string) => <AuditActor id={id} name={names.get(id.toLowerCase())} />;
   const rows = snapshotEntries(snapshot).filter(
@@ -180,7 +174,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
   const timeline: TimelineStep[] = request.steps.map((step) => ({
     key: step.seq,
-    title: selectedSigners[step.seq - 1]?.name ?? stepWho(step),
+    title: selectedSigners[step.seq - 1]?.name ?? stepWho(step, names),
     status: statusText(step.status),
     tone: STEP_TONE[step.status] ?? 'upcoming',
     detail: (

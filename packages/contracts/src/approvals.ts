@@ -177,11 +177,15 @@ export const ApprovalActionKindSchema = z.enum([
   'reroute',
 ]);
 
+export const PersonNameSchema = z.object({ userId: z.string(), name: z.string().min(1) });
+export type PersonName = z.infer<typeof PersonNameSchema>;
+
 export const ApprovalStepDtoSchema = z.object({
   seq: z.number().int().min(1),
   kind: StepKindSchema,
   roleKey: RoleKeySchema.nullable(),
   groupId: z.string().nullable(),
+  groupName: z.string().nullable().optional(),
   userId: z.string().nullable(),
   reason: z.string(),
   status: ApprovalStepStatusSchema,
@@ -214,6 +218,7 @@ export const ApprovalRequestDtoSchema = z.object({
   snapshot: z.unknown(),
   steps: z.array(ApprovalStepDtoSchema),
   actions: z.array(ApprovalActionDtoSchema),
+  people: z.array(PersonNameSchema).optional(),
   submittedAt: isoDateTime,
   decidedAt: isoDateTime.nullable(),
 });
