@@ -9,11 +9,11 @@ import { valuesOfCustomer } from '@/components/p2/customers/forms';
 import { isGuid } from '@/components/p2/customers/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
-import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { Breadcrumb, Page } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 
-export const metadata: Metadata = { title: 'Edit customer · Business OS' };
+export const metadata: Metadata = { title: 'Edit Organization · Business OS' };
 export const dynamic = 'force-dynamic';
 
 export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
@@ -29,13 +29,13 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
       <Page width="narrow">
         <Breadcrumb
           items={[
-            { label: 'Customers', href: '/customers' },
-            { label: 'Customer', href: back },
+            { label: 'Organizations', href: '/customers' },
+            { label: 'Organization', href: back },
             { label: 'Edit' },
           ]}
         />
-        <Alert tone="info" role="status" title="Your roles do not include editing customers">
-          Ask an administrator if you need to. You can still read this customer.
+        <Alert tone="info" role="status" title="Your roles do not include editing organizations">
+          Ask an administrator if you need to. You can still read this organization.
         </Alert>
       </Page>
     );
@@ -50,12 +50,16 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
     return (
       <Page width="narrow">
         <Breadcrumb
-          items={[{ label: 'Customers', href: '/customers' }, { label: 'Edit customer' }]}
+          items={[{ label: 'Organizations', href: '/customers' }, { label: 'Edit Organization' }]}
         />
         <Alert
           tone={f.status === 403 ? 'info' : 'error'}
           role="alert"
-          title={f.status === 403 ? 'You cannot open this customer' : 'This customer did not load'}
+          title={
+            f.status === 403
+              ? 'You cannot open this organization'
+              : 'This organization did not load'
+          }
           actions={f.status !== 403 ? <a href={here}>Try again</a> : null}
         >
           {f.message}
@@ -65,7 +69,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
   }
 
   const crumbs = [
-    { label: 'Customers', href: '/customers' },
+    { label: 'Organizations', href: '/customers' },
     { label: customer.legalName, href: back },
     { label: 'Edit' },
   ];
@@ -74,18 +78,23 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
     return (
       <Page width="narrow">
         <Breadcrumb items={crumbs} />
-        <Alert tone="warning" role="status" title="This record was merged into another customer.">
-          Edit the customer it was merged into instead.{' '}
-          <a href={`/customers/${encodeURIComponent(customer.mergedIntoId)}`}>Open that customer</a>
+        <Alert
+          tone="warning"
+          role="status"
+          title="This record was merged into another organization."
+        >
+          Edit the organization it was merged into instead.{' '}
+          <a href={`/customers/${encodeURIComponent(customer.mergedIntoId)}`}>
+            Open that organization
+          </a>
         </Alert>
       </Page>
     );
   }
 
   return (
-    <Page width="narrow">
+    <Page>
       <Breadcrumb items={crumbs} />
-      <PageHeader title="Edit customer" description={customer.number} />
       <CustomerForm
         action={updateCustomerAction}
         mode="edit"
@@ -94,6 +103,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         version={customer.version}
         cancelHref={back}
         reloadHref={here}
+        description={customer.number}
       />
     </Page>
   );
