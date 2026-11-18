@@ -44,17 +44,19 @@ describe('approval from upload producer state', () => {
     expect(checklistProgress(acceptProvided(checklist)).complete).toBe(true);
   });
 
-  it.each(['awaiting_content', 'scan_failed', 'quarantined', 'infected', 'rejected'] as const)(
-    'blocks %s scans with visible feedback',
-    (status) => {
-      const files = new Map(clean);
-      const id = checklist[0]!.documentId!;
-      expect(canApprove(submitted, new Map([...files, [id, { status }]]))).toBe(false);
-      expect(approveBlockedReason(submitted, new Map([...files, [id, { status }]]))).toContain(
-        status,
-      );
-    },
-  );
+  it.each([
+    ['awaiting_content', 'the scan is pending'],
+    ['quarantined', 'the scan is pending'],
+    ['scan_failed', 'the file did not pass its scan'],
+    ['infected', 'the file did not pass its scan'],
+    ['rejected', 'the file did not pass its scan'],
+  ] as const)('blocks %s scans with visible feedback', (status, feedback) => {
+    const files = new Map(clean);
+    const id = checklist[0]!.documentId!;
+    files.set(id, { status });
+    expect(canApprove(submitted, files)).toBe(false);
+    expect(approveBlockedReason(submitted, files)).toContain(feedback);
+  });
 
   it('blocks absent files, unavailable lookups, missing checklist items and decided cases', () => {
     expect(approveBlockedReason(submitted)).toContain('unavailable');
