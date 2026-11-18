@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
 import { __resetEnvForTests } from './env';
 import type { Session } from './session';
+import { SessionUnavailableError } from './session-unavailable';
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/navigation', () => ({
@@ -50,6 +51,12 @@ afterEach(() => {
 });
 
 describe('requireStaffSession', () => {
+  it('propagates a store outage to the page error boundary', async () => {
+    const outage = new SessionUnavailableError();
+    getSession.mockRejectedValue(outage);
+    await expect(requireStaffSession('/inbox')).rejects.toBe(outage);
+  });
+
   it('sends an unauthenticated user to login with the page path encoded', async () => {
     getSession.mockResolvedValue(null);
     await expect(requireStaffSession('/inbox/abc?x=1')).rejects.toThrow(
