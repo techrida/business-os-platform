@@ -667,6 +667,7 @@ export function isChecklistComplete(
 }
 
 export const VerificationCaseDtoSchema = z.object({
+  reviewerNames: z.array(z.string()).optional(),
   looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
   reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),
   approvalBlockedReason: z.string().nullable().optional(),

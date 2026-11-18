@@ -189,6 +189,10 @@ export default async function VerificationCasePage({
         <p className={styles.note}>Update the documents to reopen this case as a draft.</p>
       ) : null}
 
+      {!legacy && c.status === 'submitted' && c.reviewerNames?.length ? (
+        <p className={styles.note}>Can review: {c.reviewerNames.join(', ')}.</p>
+      ) : null}
+
       {c.status === 'approved' || c.status === 'rejected' ? (
         <Alert
           tone={c.status === 'approved' ? 'success' : 'warning'}
