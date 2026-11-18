@@ -146,9 +146,9 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
       // `GET /v1/approvals/inbox` needs approvals.requests.act, which sales lacks: a 403 that the
       // page turns into words.
       await sales.goto('/inbox');
-      await expect(sales.getByText('Your roles do not include approvals')).toBeVisible();
+      await expect(sales.getByText("You can't open the inbox")).toBeVisible();
       await expect(
-        sales.getByText('The inbox is for people who approve documents.', { exact: false }),
+        sales.getByText("Your roles don't allow this action. Ask an administrator if you need it."),
       ).toBeVisible();
 
       // The request itself may be read by its requester (approvals.requests.read, own scope), but

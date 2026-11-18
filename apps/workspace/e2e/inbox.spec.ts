@@ -41,10 +41,10 @@ test('the inbox shows the reason for each item, and a 403 is explained in words'
 
     await test.step('a 403 on the inbox reads as words for sales', async () => {
       await sales.page.goto('/inbox');
-      await expect(sales.page.getByText('Your roles do not include approvals')).toBeVisible();
+      await expect(sales.page.getByText("You can't open the inbox")).toBeVisible();
       await expect(
         sales.page.getByText(
-          'The inbox is for people who approve documents. If you prepare documents, open Memos to follow yours.',
+          "Your roles don't allow this action. Ask an administrator if you need it.",
         ),
       ).toBeVisible();
     });
