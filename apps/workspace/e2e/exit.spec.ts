@@ -135,11 +135,7 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
     const requestId = await test.step('sales submits', async () => {
       const id = await submitMemo(sales);
       await expect(sales.getByText('Submitted', { exact: true })).toBeVisible();
-      await expect(
-        sales.getByText(
-          'This memo is waiting for approval. It cannot be edited until it is returned.',
-        ),
-      ).toBeVisible();
+      await expect(sales.getByRole('region', { name: 'Edit memo', exact: true })).toHaveCount(0);
       return id;
     });
 
