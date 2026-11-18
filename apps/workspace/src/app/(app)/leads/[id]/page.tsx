@@ -191,7 +191,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
       <div className={styles.detailColumns}>
         <div className={styles.detailStack}>
           <Panel title="Lead overview" className={styles.detailPanel}>
-            <FactList facts={facts(lead)} className={styles.overviewFacts} />
+            <FactList facts={facts(lead)} className={styles.overviewFacts ?? ''} />
           </Panel>
 
           <Panel title="History" className={styles.detailPanel}>

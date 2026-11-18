@@ -250,7 +250,11 @@ export default async function VerificationCasePage({
         }
       >
         <p className={styles.tableHint}>Scroll sideways to see all columns.</p>
-        <Table caption="Verification documents" minWidth={790} className={styles.documentTable}>
+        <Table
+          caption="Verification documents"
+          minWidth={790}
+          className={styles.documentTable ?? ''}
+        >
           <thead>
             <tr>
               <Th>Document</Th>

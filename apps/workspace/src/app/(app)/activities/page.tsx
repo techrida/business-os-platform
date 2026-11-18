@@ -101,7 +101,7 @@ export default async function ActivitiesPage({
             role="search"
             aria-label="Filter activities"
           >
-            <Field label="Type" className={styles.typeField}>
+            <Field label="Type" className={styles.typeField ?? ''}>
               {(c) => (
                 <Select name="kind" defaultValue={kind ?? ''} {...c}>
                   <option value="">All types</option>
@@ -137,7 +137,7 @@ export default async function ActivitiesPage({
           </EmptyState>
         ) : (
           <Card className={styles.results}>
-            <Table caption="Recent activities" minWidth={560} className={styles.table}>
+            <Table caption="Recent activities" minWidth={560} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th>Activity</Th>

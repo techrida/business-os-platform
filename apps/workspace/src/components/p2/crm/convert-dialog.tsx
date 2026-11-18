@@ -233,7 +233,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
 
           <Panel title="Carried over from the lead" headingLevel={3} className={styles.dialogPanel}>
             <FactList
-              className={styles.conversionFacts}
+              className={styles.conversionFacts ?? ''}
               facts={[
                 { key: 'organization', label: 'Organization', value: lead.companyName },
                 { key: 'contact', label: 'Contact person', value: lead.contactName },
@@ -517,7 +517,7 @@ export function ConvertDialog({ lead, action }: { lead: ConvertLead; action: Con
               )}
             </Field>
             <FactList
-              className={styles.conversionFacts}
+              className={styles.conversionFacts ?? ''}
               facts={[
                 { key: 'stage', label: 'Pipeline stage', value: 'Qualified' },
                 { key: 'value', label: 'Estimated value', value: lead.value ?? 'Not set' },

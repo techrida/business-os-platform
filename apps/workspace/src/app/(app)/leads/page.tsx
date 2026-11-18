@@ -241,7 +241,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           <Board columns={columnsFor(matches)} action={moveLeadStageAction} noun="lead" />
         ) : (
           <div className={styles.listCard}>
-            <Table caption="Leads" minWidth={900} className={styles.table}>
+            <Table caption="Leads" minWidth={900} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th>Lead name</Th>
