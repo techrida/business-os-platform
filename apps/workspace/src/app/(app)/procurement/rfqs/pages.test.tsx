@@ -5,6 +5,10 @@ import { ApiError } from '@/lib/api';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
+// The redirect confirmation is a toast raised on mount; render its message so the page's choice shows.
+vi.mock('@/components/p4/success-notice', () => ({
+  SuccessNotice: ({ message }: { message: string }) => <output>{message}</output>,
+}));
 const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ roles: session.roles }),
@@ -165,7 +169,7 @@ describe('the list', () => {
     expect(out).toContain('RFQ-2082/83-00001');
     expect(out).toContain('PR-2082/83-00007');
     expect(out).toContain('1 of 3');
-    expect(out).toContain('Open for quotations');
+    expect(out).toContain('>Open</');
     expect(out).toContain('New RFQ');
     expect(out).toContain('15:45');
   });
@@ -481,8 +485,9 @@ describe('scoring, recommending and committing on the detail', () => {
   it('a recommended RFQ on a sourcing request offers the commitment submit', async () => {
     rfqApi.getRfq.mockResolvedValue(rfq({ status: 'recommended', recommendedQuotationId: Q1 }));
     const out = await detail();
-    expect(out).toContain('Submit for commitment approval');
-    expect(out).toContain('name="rfqId"');
+    expect(out).toMatch(
+      /<button[^>]*aria-haspopup="dialog"[^>]*>Submit for commitment approval<\/button>/,
+    );
   });
 
   it('shows no submit once the request waits on the approvers, and the approval panel appears', async () => {
