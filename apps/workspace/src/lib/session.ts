@@ -494,13 +494,17 @@ async function refreshUnderLock(
     });
     // XX: only if the session still exists, so a concurrent logout is not undone. We hold the
     // lock and the newest tokens, so overwriting a concurrent slide is correct here.
-    const written = await client.set(
-      sessionKey(id),
-      seal(id, updated),
-      'EX',
-      ttlFor(updated, now),
-      'XX',
-    );
+    const sealed = seal(id, updated);
+    const ttl = ttlFor(updated, now);
+    let written: string | null;
+    try {
+      written = await client.set(sessionKey(id), sealed, 'EX', ttl, 'XX');
+    } catch {
+      // The provider has already rotated the refresh token, so losing this write would sign the
+      // user out at the next refresh. Retry once after a reconnect: the same value, still under
+      // the lock, and XX so a concurrent logout is still not undone.
+      written = await (await whenReady(client)).set(sessionKey(id), sealed, 'EX', ttl, 'XX');
+    }
     return written === 'OK' ? updated : null;
   } finally {
     // Best effort: the lock expires by itself after REFRESH_LOCK_MS, and a failed unlock must not
