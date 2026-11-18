@@ -7,9 +7,10 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input } from '@/components/ui/field';
+import { Field } from '@/components/ui/field';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
+import { SearchInput } from '@/components/ui/search-input';
 import { Table, Td, Th } from '@/components/ui/table';
 import {
   getPoProgress,
@@ -23,6 +24,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import type { Session } from '@/lib/session';
 
+import layout from '../procurement.module.css';
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../orders/_lib/model';
 import { receiptFailure } from './_lib/failure';
 import {
@@ -71,7 +73,11 @@ function WaitingOrders({ orders }: { orders: readonly ReceivableOrder[] }) {
           Orders appear here once they are issued, and leave when everything has arrived.
         </EmptyState>
       ) : (
-        <Table caption="Purchase orders waiting to be received" minWidth={900}>
+        <Table
+          className={layout.panelTable ?? ''}
+          caption="Purchase orders waiting to be received"
+          minWidth={900}
+        >
           <thead>
             <tr>
               <Th>Order</Th>
@@ -145,7 +151,7 @@ function Picker({
   waiting: Waiting | undefined;
 }) {
   return (
-    <Page width={waiting?.state === 'list' ? 'full' : 'narrow'}>
+    <Page width={waiting?.state === 'list' ? 'full' : 'narrow'} className={layout.detail}>
       <PageHeader
         title="Receipts"
         description={
@@ -154,7 +160,7 @@ function Picker({
             : "Goods and services are received against one purchase order. Open an order's receipts from the order page, or paste the order's ID here."
         }
       />
-      <div className={styles.stack}>
+      <div className={layout.stack}>
         {invalid ? (
           <Alert tone="warning" role="alert" title="That is not a purchase order ID">
             An ID looks like 3f2b8c1e-0d4a-4c1b-9e7a-5b6d2f1a8c90. Copy it from the link you were
@@ -167,21 +173,30 @@ function Picker({
           </Alert>
         ) : null}
         {waiting?.state === 'list' ? <WaitingOrders orders={waiting.orders} /> : null}
-        <form method="get" action="/procurement/receipts" role="search" className={styles.picker}>
-          <Field label="Purchase order ID" hint="Paste the ID from the order's link.">
-            {(control) => (
-              <Input name="po" autoComplete="off" spellCheck={false} required {...control} />
-            )}
-          </Field>
-          <Button type="submit" variant="secondary">
-            Open receipts
-          </Button>
-        </form>
-        {canOpenOrders ? (
-          <p className={styles.note}>
-            Or <Link href="/procurement/orders">pick the order from the purchase order list</Link>.
-          </p>
-        ) : null}
+        <Panel title="Find receipts by purchase order">
+          <form method="get" action="/procurement/receipts" role="search" className={styles.picker}>
+            <Field label="Purchase order ID" hint="Paste the ID from the order's link.">
+              {(control) => (
+                <SearchInput
+                  name="po"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  {...control}
+                />
+              )}
+            </Field>
+            <Button type="submit" variant="secondary">
+              Open receipts
+            </Button>
+          </form>
+          {canOpenOrders ? (
+            <p className={styles.note}>
+              Or <Link href="/procurement/orders">pick the order from the purchase order list</Link>
+              .
+            </p>
+          ) : null}
+        </Panel>
       </div>
     </Page>
   );
@@ -206,7 +221,11 @@ function Progress({ progress }: { progress: PoProgress }) {
       title="Where the order stands"
       description="What was ordered, what has arrived, and what is still open. Draft receipts hold their quantity until they are confirmed."
     >
-      <Table caption="Receipt progress by purchase order line" minWidth={820}>
+      <Table
+        className={layout.panelTable ?? ''}
+        caption="Receipt progress by purchase order line"
+        minWidth={820}
+      >
         <thead>
           <tr>
             <Th align="end">#</Th>
@@ -256,7 +275,11 @@ function Progress({ progress }: { progress: PoProgress }) {
 function ReceiptRows({ receipts }: { receipts: readonly Receipt[] }) {
   const numberOf = new Map(receipts.map((r) => [r.id, r.number]));
   return (
-    <Table caption="Receipts of this purchase order" minWidth={820}>
+    <Table
+      className={layout.panelTable ?? ''}
+      caption="Receipts of this purchase order"
+      minWidth={820}
+    >
       <thead>
         <tr>
           <Th>Receipt</Th>
@@ -363,43 +386,45 @@ export default async function ReceiptsPage({
   const newHref = `/procurement/receipts/new?po=${encodeURIComponent(po)}`;
 
   return (
-    <Page>
-      <Breadcrumb
-        items={
-          grants.issue
-            ? [
-                { label: 'Purchase orders', href: '/procurement/orders' },
-                {
-                  label: order?.number ?? 'Purchase order',
-                  href: `/procurement/orders/${encodeURIComponent(po)}`,
-                },
-                { label: 'Receipts' },
-              ]
-            : [{ label: 'Receipts' }]
-        }
-      />
-      <PageHeader
-        title={
-          <>Receipts{order ? <span className={styles.long}> for {order.number}</span> : null}</>
-        }
-        status={
-          order ? (
-            <Badge tone={PO_STATUS_LABEL[order.status].tone}>
-              {PO_STATUS_LABEL[order.status].text}
-            </Badge>
-          ) : undefined
-        }
-        description="A receipt records what arrived. It starts as a draft and counts once it is confirmed. A mistake is undone by reversing the receipt, never by editing it."
-        actions={
-          mayStart ? (
-            <LinkButton href={newHref} variant="primary">
-              New receipt
-            </LinkButton>
-          ) : null
-        }
-      />
+    <Page className={layout.detail}>
+      <div className={layout.detailHeader}>
+        <Breadcrumb
+          items={
+            grants.issue
+              ? [
+                  { label: 'Purchase orders', href: '/procurement/orders' },
+                  {
+                    label: order?.number ?? 'Purchase order',
+                    href: `/procurement/orders/${encodeURIComponent(po)}`,
+                  },
+                  { label: 'Receipts' },
+                ]
+              : [{ label: 'Receipts' }]
+          }
+        />
+        <PageHeader
+          title={
+            <>Receipts{order ? <span className={styles.long}> for {order.number}</span> : null}</>
+          }
+          status={
+            order ? (
+              <Badge tone={PO_STATUS_LABEL[order.status].tone}>
+                {PO_STATUS_LABEL[order.status].text}
+              </Badge>
+            ) : undefined
+          }
+          description="A receipt records what arrived. It starts as a draft and counts once it is confirmed. A mistake is undone by reversing the receipt, never by editing it."
+          actions={
+            mayStart ? (
+              <LinkButton href={newHref} variant="primary">
+                New receipt
+              </LinkButton>
+            ) : null
+          }
+        />
+      </div>
 
-      <div className={styles.stack}>
+      <div className={layout.stack}>
         <Panel title="Receipts">
           {receipts.value.length === 0 ? (
             <EmptyState

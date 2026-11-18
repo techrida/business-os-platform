@@ -8,11 +8,13 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
+
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listPurchaseRequests, type PurchaseRequestListItem } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 
+import layout from '../procurement.module.css';
 import { prFailure } from './_lib/failure';
 import { PR_STATUS_LABEL, prGrants } from './_lib/model';
 import styles from './requests.module.css';
@@ -43,14 +45,14 @@ function Row({ pr }: { pr: PurchaseRequestListItem }) {
               {pr.number ?? 'Not numbered yet'}
             </Link>
           }
-          meta={<span className={styles.long}>{pr.justification}</span>}
+          note={<span className={styles.long}>{pr.justification}</span>}
         />
       </Td>
       <Td nowrap>
         <span className={styles.numeric}>Department name unavailable</span>
       </Td>
       <Td nowrap>{when(pr.requiredBy, 'date')}</Td>
-      <Td nowrap>
+      <Td align="end" nowrap>
         <span className={styles.numeric}>{money(pr.estimatedTotal, pr.currency)}</span>
       </Td>
       <Td nowrap>
@@ -93,7 +95,7 @@ export default async function PurchaseRequestsPage({
   ) : null;
 
   return (
-    <Page>
+    <Page className={layout.list}>
       <PageHeader
         title={grants.readAll ? 'Purchase requests' : 'My purchase requests'}
         description={
@@ -101,19 +103,10 @@ export default async function PurchaseRequestsPage({
             ? 'Every purchase request in this entity, newest first. A request is approved by the department head before sourcing starts.'
             : 'The purchase requests you raised, newest first. A request is approved by the department head before sourcing starts.'
         }
-        actions={
-          <>
-            {requests !== null ? (
-              <Badge tone="info" role="status" className={styles.count}>
-                {requests.length} {requests.length === 1 ? 'request' : 'requests'}
-              </Badge>
-            ) : null}
-            {newButton}
-          </>
-        }
+        actions={newButton}
       />
 
-      <form method="get" action="/procurement/requests" className={styles.filters}>
+      <form method="get" action="/procurement/requests" className={layout.filters}>
         <Field label="Status">
           {(control) => (
             <Select name="status" defaultValue={status ?? ''} {...control}>
@@ -126,7 +119,7 @@ export default async function PurchaseRequestsPage({
             </Select>
           )}
         </Field>
-        <div className={styles.filterActions}>
+        <div className={layout.filterActions}>
           <Button type="submit" variant="secondary">
             Apply
           </Button>
@@ -178,14 +171,14 @@ export default async function PurchaseRequestsPage({
           </EmptyState>
         )
       ) : requests !== null ? (
-        <>
-          <Table caption="Purchase requests" minWidth={720}>
+        <div className={layout.results}>
+          <Table className={layout.resultsTable ?? ''} caption="Purchase requests" minWidth={720}>
             <thead>
               <tr>
                 <Th>Request</Th>
                 <Th>Department</Th>
                 <Th>Needed by</Th>
-                <Th>Estimated total</Th>
+                <Th align="end">Estimated total</Th>
                 <Th>Status</Th>
               </tr>
             </thead>
@@ -195,12 +188,12 @@ export default async function PurchaseRequestsPage({
               ))}
             </tbody>
           </Table>
-          {requests.length >= LIMIT ? (
-            <p className={styles.note}>
-              Showing the newest {LIMIT} requests. Filter by status to narrow the list.
-            </p>
-          ) : null}
-        </>
+          <p className={layout.resultsNote}>
+            {requests.length >= LIMIT
+              ? `Showing the newest ${LIMIT} requests. Filter by status to narrow the list.`
+              : `Showing ${requests.length} ${requests.length === 1 ? 'request' : 'requests'}`}
+          </p>
+        </div>
       ) : null}
     </Page>
   );

@@ -1,10 +1,6 @@
 /* Layout and small pieces that belong to the purchase order screens only. Everything else comes
    from components/ui. Colours and sizes are Figma tokens from styles/tokens.css. */
 
-.count {
-  white-space: nowrap;
-}
-
 .note {
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
@@ -29,44 +25,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- List: a plain GET form, so it works without scripts and the URL can be shared ---- */
-
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px 16px;
-}
-
-.filters > :first-child {
-  flex: 0 1 16rem;
-}
-
-.filterActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.pager {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-}
-
-.pagerLinks {
-  display: flex;
-  gap: 8px;
-}
-
 /* ---- Detail ---- */
 
-.stack {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
+.tablePanel {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .headActions {

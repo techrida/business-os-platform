@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
+import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -19,6 +20,8 @@ import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 
+import { ApprovalTimeline } from '../../approval-timeline';
+import layout from '../../procurement.module.css';
 import styles from '../../requests/requests.module.css';
 import { CommitForm, RecommendForm, ScoreForm } from '../_components/decision-forms';
 import { commitRfqAction, recommendQuotationAction, scoreQuotationAction } from '../actions';
@@ -36,14 +39,6 @@ import { loadVendors, nameIndex } from '../_lib/vendors';
 
 export const metadata: Metadata = { title: 'RFQ · Business OS' };
 export const dynamic = 'force-dynamic';
-
-const STEP_TONE: Record<string, 'neutral' | 'info' | 'success' | 'warning' | 'error'> = {
-  approved: 'success',
-  rejected: 'error',
-  returned: 'warning',
-  active: 'warning',
-  pending: 'neutral',
-};
 
 type Problem = { message: string; status: number };
 type Load<T> = { value: T; problem?: undefined } | { value?: undefined; problem: Problem };
@@ -90,16 +85,7 @@ function ApprovalPanel({ load, retry }: { load: Load<ApprovalRequestDto>; retry:
           {approval.steps.length === 0 ? (
             <p className={styles.note}>No approval steps were planned.</p>
           ) : (
-            <ol className={styles.steps}>
-              {approval.steps.map((s) => (
-                <li key={s.seq} className={styles.step}>
-                  <span className={styles.stepReason}>
-                    {s.seq}. {s.reason}
-                  </span>
-                  <Badge tone={STEP_TONE[s.status] ?? 'neutral'}>{humanizeKey(s.status)}</Badge>
-                </li>
-              ))}
-            </ol>
+            <ApprovalTimeline steps={approval.steps} />
           )}
         </>
       )}
@@ -236,210 +222,42 @@ export default async function RfqPage({
   ];
 
   return (
-    <Page>
-      <Breadcrumb
-        items={[
-          { label: 'Requests for quotation', href: '/procurement/rfqs' },
-          { label: rfq.number },
-        ]}
-      />
-      <PageHeader
-        title={rfq.number}
-        status={<Badge tone={status.tone}>{status.text}</Badge>}
-        description={RFQ_STATUS_NOTE[rfq.status]}
-        actions={
-          grants.sourcing && open ? (
-            <LinkButton href={`${self}/quotations/new`}>Enter a quotation</LinkButton>
-          ) : null
-        }
-      />
+    <Page className={layout.detail}>
+      <div className={layout.detailHeader}>
+        <Breadcrumb
+          items={[
+            { label: 'Requests for quotation', href: '/procurement/rfqs' },
+            { label: rfq.number },
+          ]}
+        />
+        <PageHeader
+          title={rfq.number}
+          status={<Badge tone={status.tone}>{status.text}</Badge>}
+          description={RFQ_STATUS_NOTE[rfq.status]}
+          actions={
+            grants.sourcing && open ? (
+              <LinkButton href={`${self}/quotations/new`}>Enter a quotation</LinkButton>
+            ) : null
+          }
+        />
+      </div>
 
       {sp.created !== undefined ? (
-        <Alert tone="success" role="status">
-          The RFQ was opened and the purchase request moved to sourcing.
-        </Alert>
+        <SuccessNotice message="The RFQ was opened and the purchase request moved to sourcing." />
       ) : sp.quoted !== undefined ? (
-        <Alert tone="success" role="status">
-          The quotation was recorded.
-        </Alert>
+        <SuccessNotice message="The quotation was recorded." />
       ) : sp.recommended !== undefined ? (
-        <Alert tone="success" role="status">
-          The quotation was recommended.
-        </Alert>
+        <SuccessNotice message="The quotation was recommended." />
       ) : null}
 
-      <div className={styles.columns}>
-        <div className={styles.main}>
-          <Panel title="RFQ">
-            <FactList facts={facts} />
+      <section aria-label="RFQ" className={layout.detailColumns}>
+        <Panel title="Request details">
+          <FactList facts={facts.filter((fact) => fact.key !== 'pr')} />
+        </Panel>
+        <div className={layout.stack}>
+          <Panel as="aside" title="Linked records" className={layout.linkedRecords}>
+            <FactList facts={facts.filter((fact) => fact.key === 'pr')} />
           </Panel>
-
-          <Panel
-            title="Quotations"
-            description="Cheapest first, by total in NPR. Every figure is the platform's."
-          >
-            {comparison.value === undefined ? (
-              <Degraded what="Quotations" problem={comparison.problem} retry={self} />
-            ) : comparison.value.length === 0 ? (
-              <p className={styles.note}>
-                No quotation has been recorded yet.
-                {grants.sourcing && open
-                  ? ' Enter one from a vendor’s document, or convert a vendor submission.'
-                  : ''}
-              </p>
-            ) : (
-              <Table caption="Quotations received" minWidth={720}>
-                <thead>
-                  <tr>
-                    <Th>Vendor</Th>
-                    <Th align="end">Total</Th>
-                    <Th align="end">Total in NPR</Th>
-                    <Th align="end">Delivery</Th>
-                    <Th align="end">Score</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparison.value.map((q) => (
-                    <tr key={q.id}>
-                      <Td>
-                        <span className={styles.badges}>
-                          <span className={styles.name}>{vendorLabel(q.vendorId)}</span>
-                          {q.id === rfq.recommendedQuotationId ? (
-                            <Badge tone="success">Recommended</Badge>
-                          ) : null}
-                        </span>
-                      </Td>
-                      <Td align="end" nowrap>
-                        <span className={styles.numeric}>{money(q.total, q.currency)}</span>
-                      </Td>
-                      <Td align="end" nowrap>
-                        <span className={styles.numeric}>{money(q.totalNpr, 'NPR')}</span>
-                        {q.currency !== 'NPR' ? (
-                          <span className={styles.quiet}> at {q.fxRate}</span>
-                        ) : null}
-                      </Td>
-                      <Td align="end" nowrap>
-                        {q.deliveryDays !== null ? (
-                          `${q.deliveryDays} days`
-                        ) : (
-                          <span className={styles.quiet}>Not stated</span>
-                        )}
-                      </Td>
-                      <Td align="end" nowrap>
-                        {q.averageScore !== null ? (
-                          <span className={styles.numeric}>{q.averageScore}</span>
-                        ) : (
-                          <span className={styles.quiet}>Not scored</span>
-                        )}
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            )}
-          </Panel>
-
-          {decide && quotations.length > 0 ? (
-            <>
-              <Panel
-                title="Score the quotations"
-                description="Mark each quotation from 0 to 100 against the criteria you choose. The average above is the platform’s."
-              >
-                <div className={styles.panelForm}>
-                  {quotations.map((q) => (
-                    <ScoreForm
-                      key={q.id}
-                      action={scoreQuotationAction}
-                      idempotencyKey={randomUUID()}
-                      rfqId={rfq.id}
-                      quotationId={q.id}
-                      vendorName={vendorLabel(q.vendorId)}
-                      held={q.scores.map((s) => ({ criterion: s.criterion, score: s.score }))}
-                      reloadHref={self}
-                    />
-                  ))}
-                </div>
-              </Panel>
-              <Panel
-                title="Recommend a quotation"
-                description="Choose the quotation to take to the commitment approvers and say why."
-              >
-                <RecommendForm
-                  action={recommendQuotationAction}
-                  idempotencyKey={randomUUID()}
-                  rfqId={rfq.id}
-                  choices={quotations.map((q) => ({
-                    id: q.id,
-                    label: `${vendorLabel(q.vendorId)}, ${money(q.total, q.currency)}`,
-                  }))}
-                  reloadHref={self}
-                />
-              </Panel>
-            </>
-          ) : null}
-
-          {submissions !== null ? (
-            <Panel
-              title="Vendor submissions"
-              description="Quotations vendors uploaded in the portal. Convert one after its file scan passes."
-            >
-              {submissions.value === undefined ? (
-                <Degraded what="Vendor submissions" problem={submissions.problem} retry={self} />
-              ) : submissions.value.length === 0 ? (
-                <p className={styles.note}>No vendor has uploaded a quotation for this RFQ.</p>
-              ) : (
-                <Table caption="Vendor submissions waiting to be converted" minWidth={640}>
-                  <thead>
-                    <tr>
-                      <Th>Vendor</Th>
-                      <Th>Their reference</Th>
-                      <Th>Sent</Th>
-                      <Th>File</Th>
-                      <Th>
-                        <span className="sr-only">Action</span>
-                      </Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {submissions.value.map((s) => {
-                      const c = submissionConvertibility(s.scanStatus);
-                      return (
-                        <tr key={s.id}>
-                          <Td>
-                            <span className={styles.name}>{s.vendorName}</span>
-                          </Td>
-                          <Td>
-                            <span className={styles.long}>
-                              {s.vendorRef ?? <span className={styles.quiet}>None</span>}
-                            </span>
-                          </Td>
-                          <Td nowrap>{when(s.submittedAt)}</Td>
-                          <Td>
-                            <Badge tone={c.tone}>{c.label}</Badge>
-                            {c.reason !== '' ? <p className={styles.note}>{c.reason}</p> : null}
-                          </Td>
-                          <Td nowrap>
-                            {c.convertible ? (
-                              <LinkButton
-                                href={`${self}/quotations/new?submission=${encodeURIComponent(s.id)}`}
-                                variant="secondary"
-                                aria-label={`Convert the submission from ${s.vendorName}`}
-                              >
-                                Convert
-                              </LinkButton>
-                            ) : null}
-                          </Td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </Table>
-              )}
-            </Panel>
-          ) : null}
-        </div>
-
-        <div className={styles.sideStack}>
           {commit.show ? (
             <Panel
               title="Commitment"
@@ -459,7 +277,175 @@ export default async function RfqPage({
           ) : null}
           {approval !== null ? <ApprovalPanel load={approval} retry={self} /> : null}
         </div>
-      </div>
+      </section>
+
+      <Panel
+        title="Quotations"
+        description="Cheapest first, by total in NPR. Every figure is the platform's."
+      >
+        {comparison.value === undefined ? (
+          <Degraded what="Quotations" problem={comparison.problem} retry={self} />
+        ) : comparison.value.length === 0 ? (
+          <p className={styles.note}>
+            No quotation has been recorded yet.
+            {grants.sourcing && open
+              ? ' Enter one from a vendor’s document, or convert a vendor submission.'
+              : ''}
+          </p>
+        ) : (
+          <Table className={layout.panelTable ?? ''} caption="Quotations received" minWidth={720}>
+            <thead>
+              <tr>
+                <Th>Vendor</Th>
+                <Th align="end">Total</Th>
+                <Th align="end">Total in NPR</Th>
+                <Th align="end">Delivery</Th>
+                <Th align="end">Score</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparison.value.map((q) => (
+                <tr key={q.id}>
+                  <Td>
+                    <span className={styles.badges}>
+                      <span className={styles.name}>{vendorLabel(q.vendorId)}</span>
+                      {q.id === rfq.recommendedQuotationId ? (
+                        <Badge tone="success">Recommended</Badge>
+                      ) : null}
+                    </span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{money(q.total, q.currency)}</span>
+                  </Td>
+                  <Td align="end" nowrap>
+                    <span className={styles.numeric}>{money(q.totalNpr, 'NPR')}</span>
+                    {q.currency !== 'NPR' ? (
+                      <span className={styles.quiet}> at {q.fxRate}</span>
+                    ) : null}
+                  </Td>
+                  <Td align="end" nowrap>
+                    {q.deliveryDays !== null ? (
+                      `${q.deliveryDays} days`
+                    ) : (
+                      <span className={styles.quiet}>Not stated</span>
+                    )}
+                  </Td>
+                  <Td align="end" nowrap>
+                    {q.averageScore !== null ? (
+                      <span className={styles.numeric}>{q.averageScore}</span>
+                    ) : (
+                      <span className={styles.quiet}>Not scored</span>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Panel>
+
+      {decide && quotations.length > 0 ? (
+        <>
+          <Panel
+            title="Score the quotations"
+            description="Mark each quotation from 0 to 100 against the criteria you choose. The average above is the platform’s."
+          >
+            <div className={styles.panelForm}>
+              {quotations.map((q) => (
+                <ScoreForm
+                  key={q.id}
+                  action={scoreQuotationAction}
+                  idempotencyKey={randomUUID()}
+                  rfqId={rfq.id}
+                  quotationId={q.id}
+                  vendorName={vendorLabel(q.vendorId)}
+                  held={q.scores.map((s) => ({ criterion: s.criterion, score: s.score }))}
+                  reloadHref={self}
+                />
+              ))}
+            </div>
+          </Panel>
+          <Panel
+            title="Recommend a quotation"
+            description="Choose the quotation to take to the commitment approvers and say why."
+          >
+            <RecommendForm
+              action={recommendQuotationAction}
+              idempotencyKey={randomUUID()}
+              rfqId={rfq.id}
+              choices={quotations.map((q) => ({
+                id: q.id,
+                label: `${vendorLabel(q.vendorId)}, ${money(q.total, q.currency)}`,
+              }))}
+              reloadHref={self}
+            />
+          </Panel>
+        </>
+      ) : null}
+
+      {submissions !== null ? (
+        <Panel
+          title="Vendor submissions"
+          description="Quotations vendors uploaded in the portal. Convert one after its file scan passes."
+        >
+          {submissions.value === undefined ? (
+            <Degraded what="Vendor submissions" problem={submissions.problem} retry={self} />
+          ) : submissions.value.length === 0 ? (
+            <p className={styles.note}>No vendor has uploaded a quotation for this RFQ.</p>
+          ) : (
+            <Table
+              className={layout.panelTable ?? ''}
+              caption="Vendor submissions waiting to be converted"
+              minWidth={640}
+            >
+              <thead>
+                <tr>
+                  <Th>Vendor</Th>
+                  <Th>Their reference</Th>
+                  <Th>Sent</Th>
+                  <Th>File</Th>
+                  <Th>
+                    <span className="sr-only">Action</span>
+                  </Th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.value.map((s) => {
+                  const c = submissionConvertibility(s.scanStatus);
+                  return (
+                    <tr key={s.id}>
+                      <Td>
+                        <span className={styles.name}>{s.vendorName}</span>
+                      </Td>
+                      <Td>
+                        <span className={styles.long}>
+                          {s.vendorRef ?? <span className={styles.quiet}>None</span>}
+                        </span>
+                      </Td>
+                      <Td nowrap>{when(s.submittedAt)}</Td>
+                      <Td>
+                        <Badge tone={c.tone}>{c.label}</Badge>
+                        {c.reason !== '' ? <p className={styles.note}>{c.reason}</p> : null}
+                      </Td>
+                      <Td nowrap>
+                        {c.convertible ? (
+                          <LinkButton
+                            href={`${self}/quotations/new?submission=${encodeURIComponent(s.id)}`}
+                            variant="secondary"
+                            aria-label={`Convert the submission from ${s.vendorName}`}
+                          >
+                            Convert
+                          </LinkButton>
+                        ) : null}
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </Panel>
+      ) : null}
     </Page>
   );
 }

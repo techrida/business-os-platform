@@ -1,30 +1,14 @@
 'use client';
 
-import { useActionState, useRef, useState, type ReactNode } from 'react';
+import { useState } from 'react';
 
-import {
-  ActionDialog,
-  DialogCloseButton,
-  ErrorSummary,
-  PendingLine,
-  useFocusOnProblem,
-  useReloadWhenClosed,
-} from '@/components/ui/transaction-dialog';
-import actions from '@/components/p2/quotations/actions.module.css';
-import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/field';
 
 import { amendAction, cancelAction, issueAction, shortCloseAction } from '../actions';
 import { qtyText } from '../_lib/model';
-import type { ActionState } from '../_lib/state';
 import styles from '../orders.module.css';
 
-/**
- * The action dialogs of the purchase order page. Each is a trigger button and a native modal
- * dialog (focus trapped, Esc closes). The page makes one Idempotency-Key per render and the action
- * returns the key the next submit must use (kept after a timeout, rotated after a 4xx). Once the
- * API accepts, the dialog says what happened and closing it reloads the page with the new status.
- */
+import { ProcurementActionDialog } from '../../action-dialog';
 
 interface Common {
   purchaseOrderId: string;
@@ -33,78 +17,22 @@ interface Common {
   reloadHref: string;
 }
 
-function Form({
-  action,
-  common,
-  submitLabel,
-  pendingWords,
-  tone = 'primary',
-  fields,
-}: {
-  action: (prev: ActionState, form: FormData) => Promise<ActionState>;
-  common: Common;
-  submitLabel: string;
-  pendingWords: string;
-  tone?: 'primary' | 'secondary';
-  fields?: (errors: Record<string, string>) => ReactNode;
-}) {
-  const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {
-    key: common.idempotencyKey,
-  });
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const summaryRef = useRef<HTMLDivElement>(null);
-  useFocusOnProblem(state, wrapRef, summaryRef);
-  useReloadWhenClosed(state.done !== undefined, wrapRef);
-
-  return (
-    <div ref={wrapRef}>
-      {state.done !== undefined ? (
-        <div className={actions.form}>
-          <p role="status">{state.done} Close this to see the new status.</p>
-          <div className={actions.buttons}>
-            <DialogCloseButton variant="primary">Done</DialogCloseButton>
-          </div>
-        </div>
-      ) : (
-        <form action={formAction} className={actions.form}>
-          <input type="hidden" name="purchaseOrderId" value={common.purchaseOrderId} />
-          <input type="hidden" name="idempotencyKey" value={state.key} />
-          <ErrorSummary
-            error={state.error}
-            reload={state.reload}
-            reloadHref={common.reloadHref}
-            reloadLabel="Reload this purchase order"
-            summaryRef={summaryRef}
-          />
-          {fields?.(state.errors ?? {})}
-          <div className={actions.buttons}>
-            <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-            <Button type="submit" variant={tone} disabled={pending}>
-              {submitLabel}
-            </Button>
-          </div>
-          <PendingLine pending={pending} words={pendingWords} />
-        </form>
-      )}
-    </div>
-  );
-}
-
 export function IssueDialog(props: Common) {
   return (
-    <ActionDialog
+    <ProcurementActionDialog
       triggerLabel="Issue purchase order"
       triggerVariant="primary"
       title={`Issue ${props.number}`}
       intro="Issuing makes version 1 final and gives it a PDF. The vendor must be approved and have an active account with your legal entity. It cannot be undone, only amended."
-    >
-      <Form
-        action={issueAction}
-        common={props}
-        submitLabel="Issue purchase order"
-        pendingWords="Issuing the purchase order"
-      />
-    </ActionDialog>
+      action={issueAction}
+      idempotencyKey={props.idempotencyKey}
+      recordField="purchaseOrderId"
+      recordId={props.purchaseOrderId}
+      reloadHref={props.reloadHref}
+      reloadLabel="Reload this purchase order"
+      submitLabel="Issue purchase order"
+      pendingWords="Issuing the purchase order"
+    />
   );
 }
 
@@ -130,7 +58,7 @@ function ReasonField({ errors }: { errors: Record<string, string> }) {
 export function ReasonDialog({ kind, ...common }: Common & { kind: 'shortClose' | 'cancel' }) {
   const cancel = kind === 'cancel';
   return (
-    <ActionDialog
+    <ProcurementActionDialog
       triggerLabel={cancel ? 'Cancel order' : 'Short-close'}
       title={`${cancel ? 'Cancel' : 'Short-close'} ${common.number}`}
       intro={
@@ -138,16 +66,17 @@ export function ReasonDialog({ kind, ...common }: Common & { kind: 'shortClose' 
           ? 'Cancelling stops the order before anything is received. Discard any draft receipt from its detail page first. Once a receipt is confirmed, short-close the order instead.'
           : 'Short-closing accepts what has arrived and stops waiting for the rest. A draft receipt still open on the order must be confirmed or discarded from its detail page first.'
       }
-    >
-      <Form
-        action={cancel ? cancelAction : shortCloseAction}
-        common={common}
-        submitLabel={cancel ? 'Cancel order' : 'Short-close order'}
-        pendingWords={cancel ? 'Cancelling the order' : 'Short-closing the order'}
-        tone="secondary"
-        fields={(errors) => <ReasonField errors={errors} />}
-      />
-    </ActionDialog>
+      action={cancel ? cancelAction : shortCloseAction}
+      idempotencyKey={common.idempotencyKey}
+      recordField="purchaseOrderId"
+      recordId={common.purchaseOrderId}
+      reloadHref={common.reloadHref}
+      reloadLabel="Reload this purchase order"
+      submitLabel={cancel ? 'Cancel order' : 'Short-close order'}
+      pendingWords={cancel ? 'Cancelling the order' : 'Short-closing the order'}
+      submitVariant="secondary"
+      fields={(errors) => <ReasonField errors={errors} />}
+    />
   );
 }
 
@@ -278,25 +207,27 @@ export function AmendDialog({
   ...common
 }: Common & { lines: readonly AmendLine[]; paymentTermsDays: number; currency: string }) {
   return (
-    <ActionDialog
+    <ProcurementActionDialog
+      size="large"
       triggerLabel="Amend order"
       title={`Amend ${common.number}`}
       intro="Change a quantity or price. If the new total falls in a higher approval band, the order waits for approval and keeps its current version until then. Otherwise the change becomes the next version straight away."
-    >
-      <Form
-        action={amendAction}
-        common={common}
-        submitLabel="Submit amendment"
-        pendingWords="Submitting the amendment"
-        fields={(errors) => (
-          <AmendFields
-            lines={lines}
-            paymentTermsDays={paymentTermsDays}
-            currency={currency}
-            errors={errors}
-          />
-        )}
-      />
-    </ActionDialog>
+      action={amendAction}
+      idempotencyKey={common.idempotencyKey}
+      recordField="purchaseOrderId"
+      recordId={common.purchaseOrderId}
+      reloadHref={common.reloadHref}
+      reloadLabel="Reload this purchase order"
+      submitLabel="Submit amendment"
+      pendingWords="Submitting the amendment"
+      fields={(errors) => (
+        <AmendFields
+          lines={lines}
+          paymentTermsDays={paymentTermsDays}
+          currency={currency}
+          errors={errors}
+        />
+      )}
+    />
   );
 }

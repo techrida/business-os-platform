@@ -9,6 +9,8 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
+import { Pagination } from '@/components/ui/pagination';
+
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getVendor } from '@/lib/api-vendors';
 import { listPurchaseOrders, type PoListItem } from '@/lib/api-purchase-orders';
@@ -16,6 +18,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import type { Session } from '@/lib/session';
 
+import layout from '../procurement.module.css';
 import { poFailure } from './_lib/failure';
 import { PO_STATUS_LABEL, poMoney } from './_lib/model';
 import styles from './orders.module.css';
@@ -121,20 +124,13 @@ export default async function PurchaseOrdersPage({
   const hasNext = page * PAGE_SIZE < total;
 
   return (
-    <Page>
+    <Page className={layout.list}>
       <PageHeader
         title="Purchase orders"
         description="Orders placed with approved vendors. An order is issued once, and every change after that is a new version."
-        actions={
-          orders !== null ? (
-            <Badge tone="info" role="status" className={styles.count}>
-              {total} {total === 1 ? 'order' : 'orders'}
-            </Badge>
-          ) : null
-        }
       />
 
-      <form method="get" action="/procurement/orders" role="search" className={styles.filters}>
+      <form method="get" action="/procurement/orders" role="search" className={layout.filters}>
         <Field label="Status">
           {(control) => (
             <Select name="status" defaultValue={status ?? ''} {...control}>
@@ -147,7 +143,7 @@ export default async function PurchaseOrdersPage({
             </Select>
           )}
         </Field>
-        <div className={styles.filterActions}>
+        <div className={layout.filterActions}>
           <Button type="submit" variant="secondary">
             Apply
           </Button>
@@ -202,8 +198,8 @@ export default async function PurchaseOrdersPage({
           </EmptyState>
         )
       ) : orders !== null ? (
-        <>
-          <Table caption="Purchase orders" minWidth={760}>
+        <div className={layout.results}>
+          <Table className={layout.resultsTable ?? ''} caption="Purchase orders" minWidth={760}>
             <thead>
               <tr>
                 <Th>Number</Th>
@@ -220,24 +216,13 @@ export default async function PurchaseOrdersPage({
               ))}
             </tbody>
           </Table>
-          <nav aria-label="Pages" className={styles.pager}>
-            <span className={styles.note}>
-              Showing {first} to {first + shown.length - 1} of {total}
-            </span>
-            <span className={styles.pagerLinks}>
-              {page > 1 ? (
-                <LinkButton href={href(status, page - 1)} variant="secondary" size="small">
-                  Previous
-                </LinkButton>
-              ) : null}
-              {hasNext ? (
-                <LinkButton href={href(status, page + 1)} variant="secondary" size="small">
-                  Next
-                </LinkButton>
-              ) : null}
-            </span>
-          </nav>
-        </>
+          <Pagination
+            label="Pages"
+            summary={`Showing ${first} to ${first + shown.length - 1} of ${total}`}
+            {...(page > 1 ? { previousHref: href(status, page - 1) } : {})}
+            {...(hasNext ? { nextHref: href(status, page + 1) } : {})}
+          />
+        </div>
       ) : null}
     </Page>
   );

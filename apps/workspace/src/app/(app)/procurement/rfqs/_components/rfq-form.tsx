@@ -3,10 +3,11 @@
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
+import { ProcurementFormActions } from '../../form-actions';
 import styles from '../../requests/requests.module.css';
 import type { RfqFormState } from '../_lib/state';
 
@@ -70,6 +71,22 @@ export function RfqForm({
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <PageHeader
+        title="New RFQ"
+        description="Ask approved vendors to quote on a department-approved purchase request."
+        actions={
+          <ProcurementFormActions
+            cancelHref={cancelHref}
+            submitLabel={pending ? 'Opening' : 'Open RFQ'}
+            disabled={pending}
+          />
+        }
+      />
+      {pending ? (
+        <span className="sr-only" role="status">
+          Opening the RFQ
+        </span>
+      ) : null}
       <input type="hidden" name="idempotencyKey" value={state.key} />
 
       {state.error ? (
@@ -86,7 +103,7 @@ export function RfqForm({
       ) : null}
 
       <Panel
-        title="RFQ"
+        title="Request details"
         description="Vendors are asked to quote on the lines of the purchase request."
       >
         <div className={styles.grid}>
@@ -155,20 +172,6 @@ export function RfqForm({
           </p>
         ) : null}
       </Panel>
-
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Opening' : 'Open RFQ'}
-        </Button>
-        <LinkButton href={cancelHref} variant="ghost">
-          Cancel
-        </LinkButton>
-        {pending ? (
-          <span role="status" className={styles.status}>
-            Opening the RFQ
-          </span>
-        ) : null}
-      </div>
     </form>
   );
 }
