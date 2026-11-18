@@ -16,6 +16,7 @@ import {
   QuotationApprovalSnapshotSchema,
   QuotationDetailSchema,
   QuotationLineInputSchema,
+  ListQuotationsQuerySchema,
   QuotationListItemSchema,
   QuotationTaxSummaryItemSchema,
   QuotationVersionContentSchema,
@@ -547,6 +548,7 @@ describe('QuotationListItemSchema', () => {
     total: '2690999.99',
     validUntil: '2026-11-23',
     ownerName: 'Amanda Rai',
+    canEdit: false,
   });
 
   it('is the parent DTO plus customer, currency, total, valid-until and owner', () => {
@@ -567,6 +569,25 @@ describe('QuotationListItemSchema', () => {
     expect(QuotationListItemSchema.safeParse(without).success).toBe(false);
     expect(QuotationListItemSchema.safeParse({ ...item(), status: 'lost' }).success).toBe(false);
     expect(QuotationListItemSchema.safeParse({ ...item(), currency: 'EUR' }).success).toBe(false);
+  });
+
+  it('carries whether the caller may edit the row, as a boolean the server decides', () => {
+    const { canEdit: _omitted, ...without } = item();
+    expect(QuotationListItemSchema.safeParse(without).success).toBe(false);
+    expect(QuotationListItemSchema.safeParse({ ...item(), canEdit: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('ListQuotationsQuerySchema', () => {
+  it('takes an optional status and an optional opportunity id, and refuses a bad one', () => {
+    expect(ListQuotationsQuerySchema.parse({})).toEqual({});
+    const opportunityId = id();
+    expect(ListQuotationsQuerySchema.parse({ status: 'draft', opportunityId })).toEqual({
+      status: 'draft',
+      opportunityId,
+    });
+    expect(ListQuotationsQuerySchema.safeParse({ opportunityId: 'x' }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ status: 'lost' }).success).toBe(false);
   });
 });
 
@@ -599,6 +620,7 @@ describe('QuotationDetailSchema', () => {
     ],
     customerName: 'Big Kahuna Burger Ltd.',
     contacts: [{ id: id(), name: 'Jules Winnfield', email: 'jules@example.com' }],
+    capabilities: { canEdit: false, canRevise: true },
   });
 
   it('parses the parent, versions, history, customer name and contacts', () => {
@@ -626,6 +648,14 @@ describe('QuotationDetailSchema', () => {
     ).toBe(false);
     expect(
       QuotationDetailSchema.safeParse({ ...d, contacts: [{ name: 'x', email: null }] }).success,
+    ).toBe(false);
+  });
+
+  it('needs the caller capabilities, so a screen never guesses Edit or Revise', () => {
+    const { capabilities: _omitted, ...without } = detail();
+    expect(QuotationDetailSchema.safeParse(without).success).toBe(false);
+    expect(
+      QuotationDetailSchema.safeParse({ ...detail(), capabilities: { canEdit: true } }).success,
     ).toBe(false);
   });
 });
