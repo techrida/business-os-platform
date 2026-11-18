@@ -109,7 +109,7 @@ export function ShellFrame({ children }: { children: ReactNode }) {
           type="button"
           className={styles.scrim}
           tabIndex={-1}
-          aria-label="Close menu"
+          aria-hidden="true"
           onClick={closeDrawer}
         />
       </div>
