@@ -5,36 +5,44 @@ import {
   DEFAULT_CHECKLIST,
   attachDocument,
 } from '../../../../../../api/src/modules/verification/verification.rules';
-import { approveBlockedReason, canApprove } from '@/components/p2/customers/format';
+import { approvalProblems, type ApprovalFile } from '@/components/p2/customers/format';
 
 vi.mock('../actions', () => ({ reviewAction: vi.fn() }));
 import { ReviewForm } from './review-form';
 
 it('renders an enabled approve control from real provided uploads, and visible scan feedback otherwise', () => {
   const checklist = DEFAULT_CHECKLIST.reduce(
-    (items, item) => (item.required ? attachDocument(items, item.key, item.key, null) : items),
+    (items, item) =>
+      item.required || item.key === 'other'
+        ? attachDocument(items, item.key, item.key, null)
+        : items,
     [...DEFAULT_CHECKLIST],
   );
   const c = { status: 'submitted' as const, checklist };
   const files = new Map(
-    checklist.filter((i) => i.required).map((i) => [i.documentId!, { status: 'clean' as const }]),
+    checklist.flatMap((item) =>
+      item.documentId ? [[item.documentId, { status: 'clean' as const }]] : [],
+    ),
   );
-  const render = (ready: boolean, reason: string | null) =>
+  const render = (problems: string[]) =>
     renderToStaticMarkup(
       createElement(ReviewForm, {
         caseId: '11111111-1111-4111-8111-111111111111',
         version: 3,
         reloadHref: '/verification/test',
         idempotencyKey: '55555555-5555-4555-8555-555555555555',
-        canApprove: ready,
         canReject: true,
-        approveBlockedReason: reason,
+        approvalProblems: problems,
       }),
     );
-  const html = render(canApprove(c, files), approveBlockedReason(c, files));
-  expect(html).toMatch(/<button[^>]*value="approve"/);
-  expect(html.match(/<button[^>]*value="approve"[^>]*>/)?.[0]).not.toContain('disabled');
-  expect(html).not.toContain('accepted (0');
-  const reason = approveBlockedReason(c);
-  expect(render(canApprove(c), reason)).toContain('unavailable');
+  expect(render(approvalProblems(c, files))).toMatch(
+    /<button(?![^>]*disabled)[^>]*>Approve customer<\/button>/,
+  );
+
+  const scanning = new Map<string, ApprovalFile>(files);
+  scanning.set('other', { status: 'quarantined' });
+  const blocked = render(approvalProblems(c, scanning));
+  expect(blocked).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Approve customer<\/button>/);
+  expect(blocked).toContain('Other supporting document: the scan is pending.');
+  expect(blocked).toMatch(/<button(?![^>]*disabled)[^>]*>Reject<\/button>/);
 });
