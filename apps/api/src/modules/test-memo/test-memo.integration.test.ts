@@ -141,6 +141,7 @@ const U: Record<'salesA' | 'salesB' | 'boss' | 'acc' | 'fin' | 'mgmt' | 'founder
 };
 const roles: Partial<Record<RoleKey, string[]>> = {};
 const resetRoles = () => {
+  roles.sales = [U.salesA, U.salesB];
   roles.accountant = [U.acc];
   roles.finance = [U.fin];
   roles.management = [U.mgmt];
