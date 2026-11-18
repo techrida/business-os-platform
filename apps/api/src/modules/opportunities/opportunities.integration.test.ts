@@ -215,6 +215,7 @@ interface SeedOptions {
   stage?: OpportunityStage;
   name?: string;
   entity?: 'A' | 'B';
+  createdAt?: Date;
 }
 
 /**
@@ -255,6 +256,7 @@ async function seed(options: SeedOptions = {}): Promise<string> {
         name: options.name ?? 'Acme website',
         customerId: options.entity === 'B' ? customerB : customerA,
         ownerUserId: options.owner ?? U.salesA,
+        ...(options.createdAt !== undefined ? { createdAt: options.createdAt } : {}),
         // A won row needs the version it was won with, and the version needs the opportunity: insert at
         // quotation_sent, then move it to won below.
         stage: stage === 'won' ? 'quotation_sent' : stage,
@@ -355,6 +357,36 @@ describe('GET /v1/opportunities', () => {
     expect(word.map((o) => o.id)).toEqual(expect.arrayContaining([hold, plain]));
   });
 
+  it('filters repeated stages together with search and scope before sorting and limiting', async () => {
+    const name = 'North & West launch';
+    const newest = new Date('2026-11-09T12:00:00Z');
+    const qualified = await seed({
+      name,
+      stage: 'qualified',
+      createdAt: new Date('2026-11-09T10:00:00Z'),
+    });
+    const negotiating = await seed({
+      name,
+      stage: 'negotiation',
+      createdAt: new Date('2026-11-09T11:00:00Z'),
+    });
+    await seed({ name, stage: 'on_hold', createdAt: newest });
+    await seed({ name: 'South launch', stage: 'qualified', createdAt: newest });
+    await seed({ name, stage: 'qualified', owner: U.salesB, createdAt: newest });
+    await seed({ name, stage: 'negotiation', entity: 'B', createdAt: newest });
+
+    const res = await request(baseUrl).get(
+      '/v1/opportunities?stage=qualified&stage=negotiation&q=North+%26+West&limit=2',
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(
+      z
+        .array(OpportunityDtoSchema)
+        .parse(res.body)
+        .map((o) => o.id),
+    ).toEqual([negotiating, qualified]);
+  });
+
   it('honours limit and refuses a bad stage or limit with 400', async () => {
     as(U.boss, 'founder');
     await seed();
@@ -362,6 +394,9 @@ describe('GET /v1/opportunities', () => {
     const two = await request(baseUrl).get('/v1/opportunities?limit=2');
     expect(two.body).toHaveLength(2);
     expect((await request(baseUrl).get('/v1/opportunities?stage=nonsense')).status).toBe(400);
+    expect(
+      (await request(baseUrl).get('/v1/opportunities?stage=qualified&stage=nonsense')).status,
+    ).toBe(400);
     expect((await request(baseUrl).get('/v1/opportunities?limit=0')).status).toBe(400);
     expect((await request(baseUrl).get('/v1/opportunities?limit=1000')).status).toBe(400);
   });
