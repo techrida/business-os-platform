@@ -8,14 +8,19 @@
 }
 
 /* Rows about 56px high (dense-grid precedent 118:14182); a Separation-of-duties note makes a row taller. */
-.matrix tbody th.rowHead,
+.matrix tbody th[scope='row'],
 .matrix tbody td.cell {
   height: 56px;
   vertical-align: middle;
 }
 
-.matrix th.rowHead {
-  min-width: 260px;
+.matrix table {
+  table-layout: fixed;
+}
+
+/* Leave room beside the sticky permission for an entire role column on a phone. */
+.matrix thead th:first-child {
+  width: clamp(136px, 36vw, 260px);
 }
 
 .matrix th.roleHead,

@@ -18,7 +18,8 @@
 
 .sections {
   position: sticky;
-  inset-block-start: var(--spacing-section);
+  inset-block-start: calc(var(--bos-header-height) + 16px);
+  box-shadow: var(--shadow-section);
   padding: 12px;
   border: var(--border-width-thin) solid var(--card-border);
   border-radius: var(--radius-xl);
@@ -58,7 +59,8 @@
 }
 
 .anchor {
-  scroll-margin-block-start: var(--spacing-section);
+  scroll-margin-block-start: calc(var(--bos-header-height) + 16px);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (max-width: 1023.98px) {
@@ -185,8 +187,7 @@
 }
 
 .rowError,
-.rowForm,
-.rowStatus {
+.rowForm {
   grid-column: 1 / -1;
   min-width: 0;
 }
@@ -261,4 +262,9 @@
   .rowAction {
     justify-self: start;
   }
+}
+
+.fieldError {
+  color: var(--error-700);
+  font-size: var(--font-size-caption);
 }

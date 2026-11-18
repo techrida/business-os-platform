@@ -46,7 +46,10 @@ export async function addFxRateAction(
       issue?.path[0] === 'rateNpr' && issue.code === 'invalid_format'
         ? 'Enter the rate as a number with up to 6 decimals, for example 133.5.'
         : (issue?.message ?? 'Check the form and try again.');
-    return fail(message, fields);
+    return {
+      ...fail(message, fields),
+      fieldErrors: issue ? { [String(issue.path[0])]: message } : {},
+    };
   }
 
   try {
@@ -70,7 +73,11 @@ export async function saveSettingAction(
 
   const raw = formData.getAll('value').filter((v): v is string => typeof v === 'string');
   const input = parseSettingInput(key.data, raw);
-  if (!input.ok) return fail(input.message, { value: raw.join(',') });
+  if (!input.ok)
+    return {
+      ...fail(input.message, { value: raw.join(',') }),
+      fieldErrors: { value: input.message },
+    };
 
   try {
     const { version } = await putSetting(session, key.data, input.value);
