@@ -14,6 +14,7 @@ export const ERROR_REASONS = [
   'inactive_user',
   'entity_not_permitted',
   'invalid_entity',
+  'stale_memo',
 ] as const;
 export const ErrorReasonSchema = z.enum(ERROR_REASONS);
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>;
@@ -24,7 +25,7 @@ export const ErrorBodySchema = z.object({
     code: z.string().min(1),
     message: z.string(),
     correlationId: z.string().min(1),
-    /** Present only on some 403 and 400 responses. */
+    /** Present only for allow-listed reasons. */
     reason: ErrorReasonSchema.optional(),
     /** Facts a client can show next to a domain code such as `fx_rate_stale`: currency, rate date, limit. */
     details: z.record(z.string(), z.union([z.string(), z.number()])).optional(),

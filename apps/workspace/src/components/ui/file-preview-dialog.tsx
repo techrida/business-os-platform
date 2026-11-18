@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button, LinkButton } from './button';
 import { Dialog, DialogClose } from './dialog';
@@ -26,7 +26,7 @@ export interface FilePreviewDialogProps {
   open?: boolean | undefined;
   defaultOpen?: boolean | undefined;
   onOpenChange?: ((open: boolean) => void) | undefined;
-  /** Called when Download is activated, for example to show a "File downloaded" toast. */
+  /** Called when Download is activated, for example to show a "Download started" toast. */
   onDownload?: (() => void) | undefined;
   /** Optional content below the preview, such as fields to edit an attachment. */
   children?: ReactNode | undefined;
@@ -57,7 +57,7 @@ export interface FilePreviewDialogProps {
  *     previewUrl={`/api/documents/${doc.id}/versions/${v.id}/preview`}
  *     downloadUrl={`/api/documents/${doc.id}/versions/${v.id}/download`}
  *     trigger={<button type="button">{file.name}</button>}
- *     onDownload={() => toast.success('File downloaded')}
+ *     onDownload={() => toast.info('Download started')}
  *   />
  */
 export function FilePreviewDialog({
@@ -89,6 +89,7 @@ export function FilePreviewDialog({
       onFail={() => setFailedUrl(previewUrl)}
     />
   );
+  const closeRef = useRef<HTMLButtonElement>(null);
   const dialog = {
     ...(trigger ? { trigger } : {}),
     ...(open !== undefined ? { open } : {}),
@@ -106,6 +107,7 @@ export function FilePreviewDialog({
       locked={locked}
       closeOnOutsideClick={closeOnOutsideClick}
       bodyClassName={children || hasStageSlot ? styles.editBody : styles.body}
+      initialFocusRef={actions === undefined ? closeRef : undefined}
       footer={
         <Footer
           name={name}
@@ -113,6 +115,7 @@ export function FilePreviewDialog({
           previewUrl={previewUrl}
           downloadUrl={downloadUrl}
           failed={failed}
+          closeRef={closeRef}
           onDownload={onDownload}
           actions={actions}
         />
@@ -138,6 +141,7 @@ function Footer({
   previewUrl,
   downloadUrl,
   failed,
+  closeRef,
   onDownload,
   actions,
 }: Pick<
@@ -145,15 +149,17 @@ function Footer({
   'name' | 'mimeType' | 'previewUrl' | 'downloadUrl' | 'onDownload' | 'actions'
 > & {
   failed: boolean;
+  closeRef: RefObject<HTMLButtonElement | null>;
 }) {
   const origin = window.location.origin;
-  const canPreview =
-    !failed && previewKind(mimeType) !== 'unsupported' && isSameOriginUrl(previewUrl, origin);
+  const canPreview = !failed && browserCanPreview(mimeType) && isSameOriginUrl(previewUrl, origin);
   return (
     <>
       {actions === undefined ? (
         <DialogClose asChild>
-          <Button variant="secondary">Close</Button>
+          <Button ref={closeRef} variant="secondary">
+            Close
+          </Button>
         </DialogClose>
       ) : null}
       {isSameOriginUrl(downloadUrl, origin) ? (
@@ -188,7 +194,7 @@ function Stage({
   const kind = previewKind(mimeType);
   const safe = isSameOriginUrl(previewUrl, window.location.origin);
 
-  if (failed || kind === 'unsupported' || !safe) {
+  if (failed || !browserCanPreview(mimeType) || !safe) {
     return (
       <div className={styles.fallback} role="status">
         <Icon name="file-text" size={40} className={styles.fallbackIcon} />
@@ -217,6 +223,11 @@ function Stage({
       )}
     </div>
   );
+}
+
+function browserCanPreview(mimeType: string): boolean {
+  const kind = previewKind(mimeType);
+  return kind === 'image' || (kind === 'pdf' && window.navigator.pdfViewerEnabled !== false);
 }
 
 function typeLabel(mime: string): string {

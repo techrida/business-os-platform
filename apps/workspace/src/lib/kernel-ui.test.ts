@@ -139,11 +139,56 @@ describe('display helpers', () => {
     expect(by['amountNpr']?.value).toBe('NPR 1,33,000.00');
     expect(by['submittedAt']?.value).toBe('17 Jul 2025, 05:44');
     expect(by['editors']?.block).toBe(true);
-    expect(by['note']?.value).toBe('None');
+    // A null field has no value, so it has no row (it used to render as "None").
+    expect(by['note']).toBeUndefined();
   });
   it('handles an empty or non-object snapshot', () => {
     expect(snapshotEntries(null)).toEqual([]);
+    expect(snapshotEntries([])).toEqual([]);
+    expect(snapshotEntries('')).toEqual([]);
     expect(snapshotEntries('text')[0]?.block).toBe(true);
+  });
+  // The snapshot of a memo submitted without a template or files, in the shape test-memo.service.ts submit()
+  // freezes it (the API package cannot be imported here, so the shape is spelled out: keep the two in step).
+  const frozenMemo = {
+    template: null,
+    number: 'MEMO-2026-0007',
+    title: 'Laptop for the new hire',
+    body: 'Please approve.',
+    amount: '1000.00',
+    currency: 'USD',
+    amountNpr: '133000.00',
+    fxRate: '133.00',
+    fxSource: 'nrb',
+    fxDate: '2026-11-17',
+    ownerUserId: '11111111-1111-4111-8111-111111111111',
+    customerPartyId: null,
+    memoVersion: 2,
+    attachments: [],
+  };
+  it('gives empty fields of a real memo snapshot no row, so no [] or None reaches the screen', () => {
+    const rows = snapshotEntries(frozenMemo);
+    const keys = rows.map((r) => r.key);
+    expect(keys).not.toContain('attachments');
+    expect(keys).not.toContain('template');
+    expect(keys).not.toContain('customerPartyId');
+    expect(rows.map((r) => r.value)).not.toContain('[]');
+    expect(rows.map((r) => r.value)).not.toContain('None');
+    expect(rows.find((r) => r.key === 'amount')?.value).toBe('USD 1,000.00');
+    expect(rows.find((r) => r.key === 'memoVersion')?.value).toBe('2');
+  });
+  it('keeps the attachments of a memo that has files, and zero and false values', () => {
+    const rows = snapshotEntries({
+      ...frozenMemo,
+      attachments: [{ documentId: 'd1', filename: 'quote.pdf', sha256: null }],
+      memoVersion: 0,
+      flag: false,
+    });
+    const attachments = rows.find((r) => r.key === 'attachments');
+    expect(attachments?.block).toBe(true);
+    expect(attachments?.value).toContain('quote.pdf');
+    expect(rows.find((r) => r.key === 'memoVersion')?.value).toBe('0');
+    expect(rows.find((r) => r.key === 'flag')?.value).toBe('false');
   });
   it('shows Admin only for roles whose default grants include admin.*', () => {
     expect(canSeeAdmin(['founder'])).toBe(true);

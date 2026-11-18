@@ -219,7 +219,7 @@ export function getMemo(session: Session, id: string): Promise<MemoDetail> {
 export function updateMemo(
   session: Session,
   id: string,
-  body: Partial<CreateMemoBody>,
+  body: Partial<CreateMemoBody> & { expectedVersion?: number },
 ): Promise<Memo> {
   return call(session, `/v1/test-memos/${seg(id)}`, MemoDtoSchema, json('PATCH', body));
 }
@@ -233,12 +233,16 @@ export function getMemoRoute(session: Session, id: string): Promise<RoutePlan> {
   return call(session, `/v1/test-memos/${seg(id)}/route`, RoutePlanSchema);
 }
 
-export function submitMemo(session: Session, id: string): Promise<SubmitMemoResult> {
+export function submitMemo(
+  session: Session,
+  id: string,
+  expectedVersion?: number,
+): Promise<SubmitMemoResult> {
   return call(
     session,
     `/v1/test-memos/${seg(id)}/submit`,
     SubmitMemoResultSchema,
-    json('POST', {}),
+    json('POST', { expectedVersion }),
   );
 }
 
