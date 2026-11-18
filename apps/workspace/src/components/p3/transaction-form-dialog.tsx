@@ -48,15 +48,18 @@ export function TransactionFormDialog<State extends TransactionState>({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [state, dispatch, pending] = useActionState(async (previous: State, form: FormData) => {
-    const result = await action(previous, form);
-    if (result.done) {
-      setOpen(false);
-      toast.success(successMessage);
-      router.refresh();
-    }
-    return result;
-  }, initial);
+  const [{ value: state }, dispatch, pending] = useActionState<{ value: State }, FormData>(
+    async ({ value: previous }, form) => {
+      const result = await action(previous, form);
+      if (result.done) {
+        setOpen(false);
+        toast.success(successMessage);
+        router.refresh();
+      }
+      return { value: result };
+    },
+    { value: initial },
+  );
   const formId = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const summaryRef = useRef<HTMLDivElement>(null);

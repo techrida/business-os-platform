@@ -290,7 +290,7 @@ export default async function InvoicesPage({
         )
       ) : (
         <div className={styles.tableCard}>
-          <Table caption="Invoices" minWidth={920} className={styles.listTable}>
+          <Table caption="Invoices" minWidth={920} className={styles.listTable ?? ''}>
             <thead>
               <tr>
                 <Th>Invoice</Th>
