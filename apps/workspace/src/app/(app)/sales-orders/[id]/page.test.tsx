@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +10,16 @@ import SalesOrderPage from './page';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
+
+// Include the dialog portal in the static render to verify its form fields and action footer.
+vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
+  const radix = await importOriginal<typeof import('@radix-ui/react-dialog')>();
+  return {
+    ...radix,
+    Root: (props: ComponentProps<typeof radix.Root>) => <radix.Root {...props} open />,
+    Portal: ({ children }: ComponentProps<typeof radix.Portal>) => children,
+  };
+});
 
 const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
@@ -23,7 +34,11 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-billing')>()),
   getSalesOrder: mocks.getSalesOrder,
 }));
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+  notFound: mocks.notFound,
+  redirect: vi.fn(),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const render = async (id: string = IDS.order): Promise<string> =>

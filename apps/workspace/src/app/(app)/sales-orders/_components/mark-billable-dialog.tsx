@@ -1,22 +1,10 @@
 'use client';
 
-import { useActionState, useRef, useState } from 'react';
-
-import {
-  ActionDialog,
-  DialogCloseButton,
-  PendingLine,
-  useFocusOnProblem,
-  useReloadWhenClosed,
-} from '@/components/ui/transaction-dialog';
-import styles from '@/components/p2/quotations/actions.module.css';
-import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/field';
-
+import { useState } from 'react';
+import { Field, Select, Input } from '@/components/ui/field';
+import { TransactionFormDialog } from '@/components/p3/transaction-form-dialog';
 import { markBillableAction } from '../_lib/actions';
 import type { ActionState } from '../_lib/state';
-
-import { ErrorSummary } from './error-summary';
 
 export interface EvidenceOption {
   documentId: string;
@@ -38,66 +26,34 @@ export interface MarkBillableDialogProps {
   reloadHref: string;
 }
 
-/**
- * Mark a milestone or acceptance step billable. The step needs a document that shows it happened:
- * the form offers the order's own evidence first and says so, and takes another document id only
- * when the one needed is not in that list.
- */
-export function MarkBillableDialog(props: MarkBillableDialogProps) {
-  return (
-    <ActionDialog
-      triggerLabel="Mark billable"
-      title={`Mark "${props.lineLabel}" billable`}
-      intro="Use this once the milestone or the customer's acceptance has happened. The step needs a document that shows it. After that, the invoice can be drafted from it."
-    >
-      <MarkBody {...props} />
-    </ActionDialog>
-  );
-}
-
-function MarkBody({
+export function MarkBillableDialog({
   salesOrderId,
   scheduleLineId,
   version,
+  lineLabel,
   evidence,
   idempotencyKey,
   reloadHref,
 }: MarkBillableDialogProps) {
-  const [state, formAction, pending] = useActionState<ActionState, FormData>(markBillableAction, {
-    key: idempotencyKey,
-  });
   const [chosen, setChosen] = useState('');
   const [other, setOther] = useState('');
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const summaryRef = useRef<HTMLDivElement>(null);
-  useFocusOnProblem(state, wrapRef, summaryRef);
-  useReloadWhenClosed(state.done, wrapRef);
-
   const listed = evidence.length > 0;
-
   return (
-    <div ref={wrapRef}>
-      {state.done === true ? (
-        <div className={styles.form}>
-          <p role="status">Marked billable. Close this to see the new status.</p>
-          <div className={styles.buttons}>
-            <DialogCloseButton variant="primary">Done</DialogCloseButton>
-          </div>
-        </div>
-      ) : (
-        <form action={formAction} className={styles.form}>
+    <TransactionFormDialog<ActionState>
+      trigger="Mark billable"
+      title={`Mark "${lineLabel}" billable`}
+      description="Attach evidence that the milestone or acceptance step is complete. An invoice can then be drafted."
+      submit="Mark billable"
+      successMessage="Step marked billable"
+      initial={{ key: idempotencyKey }}
+      action={markBillableAction}
+      reloadHref={reloadHref}
+    >
+      {(state) => (
+        <>
           <input type="hidden" name="salesOrderId" value={salesOrderId} />
           <input type="hidden" name="scheduleLineId" value={scheduleLineId} />
           <input type="hidden" name="expectedVersion" value={version} />
-          <input type="hidden" name="idempotencyKey" value={state.key} />
-
-          <ErrorSummary
-            error={state.error}
-            reload={state.reload}
-            reloadHref={reloadHref}
-            summaryRef={summaryRef}
-          />
-
           {listed ? (
             <Field
               label="Evidence document"
@@ -142,16 +98,8 @@ function MarkBody({
               />
             )}
           </Field>
-
-          <div className={styles.buttons}>
-            <DialogCloseButton disabled={pending}>Cancel</DialogCloseButton>
-            <Button type="submit" disabled={pending}>
-              Mark billable
-            </Button>
-          </div>
-          <PendingLine pending={pending} words="Marking the step billable" />
-        </form>
+        </>
       )}
-    </div>
+    </TransactionFormDialog>
   );
 }

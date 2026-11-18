@@ -6,6 +6,13 @@
   gap: 16px;
 }
 
+.allocate,
+.allocate > *,
+.form,
+.form > * {
+  min-width: 0;
+}
+
 .form {
   display: grid;
   gap: 16px;
