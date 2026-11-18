@@ -14,7 +14,7 @@ export interface SidebarUser {
 }
 
 /**
- * Expanded navigation on desktop, a rail on tablet and a drawer on mobile. Administration shows
+ * Expanded navigation on desktop, a rail on tablet and a drawer on mobile. Admin screens show
  * only for people who can see admin; permission-gated CRM items only for roles that grant them.
  */
 export function Sidebar({ user, roles }: { user: SidebarUser; roles: readonly string[] }) {

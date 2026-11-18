@@ -1,25 +1,25 @@
 .list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 144px), 1fr));
+  gap: 16px 12px;
 }
 
 .step {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
 .bar {
   height: 4px;
-  margin-bottom: 8px;
+  margin-block-end: 6px;
   border-radius: var(--radius-full);
   background: var(--border-strong);
 }
 
 .done .bar {
-  background: var(--status-success);
+  background: var(--text-primary);
 }
 
 .current .bar {
@@ -50,6 +50,12 @@
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.done .title,
+.current .title {
+  font-weight: var(--font-weight-semibold);
 }
 
 .current .status,
