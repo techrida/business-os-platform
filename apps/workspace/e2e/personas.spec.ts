@@ -35,6 +35,29 @@ test.afterEach(() => {
 // Read at collection time, so a missing `.dev/personas.json` fails loudly with "run pnpm seed".
 const personas = loadPersonas();
 
+test('branded sign-in exposes the product name and accepts a real persona', async ({
+  page,
+  baseURL,
+}) => {
+  test.skip(
+    process.env.BOS_E2E_BRANDED_LOGIN !== '1',
+    'set BOS_E2E_BRANDED_LOGIN=1 when testing the Business OS login image',
+  );
+
+  const appOrigin = new URL(baseURL ?? '').origin;
+  await page.goto('/');
+  await expect(page).toHaveURL((url) => url.origin === authOrigin);
+  await expect(page.getByText('Business OS', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Email or username', { exact: true })).toBeVisible();
+
+  await signInOnZitadel(page, persona('sales'), appOrigin);
+  await expect(page).toHaveURL(`${appOrigin}/`);
+  const cookies = await page.context().cookies(appOrigin);
+  expect(cookies.some((cookie) => cookie.name === SESSION_COOKIE && cookie.value !== '')).toBe(
+    true,
+  );
+});
+
 test.describe('persona sign-in and sign-out', () => {
   for (const who of personas) {
     test(`${who.key} (${who.orgKind}) signs in, lands in the right place, and sign-out ends the session`, async ({
