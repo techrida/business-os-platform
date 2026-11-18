@@ -674,6 +674,47 @@ describe('quotation approval: decisions', () => {
   });
 });
 
+describe('quotation approval: inbox (demo feedback 2026-11-17 guard)', () => {
+  /**
+   * The document ids in the inbox `user` (holding `role`) sees, then back to the owner. A caller with
+   * no approval assignment at all is refused the inbox (403 out_of_scope), which is an empty inbox here.
+   */
+  async function inboxOf(user: string, role: RoleKey): Promise<string[]> {
+    as(user, role);
+    try {
+      return (await approvals.inbox()).map((i) => i.documentId);
+    } catch (error) {
+      if (error instanceof HttpException && error.getStatus() === 403) return [];
+      throw error;
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+  }
+
+  it("puts nothing in an inbox on save; submit puts it in the accountant's inbox, and the author cannot decide it", async () => {
+    const d = await draft('50000.00');
+    // Saved (created and edited), not submitted: no request and no inbox item anywhere.
+    const { version: saved } = await drafting.updateDraft(d.quotationId, d.versionId, {
+      expectedVersion: d.rowVersion,
+      scope: 'Saved, not submitted',
+    });
+    expect(await requestsOf(d.versionId)).toEqual([]);
+    expect(await inboxOf(U.acc, 'accountant')).not.toContain(d.versionId);
+
+    await submit(d, saved);
+    const [request, ...others] = await requestsOf(d.versionId);
+    expect(others).toEqual([]);
+    expect(await inboxOf(U.acc, 'accountant')).toContain(d.versionId);
+    // The author does not see it, and a decision from them is refused.
+    expect(await inboxOf(f.ownerUserId, 'sales')).not.toContain(d.versionId);
+    // Refused either way: today a Sales author cannot even see the request (404); a 403 would do too.
+    const error = await httpErrorOf(act(f.ownerUserId, 'sales', request!.id, 'approve'));
+    expect([403, 404]).toContain(error.getStatus());
+    expect((await versionRow(d.versionId)).status).toBe('submitted');
+    expect((await requestsOf(d.versionId))[0]?.status).toBe('pending');
+  });
+});
+
 describe('quotation approval: tamper after submit', () => {
   it('the freeze trigger refuses a line price change on a submitted version', async () => {
     const d = await draft('50000.00');
