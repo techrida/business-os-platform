@@ -1,7 +1,8 @@
-// The builder's form model and the pure rules around it. No React, no server imports, so the
-// client island, the server actions and the tests share one definition. Nothing here computes a
-// money total: the only arithmetic is adding milestone percentages (integer hundredths, the same
-// rule the contract applies) and a string comparison for the 12% discount trigger.
+// Pure rules shared by the client, server actions and tests. Milestone amounts depend on the
+// server's final total. Pricing itself stays on the server.
+import { NonNegativeDecimalString, PaymentMilestoneSchema } from '@bos/contracts';
+import { Dec } from '@bos/locale';
+import { z } from 'zod';
 
 export type Currency = 'NPR' | 'INR' | 'USD';
 export const CURRENCY_OPTIONS: readonly Currency[] = ['NPR', 'INR', 'USD'];
@@ -98,17 +99,85 @@ export function plainNumber(raw: string): string {
 // Payment schedule: must total exactly 100%
 // ---------------------------------------------------------------------------------------------
 
-const PERCENT = /^(?:\d{1,3})(?:\.\d{1,2})?$/;
+const FULL_PERCENT = 100;
+const FULL_PERCENT_HUNDREDTHS = FULL_PERCENT * 100;
+
+/** Number inputs can produce ".5"; the wire contract expects a leading digit. */
+const milestoneNumber = (raw: string): string => plainNumber(raw).replace(/^\./, '0.');
+
+function validPercent(raw: string): string | null {
+  const value = PaymentMilestoneSchema.shape.percent.safeParse(milestoneNumber(raw));
+  return value.success ? value.data : null;
+}
+
+function parseMilestoneMoney(raw: string): Dec | null {
+  const value = NonNegativeDecimalString.safeParse(milestoneNumber(raw));
+  return value.success ? new Dec(value.data) : null;
+}
 
 function hundredths(percent: string): number | null {
-  const p = plainNumber(percent);
-  if (!PERCENT.test(p)) return null;
+  const p = validPercent(percent);
+  if (p === null) return null;
   const [whole = '0', frac = ''] = p.split('.');
   return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
 }
 
 const fromHundredths = (n: number): string =>
   `${Math.floor(n / 100)}.${String(n % 100).padStart(2, '0')}`;
+
+function amountForPercent(percent: string, total: Dec): string {
+  // @bos/locale's Decimal rounds half up, the same rule as quotation pricing.
+  return total.times(percent).div(FULL_PERCENT).toFixed(2);
+}
+
+/** Derive a row amount from the canonical percent and the current server-priced total. */
+export function milestoneAmount(percent: string, total: string | null): string | null {
+  const valid = validPercent(percent);
+  const pricedTotal = total === null ? null : parseMilestoneMoney(total);
+  return valid === null || pricedTotal === null ? null : amountForPercent(valid, pricedTotal);
+}
+
+export type MilestoneEdit = { field: 'percent' | 'amount'; value: string };
+
+type MilestoneReconciliation =
+  | { ok: true; percent: string; amount: string | null }
+  | {
+      ok: false;
+      reason: 'invalid-percent' | 'invalid-amount' | 'total-unavailable' | 'above-total';
+    };
+
+/**
+ * Resolve a user edit to the percent we can persist and the amount it represents.
+ * Pass null while the server total is absent or stale.
+ */
+export function reconcileMilestone(
+  currentPercent: string,
+  edit: MilestoneEdit,
+  total: string | null,
+): MilestoneReconciliation {
+  if (edit.field === 'percent') {
+    const percent = validPercent(edit.value);
+    return percent === null
+      ? { ok: false, reason: 'invalid-percent' }
+      : { ok: true, percent, amount: milestoneAmount(percent, total) };
+  }
+
+  const amount = parseMilestoneMoney(edit.value);
+  if (amount === null) return { ok: false, reason: 'invalid-amount' };
+  const pricedTotal = total === null ? null : parseMilestoneMoney(total);
+  if (pricedTotal === null) return { ok: false, reason: 'total-unavailable' };
+  if (amount.gt(pricedTotal)) return { ok: false, reason: 'above-total' };
+  // Every valid percent represents zero money on a zero total. Keep the user's allocation.
+  if (pricedTotal.isZero()) {
+    const percent = validPercent(currentPercent);
+    return percent === null
+      ? { ok: false, reason: 'invalid-percent' }
+      : { ok: true, percent, amount: '0.00' };
+  }
+
+  const percent = amount.times(FULL_PERCENT).div(pricedTotal).toFixed(2);
+  return { ok: true, percent, amount: amountForPercent(percent, pricedTotal) };
+}
 
 export type ScheduleState =
   | { kind: 'empty' }
@@ -128,10 +197,10 @@ export function scheduleState(
     if (h === null) return { kind: 'invalid' };
     sum += h;
   }
-  if (sum === 10000) return { kind: 'ok' };
-  return sum < 10000
-    ? { kind: 'short', by: fromHundredths(10000 - sum) }
-    : { kind: 'over', by: fromHundredths(sum - 10000) };
+  if (sum === FULL_PERCENT_HUNDREDTHS) return { kind: 'ok' };
+  return sum < FULL_PERCENT_HUNDREDTHS
+    ? { kind: 'short', by: fromHundredths(FULL_PERCENT_HUNDREDTHS - sum) }
+    : { kind: 'over', by: fromHundredths(sum - FULL_PERCENT_HUNDREDTHS) };
 }
 
 export function scheduleMessage(state: ScheduleState): string | null {
@@ -141,10 +210,37 @@ export function scheduleMessage(state: ScheduleState): string | null {
     case 'over':
       return `The payment schedule must add up to 100%. It is ${state.by}% over.`;
     case 'invalid':
-      return 'The payment schedule must add up to 100%. Enter each milestone as a percentage such as 40 or 33.33.';
+      return 'Enter each milestone as a percentage from 0 to 100 with up to two decimal places.';
     default:
       return null;
   }
+}
+
+const dueDateSchema = z.iso.date();
+
+export function milestoneDue(
+  dueDescription: string,
+): { kind: 'empty' } | { kind: 'date'; date: string } | { kind: 'legacy'; description: string } {
+  if (dueDescription === '') return { kind: 'empty' };
+  if (dueDateSchema.safeParse(dueDescription).success)
+    return { kind: 'date', date: dueDescription };
+  return { kind: 'legacy', description: dueDescription };
+}
+
+/** Store a Gregorian date in the existing description slot and protect existing free text. */
+export function setMilestoneDueDate(
+  dueDescription: string,
+  date: string,
+):
+  | { ok: true; dueDescription: string }
+  | { ok: false; reason: 'legacy-description' | 'invalid-date' } {
+  if (milestoneDue(dueDescription).kind === 'legacy') {
+    return { ok: false, reason: 'legacy-description' };
+  }
+  if (date !== '' && !dueDateSchema.safeParse(date).success) {
+    return { ok: false, reason: 'invalid-date' };
+  }
+  return { ok: true, dueDescription: date };
 }
 
 /** Why Submit is unavailable, in words; null when it may go. */
@@ -200,7 +296,7 @@ export function toContent(v: BuilderValues, mode: 'create' | 'update' = 'create'
       v.schedule.length > 0
         ? v.schedule.map((m) => ({
             label: m.label.trim(),
-            percent: plainNumber(m.percent),
+            percent: milestoneNumber(m.percent),
             ...(opt(m.dueDescription) ? { dueDescription: m.dueDescription.trim() } : {}),
           }))
         : blank,
