@@ -1382,3 +1382,22 @@ it('preserves real legacy case notes before correction and leaves legacy approve
     evidence: null,
   });
 });
+
+it('removes only loose files belonging to an editable case the caller owns', async () => {
+  const mine = await openCase(await newCustomer(scope, U.salesA));
+  const theirs = await openCase(await newCustomer(scope, U.salesB));
+  const foreign = await attach(theirs.id, 'clean');
+  as(U.salesA, 'sales');
+  const loose = await attach(mine.id, 'infected');
+  const attached = await attach(mine.id, 'clean');
+  expect((await putDocument(mine.id, 'other', attached.documentId, mine.version)).status).toBe(200);
+  const remove = (documentId: string) =>
+    api().delete(`/v1/verification-cases/${mine.id}/loose-documents/${documentId}`);
+  expect((await remove(foreign.documentId)).status).toBe(404);
+  expect((await remove(attached.documentId)).status).toBe(409);
+  as(U.salesB, 'sales');
+  expect((await remove(loose.documentId)).status).toBe(404);
+  as(U.salesA, 'sales');
+  expect((await remove(loose.documentId)).status).toBe(204);
+  expect(await documents.allClean(scope, 'verification_case', mine.id)).toBe(true);
+});
