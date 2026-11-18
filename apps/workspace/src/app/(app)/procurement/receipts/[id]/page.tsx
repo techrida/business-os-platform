@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
+import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
@@ -20,6 +21,7 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
+import layout from '../../procurement.module.css';
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
 import { ConfirmDialog, ReverseDialog, DiscardReceiptDialog } from '../_components/receipt-actions';
 import { receiptFailure } from '../_lib/failure';
@@ -54,7 +56,7 @@ function Lines({
           : 'What arrived on each line. Quantities are as the server recorded them.'
       }
     >
-      <Table caption="Receipt lines" minWidth={720}>
+      <Table className={layout.panelTable ?? ''} caption="Receipt lines" minWidth={720}>
         <thead>
           <tr>
             <Th align="end">#</Th>
@@ -242,27 +244,32 @@ export default async function ReceiptPage({
   const canDiscard = receipt.status === 'draft' && mayHandleKind(receipt.kind, grants);
 
   return (
-    <Page>
-      <Breadcrumb items={[{ label: 'Receipts', href: listHref }, { label: receipt.number }]} />
-      <PageHeader
-        title={<span className={styles.long}>{receipt.number}</span>}
-        status={<Badge tone={status.tone}>{status.text}</Badge>}
-        actions={
-          can.confirm || can.reverse || canDiscard ? (
-            <div className={styles.headActions}>
-              {can.confirm ? <ConfirmDialog {...common} idempotencyKey={randomUUID()} /> : null}
-              {can.reverse ? <ReverseDialog {...common} idempotencyKey={randomUUID()} /> : null}
-              {canDiscard ? (
-                <DiscardReceiptDialog {...common} idempotencyKey={randomUUID()} />
-              ) : null}
-            </div>
-          ) : null
-        }
-      />
+    <Page className={layout.detail}>
+      <div className={layout.detailHeader}>
+        <Breadcrumb items={[{ label: 'Receipts', href: listHref }, { label: receipt.number }]} />
+        <PageHeader
+          title={<span className={styles.long}>{receipt.number}</span>}
+          status={<Badge tone={status.tone}>{status.text}</Badge>}
+          actions={
+            can.confirm || can.reverse || canDiscard ? (
+              <div className={styles.headActions}>
+                {can.confirm ? <ConfirmDialog {...common} idempotencyKey={randomUUID()} /> : null}
+                {can.reverse ? <ReverseDialog {...common} idempotencyKey={randomUUID()} /> : null}
+                {canDiscard ? (
+                  <DiscardReceiptDialog {...common} idempotencyKey={randomUUID()} />
+                ) : null}
+              </div>
+            ) : null
+          }
+        />
+      </div>
 
       {justCreated && receipt.status === 'draft' ? (
-        <Alert tone="success" role="status" title="The draft receipt was saved">
-          Nothing counts as received on the purchase order until it is confirmed.
+        <SuccessNotice message="The draft receipt was saved." />
+      ) : null}
+      {receipt.status === 'draft' && !stuckDraft ? (
+        <Alert tone="info" role="status">
+          This draft counts as received on the purchase order once it is confirmed.
         </Alert>
       ) : null}
       {stuckDraft && order !== undefined ? (
@@ -303,12 +310,20 @@ export default async function ReceiptPage({
         </Alert>
       ) : null}
 
-      <div className={styles.stack}>
-        <Panel title="Summary">
-          <FactList facts={facts} />
+      <div className={layout.detailColumns}>
+        <Panel title="Receipt details">
+          <FactList
+            facts={facts.filter((fact) => !(fact.key === 'order' || fact.key === 'reverses'))}
+          />
         </Panel>
-        <Lines receipt={receipt} progress={progress} />
+        <Panel as="aside" title="Linked records" className={layout.linkedRecords}>
+          <FactList
+            facts={facts.filter((fact) => fact.key === 'order' || fact.key === 'reverses')}
+          />
+        </Panel>
       </div>
+
+      <Lines receipt={receipt} progress={progress} />
     </Page>
   );
 }

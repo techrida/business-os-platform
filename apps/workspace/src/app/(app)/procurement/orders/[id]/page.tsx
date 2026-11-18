@@ -25,6 +25,7 @@ import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
+import layout from '../../procurement.module.css';
 import { AmendDialog, IssueDialog, ReasonDialog } from '../_components/order-actions';
 import { poFailure } from '../_lib/failure';
 import {
@@ -72,6 +73,7 @@ function Lines({
   const withProgress = progress.status === 'fulfilled';
   return (
     <Panel
+      className={styles.tablePanel}
       title="Lines"
       description={
         withProgress
@@ -84,7 +86,11 @@ function Lines({
           A purchase order needs at least one line before it can be issued.
         </EmptyState>
       ) : (
-        <Table caption="Purchase order lines" minWidth={withProgress ? 980 : 720}>
+        <Table
+          className={layout.panelTable ?? ''}
+          caption="Purchase order lines"
+          minWidth={withProgress ? 980 : 720}
+        >
           <thead>
             <tr>
               <Th align="end">#</Th>
@@ -181,6 +187,7 @@ function Versions({
 }) {
   return (
     <Panel
+      className={styles.tablePanel}
       title="Versions"
       description="Every issued version stays as it was. Each has its own PDF."
     >
@@ -191,7 +198,7 @@ function Versions({
           Version 1 and its PDF appear when the order is issued.
         </EmptyState>
       ) : (
-        <Table caption="Purchase order versions" minWidth={720}>
+        <Table className={layout.panelTable ?? ''} caption="Purchase order versions" minWidth={720}>
           <thead>
             <tr>
               <Th align="end">Version</Th>
@@ -376,59 +383,61 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
   ];
 
   return (
-    <Page>
-      <Breadcrumb
-        items={[{ label: 'Purchase orders', href: '/procurement/orders' }, { label: po.number }]}
-      />
-      <PageHeader
-        title={<span className={styles.long}>{po.number}</span>}
-        status={<Badge tone={status.tone}>{status.text}</Badge>}
-        actions={
-          <div className={styles.headActions}>
-            {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
-            {can.amend ? (
-              <AmendDialog
-                {...common}
-                idempotencyKey={randomUUID()}
-                currency={po.currency}
-                paymentTermsDays={po.paymentTermsDays}
-                lines={po.lines.map((l) => ({
-                  id: l.id,
-                  lineNo: l.lineNo,
-                  description: l.description,
-                  uom: l.uom,
-                  orderedQuantity: l.orderedQuantity,
-                  unitPrice: l.unitPrice,
-                  cancelledQuantity: l.cancelledQuantity,
-                  received: received(l.id),
-                }))}
-              />
-            ) : null}
-            {can.shortClose ? (
-              <ReasonDialog kind="shortClose" {...common} idempotencyKey={randomUUID()} />
-            ) : null}
-            {can.cancel ? (
-              <ReasonDialog kind="cancel" {...common} idempotencyKey={randomUUID()} />
-            ) : null}
-            {mayReceive ? (
-              <LinkButton
-                href={`/procurement/receipts/new?po=${encodeURIComponent(po.id)}`}
-                variant="secondary"
-              >
-                Receive goods
-              </LinkButton>
-            ) : null}
-            {po.status !== 'draft' ? (
-              <LinkButton
-                href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
-                variant="ghost"
-              >
-                Receipts
-              </LinkButton>
-            ) : null}
-          </div>
-        }
-      />
+    <Page className={layout.detail}>
+      <div className={layout.detailHeader}>
+        <Breadcrumb
+          items={[{ label: 'Purchase orders', href: '/procurement/orders' }, { label: po.number }]}
+        />
+        <PageHeader
+          title={<span className={styles.long}>{po.number}</span>}
+          status={<Badge tone={status.tone}>{status.text}</Badge>}
+          actions={
+            <div className={styles.headActions}>
+              {can.issue ? <IssueDialog {...common} idempotencyKey={randomUUID()} /> : null}
+              {can.amend ? (
+                <AmendDialog
+                  {...common}
+                  idempotencyKey={randomUUID()}
+                  currency={po.currency}
+                  paymentTermsDays={po.paymentTermsDays}
+                  lines={po.lines.map((l) => ({
+                    id: l.id,
+                    lineNo: l.lineNo,
+                    description: l.description,
+                    uom: l.uom,
+                    orderedQuantity: l.orderedQuantity,
+                    unitPrice: l.unitPrice,
+                    cancelledQuantity: l.cancelledQuantity,
+                    received: received(l.id),
+                  }))}
+                />
+              ) : null}
+              {can.shortClose ? (
+                <ReasonDialog kind="shortClose" {...common} idempotencyKey={randomUUID()} />
+              ) : null}
+              {can.cancel ? (
+                <ReasonDialog kind="cancel" {...common} idempotencyKey={randomUUID()} />
+              ) : null}
+              {mayReceive ? (
+                <LinkButton
+                  href={`/procurement/receipts/new?po=${encodeURIComponent(po.id)}`}
+                  variant="secondary"
+                >
+                  Receive goods
+                </LinkButton>
+              ) : null}
+              {po.status !== 'draft' ? (
+                <LinkButton
+                  href={`/procurement/receipts?po=${encodeURIComponent(po.id)}`}
+                  variant="ghost"
+                >
+                  Receipts
+                </LinkButton>
+              ) : null}
+            </div>
+          }
+        />
+      </div>
 
       {po.status === 'amendment_pending' ? (
         <Alert tone="warning" role="status" title="An amendment is waiting for approval">
@@ -437,13 +446,17 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
         </Alert>
       ) : null}
 
-      <div className={styles.stack}>
-        <Panel title="Summary">
-          <FactList facts={facts} />
+      <div className={layout.detailColumns}>
+        <Panel title="Order details">
+          <FactList facts={facts.filter((fact) => !(fact.key === 'vendor'))} />
         </Panel>
-        <Lines po={po} progress={progress} />
-        <Versions po={po} result={versions} here={here} />
+        <Panel as="aside" title="Linked records" className={layout.linkedRecords}>
+          <FactList facts={facts.filter((fact) => fact.key === 'vendor')} />
+        </Panel>
       </div>
+
+      <Lines po={po} progress={progress} />
+      <Versions po={po} result={versions} here={here} />
     </Page>
   );
 }

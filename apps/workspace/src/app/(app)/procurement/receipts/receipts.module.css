@@ -1,10 +1,6 @@
 /* Layout and small pieces that belong to the receipt screens only. Everything else comes from
    components/ui. Colours and sizes are Figma tokens from styles/tokens.css. */
 
-.count {
-  white-space: nowrap;
-}
-
 .note {
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
@@ -41,12 +37,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.stack {
-  display: grid;
-  gap: 24px;
-  min-width: 0;
-}
-
 .headActions {
   display: flex;
   flex-wrap: wrap;
@@ -72,7 +62,7 @@
 
 .form {
   display: grid;
-  gap: 20px;
+  gap: var(--spacing-page);
   min-width: 0;
 }
 
@@ -115,9 +105,9 @@
   gap: 12px;
   min-width: 0;
   margin: 0;
-  padding: 12px 0 0;
+  padding: 8px 0 16px;
   border: 0;
-  border-top: var(--border-width-thin) solid var(--border-default);
+  border-bottom: var(--border-width-thin) solid var(--border-default);
 }
 
 .lineGroup legend {
@@ -135,13 +125,6 @@
 .fieldError {
   color: var(--text-error, var(--text-primary));
   font-size: var(--font-size-body-small);
-}
-
-.formButtons {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
 }
 
 /* ---- Detail ---- */

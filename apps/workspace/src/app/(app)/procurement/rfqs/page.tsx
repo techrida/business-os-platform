@@ -8,11 +8,13 @@ import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select } from '@/components/ui/field';
 import { Page, PageHeader } from '@/components/ui/page';
+
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { listRfqs } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
+import layout from '../procurement.module.css';
 import styles from '../requests/requests.module.css';
 import { rfqFailure } from './_lib/failure';
 import { RFQ_STATUS_LABEL, rfqGrants } from './_lib/model';
@@ -51,7 +53,7 @@ function Row({ rfq }: { rfq: RfqListItem }) {
         </Link>
       </Td>
       <Td nowrap>{when(rfq.deadline)}</Td>
-      <Td nowrap>
+      <Td align="end" nowrap>
         <span className={styles.numeric}>
           {rfq.quotationCount} of {rfq.invitedVendorCount}
         </span>
@@ -89,23 +91,16 @@ export default async function RfqsPage({
   }
 
   return (
-    <Page>
+    <Page className={layout.list}>
       <PageHeader
         title="Requests for quotation"
         description="RFQs sent to approved vendors for a department-approved purchase request, newest first. Open one to enter quotations, compare them and recommend one."
         actions={
-          <>
-            {rfqs !== null ? (
-              <Badge tone="info" role="status" className={styles.count}>
-                {rfqs.length} {rfqs.length === 1 ? 'RFQ' : 'RFQs'}
-              </Badge>
-            ) : null}
-            {grants.sourcing ? <LinkButton href="/procurement/rfqs/new">New RFQ</LinkButton> : null}
-          </>
+          grants.sourcing ? <LinkButton href="/procurement/rfqs/new">New RFQ</LinkButton> : null
         }
       />
 
-      <form method="get" action="/procurement/rfqs" className={styles.filters}>
+      <form method="get" action="/procurement/rfqs" className={layout.filters}>
         <Field label="Status">
           {(control) => (
             <Select name="status" defaultValue={status ?? ''} {...control}>
@@ -118,7 +113,7 @@ export default async function RfqsPage({
             </Select>
           )}
         </Field>
-        <div className={styles.filterActions}>
+        <div className={layout.filterActions}>
           <Button type="submit" variant="secondary">
             Apply
           </Button>
@@ -172,14 +167,18 @@ export default async function RfqsPage({
           </EmptyState>
         )
       ) : rfqs !== null ? (
-        <>
-          <Table caption="Requests for quotation" minWidth={720}>
+        <div className={layout.results}>
+          <Table
+            className={layout.resultsTable ?? ''}
+            caption="Requests for quotation"
+            minWidth={720}
+          >
             <thead>
               <tr>
                 <Th>RFQ</Th>
                 <Th>Purchase request</Th>
                 <Th>Deadline</Th>
-                <Th>Quotations</Th>
+                <Th align="end">Quotations</Th>
                 <Th>Status</Th>
               </tr>
             </thead>
@@ -189,12 +188,12 @@ export default async function RfqsPage({
               ))}
             </tbody>
           </Table>
-          {rfqs.length >= LIMIT ? (
-            <p className={styles.note}>
-              Showing the newest {LIMIT} RFQs. Filter by status to narrow the list.
-            </p>
-          ) : null}
-        </>
+          <p className={layout.resultsNote}>
+            {rfqs.length >= LIMIT
+              ? `Showing the newest ${LIMIT} RFQs. Filter by status to narrow the list.`
+              : `Showing ${rfqs.length} ${rfqs.length === 1 ? 'RFQ' : 'RFQs'}`}
+          </p>
+        </div>
       ) : null}
     </Page>
   );

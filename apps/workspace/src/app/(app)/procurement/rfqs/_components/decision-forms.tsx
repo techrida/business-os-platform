@@ -1,10 +1,12 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
 
 import styles from '../../requests/requests.module.css';
 import { MAX_SCORE_ROWS, type ScoreRowValues } from '../_lib/forms';
@@ -59,6 +61,7 @@ export function ScoreForm({
   useEffect(() => {
     if (state.error) summaryRef.current?.focus();
     else formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    if (state.saved) toast.success(state.saved);
   }, [state]);
 
   const setRow = (i: number, patch: Partial<ScoreRowValues>): void =>
@@ -91,10 +94,6 @@ export function ScoreForm({
               actions={state.reload ? <a href={reloadHref}>Reload this page</a> : null}
             >
               {state.error}
-            </Alert>
-          ) : state.saved ? (
-            <Alert tone="success" role="status">
-              {state.saved}
             </Alert>
           ) : null}
           {err.scores ? (
@@ -294,8 +293,10 @@ export function RecommendForm({
 }
 
 /**
- * Sends the recommended quotation to the commitment approvers. The platform refuses (422) when a
- * step has nobody who may decide it, and nothing is submitted; its reason is shown as it wrote it.
+ * Sends the recommended quotation to the commitment approvers, after one confirmation. The platform
+ * refuses (422) when a step has nobody who may decide it, and nothing is submitted; its reason is
+ * shown in the dialog as it wrote it. A success revalidates the page, which then no longer offers
+ * this form, so the toast is raised where the result arrives rather than from an effect.
  */
 export function CommitForm({
   action,
@@ -308,37 +309,56 @@ export function CommitForm({
   rfqId: string;
   reloadHref: string;
 }) {
+  const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<CommandState, FormData>(
-    action,
+    async (prev, form) => {
+      const next = await action(prev, form);
+      if (next.saved) {
+        toast.success(next.saved);
+        setOpen(false);
+      }
+      return next;
+    },
     commandStart(idempotencyKey),
   );
+  const formId = useId();
   return (
-    <form action={formAction} className={styles.panelForm}>
-      <input type="hidden" name="rfqId" value={rfqId} />
-      <input type="hidden" name="idempotencyKey" value={state.key} />
-      <p className={styles.note}>
-        The Accountant, then Finance, then Management or the Founder when the amount is high decide
-        it.
-      </p>
-      {state.error ? (
-        <Alert
-          tone="error"
-          role="alert"
-          title={state.reload ? 'This page is out of date' : 'Not submitted'}
-          actions={state.reload ? <a href={reloadHref}>Reload this RFQ</a> : null}
-        >
-          {state.error}
-        </Alert>
-      ) : state.saved ? (
-        <Alert tone="success" role="status">
-          {state.saved}
-        </Alert>
-      ) : null}
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Submitting' : 'Submit for commitment approval'}
-        </Button>
-      </div>
-    </form>
+    <Dialog
+      open={open}
+      onOpenChange={setOpen}
+      trigger={<Button>Submit for commitment approval</Button>}
+      title="Submit for commitment approval?"
+      description="The Accountant, then Finance, then Management or the Founder when the amount is high decide it."
+      size="small"
+      locked={pending}
+      closeOnOutsideClick={false}
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? 'Submitting' : 'Submit'}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} action={formAction} className={styles.panelForm}>
+        <input type="hidden" name="rfqId" value={rfqId} />
+        <input type="hidden" name="idempotencyKey" value={state.key} />
+        {state.error ? (
+          <Alert
+            tone="error"
+            role="alert"
+            title={state.reload ? 'This page is out of date' : 'Not submitted'}
+            actions={state.reload ? <a href={reloadHref}>Reload this RFQ</a> : null}
+          >
+            {state.error}
+          </Alert>
+        ) : null}
+      </form>
+    </Dialog>
   );
 }

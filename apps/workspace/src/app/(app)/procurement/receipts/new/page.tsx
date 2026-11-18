@@ -13,6 +13,7 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { getPoProgress, type PoProgress } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 
+import layout from '../../procurement.module.css';
 import { isReceivable, PO_STATUS_LABEL, qtyText } from '../../orders/_lib/model';
 import { ReceiptForm, type FormLine } from '../_components/receipt-form';
 import { receiptFailure } from '../_lib/failure';
@@ -131,7 +132,8 @@ export default async function NewReceiptPage({
   }));
 
   return (
-    <Shell po={po} number={progress.number}>
+    <Page className={layout.formPage}>
+      <Breadcrumb items={[{ label: 'Receipts', href: back }, { label: 'New receipt' }]} />
       <ReceiptForm
         purchaseOrderId={po}
         number={progress.number}
@@ -143,6 +145,6 @@ export default async function NewReceiptPage({
         cancelHref={back}
         reloadHref={`/procurement/receipts/new?po=${po}`}
       />
-    </Shell>
+    </Page>
   );
 }

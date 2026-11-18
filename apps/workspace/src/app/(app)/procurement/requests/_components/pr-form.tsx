@@ -4,13 +4,15 @@ import { CURRENCIES, PR_REQUEST_TYPES, type CostCenter } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
 import { emptyLine, type LineValues, type PrValues } from '../_lib/forms';
 import { REQUEST_TYPE_LABEL } from '../_lib/model';
 import type { PrFormState } from '../_lib/state';
+import { ProcurementFormActions } from '../../form-actions';
 import styles from '../requests.module.css';
 
 const WIDE = styles.wide ?? '';
@@ -38,6 +40,7 @@ export function PrForm({
   idempotencyKey,
   prId,
   version,
+  requestLabel,
   cancelHref,
   reloadHref,
   costCenters,
@@ -51,6 +54,7 @@ export function PrForm({
   /** The request being edited, and the version the person is looking at. */
   prId?: string;
   version?: number;
+  requestLabel?: string;
   cancelHref: string;
   reloadHref: string;
   costCenters: CostCenter[];
@@ -95,6 +99,28 @@ export function PrForm({
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <PageHeader
+        title={
+          mode === 'edit' ? `Edit ${requestLabel ?? 'purchase request'}` : 'New purchase request'
+        }
+        description={
+          mode === 'create'
+            ? 'Save a draft and submit it to the department head when it is ready.'
+            : undefined
+        }
+        actions={
+          <ProcurementFormActions
+            cancelHref={cancelHref}
+            submitLabel={submitLabel}
+            disabled={pending || !costCenters.some((c) => c.active || c.id === values.costCenterId)}
+          />
+        }
+      />
+      {pending ? (
+        <span className="sr-only" role="status">
+          Saving the request
+        </span>
+      ) : null}
       <input type="hidden" name="idempotencyKey" value={state.key} />
       {mode === 'edit' ? (
         <>
@@ -116,7 +142,7 @@ export function PrForm({
         </Alert>
       ) : null}
 
-      <Panel title="Request">
+      <Panel title="Request details">
         <div className={styles.grid}>
           <Field label="Type" error={err.requestType}>
             {(control) => (
@@ -309,7 +335,13 @@ export function PrForm({
       </Panel>
 
       <Panel
-        title="Lines"
+        title="Line items"
+        actions={
+          <Button variant="tertiary" onClick={addLine} disabled={rows.length >= MAX_LINES}>
+            <span aria-hidden="true">+</span>
+            Add a line
+          </Button>
+        }
         description="What is needed, with your estimate of the unit price. The platform works out the totals when you save."
       >
         <div className={styles.lines}>
@@ -347,7 +379,7 @@ export function PrForm({
                   )}
                 </Field>
                 {values.requestType === 'goods' ? (
-                  <label>
+                  <label className={styles.check}>
                     <input
                       type="checkbox"
                       name={`lines.${i}.requiresSerials`}
@@ -411,7 +443,6 @@ export function PrForm({
                 </Field>
               </div>
               <div className={styles.lineHead}>
-                <span />
                 <Button
                   variant="ghost"
                   size="small"
@@ -419,7 +450,7 @@ export function PrForm({
                   disabled={rows.length <= 1}
                   aria-label={`Remove line ${i + 1}`}
                 >
-                  Remove line
+                  <span aria-hidden="true">×</span>
                 </Button>
               </div>
             </fieldset>
@@ -430,32 +461,10 @@ export function PrForm({
             {err.lines}
           </p>
         ) : null}
-        <div className={styles.actions} style={{ marginTop: 16 }}>
-          <Button variant="secondary" onClick={addLine} disabled={rows.length >= MAX_LINES}>
-            Add a line
-          </Button>
-          {rows.length >= MAX_LINES ? (
-            <span className={styles.status}>A request takes up to {MAX_LINES} lines.</span>
-          ) : null}
-        </div>
-      </Panel>
-
-      <div className={styles.actions}>
-        <Button
-          type="submit"
-          disabled={pending || !costCenters.some((c) => c.active || c.id === values.costCenterId)}
-        >
-          {submitLabel}
-        </Button>
-        <LinkButton href={cancelHref} variant="ghost">
-          Cancel
-        </LinkButton>
-        {pending ? (
-          <span role="status" className={styles.status}>
-            Saving the request
-          </span>
+        {rows.length >= MAX_LINES ? (
+          <p className={styles.status}>A request takes up to {MAX_LINES} lines.</p>
         ) : null}
-      </div>
+      </Panel>
     </form>
   );
 }

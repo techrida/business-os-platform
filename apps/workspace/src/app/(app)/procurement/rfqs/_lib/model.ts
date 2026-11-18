@@ -11,7 +11,7 @@ import type { BadgeTone } from '../../requests/_lib/model';
  */
 
 export const RFQ_STATUS_LABEL: Record<RfqStatus, { tone: BadgeTone; text: string }> = {
-  open: { tone: 'info', text: 'Open for quotations' },
+  open: { tone: 'info', text: 'Open' },
   closed: { tone: 'neutral', text: 'Closed' },
   recommended: { tone: 'success', text: 'Recommended' },
   cancelled: { tone: 'neutral', text: 'Cancelled' },

@@ -1,0 +1,122 @@
+.list {
+  row-gap: var(--spacing-content-gap);
+}
+
+.filters,
+.filterActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.filters {
+  margin-top: 8px;
+}
+
+.filters > :first-child {
+  flex: 0 1 15rem;
+  min-width: 0;
+}
+
+.results {
+  min-width: 0;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background: var(--table-row-bg);
+}
+
+.results .resultsTable {
+  min-width: 0;
+  border: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.resultsTable thead th,
+.panelTable thead th {
+  background: var(--table-header-bg);
+}
+
+.results > :not(.resultsTable) {
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.resultsNote {
+  margin: 0;
+  padding: 16px 20px;
+  color: var(--pagination-text);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.formPage,
+.detail {
+  row-gap: var(--spacing-content-gap);
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.detailHeader {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.detailColumns,
+.stack {
+  display: grid;
+  align-items: start;
+  gap: var(--spacing-content-gap);
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.detailColumns > *,
+.stack > *,
+.formPage form > * {
+  min-width: 0;
+}
+
+.linkedRecords {
+  overflow-wrap: anywhere;
+}
+
+.totals {
+  justify-self: end;
+  width: min(100%, 20rem);
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+}
+
+@media (min-width: 1200px) {
+  .filters {
+    justify-content: flex-end;
+  }
+
+  .detailColumns {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+
+.panelTable {
+  /* Keep absolutely positioned accessible labels inside the scroll region. */
+  position: relative;
+  min-width: 0;
+}
+
+.panelTable th,
+.panelTable td {
+  padding: 14px 16px;
+}
+
+.actionForm {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}

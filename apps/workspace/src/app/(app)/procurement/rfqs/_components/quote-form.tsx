@@ -4,10 +4,11 @@ import { CURRENCIES, type TaxCode } from '@bos/contracts';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { FactList, Panel } from '@/components/ui/panel';
 
+import { ProcurementFormActions } from '../../form-actions';
 import styles from '../../requests/requests.module.css';
 import {
   emptyQuoteValues,
@@ -47,6 +48,7 @@ export function QuoteForm({
   action,
   idempotencyKey,
   rfqId,
+  rfqNumber,
   mode,
   vendors,
   submission,
@@ -60,6 +62,7 @@ export function QuoteForm({
   /** A UUID the server made for this render. */
   idempotencyKey: string;
   rfqId: string;
+  rfqNumber?: string;
   mode: QuoteMode;
   /** The invited vendors, for `record`. */
   vendors: VendorOption[];
@@ -110,6 +113,28 @@ export function QuoteForm({
 
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <PageHeader
+        title={mode === 'convert' ? 'Convert a vendor submission' : 'Enter a quotation'}
+        description={
+          rfqNumber
+            ? `For ${rfqNumber}. A quotation is recorded for one invited vendor, once.`
+            : undefined
+        }
+        actions={
+          <ProcurementFormActions
+            cancelHref={cancelHref}
+            submitLabel={
+              pending ? 'Saving' : mode === 'convert' ? 'Convert to quotation' : 'Record quotation'
+            }
+            disabled={pending || !hasTaxCodes || hasUnavailableTax}
+          />
+        }
+      />
+      {pending ? (
+        <span className="sr-only" role="status">
+          Saving the quotation
+        </span>
+      ) : null}
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <input type="hidden" name="rfqId" value={rfqId} />
       <input type="hidden" name="mode" value={mode} />
@@ -152,7 +177,7 @@ export function QuoteForm({
       ) : null}
 
       <Panel
-        title="Quotation"
+        title="Quotation details"
         description={
           mode === 'convert'
             ? 'The vendor and the uploaded file come from their submission. Type in what their document says.'
@@ -286,7 +311,7 @@ export function QuoteForm({
       </Panel>
 
       <Panel
-        title="Lines"
+        title="Line items"
         description="One row for each line of the purchase request. Untick a line the vendor did not quote."
       >
         <div className={styles.lines}>
@@ -385,20 +410,6 @@ export function QuoteForm({
           </p>
         ) : null}
       </Panel>
-
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending || !hasTaxCodes || hasUnavailableTax}>
-          {pending ? 'Saving' : mode === 'convert' ? 'Convert to quotation' : 'Record quotation'}
-        </Button>
-        <LinkButton href={cancelHref} variant="ghost">
-          Cancel
-        </LinkButton>
-        {pending ? (
-          <span role="status" className={styles.status}>
-            Saving the quotation
-          </span>
-        ) : null}
-      </div>
     </form>
   );
 }

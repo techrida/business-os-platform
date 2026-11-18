@@ -9,6 +9,7 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { listCostCenters, listDepartments } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 
+import layout from '../../procurement.module.css';
 import { createPrAction } from '../actions';
 import { PrForm } from '../_components/pr-form';
 import { EMPTY_PR_VALUES } from '../_lib/forms';
@@ -43,16 +44,12 @@ export default async function NewPurchaseRequestPage() {
     }
   }
   return (
-    <Page width="narrow">
+    <Page className={layout.formPage}>
       <Breadcrumb
         items={[
           { label: 'Purchase requests', href: '/procurement/requests' },
           { label: 'New request' },
         ]}
-      />
-      <PageHeader
-        title="New purchase request"
-        description="Saved as a draft first. Submitting it sends it to the department head."
       />
       {allowed ? (
         <PrForm
@@ -66,18 +63,24 @@ export default async function NewPurchaseRequestPage() {
           reloadHref="/procurement/requests/new"
         />
       ) : (
-        <Alert
-          tone="info"
-          role="status"
-          title="Your roles do not include raising purchase requests"
-          actions={
-            <LinkButton href="/procurement/requests" variant="secondary">
-              Back to purchase requests
-            </LinkButton>
-          }
-        >
-          Ask an administrator if you need to.
-        </Alert>
+        <>
+          <PageHeader
+            title="New purchase request"
+            description="Saved as a draft first. Submitting it sends it to the department head."
+          />
+          <Alert
+            tone="info"
+            role="status"
+            title="Your roles do not include raising purchase requests"
+            actions={
+              <LinkButton href="/procurement/requests" variant="secondary">
+                Back to purchase requests
+              </LinkButton>
+            }
+          >
+            Ask an administrator if you need to.
+          </Alert>
+        </>
       )}
     </Page>
   );

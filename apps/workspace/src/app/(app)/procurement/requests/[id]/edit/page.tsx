@@ -16,6 +16,7 @@ import {
 } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
 
+import layout from '../../../procurement.module.css';
 import { updatePrAction } from '../../actions';
 import { PrForm } from '../../_components/pr-form';
 import { prFailure } from '../../_lib/failure';
@@ -79,7 +80,7 @@ export default async function EditPurchaseRequestPage({
     }
   }
   return (
-    <Page width="narrow">
+    <Page className={layout.formPage}>
       <Breadcrumb
         items={[
           { label: 'Purchase requests', href: '/procurement/requests' },
@@ -87,7 +88,6 @@ export default async function EditPurchaseRequestPage({
           { label: 'Edit' },
         ]}
       />
-      <PageHeader title={`Edit ${label}`} />
       {editable ? (
         <PrForm
           departments={departments}
@@ -95,6 +95,7 @@ export default async function EditPurchaseRequestPage({
           action={updatePrAction}
           initial={valuesFromDto(pr)}
           mode="edit"
+          requestLabel={label}
           idempotencyKey={randomUUID()}
           prId={pr.id}
           version={pr.version}
@@ -102,24 +103,27 @@ export default async function EditPurchaseRequestPage({
           reloadHref={`${back}/edit`}
         />
       ) : (
-        <Alert
-          tone="info"
-          role="status"
-          title={
-            isPrEditable(pr.status)
-              ? 'Your roles do not include editing purchase requests'
-              : 'This request is read-only'
-          }
-          actions={
-            <LinkButton href={back} variant="secondary">
-              Back to the request
-            </LinkButton>
-          }
-        >
-          {isPrEditable(pr.status)
-            ? 'Ask an administrator if you need to.'
-            : `It is ${PR_STATUS_LABEL[pr.status].text.toLowerCase()}. Only a draft or a returned request can be edited.`}
-        </Alert>
+        <>
+          <PageHeader title={`Edit ${label}`} />
+          <Alert
+            tone="info"
+            role="status"
+            title={
+              isPrEditable(pr.status)
+                ? 'Your roles do not include editing purchase requests'
+                : 'This request is read-only'
+            }
+            actions={
+              <LinkButton href={back} variant="secondary">
+                Back to the request
+              </LinkButton>
+            }
+          >
+            {isPrEditable(pr.status)
+              ? 'Ask an administrator if you need to.'
+              : `It is ${PR_STATUS_LABEL[pr.status].text.toLowerCase()}. Only a draft or a returned request can be edited.`}
+          </Alert>
+        </>
       )}
     </Page>
   );

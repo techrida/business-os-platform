@@ -14,6 +14,7 @@ import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
+import layout from '../../../../procurement.module.css';
 import { recordQuotationAction } from '../../../actions';
 import { QuoteForm, type SubmissionInfo } from '../../../_components/quote-form';
 import { rfqFailure } from '../../../_lib/failure';
@@ -71,15 +72,18 @@ export default async function NewQuotationPage({
   }
 
   const convert = submissionId !== '';
+  const crumbs = (
+    <Breadcrumb
+      items={[
+        { label: 'Requests for quotation', href: '/procurement/rfqs' },
+        { label: rfq.number, href: back },
+        { label: convert ? 'Convert a submission' : 'Enter a quotation' },
+      ]}
+    />
+  );
   const header = (
     <>
-      <Breadcrumb
-        items={[
-          { label: 'Requests for quotation', href: '/procurement/rfqs' },
-          { label: rfq.number, href: back },
-          { label: convert ? 'Convert a submission' : 'Enter a quotation' },
-        ]}
-      />
+      {crumbs}
       <PageHeader
         title={convert ? 'Convert a vendor submission' : 'Enter a quotation'}
         description={`For ${rfq.number}. A quotation is recorded for one invited vendor, once.`}
@@ -154,8 +158,8 @@ export default async function NewQuotationPage({
   const names = nameIndex(vendorLookup);
 
   return (
-    <Page width="narrow">
-      {header}
+    <Page className={layout.formPage}>
+      {crumbs}
       {vendorLookup.problem !== undefined && !convert ? (
         <Alert tone="info" role="status" title="Vendor names did not load">
           The invited vendors are listed by id instead.
@@ -165,6 +169,7 @@ export default async function NewQuotationPage({
         action={recordQuotationAction}
         idempotencyKey={randomUUID()}
         rfqId={rfq.id}
+        rfqNumber={rfq.number}
         mode={convert ? 'convert' : 'record'}
         vendors={rfq.vendorIds.map((vid) => ({
           id: vid,

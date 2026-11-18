@@ -11,6 +11,7 @@ import { listPurchaseRequests, type PurchaseRequestListItem } from '@/lib/api-pr
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 
+import layout from '../../procurement.module.css';
 import { createRfqAction } from '../actions';
 import { RfqForm } from '../_components/rfq-form';
 import { rfqFailure } from '../_lib/failure';
@@ -38,14 +39,14 @@ export default async function NewRfqPage({
   const allowed = rfqGrants(session.roles).sourcing;
   const wanted = typeof sp.pr === 'string' && isGuid(sp.pr) ? sp.pr : '';
 
+  const crumbs = (
+    <Breadcrumb
+      items={[{ label: 'Requests for quotation', href: '/procurement/rfqs' }, { label: 'New RFQ' }]}
+    />
+  );
   const header = (
     <>
-      <Breadcrumb
-        items={[
-          { label: 'Requests for quotation', href: '/procurement/rfqs' },
-          { label: 'New RFQ' },
-        ]}
-      />
+      {crumbs}
       <PageHeader
         title="New RFQ"
         description="Ask approved vendors to quote on a department-approved purchase request."
@@ -136,8 +137,8 @@ export default async function NewRfqPage({
   }
 
   return (
-    <Page width="narrow">
-      {header}
+    <Page className={layout.formPage}>
+      {crumbs}
       <RfqForm
         action={createRfqAction}
         idempotencyKey={randomUUID()}

@@ -1,15 +1,29 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useId } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
+import { toast } from '@/components/ui/toast';
 
 import { cancelPrAction, submitPrAction } from '../actions';
 import { commandStart, type CommandState } from '../_lib/state';
 import styles from '../requests.module.css';
 
 type Action = (prev: CommandState, form: FormData) => Promise<CommandState>;
+
+/**
+ * A success revalidates the page, which then stops offering the form that sent it, so the toast is
+ * raised where the result arrives rather than from an effect in a form that may already be gone.
+ */
+function toastOnSuccess(action: Action): Action {
+  return async (prev, form) => {
+    const next = await action(prev, form);
+    if (next.saved) toast.success(next.saved);
+    return next;
+  };
+}
 
 function Hidden({ prId, version, state }: { prId: string; version: number; state: CommandState }) {
   return (
@@ -31,13 +45,6 @@ function Outcome({ state, reloadHref }: { state: CommandState; reloadHref: strin
         actions={state.reload ? <a href={reloadHref}>Reload this request</a> : null}
       >
         {state.error}
-      </Alert>
-    );
-  }
-  if (state.saved) {
-    return (
-      <Alert tone="success" role="status">
-        {state.saved}
       </Alert>
     );
   }
@@ -64,7 +71,7 @@ export function SubmitForm({
   action?: Action;
 }) {
   const [state, formAction, pending] = useActionState<CommandState, FormData>(
-    action,
+    toastOnSuccess(action),
     commandStart(idempotencyKey),
   );
   return (
@@ -100,33 +107,36 @@ export function CancelForm({
   action?: Action;
 }) {
   const [state, formAction, pending] = useActionState<CommandState, FormData>(
-    action,
+    toastOnSuccess(action),
     commandStart(idempotencyKey),
   );
-  const [confirming, setConfirming] = useState(false);
+  const formId = useId();
   return (
-    <form action={formAction} className={styles.panelForm}>
-      <Hidden prId={prId} version={version} state={state} />
-      <Outcome state={state} reloadHref={reloadHref} />
-      {confirming ? (
+    <Dialog
+      trigger={<Button variant="secondary">Cancel request</Button>}
+      title="Cancel this draft?"
+      description="It cannot be reopened afterwards."
+      size="small"
+      tone="destructive"
+      locked={pending}
+      closeOnOutsideClick={false}
+      footer={
         <>
-          <p className={styles.note}>Cancel this draft? It cannot be reopened afterwards.</p>
-          <div className={styles.actions}>
-            <Button type="submit" variant="secondary" disabled={pending}>
-              {pending ? 'Cancelling' : 'Yes, cancel this request'}
-            </Button>
-            <Button variant="ghost" onClick={() => setConfirming(false)} disabled={pending}>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={pending}>
               Keep it
             </Button>
-          </div>
-        </>
-      ) : (
-        <div className={styles.actions}>
-          <Button variant="secondary" onClick={() => setConfirming(true)}>
-            Cancel request
+          </DialogClose>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? 'Cancelling' : 'Yes, cancel this request'}
           </Button>
-        </div>
-      )}
-    </form>
+        </>
+      }
+    >
+      <form id={formId} action={formAction} className={styles.panelForm}>
+        <Hidden prId={prId} version={version} state={state} />
+        <Outcome state={state} reloadHref={reloadHref} />
+      </form>
+    </Dialog>
   );
 }

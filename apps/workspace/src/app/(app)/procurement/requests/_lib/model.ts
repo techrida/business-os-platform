@@ -12,8 +12,8 @@ export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 
 export const PR_STATUS_LABEL: Record<PrStatus, { tone: BadgeTone; text: string }> = {
   draft: { tone: 'neutral', text: 'Draft' },
-  submitted: { tone: 'warning', text: 'Waiting for approval' },
-  returned: { tone: 'warning', text: 'Returned for changes' },
+  submitted: { tone: 'warning', text: 'Awaiting approval' },
+  returned: { tone: 'warning', text: 'Returned' },
   dept_approved: { tone: 'success', text: 'Department approved' },
   sourcing: { tone: 'info', text: 'Sourcing' },
   commitment_pending: { tone: 'warning', text: 'Commitment pending' },

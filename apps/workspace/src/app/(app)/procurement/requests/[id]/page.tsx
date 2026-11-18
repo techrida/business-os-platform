@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
+import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -18,6 +19,8 @@ import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 
+import { ApprovalTimeline } from '../../approval-timeline';
+import layout from '../../procurement.module.css';
 import { canStartRfq, rfqGrants } from '../../rfqs/_lib/model';
 import { CancelForm, SubmitForm } from '../_components/command-forms';
 import { prFailure } from '../_lib/failure';
@@ -33,14 +36,6 @@ import styles from '../requests.module.css';
 
 export const metadata: Metadata = { title: 'Purchase request · Business OS' };
 export const dynamic = 'force-dynamic';
-
-const STEP_TONE: Record<string, 'neutral' | 'info' | 'success' | 'warning' | 'error'> = {
-  approved: 'success',
-  rejected: 'error',
-  returned: 'warning',
-  active: 'warning',
-  pending: 'neutral',
-};
 
 type ApprovalLoad =
   | { approval: ApprovalRequestDto; problem?: undefined }
@@ -88,16 +83,7 @@ function ApprovalPanel({ load, retry }: { load: ApprovalLoad; retry: string }) {
           {approval.steps.length === 0 ? (
             <p className={styles.note}>No approval steps were planned.</p>
           ) : (
-            <ol className={styles.steps}>
-              {approval.steps.map((s) => (
-                <li key={s.seq} className={styles.step}>
-                  <span className={styles.stepReason}>
-                    {s.seq}. {s.reason}
-                  </span>
-                  <Badge tone={STEP_TONE[s.status] ?? 'neutral'}>{humanizeKey(s.status)}</Badge>
-                </li>
-              ))}
-            </ol>
+            <ApprovalTimeline steps={approval.steps} />
           )}
         </>
       )}
@@ -217,165 +203,160 @@ export default async function PurchaseRequestPage({
   const label = pr.number ?? 'Draft purchase request';
 
   return (
-    <Page>
-      <Breadcrumb
-        items={[{ label: 'Purchase requests', href: '/procurement/requests' }, { label }]}
-      />
-      <PageHeader
-        title={label}
-        status={
-          <span className={styles.badges}>
-            <Badge tone={status.tone}>{status.text}</Badge>
-            {pr.isEmergency ? <Badge tone="error">Emergency</Badge> : null}
-          </span>
-        }
-        description={PR_STATUS_NOTE[pr.status]}
-        actions={
-          <>
-            {editable ? (
-              <LinkButton href={`${self}/edit`} variant="secondary">
-                Edit request
-              </LinkButton>
-            ) : null}
-            {pr.rfqId && rfqGrants(session.roles).sourcing ? (
-              <LinkButton href={`/procurement/rfqs/${encodeURIComponent(pr.rfqId)}`}>
-                Open RFQ
-              </LinkButton>
-            ) : canStartRfq(pr.status, pr.rfqId, session.roles) ? (
-              <LinkButton href={`/procurement/rfqs/new?pr=${encodeURIComponent(pr.id)}`}>
-                Start RFQ
-              </LinkButton>
-            ) : null}
-          </>
-        }
-      />
+    <Page className={layout.detail}>
+      <div className={layout.detailHeader}>
+        <Breadcrumb
+          items={[{ label: 'Purchase requests', href: '/procurement/requests' }, { label }]}
+        />
+        <PageHeader
+          title={label}
+          status={
+            <span className={styles.badges}>
+              <Badge tone={status.tone}>{status.text}</Badge>
+              {pr.isEmergency ? <Badge tone="error">Emergency</Badge> : null}
+            </span>
+          }
+          description={PR_STATUS_NOTE[pr.status]}
+          actions={
+            <>
+              {editable ? (
+                <LinkButton href={`${self}/edit`} variant="secondary">
+                  Edit request
+                </LinkButton>
+              ) : null}
+              {pr.rfqId && rfqGrants(session.roles).sourcing ? (
+                <LinkButton href={`/procurement/rfqs/${encodeURIComponent(pr.rfqId)}`}>
+                  Open RFQ
+                </LinkButton>
+              ) : canStartRfq(pr.status, pr.rfqId, session.roles) ? (
+                <LinkButton href={`/procurement/rfqs/new?pr=${encodeURIComponent(pr.id)}`}>
+                  Start RFQ
+                </LinkButton>
+              ) : null}
+            </>
+          }
+        />
+      </div>
 
       {sp.created !== undefined ? (
-        <Alert tone="success" role="status">
-          The draft was saved. Check it, then submit it for approval.
-        </Alert>
+        <SuccessNotice message="The draft was saved." />
       ) : sp.saved !== undefined ? (
-        <Alert tone="success" role="status">
-          Your changes were saved.
-        </Alert>
+        <SuccessNotice message="Your changes were saved." />
       ) : null}
 
-      <div className={styles.columns}>
-        <div className={styles.main}>
-          <Panel title="Request">
-            <FactList facts={factsOf(pr)} />
-          </Panel>
+      <div className={editable || approvalLoad !== null ? layout.detailColumns : layout.stack}>
+        <Panel title="Request details">
+          <FactList facts={factsOf(pr)} />
+        </Panel>
+        {editable || approvalLoad !== null ? (
+          <div className={layout.stack}>
+            {editable ? (
+              <Panel
+                as="aside"
+                title={pr.status === 'returned' ? 'Resubmit' : 'Submit for approval'}
+              >
+                <SubmitForm
+                  prId={pr.id}
+                  version={pr.version}
+                  idempotencyKey={randomUUID()}
+                  emergency={pr.isEmergency}
+                  reloadHref={self}
+                />
+              </Panel>
+            ) : null}
 
-          <Panel
-            title="Lines"
-            description="Estimates entered with the request. The totals are the platform's."
-          >
-            <Table caption="Purchase request lines" minWidth={640}>
-              <thead>
-                <tr>
-                  <Th>#</Th>
-                  <Th>Item</Th>
-                  <Th align="end">Quantity</Th>
-                  <Th align="end">Estimated unit price</Th>
-                  <Th align="end">Estimated amount</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {pr.lines.map((l) => (
-                  <tr key={l.id}>
-                    <Td nowrap>{l.lineNo}</Td>
-                    <Td>
-                      <CellTitle
-                        title={<span className={styles.long}>{l.description}</span>}
-                        meta={
-                          l.specification !== null ? (
-                            <span className={styles.long}>{l.specification}</span>
-                          ) : null
-                        }
-                      />
-                    </Td>
-                    <Td align="end" nowrap>
-                      <span className={styles.numeric}>
-                        {l.quantity} {l.uom}
-                      </span>
-                    </Td>
-                    <Td align="end" nowrap>
-                      <span className={styles.numeric}>
-                        {money(l.estimatedUnitPrice, pr.currency)}
-                      </span>
-                    </Td>
-                    <Td align="end" nowrap>
-                      <span className={styles.numeric}>
-                        {money(l.estimatedAmount, pr.currency)}
-                      </span>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-            <FactList
-              facts={[
-                {
-                  key: 'total',
-                  label: `Estimated total (${pr.currency})`,
-                  value: (
-                    <strong className={styles.numeric}>
-                      {money(pr.estimatedTotal, pr.currency)}
-                    </strong>
-                  ),
-                },
-                ...(showFx && pr.estimatedTotalNpr !== null
-                  ? [
-                      {
-                        key: 'npr',
-                        label: 'Estimated total in NPR',
-                        value: (
-                          <span className={styles.numeric}>
-                            {money(pr.estimatedTotalNpr, 'NPR')}
-                            {pr.fxRate !== null ? (
-                              <span className={styles.quiet}>
-                                {' '}
-                                at {pr.fxRate}
-                                {pr.fxDate !== null ? `, rate of ${pr.fxDate}` : ''}
-                              </span>
-                            ) : null}
-                          </span>
-                        ),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          </Panel>
-        </div>
+            {approvalLoad !== null ? <ApprovalPanel load={approvalLoad} retry={self} /> : null}
 
-        <div className={styles.sideStack}>
-          {isPrEditable(pr.status) && grants.create ? (
-            <Panel as="aside" title={pr.status === 'returned' ? 'Resubmit' : 'Submit for approval'}>
-              <SubmitForm
-                prId={pr.id}
-                version={pr.version}
-                idempotencyKey={randomUUID()}
-                emergency={pr.isEmergency}
-                reloadHref={self}
-              />
-            </Panel>
-          ) : null}
-
-          {approvalLoad !== null ? <ApprovalPanel load={approvalLoad} retry={self} /> : null}
-
-          {canCancelPr(pr.status) && grants.create ? (
-            <Panel as="aside" title="Cancel">
-              <CancelForm
-                prId={pr.id}
-                version={pr.version}
-                idempotencyKey={randomUUID()}
-                reloadHref={self}
-              />
-            </Panel>
-          ) : null}
-        </div>
+            {canCancelPr(pr.status) && grants.create ? (
+              <Panel as="aside" title="Cancel">
+                <CancelForm
+                  prId={pr.id}
+                  version={pr.version}
+                  idempotencyKey={randomUUID()}
+                  reloadHref={self}
+                />
+              </Panel>
+            ) : null}
+          </div>
+        ) : null}
       </div>
+
+      <Panel
+        title="Line items"
+        description="Estimates entered with the request. The totals are the platform's."
+      >
+        <Table className={layout.panelTable ?? ''} caption="Purchase request lines" minWidth={640}>
+          <thead>
+            <tr>
+              <Th>#</Th>
+              <Th>Item</Th>
+              <Th align="end">Quantity</Th>
+              <Th align="end">Estimated unit price</Th>
+              <Th align="end">Estimated amount</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {pr.lines.map((l) => (
+              <tr key={l.id}>
+                <Td nowrap>{l.lineNo}</Td>
+                <Td>
+                  <CellTitle
+                    title={<span className={styles.long}>{l.description}</span>}
+                    meta={
+                      l.specification !== null ? (
+                        <span className={styles.long}>{l.specification}</span>
+                      ) : null
+                    }
+                  />
+                </Td>
+                <Td align="end" nowrap>
+                  <span className={styles.numeric}>
+                    {l.quantity} {l.uom}
+                  </span>
+                </Td>
+                <Td align="end" nowrap>
+                  <span className={styles.numeric}>{money(l.estimatedUnitPrice, pr.currency)}</span>
+                </Td>
+                <Td align="end" nowrap>
+                  <span className={styles.numeric}>{money(l.estimatedAmount, pr.currency)}</span>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+        <FactList
+          className={layout.totals ?? ''}
+          facts={[
+            {
+              key: 'total',
+              label: `Estimated total (${pr.currency})`,
+              value: (
+                <strong className={styles.numeric}>{money(pr.estimatedTotal, pr.currency)}</strong>
+              ),
+            },
+            ...(showFx && pr.estimatedTotalNpr !== null
+              ? [
+                  {
+                    key: 'npr',
+                    label: 'Estimated total in NPR',
+                    value: (
+                      <span className={styles.numeric}>
+                        {money(pr.estimatedTotalNpr, 'NPR')}
+                        {pr.fxRate !== null ? (
+                          <span className={styles.quiet}>
+                            {' '}
+                            at {pr.fxRate}
+                            {pr.fxDate !== null ? `, rate of ${pr.fxDate}` : ''}
+                          </span>
+                        ) : null}
+                      </span>
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </Panel>
     </Page>
   );
 }
