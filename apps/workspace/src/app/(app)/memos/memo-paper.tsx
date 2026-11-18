@@ -1,5 +1,5 @@
 import type { MemoTemplateSnapshot } from '@bos/contracts';
-import { NOT_SELECTED, PAPER_NOTE } from '@/lib/memo-pdf-input';
+import { NOT_SELECTED } from '@/lib/memo-pdf-input';
 
 import styles from './memo-template.module.css';
 
@@ -27,7 +27,7 @@ export function MemoPaper({
         <div>{template.departmentName}</div>
         <div>(MEMO)</div>
       </header>
-      <p className={styles.date}>Date: {template.date}</p>
+      <p className={styles.date}>Date: {template.date || 'Not set'}</p>
       <h2 className={styles.subject}>Subject: {title || 'Untitled memo'}</h2>
       <div className={styles.body}>
         {body
@@ -47,7 +47,6 @@ export function MemoPaper({
           </section>
         ))}
       </div>
-      <p className={styles.note}>{PAPER_NOTE}</p>
     </article>
   );
 }
