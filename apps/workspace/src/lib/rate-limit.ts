@@ -1,7 +1,10 @@
 import { isIP } from 'node:net';
 
+import type { Redis } from 'ioredis';
+
 import { getEnv } from './env';
 import { getOidcRedis } from './oidc';
+import { clientStatus, errorCategory, whenReady } from './valkey-health';
 
 /**
  * Fixed-window rate limit for `/auth/login` (CR-03).
@@ -63,15 +66,22 @@ export function clientIp(headers: Headers): string {
  *
  * Fails OPEN on Valkey errors: this guard exists to protect `valkey-oidc`, and when that server is
  * down or full the login cannot store its OIDC state anyway, so blocking adds nothing but a second
- * outage mode. The warning carries only the error name, never the error itself: ioredis errors
- * hold the command arguments.
+ * outage mode. The warning carries only allow-listed fields (error category and client state),
+ * never the error itself: ioredis errors hold the command arguments.
+ *
+ * Like the OIDC state writes, it first waits (up to a second) for a client that is still
+ * connecting: without the offline queue ioredis rejects a command sent before the connection is
+ * ready, which used to switch the limiter off for the first logins after every start.
  */
 export async function checkLoginRateLimit(req: Request): Promise<RateLimitResult> {
   const key = loginKey(clientIp(req.headers));
   let count: number;
   let ttl: number;
+  let client: Redis | undefined;
   try {
-    const reply = (await getOidcRedis().eval(HIT_SCRIPT, 1, key, String(LOGIN_RATE_WINDOW_S))) as [
+    client = getOidcRedis();
+    const redis = await whenReady(client);
+    const reply = (await redis.eval(HIT_SCRIPT, 1, key, String(LOGIN_RATE_WINDOW_S))) as [
       number,
       number,
     ];
@@ -80,7 +90,8 @@ export async function checkLoginRateLimit(req: Request): Promise<RateLimitResult
     console.warn(
       JSON.stringify({
         event: 'auth.login_rate_limit_unavailable',
-        error: err instanceof Error ? err.name : typeof err,
+        category: errorCategory(err),
+        clientStatus: clientStatus(client),
       }),
     );
     return { allowed: true };
