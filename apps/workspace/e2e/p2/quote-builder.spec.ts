@@ -109,8 +109,24 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await expect(amount).not.toHaveValue('');
     await expect(amount).toBeEnabled();
     await expect(percent).toHaveValue('100.00');
+    const due = page.getByRole('group', { name: 'Due when' }).first();
+    for (const [segment, digits] of [
+      ['year', '2030'],
+      ['month', '06'],
+      ['day', '15'],
+    ] as const) {
+      await due.locator(`[data-type="${segment}"]`).pressSequentially(digits);
+    }
     await save.click();
     await expect(page.getByText('All changes saved')).toBeVisible();
+    await page.reload();
+    for (const [segment, digits] of [
+      ['year', '2030'],
+      ['month', '6'],
+      ['day', '15'],
+    ] as const) {
+      await expect(due.locator(`[data-type="${segment}"]`)).toHaveText(new RegExp(`^0?${digits}$`));
+    }
 
     await submit.click();
     const confirmation = page.getByRole('dialog', { name: 'Submit this quotation for approval?' });
