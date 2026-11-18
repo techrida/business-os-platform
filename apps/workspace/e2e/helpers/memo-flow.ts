@@ -104,7 +104,7 @@ export async function createDraftMemo(
     await expect(box).toHaveValue(signers[i]!);
   }
 
-  await page.getByRole('button', { name: 'Save draft' }).click();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
 
   await page.waitForURL(/\/memos\/[0-9a-f-]{36}(\?.*)?$/, { timeout: 30_000 });
   const memoId = new URL(page.url()).pathname.split('/').pop() ?? '';
@@ -118,8 +118,7 @@ export async function createDraftMemo(
 }
 
 /** The approval route panel on a draft memo. It exists only while the memo can still change. */
-export const routePanel = (page: Page) =>
-  page.getByRole('complementary', { name: 'Approval route' });
+export const routePanel = (page: Page) => page.getByRole('region', { name: 'Approval route' });
 
 /**
  * Reads the previewed steps from a draft memo's page: who each step asks, and the reason given.
@@ -145,9 +144,13 @@ export async function readPreviewSteps(page: Page): Promise<{ who: string; reaso
 
 /** Presses "Submit for approval" and returns the approval request id from the memo's link. */
 export async function submitMemo(page: Page): Promise<string> {
-  const submit = page.getByRole('button', { name: 'Submit for approval' });
+  const submit = page.getByRole('button', { name: 'Submit for approval', exact: true });
   await expect(submit).toBeEnabled({ timeout: 30_000 });
   await submit.click();
+  await page
+    .getByRole('dialog', { name: 'Submit for approval?' })
+    .getByRole('button', { name: 'Submit for approval', exact: true })
+    .click();
   await page.waitForURL(/[?&]submitted=pending\b/, { timeout: 30_000 });
   await expect(page.getByText('Submitted for approval.', { exact: false })).toBeVisible();
   const link = page.getByRole('link', { name: 'View the approval route and history' });
