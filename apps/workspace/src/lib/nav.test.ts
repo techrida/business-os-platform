@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { NAV_GROUPS, SHIPPED_PHASES, isBuilt, ownsPath, titleForPath, visibleGroups } from './nav';
+import {
+  NAV_GROUPS,
+  SHIPPED_PHASES,
+  isBuilt,
+  ownsPath,
+  searchNavGroups,
+  titleForPath,
+  visibleGroups,
+} from './nav';
 
 const items = NAV_GROUPS.flatMap((group) => group.items);
 
@@ -9,7 +17,6 @@ describe('NAV_GROUPS', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Overview',
       'Work',
-      'Administration',
       'Organization',
       'CRM',
       'Sales Management',
@@ -95,12 +102,13 @@ describe('visibleGroups', () => {
   const labelsFor = (showAdmin: boolean) =>
     visibleGroups(showAdmin).flatMap((g) => g.items.map((i) => i.label));
 
-  it('hides the admin screens and the empty Administration group from non-admins', () => {
-    expect(visibleGroups(false).map((g) => g.label)).not.toContain('Administration');
+  it('hides the admin screens and the empty Organization group from non-admins', () => {
+    expect(visibleGroups(false).map((g) => g.label)).not.toContain('Organization');
     expect(labelsFor(false)).not.toContain('Users');
     expect(labelsFor(false)).not.toContain('Settings');
     expect(labelsFor(false)).toContain('Inbox');
-    expect(labelsFor(false)).toContain('Help');
+    expect(labelsFor(false)).not.toContain('Help');
+    expect(labelsFor(true)).not.toContain('Department');
   });
 
   it('shows them to admins', () => {
@@ -133,5 +141,18 @@ describe('titleForPath', () => {
 
   it('falls back to the app name for any other path', () => {
     expect(titleForPath('/somewhere-else')).toBe('Business OS');
+  });
+});
+
+describe('searchNavGroups', () => {
+  it('searches group and page labels without surfacing unavailable destinations', () => {
+    expect(searchNavGroups(visibleGroups(false), '  INBOX ')).toEqual([
+      { label: 'Work', items: [expect.objectContaining({ href: '/inbox' })] },
+    ]);
+    expect(searchNavGroups(visibleGroups(false), 'organization')).toEqual([]);
+    expect(
+      searchNavGroups(visibleGroups(true), 'organization')[0]?.items.map((item) => item.label),
+    ).toEqual(['Users', 'Roles & Permissions', 'Approval Workflows']);
+    expect(searchNavGroups(NAV_GROUPS, 'department')).toEqual([]);
   });
 });
