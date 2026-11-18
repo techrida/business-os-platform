@@ -17,7 +17,6 @@ describe('NAV_GROUPS', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Overview',
       'Work',
-      'Administration',
       'Organization',
       'CRM',
       'Sales Management',
@@ -133,16 +132,17 @@ describe('visibleGroups', () => {
   const labelsFor = (showAdmin: boolean) =>
     visibleGroups(showAdmin).flatMap((g) => g.items.map((i) => i.label));
 
-  it('hides the admin screens and the empty Administration group from non-admins', () => {
-    expect(visibleGroups(false).map((g) => g.label)).not.toContain('Administration');
+  it('hides the admin screens and the empty Organization group from non-admins', () => {
+    expect(visibleGroups(false).map((g) => g.label)).not.toContain('Organization');
     expect(labelsFor(false)).not.toContain('Users');
     expect(labelsFor(false)).not.toContain('Settings');
     expect(labelsFor(false)).toContain('Inbox');
-    expect(labelsFor(false)).toContain('Help');
+    expect(labelsFor(false)).not.toContain('Help');
+    expect(labelsFor(true)).not.toContain('Department');
   });
 
   it('shows them to admins', () => {
-    expect(visibleGroups(true).map((g) => g.label)).toContain('Administration');
+    expect(visibleGroups(true).map((g) => g.label)).toContain('Organization');
     expect(labelsFor(true)).toEqual(expect.arrayContaining(['Users', 'Settings']));
   });
 });
@@ -233,14 +233,14 @@ describe('titleForPath', () => {
 });
 
 describe('searchNavGroups', () => {
-  it('searches only built destinations visible to the current role', () => {
-    const groups = visibleGroups(false);
-    const labels = (query: string) =>
-      searchNavGroups(groups, query).flatMap((group) => group.items.map((item) => item.label));
-    expect(labels(' work ')).toEqual(['Inbox', 'Memos']);
-    expect(labels('INBOX')).toEqual(['Inbox']);
-    expect(labels('Projects')).toEqual([]);
-    expect(labels('Users')).toEqual([]);
-    expect(searchNavGroups(visibleGroups(true), 'Users')[0]?.items[0]?.href).toBe('/admin/users');
+  it('searches group and page labels without surfacing unavailable destinations', () => {
+    expect(searchNavGroups(visibleGroups(false), '  INBOX ')).toEqual([
+      { label: 'Work', items: [expect.objectContaining({ href: '/inbox' })] },
+    ]);
+    expect(searchNavGroups(visibleGroups(false), 'organization')).toEqual([]);
+    expect(
+      searchNavGroups(visibleGroups(true), 'organization')[0]?.items.map((item) => item.label),
+    ).toEqual(['Users', 'Roles & Permissions', 'Approval Workflows']);
+    expect(searchNavGroups(NAV_GROUPS, 'department')).toEqual([]);
   });
 });

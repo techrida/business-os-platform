@@ -5,8 +5,8 @@ import { Icon } from './icon';
 import styles from './page.module.css';
 
 /**
- * The page's `main`: 1124px of content with the 48px margin at 1440 (steps down with the
- * breakpoints), blocks 24px apart. `narrow` (720px) is for forms. It carries `id="main"`.
+ * The page's `main` uses the shared container, page spacing and responsive margins.
+ * `narrow` has a 720px content cap for forms. It carries `id="main"`.
  */
 export function Page({
   width = 'full',
