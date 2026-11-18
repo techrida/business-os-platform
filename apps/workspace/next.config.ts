@@ -67,6 +67,14 @@ const nextConfig: NextConfig = {
           { key: 'Content-Security-Policy', value: filePreviewPolicy },
         ],
       },
+      {
+        // Invoice previews stream only the authenticated, scan-approved original PDF.
+        source: '/invoices/:id/document/preview',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: filePreviewPolicy },
+        ],
+      },
     ]);
   },
 };

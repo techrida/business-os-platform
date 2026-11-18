@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { InvoiceKind, InvoiceStatus } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,6 +11,28 @@ import { InvoiceActions } from './invoice-actions';
 // The dialogs import the server actions, which import server-only modules.
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: vi.fn() }));
+// Radix mounts its portal only when a browser opens it. Keep the footer separate while
+// rendering the producer's form data and button wiring in this server-rendered test.
+vi.mock('@/components/ui/dialog', () => ({
+  Dialog: ({
+    trigger,
+    title,
+    description,
+    children,
+    footer,
+  }: Record<'trigger' | 'title' | 'description' | 'children' | 'footer', ReactNode>) => (
+    <>
+      {trigger}
+      <section>
+        <h2>{title}</h2>
+        <p>{description}</p>
+        {children}
+        <footer>{footer}</footer>
+      </section>
+    </>
+  ),
+  DialogClose: ({ children }: { children: ReactNode }) => children,
+}));
 
 function render(
   kind: InvoiceKind,
@@ -78,6 +101,12 @@ describe('the forms', () => {
     expect(html).toContain('Discard INV-2083/84-00009');
     expect(html).toContain('name="reason"');
     expect(html).toContain('cannot be brought back');
+    const ids = [...html.matchAll(/<form id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(2);
+    for (const id of ids) {
+      expect(html).toContain(`</form><footer>`);
+      expect(html).toContain(`form="${id}"`);
+    }
   });
 
   it('say that issuing sets the number and date, which cannot be changed', () => {

@@ -157,12 +157,10 @@ describe('invoice detail page', () => {
     expect(await render()).toMatch(/no approval/i);
   });
 
-  it('shows the PDF as a plain anchor, never a prefetching Link, once issued', async () => {
+  it('offers a dialog trigger for the issued PDF without a prefetching download link', async () => {
     const html = await render();
-    const pdf = html.match(/<a [^>]*href="\/invoices\/[^"]+\/document"[^>]*>/);
-    expect(pdf?.[0]).toBeDefined();
-    expect(pdf?.[0]).not.toContain('data-next-link');
-    expect(html).toContain('Download PDF');
+    expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>.*Preview invoice<\/button>/);
+    expect(html).not.toMatch(/<a[^>]+href="\/invoices\/[^"]+\/document"/);
   });
 
   it.each(['draft', 'submitted', 'returned', 'approved'])(
@@ -228,10 +226,11 @@ describe('invoice detail page', () => {
     expect(mocks.listTaxCodes).not.toHaveBeenCalled();
   });
 
-  it('still opens when the tax codes fail to load, and says so in the debit note dialog', async () => {
+  it('still opens the detail and offers the note dialogs when tax codes fail to load', async () => {
     mocks.listTaxCodes.mockRejectedValue(new Error('down'));
     const html = await render();
-    expect(html).toContain('tax codes did not load');
+    expect(html).toContain('Invoice details');
+    expect(html).toMatch(/<button[^>]*>Debit note<\/button>/);
   });
 
   it('puts the actions the role may take into the action slot, and none on an issued invoice', async () => {
