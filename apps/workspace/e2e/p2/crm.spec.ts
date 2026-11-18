@@ -91,9 +91,13 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
     await test.step('convert a qualified lead into an opportunity', async () => {
       await page.goto('/leads/new');
       await page.waitForLoadState('networkidle');
-      await page.getByLabel('Title').fill(title);
-      await page.getByLabel('Source').selectOption('referral');
-      await page.getByLabel('Company').fill(`Board Test ${stamp} Pvt. Ltd.`);
+      await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill(title);
+      await page
+        .getByRole('combobox', { name: 'Lead source', exact: true })
+        .selectOption('referral');
+      await page
+        .getByRole('textbox', { name: 'Company or organization', exact: true })
+        .fill(`Board Test ${stamp} Pvt. Ltd.`);
       await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
       await page.getByRole('button', { name: 'Save lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
@@ -103,15 +107,19 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await page.getByLabel('Move to').selectOption('contacted');
       await page.getByRole('button', { name: 'Move', exact: true }).click();
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
-      await page.getByLabel('Move to').selectOption('qualified');
-      await page.getByRole('button', { name: 'Move', exact: true }).click();
+      await page.getByRole('button', { name: 'Qualify lead', exact: true }).click();
+      await page
+        .getByRole('dialog', { name: 'Qualify this lead?' })
+        .getByRole('button', { name: 'Qualify lead', exact: true })
+        .click();
       await expect(page.getByText('Moved to Qualified.')).toBeVisible();
 
       await page.getByRole('button', { name: 'Convert to opportunity' }).click();
       const dialog = page.getByRole('dialog', { name: 'Convert lead to opportunity' });
-      // The dialog starts from the lead's company and contact; the address is the one thing it cannot know.
+      // Keep the lead's company and contact, then provide the required address and contact email.
       await dialog.getByLabel('Address', { exact: true }).fill('1 Durbar Marg');
       await dialog.getByLabel('City', { exact: true }).fill('Kathmandu');
+      await dialog.getByLabel('Email', { exact: true }).fill(`board-test-${stamp}@example.test`);
       await dialog.getByRole('button', { name: 'Convert', exact: true }).click();
       await page.waitForURL(/\/opportunities\/[0-9a-f-]{36}$/, { timeout: 30_000 });
     });
