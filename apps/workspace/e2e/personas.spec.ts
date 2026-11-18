@@ -8,7 +8,7 @@ import { expectZitadelCredentialForm, signInOnZitadel } from './helpers/zitadel-
  * OIDC code flow. Nothing is stubbed: no token, header or cookie is faked anywhere.
  */
 
-const SESSION_COOKIE = '__Host-bos_session';
+const SESSION_COOKIE = process.env.BOS_E2E_SESSION_COOKIE ?? '__Host-bos_session';
 const authOrigin = process.env.BOS_E2E_AUTH_ORIGIN ?? 'https://auth.localhost';
 
 // A login answered with 429 (CR-03) makes a sign-in look broken for no reason in the app. Name it
@@ -103,16 +103,7 @@ test.describe('persona sign-in and sign-out', () => {
         // "Accounts / Select the account you want to use" chooser. Listing the account is fine;
         // what matters is that picking it asks for the password again instead of signing
         // straight back in (which would mean ZITADEL's own session survived the logout).
-        const chooser = page.getByRole('heading', { name: 'Accounts', level: 1 });
-        // Wait until ZITADEL has rendered either page before deciding (avoids a race).
-        await expect(chooser.or(page.getByLabel(/^\s*(login ?name|password)\s*$/i))).toBeVisible({
-          timeout: 30_000,
-        });
-        if (await chooser.isVisible()) {
-          const name = who.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          await page.getByRole('button', { name: new RegExp(name, 'i') }).click();
-        }
-        await expectZitadelCredentialForm(page);
+        await expectZitadelCredentialForm(page, who);
         await expect(page.getByRole('heading', { name: 'Welcome back' })).toHaveCount(0);
       });
     });
