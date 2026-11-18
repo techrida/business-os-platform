@@ -331,6 +331,74 @@ export function CustomerForm({
         </div>
       </Panel>
 
+      {mode === 'create' ? (
+        <Panel
+          title="Main contact"
+          description="Quotations are sent to this person by email. You can add more contacts later."
+        >
+          <div className={styles.grid}>
+            <Field label="Full name" error={err.contactName}>
+              {(control) => (
+                <Input
+                  name="contactName"
+                  value={values.contactName}
+                  onChange={set('contactName')}
+                  maxLength={200}
+                  autoComplete="off"
+                  required
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field label="Email" error={err.contactEmail}>
+              {(control) => (
+                <Input
+                  type="email"
+                  name="contactEmail"
+                  value={values.contactEmail}
+                  onChange={set('contactEmail')}
+                  maxLength={254}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field
+              label="Phone"
+              hint="Optional. Start with + and the country code, for example +9779812345678."
+              error={err.contactPhone}
+            >
+              {(control) => (
+                <Input
+                  type="tel"
+                  name="contactPhone"
+                  value={values.contactPhone}
+                  onChange={set('contactPhone')}
+                  maxLength={30}
+                  autoComplete="off"
+                  className={styles.numeric}
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field label="Job title" hint="Optional." error={err.contactTitle}>
+              {(control) => (
+                <Input
+                  name="contactTitle"
+                  value={values.contactTitle}
+                  onChange={set('contactTitle')}
+                  maxLength={100}
+                  autoComplete="off"
+                  {...control}
+                />
+              )}
+            </Field>
+          </div>
+        </Panel>
+      ) : null}
+
       <div className={styles.actions}>
         <Button type="submit" disabled={pending}>
           {submitLabel}

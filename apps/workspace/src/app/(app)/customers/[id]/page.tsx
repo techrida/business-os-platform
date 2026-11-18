@@ -85,6 +85,11 @@ function Contacts({
   mayWrite: boolean;
   customerId: string;
 }) {
+  // What the add-contact form needs from the loaded list. Unknown (the list failed) reads as "no",
+  // and the API still refuses a second main contact (409) or a missing first email (422).
+  const loaded = result.status === 'fulfilled' ? result.value.items : [];
+  const hasPrimary = loaded.some((c) => c.isPrimary);
+  const requireEmail = result.status === 'fulfilled' && !loaded.some((c) => c.email !== null);
   return (
     <Panel
       title="Contacts"
@@ -158,6 +163,8 @@ function Contacts({
             customerId={customerId}
             // One key per render of this page, so a double click saves the contact once.
             idempotencyKey={randomUUID()}
+            hasPrimary={hasPrimary}
+            requireEmail={requireEmail}
           />
         </div>
       ) : null}
