@@ -249,6 +249,11 @@ export function QuoteBuilder({
     previewKey,
   ]);
   const readyPreview = view.state === 'ready' ? view.preview : null;
+  const pricedTotal = readyPreview?.totals.total ?? null;
+  // An amount draft only has meaning against the total it was typed for. Once pricing is unavailable
+  // (for example a new issue date that must be saved first) the amount field is disabled, so a kept
+  // draft error would block Save with no way to correct it. The percent keeps its last valid value.
+  if (pricedTotal === null && Object.keys(amountDrafts).length > 0) setAmountDrafts({});
 
   const lineAmounts = useMemo(() => {
     const map = new Map<number, string>();
@@ -621,7 +626,7 @@ export function QuoteBuilder({
             paymentTerms={paymentTerms}
             milestones={values.schedule}
             currency={values.currency}
-            total={readyPreview?.totals.total ?? null}
+            total={pricedTotal}
             amountDrafts={amountDrafts}
             disabled={busy !== null}
             showScheduleErrors={scheduleAttempted}
