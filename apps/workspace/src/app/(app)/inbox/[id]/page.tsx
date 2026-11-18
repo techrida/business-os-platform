@@ -239,6 +239,31 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
       </Panel>
 
       <div className={styles.columns}>
+        <Panel as="aside" title="Your decision" className={`${styles.detailPanel} ${styles.side}`}>
+          {inboxItem ? (
+            <div className={styles.assignment} role="region" aria-label="Why this is in your inbox">
+              <p className={styles.assignmentLabel}>Why this is in your inbox</p>
+              <p>{inboxItem.reason}</p>
+            </div>
+          ) : null}
+          {waitingOnMe === 'no' ? (
+            <p className={styles.note}>
+              {request.status === 'pending'
+                ? 'This request is waiting for a different approver.'
+                : 'This request has been decided.'}
+            </p>
+          ) : (
+            <DecisionForm
+              requestId={request.requestId}
+              documentNumber={request.documentNumber}
+              version={request.version}
+              // One key per render of this page: a double click or a retry after a network
+              // error sends the same key, so the decision is applied once.
+              idempotencyKey={randomUUID()}
+              reloadHref={path}
+            />
+          )}
+        </Panel>
         <div className={styles.main}>
           <Panel
             title="Submitted details"
@@ -306,32 +331,6 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             )}
           </Panel>
         </div>
-
-        <Panel as="aside" title="Your decision" className={`${styles.detailPanel} ${styles.side}`}>
-          {inboxItem ? (
-            <div className={styles.assignment} role="region" aria-label="Why this is in your inbox">
-              <p className={styles.assignmentLabel}>Why this is in your inbox</p>
-              <p>{inboxItem.reason}</p>
-            </div>
-          ) : null}
-          {waitingOnMe === 'no' ? (
-            <p className={styles.note}>
-              {request.status === 'pending'
-                ? 'This request is waiting for a different approver.'
-                : 'This request has been decided.'}
-            </p>
-          ) : (
-            <DecisionForm
-              requestId={request.requestId}
-              documentNumber={request.documentNumber}
-              version={request.version}
-              // One key per render of this page: a double click or a retry after a network
-              // error sends the same key, so the decision is applied once.
-              idempotencyKey={randomUUID()}
-              reloadHref={path}
-            />
-          )}
-        </Panel>
       </div>
     </Page>
   );

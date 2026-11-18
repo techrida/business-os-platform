@@ -75,8 +75,13 @@
     grid-template-columns: minmax(0, 2fr) minmax(248px, 1fr);
   }
 
+  .main {
+    grid-area: 1 / 1;
+  }
+
   /* The header is sticky too, so the card stops below it. */
   .side {
+    grid-area: 1 / 2;
     position: sticky;
     top: calc(var(--bos-header-height) + 16px);
   }
