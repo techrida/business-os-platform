@@ -162,7 +162,9 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
       ...(memoTemplate.success ? [memoTemplate.data.preparedBy, ...selectedSigners] : []),
     ].map((person) => [person.userId.toLowerCase(), person.name]),
   );
-  const person = (id: string) => <span>{names.get(id.toLowerCase()) ?? 'Person name unavailable'}</span>;
+  const person = (id: string) => (
+    <span>{names.get(id.toLowerCase()) ?? 'Person name unavailable'}</span>
+  );
   const rows = snapshotEntries(snapshot, names).filter(
     (row) =>
       (!memoTemplate.success || row.key !== 'template') && (!isMemo || row.key !== 'attachments'),
