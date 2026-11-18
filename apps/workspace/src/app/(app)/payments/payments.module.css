@@ -1,30 +1,6 @@
 /* Layout and small pieces that belong to the payment screens only. Everything else comes from
    components/ui. Colours are Figma tokens from styles/tokens.css. */
 
-.count {
-  white-space: nowrap;
-}
-
-/* The filter is a plain GET form: it works without script, and the URL carries the choice. */
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.filterField {
-  flex: 0 1 240px;
-  min-width: min(100%, 200px);
-}
-
-.toolbarActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-}
-
 .number {
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
@@ -90,4 +66,34 @@
 
 .negative {
   color: var(--status-error);
+}
+
+.stack > * {
+  min-width: 0;
+}
+
+.file {
+  align-items: center;
+  gap: 8px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.file:last-child {
+  border-bottom: 0;
+}
+
+.fileTrigger {
+  max-width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 1200px) {
+  .stack {
+    grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+    align-items: start;
+  }
 }
