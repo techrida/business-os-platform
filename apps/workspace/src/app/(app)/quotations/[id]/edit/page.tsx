@@ -98,6 +98,32 @@ export default async function EditQuotationPage({
     );
   }
 
+  // Editable, but not by this caller (a colleague's quotation, or a role that cannot draft): the
+  // server would refuse the save with 403, so the editor is not offered at all.
+  if (!detail.capabilities.canEdit) {
+    return (
+      <Page width="narrow">
+        <Breadcrumb items={crumbs} />
+        <PageHeader title={title} status={<Badge tone="info">{version.status}</Badge>} />
+        <Alert
+          tone="info"
+          role="status"
+          title="You can view this quotation but not edit it"
+          actions={
+            <LinkButton
+              href={`/quotations/${encodeURIComponent(quotation.id)}`}
+              variant="secondary"
+            >
+              Open the quotation
+            </LinkButton>
+          }
+        >
+          Only its owner, or someone whose role allows editing it, can change this draft.
+        </Alert>
+      </Page>
+    );
+  }
+
   const [customer, opportunity, lookups] = await Promise.all([
     api.getCustomer(session, quotation.customerId).then(
       (c): CustomerDto | null => c,
