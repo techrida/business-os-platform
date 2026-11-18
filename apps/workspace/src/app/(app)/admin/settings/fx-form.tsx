@@ -3,6 +3,7 @@
 import { useActionState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select } from '@/components/ui/field';
 
 import { IDLE } from '../action-state';
@@ -41,8 +42,7 @@ export function FxForm({ today }: { today: string }) {
         </Field>
         <Field label="Applies from">
           {(control) => (
-            <Input
-              type="date"
+            <DatePicker
               name="rateDate"
               required
               defaultValue={kept.rateDate ?? today}
