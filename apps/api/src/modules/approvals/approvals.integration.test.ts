@@ -674,7 +674,8 @@ describe('versions, inbox and reading', () => {
     const detail = await service.get(requestId);
     expect(detail.requestId).toBe(requestId);
     // A role step names no individual. Other staff and role members stay out of this response.
-    expect(detail.people).toEqual([{ userId: U.requester, name: expect.any(String) }]);
+    expect(detail.people?.map((person) => person.userId)).toEqual([U.requester]);
+    expect(detail.people?.[0]?.name).toMatch(/^staff /);
     // R23: out of scope answers like an unknown id, so the id's existence does not leak.
     me = U.stranger;
     await expect(service.get(requestId)).rejects.toMatchObject({ status: 404 });
