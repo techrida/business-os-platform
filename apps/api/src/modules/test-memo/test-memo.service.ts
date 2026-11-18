@@ -55,6 +55,7 @@ import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { can } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
+import { personLabel } from '../../platform/users/person-names';
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
@@ -247,7 +248,8 @@ export class TestMemoService implements OnModuleInit {
     const people = await this.db
       .select({
         userId: users.id,
-        name: users.displayName,
+        displayName: users.displayName,
+        email: users.email,
         jobTitle: userEntities.jobTitle,
         departmentId: userEntities.departmentId,
       })
@@ -273,18 +275,16 @@ export class TestMemoService implements OnModuleInit {
       currentUserId: principal.userId,
       departmentId: principal.departmentId,
       departments: depts,
-      people: people.flatMap((p) =>
-        p.name?.trim()
-          ? [
-              {
-                userId: p.userId,
-                name: p.name,
-                jobTitle: p.jobTitle,
-                department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
-              },
-            ]
-          : [],
-      ),
+      people: people.flatMap((p) => {
+        const name = personLabel(p.displayName, p.email);
+        if (!name) return [];
+        return [{
+          userId: p.userId,
+          name,
+          jobTitle: p.jobTitle,
+          department: depts.find((d) => d.id === p.departmentId)?.name ?? null,
+        }];
+      }),
     };
   }
 
