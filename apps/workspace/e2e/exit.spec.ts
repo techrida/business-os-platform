@@ -168,6 +168,10 @@ test('P1 exit: a memo with a scanned upload goes through two approvals, emails a
     await test.step('the accountant sees the reason in the inbox and approves step 1', async () => {
       const found = await openFromInbox(accountant, title, stepOneReason);
       expect(found.requestId).toBe(requestId);
+      const frozenFiles = accountant.getByRole('region', { name: 'Attachments', exact: true });
+      await expect(
+        frozenFiles.getByRole('button', { name: 'exit-quote.pdf', exact: true }),
+      ).toBeVisible();
       await approve(accountant, 'Looks right. Step 1 approved by the exit spec.');
       // Decided: it leaves this person's inbox.
       await expect(inboxRow(accountant, title)).toHaveCount(0);
