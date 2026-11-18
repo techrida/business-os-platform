@@ -623,6 +623,28 @@ describe('the customer of a memo is a party (ADR 0027 section 5)', () => {
 });
 
 describe('PATCH /v1/test-memos/:id', () => {
+  it('keeps a newer saved version when a stale tab edits or submits', async () => {
+    const { id } = await createMemo();
+    const newer = await request(baseUrl)
+      .patch(`/v1/test-memos/${id}`)
+      .send({ title: 'Newer version', expectedVersion: 1 });
+    expect(newer.status).toBe(200);
+
+    const staleEdit = await request(baseUrl)
+      .patch(`/v1/test-memos/${id}`)
+      .send({ title: 'Stale version', expectedVersion: 1 });
+    expect(staleEdit.status).toBe(409);
+    const staleSubmit = await request(baseUrl)
+      .post(`/v1/test-memos/${id}/submit`)
+      .send({ expectedVersion: 1 });
+    expect(staleSubmit.status).toBe(409);
+    for (const result of [staleEdit, staleSubmit]) {
+      expect(result.body).toMatchObject({ error: { reason: 'stale_memo' } });
+    }
+    const memo = await request(baseUrl).get(`/v1/test-memos/${id}`);
+    expect(memo.body).toMatchObject({ title: 'Newer version', status: 'draft', version: 2 });
+  });
+
   it('lets the owner edit a draft, bumps the version and re-freezes the NPR value', async () => {
     const { id } = await createMemo();
     const res = await request(baseUrl)
