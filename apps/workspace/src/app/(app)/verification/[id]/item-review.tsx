@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useId, useRef, useState } from 'react';
 
+import styles from '../verification.module.css';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Textarea } from '@/components/ui/field';
@@ -25,6 +26,8 @@ export function ItemReview({
   const router = useRouter();
   const hintId = useId();
   const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState('');
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
   const [pending, setPending] = useState(false);
   const [open, setOpen] = useState(false);
   const busy = useRef(false);
@@ -32,6 +35,8 @@ export function ItemReview({
   async function decide(intent: 'approve' | 'reject') {
     if (busy.current || (intent === 'approve' && !canApprove)) return false;
     if (intent === 'reject' && !reason.trim()) {
+      setReasonError('Enter a rejection reason');
+      reasonRef.current?.focus();
       toast.error('Enter a rejection reason');
       return false;
     }
@@ -67,7 +72,7 @@ export function ItemReview({
     }
   }
   return (
-    <div>
+    <div className={styles.headerActions}>
       <Button
         size="small"
         variant="secondary"
@@ -83,7 +88,10 @@ export function ItemReview({
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
-          if (!next) setReason('');
+          if (!next) {
+            setReason('');
+            setReasonError('');
+          }
         }}
         trigger={
           <Button size="small" variant="ghost" disabled={pending} aria-label={`Reject ${label}`}>
@@ -96,14 +104,18 @@ export function ItemReview({
         confirmLabel="Reject document"
         onConfirm={() => decide('reject')}
       >
-        <Field label="Rejection reason">
+        <Field label="Rejection reason" error={reasonError || undefined}>
           {(control) => (
             <Textarea
               {...control}
+              ref={reasonRef}
               required
               maxLength={2000}
               value={reason}
-              onChange={(event) => setReason(event.target.value)}
+              onChange={(event) => {
+                setReason(event.target.value);
+                setReasonError('');
+              }}
               rows={4}
             />
           )}

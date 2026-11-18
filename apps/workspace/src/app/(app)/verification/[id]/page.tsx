@@ -112,11 +112,21 @@ export default async function VerificationCasePage({
     if (documentId === undefined) return;
     const bound = c.checklist.find((item) => item.documentId === documentId)?.evidence
       ?.documentVersionId;
-    approvalFiles.set(
-      documentId,
-      r.status === 'fulfilled' ? approvalFile(r.value.versions, bound) : 'unavailable',
-    );
-    files.set(documentId, r.status === 'fulfilled' ? fileOf(r.value, bound) : null);
+    const document =
+      r.status === 'fulfilled' &&
+      r.value.id === documentId &&
+      r.value.ownerType === 'verification_case' &&
+      r.value.ownerId === c.id
+        ? r.value
+        : null;
+    const needsBinding = c.reviewPolicy === 'document_review_v1' && c.status === 'submitted';
+    if (!document || (needsBinding && !bound)) {
+      approvalFiles.set(documentId, 'unavailable');
+      files.set(documentId, null);
+      return;
+    }
+    approvalFiles.set(documentId, approvalFile(document.versions, bound));
+    files.set(documentId, fileOf(document, bound));
   });
   const history = await getVerificationReviewHistory(session, id, before).catch(() => null);
   const reviewerNames = new Map(
@@ -336,7 +346,7 @@ export default async function VerificationCasePage({
                   {entry.itemKey ? CHECKLIST_LABEL[entry.itemKey] : 'Case'}: {entry.decision}.{' '}
                   {when(entry.reviewedAt)} · {entry.reviewerName || 'a staff member'}
                 </p>
-                {entry.comment ? <p>{entry.comment}</p> : null}
+                {entry.comment ? <p className={styles.comment}>{entry.comment}</p> : null}
               </div>
             ))}
             {history.nextCursor ? (
