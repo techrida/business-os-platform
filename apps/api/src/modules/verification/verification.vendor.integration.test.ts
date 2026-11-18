@@ -491,10 +491,24 @@ describe('a vendor case, once the vendor adapter is registered', () => {
 
     // Clean documents are checked before a decision: a different reviewer approves them.
     as(U.pmo, 'pmo');
+    expect(dto.reviewPolicy).toBe('case_review_v0');
+    const itemDecision = await api()
+      .post(`/v1/verification-cases/${dto.id}/checklist/pan_certificate/decision`)
+      .set('Idempotency-Key', randomUUID())
+      .send({ decision: 'approve', expectedVersion: dto.version });
+    expect(itemDecision.status).toBe(409);
     const approved = await api()
       .post(`/v1/verification-cases/${dto.id}/decision`)
       .send({ decision: 'approve', comment: 'ok', expectedVersion: dto.version });
     expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    expect(
+      (
+        await ownerPool.query<{ count: string }>(
+          'SELECT count(*) FROM app.verification_review_events WHERE case_id=$1',
+          [dto.id],
+        )
+      ).rows[0]?.count,
+    ).toBe('0');
     expect(VerificationCaseDtoSchema.parse(approved.body)).toMatchObject({
       status: 'approved',
       reviewedBy: U.pmo,
@@ -561,7 +575,14 @@ describe('a vendor case, once the vendor adapter is registered', () => {
       const mine = await openCase(await newCustomer(U.sales));
       // Past the permission check: an unknown document is a 422, a missing required document a 409.
       expect((await write.checklist(mine.id)).status).toBe(422);
-      expect((await write.submit(mine.id)).status).toBe(409);
+      expect(
+        (
+          await api()
+            .post(`/v1/verification-cases/${mine.id}/submit`)
+            .set('Idempotency-Key', randomUUID())
+            .send({ expectedVersion: mine.version })
+        ).status,
+      ).toBe(409);
 
       as(U.founder, 'founder');
       const vendorParty = await newVendor(U.sales);
