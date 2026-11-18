@@ -307,7 +307,9 @@ services:
 
   zitadel-login:
     profiles: [core]
-    image: ghcr.io/zitadel/zitadel-login:v4.20.1@sha256:1508e83275f1471b20ed42b159174e6b3e10e6c2481e64c0aee7ed5bfeeec18b
+    build:
+      context: ../..
+      dockerfile: infra/login/Dockerfile
     user: '0' # same reason as zitadel-api; also lets it read the root-owned PAT file
     environment:
       ZITADEL_API_URL: http://zitadel-api:8080
