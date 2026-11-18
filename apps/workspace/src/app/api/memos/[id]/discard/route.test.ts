@@ -1,6 +1,11 @@
+import { createRequire } from 'node:module';
+
+import type { Redis } from 'ioredis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Session } from '@/lib/session';
+import { __setRedisForTests, type Session } from '@/lib/session';
+
+const RedisMock = createRequire(import.meta.url)('ioredis-mock') as new () => Redis;
 
 vi.mock('server-only', () => ({}));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
@@ -75,12 +80,14 @@ beforeEach(() => {
     vi.stubEnv(k, v);
   }
   __resetEnvForTests();
+  __setRedisForTests(new RedisMock());
   getSession.mockReset();
   getSession.mockResolvedValue(session);
   apiFetch.mockReset();
 });
 
 afterEach(() => {
+  __setRedisForTests(undefined);
   vi.unstubAllEnvs();
   __resetEnvForTests();
 });
