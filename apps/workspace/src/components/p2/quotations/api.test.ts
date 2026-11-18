@@ -45,6 +45,7 @@ const listItem = {
   total: '2690999.99',
   validUntil: '2026-11-23',
   ownerName: null,
+  canEdit: true,
 };
 
 function reply(status: number, body: unknown): Response {
@@ -95,8 +96,22 @@ describe('listQuotations', () => {
 
   it('passes the status filter in the query string', async () => {
     fetchMock.mockResolvedValue(reply(200, []));
-    await listQuotations(session, 'sent');
+    await listQuotations(session, { status: 'sent' });
     expect(calledUrl().searchParams.get('status')).toBe('sent');
+    expect(calledUrl().searchParams.has('opportunityId')).toBe(false);
+  });
+
+  it('passes the opportunity filter, alone or with a status', async () => {
+    const opportunityId = '3f1d2c3b-0d52-4d1e-9d8a-4f6c7a5e4a5f';
+    fetchMock.mockResolvedValue(reply(200, []));
+    await listQuotations(session, { opportunityId });
+    expect(calledUrl().searchParams.get('opportunityId')).toBe(opportunityId);
+    expect(calledUrl().searchParams.has('status')).toBe(false);
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(reply(200, []));
+    await listQuotations(session, { opportunityId, status: 'draft' });
+    expect(calledUrl().searchParams.get('opportunityId')).toBe(opportunityId);
+    expect(calledUrl().searchParams.get('status')).toBe('draft');
   });
 
   it('turns a body that breaks the contract into a 502, never undefined fields', async () => {
@@ -125,6 +140,7 @@ describe('getQuotation', () => {
     statusHistory: [],
     customerName: 'Big Kahuna Burger Ltd.',
     contacts: [{ id: ID_B, name: 'Jules', email: null }],
+    capabilities: { canEdit: true, canRevise: false },
   };
 
   it('encodes the id as one path segment', async () => {
