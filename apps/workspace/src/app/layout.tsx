@@ -8,8 +8,6 @@ import '@/styles/token-overrides.css';
 import '@fontsource-variable/outfit';
 import '@/styles/globals.css';
 
-import { WebVitals } from '@/components/web-vitals';
-
 export const metadata: Metadata = {
   title: 'Business OS',
 };
@@ -17,10 +15,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        <WebVitals />
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
