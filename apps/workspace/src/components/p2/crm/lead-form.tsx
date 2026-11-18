@@ -1,12 +1,16 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { useActionState, useEffect, useId, useRef, useState } from 'react';
 
+import styles from '@/app/(app)/leads/leads.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
+import { Panel } from '@/components/ui/panel';
+import { toast } from '@/components/ui/toast';
 
-import styles from './crm.module.css';
 import type { FormAction, FormState } from './types';
 
 const CURRENCIES = [
@@ -49,225 +53,271 @@ export function LeadForm({
   });
   const [values, setValues] = useState<Record<string, string>>(EMPTY);
   const summary = useRef<HTMLDivElement>(null);
-  const set = (name: string) => (e: { target: { value: string } }) =>
-    setValues((v) => ({ ...v, [name]: e.target.value }));
+  const form = useRef<HTMLFormElement>(null);
+  function update(name: string, value: string) {
+    setValues((values) => ({ ...values, [name]: value }));
+  }
+  const set = (name: string) => (e: { target: { value: string } }) => update(name, e.target.value);
+  const formId = useId();
   const err = state.fieldErrors;
 
   useEffect(() => {
     if (state.error) summary.current?.focus();
     else {
       const first = Object.keys(state.fieldErrors)[0];
-      if (first) document.getElementsByName(first)[0]?.focus();
+      if (first) {
+        const control = form.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+        const firstSegment = control?.querySelector<HTMLElement>('[role="spinbutton"]');
+        (firstSegment ?? control)?.focus();
+        toast.error('Check the highlighted fields.');
+      }
     }
   }, [state]);
 
   return (
-    <form action={formAction} noValidate className={styles.form}>
-      <input type="hidden" name="idempotencyKey" value={state.key ?? idempotencyKey} />
+    <>
+      <PageHeader
+        title="Create Lead"
+        description="Record an enquiry, its contact details and the next follow-up."
+        actions={
+          <>
+            <LinkButton href="/leads" variant="secondary">
+              Cancel
+            </LinkButton>
+            <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
+              {pending ? 'Saving' : 'Save lead'}
+            </Button>
+          </>
+        }
+      />
+      <form
+        id={formId}
+        ref={form}
+        action={formAction}
+        noValidate
+        className={styles.form}
+        aria-busy={pending || undefined}
+      >
+        <input type="hidden" name="idempotencyKey" value={state.key ?? idempotencyKey} />
 
-      {state.error ? (
-        <Alert ref={summary} tabIndex={-1} tone="error" role="alert">
-          {state.error}
-        </Alert>
-      ) : null}
+        {state.error ? (
+          <Alert ref={summary} tabIndex={-1} tone="error" role="alert">
+            {state.error}
+          </Alert>
+        ) : null}
 
-      <Field label="Title" hint="What the lead is about, in a few words." error={err['title']}>
-        {(c) => (
-          <Input
-            name="title"
-            value={values['title']}
-            onChange={set('title')}
-            maxLength={200}
-            required
-            {...c}
-          />
-        )}
-      </Field>
+        <Panel title="Lead overview">
+          <Field label="Lead title" error={err['title']}>
+            {(c) => (
+              <Input
+                name="title"
+                placeholder="e.g. Inventory and dispatch automation"
+                value={values['title']}
+                onChange={set('title')}
+                maxLength={200}
+                required
+                {...c}
+              />
+            )}
+          </Field>
 
-      <div className={styles.formGrid}>
-        <Field label="Source" error={err['source']}>
-          {(c) => (
-            <Select name="source" value={values['source']} onChange={set('source')} required {...c}>
-              <option value="">Choose a source</option>
-              {sources.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Field label="Campaign" hint="Optional." error={err['campaign']}>
-          {(c) => (
-            <Input
-              name="campaign"
-              value={values['campaign']}
-              onChange={set('campaign')}
-              maxLength={100}
-              {...c}
-            />
-          )}
-        </Field>
-      </div>
+          <div className={styles.formGrid}>
+            <Field label="Lead source" error={err['source']}>
+              {(c) => (
+                <Select
+                  name="source"
+                  value={values['source']}
+                  onChange={set('source')}
+                  required
+                  {...c}
+                >
+                  <option value="">Choose a source</option>
+                  {sources.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Campaign" hint="Optional." error={err['campaign']}>
+              {(c) => (
+                <Input
+                  name="campaign"
+                  value={values['campaign']}
+                  onChange={set('campaign')}
+                  maxLength={100}
+                  {...c}
+                />
+              )}
+            </Field>
+          </div>
+        </Panel>
 
-      <div className={styles.formGrid}>
-        <Field label="Company" error={err['companyName']}>
-          {(c) => (
-            <Input
-              name="companyName"
-              value={values['companyName']}
-              onChange={set('companyName')}
-              maxLength={200}
-              required
-              {...c}
-            />
-          )}
-        </Field>
-        <Field label="Contact person" error={err['contactName']}>
-          {(c) => (
-            <Input
-              name="contactName"
-              value={values['contactName']}
-              onChange={set('contactName')}
-              maxLength={200}
-              required
-              {...c}
-            />
-          )}
-        </Field>
-        <Field label="Email" hint="Optional." error={err['email']}>
-          {(c) => (
-            <Input
-              name="email"
-              type="email"
-              autoComplete="off"
-              value={values['email']}
-              onChange={set('email')}
-              {...c}
-            />
-          )}
-        </Field>
-        <Field
-          label="Phone"
-          hint="Optional. With the country code, for example +9779812345678."
-          error={err['phone']}
-        >
-          {(c) => (
-            <Input
-              name="phone"
-              type="tel"
-              autoComplete="off"
-              value={values['phone']}
-              onChange={set('phone')}
-              {...c}
-            />
-          )}
-        </Field>
-      </div>
+        <Panel title="Prospect and company">
+          <div className={styles.formGrid}>
+            <Field label="Company or organization" error={err['companyName']}>
+              {(c) => (
+                <Input
+                  name="companyName"
+                  value={values['companyName']}
+                  onChange={set('companyName')}
+                  maxLength={200}
+                  required
+                  {...c}
+                />
+              )}
+            </Field>
+            <Field label="Contact person" error={err['contactName']}>
+              {(c) => (
+                <Input
+                  name="contactName"
+                  value={values['contactName']}
+                  onChange={set('contactName')}
+                  maxLength={200}
+                  required
+                  {...c}
+                />
+              )}
+            </Field>
+            <Field label="Email" hint="Optional." error={err['email']}>
+              {(c) => (
+                <Input
+                  name="email"
+                  type="email"
+                  autoComplete="off"
+                  value={values['email']}
+                  onChange={set('email')}
+                  {...c}
+                />
+              )}
+            </Field>
+            <Field
+              label="Phone"
+              hint="Optional. With the country code, for example +9779812345678."
+              error={err['phone']}
+            >
+              {(c) => (
+                <Input
+                  name="phone"
+                  type="tel"
+                  autoComplete="off"
+                  value={values['phone']}
+                  onChange={set('phone')}
+                  {...c}
+                />
+              )}
+            </Field>
+          </div>
 
-      <Field label="Requirement" hint="What they asked for. Optional." error={err['requirement']}>
-        {(c) => (
-          <Textarea
-            name="requirement"
-            rows={4}
-            value={values['requirement']}
-            onChange={set('requirement')}
-            maxLength={5000}
-            {...c}
-          />
-        )}
-      </Field>
+          <Field
+            label="Requirement"
+            hint="What they asked for. Optional."
+            error={err['requirement']}
+          >
+            {(c) => (
+              <Textarea
+                name="requirement"
+                rows={3}
+                value={values['requirement']}
+                onChange={set('requirement')}
+                maxLength={5000}
+                {...c}
+              />
+            )}
+          </Field>
+        </Panel>
 
-      <div className={styles.formGrid}>
-        <Field
-          label="Expected value"
-          hint="Optional. For example 12,50,000."
-          error={err['expectedValue']}
-        >
-          {(c) => (
-            <Input
-              name="expectedValue"
-              inputMode="decimal"
-              autoComplete="off"
-              value={values['expectedValue']}
-              onChange={set('expectedValue')}
-              className={styles.num}
-              {...c}
-            />
-          )}
-        </Field>
-        <Field label="Currency" error={err['currency']}>
-          {(c) => (
-            <Select name="currency" value={values['currency']} onChange={set('currency')} {...c}>
-              {CURRENCIES.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <Field label="Probability (%)" hint="Optional. 0 to 100." error={err['probability']}>
-          {(c) => (
-            <Input
-              name="probability"
-              inputMode="numeric"
-              autoComplete="off"
-              value={values['probability']}
-              onChange={set('probability')}
-              {...c}
-            />
-          )}
-        </Field>
-        <Field label="Expected close" hint="Optional." error={err['expectedClose']}>
-          {(c) => (
-            <Input
-              name="expectedClose"
-              type="date"
-              value={values['expectedClose']}
-              onChange={set('expectedClose')}
-              {...c}
-            />
-          )}
-        </Field>
-        <Field
-          label="Next follow-up"
-          hint="Optional. Kathmandu time."
-          error={err['nextFollowUpAt']}
-        >
-          {(c) => (
-            <Input
-              name="nextFollowUpAt"
-              type="datetime-local"
-              value={values['nextFollowUpAt']}
-              onChange={set('nextFollowUpAt')}
-              {...c}
-            />
-          )}
-        </Field>
-      </div>
+        <Panel title="Commercial details">
+          <div className={styles.formGrid}>
+            <Field
+              label="Expected value"
+              hint="Optional. For example 12,50,000."
+              error={err['expectedValue']}
+            >
+              {(c) => (
+                <Input
+                  name="expectedValue"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={values['expectedValue']}
+                  onChange={set('expectedValue')}
+                  {...c}
+                />
+              )}
+            </Field>
+            <Field label="Currency" error={err['currency']}>
+              {(c) => (
+                <Select
+                  name="currency"
+                  value={values['currency']}
+                  onChange={set('currency')}
+                  {...c}
+                >
+                  {CURRENCIES.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Probability (%)" hint="Optional. 0 to 100." error={err['probability']}>
+              {(c) => (
+                <Input
+                  name="probability"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  autoComplete="off"
+                  value={values['probability']}
+                  onChange={set('probability')}
+                  {...c}
+                />
+              )}
+            </Field>
+            <Field label="Expected close" hint="Optional." error={err['expectedClose']}>
+              {(c) => (
+                <DatePicker
+                  name="expectedClose"
+                  value={values['expectedClose']}
+                  onChange={(value) => update('expectedClose', value)}
+                  {...c}
+                />
+              )}
+            </Field>
+            <Field
+              label="Next follow-up"
+              hint="Optional. Kathmandu time."
+              error={err['nextFollowUpAt']}
+            >
+              {(c) => (
+                <Input
+                  name="nextFollowUpAt"
+                  type="datetime-local"
+                  value={values['nextFollowUpAt']}
+                  onChange={set('nextFollowUpAt')}
+                  {...c}
+                />
+              )}
+            </Field>
+          </div>
 
-      <Field label="Notes" hint="Optional." error={err['notes']}>
-        {(c) => (
-          <Textarea
-            name="notes"
-            rows={3}
-            value={values['notes']}
-            onChange={set('notes')}
-            maxLength={5000}
-            {...c}
-          />
-        )}
-      </Field>
-
-      <div className={styles.formActions}>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Saving' : 'Save lead'}
-        </Button>
-        <LinkButton href="/leads" variant="secondary">
-          Cancel
-        </LinkButton>
-      </div>
-    </form>
+          <Field label="Notes" hint="Optional." error={err['notes']}>
+            {(c) => (
+              <Textarea
+                name="notes"
+                rows={3}
+                value={values['notes']}
+                onChange={set('notes')}
+                maxLength={5000}
+                {...c}
+              />
+            )}
+          </Field>
+        </Panel>
+      </form>
+    </>
   );
 }
