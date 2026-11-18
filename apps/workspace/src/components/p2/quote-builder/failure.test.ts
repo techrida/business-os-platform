@@ -21,6 +21,17 @@ describe('describeQuoteFailure: approvers', () => {
     expect(f.kind).not.toBe('invalid');
   });
 
+  it("says why a chosen approver was refused (422 APPROVER_NOT_ELIGIBLE), in the API's words", () => {
+    const f = describeQuoteFailure(
+      err(422, 'APPROVER_NOT_ELIGIBLE', 'You prepared this quotation, so you cannot approve it.'),
+      'submit',
+    );
+    expect(f.message).toBe(
+      'You prepared this quotation, so you cannot approve it. Nothing was submitted.',
+    );
+    expect(f.kind).toBe('error');
+  });
+
   it('keeps the generic 422 wording for an uncoded 422', () => {
     const f = describeQuoteFailure(err(422, 'bad_request', 'nope'), 'submit');
     expect(f).toMatchObject({ kind: 'invalid' });
