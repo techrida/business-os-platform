@@ -109,6 +109,9 @@ const convertForm = () => {
     expectedVersion: '3',
     line1: 'Balaju',
     city: 'Kathmandu',
+    contactMode: 'create',
+    contactName: 'Sita Rai',
+    contactEmail: 'sita@himalayan.example',
   })) {
     f.set(k, v);
   }
@@ -130,4 +133,20 @@ describe('convertLeadAction', () => {
       expect(res.definite).toBe(true);
     },
   );
+
+  it('puts a 422 contact_email_required next to the contact, not as a generic failure', async () => {
+    api.convertLead.mockRejectedValue(apiError(422, 'contact_email_required'));
+    const res = await convertLeadAction(empty, convertForm());
+    expect(res.fieldErrors.contactId).toMatch(/no email/i);
+    expect(res.error).toBeUndefined();
+    expect(res.definite).toBe(true);
+  });
+
+  it('refuses a conversion without a contact before calling the API', async () => {
+    const f = convertForm();
+    f.delete('contactMode');
+    const res = await convertLeadAction(empty, f);
+    expect(res.fieldErrors.contactMode).toMatch(/choose a contact/i);
+    expect(api.convertLead).not.toHaveBeenCalled();
+  });
 });
