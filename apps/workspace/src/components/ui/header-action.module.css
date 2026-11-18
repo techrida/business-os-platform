@@ -1,0 +1,81 @@
+.root {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Looks unavailable but stays legible and clickable (it explains itself). Beats `.primary` by selector weight. */
+.root .blocked {
+  background: var(--button-disabled-bg);
+  color: var(--text-secondary);
+  cursor: help;
+}
+
+.root .blocked:hover,
+.root .blocked:active {
+  background: var(--button-disabled-bg);
+}
+
+.popover {
+  z-index: 110;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--neutral-900) 16%, transparent);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.popover:focus {
+  outline: none;
+}
+
+.popoverTitle {
+  margin: 0 0 4px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.list li {
+  overflow-wrap: anywhere;
+}
+
+.arrow {
+  fill: var(--surface-elevated);
+  stroke: var(--border-default);
+  stroke-width: 1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .popover[data-state='open'] {
+    animation: pop 140ms ease-out;
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}
