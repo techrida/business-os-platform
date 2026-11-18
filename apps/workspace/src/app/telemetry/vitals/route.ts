@@ -1,7 +1,8 @@
 import { VitalsSchema } from '@bos/contracts';
 
 import { apiFetch } from '@/lib/api';
-import { getSession } from '@/lib/session';
+import { getSession, type Session } from '@/lib/session';
+import { SessionUnavailableError, sessionUnavailableResponse } from '@/lib/session-unavailable';
 
 // The session lives in Valkey (ioredis), which needs the Node.js runtime.
 export const runtime = 'nodejs';
@@ -42,7 +43,14 @@ async function readLimitedBody(req: Request): Promise<string | null> {
  */
 export async function POST(req: Request): Promise<Response> {
   // Auth first, so an anonymous caller cannot make us read or parse anything.
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (err) {
+    // The store did not answer: not a sign-out, and nothing to accept. The cookie stays.
+    if (err instanceof SessionUnavailableError) return sessionUnavailableResponse();
+    throw err;
+  }
   if (!session) return json(401, { error: 'unauthenticated' });
 
   const declared = Number(req.headers.get('content-length') ?? '0');
