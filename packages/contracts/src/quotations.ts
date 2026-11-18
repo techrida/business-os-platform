@@ -539,8 +539,37 @@ export const QuotationListItemSchema = QuotationDtoSchema.extend({
   total: NonNegativeDecimalString,
   validUntil: isoDate,
   ownerName: z.string().nullable(),
+  /**
+   * The caller may edit the current version now: it is Draft or Returned and the server's
+   * `quotation.draft` rule allows this caller on this record. Lets a screen resume a draft instead of
+   * starting a second quotation.
+   */
+  canEdit: z.boolean(),
 });
 export type QuotationListItem = z.infer<typeof QuotationListItemSchema>;
+
+/**
+ * `GET /v1/quotations` query. Both filters are optional and combine; `opportunityId` limits the
+ * list to one opportunity's quotations (still only those the caller may read). Unknown keys are
+ * ignored, as before.
+ */
+export const ListQuotationsQuerySchema = z.object({
+  status: QuotationStatusSchema.optional(),
+  opportunityId: z.guid().optional(),
+});
+export type ListQuotationsQuery = z.infer<typeof ListQuotationsQuerySchema>;
+
+/**
+ * What the caller may do with a quotation now, decided by the server with the same rules its
+ * commands enforce, so a screen never offers an action that would answer 403 or 409.
+ */
+export const QuotationCapabilitiesSchema = z.object({
+  /** Edit the current version: Draft or Returned, and `quotation.draft` on this record. */
+  canEdit: z.boolean(),
+  /** Start a revision: a revisable status, and `quotation.revise` on this record. */
+  canRevise: z.boolean(),
+});
+export type QuotationCapabilities = z.infer<typeof QuotationCapabilitiesSchema>;
 
 /** A customer contact the send dialog can offer as a recipient. */
 export const QuotationContactSchema = z.object({
@@ -558,6 +587,7 @@ export const QuotationDetailSchema = z.object({
   statusHistory: z.array(QuotationStatusHistoryDtoSchema),
   customerName: z.string().min(1),
   contacts: z.array(QuotationContactSchema),
+  capabilities: QuotationCapabilitiesSchema,
 });
 export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
 
