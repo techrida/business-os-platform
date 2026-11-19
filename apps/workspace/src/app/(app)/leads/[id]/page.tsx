@@ -2,6 +2,7 @@ import type { ActivityDto, LeadDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import type { NumberSystem } from '@bos/locale';
 
 import { ActivityForm } from '@/components/p2/crm/activity-form';
 import { ConvertDialog } from '@/components/p2/crm/convert-dialog';
@@ -24,6 +25,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { StatusTimeline, type TimelineStep } from '@/components/ui/status-timeline';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import { logActivityAction } from '../../activities/actions';
@@ -36,7 +38,7 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facts(l: LeadDto): Fact[] {
+function facts(l: LeadDto, numberSystem: NumberSystem): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
     {
@@ -67,7 +69,7 @@ function facts(l: LeadDto): Fact[] {
     {
       key: 'value',
       label: 'Expected value',
-      value: moneyOrNull(l.expectedValue, l.currency) ?? dash,
+      value: moneyOrNull(l.expectedValue, l.currency, numberSystem) ?? dash,
     },
     {
       key: 'probability',
@@ -127,6 +129,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const session = await requireStaffSession(`/leads/${id}`);
+  const numberSystem = await getNumberSystem();
 
   const [leadResult, activityResult] = await Promise.allSettled([
     getLead(session, id),
@@ -191,7 +194,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
       <div className={styles.detailColumns}>
         <div className={styles.detailStack}>
           <Panel title="Lead overview" className={styles.detailPanel}>
-            <FactList facts={facts(lead)} className={styles.overviewFacts ?? ''} />
+            <FactList facts={facts(lead, numberSystem)} className={styles.overviewFacts ?? ''} />
           </Panel>
 
           <Panel title="History" className={styles.detailPanel}>
@@ -238,7 +241,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                     email: lead.email ?? '',
                     phone: lead.phone ?? '',
                     requirement: lead.requirement,
-                    value: moneyOrNull(lead.expectedValue, lead.currency),
+                    value: moneyOrNull(lead.expectedValue, lead.currency, numberSystem),
                     probability: lead.probability,
                     expectedClose: lead.expectedClose ? when(lead.expectedClose, 'date') : null,
                   }}

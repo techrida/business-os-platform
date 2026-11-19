@@ -1,4 +1,4 @@
-import { UpdateQuotationDraftBodySchema } from '@bos/contracts';
+import { CreateQuotationBodySchema, UpdateQuotationDraftBodySchema } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -204,6 +204,7 @@ describe('toContent', () => {
       scope: null,
       assumptions: null,
       exclusions: null,
+      termsAndConditions: null,
       deliveryTimeline: null,
       paymentTermId: null,
       discount: null,
@@ -240,6 +241,7 @@ describe('editing a saved quotation', () => {
     scope: null,
     assumptions: null,
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: null,
     discount: null,
     lines: [
@@ -348,6 +350,84 @@ describe('editing a saved quotation', () => {
     ]);
   });
 });
+
+describe('terms and conditions', () => {
+  const OPP = '77777777-7777-4777-8777-777777777777';
+  const TERMS = 'Payment within 30 days of invoice.\nGoverned by the laws of Nepal.';
+
+  it('starts empty on a new quotation and is left out of a create when blank', () => {
+    expect(emptyValues().termsAndConditions).toBe('');
+    const c = toContent(filled());
+    expect(c).not.toHaveProperty('termsAndConditions');
+    expect(CreateQuotationBodySchema.safeParse({ ...c, opportunityId: OPP }).success).toBe(true);
+  });
+
+  it('is sent trimmed in a create and an update, and both bodies pass the contract', () => {
+    const v = { ...filled(), termsAndConditions: `  ${TERMS}  ` };
+    const create = toContent(v);
+    expect(create.termsAndConditions).toBe(TERMS);
+    expect(
+      CreateQuotationBodySchema.parse({ ...create, opportunityId: OPP }).termsAndConditions,
+    ).toBe(TERMS);
+    const update = toContent(v, 'update');
+    expect(update.termsAndConditions).toBe(TERMS);
+    expect(
+      UpdateQuotationDraftBodySchema.parse({ ...update, expectedVersion: 2 }).termsAndConditions,
+    ).toBe(TERMS);
+  });
+
+  it('sends null on an update when cleared (or only spaces), so the saved text is removed', () => {
+    for (const blank of ['', '   \n ']) {
+      const c = toContent({ ...filled(), termsAndConditions: blank }, 'update');
+      expect(c.termsAndConditions).toBeNull();
+      expect(
+        UpdateQuotationDraftBodySchema.parse({ ...c, expectedVersion: 2 }).termsAndConditions,
+      ).toBeNull();
+    }
+  });
+
+  it('round-trips a saved version: fills the form and is sent back unchanged', () => {
+    const saved = { ...versionWith(TERMS) };
+    const values = valuesFromVersion(saved);
+    expect(values.termsAndConditions).toBe(TERMS);
+    expect(toContent(values, 'update').termsAndConditions).toBe(TERMS);
+    // A version without terms opens as an empty box, not "null".
+    expect(valuesFromVersion(versionWith(null)).termsAndConditions).toBe('');
+  });
+
+  it('refuses text over 10000 characters at the contract, so the box caps it', () => {
+    const c = toContent({ ...filled(), termsAndConditions: 'x'.repeat(10001) }, 'update');
+    expect(UpdateQuotationDraftBodySchema.safeParse({ ...c, expectedVersion: 2 }).success).toBe(
+      false,
+    );
+  });
+});
+
+function versionWith(termsAndConditions: string | null): VersionLike {
+  return {
+    contactId: null,
+    currency: 'NPR',
+    issueDate: '2026-11-08',
+    validUntil: '2026-12-08',
+    paymentTermId: null,
+    scope: null,
+    assumptions: null,
+    exclusions: null,
+    termsAndConditions,
+    deliveryTimeline: null,
+    discount: null,
+    lines: [
+      {
+        description: 'HRMS implementation',
+        uom: 'lot',
+        quantity: '1',
+        unitPrice: '180000.00',
+        taxCodeId: TAX,
+      },
+    ],
+    paymentSchedule: [],
+  };
+}
 
 describe('discountAboveThreshold', () => {
   it('is true only above 12, comparing the 4-decimal string exactly', () => {

@@ -16,6 +16,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procurement';
 import { getApprovalRequest } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 
@@ -161,6 +162,7 @@ export default async function PurchaseRequestPage({
   const { id } = await params;
   if (!isGuid(id)) notFound();
   const session = await requireStaffSession(`/procurement/requests/${id}`);
+  const numberSystem = await getNumberSystem();
   const sp = await searchParams;
   const self = `/procurement/requests/${encodeURIComponent(id)}`;
 
@@ -315,10 +317,14 @@ export default async function PurchaseRequestPage({
                   </span>
                 </Td>
                 <Td align="end" nowrap>
-                  <span className={styles.numeric}>{money(l.estimatedUnitPrice, pr.currency)}</span>
+                  <span className={styles.numeric}>
+                    {money(l.estimatedUnitPrice, pr.currency, numberSystem)}
+                  </span>
                 </Td>
                 <Td align="end" nowrap>
-                  <span className={styles.numeric}>{money(l.estimatedAmount, pr.currency)}</span>
+                  <span className={styles.numeric}>
+                    {money(l.estimatedAmount, pr.currency, numberSystem)}
+                  </span>
                 </Td>
               </tr>
             ))}
@@ -331,7 +337,9 @@ export default async function PurchaseRequestPage({
               key: 'total',
               label: `Estimated total (${pr.currency})`,
               value: (
-                <strong className={styles.numeric}>{money(pr.estimatedTotal, pr.currency)}</strong>
+                <strong className={styles.numeric}>
+                  {money(pr.estimatedTotal, pr.currency, numberSystem)}
+                </strong>
               ),
             },
             ...(showFx && pr.estimatedTotalNpr !== null
@@ -341,7 +349,7 @@ export default async function PurchaseRequestPage({
                     label: 'Estimated total in NPR',
                     value: (
                       <span className={styles.numeric}>
-                        {money(pr.estimatedTotalNpr, 'NPR')}
+                        {money(pr.estimatedTotalNpr, 'NPR', numberSystem)}
                         {pr.fxRate !== null ? (
                           <span className={styles.quiet}>
                             {' '}

@@ -1,6 +1,7 @@
 import { AGING_BUCKETS, type ArAgingReport, type Currency } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
@@ -11,6 +12,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { getAging } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import { BUCKET_LABEL, isZeroAmount } from '../_lib/aging';
@@ -23,10 +25,18 @@ export const dynamic = 'force-dynamic';
 const HERE = '/receivables/aging';
 
 /** One amount from the server. A zero is drawn quietly so the open buckets stand out. */
-function Amount({ value, currency }: { value: string; currency: Currency }) {
+function Amount({
+  value,
+  currency,
+  numberSystem,
+}: {
+  value: string;
+  currency: Currency;
+  numberSystem: NumberSystem;
+}) {
   return (
     <span className={isZeroAmount(value) ? styles.zero : styles.amount}>
-      {money(value, currency)}
+      {money(value, currency, numberSystem)}
     </span>
   );
 }
@@ -61,7 +71,13 @@ function AsOf({ date }: { date: string }) {
   return <time dateTime={date}>{when(date, 'date')}</time>;
 }
 
-function AgingTable({ report }: { report: ArAgingReport }) {
+function AgingTable({
+  report,
+  numberSystem,
+}: {
+  report: ArAgingReport;
+  numberSystem: NumberSystem;
+}) {
   return (
     <Table
       caption={`Receivables aging as of ${when(report.asOf, 'date')}`}
@@ -96,12 +112,16 @@ function AgingTable({ report }: { report: ArAgingReport }) {
             </Td>
             {AGING_BUCKETS.map((bucket) => (
               <Td key={bucket} align="end" nowrap>
-                <Amount value={row.buckets[bucket]} currency={row.currency} />
+                <Amount
+                  numberSystem={numberSystem}
+                  value={row.buckets[bucket]}
+                  currency={row.currency}
+                />
               </Td>
             ))}
             <Td align="end" nowrap>
               <span className={styles.total}>
-                <Amount value={row.totalOpen} currency={row.currency} />
+                <Amount numberSystem={numberSystem} value={row.totalOpen} currency={row.currency} />
               </span>
             </Td>
           </tr>
@@ -114,12 +134,20 @@ function AgingTable({ report }: { report: ArAgingReport }) {
               <Th scope="row">Total {total.currency}</Th>
               {AGING_BUCKETS.map((bucket) => (
                 <Td key={bucket} align="end" nowrap>
-                  <Amount value={total.buckets[bucket]} currency={total.currency} />
+                  <Amount
+                    numberSystem={numberSystem}
+                    value={total.buckets[bucket]}
+                    currency={total.currency}
+                  />
                 </Td>
               ))}
               <Td align="end" nowrap>
                 <span className={styles.total}>
-                  <Amount value={total.totalOpen} currency={total.currency} />
+                  <Amount
+                    numberSystem={numberSystem}
+                    value={total.totalOpen}
+                    currency={total.currency}
+                  />
                 </span>
               </Td>
             </tr>
@@ -132,6 +160,7 @@ function AgingTable({ report }: { report: ArAgingReport }) {
 
 export default async function ReceivablesAgingPage() {
   const session = await requireStaffSession(HERE);
+  const numberSystem = await getNumberSystem();
 
   // A person without ar.read is told so without the page fetching anything for them.
   if (!hasPermission(session.roles, 'ar.read')) {
@@ -181,7 +210,7 @@ export default async function ReceivablesAgingPage() {
               key={total.currency}
               label={`Open balance · ${total.currency}`}
               icon="banknote"
-              value={money(total.totalOpen, total.currency)}
+              value={money(total.totalOpen, total.currency, numberSystem)}
             />
           ))}
         </section>
@@ -192,7 +221,7 @@ export default async function ReceivablesAgingPage() {
           issued and not yet fully paid.
         </EmptyState>
       ) : (
-        <AgingTable report={report} />
+        <AgingTable numberSystem={numberSystem} report={report} />
       )}
     </Page>
   );

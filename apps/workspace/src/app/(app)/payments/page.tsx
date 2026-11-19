@@ -1,6 +1,7 @@
 import type { PaymentListItem } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
@@ -15,6 +16,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { listPayments } from '@/lib/api-receivables';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import {
@@ -37,7 +39,7 @@ import styles from './payments.module.css';
 export const metadata: Metadata = { title: 'Payments · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function PaymentRow({ item }: { item: PaymentListItem }) {
+function PaymentRow({ item, numberSystem }: { item: PaymentListItem; numberSystem: NumberSystem }) {
   const meta = paymentStatusMeta(item.status);
   return (
     <tr>
@@ -54,11 +56,11 @@ function PaymentRow({ item }: { item: PaymentListItem }) {
       </Td>
       <Td>{methodLabel(item.method)}</Td>
       <Td align="end" nowrap>
-        <span className={styles.amount}>{money(item.amount, item.currency)}</span>
+        <span className={styles.amount}>{money(item.amount, item.currency, numberSystem)}</span>
       </Td>
       <Td align="end" nowrap>
         {Number(item.unallocatedAmount) > 0 ? (
-          money(item.unallocatedAmount, item.currency)
+          money(item.unallocatedAmount, item.currency, numberSystem)
         ) : (
           <span className={styles.quiet}>None</span>
         )}
@@ -82,6 +84,7 @@ export default async function PaymentsPage({
   const filters = { status, q };
   const here = listHref('/payments', filters, page);
   const session = await requireStaffSession(here);
+  const numberSystem = await getNumberSystem();
 
   let items: PaymentListItem[] | null = null;
   let problem: { message: string; status: number } | null = null;
@@ -222,7 +225,7 @@ export default async function PaymentsPage({
             </thead>
             <tbody>
               {window.rows.map((item) => (
-                <PaymentRow key={item.id} item={item} />
+                <PaymentRow numberSystem={numberSystem} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>

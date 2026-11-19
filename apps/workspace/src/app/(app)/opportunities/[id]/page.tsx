@@ -2,6 +2,7 @@ import { OPPORTUNITY_STAGES, type OpportunityDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import type { NumberSystem } from '@bos/locale';
 
 import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
@@ -30,6 +31,7 @@ import { StatusTimeline } from '@/components/ui/status-timeline';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { getCustomer } from '@/components/p2/customers/api';
 
@@ -42,10 +44,14 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facts(o: OpportunityDto, customerName: string): Fact[] {
+function facts(o: OpportunityDto, customerName: string, numberSystem: NumberSystem): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
-    { key: 'value', label: 'Estimated value', value: moneyOrNull(o.value, o.currency) ?? dash },
+    {
+      key: 'value',
+      label: 'Estimated value',
+      value: moneyOrNull(o.value, o.currency, numberSystem) ?? dash,
+    },
     {
       key: 'probability',
       label: 'Probability',
@@ -82,6 +88,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const session = await requireStaffSession(`/opportunities/${id}`);
+  const numberSystem = await getNumberSystem();
 
   const [oppResult, activityResult, quotationsResult] = await Promise.allSettled([
     getOpportunity(session, id),
@@ -214,6 +221,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
           facts={facts(
             opp,
             customer ? `${customer.legalName} · ${customer.number}` : 'Customer name unavailable',
+            numberSystem,
           )}
           className={styles.facts ?? ''}
         />
@@ -258,7 +266,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
                     <QuotationStatusBadge status={quote.status} />
                   </Td>
                   <Td align="end" nowrap>
-                    {money(quote.total, quote.currency)}
+                    {money(quote.total, quote.currency, numberSystem)}
                   </Td>
                   <Td nowrap>
                     <time dateTime={quote.validUntil}>{when(quote.validUntil, 'date')}</time>

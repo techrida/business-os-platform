@@ -271,7 +271,12 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
                 className={styles.detailPanel}
                 title="Current revision"
                 description={`Last changed ${when(current.updatedAt)}`}
-                actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail, numberSystem)} />}
+                actions={
+                  <VersionDrawer
+                    number={quotation.number}
+                    rows={revisionRows(detail, numberSystem)}
+                  />
+                }
               >
                 <FactList facts={facts} className={styles.facts ?? ''} />
               </Panel>
@@ -281,7 +286,12 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
             <Panel
               className={styles.detailPanel}
               title="Revisions"
-              actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail, numberSystem)} />}
+              actions={
+                <VersionDrawer
+                  number={quotation.number}
+                  rows={revisionRows(detail, numberSystem)}
+                />
+              }
             >
               <p className={styles.note}>Open the list to see every revision.</p>
             </Panel>

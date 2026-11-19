@@ -17,6 +17,7 @@ import {
   type PaymentRequest,
 } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 
 import { poMoney } from '../../../procurement/orders/_lib/model';
 import styles from '../../payables.module.css';
@@ -31,6 +32,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
   const { id } = await params;
   if (!isGuid(id)) notFound();
   const session = await requireStaffSession(`/payables/payment-requests/${id}`);
+  const numberSystem = await getNumberSystem();
   if (!hasPermission(session.roles, 'payables.payment.request'))
     return (
       <Page>
@@ -112,7 +114,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
                         )}
                       </span>
                     </Td>
-                    <Td align="end">{poMoney(line.amount, request.currency)}</Td>
+                    <Td align="end">{poMoney(line.amount, request.currency, numberSystem)}</Td>
                   </tr>
                 );
               })}
@@ -140,7 +142,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
               {
                 key: 'total',
                 label: 'Total requested',
-                value: poMoney(request.totalAmount, request.currency),
+                value: poMoney(request.totalAmount, request.currency, numberSystem),
               },
               {
                 key: 'approval',

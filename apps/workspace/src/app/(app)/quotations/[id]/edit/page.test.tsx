@@ -70,6 +70,7 @@ function version(over: Record<string, unknown>) {
     assumptions: null,
     exclusions: null,
     deliveryTimeline: null,
+    termsAndConditions: null,
     paymentTermId: null,
     paymentSchedule: [],
     discount: null,

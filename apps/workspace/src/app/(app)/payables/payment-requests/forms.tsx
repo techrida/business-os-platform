@@ -10,6 +10,7 @@ import {
 } from '@/components/p2/quotations/action-dialog';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
+import { useNumberSystem } from '@/components/ui/number-system-context';
 import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import type { PaymentRequestItem } from '@/lib/api-payables';
@@ -30,6 +31,7 @@ export function PaymentRequestEntry({
   idempotencyKey: string;
   items: PaymentRequestItem[];
 }) {
+  const numberSystem = useNumberSystem();
   const [state, action, pending] = useActionState<ActionState, FormData>(
     createPaymentRequestAction,
     { key: idempotencyKey },
@@ -179,7 +181,7 @@ export function PaymentRequestEntry({
                       {eligible.map((item) => (
                         <option key={item.openItemId} value={item.openItemId}>
                           {item.billNumber ?? item.vendorInvoiceNo} · {item.vendorInvoiceNo} ·{' '}
-                          {money(item.availableAmount, item.currency)} available
+                          {money(item.availableAmount, item.currency, numberSystem)} available
                         </option>
                       ))}
                     </Select>

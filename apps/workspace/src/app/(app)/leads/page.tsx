@@ -1,6 +1,7 @@
 import { LEAD_SOURCES, LEAD_STAGES, type LeadDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import type { NumberSystem } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
 import { listLeads } from '@/components/p2/crm/crm-api';
@@ -21,6 +22,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import { moveLeadStageAction } from './actions';
@@ -45,7 +47,7 @@ function href(params: Filters): string {
   return query.size > 0 ? `/leads?${query.toString()}` : '/leads';
 }
 
-function columnsFor(leads: LeadDto[]): BoardColumnData[] {
+function columnsFor(leads: LeadDto[], numberSystem: NumberSystem): BoardColumnData[] {
   const groups = groupByStage('lead', leads);
   return boardColumns('lead').map((column) => ({
     stage: column.stage,
@@ -57,7 +59,7 @@ function columnsFor(leads: LeadDto[]): BoardColumnData[] {
       title: lead.title,
       number: lead.number,
       subtitle: `${lead.companyName} · ${lead.contactName}`,
-      value: moneyOrNull(lead.expectedValue, lead.currency),
+      value: moneyOrNull(lead.expectedValue, lead.currency, numberSystem),
       version: lead.version,
       moves: userMoves('lead', lead.stage),
     })),
@@ -73,6 +75,7 @@ const summaryStages = [
 
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const session = await requireStaffSession('/leads');
+  const numberSystem = await getNumberSystem();
   const sp = await searchParams;
   const view = one(sp.view) === 'board' ? 'board' : 'table';
   const q = one(sp.q)?.trim().slice(0, 100) || undefined;
@@ -238,7 +241,11 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             </EmptyState>
           )
         ) : view === 'board' ? (
-          <Board columns={columnsFor(matches)} action={moveLeadStageAction} noun="lead" />
+          <Board
+            columns={columnsFor(matches, numberSystem)}
+            action={moveLeadStageAction}
+            noun="lead"
+          />
         ) : (
           <div className={styles.listCard}>
             <Table caption="Leads" minWidth={900} className={styles.table ?? ''}>
@@ -256,7 +263,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               <tbody>
                 {matches.slice(start, start + rows).map((lead) => {
                   const leadHref = `/leads/${lead.id}`;
-                  const value = moneyOrNull(lead.expectedValue, lead.currency);
+                  const value = moneyOrNull(lead.expectedValue, lead.currency, numberSystem);
                   const canQualify = userMoves('lead', lead.stage).some(
                     (move) => move.stage === 'qualified',
                   );

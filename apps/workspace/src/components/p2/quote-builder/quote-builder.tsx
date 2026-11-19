@@ -528,7 +528,7 @@ export function QuoteBuilder({
             hint={
               contacts === null
                 ? 'The contact list did not load. Reload the page to choose one.'
-                : 'Who at the customer receives this quotation.'
+                : 'Optional. Who at the customer receives this quotation.'
             }
             error={errors['contactId']}
           >
@@ -550,9 +550,12 @@ export function QuoteBuilder({
           </Field>
         </Card>
 
-        <Panel title="Quotation details">
+        <Panel
+          title="Dates and currency"
+          description="The issue date, the valid-until date and the currency are required."
+        >
           <div className={styles.grid2}>
-            <Field label="Issue date" error={errors['issueDate']}>
+            <Field label="Issue date" hint="Required." error={errors['issueDate']}>
               {(control) => (
                 <DatePicker
                   required
@@ -563,7 +566,11 @@ export function QuoteBuilder({
                 />
               )}
             </Field>
-            <Field label="Valid until" error={errors['validUntil']}>
+            <Field
+              label="Valid until"
+              hint="Required. The last day the prices hold; not before the issue date."
+              error={errors['validUntil']}
+            >
               {(control) => (
                 <DatePicker
                   required
@@ -593,31 +600,6 @@ export function QuoteBuilder({
                   {CURRENCY_OPTIONS.map((c) => (
                     <option key={c} value={c}>
                       {c}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <Field
-              label="Payment term"
-              hint={
-                paymentTerms === null
-                  ? 'Reload to choose a payment term.'
-                  : "Defaults to the customer's term when left empty."
-              }
-              error={errors.paymentTermId}
-            >
-              {(control) => (
-                <Select
-                  {...control}
-                  value={values.paymentTermId}
-                  onChange={(e) => set('paymentTermId')(e.target.value)}
-                  disabled={paymentTerms === null}
-                >
-                  <option value="">Customer default</option>
-                  {(paymentTerms ?? []).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label}
                     </option>
                   ))}
                 </Select>
@@ -667,7 +649,7 @@ export function QuoteBuilder({
           />
         </Card>
 
-        <Panel title="Discount" description="Applies to the full quotation.">
+        <Panel title="Discount" description="Optional. Applies to the full quotation.">
           <div className={styles.sectionBody}>
             <div className={styles.grid2}>
               <Field label="Discount type">
@@ -721,52 +703,91 @@ export function QuoteBuilder({
           </div>
         </Panel>
 
-        <Panel title="Payment schedule" description="Milestones must add up to 100%.">
-          <ScheduleSection
-            milestones={values.schedule}
-            currency={values.currency}
-            total={pricedTotal}
-            amountDrafts={amountDrafts}
-            disabled={busy !== null}
-            showScheduleErrors={scheduleAttempted}
-            onAmountDraft={setAmountDraft}
-            errors={errors}
-            onChange={(key, patch: Partial<MilestoneValues>) => {
-              const index = values.schedule.findIndex((m) => m.key === key);
-              setErrors((current) =>
-                Object.fromEntries(
-                  Object.entries(current).filter(
-                    ([path]) =>
-                      !Object.keys(patch).some(
-                        (field) => path === `paymentSchedule.${index}.${field}`,
-                      ),
+        <Panel
+          title="Payment"
+          description="Choose a payment term, or split the payment into milestones that add up to 100%."
+        >
+          <div className={styles.sectionBody}>
+            <div className={styles.grid2}>
+              <Field
+                label="Payment term"
+                hint={
+                  paymentTerms === null
+                    ? 'The payment terms did not load. Reload the page to choose one.'
+                    : "Optional. Defaults to the customer's term when left empty."
+                }
+                error={errors.paymentTermId}
+              >
+                {(control) => (
+                  <Select
+                    {...control}
+                    value={values.paymentTermId}
+                    onChange={(e) => set('paymentTermId')(e.target.value)}
+                    disabled={paymentTerms === null}
+                  >
+                    <option value="">Customer default</option>
+                    {(paymentTerms ?? []).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </div>
+            <ScheduleSection
+              milestones={values.schedule}
+              currency={values.currency}
+              total={pricedTotal}
+              amountDrafts={amountDrafts}
+              disabled={busy !== null}
+              showScheduleErrors={scheduleAttempted}
+              onAmountDraft={setAmountDraft}
+              errors={errors}
+              onChange={(key, patch: Partial<MilestoneValues>) => {
+                const index = values.schedule.findIndex((m) => m.key === key);
+                setErrors((current) =>
+                  Object.fromEntries(
+                    Object.entries(current).filter(
+                      ([path]) =>
+                        !Object.keys(patch).some(
+                          (field) => path === `paymentSchedule.${index}.${field}`,
+                        ),
+                    ),
                   ),
-                ),
-              );
-              edit((v) => ({
-                ...v,
-                schedule: v.schedule.map((m) => (m.key === key ? { ...m, ...patch } : m)),
-              }));
-            }}
-            onAdd={() => {
-              const milestone = newMilestone(nextKey('m'));
-              edit((v) => ({ ...v, schedule: [...v.schedule, milestone] }));
-            }}
-            onRemove={(key) => {
-              setAmountDraft(key, undefined);
-              setErrors((current) =>
-                Object.fromEntries(
-                  Object.entries(current).filter(([path]) => !path.startsWith('paymentSchedule')),
-                ),
-              );
-              edit((v) => ({ ...v, schedule: v.schedule.filter((m) => m.key !== key) }));
-            }}
-          />
+                );
+                edit((v) => ({
+                  ...v,
+                  schedule: v.schedule.map((m) => (m.key === key ? { ...m, ...patch } : m)),
+                }));
+              }}
+              onAdd={() => {
+                const milestone = newMilestone(nextKey('m'));
+                edit((v) => ({ ...v, schedule: [...v.schedule, milestone] }));
+              }}
+              onRemove={(key) => {
+                setAmountDraft(key, undefined);
+                setErrors((current) =>
+                  Object.fromEntries(
+                    Object.entries(current).filter(([path]) => !path.startsWith('paymentSchedule')),
+                  ),
+                );
+                edit((v) => ({ ...v, schedule: v.schedule.filter((m) => m.key !== key) }));
+              }}
+            />
+          </div>
         </Panel>
 
-        <Panel title="Terms">
+        <Panel
+          title="Terms"
+          description={
+            termPresets?.length
+              ? 'All optional. A saved option fills the box; edit the text freely after.'
+              : 'All optional.'
+          }
+        >
           <div className={styles.sectionBody}>
-            <Field label="Scope" hint="What is included." error={errors['scope']}>
+            <Field label="Scope" hint="Optional. What is included." error={errors['scope']}>
               {(control) => (
                 <>
                   <SavedOptionsSelect
@@ -786,7 +807,11 @@ export function QuoteBuilder({
                 </>
               )}
             </Field>
-            <Field label="Assumptions" error={errors['assumptions']}>
+            <Field
+              label="Assumptions"
+              hint="Optional. What the price and plan rely on."
+              error={errors['assumptions']}
+            >
               {(control) => (
                 <>
                   <SavedOptionsSelect
@@ -806,7 +831,11 @@ export function QuoteBuilder({
                 </>
               )}
             </Field>
-            <Field label="Exclusions" hint="What is not included." error={errors['exclusions']}>
+            <Field
+              label="Exclusions"
+              hint="Optional. What is not included."
+              error={errors['exclusions']}
+            >
               {(control) => (
                 <>
                   <SavedOptionsSelect
@@ -826,7 +855,11 @@ export function QuoteBuilder({
                 </>
               )}
             </Field>
-            <Field label="Delivery timeline" error={errors['deliveryTimeline']}>
+            <Field
+              label="Delivery timeline"
+              hint="Optional. When the work is delivered."
+              error={errors['deliveryTimeline']}
+            >
               {(control) => (
                 <>
                   <SavedOptionsSelect
@@ -841,6 +874,30 @@ export function QuoteBuilder({
                     maxLength={2000}
                     value={values.deliveryTimeline}
                     onChange={(e) => set('deliveryTimeline')(e.target.value)}
+                    {...control}
+                  />
+                </>
+              )}
+            </Field>
+            <Field
+              label="Terms and conditions"
+              hint="Optional. The conditions that apply to this quotation."
+              error={errors['termsAndConditions']}
+            >
+              {(control) => (
+                <>
+                  <SavedOptionsSelect
+                    kind="terms_conditions"
+                    presets={termPresets}
+                    value={values.termsAndConditions}
+                    maxLength={10000}
+                    onFill={set('termsAndConditions')}
+                  />
+                  <Textarea
+                    rows={5}
+                    maxLength={10000}
+                    value={values.termsAndConditions}
+                    onChange={(e) => set('termsAndConditions')(e.target.value)}
                     {...control}
                   />
                 </>

@@ -4,6 +4,7 @@ import type { SalesOrderDetail, ScheduleLineStatus } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import type { NumberSystem } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import detail from '@/components/p2/quotations/detail.module.css';
@@ -16,6 +17,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { getSalesOrder } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import { DraftInvoiceForm } from '../_components/draft-invoice-form';
@@ -43,7 +45,7 @@ const stepTones: Record<ScheduleLineStatus, TimelineTone> = {
   cancelled: 'muted',
 };
 
-function Totals({ order }: { order: Order }) {
+function Totals({ order, numberSystem }: { order: Order; numberSystem: NumberSystem }) {
   const { totals, currency } = order;
   const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
     { key: 'subtotal', label: 'Subtotal', value: totals.subtotal },
@@ -63,7 +65,7 @@ function Totals({ order }: { order: Order }) {
             }
           >
             <dt className={detail.totalTerm}>{row.label}</dt>
-            <dd className={detail.totalValue}>{money(row.value, currency)}</dd>
+            <dd className={detail.totalValue}>{money(row.value, currency, numberSystem)}</dd>
           </div>
         ))}
       </dl>
@@ -118,10 +120,10 @@ function summaryFacts(order: Order, deliveryReleased: boolean): Fact[] {
   ];
 }
 
-function NprSnapshot({ order }: { order: Order }) {
+function NprSnapshot({ order, numberSystem }: { order: Order; numberSystem: NumberSystem }) {
   const { npr } = order;
   const facts: Fact[] = [
-    { key: 'amount', label: 'Total in NPR', value: money(npr.amountNpr, 'NPR') },
+    { key: 'amount', label: 'Total in NPR', value: money(npr.amountNpr, 'NPR', numberSystem) },
     { key: 'rate', label: 'Exchange rate', value: <span className={local.id}>{npr.rate}</span> },
     {
       key: 'source',
@@ -141,7 +143,7 @@ function NprSnapshot({ order }: { order: Order }) {
   );
 }
 
-function Lines({ data }: { data: SalesOrderDetail }) {
+function Lines({ data, numberSystem }: { data: SalesOrderDetail; numberSystem: NumberSystem }) {
   const { currency } = data.order;
   return (
     <Panel title="Order lines" description="Items from the accepted quotation.">
@@ -173,16 +175,16 @@ function Lines({ data }: { data: SalesOrderDetail }) {
                   {line.quantity} {line.uom}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.unitPrice, currency)}
+                  {money(line.unitPrice, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.gross, currency)}
+                  {money(line.gross, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.discountAlloc, currency)}
+                  {money(line.discountAlloc, currency, numberSystem)}
                 </Td>
                 <Td align="end" nowrap>
-                  {money(line.taxable, currency)}
+                  {money(line.taxable, currency, numberSystem)}
                 </Td>
               </tr>
             ))}
@@ -198,11 +200,13 @@ function Schedule({
   evidence,
   can,
   reloadHref,
+  numberSystem,
 }: {
   data: SalesOrderDetail;
   evidence: readonly EvidenceOption[];
   can: { mark: boolean; draft: boolean };
   reloadHref: string;
+  numberSystem: NumberSystem;
 }) {
   const { order, schedule } = data;
   return (
@@ -244,7 +248,7 @@ function Schedule({
                     {line.percent !== null ? `${line.percent}%` : 'By amount'}
                   </Td>
                   <Td align="end" nowrap>
-                    {money(line.amount, order.currency)}
+                    {money(line.amount, order.currency, numberSystem)}
                   </Td>
                   <Td nowrap>
                     <Badge tone={tone}>{label}</Badge>
@@ -331,6 +335,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   if (!isGuid(id)) notFound();
   const path = `/sales-orders/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
+  const numberSystem = await getNumberSystem();
 
   let data: SalesOrderDetail;
   try {
@@ -383,7 +388,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
       <PageHeader
         title={<span className={detail.wrap}>{order.number ?? 'Draft sales order'}</span>}
         status={<Badge tone={tone}>{label}</Badge>}
-        description={`Sales order · ${money(order.totals.total, order.currency)}`}
+        description={`Sales order · ${money(order.totals.total, order.currency, numberSystem)}`}
       />
 
       {order.status === 'draft' ? (
@@ -409,14 +414,20 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
         <Panel title="Order overview">
           <FactList facts={summaryFacts(order, data.deliveryReleased)} />
         </Panel>
-        <Totals order={order} />
+        <Totals numberSystem={numberSystem} order={order} />
       </div>
 
-      <Schedule data={data} evidence={evidence} can={can} reloadHref={path} />
-      <Lines data={data} />
+      <Schedule
+        numberSystem={numberSystem}
+        data={data}
+        evidence={evidence}
+        can={can}
+        reloadHref={path}
+      />
+      <Lines numberSystem={numberSystem} data={data} />
       <div className={detail.columns}>
         <Evidence items={data.evidence} />
-        <NprSnapshot order={order} />
+        <NprSnapshot numberSystem={numberSystem} order={order} />
       </div>
     </Page>
   );

@@ -11,6 +11,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Table, Td, Th } from '@/components/ui/table';
 import { listBills, type BillListItem } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import { poMoney } from '../../procurement/orders/_lib/model';
@@ -32,6 +33,8 @@ export default async function BillsPage({
   const status = parsed.success ? parsed.data : undefined;
 
   const session = await requireStaffSession('/payables/bills');
+
+  const numberSystem = await getNumberSystem();
   const grants = billGrants(session.roles);
 
   const header = (
@@ -159,7 +162,9 @@ export default async function BillsPage({
                     <Badge tone={match.tone}>{match.text}</Badge>
                   </Td>
                   <Td align="end" nowrap>
-                    <span className={styles.numeric}>{poMoney(b.payableTotal, b.currency)}</span>
+                    <span className={styles.numeric}>
+                      {poMoney(b.payableTotal, b.currency, numberSystem)}
+                    </span>
                   </Td>
                 </tr>
               );
