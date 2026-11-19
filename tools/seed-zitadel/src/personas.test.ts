@@ -40,6 +40,23 @@ describe('personas', () => {
     expect(new Set(PERSONAS.map((p) => personaUsername(p.key))).size).toBe(12);
   });
 
+  it('adds a second Finance user, so a Finance-created note can get an independent Finance approver', () => {
+    expect(PERSONAS).toContainEqual({
+      key: 'finance2',
+      givenName: 'Dev',
+      familyName: 'Finance Two',
+      orgKind: 'staff',
+      role: 'finance',
+    });
+    expect(personaUsername('finance2')).toBe('finance2@dev.bos.test');
+    expect(PERSONAS.filter((p) => p.role === 'finance').map((p) => p.key)).toEqual([
+      'finance',
+      'finance2',
+    ]);
+    // Appended last, so the order (and every earlier login) of the existing personas does not change.
+    expect(PERSONAS.at(-1)?.key).toBe('finance2');
+  });
+
   it('adds the P4 personas: procurement, warehouse, a department head and a second management user', () => {
     const byKey = new Map(PERSONAS.map((p) => [p.key, p]));
     expect(byKey.get('procurement')?.role).toBe('procurement');
