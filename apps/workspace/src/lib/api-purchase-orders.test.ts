@@ -16,6 +16,7 @@ import {
   issuePurchaseOrder,
   listPoVersions,
   listPurchaseOrders,
+  listPurchaseOrdersPage,
   listReceipts,
   listReceivableOrders,
   PurchaseOrderSchema,
@@ -181,6 +182,30 @@ describe('purchase order reads', () => {
     answer(reply([]));
     await listPurchaseOrders(session);
     expect(lastCall().url).toBe('http://api:3001/v1/procurement/purchase-orders');
+  });
+
+  it('lists a page with repeated statuses, a search and an offset, and reads the total', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([listFields]), {
+          status: 200,
+          headers: { 'x-total-count': '640' },
+        }),
+      ),
+    );
+    const out = await listPurchaseOrdersPage(session, {
+      status: ['issued', 'draft'],
+      q: 'Himal',
+      limit: 25,
+      offset: 50,
+    });
+    expect(out.total).toBe(640);
+    expect(out.items[0]?.number).toBe('PO-2082-0001');
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/procurement/purchase-orders?status=issued&status=draft&q=Himal&limit=25&offset=50',
+    );
+    answer(reply([listFields]));
+    expect((await listPurchaseOrdersPage(session, { limit: 25, offset: 0 })).total).toBe(1);
   });
 
   it('keeps money as the server sent it, never a number', async () => {

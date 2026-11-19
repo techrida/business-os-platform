@@ -16,7 +16,7 @@ import {
 } from '@bos/contracts';
 import { z } from 'zod';
 
-import { call, jsonInit, seg } from './api-procurement';
+import { call, callList, jsonInit, listQuery, seg } from './api-procurement';
 import type { Session } from './session';
 
 /**
@@ -100,6 +100,23 @@ export function listRfqs(
       limit: query.limit,
     }),
     z.array(RfqListItemSchema),
+  );
+}
+
+/** One page of `GET /v1/procurement/rfqs` with several statuses, a search and `offset`, plus the total of all matches. */
+export function listRfqsPage(
+  session: Session,
+  query: { status?: readonly RfqStatus[]; q?: string; limit: number; offset: number },
+): Promise<{ items: RfqListItem[]; total: number }> {
+  return callList(
+    session,
+    listQuery(RFQ_PATH, {
+      status: query.status?.map((s) => RfqStatusSchema.parse(s)),
+      q: query.q,
+      limit: query.limit,
+      offset: query.offset,
+    }),
+    RfqListItemSchema,
   );
 }
 

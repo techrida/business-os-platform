@@ -1,5 +1,7 @@
 // Exercise the real list handler/service and its generated visibility/search predicates without a server.
-// SQLite executes the PostgreSQL-compatible WHERE clause; Postgres/RLS remain integration-suite coverage.
+// SQLite executes the WHERE clause (ILIKE is rewritten to LIKE, which SQLite matches case-insensitively); the
+// typo-tolerant step needs pg_trgm, so these searches stay exact (5+ matches, or under 3 characters) and the
+// fuzzy path is covered by the Postgres integration test.
 import 'reflect-metadata';
 
 import { DatabaseSync } from 'node:sqlite';
@@ -28,6 +30,10 @@ it('searches names with tenant and owner visibility, and requires customer.read'
     );
     INSERT INTO app.customers VALUES
       ('mine', 'tenant-a', 'user-a', 'Mountain Legal Ltd', 'mountain legal ltd', NULL, 'CUS-1'),
+      ('mine-2', 'tenant-a', 'user-a', 'Mountain Two Ltd', 'mountain two ltd', NULL, 'CUS-4'),
+      ('mine-3', 'tenant-a', 'user-a', 'Mountain Three Ltd', 'mountain three ltd', NULL, 'CUS-5'),
+      ('mine-4', 'tenant-a', 'user-a', 'Mountain Four Ltd', 'mountain four ltd', NULL, 'CUS-6'),
+      ('mine-5', 'tenant-a', 'user-a', 'Mountain Five Ltd', 'mountain five ltd', NULL, 'CUS-7'),
       ('other-owner', 'tenant-a', 'user-b', 'Mountain Other Ltd', 'mountain other ltd', NULL, 'CUS-2'),
       ('other-tenant', 'tenant-b', 'user-a', 'Mountain Secret Ltd', 'mountain secret ltd', NULL, 'CUS-3');`);
     const principal: Principal = {
@@ -50,7 +56,9 @@ it('searches names with tenant and owner visibility, and requires customer.read'
         params.push(query.params[Number(index) - 1] as string | number | null);
         return '?';
       });
-      return sqlite.prepare('SELECT * FROM app.customers WHERE ' + text).all(...params);
+      return sqlite
+        .prepare('SELECT * FROM app.customers WHERE ' + text.replaceAll(' ILIKE ', ' LIKE '))
+        .all(...params);
     };
     const db = {
       select: (count?: unknown) => ({
@@ -93,19 +101,20 @@ it('searches names with tenant and owner visibility, and requires customer.read'
     expect(permission).toBe('customer.read');
     expect(can(principal, permission).allowed).toBe(true);
     const result = await controller.list({ q: 'Mountain', limit: '20' });
-    expect(result.items.map((c) => c.legalName)).toEqual([
-      'Mountain Legal Ltd',
-      'Mountain Other Ltd',
-    ]);
+    expect(result.total).toBe(6);
+    expect(result.items.map((c) => c.id)).toEqual(
+      expect.arrayContaining(['mine', 'mine-5', 'other-owner']),
+    );
     expect(result.items.map((c) => c.id)).not.toContain('other-tenant');
-    expect((await controller.list({ q: 'Missing', limit: '20' })).items).toEqual([]);
+    expect((await controller.list({ q: 'Zz', limit: '20' })).items).toEqual([]);
     principal.grants = new Map([['customer.read', 'own']]);
-    expect((await controller.list({ q: 'Mountain', limit: '1' })).items.map((c) => c.id)).toEqual([
-      'mine',
-    ]);
+    const own = await controller.list({ q: 'Mountain', limit: '1' });
+    expect(own.items.map((c) => c.id)).toEqual(['mine']);
+    // The total counts only what this caller may read: not other-owner, not the other tenant.
+    expect(own.total).toBe(5);
     principal.grants = new Map();
     expect(can(principal, permission)).toEqual({ allowed: false, reason: 'no_permission' });
-    expect((await controller.list({ q: 'Mountain' })).items).toEqual([]);
+    expect((await controller.list({ q: 'Mo' })).items).toEqual([]);
   } finally {
     sqlite.close();
   }

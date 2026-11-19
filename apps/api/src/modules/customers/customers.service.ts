@@ -39,22 +39,18 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, like, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 
 import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
+import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { personNames } from '../../platform/users/person-names';
 import { CustomersCaller } from './customers.caller';
-import {
-  escapeLike,
-  normalizeEmail,
-  normalizeName,
-  normalizePan,
-  searchTerms,
-} from './customers.normalize';
+import { escapeLike, normalizeEmail, normalizeName, normalizePan } from './customers.normalize';
 import {
   type CustomerDetailDto,
   type CustomerList,
@@ -187,35 +183,64 @@ export class CustomersService {
 
   async list(query: ListCustomersQuery): Promise<CustomerList> {
     const { scope, principal } = this.caller.current();
-    const conditions: SQL[] = [this.visibleWhere(scope.tenantId, principal, 'customer.read')];
-    // A bare constant in ORDER BY is a column position to Postgres, so the rank is added only when it exists.
-    const order: SQL[] = [];
+    // The scope predicate and every filter are one `where`; searchPage ANDs the search onto it, so a fuzzy
+    // match can never reach a customer the caller may not read.
+    const where = and(
+      this.visibleWhere(scope.tenantId, principal, 'customer.read'),
+      query.relationship === undefined
+        ? undefined
+        : inArray(customers.relationship, query.relationship),
+      query.industry === undefined ? undefined : inArray(customers.industry, query.industry),
+    );
+    const order: SQL[] = [asc(customers.legalName), asc(customers.id)];
     if (query.q !== undefined) {
-      const terms = searchTerms(query.q);
-      const code = `%${escapeLike(terms.code)}%`;
-      const matches: SQL[] = [like(customers.panVatNo, code), like(customers.number, code)];
-      if (terms.name !== null) {
-        matches.push(like(customers.nameNorm, `%${escapeLike(terms.name)}%`));
-        order.push(
-          sql`CASE WHEN ${like(customers.nameNorm, `${escapeLike(terms.name)}%`)} THEN 0 ELSE 1 END`,
-        );
-      }
-      conditions.push(or(...matches) as SQL);
+      // Names that start with the text come before names that only contain it.
+      const prefix = `${escapeLike(query.q)}%`;
+      order.unshift(
+        sql`CASE WHEN ${customers.legalName} ILIKE ${prefix} OR ${customers.nameNorm} ILIKE ${prefix} THEN 0 ELSE 1 END`,
+      );
     }
-    order.push(asc(customers.legalName), asc(customers.id));
-    const where = and(...conditions);
+    const { rows, total } = await searchPage(this.db, {
+      q: query.q,
+      columns: [customers.legalName, customers.nameNorm, customers.number, customers.panVatNo],
+      where,
+      orderBy: order,
+      limit: query.limit,
+      offset: query.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(customers)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: async (tx, w) => {
+        const [count] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(customers)
+          .where(w);
+        return count?.n ?? 0;
+      },
+    });
+    return { items: rows.map(toCustomerDto), total };
+  }
+
+  /** The industries in use among the customers the caller may read, for the list's Industry filter. */
+  async industries(): Promise<string[]> {
+    const { scope, principal } = this.caller.current();
     const rows = await this.db
-      .select()
+      .selectDistinct({ industry: customers.industry })
       .from(customers)
-      .where(where)
-      .orderBy(...order)
-      .limit(query.limit)
-      .offset(query.offset);
-    const [count] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(customers)
-      .where(where);
-    return { items: rows.map(toCustomerDto), total: count?.n ?? 0 };
+      .where(
+        and(
+          this.visibleWhere(scope.tenantId, principal, 'customer.read'),
+          isNotNull(customers.industry),
+        ),
+      )
+      .orderBy(asc(customers.industry))
+      .limit(100);
+    return rows.flatMap((r) => (r.industry === null || r.industry === '' ? [] : [r.industry]));
   }
 
   // --------------------------------------------------------------------------------------------------- read
@@ -229,7 +254,12 @@ export class CustomersService {
     // The terms are entity-owned: show the ones of the entities this user may act for. A portal caller has
     // no entities, so the field is left out (not an empty list, which would claim "no terms set").
     if (principal.orgKind !== 'staff') return dto;
-    return { ...dto, accounts: await this.accountsFor(scope.tenantId, principal.userId, id) };
+    // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
+    const [accounts, people] = await Promise.all([
+      this.accountsFor(scope.tenantId, principal.userId, id),
+      personNames(this.db, row.tenantId, [row.ownerUserId]),
+    ]);
+    return { ...dto, accounts, people };
   }
 
   // ------------------------------------------------------------------------------------------------- create

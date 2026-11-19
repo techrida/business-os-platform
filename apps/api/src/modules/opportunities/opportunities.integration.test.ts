@@ -350,7 +350,8 @@ describe('GET /v1/opportunities', () => {
     const percent = z
       .array(OpportunityDtoSchema)
       .parse((await request(baseUrl).get('/v1/opportunities?q=50%25')).body);
-    expect(percent.map((o) => o.id)).toEqual([hold]);
+    // Fewer than five exact hits, so close matches may follow; the exact one is first.
+    expect(percent[0]?.id).toBe(hold);
     const word = z
       .array(OpportunityDtoSchema)
       .parse((await request(baseUrl).get('/v1/opportunities?q=zeta&limit=200')).body);
@@ -399,6 +400,88 @@ describe('GET /v1/opportunities', () => {
     ).toBe(400);
     expect((await request(baseUrl).get('/v1/opportunities?limit=0')).status).toBe(400);
     expect((await request(baseUrl).get('/v1/opportunities?limit=1000')).status).toBe(400);
+  });
+
+  it('pages with offset in a stable order and reports all matches in X-Total-Count', async () => {
+    as(U.boss, 'founder');
+    const sameTime = new Date('2026-11-10T08:00:00Z');
+    const made: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      made.push(await seed({ name: 'Pagerun deal', createdAt: sameTime }));
+    }
+    const page = async (offset: number) => {
+      const res = await request(baseUrl).get(
+        `/v1/opportunities?q=pagerun&limit=2&offset=${offset}`,
+      );
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.headers['x-total-count']).toBe('5');
+      return z
+        .array(OpportunityDtoSchema)
+        .parse(res.body)
+        .map((o) => o.id);
+    };
+    const seen = [...(await page(0)), ...(await page(2)), ...(await page(4))];
+    // Equal createdAt: the id tiebreak keeps pages disjoint and complete.
+    expect(new Set(seen).size).toBe(5);
+    expect([...seen].sort()).toEqual([...made].sort());
+    expect(await page(6)).toEqual([]);
+  });
+
+  it('filters by repeated owner and never widens the caller scope', async () => {
+    const mine = await seed({ owner: U.salesA, name: 'Ownerfilter one' });
+    const theirs = await seed({ owner: U.salesB, name: 'Ownerfilter two' });
+    const otherEntity = await seed({ entity: 'B', owner: U.salesA, name: 'Ownerfilter three' });
+    const get = async (query: string) => {
+      const res = await request(baseUrl).get(`/v1/opportunities?q=ownerfilter&${query}`);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return {
+        ids: z
+          .array(OpportunityDtoSchema)
+          .parse(res.body)
+          .map((o) => o.id),
+        total: res.headers['x-total-count'],
+      };
+    };
+
+    // `own` scope: asking for a colleague's deals by owner returns nothing, and the total says so.
+    expect(await get(`owner=${U.salesB}`)).toEqual({ ids: [], total: '0' });
+    expect(await get(`owner=${U.salesA}&owner=${U.salesB}`)).toEqual({ ids: [mine], total: '1' });
+
+    as(U.boss, 'founder');
+    expect((await get(`owner=${U.salesB}`)).ids).toEqual([theirs]);
+    const both = await get(`owner=${U.salesA}&owner=${U.salesB}`);
+    expect([...both.ids].sort()).toEqual([mine, theirs].sort());
+    expect(both.ids).not.toContain(otherEntity);
+    expect(both.total).toBe('2');
+  });
+
+  it('finds a close spelling only when there are few exact matches, and keeps the scope', async () => {
+    as(U.boss, 'founder');
+    const close = await seed({ name: 'Himalyan Traders Pvt Ltd' });
+    const hidden = await seed({ name: 'Himalyan Exports', entity: 'B' });
+    const res = await request(baseUrl).get('/v1/opportunities?q=Himalayan');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const ids = z
+      .array(OpportunityDtoSchema)
+      .parse(res.body)
+      .map((o) => o.id);
+    expect(ids).toContain(close);
+    expect(ids).not.toContain(hidden);
+    expect(Number(res.headers['x-total-count'])).toBe(ids.length);
+
+    // An exact substring match ranks before the close ones.
+    const exact = await seed({ name: 'Himalayan Hydro' });
+    const ranked = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Himalayan')).body)
+      .map((o) => o.id);
+    expect(ranked.indexOf(exact)).toBeLessThan(ranked.indexOf(close));
+  });
+
+  it('refuses an unknown owner, a repeated q and an unknown param with 400', async () => {
+    for (const query of ['owner=nobody', 'q=ab&q=cd', 'sort=name', 'offset=-1']) {
+      expect((await request(baseUrl).get(`/v1/opportunities?${query}`)).status, query).toBe(400);
+    }
   });
 });
 

@@ -796,7 +796,7 @@ describe('purchase request: scope', () => {
     expect((await httpErrorOf(service.cancel(d.id, undefined, randomUUID()))).getStatus()).toBe(
       404,
     );
-    expect(await service.list({ limit: 200 })).toEqual([]);
+    expect((await service.list({ limit: 200, offset: 0 })).rows).toEqual([]);
     // A department of entity B is not a department of the acting entity A.
     current.scope = null;
     const error = await httpErrorOf(draft({ departmentId: dept.otherEntity }));
@@ -811,11 +811,13 @@ describe('purchase request: scope', () => {
     expect((await httpErrorOf(service.submit(d.id, undefined, randomUUID()))).getStatus()).toBe(
       404,
     );
-    expect((await service.list({ limit: 200 })).map((r) => r.id)).not.toContain(d.id);
+    expect((await service.list({ limit: 200, offset: 0 })).rows.map((r) => r.id)).not.toContain(
+      d.id,
+    );
 
     as(U.proc, 'procurement');
     expect((await service.get(d.id)).id).toBe(d.id);
-    expect((await service.list({ limit: 200 })).map((r) => r.id)).toContain(d.id);
+    expect((await service.list({ limit: 200, offset: 0 })).rows.map((r) => r.id)).toContain(d.id);
     // Reading everything does not let Procurement edit someone else's request.
     expect(
       (await httpErrorOf(service.update(d.id, body(), undefined, randomUUID()))).getStatus(),
@@ -823,10 +825,45 @@ describe('purchase request: scope', () => {
 
     // The requester's own list is not empty under `own` scope.
     as(U.req, 'operations_officer');
-    expect((await service.list({ limit: 200 })).map((r) => r.id)).toContain(d.id);
+    expect((await service.list({ limit: 200, offset: 0 })).rows.map((r) => r.id)).toContain(d.id);
     expect(
-      (await service.list({ status: 'cancelled', limit: 200 })).map((r) => r.id),
+      (await service.list({ status: ['cancelled'], limit: 200, offset: 0 })).rows.map((r) => r.id),
     ).not.toContain(d.id);
+  });
+});
+
+describe('purchase request: list filters, search and paging', () => {
+  it('filters by several statuses, searches, pages with a stable total and keeps the scope', async () => {
+    as(U.req, 'operations_officer');
+    const chairs = await draft({ justification: 'Chairs for the Himalayan lounge' });
+    const desks = await draft({ justification: 'Standing desks for finance' });
+    await service.cancel(desks.id, undefined, randomUUID());
+
+    const both = await service.list({ status: ['draft', 'cancelled'], limit: 200, offset: 0 });
+    expect(both.rows.map((r) => r.id)).toEqual(expect.arrayContaining([chairs.id, desks.id]));
+    const onlyCancelled = await service.list({ status: ['cancelled'], limit: 200, offset: 0 });
+    expect(onlyCancelled.rows.map((r) => r.id)).not.toContain(chairs.id);
+
+    const found = await service.list({ q: 'standing desks', limit: 50, offset: 0 });
+    expect(found.rows.map((r) => r.id)).toEqual([desks.id]);
+    expect(found.total).toBe(1);
+
+    const all = await service.list({ limit: 200, offset: 0 });
+    const first = await service.list({ limit: 1, offset: 0 });
+    const second = await service.list({ limit: 1, offset: 1 });
+    expect(first.total).toBe(all.total);
+    expect(first.rows[0]?.id).toBe(all.rows[0]?.id);
+    expect(second.rows[0]?.id).toBe(all.rows[1]?.id);
+
+    // Another entity gets neither the rows nor the count, whatever the filter says.
+    current.scope = scopeB;
+    const other = await service.list({
+      q: 'standing desks',
+      status: ['cancelled'],
+      limit: 50,
+      offset: 0,
+    });
+    expect(other).toEqual({ rows: [], total: 0 });
   });
 });
 
@@ -848,7 +885,7 @@ describe('purchase request: the live RFQ', () => {
     const d = await draft();
     expect(d.rfqId).toBeNull();
     expect((await service.get(d.id)).rfqId).toBeNull();
-    const listed = (await service.list({ limit: 200 })).find((r) => r.id === d.id);
+    const listed = (await service.list({ limit: 200, offset: 0 })).rows.find((r) => r.id === d.id);
     expect(listed?.rfqId).toBeNull();
     expect((await service.update(d.id, body(), undefined, randomUUID())).rfqId).toBeNull();
     expect((await service.submit(d.id, undefined, randomUUID())).rfqId).toBeNull();
@@ -866,7 +903,7 @@ describe('purchase request: the live RFQ', () => {
 
     expect((await service.get(withRfq.id)).rfqId).toBe(live);
     expect((await service.get(cancelledOnly.id)).rfqId).toBeNull();
-    const listed = await service.list({ limit: 200 });
+    const listed = (await service.list({ limit: 200, offset: 0 })).rows;
     expect(listed.find((r) => r.id === withRfq.id)?.rfqId).toBe(live);
     expect(listed.find((r) => r.id === cancelledOnly.id)?.rfqId).toBeNull();
   });
@@ -876,7 +913,7 @@ describe('purchase request: the live RFQ', () => {
     await insertRfq(d.id, 'open');
     current.scope = scopeB;
     expect((await httpErrorOf(service.get(d.id))).getStatus()).toBe(404);
-    expect(await service.list({ limit: 200 })).toEqual([]);
+    expect((await service.list({ limit: 200, offset: 0 })).rows).toEqual([]);
   });
 });
 
@@ -916,5 +953,60 @@ describe('editing a request with a retired cost centre', () => {
         randomUUID(),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('department and cost-centre names on a request (I-27)', () => {
+  /** The stored names, read as the system so the test does not trust the service's own lookup. */
+  const namesOf = async (deptId: string, ccId: string) =>
+    read(async (tx) => {
+      const [d] = await tx
+        .execute<{ name: string }>(sql`SELECT name FROM app.departments WHERE id = ${deptId}`)
+        .then((r) => r.rows);
+      const [c] = await tx
+        .execute<{ name: string }>(sql`SELECT name FROM app.cost_centers WHERE id = ${ccId}`)
+        .then((r) => r.rows);
+      return { departmentName: d!.name, costCenterName: c!.name };
+    });
+
+  it("names another requester's department and cost centre for Procurement, in the detail and the list", async () => {
+    const mine = await draft();
+    const expected = await namesOf(dept.headed, centers.active);
+    as(U.proc, 'procurement');
+    const got = await service.get(mine.id);
+    expect(got.requesterUserId).toBe(U.req);
+    expect({ departmentName: got.departmentName, costCenterName: got.costCenterName }).toEqual(
+      expected,
+    );
+    const row = (await service.list({ limit: 100, offset: 0 })).rows.find((r) => r.id === mine.id);
+    expect(row).toMatchObject(expected);
+  });
+
+  it('names each request by its own department when several are listed', async () => {
+    const other = await draft({ departmentId: dept.headless });
+    const expected = await namesOf(dept.headless, centers.active);
+    as(U.proc, 'procurement');
+    const row = (await service.list({ limit: 100, offset: 0 })).rows.find((r) => r.id === other.id);
+    expect(row?.departmentName).toBe(expected.departmentName);
+  });
+
+  it("does not show another entity's request, or its names, to entity A's Procurement", async () => {
+    const { costCenterId } = await createCostCenter(appPool, {
+      ...scopeB,
+      name: `Entity B centre ${randomUUID()}`,
+    });
+    current.scope = scopeB;
+    const theirs = await service.create(
+      body({ departmentId: dept.otherEntity, costCenterId }),
+      randomUUID(),
+    );
+    const theirNames = await namesOf(dept.otherEntity, costCenterId);
+    current.scope = null;
+    as(U.proc, 'procurement');
+    const listed = await service.list({ limit: 100, offset: 0 });
+    expect(listed.rows.some((r) => r.id === theirs.id)).toBe(false);
+    expect(JSON.stringify(listed)).not.toContain(theirNames.departmentName);
+    expect(JSON.stringify(listed)).not.toContain(theirNames.costCenterName);
+    expect((await httpErrorOf(service.get(theirs.id))).getStatus()).toBe(404);
   });
 });

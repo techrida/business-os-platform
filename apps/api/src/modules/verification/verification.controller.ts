@@ -32,6 +32,7 @@ import {
 import type { Response } from 'express';
 
 import { AnyAuthenticated, Can } from '../../platform/authz/decorators';
+import { setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { VerificationService } from './verification.service';
 import {
@@ -46,11 +47,21 @@ import {
 export class VerificationController {
   constructor(private readonly cases: VerificationService) {}
 
-  /** 200 with a bare array of cases, newest first, limited to what the caller may read. */
+  /**
+   * 200 with a bare array of cases, newest first, limited to what the caller may read; X-Total-Count is the
+   * number of cases the caller may read under the same filters, not just this page.
+   */
   @Get()
   @Can('verification.read')
-  list(@Query() query: unknown): Promise<VerificationCaseDto[]> {
-    return this.cases.list(parseOr400(ListVerificationCasesQuerySchema, query));
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<VerificationCaseDto[]> {
+    const { rows, total } = await this.cases.list(
+      parseOr400(ListVerificationCasesQuerySchema, query),
+    );
+    setTotalCount(res, total);
+    return rows;
   }
 
   /** 200 with the case; 404 for a case of another tenant or outside the caller's scope. */

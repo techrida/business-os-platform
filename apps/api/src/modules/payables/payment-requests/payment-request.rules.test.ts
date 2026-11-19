@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDirectory, route, type DirectoryData } from '../../approvals/router';
 import {
+  ListPaymentRequestsQuerySchema,
   PAYMENT_REQUEST_WORKFLOW_SPEC,
   allPoMatchedOf,
   amountNprOf,
@@ -139,5 +140,27 @@ describe('status', () => {
     expect(statusAfter('approved')).toBe('approved');
     expect(statusAfter('returned')).toBe('rejected');
     expect(statusAfter('rejected')).toBe('rejected');
+  });
+});
+
+describe('ListPaymentRequestsQuerySchema', () => {
+  it('takes a repeated status, a search and a page window, and pages 25 by default', () => {
+    expect(ListPaymentRequestsQuerySchema.parse({})).toEqual({ limit: 25, offset: 0 });
+    expect(
+      ListPaymentRequestsQuerySchema.parse({
+        status: ['draft', 'approved'],
+        q: 'acme',
+        limit: '50',
+        offset: '25',
+      }),
+    ).toEqual({ status: ['draft', 'approved'], q: 'acme', limit: 50, offset: 25 });
+  });
+
+  it('refuses an unknown status, a big limit and an unknown key', () => {
+    expect(ListPaymentRequestsQuerySchema.safeParse({ status: ['draft', 'nope'] }).success).toBe(
+      false,
+    );
+    expect(ListPaymentRequestsQuerySchema.safeParse({ limit: '101' }).success).toBe(false);
+    expect(ListPaymentRequestsQuerySchema.safeParse({ vendorId: 'x' }).success).toBe(false);
   });
 });

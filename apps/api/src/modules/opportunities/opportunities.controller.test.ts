@@ -6,6 +6,7 @@ import 'reflect-metadata';
 import { OPPORTUNITY_STAGES } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CAN_KEY } from '../../platform/authz/decorators';
@@ -14,10 +15,11 @@ import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
 
 const ID = '4f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
+const OWNER = '9b2c1d3e-5f60-4a7b-8c9d-0e1f2a3b4c5d';
 
 async function setup() {
   const service = {
-    list: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     get: vi.fn().mockResolvedValue({}),
     changeStage: vi.fn().mockResolvedValue({}),
   };
@@ -25,7 +27,10 @@ async function setup() {
     controllers: [OpportunitiesController],
     providers: [{ provide: OpportunitiesService, useValue: service }],
   }).compile();
-  return { service, moduleRef, controller: moduleRef.get(OpportunitiesController) };
+  const controller = moduleRef.get(OpportunitiesController);
+  const res = { setHeader: vi.fn() };
+  const list = (query: unknown) => controller.list(query, res as unknown as Response);
+  return { service, moduleRef, controller, res, list };
 }
 
 describe('OpportunitiesController', () => {
@@ -43,29 +48,59 @@ describe('OpportunitiesController', () => {
     expect(can('changeStage')).toBe('crm.opportunity.write');
   });
 
-  it('parses the list query: limit becomes a number with a default, a bad stage is a 400', async () => {
-    const { service, controller } = await setup();
-    await controller.list({ q: 'acme', stage: 'negotiation', limit: '20' });
-    expect(service.list).toHaveBeenCalledWith({ q: 'acme', stage: 'negotiation', limit: 20 });
-    await controller.list({});
-    expect(service.list).toHaveBeenLastCalledWith({ limit: 50 });
-    expect(() => controller.list({ stage: 'nonsense' })).toThrow(BadRequestException);
-    expect(() => controller.list({ limit: '5000' })).toThrow(BadRequestException);
+  it('parses the list query: arrays, paging defaults and a total header; a bad value is a 400', async () => {
+    const { service, res, list } = await setup();
+    service.list.mockResolvedValue({ items: [{ id: 'a' }], total: 7 });
+    await expect(
+      list({ q: ' acme ', stage: 'negotiation', owner: OWNER, limit: '20', offset: '40' }),
+    ).resolves.toEqual([{ id: 'a' }]);
+    expect(service.list).toHaveBeenCalledWith({
+      q: 'acme',
+      stage: ['negotiation'],
+      owner: [OWNER],
+      limit: 20,
+      offset: 40,
+    });
+    expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '7');
+    await list({});
+    expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    await expect(list({ stage: 'nonsense' })).rejects.toThrow(BadRequestException);
+    await expect(list({ owner: 'not-a-guid' })).rejects.toThrow(BadRequestException);
+    await expect(list({ limit: '5000' })).rejects.toThrow(BadRequestException);
+    await expect(list({ offset: '-1' })).rejects.toThrow(BadRequestException);
+    await expect(list({ color: 'red' })).rejects.toThrow(BadRequestException);
   });
 
-  it('accepts all stages and rejects empty, invalid or excessive stage lists', async () => {
-    const { service, moduleRef, controller } = await setup();
-    await controller.list({ stage: OPPORTUNITY_STAGES });
-    expect(service.list).toHaveBeenCalledWith({ stage: OPPORTUNITY_STAGES, limit: 50 });
+  it('treats a one-character search as no search and refuses a repeated q', async () => {
+    const { service, list } = await setup();
+    await list({ q: 'a' });
+    expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    await expect(list({ q: ['ab', 'cd'] })).rejects.toThrow(BadRequestException);
+  });
+
+  it('accepts repeated stages and owners, dedupes them, and refuses unknown or too many', async () => {
+    const { service, moduleRef, list } = await setup();
+    await list({ stage: [...OPPORTUNITY_STAGES, 'won'], owner: [OWNER, OWNER] });
+    expect(service.list).toHaveBeenCalledWith({
+      stage: OPPORTUNITY_STAGES,
+      owner: [OWNER],
+      limit: 50,
+      offset: 0,
+    });
     service.list.mockClear();
 
-    for (const stage of [
-      [],
-      ['qualified', 'nonsense'],
-      ['qualified', ''],
-      [...OPPORTUNITY_STAGES, 'qualified'],
+    for (const query of [
+      { stage: ['qualified', 'nonsense'] },
+      { owner: [OWNER, 'nope'] },
+      { stage: Array.from({ length: 21 }, () => 'qualified') },
+      {
+        owner: Array.from(
+          { length: 21 },
+          (_, i) => `${OWNER.slice(0, -2)}${String(i).padStart(2, '0')}`,
+        ),
+      },
     ]) {
-      expect(() => controller.list({ stage })).toThrow(BadRequestException);
+      await expect(list(query), JSON.stringify(query)).rejects.toThrow(BadRequestException);
     }
     expect(service.list).not.toHaveBeenCalled();
     await moduleRef.close();

@@ -5,6 +5,7 @@ import { DEFAULT_MATCH_TOLERANCE } from '@bos/money-rules';
 import { describe, expect, it } from 'vitest';
 
 import {
+  ListBillsQuerySchema,
   afterMatch,
   billFactsOf,
   billTotals,
@@ -125,5 +126,27 @@ describe('billFactsOf (AD3, AD4)', () => {
       amountNpr: '101700.00',
     });
     expect(billFactsOf({ poMatched: true, gross: '1000000.01', fxRate: '1' }).band).toBe('founder');
+  });
+});
+
+describe('ListBillsQuerySchema', () => {
+  it('takes a repeated status, a search and a page window, and pages 25 by default', () => {
+    expect(ListBillsQuerySchema.parse({})).toEqual({ limit: 25, offset: 0 });
+    expect(
+      ListBillsQuerySchema.parse({
+        status: ['draft', 'variance', 'draft'],
+        q: ' acme ',
+        limit: '100',
+        offset: '50',
+      }),
+    ).toEqual({ status: ['draft', 'variance'], q: 'acme', limit: 100, offset: 50 });
+    expect(ListBillsQuerySchema.parse({ status: 'draft' }).status).toEqual(['draft']);
+  });
+
+  it('ignores a one-letter search and refuses an unknown status, a big limit and an unknown key', () => {
+    expect(ListBillsQuerySchema.parse({ q: 'a' }).q).toBeUndefined();
+    expect(ListBillsQuerySchema.safeParse({ status: ['draft', 'nope'] }).success).toBe(false);
+    expect(ListBillsQuerySchema.safeParse({ limit: '101' }).success).toBe(false);
+    expect(ListBillsQuerySchema.safeParse({ vendorId: 'x' }).success).toBe(false);
   });
 });

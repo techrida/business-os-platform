@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { minimalPdf } from '../helpers/pdf-fixture';
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { searchBox } from '../helpers/multi-select';
 import { chooseOption, selectByName } from '../helpers/select';
 
 /**
@@ -27,11 +28,14 @@ test('the vendor list loads and searches', async ({ browser, baseURL }) => {
     opened.push(founder);
     await founder.page.goto('/vendors');
     await expect(founder.page.getByRole('heading', { level: 1, name: 'Vendors' })).toBeVisible();
-    await founder.page.getByLabel('Search vendors').fill('no-such-vendor-xyz');
-    await founder.page.getByRole('button', { name: 'Apply' }).click();
-    await expect(founder.page).toHaveURL(/q=no-such-vendor-xyz/);
-    await expect(founder.page.getByText('No vendors match "no-such-vendor-xyz".')).toBeVisible();
-    await expect(founder.page.getByLabel('Search vendors')).toHaveValue('no-such-vendor-xyz');
+    // Search is instant (debounced) and lives in the URL: no Apply button. A nonsense token, because
+    // the typo-tolerant search also returns close matches when few vendors match exactly.
+    const query = 'qzxjwkv4471';
+    const search = searchBox(founder.page, 'Search vendors');
+    await search.fill(query);
+    await expect(founder.page).toHaveURL((url) => url.searchParams.get('q') === query);
+    await expect(founder.page.getByText('No vendors match.')).toBeVisible();
+    await expect(search).toHaveValue(query);
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

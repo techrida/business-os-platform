@@ -11,6 +11,7 @@ import {
   getComparison,
   getRfq,
   listRfqs,
+  listRfqsPage,
   listSubmissions,
   recommendQuotation,
   recordQuotation,
@@ -125,6 +126,30 @@ describe('reads', () => {
     const out = await listRfqs(session, { status: 'open', limit: 100 });
     expect(out[0]?.quotationCount).toBe(1);
     expect(lastCall().url).toBe('http://api:3001/v1/procurement/rfqs?status=open&limit=100');
+  });
+
+  it('lists a page with repeated statuses, a search and an offset, and reads the total', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([listItem]), {
+          status: 200,
+          headers: { 'x-total-count': '61' },
+        }),
+      ),
+    );
+    const out = await listRfqsPage(session, {
+      status: ['open', 'closed'],
+      q: 'RFQ-1',
+      limit: 25,
+      offset: 25,
+    });
+    expect(out.total).toBe(61);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/procurement/rfqs?status=open&status=closed&q=RFQ-1&limit=25&offset=25',
+    );
+    expect(() =>
+      listRfqsPage(session, { status: ['bogus' as never], limit: 25, offset: 0 }),
+    ).toThrow();
   });
 
   it('refuses a status that is not an RFQ status before calling the API', () => {

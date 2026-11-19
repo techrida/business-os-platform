@@ -44,6 +44,7 @@ import { AuthzService } from '../../../platform/authz/authz.service';
 import type { Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
+import { searchPage } from '../../../platform/list';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
@@ -159,23 +160,45 @@ export class PurchaseRequestsService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** The requests the caller may read in the acting entity, newest first. */
-  async list(query: ListPurchaseRequestsQuery): Promise<PurchaseRequestListItem[]> {
+  /**
+   * One page of the requests the caller may read in the acting entity, newest first, with the total of all matches.
+   * The scope is part of `where`, so neither a filter nor a search can reach a request the caller may not read.
+   */
+  async list(
+    query: ListPurchaseRequestsQuery,
+  ): Promise<{ rows: PurchaseRequestListItem[]; total: number }> {
     const { principal, scope } = this.caller.current();
     const filters: SQL[] = [purchaseRequestScopeWhere(principal, READ_ACTION)];
-    if (query.status !== undefined) filters.push(eq(purchaseRequests.status, query.status));
-    const rows = await this.db
-      .select()
-      .from(purchaseRequests)
-      .where(and(...filters))
-      .orderBy(desc(purchaseRequests.createdAt), desc(purchaseRequests.id))
-      .limit(query.limit);
+    if (query.status !== undefined && query.status.length > 0) {
+      filters.push(inArray(purchaseRequests.status, query.status));
+    }
+    const page = await searchPage(this.db, {
+      q: query.q,
+      columns: [purchaseRequests.number, purchaseRequests.justification],
+      where: and(...filters),
+      orderBy: [desc(purchaseRequests.createdAt), desc(purchaseRequests.id)],
+      limit: query.limit,
+      offset: query.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(purchaseRequests)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: (tx, where) => tx.$count(purchaseRequests, where),
+    });
     const rfqIds = await this.liveRfqIds(
       this.db,
       scope,
-      rows.map((r) => r.id),
+      page.rows.map((r) => r.id),
     );
-    return rows.map((r) => toListItem(r, rfqIds.get(r.id) ?? null));
+    const names = await this.namesOf(scope, page.rows);
+    return {
+      rows: page.rows.map((r) => ({ ...toListItem(r, rfqIds.get(r.id) ?? null), ...names(r) })),
+      total: page.total,
+    };
   }
 
   /** One request with its lines; 404 outside the caller's entity or scope. */
@@ -188,7 +211,49 @@ export class PurchaseRequestsService {
       .limit(1);
     if (row === undefined) throw notFound();
     const rfqId = (await this.liveRfqIds(this.db, scope, [row.id])).get(row.id) ?? null;
-    return toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId);
+    const names = await this.namesOf(scope, [row]);
+    return {
+      ...toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId),
+      ...names(row),
+    };
+  }
+
+  /**
+   * The names of the departments and cost centres the given requests (already read under the caller's scope)
+   * name, from the acting tenant and entity only. A request's department and cost centre are labelled with the
+   * request itself, so Procurement or a requester needs no department or cost-centre directory read.
+   */
+  private async namesOf(
+    scope: TxScope,
+    rows: readonly Pick<PurchaseRequestRow, 'departmentId' | 'costCenterId'>[],
+  ): Promise<
+    (r: Pick<PurchaseRequestRow, 'departmentId' | 'costCenterId'>) => {
+      departmentName: string | null;
+      costCenterName: string | null;
+    }
+  > {
+    const deptIds = [...new Set(rows.map((r) => r.departmentId))];
+    const ccIds = [...new Set(rows.map((r) => r.costCenterId))];
+    const [depts, ccs] = await Promise.all([
+      deptIds.length === 0
+        ? []
+        : this.db
+            .select({ id: departments.id, name: departments.name })
+            .from(departments)
+            .where(scoped(scope).where(departments, inArray(departments.id, deptIds))),
+      ccIds.length === 0
+        ? []
+        : this.db
+            .select({ id: costCenters.id, name: costCenters.name })
+            .from(costCenters)
+            .where(scoped(scope).where(costCenters, inArray(costCenters.id, ccIds))),
+    ]);
+    const dept = new Map(depts.map((d) => [d.id, d.name]));
+    const cc = new Map(ccs.map((c) => [c.id, c.name]));
+    return (r) => ({
+      departmentName: dept.get(r.departmentId) ?? null,
+      costCenterName: cc.get(r.costCenterId) ?? null,
+    });
   }
 
   // ------------------------------------------------------------------------------------------------- create

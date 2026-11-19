@@ -23,7 +23,7 @@ const ISSUED = {
 
 export function invoiceDetail(
   invoice: Record<string, unknown> = {},
-  rest: Partial<Pick<InvoiceDetail, 'lines' | 'taxSummary'>> = {},
+  rest: Partial<Pick<InvoiceDetail, 'lines' | 'taxSummary' | 'customerName'>> = {},
 ): InvoiceDetail {
   const issued = invoice['status'] === 'issued';
   return InvoiceDetailSchema.parse({
@@ -64,6 +64,7 @@ export function invoiceDetail(
       ...(issued ? ISSUED : {}),
       ...invoice,
     },
+    ...(rest.customerName === undefined ? {} : { customerName: rest.customerName }),
     lines: rest.lines ?? [
       {
         lineNo: 1,

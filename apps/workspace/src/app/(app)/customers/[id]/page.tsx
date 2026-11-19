@@ -327,6 +327,23 @@ function Verification({
   );
 }
 
+/**
+ * The account owner's name: from the record itself first (the API sends it to every staff reader), then from the
+ * admin directory, which only administrators can read.
+ */
+function ownerName(
+  customer: CustomerDetail,
+  directory: PromiseSettledResult<Map<string, string>>,
+): string {
+  const owner = customer.ownerUserId;
+  if (owner === null) return 'Owner name unavailable';
+  return (
+    customer.people?.find((p) => p.userId === owner)?.name ??
+    (directory.status === 'fulfilled' ? directory.value.get(owner) : undefined) ??
+    'Owner name unavailable'
+  );
+}
+
 export default async function CustomerPage({
   params,
   searchParams,
@@ -407,9 +424,7 @@ export default async function CustomerPage({
       value:
         customer.ownerUserId !== null ? (
           <span>
-            {people.status === 'fulfilled'
-              ? (people.value.get(customer.ownerUserId) ?? 'Owner name unavailable')
-              : 'Owner name unavailable'}
+            {ownerName(customer, people)}
           </span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>

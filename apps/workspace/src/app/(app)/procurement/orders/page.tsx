@@ -1,42 +1,36 @@
-import { PO_STATUSES, PoStatusSchema, type PoStatus } from '@bos/contracts';
+import { PO_STATUSES, PoStatusSchema, pageWindow } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
-import { parsePage } from '@/components/p2/customers/duplicates';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
 
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { getVendor } from '@/lib/api-vendors';
-import { listPurchaseOrders, type PoListItem } from '@/lib/api-purchase-orders';
+import { listPurchaseOrdersPage, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
+import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 import type { Session } from '@/lib/session';
 
 import layout from '../procurement.module.css';
 import { poFailure } from './_lib/failure';
 import { PO_STATUS_LABEL, poMoney } from './_lib/model';
 import styles from './orders.module.css';
+import { OrdersFilters } from './orders-filters';
 
 export const metadata: Metadata = { title: 'Purchase orders · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const PAGE_SIZE = 25;
-
-function href(status: PoStatus | undefined, page: number): string {
-  const params = new URLSearchParams();
-  if (status !== undefined) params.set('status', status);
-  if (page > 1) params.set('page', String(page));
-  const text = params.toString();
-  return text === '' ? '/procurement/orders' : `/procurement/orders?${text}`;
-}
+const PATH = '/procurement/orders';
+const LIST = { multi: { status: PO_STATUSES } } as const;
 
 /** Vendor names for the rows on this page. Unreadable vendors show an explicit unavailable-name label. */
 async function vendorNames(session: Session, ids: readonly string[]): Promise<Map<string, string>> {
@@ -103,38 +97,62 @@ function Row({
 export default async function PurchaseOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string | string[]; page?: string | string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await requireStaffSession('/procurement/orders');
+  const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
   const params = await searchParams;
-  const parsedStatus = PoStatusSchema.safeParse(
-    typeof params.status === 'string' ? params.status : undefined,
-  );
-  const status = parsedStatus.success ? parsedStatus.data : undefined;
-  const page = parsePage(params.page);
+  const list = readList(params, LIST);
+  const status = PoStatusSchema.array().parse(list.multi.status);
 
   let orders: PoListItem[] | null = null;
+  let total = 0;
+  let window = pageWindow(list.page, list.rows);
   let problem: { message: string; status: number } | null = null;
   try {
-    orders = await listPurchaseOrders(session, status);
+    const fetchPage = () =>
+      listPurchaseOrdersPage(session, {
+        status,
+        ...(list.q !== undefined ? { q: list.q } : {}),
+        limit: window.limit,
+        offset: window.offset,
+      });
+    let result = await fetchPage();
+    // A page number past the end (a stale link) shows the last page instead of an empty table.
+    const clamped = pageWindow(list.page, list.rows, result.total);
+    if (result.items.length === 0 && result.total > 0 && clamped.page !== window.page) {
+      window = clamped;
+      result = await fetchPage();
+    } else {
+      window = clamped;
+    }
+    orders = result.items;
+    total = result.total;
   } catch (err) {
     const f = poFailure(err, 'load');
     problem = { message: f.message, status: f.status };
   }
 
-  // The API answers the whole list, newest first, so the page slices it.
-  const total = orders?.length ?? 0;
-  const shown = orders?.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) ?? [];
   const names =
-    shown.length > 0
+    orders !== null && orders.length > 0
       ? await vendorNames(
           session,
-          shown.map((o) => o.vendorId),
+          orders.map((o) => o.vendorId),
         )
       : new Map<string, string>();
-  const first = (page - 1) * PAGE_SIZE + 1;
-  const hasNext = page * PAGE_SIZE < total;
+  const filtered = activeFilterLabels(
+    { q: list.q, multi: list.multi, single: {} },
+    {
+      status: {
+        label: 'Status',
+        format: (v) => PO_STATUS_LABEL[v as keyof typeof PO_STATUS_LABEL]?.text ?? v,
+      },
+    },
+  );
+  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
+  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
+    (n) => Math.abs(n - window.page) <= 2,
+  );
 
   return (
     <Page className={layout.list}>
@@ -143,30 +161,11 @@ export default async function PurchaseOrdersPage({
         description="Orders placed with approved vendors. An order is issued once, and every change after that is a new version."
       />
 
-      <form method="get" action="/procurement/orders" role="search" className={layout.filters}>
-        <Field label="Status">
-          {(control) => (
-            <Select name="status" defaultValue={status ?? ''} {...control}>
-              <option value="">All statuses</option>
-              {PO_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {PO_STATUS_LABEL[s].text}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-        <div className={layout.filterActions}>
-          <Button type="submit" variant="secondary">
-            Apply
-          </Button>
-          {status !== undefined ? (
-            <LinkButton href="/procurement/orders" variant="ghost">
-              Clear filter
-            </LinkButton>
-          ) : null}
-        </div>
-      </form>
+      <OrdersFilters
+        statusOptions={PO_STATUSES.map((s) => ({ value: s, label: PO_STATUS_LABEL[s].text }))}
+        status={status}
+        rows={typeof params.rows === 'string' ? params.rows : undefined}
+      />
 
       {problem !== null ? (
         <Alert
@@ -179,7 +178,7 @@ export default async function PurchaseOrdersPage({
           }
           actions={
             problem.status !== 403 ? (
-              <Link href={href(status, page)}>Reload purchase orders</Link>
+              <Link href={hrefWith(PATH, params, {})}>Reload purchase orders</Link>
             ) : null
           }
         >
@@ -187,22 +186,18 @@ export default async function PurchaseOrdersPage({
             ? 'Purchase orders are for the procurement team. Ask an administrator if you need access. To receive goods, open the receipts screen.'
             : problem.message}
         </Alert>
-      ) : orders !== null && shown.length === 0 ? (
-        status !== undefined ? (
+      ) : orders !== null && orders.length === 0 ? (
+        filtered.length > 0 ? (
           <EmptyState
-            title={`No ${PO_STATUS_LABEL[status].text.toLowerCase()} purchase orders.`}
+            title="No purchase orders match."
             icon="search"
             action={
-              <LinkButton href="/procurement/orders" variant="secondary">
-                Clear filter
+              <LinkButton href={clearFiltersHref(PATH, params, LIST)} variant="secondary">
+                Clear filters
               </LinkButton>
             }
           >
-            Try another status.
-          </EmptyState>
-        ) : page > 1 ? (
-          <EmptyState title="There are no more purchase orders.">
-            <Link href={href(status, 1)}>Back to the first page</Link>
+            Nothing matches {filtered.join(' · ')}.
           </EmptyState>
         ) : (
           <EmptyState title="No purchase orders yet." icon="file-text">
@@ -212,6 +207,7 @@ export default async function PurchaseOrdersPage({
         )
       ) : orders !== null ? (
         <div className={layout.results}>
+          <ResultCount shown={orders.length} total={total} noun="purchase order" />
           <Table className={layout.resultsTable ?? ''} caption="Purchase orders" minWidth={760}>
             <thead>
               <tr>
@@ -224,7 +220,7 @@ export default async function PurchaseOrdersPage({
               </tr>
             </thead>
             <tbody>
-              {shown.map((po) => (
+              {orders.map((po) => (
                 <Row
                   numberSystems={numberSystems}
                   key={po.id}
@@ -236,9 +232,11 @@ export default async function PurchaseOrdersPage({
           </Table>
           <Pagination
             label="Pages"
-            summary={`Showing ${first} to ${first + shown.length - 1} of ${total}`}
-            {...(page > 1 ? { previousHref: href(status, page - 1) } : {})}
-            {...(hasNext ? { nextHref: href(status, page + 1) } : {})}
+            summary={`Showing ${window.first}-${window.last} of ${total}`}
+            {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
+            {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
+            pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
+            currentPage={window.page}
           />
         </div>
       ) : null}

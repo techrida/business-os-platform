@@ -76,20 +76,28 @@ function Lines({
   if (progress.status === 'fulfilled') {
     for (const l of progress.value.lines) byLine.set(l.poLineId, l);
   }
-  const withProgress = progress.status === 'fulfilled';
+  // A draft from an approved commitment gets its lines at issue, copied from the approved quotation: until then
+  // the API sends those lines as `proposedLines`, shown read-only as what the order will be issued with.
+  const proposed = po.lines.length === 0 && (po.proposedLines?.length ?? 0) > 0;
+  const lines = proposed ? (po.proposedLines ?? []) : po.lines;
+  const withProgress = progress.status === 'fulfilled' && !proposed;
   return (
     <Panel
       className={styles.tablePanel}
       title="Lines"
       description={
-        withProgress
-          ? 'What was ordered, what has arrived, and what is still open. Amounts are as the server worked them out.'
-          : 'What was ordered. Amounts are as the server worked them out.'
+        proposed
+          ? 'The lines of the approved quotation. They are written to the order when it is issued. Amounts are as the server worked them out.'
+          : withProgress
+            ? 'What was ordered, what has arrived, and what is still open. Amounts are as the server worked them out.'
+            : 'What was ordered. Amounts are as the server worked them out.'
       }
     >
-      {po.lines.length === 0 ? (
+      {lines.length === 0 ? (
         <EmptyState title="This order has no lines." icon="file-text" headingLevel={3}>
-          A purchase order needs at least one line before it can be issued.
+          {po.status === 'draft'
+            ? 'The lines of the approved quotation are copied in when the order is issued.'
+            : 'No lines were ordered.'}
         </EmptyState>
       ) : (
         <Table
@@ -115,7 +123,7 @@ function Lines({
             </tr>
           </thead>
           <tbody>
-            {po.lines.map((l) => {
+            {lines.map((l) => {
               const p = byLine.get(l.id);
               return (
                 <tr key={l.id}>

@@ -1,59 +1,54 @@
-import type { QuotationListItem } from '@bos/contracts';
+import { pageWindow, type QuotationListItem, type QuotationSummary } from '@bos/contracts';
 import type { NumberSystems } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { listQuotations } from '@/components/p2/quotations/api';
+import { listCustomers } from '@/components/p2/customers/api';
+import {
+  getQuotationsSummary,
+  listQuotationsPage,
+  type QuotationListFilter,
+} from '@/components/p2/quotations/api';
 import styles from '@/components/p2/quotations/list.module.css';
 import {
-  parseStatusFilter,
-  quotationStatusMeta,
+  QUOTATION_DEFAULT_ROWS,
+  QUOTATION_FILTER_SPEC,
+  QUOTATION_LIST_SPEC,
+  QUOTATION_ROW_OPTIONS,
   STATUS_FILTER_OPTIONS,
 } from '@/components/p2/quotations/status';
 import { editQuotationHref, newQuotationHref } from '@/components/p2/quotations/resume';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
+
+import { QuotationFilters } from './quotation-filters';
 
 export const metadata: Metadata = { title: 'Quotations · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** How many customers the filter offers. A longer list needs a search box, which is not built yet. */
+const CUSTOMER_OPTIONS = 100;
 
-/** The opportunity filter: one UUID, else none (a malformed id is ignored, never sent). */
-function parseOpportunityFilter(raw: string | string[] | undefined): string | undefined {
-  return typeof raw === 'string' && UUID.test(raw) ? raw : undefined;
-}
-
-const ROW_OPTIONS = [5, 10, 20] as const;
-
-function listHref(filters: {
-  status?: string | undefined;
-  opportunityId?: string | undefined;
-  q?: string | undefined;
-  rows?: number | undefined;
-  page?: number | undefined;
-}) {
-  const params = new URLSearchParams();
-  if (filters.opportunityId) params.set('opportunityId', filters.opportunityId);
-  if (filters.status) params.set('status', filters.status);
-  if (filters.q) params.set('q', filters.q);
-  if (filters.rows && filters.rows !== ROW_OPTIONS[0]) params.set('rows', String(filters.rows));
-  if (filters.page && filters.page > 1) params.set('page', String(filters.page));
-  return params.size === 0 ? '/quotations' : `/quotations?${params.toString()}`;
-}
+const PATH = '/quotations';
 
 function QuotationRow({
   item,
@@ -113,20 +108,23 @@ function QuotationRow({
   );
 }
 
-function QuotationStats({ items }: { items: QuotationListItem[] }) {
-  const count = (status: QuotationListItem['status']) =>
-    items.filter((item) => item.status === status).length;
+function QuotationStats({ summary, filtered }: { summary: QuotationSummary; filtered: boolean }) {
+  const { byStatus } = summary;
   return (
     <section className={styles.stats} aria-label="Quotation totals by status">
-      <StatCard label="Total quotations" value={items.length} icon="file-text" />
+      <StatCard
+        label={filtered ? 'Matching quotations' : 'Total quotations'}
+        value={summary.total}
+        icon="file-text"
+      />
       <StatCard
         label="Internal approval"
-        value={count('submitted')}
+        value={byStatus.submitted}
         icon="shield-check"
         tone="warning"
       />
-      <StatCard label="In customer review" value={count('sent')} icon="users" />
-      <StatCard label="Accepted" value={count('accepted')} icon="check-circle" tone="success" />
+      <StatCard label="In customer review" value={byStatus.sent} icon="users" />
+      <StatCard label="Accepted" value={byStatus.accepted} icon="check-circle" tone="success" />
     </section>
   );
 }
@@ -135,45 +133,83 @@ export default async function QuotationsPage({
   searchParams,
 }: {
   // Next 16: searchParams is a Promise.
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: Promise<RawParams>;
 }) {
-  const {
-    status: rawStatus,
-    opportunityId: rawOpportunity,
-    q: rawQuery,
-    rows,
-    page,
-  } = await searchParams;
-  const status = parseStatusFilter(rawStatus);
-  const opportunityId = parseOpportunityFilter(rawOpportunity);
-  const q = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 120) : '';
-  const pageSize = ROW_OPTIONS.find((option) => String(option) === rows) ?? ROW_OPTIONS[0];
-  const requestedPage = typeof page === 'string' && /^\d+$/.test(page) ? Number(page) : 1;
-  const filters = { status, opportunityId, q, rows: pageSize };
-  const here = listHref({ ...filters, page: requestedPage });
+  const params = await searchParams;
+  const state = readList(params, QUOTATION_LIST_SPEC);
+  const { q, rows } = state;
+  const statuses = state.multi.status;
+  const customerIds = state.multi.customerId;
+  const opportunityId = state.single.opportunityId;
+  const filtered = q !== undefined || statuses.length > 0 || customerIds.length > 0;
+  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : undefined });
+  const here = pageHref(state.page);
   const session = await requireStaffSession(here);
   const numberSystems = await getNumberSystems();
+  const scope = {
+    customerId: customerIds,
+    ...(opportunityId !== undefined ? { opportunityId } : {}),
+    ...(q !== undefined ? { q } : {}),
+  };
+  const filter: QuotationListFilter = { ...scope, status: statuses };
+  const readPage = (page: number) =>
+    listQuotationsPage(session, { ...filter, limit: rows, offset: pageWindow(page, rows).offset });
 
-  let items: QuotationListItem[] | null = null;
-  let problem: { message: string; status: number } | null = null;
-  try {
-    const scope = opportunityId !== undefined ? { opportunityId } : {};
-    items = await listQuotations(session, status === undefined ? scope : { ...scope, status });
-  } catch (err) {
-    const f = failureOf(err);
-    problem = { message: f.message, status: f.status };
-  }
-
-  const search = q.toLowerCase();
-  const matches = (items ?? []).filter((item) =>
-    [item.number, item.customerName, item.ownerName].some((value) =>
-      value?.toLowerCase().includes(search),
+  // The three reads do not depend on each other. Only the quotations decide whether the page works:
+  // without the customers the filter drops that field, without the summary the cards are left out.
+  const [list, customers, summary] = await Promise.all([
+    readPage(state.page).then(
+      (result) => ({ result, problem: null }),
+      (err: unknown) => {
+        const f = failureOf(err);
+        return { result: null, problem: { message: f.message, status: f.status } };
+      },
     ),
+    listCustomers(session, { limit: CUSTOMER_OPTIONS }).then(
+      (result) => result.items,
+      () => null,
+    ),
+    getQuotationsSummary(session, scope).then(
+      (result) => result,
+      () => null,
+    ),
+  ]);
+  const { problem } = list;
+  let result = list.result;
+  let current = pageWindow(state.page, rows, result?.total);
+  // A stale link past the last page lands on the last page instead of an empty table.
+  if (result !== null && current.page !== state.page && result.total > 0) {
+    result = await readPage(current.page).catch(() => result);
+    current = pageWindow(current.page, rows, result?.total);
+  }
+  const items = result?.items ?? null;
+  const total = result?.total ?? 0;
+
+  // The chosen customers stay selectable even when they are not among the first customers read.
+  const customerOptions =
+    customers === null
+      ? null
+      : [
+          ...customers.map((c) => ({ value: c.id, label: c.legalName })),
+          ...customerIds
+            .filter((id) => !customers.some((c) => c.id === id))
+            .map((id) => ({ value: id, label: 'Selected customer' })),
+        ];
+  const customerName = (id: string) =>
+    customerOptions?.find((option) => option.value === id)?.label ?? 'Selected customer';
+  // The opportunity is the page's scope, not a filter, so it is not named here.
+  const activeFilters = activeFilterLabels(
+    { q, multi: { status: statuses, customerId: customerIds }, single: {} },
+    {
+      status: {
+        label: 'Status',
+        format: (v) => STATUS_FILTER_OPTIONS.find((o) => o.value === v)?.label ?? v,
+      },
+      customerId: { label: 'Customer', format: customerName },
+    },
   );
-  const pageCount = Math.ceil(matches.length / pageSize);
-  const currentPage = Math.max(1, Math.min(requestedPage, pageCount));
-  const offset = (currentPage - 1) * pageSize;
-  const pageHref = (next: number) => listHref({ ...filters, page: next });
+  const rowsHref = (size: number) =>
+    hrefWith(PATH, params, { rows: size === QUOTATION_DEFAULT_ROWS ? undefined : size });
 
   return (
     <Page>
@@ -189,50 +225,27 @@ export default async function QuotationsPage({
         }
       />
 
-      {items !== null && status === undefined && opportunityId === undefined && !q ? (
-        <QuotationStats items={items} />
+      {items !== null && summary !== null ? (
+        <QuotationStats summary={summary} filtered={filtered} />
       ) : null}
 
-      <form method="get" action="/quotations" className={styles.toolbar}>
-        {opportunityId !== undefined ? (
-          <input type="hidden" name="opportunityId" value={opportunityId} />
-        ) : null}
-        {pageSize !== ROW_OPTIONS[0] ? <input type="hidden" name="rows" value={pageSize} /> : null}
-        <SearchInput
-          name="q"
-          defaultValue={q}
-          maxLength={120}
-          aria-label="Search quotations"
-          placeholder="Search quotations"
-          wrapperClassName={styles.search}
-        />
-        <div className={styles.toolbarActions}>
-          <Select
-            name="status"
-            aria-label="Quotation status"
-            className={styles.filter}
-            defaultValue={status ?? ''}
-          >
-            <option value="">All statuses</option>
-            {STATUS_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-          <Button type="submit" variant="secondary">
-            Apply filters
-          </Button>
-          {status !== undefined || opportunityId !== undefined || q !== '' ? (
-            <Link href="/quotations">Show all quotations</Link>
-          ) : null}
-          {opportunityId !== undefined ? (
-            <Link href={`/opportunities/${encodeURIComponent(opportunityId)}`}>
-              Back to the opportunity
-            </Link>
-          ) : null}
-        </div>
-      </form>
+      <QuotationFilters
+        opportunityId={opportunityId}
+        rows={rows}
+        statuses={statuses}
+        customerIds={customerIds}
+        statusOptions={STATUS_FILTER_OPTIONS}
+        customerOptions={customerOptions}
+      />
+      {opportunityId !== undefined ? (
+        <p>
+          <Link href={`/opportunities/${encodeURIComponent(opportunityId)}`}>
+            Back to the opportunity
+          </Link>
+        </p>
+      ) : null}
+
+      {items !== null ? <ResultCount shown={items.length} total={total} noun="quotation" /> : null}
 
       {problem !== null ? (
         <Alert
@@ -249,17 +262,21 @@ export default async function QuotationsPage({
             ? 'Quotations are for the sales team and the people who approve them. Ask an administrator if you need access.'
             : problem.message}
         </Alert>
-      ) : matches.length === 0 ? (
-        q !== '' ? (
-          <EmptyState icon="search" title="No matching quotations">
-            Try another quotation number, organization, or owner.
-          </EmptyState>
-        ) : status !== undefined ? (
+      ) : items !== null && items.length === 0 ? (
+        filtered ? (
           <EmptyState
-            icon="file-text"
-            title={`No quotations are ${quotationStatusMeta(status).label.toLowerCase()}.`}
+            icon="search"
+            title="No matching quotations."
+            action={
+              <LinkButton
+                href={clearFiltersHref(PATH, params, QUOTATION_FILTER_SPEC)}
+                variant="secondary"
+              >
+                Clear filters
+              </LinkButton>
+            }
           >
-            Choose another status, or show all quotations.
+            {`Nothing matches ${activeFilters.join(' · ')}.`}
           </EmptyState>
         ) : opportunityId !== undefined ? (
           <EmptyState icon="file-text" title="No quotations for this opportunity yet.">
@@ -270,7 +287,7 @@ export default async function QuotationsPage({
             A quotation is prepared from an opportunity. It appears here once it is saved.
           </EmptyState>
         )
-      ) : (
+      ) : items !== null ? (
         <div className={styles.results}>
           <Table caption="Quotations" minWidth={760} className={styles.table ?? ''}>
             <thead>
@@ -284,31 +301,33 @@ export default async function QuotationsPage({
               </tr>
             </thead>
             <tbody>
-              {matches.slice(offset, offset + pageSize).map((item) => (
+              {items.map((item) => (
                 <QuotationRow key={item.id} item={item} numberSystems={numberSystems} />
               ))}
             </tbody>
           </Table>
           <div className={styles.footer}>
             <Pagination
-              summary={`Showing ${offset + 1}–${Math.min(offset + pageSize, matches.length)} of ${matches.length}`}
-              currentPage={currentPage}
-              pages={Array.from({ length: Math.min(3, pageCount) }, (_, i) => {
-                const page = Math.max(1, Math.min(currentPage - 1, pageCount - 2)) + i;
+              summary={`Showing ${current.first}–${current.last} of ${total}`}
+              currentPage={current.page}
+              pages={Array.from({ length: Math.min(3, current.pageCount) }, (_, i) => {
+                const page = Math.max(1, Math.min(current.page - 1, current.pageCount - 2)) + i;
                 return { page, href: pageHref(page) };
               })}
-              {...(currentPage > 1 ? { previousHref: pageHref(currentPage - 1) } : {})}
-              {...(currentPage < pageCount ? { nextHref: pageHref(currentPage + 1) } : {})}
+              {...(current.page > 1 ? { previousHref: pageHref(current.page - 1) } : {})}
+              {...(current.page < current.pageCount
+                ? { nextHref: pageHref(current.page + 1) }
+                : {})}
             />
             <nav aria-label="Rows per page" className={styles.pageSize}>
               <span aria-hidden="true">Rows</span>
-              {ROW_OPTIONS.map((size) => (
+              {QUOTATION_ROW_OPTIONS.map((size) => (
                 <LinkButton
                   key={size}
-                  href={listHref({ ...filters, rows: size })}
+                  href={rowsHref(size)}
                   size="small"
-                  variant={size === pageSize ? 'secondary' : 'tertiary'}
-                  aria-current={size === pageSize ? 'true' : undefined}
+                  variant={size === rows ? 'secondary' : 'tertiary'}
+                  aria-current={size === rows ? 'true' : undefined}
                   aria-label={`${size} rows per page`}
                 >
                   {size}
@@ -317,7 +336,7 @@ export default async function QuotationsPage({
             </nav>
           </div>
         </div>
-      )}
+      ) : null}
     </Page>
   );
 }

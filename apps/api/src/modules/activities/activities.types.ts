@@ -1,10 +1,13 @@
 // Query and mapping types of the activities module. The create body and the DTO are contracts; the list query
-// (one optional subject filter, a kind, a status and a limit), the planned rule and the row-to-DTO mapping live here.
+// (one optional subject filter, kinds, a status, a search and a page), the planned rule and the row-to-DTO mapping live here.
 import {
   ACTIVITY_SUBJECT_KEYS,
   ActivityKindSchema,
   ActivityStatusSchema,
+  limitOffset,
+  multi,
   SCHEDULABLE_ACTIVITY_KINDS,
+  searchParam,
   type ActivityDto,
   type Permission,
 } from '@bos/contracts';
@@ -54,21 +57,22 @@ export function nextFollowUpSql(): SQL<Date | null> {
 }
 
 /**
- * `GET /v1/activities?leadId&opportunityId&customerId&contactId&quotationId&kind&status&limit`. At most one
- * subject filter: with none, the list is every activity whose subject the caller may read (the workspace's
- * activity page). `status` picks planned or logged; without it, every activity that is not cancelled. `limit`
- * arrives as text in a query string, so it is coerced.
+ * `GET /v1/activities?leadId&opportunityId&customerId&contactId&quotationId&kind&status&q&limit&offset`. At most
+ * one subject filter: with none, the list is every activity whose subject the caller may read (the workspace's
+ * activity page). `kind` may repeat. `status` picks planned or logged; without it, every activity that is not
+ * cancelled. `limit` arrives as text in a query string, so it is coerced.
  */
 export const ListActivitiesQuerySchema = z
-  .object({
+  .strictObject({
     leadId: z.guid().optional(),
     opportunityId: z.guid().optional(),
     customerId: z.guid().optional(),
     contactId: z.guid().optional(),
     quotationId: z.guid().optional(),
-    kind: ActivityKindSchema.optional(),
+    kind: multi(ActivityKindSchema),
     status: ActivityStatusSchema.optional(),
-    limit: z.coerce.number().int().min(1).max(200).default(50),
+    q: searchParam,
+    ...limitOffset({ max: 200, fallback: 50 }),
   })
   .refine((q) => ACTIVITY_SUBJECT_KEYS.filter((k) => q[k] !== undefined).length <= 1, {
     path: ['leadId'],

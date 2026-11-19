@@ -19,6 +19,8 @@ import {
   QuotationDetailSchema,
   QuotationLineInputSchema,
   ListQuotationsQuerySchema,
+  QuotationSummaryQuerySchema,
+  QuotationSummarySchema,
   QuotationListItemSchema,
   QuotationTaxSummaryItemSchema,
   QuotationVersionContentSchema,
@@ -646,15 +648,79 @@ describe('QuotationListItemSchema', () => {
 });
 
 describe('ListQuotationsQuerySchema', () => {
-  it('takes an optional status and an optional opportunity id, and refuses a bad one', () => {
-    expect(ListQuotationsQuerySchema.parse({})).toEqual({});
+  it('has no default limit (every match), and takes filters, a search and a page', () => {
+    const none = ListQuotationsQuerySchema.parse({});
+    expect(none).toEqual({ offset: 0 });
+    expect(none.limit).toBeUndefined();
     const opportunityId = id();
-    expect(ListQuotationsQuerySchema.parse({ status: 'draft', opportunityId })).toEqual({
-      status: 'draft',
+    const customerId = id();
+    expect(
+      ListQuotationsQuerySchema.parse({
+        status: 'draft',
+        customerId,
+        opportunityId,
+        q: ' acme ',
+        limit: '10',
+        offset: '30',
+      }),
+    ).toEqual({
+      status: ['draft'],
+      customerId: [customerId],
       opportunityId,
+      q: 'acme',
+      limit: 10,
+      offset: 30,
     });
+  });
+
+  it('takes a repeated status and customer, drops duplicates and blank values', () => {
+    const [a, b] = [id(), id()];
+    expect(
+      ListQuotationsQuerySchema.parse({
+        status: ['draft', 'sent', 'draft', ''],
+        customerId: [a, b],
+      }),
+    ).toMatchObject({ status: ['draft', 'sent'], customerId: [a, b] });
+    expect(ListQuotationsQuerySchema.parse({ status: '' }).status).toEqual([]);
+  });
+
+  it('ignores a search that is too short and refuses a bad value or an unknown key', () => {
+    expect(ListQuotationsQuerySchema.parse({ q: 'a' }).q).toBeUndefined();
     expect(ListQuotationsQuerySchema.safeParse({ opportunityId: 'x' }).success).toBe(false);
     expect(ListQuotationsQuerySchema.safeParse({ status: 'lost' }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ status: ['draft', 'lost'] }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ customerId: 'x' }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ opportunityId: [id(), id()] }).success).toBe(
+      false,
+    );
+    expect(ListQuotationsQuerySchema.safeParse({ limit: '0' }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ limit: '201' }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ offset: '-1' }).success).toBe(false);
+    expect(ListQuotationsQuerySchema.safeParse({ sort: 'total' }).success).toBe(false);
+  });
+});
+
+describe('QuotationSummaryQuerySchema and QuotationSummarySchema', () => {
+  it('takes the list filters except status and paging', () => {
+    const customerId = id();
+    expect(QuotationSummaryQuerySchema.parse({})).toEqual({});
+    expect(QuotationSummaryQuerySchema.parse({ customerId, q: 'acme' })).toEqual({
+      customerId: [customerId],
+      q: 'acme',
+    });
+    expect(QuotationSummaryQuerySchema.safeParse({ status: 'draft' }).success).toBe(false);
+    expect(QuotationSummaryQuerySchema.safeParse({ limit: '5' }).success).toBe(false);
+  });
+
+  it('needs a count for every status', () => {
+    const byStatus = Object.fromEntries(QUOTATION_STATUSES.map((s) => [s, 0]));
+    expect(QuotationSummarySchema.safeParse({ total: 0, byStatus }).success).toBe(true);
+    expect(QuotationSummarySchema.safeParse({ total: 0, byStatus: { draft: 0 } }).success).toBe(
+      false,
+    );
+    expect(
+      QuotationSummarySchema.safeParse({ total: 1, byStatus: { ...byStatus, draft: -1 } }).success,
+    ).toBe(false);
   });
 });
 

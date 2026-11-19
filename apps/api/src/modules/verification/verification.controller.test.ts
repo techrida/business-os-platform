@@ -157,12 +157,35 @@ describe('GET and PATCH', () => {
     expect(service.setChecklistItem).not.toHaveBeenCalled();
   });
 
-  it('answers a list with the service array as it is (a bare array)', async () => {
-    service.list.mockResolvedValue([dto]);
+  it('answers a list with a bare array and the full count in X-Total-Count', async () => {
+    service.list.mockResolvedValue({ rows: [dto], total: 41 });
     const res = await request(baseUrl).get('/v1/verification-cases').query({ status: 'draft' });
     expect(res.status).toBe(200);
     expect(res.body).toEqual([dto]);
-    expect(service.list).toHaveBeenCalledWith({ status: 'draft' });
+    expect(res.headers['x-total-count']).toBe('41');
+    expect(service.list).toHaveBeenCalledWith(
+      expect.objectContaining({ status: ['draft'], limit: 25, offset: 0 }),
+    );
+  });
+
+  it('takes repeated filters, search and paging, and refuses an unknown value', async () => {
+    service.list.mockResolvedValue({ rows: [], total: 0 });
+    const res = await request(baseUrl).get(
+      '/v1/verification-cases?status=submitted&status=draft&partyKind=vendor&q=Himalayan&limit=10&offset=20',
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers['x-total-count']).toBe('0');
+    expect(service.list).toHaveBeenCalledWith({
+      status: ['submitted', 'draft'],
+      partyKind: ['vendor'],
+      q: 'Himalayan',
+      limit: 10,
+      offset: 20,
+    });
+    const bad = (query: string) => request(baseUrl).get(`/v1/verification-cases?${query}`);
+    expect((await bad('partyKind=supplier')).status).toBe(400);
+    expect((await bad('status=submitted&status=bogus')).status).toBe(400);
+    expect((await bad('limit=101')).status).toBe(400);
   });
 });
 

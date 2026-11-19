@@ -4,6 +4,7 @@
 import { z } from 'zod';
 
 import { HexColourSchema, LogoDataUrlSchema } from './document-style.js';
+import { multi, searchParam } from './list-query.js';
 import { CurrencySchema, DecimalString, RateString } from './money.js';
 
 export const MEMO_STATUSES = ['draft', 'submitted', 'approved', 'returned', 'rejected'] as const;
@@ -148,7 +149,9 @@ export const MEMO_LIST_MAX_LIMIT = 50;
 
 /**
  * Query of `GET /v1/test-memos`. Rows come newest first, ties broken by id, so a page boundary never skips or
- * repeats a memo. `cursor` is the opaque `nextCursor` of the previous page; a made-up one is a 400.
+ * repeats a memo. `cursor` is the opaque `nextCursor` of the previous page; a made-up one is a 400. `status`
+ * may repeat; `q` finds a memo by number, title or the owner's name (exact substring: fuzzy matching would
+ * reorder rows by similarity, which a keyset cursor on created_at cannot follow).
  */
 export const MemoListQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MEMO_LIST_MAX_LIMIT).default(MEMO_LIST_DEFAULT_LIMIT),
@@ -158,7 +161,8 @@ export const MemoListQuerySchema = z.strictObject({
     .max(300)
     .regex(/^[A-Za-z0-9_-]+$/, 'cursor is not valid')
     .optional(),
-  status: MemoStatusSchema.optional(),
+  status: multi(MemoStatusSchema),
+  q: searchParam,
 });
 export type MemoListQuery = z.infer<typeof MemoListQuerySchema>;
 
@@ -185,5 +189,7 @@ export const MemoListSchema = z.object({
   items: z.array(MemoListItemSchema),
   /** Pass as `cursor` for the next page; null on the last page. */
   nextCursor: z.string().nullable(),
+  /** Every memo the caller may open that matches the filters, not just this page. */
+  total: z.number().int().min(0),
 });
 export type MemoList = z.infer<typeof MemoListSchema>;

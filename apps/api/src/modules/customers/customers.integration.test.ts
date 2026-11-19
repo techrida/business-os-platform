@@ -30,6 +30,7 @@ import {
   partyAccounts,
   runMigrations,
   userEntities,
+  users,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
 import { ConflictException, ForbiddenException, type INestApplication } from '@nestjs/common';
@@ -340,18 +341,8 @@ describe('create a customer and read it back', () => {
     const tag = randomUUID().slice(0, 6);
     const pan = panOf();
     const acme = await createCustomer({ legalName: `Zeta${tag} Traders Pvt. Ltd.`, panVatNo: pan });
-    const other = await createCustomer({ legalName: `Other zeta${tag} Company` });
+    await createCustomer({ legalName: `Other zeta${tag} Company` });
     await createCustomer({ legalName: `Unrelated ${randomUUID()}` });
-
-    const byName = await request(baseUrl)
-      .get('/v1/customers')
-      .query({ q: `ZETA${tag} Private Limited` });
-    expect(byName.status).toBe(200);
-    // Prefix matches rank first; the other name only contains the text.
-    expect((byName.body as { items: { id: string }[] }).items.map((c) => c.id)).toEqual([
-      acme.id,
-      other.id,
-    ]);
 
     // Contains, prefix matches first.
     const contains = await request(baseUrl)
@@ -376,8 +367,69 @@ describe('create a customer and read it back', () => {
     expect((all.body as { total: number }).total).toBeGreaterThanOrEqual(3);
 
     // A LIKE metacharacter is matched literally.
-    const percent = await request(baseUrl).get('/v1/customers').query({ q: '%' });
+    const percent = await request(baseUrl).get('/v1/customers').query({ q: '%%' });
     expect((percent.body as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it('filters by repeated relationship and industry, and counts only the filtered rows', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const retail = await createCustomer({
+      legalName: `Filt${tag} Retail`,
+      industry: 'Retail',
+      relationship: 'active',
+    });
+    const mining = await createCustomer({
+      legalName: `Filt${tag} Mining`,
+      industry: 'Mining',
+      relationship: 'prospect',
+    });
+    await createCustomer({
+      legalName: `Filt${tag} Hydro`,
+      industry: 'Hydropower',
+      relationship: 'inactive',
+    });
+
+    const two = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Filt${tag}`, relationship: ['active', 'prospect'] });
+    const body = two.body as { items: { id: string }[]; total: number };
+    expect(two.status).toBe(200);
+    expect(body.items.map((c) => c.id).sort()).toEqual([retail.id, mining.id].sort());
+    expect(body.total).toBe(2);
+
+    const byIndustry = await request(baseUrl)
+      .get('/v1/customers')
+      .query({ q: `Filt${tag}`, industry: ['Retail', 'Mining'], relationship: 'active' });
+    expect((byIndustry.body as { items: { id: string }[] }).items.map((c) => c.id)).toEqual([
+      retail.id,
+    ]);
+
+    expect(
+      (await request(baseUrl).get('/v1/customers').query({ relationship: 'vip' })).status,
+    ).toBe(400);
+    const industries = await request(baseUrl).get('/v1/customers/industries');
+    expect(industries.status).toBe(200);
+    expect(industries.body as string[]).toEqual(expect.arrayContaining(['Retail', 'Mining']));
+  });
+
+  it('finds a misspelt name with a typo-tolerant search, and never beyond the tenant or owner scope', async () => {
+    const suffix = randomUUID().slice(0, 4);
+    const mine = await createCustomer({ legalName: `Himalyan Traders ${suffix} Pvt Ltd` });
+    asStaff(b);
+    const theirs = await createCustomer({ legalName: `Himalyan Rivals ${suffix} Pvt Ltd` });
+    asStaff(a);
+
+    const fuzzy = await request(baseUrl).get('/v1/customers').query({ q: 'Himalayan' });
+    const found = (fuzzy.body as { items: { id: string }[] }).items.map((c) => c.id);
+    expect(found).toContain(mine.id);
+    expect(found).not.toContain(theirs.id);
+
+    // An owner-scoped caller does not see a colleague's customer even when the name is a near match.
+    current.grants = new Map<Permission, Scope>([['customer.read', 'own']]);
+    current.userId = randomUUID();
+    const own = await request(baseUrl).get('/v1/customers').query({ q: 'Himalayan' });
+    expect((own.body as { items: unknown[]; total: number }).items).toEqual([]);
+    expect((own.body as { total: number }).total).toBe(0);
   });
 
   it('is a 400 without an Idempotency-Key and for a body that breaks the contract', async () => {
@@ -797,6 +849,73 @@ describe('detail accounts', () => {
       creditLimit: '50000.00',
       version: 1,
     });
+  });
+});
+
+describe('detail people (the account owner by name)', () => {
+  /** The name a user of the fixtures has, read as the owner role so the test does not trust the API's lookup. */
+  const nameOf = async (userId: string) => {
+    const [row] = await db
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, userId));
+    expect(row?.displayName).toBeTruthy();
+    return row!.displayName!;
+  };
+  const readPeople = async (id: string) => {
+    const res = await request(baseUrl).get(`/v1/customers/${id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as { people?: { userId: string; name: string }[] }).people;
+  };
+
+  it('names the owner for a Sales caller who owns the customer, without the admin directory', async () => {
+    const customer = await createCustomer({ ownerUserId: a.userId });
+    asStaff(a);
+    expect(await readPeople(customer.id)).toEqual([
+      { userId: a.userId, name: await nameOf(a.userId) },
+    ]);
+  });
+
+  it('names a different owner, and only that owner, for a Sales colleague who reads the customer', async () => {
+    const { userId: mate } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
+    const customer = await createCustomer({ ownerUserId: mate });
+    asStaff(a);
+    expect(await readPeople(customer.id)).toEqual([{ userId: mate, name: await nameOf(mate) }]);
+  });
+
+  it('names nobody when the customer has no owner', async () => {
+    // A create defaults the owner to the caller; an imported or older row may have none.
+    const customer = await createCustomer();
+    await withTx(db, a, systemActor('test'), (tx) =>
+      tx.update(customers).set({ ownerUserId: null }).where(eq(customers.id, customer.id)),
+    );
+    const res = await request(baseUrl).get(`/v1/customers/${customer.id}`);
+    expect((res.body as { ownerUserId: string | null }).ownerUserId).toBeNull();
+    expect(await readPeople(customer.id)).toEqual([]);
+  });
+
+  it("keeps another tenant's owner name in that tenant", async () => {
+    asStaff(b);
+    const theirs = await createCustomer({ ownerUserId: b.userId });
+    const theirName = await nameOf(b.userId);
+    expect(await readPeople(theirs.id)).toEqual([{ userId: b.userId, name: theirName }]);
+
+    asStaff(a);
+    const res = await request(baseUrl).get(`/v1/customers/${theirs.id}`);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain(theirName);
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    const people = await readPeople(mine.id);
+    expect(people?.map((p) => p.userId)).toEqual([a.userId]);
+    expect(JSON.stringify(people)).not.toContain(theirName);
+  });
+
+  it('is left out for a portal caller, who must not learn staff names', async () => {
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    asPortal(a, mine.id);
+    const own = await request(baseUrl).get(`/v1/customers/${mine.id}`);
+    expect(own.status).toBe(200);
+    expect(own.body).not.toHaveProperty('people');
   });
 });
 

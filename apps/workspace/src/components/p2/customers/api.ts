@@ -4,6 +4,8 @@ import {
   ContactDtoSchema,
   CustomerDtoSchema,
   PartyAccountDtoSchema,
+  type PersonName,
+  PersonNameSchema,
   VerificationCaseDtoSchema,
   type ContactDto,
   type CreateContactBody,
@@ -80,10 +82,16 @@ async function call<T>(
   return parsed.data;
 }
 
-function withQuery(path: string, params: Record<string, string | number | undefined>): string {
+function withQuery(
+  path: string,
+  params: Record<string, string | number | readonly string[] | undefined>,
+): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') query.set(key, String(value));
+    if (typeof value === 'object') {
+      // A repeated filter: one key per value, which is how the API reads a multi-select.
+      for (const item of value) if (item !== '') query.append(key, item);
+    } else if (value !== undefined && value !== '') query.set(key, String(value));
   }
   const text = query.toString();
   return text === '' ? path : `${path}?${text}`;
@@ -93,16 +101,36 @@ function withQuery(path: string, params: Record<string, string | number | undefi
 // Customers
 // ---------------------------------------------------------------------------------------------
 
-/** `GET /v1/customers?q=&limit=&offset=`. `q` is the search text (name, number, PAN/VAT). */
+/**
+ * `GET /v1/customers?q=&relationship=&industry=&limit=&offset=`. `q` is the search text (name, number,
+ * PAN/VAT); `relationship` and `industry` repeat, one key per chosen value.
+ */
 export function listCustomers(
   session: Session,
-  query: { q?: string; limit?: number; offset?: number },
+  query: {
+    q?: string;
+    relationship?: readonly CustomerDto['relationship'][];
+    industry?: readonly string[];
+    limit?: number;
+    offset?: number;
+  },
 ): Promise<Listing<CustomerDto>> {
   return call(
     session,
-    withQuery('/v1/customers', { q: query.q, limit: query.limit, offset: query.offset }),
+    withQuery('/v1/customers', {
+      q: query.q,
+      relationship: query.relationship,
+      industry: query.industry,
+      limit: query.limit,
+      offset: query.offset,
+    }),
     listingOf(CustomerDtoSchema),
   );
+}
+
+/** `GET /v1/customers/industries`: the industries in use, for the list's Industry filter. */
+export function listCustomerIndustries(session: Session): Promise<string[]> {
+  return call(session, '/v1/customers/industries', z.array(z.string()));
 }
 
 export function getCustomer(session: Session, id: string): Promise<CustomerDto> {
@@ -116,8 +144,13 @@ export function getCustomer(session: Session, id: string): Promise<CustomerDto> 
  */
 const CustomerDetailSchema = CustomerDtoSchema.extend({
   accounts: z.array(PartyAccountDtoSchema).optional(),
+  /** The account owner by name, sent with the record (staff only); older APIs leave it out. */
+  people: z.array(PersonNameSchema).optional(),
 });
-export type CustomerDetail = CustomerDto & { accounts?: PartyAccountDto[] | undefined };
+export type CustomerDetail = CustomerDto & {
+  accounts?: PartyAccountDto[] | undefined;
+  people?: PersonName[] | undefined;
+};
 
 /** `GET /v1/customers/:id` with the optional `accounts` kept. */
 export function getCustomerDetail(session: Session, id: string): Promise<CustomerDetail> {
@@ -200,6 +233,40 @@ export function listVerificationCases(
     withQuery('/v1/verification-cases', { status: query.status, partyId: query.partyId }),
     listingOf(VerificationCaseDtoSchema),
   );
+}
+
+/**
+ * `GET /v1/verification-cases` for the queue: one page and the full count from `X-Total-Count`
+ * (the route answers a bare array). `status` and `partyKind` repeat.
+ */
+export async function listVerificationCasePage(
+  session: Session,
+  query: {
+    q?: string;
+    status?: readonly VerificationStatus[];
+    partyKind?: readonly string[];
+    limit?: number;
+    offset?: number;
+  },
+): Promise<Listing<VerificationCaseDto>> {
+  const path = withQuery('/v1/verification-cases', {
+    q: query.q,
+    status: query.status,
+    partyKind: query.partyKind,
+    limit: query.limit,
+    offset: query.offset,
+  });
+  const res = await apiFetch(session, path);
+  const body = await readBody(res);
+  const label = 'GET /v1/verification-cases';
+  if (!res.ok) throw new ApiError(res.status, `${label} failed with ${res.status}`, body);
+  const parsed = z.array(VerificationCaseDtoSchema).safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, `${label} returned an invalid body`, parsed.error.issues);
+  }
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : null;
+  return { items: parsed.data, total };
 }
 
 export function getVerificationCase(session: Session, id: string): Promise<VerificationCaseDto> {
