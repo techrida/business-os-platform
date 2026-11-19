@@ -33,7 +33,11 @@ it('refuses a save from a person who may only view access, without calling the A
     note: '',
     acknowledged: [],
   });
-  expect(result).toEqual({ ok: false, kind: 'error', message: 'Only a Founder can change access.' });
+  expect(result).toEqual({
+    ok: false,
+    kind: 'error',
+    message: 'Only a Founder can change access.',
+  });
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -54,7 +58,11 @@ it('rejects an empty or unreadable save as invalid without calling the API', asy
 it('previews with a dry run only: one POST to the preview path and nothing saved', async () => {
   const body = {
     applied: [],
-    impact: { widened: { people: 0, sample: [] }, narrowed: { people: 0, sample: [] }, unchanged: 0 },
+    impact: {
+      widened: { people: 0, sample: [] },
+      narrowed: { people: 0, sample: [] },
+      unchanged: 0,
+    },
     warnings: [],
     summaries: {},
     assignmentSummaries: {},
