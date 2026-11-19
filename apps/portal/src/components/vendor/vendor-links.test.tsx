@@ -116,15 +116,17 @@ describe('OnboardingView send-a-document links', () => {
 
 describe('PurchaseOrderView submit-a-bill link', () => {
   const link = (status: VendorVisiblePoStatus) =>
-    hrefs(renderToStaticMarkup(<PurchaseOrderView view={samplePo({ status })} />)).filter((h) =>
-      h?.startsWith('/vendor/bills'),
-    );
+    hrefs(
+      renderToStaticMarkup(<PurchaseOrderView view={samplePo({ status })} capability="full" />),
+    ).filter((h) => h?.startsWith('/vendor/bills'));
 
   it.each(['issued', 'partially_received', 'fully_received'] as const)(
     'links to a new bill for the order when it is %s',
     (status) => {
       expect(link(status)).toEqual(['/vendor/bills/new?po=0f8fad5b-d9cb-469f-a165-70867728950e']);
-      const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo({ status })} />);
+      const html = renderToStaticMarkup(
+        <PurchaseOrderView view={samplePo({ status })} capability="full" />,
+      );
       expect(text(html)).toContain('Submit a bill');
     },
   );
@@ -133,13 +135,17 @@ describe('PurchaseOrderView submit-a-bill link', () => {
     'offers no bill link when the order is %s',
     (status) => {
       expect(link(status)).toEqual([]);
-      const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo({ status })} />);
+      const html = renderToStaticMarkup(
+        <PurchaseOrderView view={samplePo({ status })} capability="full" />,
+      );
       expect(text(html)).not.toContain('Submit a bill');
     },
   );
 
   it('keeps the bill link when the PDF is not ready', () => {
-    const html = renderToStaticMarkup(<PurchaseOrderView view={samplePo({ file: null })} />);
+    const html = renderToStaticMarkup(
+      <PurchaseOrderView view={samplePo({ file: null })} capability="full" />,
+    );
     expect(text(html)).toContain('Submit a bill');
   });
 });
