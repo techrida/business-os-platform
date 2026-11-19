@@ -393,6 +393,10 @@ export const leads = appSchema.table(
     index('leads_tenant_customer_idx').on(t.tenantId, t.customerId),
     index('leads_tenant_email_norm_idx').on(t.tenantId, t.emailNorm),
     index('leads_tenant_phone_e164_idx').on(t.tenantId, t.phoneE164),
+    index('leads_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
+    index('leads_company_name_trgm_idx').using('gin', t.companyName.op('gin_trgm_ops')),
+    index('leads_contact_name_trgm_idx').using('gin', t.contactName.op('gin_trgm_ops')),
+    index('leads_number_trgm_idx').using('gin', t.number.op('gin_trgm_ops')),
     check(
       'leads_stage_check',
       sql`${t.stage} in ('new', 'contacted', 'qualified', 'converted', 'lost', 'on_hold')`,
