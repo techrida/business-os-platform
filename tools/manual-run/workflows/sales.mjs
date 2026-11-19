@@ -112,6 +112,37 @@ export function workflow(cfg) {
     s.expect(hasAmount(text, amount), `the statement shows NPR ${amount} open`, text);
   };
 
+  /** sales-8: wait for the clean PDF, download it, then send it to the contact. */
+  const downloadAndSend = async (s) => {
+    const send = s.button('Send to customer');
+    await s.see(send, 'Send to customer');
+    await s.caption('sales-8 — wait until the PDF is rendered and scanned clean');
+    for (let i = 0; i < 30 && (await send.first().getAttribute('aria-disabled')) === 'true'; i++) {
+      await s.page.waitForTimeout(5000);
+      if (i % 3 === 2) await s.page.reload({ waitUntil: 'domcontentloaded' });
+    }
+    s.expect(
+      (await send.first().getAttribute('aria-disabled')) !== 'true',
+      'the PDF is clean (Send is enabled)',
+    );
+    const file = await s.download(s.page.getByRole('link', { name: /^Download/ }), s.dirs.files);
+    s.expect(isPdf(file.bytes), 'the quotation download is a PDF');
+    s.record('quotationPdf', file.path);
+    const pdf = pdfText(file.path);
+    if (pdf !== null) s.expect(hasAmount(pdf, 135600), 'the PDF total is NPR 135,600');
+
+    await s.caption('sales-8 — Send to customer → Anu Shrestha');
+    await s.click(send, 'Send to customer');
+    const dialog = s.page.getByRole('dialog', { name: /^Send / });
+    await s.see(dialog.getByText(/never sent as a file/), 'the dialog says the file is never sent');
+    await s.choose(s.select('Send to', { scope: dialog }), new RegExp(escapeRe(v.contact)));
+    await s.pause(400);
+    await dialog.locator('footer').getByRole('button', { name: 'Send to customer' }).click();
+    await s.see(dialog.getByRole('status').filter({ hasText: 'Sent to' }), 'Sent to …', 60000);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await s.see(status(s, 'Sent'), 'quotation status Sent');
+  };
+
   const checkDraft = async (s) => {
     await s.see(status(s, 'Draft'), 'the invoice is a draft');
     const inv = await main(s);
@@ -661,47 +692,16 @@ export function workflow(cfg) {
           if (await link.isVisible().catch(() => false))
             await s.click(link, 'the quotation in the list');
           else await openUrl(s, 'quotationUrl', (p) => p.getByRole('heading', { level: 1 }));
-          const send = s.button('Send to customer');
-          await s.see(send, 'Send to customer');
-          await s.caption('sales-8 — wait until the PDF is rendered and scanned clean');
-          for (
-            let i = 0;
-            i < 30 && (await send.first().getAttribute('aria-disabled')) === 'true';
-            i++
-          ) {
-            await s.page.waitForTimeout(5000);
-            if (i % 3 === 2) await s.page.reload({ waitUntil: 'domcontentloaded' });
-          }
-          s.expect(
-            (await send.first().getAttribute('aria-disabled')) !== 'true',
-            'the PDF is clean (Send is enabled)',
-          );
-          const file = await s.download(
-            s.page.getByRole('link', { name: /^Download/ }),
-            s.dirs.files,
-          );
-          s.expect(isPdf(file.bytes), 'the quotation download is a PDF');
-          s.record('quotationPdf', file.path);
-          const pdf = pdfText(file.path);
-          if (pdf !== null) s.expect(hasAmount(pdf, 135600), 'the PDF total is NPR 135,600');
-
-          await s.caption('sales-8 — Send to customer → Anu Shrestha');
-          await s.click(send, 'Send to customer');
-          const dialog = s.page.getByRole('dialog', { name: /^Send / });
-          await s.see(
-            dialog.getByText(/never sent as a file/),
-            'the dialog says the file is never sent',
-          );
-          await s.choose(s.select('Send to', { scope: dialog }), new RegExp(escapeRe(v.contact)));
-          await s.pause(400);
-          await dialog.locator('footer').getByRole('button', { name: 'Send to customer' }).click();
-          await s.see(
-            dialog.getByRole('status').filter({ hasText: 'Sent to' }),
-            'Sent to …',
-            60000,
-          );
-          await dialog.getByRole('button', { name: 'Done' }).click();
-          await s.see(status(s, 'Sent'), 'quotation status Sent');
+          await s.see(s.page.getByRole('heading', { level: 1 }), 'the quotation');
+          await s.page.waitForTimeout(1500);
+          // Retry-safe: an earlier attempt may already have sent it; then only the checks remain.
+          if (
+            await status(s, 'Sent')
+              .isVisible()
+              .catch(() => false)
+          )
+            s.checks.push('note: the quotation was sent by an earlier attempt of this run');
+          else await downloadAndSend(s);
 
           await s.caption('sales-8 — Test mail: portal link, no attachment');
           const mail = await findMail(cfg, `to:"${v.email}"`, 90000);
@@ -716,7 +716,9 @@ export function workflow(cfg) {
             /https?:\/\/\S*portal/i.test(full.Text ?? full.HTML ?? ''),
             'the e-mail has a portal link',
           );
-          await s.goto(`${cfg.mailUrl}/view/${mail.ID}`, (p) => p.getByText(mail.Subject).first());
+          await s.goto(`${cfg.mailUrl}/view/${mail.ID}`, (p) =>
+            p.getByText(mail.Subject).filter({ visible: true }).first(),
+          );
           await s.pause(1500);
           await openUrl(s, 'opportunityUrl', (p) => h1(p, v.leadTitle));
           await s.see(status(s, 'Quotation Sent'), 'opportunity stage Quotation Sent');
