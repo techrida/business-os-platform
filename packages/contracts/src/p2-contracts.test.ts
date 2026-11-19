@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
@@ -118,13 +118,11 @@ describe('P2 permissions', () => {
   it('lets management and the finance roles read all but never send, accept or revise', () => {
     const { management, finance, accountant } = DEFAULT_ROLE_PERMISSIONS;
     for (const role of [management, finance, accountant]) {
-      for (const p of [
-        'crm.lead.read',
-        'crm.opportunity.read',
-        'customer.read',
-        'quotation.read',
-        'verification.read',
-      ] as const) {
+      // D50: only Management keeps read-all on leads and opportunities; Finance and Accountant read their own.
+      for (const p of ['crm.lead.read', 'crm.opportunity.read'] as const) {
+        expect(role[p], p).toBe(role === management ? 'all' : 'own');
+      }
+      for (const p of ['customer.read', 'quotation.read', 'verification.read'] as const) {
         expect(role[p], p).toBe('all');
       }
       for (const p of [
@@ -164,14 +162,12 @@ describe('P2 permissions', () => {
 
   it('lets operations head read CRM, quotations and verification but not change them', () => {
     const grants = DEFAULT_ROLE_PERMISSIONS.operations_head;
-    for (const p of [
-      'crm.opportunity.read',
-      'customer.read',
-      'quotation.read',
-      'verification.read',
-    ] as const) {
+    for (const p of ['customer.read', 'quotation.read', 'verification.read'] as const) {
       expect(grants[p], p).toBe('all');
     }
+    // D50: Operations Head has no lead or opportunity access.
+    expect(grants['crm.lead.read']).toBeUndefined();
+    expect(grants['crm.opportunity.read']).toBeUndefined();
     for (const p of NEW_PERMISSIONS.filter((x) => !x.endsWith('.read'))) {
       expect(grants[p], p).toBeUndefined();
     }
