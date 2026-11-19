@@ -183,7 +183,11 @@ export class LeadLostReasonsService {
         .for('update');
       const known = new Set(rows.map((r) => r.id));
       const sent = new Set(body.ids);
-      if (sent.size !== body.ids.length || sent.size !== known.size || body.ids.some((i) => !known.has(i))) {
+      if (
+        sent.size !== body.ids.length ||
+        sent.size !== known.size ||
+        body.ids.some((i) => !known.has(i))
+      ) {
         throw new BadRequestException({
           code: 'bad_request',
           message: 'The new order must list every lost reason exactly once',
@@ -225,7 +229,9 @@ export class LeadLostReasonsService {
         .where(eq(leadLostReasons.tenantId, scope.tenantId))
         .orderBy(asc(leadLostReasons.position), asc(leadLostReasons.label))
         .for('update');
-      const defaultNorms = new Set(DEFAULT_LEAD_LOST_REASONS.map((d) => normalizeReasonLabel(d.label)));
+      const defaultNorms = new Set(
+        DEFAULT_LEAD_LOST_REASONS.map((d) => normalizeReasonLabel(d.label)),
+      );
       const target = new Map<string, { label: string; position: number; retired: boolean }>();
       DEFAULT_LEAD_LOST_REASONS.forEach((d, position) => {
         const row = rows.find((r) => r.defaultKey === d.key);
@@ -305,7 +311,9 @@ export class LeadLostReasonsService {
       const [row] = await tx
         .select()
         .from(leadLostReasons)
-        .where(and(eq(leadLostReasons.tenantId, tenantId), eq(leadLostReasons.id, pick.lostReasonId)));
+        .where(
+          and(eq(leadLostReasons.tenantId, tenantId), eq(leadLostReasons.id, pick.lostReasonId)),
+        );
       if (row === undefined) {
         throw new BadRequestException({ code: 'bad_request', message: 'Unknown lost reason' });
       }
@@ -335,7 +343,9 @@ export class LeadLostReasonsService {
    * answer 409 instead of a unique-index error, and reorder, reset and update never wait on each other's row locks.
    */
   private async lockTenant(tx: DbTransaction, tenantId: string): Promise<void> {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lead_lost_reasons:${tenantId}`}))`);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`lead_lost_reasons:${tenantId}`}))`,
+    );
   }
 
   /** Adds an option at the end of the list; 409 when its normalised label is taken (active or retired). */

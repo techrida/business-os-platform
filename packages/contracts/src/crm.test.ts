@@ -237,9 +237,9 @@ describe('stage change bodies', () => {
     expect(
       LeadStageChangeBodySchema.safeParse({ ...leadLost, newLostReason: 'Slow to reply' }).success,
     ).toBe(false);
-    expect(LeadStageChangeBodySchema.safeParse({ ...leadLost, lostReasonId: undefined }).success).toBe(
-      false,
-    );
+    expect(
+      LeadStageChangeBodySchema.safeParse({ ...leadLost, lostReasonId: undefined }).success,
+    ).toBe(false);
   });
 
   it('rejects "engaged", and "converted" (conversion is its own action)', () => {
@@ -255,7 +255,9 @@ describe('stage change bodies', () => {
     expect(LeadStageChangeBodySchema.safeParse({ stage: 'lost', expectedVersion: 1 }).success).toBe(
       false,
     );
-    expect(LeadStageChangeBodySchema.safeParse({ ...leadLost, note: undefined }).success).toBe(false);
+    expect(LeadStageChangeBodySchema.safeParse({ ...leadLost, note: undefined }).success).toBe(
+      false,
+    );
     expect(
       LeadStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold', reason: undefined }).success,
     ).toBe(false);

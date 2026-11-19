@@ -72,7 +72,13 @@ describe('parseStageMove', () => {
     expect(old.ok).toBe(false);
     const both = parseStageMove(
       'lead',
-      form({ stage: 'lost', lostReasonId: id, newLostReason: 'x', note: 'n', expectedVersion: '2' }),
+      form({
+        stage: 'lost',
+        lostReasonId: id,
+        newLostReason: 'x',
+        note: 'n',
+        expectedVersion: '2',
+      }),
     );
     expect(both.ok).toBe(false);
     const long = parseStageMove(

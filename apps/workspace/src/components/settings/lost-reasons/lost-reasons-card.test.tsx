@@ -125,7 +125,11 @@ it('renames in place: refuses a duplicate before any request, then saves the tri
   await fill(rows()[0]!.querySelector('input'), '  Too dear ');
   await submit(rows()[0]!.querySelector('form')!.parentElement as HTMLElement);
   await settle();
-  expect(mocks.rename).toHaveBeenCalledExactlyOnceWith(DEFAULTS[0]!.id, 'Too dear', DEFAULTS[0]!.version);
+  expect(mocks.rename).toHaveBeenCalledExactlyOnceWith(
+    DEFAULTS[0]!.id,
+    'Too dear',
+    DEFAULTS[0]!.version,
+  );
   await m.unmount();
 });
 

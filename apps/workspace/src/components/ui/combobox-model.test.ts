@@ -119,10 +119,12 @@ describe('resultsAnnouncement', () => {
 });
 
 describe('keepOrder', () => {
-  const reasons: ComboboxOption[] = ['Price', 'Chose a competitor', 'Timing', 'Other'].map((label, i) => ({
-    id: `r${i}`,
-    label,
-  }));
+  const reasons: ComboboxOption[] = ['Price', 'Chose a competitor', 'Timing', 'Other'].map(
+    (label, i) => ({
+      id: `r${i}`,
+      label,
+    }),
+  );
 
   it('lists options in the order given, where the default sorts them by name', () => {
     expect(layoutOptions(reasons, '').flat.map((o) => o.label)).toEqual([
@@ -131,12 +133,9 @@ describe('keepOrder', () => {
       'Price',
       'Timing',
     ]);
-    expect(layoutOptions(reasons, '', undefined, undefined, true).flat.map((o) => o.label)).toEqual([
-      'Price',
-      'Chose a competitor',
-      'Timing',
-      'Other',
-    ]);
+    expect(layoutOptions(reasons, '', undefined, undefined, true).flat.map((o) => o.label)).toEqual(
+      ['Price', 'Chose a competitor', 'Timing', 'Other'],
+    );
   });
 });
 

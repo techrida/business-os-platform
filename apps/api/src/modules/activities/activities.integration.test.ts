@@ -441,7 +441,12 @@ describe('planned and logged activities', () => {
   it('filters by an inclusive due-day range in Asia/Kathmandu and drops rows without a due time', async () => {
     const lead = await seedLead();
     const make = (subject: string, dueAt?: string) =>
-      post({ leadId: lead.id, kind: dueAt ? 'call' : 'note', subject, ...(dueAt ? { dueAt } : {}) });
+      post({
+        leadId: lead.id,
+        kind: dueAt ? 'call' : 'note',
+        subject,
+        ...(dueAt ? { dueAt } : {}),
+      });
     // 18:15 UTC is midnight in Kathmandu (UTC+5:45).
     await make('before', '2029-12-31T18:14:00.000Z');
     await make('first', '2029-12-31T18:15:00.000Z');
@@ -531,7 +536,9 @@ describe('planned and logged activities', () => {
 
 describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
   const patch = (id: string, action: 'complete' | 'reschedule' | 'cancel', body: unknown) =>
-    request(baseUrl).patch(`/v1/activities/${id}/${action}`).send(body as object);
+    request(baseUrl)
+      .patch(`/v1/activities/${id}/${action}`)
+      .send(body as object);
   const plan = async (leadId: string, subject: string, dueAt: string, body?: string) => {
     const res = await post({ kind: 'call', subject, dueAt, leadId, ...(body ? { body } : {}) });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
@@ -557,7 +564,9 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     // Without an occurredAt it happened when it was completed.
     expect(done.occurredAt).toBe(done.completedAt);
 
-    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.id)).not.toContain(p.id);
+    expect((await listed(`?leadId=${lead.id}&status=planned`)).map((a) => a.id)).not.toContain(
+      p.id,
+    );
     const logged = await listed(`?leadId=${lead.id}&status=logged`);
     expect(logged.find((a) => a.id === p.id)).toMatchObject({ occurredAt: done.completedAt });
     expect((await h.auditOf(p.id)).map((e) => e.action)).toContain('activity.completed');
@@ -581,7 +590,9 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
   it('answers 409 for a stale expectedVersion on a row that is still planned', async () => {
     const lead = await seedLead();
     const p = await plan(lead.id, 'Chase', DUE_1);
-    expect((await patch(p.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(200);
+    expect((await patch(p.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_2 })).status).toBe(
+      200,
+    );
     for (const [action, body] of [
       ['complete', { expectedVersion: 1 }],
       ['reschedule', { expectedVersion: 1, dueAt: DUE_3 }],
@@ -615,7 +626,11 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     const { inactive, portal } = await outsiders();
     h.as('boss', 'founder');
     for (const assigneeUserId of [inactive, portal]) {
-      const res = await patch(first.id, 'reschedule', { expectedVersion: 1, dueAt: DUE_3, assigneeUserId });
+      const res = await patch(first.id, 'reschedule', {
+        expectedVersion: 1,
+        dueAt: DUE_3,
+        assigneeUserId,
+      });
       expect(res.status, JSON.stringify(res.body)).toBe(400);
       expect(errorOf(res.body).message).toBe(
         'assigneeUserId is not an active staff member of this entity',
@@ -656,7 +671,10 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     expect(cancelled).toMatchObject({ planned: false, completedAt: null, version: 2 });
     expect(cancelled.cancelledAt).not.toBeNull();
     for (const query of [`?leadId=${lead.id}&status=planned`, `?leadId=${lead.id}&status=logged`]) {
-      expect((await listed(query)).map((a) => a.id), query).not.toContain(p.id);
+      expect(
+        (await listed(query)).map((a) => a.id),
+        query,
+      ).not.toContain(p.id);
     }
     expect((await h.auditOf(p.id)).map((e) => e.action)).toContain('activity.cancelled');
     expect((await patch(p.id, 'cancel', { expectedVersion: 2 })).status).toBe(409);
@@ -670,7 +688,13 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     const [system] = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
       tx
         .insert(activities)
-        .values({ ...h.scopeA, kind: 'system', subject: 'x', leadId: lead.id, dueAt: new Date(DUE_1) })
+        .values({
+          ...h.scopeA,
+          kind: 'system',
+          subject: 'x',
+          leadId: lead.id,
+          dueAt: new Date(DUE_1),
+        })
         .returning(),
     );
     for (const action of ['complete', 'cancel'] as const) {

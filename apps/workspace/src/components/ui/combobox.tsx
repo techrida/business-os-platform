@@ -123,7 +123,14 @@ export function Combobox({
     return add === null ? list : [...list, add];
   };
   const layout = useMemo(
-    () => layoutOptions(withAdd(options, query ?? ''), query ?? '', groupThreshold, ungroupedLabel, keepOrder),
+    () =>
+      layoutOptions(
+        withAdd(options, query ?? ''),
+        query ?? '',
+        groupThreshold,
+        ungroupedLabel,
+        keepOrder,
+      ),
     // withAdd closes over addOption only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [options, query, groupThreshold, ungroupedLabel, keepOrder, addOption],

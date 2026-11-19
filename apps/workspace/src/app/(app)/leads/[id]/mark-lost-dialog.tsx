@@ -106,7 +106,8 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
         errors['reason'] = result.error;
       } else if (result.reload && pick?.kind === 'new') {
         // A 409 for a typed reason is most often someone adding the same words first; the toast alone does not say so.
-        errors['reason'] = 'That reason already exists, or was retired. Use different words, or ask a Founder to restore it.';
+        errors['reason'] =
+          'That reason already exists, or was retired. Use different words, or ask a Founder to restore it.';
       }
       setFieldErrors(errors);
       toast.error(
@@ -150,7 +151,9 @@ export function MarkLostDialog({ id, number, version, reasons }: MarkLostDialogP
         <input type="hidden" name="expectedVersion" value={version} />
         <input type="hidden" name="stage" value="lost" />
         {pick?.kind === 'id' ? <input type="hidden" name="lostReasonId" value={pick.id} /> : null}
-        {pick?.kind === 'new' ? <input type="hidden" name="newLostReason" value={pick.text} /> : null}
+        {pick?.kind === 'new' ? (
+          <input type="hidden" name="newLostReason" value={pick.text} />
+        ) : null}
         <Field label="Reason" error={fieldErrors['reason']}>
           {(control) => (
             <Combobox

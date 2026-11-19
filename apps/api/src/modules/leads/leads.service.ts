@@ -644,7 +644,9 @@ export class LeadsService {
     row: Pick<LeadRow, 'tenantId' | 'lostReasonId'>,
   ): Promise<LeadLostReasonRef | null> {
     if (row.lostReasonId === null) return null;
-    return (await lostReasonRefs(q, row.tenantId, [row.lostReasonId])).get(row.lostReasonId) ?? null;
+    return (
+      (await lostReasonRefs(q, row.tenantId, [row.lostReasonId])).get(row.lostReasonId) ?? null
+    );
   }
 
   /** The owner's display name (D46), read in the lead's tenant. */

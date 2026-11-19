@@ -39,7 +39,11 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facts(l: LeadDto, owners: readonly LeadOwnerOption[], numberSystems: NumberSystems): Fact[] {
+function facts(
+  l: LeadDto,
+  owners: readonly LeadOwnerOption[],
+  numberSystems: NumberSystems,
+): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
     {
