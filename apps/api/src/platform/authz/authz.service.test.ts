@@ -1,6 +1,8 @@
 // Tests for AuthzService. The key one is a property test: for every scope, org kind, department and
 // status, the rows `scopeWhere()` returns from a real Postgres table are exactly the rows `can()`
-// allows, so a list never shows a row its detail page would refuse (P1 plan §6.2). Needs Docker:
+// allows, so a list never shows a row its detail page would refuse (P1 plan §6.2). A second fixture,
+// registered in record-reach.ts like `leads`, does the same for the creator and assignee reach and
+// the `assigned` scope, with refs filled by the real `loadReaders()`. Needs Docker:
 //   pnpm --filter @bos/api exec vitest run src/platform/authz/authz.service.test.ts
 // The fixture table lives in `public` and is read as the container superuser: this test is about the
 // SQL, not about migrations or grants (role-cache.test.ts covers those).
@@ -12,12 +14,18 @@ import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
 
-import { ErrorBodySchema, type OrgKind, type Permission, type Scope } from '@bos/contracts';
+import {
+  type AccessScope,
+  ErrorBodySchema,
+  type OrgKind,
+  type Permission,
+  type Scope,
+} from '@bos/contracts';
 import { type ArgumentsHost, ForbiddenException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { asc } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { type AnyPgColumn, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { type AnyPgColumn, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -27,6 +35,7 @@ import { bindIdentity, bindPrincipal, runWithRequestStore } from '../tenancy/req
 import { AuthzService, scopeWhereFor } from './authz.service';
 import { can } from './can';
 import type { Principal, ResourceRef, ScopableTable } from './principal';
+import { defineRecordReach, loadReaders } from './record-reach';
 import { RoleCache } from './role-cache';
 
 const TENANT = randomUUID();
@@ -328,4 +337,269 @@ describe('AuthzService.assert', () => {
       expect(ErrorBodySchema.parse(sent.body).error).toMatchObject({ code: 'forbidden', reason });
     },
   );
+});
+
+// D50 and D55-3 through record-reach.ts: a table registered there is filtered by its own columns, and
+// `own` on its read permission also reaches the creator and every holder of a live assignment. The
+// fixture stands in for `leads` (same read permission, same reach shape), and the refs come from the
+// real `loadReaders()`, so the list query and the record check a service builds agree, row for row.
+const reachTable = pgTable('authz_reach_fixture', {
+  id: text('id').primaryKey(),
+  tenantId: uuid('tenant_id').notNull(),
+  organizationId: uuid('organization_id').notNull(),
+  ownerUserId: uuid('owner_user_id'),
+  departmentId: uuid('department_id'),
+  createdBy: uuid('created_by'),
+});
+const reachAssignments = pgTable('authz_reach_assignment', {
+  id: text('id').primaryKey(),
+  tenantId: uuid('tenant_id').notNull(),
+  organizationId: uuid('organization_id').notNull(),
+  subjectId: text('subject_id').notNull(),
+  assigneeUserId: uuid('assignee_user_id'),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+});
+/** The same rows seen as an invoice-like table: owned through `created_by`, with no department. */
+const createdByTable = pgTable('authz_reach_fixture', {
+  id: text('id').primaryKey(),
+  tenantId: uuid('tenant_id').notNull(),
+  organizationId: uuid('organization_id').notNull(),
+  createdBy: uuid('created_by'),
+});
+
+const READ: Permission = 'crm.lead.read';
+const WRITE: Permission = 'crm.lead.write';
+
+defineRecordReach(reachTable, {
+  id: reachTable.id,
+  owner: reachTable.ownerUserId,
+  department: reachTable.departmentId,
+  readPermission: READ,
+  creator: reachTable.createdBy,
+  assignment: { table: reachAssignments, subject: reachAssignments.subjectId },
+});
+defineRecordReach(createdByTable, { id: createdByTable.id, owner: createdByTable.createdBy });
+
+/** Who holds a follow-up on a row: the cases a live-assignment check must tell apart. */
+const ASSIGNMENTS = [
+  'none',
+  'me',
+  'me-cancelled',
+  'someone-else',
+  'unassigned',
+  'me-in-other-entity',
+] as const;
+type Assignment = (typeof ASSIGNMENTS)[number];
+
+type ReachRow = typeof reachTable.$inferSelect;
+type AssignmentRow = typeof reachAssignments.$inferInsert;
+
+const otherEntityThan = (organizationId: string): string =>
+  organizationId === ENTITY ? OTHER_ENTITY : ENTITY;
+
+/** 2 tenants × 2 entities × 3 owners × 3 departments × 3 creators × 6 follow-ups = 648 rows. */
+function reachFixture(): {
+  rows: ReachRow[];
+  assignments: AssignmentRow[];
+  followUp: ReadonlyMap<string, Assignment>;
+} {
+  const rows: ReachRow[] = [];
+  const assignments: AssignmentRow[] = [];
+  const followUp = new Map<string, Assignment>();
+  for (const tenantId of [TENANT, OTHER_TENANT])
+    for (const organizationId of [ENTITY, OTHER_ENTITY])
+      for (const ownerUserId of [ME, SOMEONE_ELSE, null])
+        for (const departmentId of [MY_DEPT, OTHER_DEPT, null])
+          for (const createdBy of [ME, SOMEONE_ELSE, null])
+            for (const assignment of ASSIGNMENTS) {
+              const id = `x${rows.length.toString().padStart(4, '0')}`;
+              rows.push({ id, tenantId, organizationId, ownerUserId, departmentId, createdBy });
+              followUp.set(id, assignment);
+              if (assignment === 'none') continue;
+              let assigneeUserId: string | null = ME;
+              if (assignment === 'someone-else') assigneeUserId = SOMEONE_ELSE;
+              if (assignment === 'unassigned') assigneeUserId = null;
+              assignments.push({
+                id: `a${id}`,
+                tenantId,
+                organizationId:
+                  assignment === 'me-in-other-entity'
+                    ? otherEntityThan(organizationId)
+                    : organizationId,
+                subjectId: id,
+                assigneeUserId,
+                cancelledAt: assignment === 'me-cancelled' ? new Date() : null,
+              });
+            }
+  return { rows, assignments, followUp };
+}
+
+const FIXTURE = reachFixture();
+
+describe('AuthzService.scopeWhere on a table described in record-reach.ts', () => {
+  /** Each row's ResourceRef, filled the way a service fills it: its columns plus `loadReaders()`. */
+  const refs = new Map<string, ResourceRef>();
+  /** The invoice-like view's refs: the owner is whoever entered the row. */
+  const createdByRefs = new Map<string, ResourceRef>();
+
+  beforeAll(async () => {
+    await pool.query(`CREATE TABLE public.authz_reach_fixture (
+      id text PRIMARY KEY,
+      tenant_id uuid NOT NULL,
+      organization_id uuid NOT NULL,
+      owner_user_id uuid,
+      department_id uuid,
+      created_by uuid
+    )`);
+    await pool.query(`CREATE TABLE public.authz_reach_assignment (
+      id text PRIMARY KEY,
+      tenant_id uuid NOT NULL,
+      organization_id uuid NOT NULL,
+      subject_id text NOT NULL,
+      assignee_user_id uuid,
+      cancelled_at timestamptz
+    )`);
+    await db.insert(reachTable).values(FIXTURE.rows);
+    await db.insert(reachAssignments).values(FIXTURE.assignments);
+
+    const readers = await loadReaders(
+      db,
+      { tenantId: TENANT, organizationId: ENTITY },
+      reachTable,
+      FIXTURE.rows.map((r) => r.id),
+    );
+    for (const r of FIXTURE.rows) {
+      const found = readers.get(r.id);
+      if (found === undefined) throw new Error(`loadReaders() left out ${r.id}`);
+      refs.set(r.id, {
+        tenantId: r.tenantId,
+        organizationId: r.organizationId,
+        ownerUserId: r.ownerUserId,
+        departmentId: r.departmentId,
+        creatorUserId: found.creatorUserId,
+        assigneeUserIds: found.assigneeUserIds,
+      });
+      createdByRefs.set(r.id, {
+        tenantId: r.tenantId,
+        organizationId: r.organizationId,
+        ownerUserId: r.createdBy,
+      });
+    }
+  }, 60_000);
+
+  /** The ref of `id`. Never undefined: `can()` with no ref is a route-level check and would allow. */
+  const refIn = (map: ReadonlyMap<string, ResourceRef>, id: string): ResourceRef => {
+    const ref = map.get(id);
+    if (ref === undefined) throw new Error(`no ref for ${id}`);
+    return ref;
+  };
+
+  const allowedIds = (
+    map: ReadonlyMap<string, ResourceRef>,
+    p: Principal,
+    action: Permission,
+  ): string[] =>
+    FIXTURE.rows.filter((r) => can(p, action, refIn(map, r.id)).allowed).map((r) => r.id);
+
+  const followUpOf = (r: ReachRow): Assignment | undefined => FIXTURE.followUp.get(r.id);
+
+  async function listedIds(
+    table: ScopableTable & { id: AnyPgColumn },
+    p: Principal,
+    action: Permission,
+  ): Promise<string[]> {
+    const rows = await db
+      .select({ id: table.id })
+      .from(table)
+      .where(scopeWhereFor(p, table, action))
+      .orderBy(asc(table.id));
+    return rows.map((r) => String(r.id));
+  }
+
+  /** Rows of the acting entity owned by someone else in another department: only reach can match. */
+  const theirs = (pick: (r: ReachRow) => boolean): string[] =>
+    FIXTURE.rows
+      .filter(
+        (r) =>
+          r.tenantId === TENANT &&
+          r.organizationId === ENTITY &&
+          r.ownerUserId === SOMEONE_ELSE &&
+          r.departmentId === OTHER_DEPT &&
+          pick(r),
+      )
+      .map((r) => r.id);
+
+  it('returns exactly the rows can() allows, on the read with its reach and the write without', async () => {
+    let nonEmptyCases = 0;
+    const scopes: (AccessScope | 'none')[] = ['assigned', 'own', 'department', 'all', 'none'];
+    for (const action of [READ, WRITE])
+      for (const scope of scopes)
+        for (const departmentId of [MY_DEPT, null]) {
+          const grants = new Map<Permission, AccessScope>();
+          if (scope !== 'none') grants.set(action, scope);
+          const p = principalOf({ orgKind: 'staff', departmentId, grants });
+
+          const expected = allowedIds(refs, p, action);
+          expect(
+            await listedIds(reachTable, p, action),
+            `${action} ${scope} dept=${departmentId}`,
+          ).toEqual(expected);
+          if (expected.length > 0) nonEmptyCases++;
+        }
+    expect(nonEmptyCases).toBeGreaterThan(10);
+  });
+
+  it('reaches a row I entered or hold a live follow-up on with own, read only', async () => {
+    const reader = principalOf({ orgKind: 'staff', grants: new Map([[READ, 'own']]) });
+    const writer = principalOf({ orgKind: 'staff', grants: new Map([[WRITE, 'own']]) });
+    const readIds = await listedIds(reachTable, reader, READ);
+    const writeIds = await listedIds(reachTable, writer, WRITE);
+
+    const entered = theirs((r) => r.createdBy === ME);
+    const following = theirs((r) => r.createdBy !== ME && followUpOf(r) === 'me');
+    const notMine = theirs((r) => r.createdBy !== ME && followUpOf(r) !== 'me');
+    expect(entered.length).toBeGreaterThan(0);
+    expect(following.length).toBeGreaterThan(0);
+    expect(notMine.length).toBeGreaterThan(0);
+
+    expect(readIds).toEqual(expect.arrayContaining([...entered, ...following]));
+    // Cancelled, someone else's, unassigned and other-entity follow-ups hand nothing over.
+    for (const id of notMine) expect(readIds).not.toContain(id);
+    for (const id of [...entered, ...following]) expect(writeIds).not.toContain(id);
+  });
+
+  it('gives assigned only the rows with my live follow-up, and nothing on a write', async () => {
+    const p = principalOf({
+      orgKind: 'staff',
+      grants: new Map<Permission, AccessScope>([
+        [READ, 'assigned'],
+        [WRITE, 'assigned'],
+      ]),
+    });
+    const want = FIXTURE.rows
+      .filter(
+        (r) => r.tenantId === TENANT && r.organizationId === ENTITY && followUpOf(r) === 'me',
+      )
+      .map((r) => r.id);
+    expect(want.length).toBeGreaterThan(0);
+    expect(await listedIds(reachTable, p, READ)).toEqual(want);
+    expect(await listedIds(reachTable, p, WRITE)).toEqual([]);
+  });
+
+  it('reads the owner from the registered column, and lets department act as own without one', async () => {
+    const want = FIXTURE.rows
+      .filter((r) => r.tenantId === TENANT && r.organizationId === ENTITY && r.createdBy === ME)
+      .map((r) => r.id);
+    expect(want.length).toBeGreaterThan(0);
+    for (const scope of ['own', 'department'] as const)
+      for (const departmentId of [MY_DEPT, null]) {
+        const p = principalOf({
+          orgKind: 'staff',
+          departmentId,
+          grants: new Map([[ACTION, scope]]),
+        });
+        expect(allowedIds(createdByRefs, p, ACTION)).toEqual(want);
+        expect(await listedIds(createdByTable, p, ACTION)).toEqual(want);
+      }
+  });
 });
