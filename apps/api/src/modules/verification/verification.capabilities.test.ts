@@ -38,14 +38,18 @@ function principal(role: RoleKey, userId: string, grants = DEFAULT_ROLE_PERMISSI
   };
 }
 
-function loaded(kind: 'customer' | 'vendor', ownerUserId: string | null): Loaded {
+function loaded(
+  kind: 'customer' | 'vendor',
+  ownerUserId: string | null,
+  submittedByUserId: string | null = null,
+): Loaded {
   const port = {
     writePermission: kind === 'customer' ? 'customer.write' : 'vendor.write',
     counterparty: (id: string) =>
       kind === 'customer' ? { customerPartyId: id } : { vendorPartyId: id },
   } as unknown as PartyOwnerPort;
   return {
-    row: { tenantId: TENANT, partyId: PARTY, partyKind: kind } as Loaded['row'],
+    row: { tenantId: TENANT, partyId: PARTY, partyKind: kind, submittedByUserId } as Loaded['row'],
     partyOwnerUserId: ownerUserId,
     port,
   };
@@ -116,6 +120,25 @@ describe('caseCapabilities', () => {
     expect(caseCapabilities(principal('procurement', buyer), SCOPE, loaded('vendor', buyer)).attach).toBe(
       true,
     );
+  });
+
+  it('never offers review to the person who submitted the case, a Founder included (separation of duties)', () => {
+    const submitter = randomUUID();
+    const founder = caseCapabilities(
+      principal('founder', submitter),
+      SCOPE,
+      loaded('vendor', null, submitter),
+    );
+    // Only review is withheld: the submitter keeps what the kind's write permission gives.
+    expect(founder).toEqual({ review: false, edit: true, attach: true, remove: true });
+    expect(
+      caseCapabilities(principal('founder', randomUUID()), SCOPE, loaded('vendor', null, submitter))
+        .review,
+    ).toBe(true);
+    expect(
+      caseCapabilities(principal('pmo', submitter), SCOPE, loaded('customer', OWNER, submitter))
+        .review,
+    ).toBe(false);
   });
 
   it('offers nothing to a customer portal user', () => {
