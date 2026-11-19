@@ -208,12 +208,38 @@ describe('stage change bodies', () => {
     note: 'Price was too high',
     expectedVersion: 1,
   };
+  // A lead is lost with an option of the tenant's list (D49), not free text.
+  const leadLost = {
+    stage: 'lost',
+    lostReasonId: '11111111-1111-4111-8111-111111111111',
+    note: 'Price was too high',
+    expectedVersion: 1,
+  };
 
   it('parses a lead move and a lost move with reason and note', () => {
     expect(
       LeadStageChangeBodySchema.safeParse({ stage: 'contacted', expectedVersion: 2 }).success,
     ).toBe(true);
-    expect(LeadStageChangeBodySchema.safeParse(lost).success).toBe(true);
+    expect(LeadStageChangeBodySchema.safeParse(leadLost).success).toBe(true);
+    expect(
+      LeadStageChangeBodySchema.safeParse({
+        stage: 'lost',
+        newLostReason: 'Slow to reply',
+        note: 'n',
+        expectedVersion: 1,
+      }).success,
+    ).toBe(true);
+    expect(LeadStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold' }).success).toBe(true);
+  });
+
+  it('refuses free text, both choices, or none as the reason a lead is lost', () => {
+    expect(LeadStageChangeBodySchema.safeParse(lost).success).toBe(false);
+    expect(
+      LeadStageChangeBodySchema.safeParse({ ...leadLost, newLostReason: 'Slow to reply' }).success,
+    ).toBe(false);
+    expect(LeadStageChangeBodySchema.safeParse({ ...leadLost, lostReasonId: undefined }).success).toBe(
+      false,
+    );
   });
 
   it('rejects "engaged", and "converted" (conversion is its own action)', () => {
@@ -229,8 +255,10 @@ describe('stage change bodies', () => {
     expect(LeadStageChangeBodySchema.safeParse({ stage: 'lost', expectedVersion: 1 }).success).toBe(
       false,
     );
-    expect(LeadStageChangeBodySchema.safeParse({ ...lost, note: undefined }).success).toBe(false);
-    expect(LeadStageChangeBodySchema.safeParse({ ...lost, reason: undefined }).success).toBe(false);
+    expect(LeadStageChangeBodySchema.safeParse({ ...leadLost, note: undefined }).success).toBe(false);
+    expect(
+      LeadStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold', reason: undefined }).success,
+    ).toBe(false);
     expect(
       LeadStageChangeBodySchema.safeParse({ ...lost, stage: 'on_hold', note: ' ' }).success,
     ).toBe(false);
@@ -451,10 +479,12 @@ describe('activities: exactly one primary subject', () => {
       quotationId: null,
       dueAt: null,
       assigneeUserId: null,
+      assigneeName: null,
       completedAt: null,
       cancelledAt: null,
       planned: false,
       createdByUserId: null,
+      createdByName: null,
       occurredAt: '2026-11-08T10:00:00+05:45',
       version: 1,
     };
