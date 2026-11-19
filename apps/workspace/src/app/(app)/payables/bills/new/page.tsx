@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+import { todayInKathmandu } from '@/app/(app)/admin/format';
 import { isGuid } from '@/components/p2/customers/format';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { listWithholdingCodes } from '@/lib/api-withholding-codes';
@@ -191,6 +192,8 @@ export default async function NewBillPage({
             reloadHref={here}
             entry={{
               vendors,
+              // The invoice date starts at today in Kathmandu (the tenant's calendar), and stays editable.
+              today: todayInKathmandu(),
               ...(standaloneOrder
                 ? {
                     vendorPartyId: standaloneOrder.vendorId,
