@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -24,13 +25,24 @@ export interface ProfilePictureDialogProps {
  */
 export function ProfilePictureDialog({ userId, imageDocumentId, name }: ProfilePictureDialogProps) {
   const router = useRouter();
+  // A new picture answers 404 until its scan clears, and Avatar does not retry a picture that failed. Closing the
+  // dialog gives the sidebar picture a fresh try, so it appears without a full reload.
+  const [revision, setRevision] = useState(0);
   return (
     <Dialog
       title="Profile picture"
       size="small"
+      onOpenChange={(open) => {
+        if (!open) setRevision((r) => r + 1);
+      }}
       trigger={
         <button type="button" className={shellStyles.iconButton} aria-label="Profile picture">
-          <Avatar name={name} seedId={userId} imageDocumentId={imageDocumentId} />
+          <Avatar
+            key={revision}
+            name={name}
+            seedId={userId}
+            imageDocumentId={imageDocumentId}
+          />
         </button>
       }
       footer={
