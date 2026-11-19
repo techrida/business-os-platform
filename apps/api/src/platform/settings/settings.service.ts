@@ -52,6 +52,11 @@ export interface TxContext {
   userId: string | null;
 }
 
+/** The advisory-lock text for one (tenant, entity, key): the same string for every writer of that key. */
+export function settingLockKey(tenantId: string, organizationId: string, key: SettingKey): string {
+  return `${tenantId}:${organizationId}:${key}`;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -105,6 +110,43 @@ export class SettingsService {
     return { value: structuredClone(SETTING_DEFAULTS[key]), version: null };
   }
 
+  /**
+   * Takes the same per-key advisory lock `set()` takes, inside the caller's transaction. A read-modify-write
+   * (read the list, change one entry, `set` the list) must call this BEFORE its read: `set()` alone locks
+   * only at the write, so two writers could both read version 3 and the second would silently drop the
+   * first's change. The lock is re-entrant within a transaction, so the later `set()` takes it again at no cost.
+   */
+  async lock(tx: DbTransaction, key: SettingKey): Promise<void> {
+    const context = await readTxContext(tx, 'SettingsService.lock');
+    await this.lockWith(tx, context, key);
+  }
+
+  /**
+   * Locks `key` (see `lock`) and then reads its latest version on `tx`, so the read sees whatever the
+   * previous holder committed. The default applies when nobody has written the key yet.
+   * Needs READ COMMITTED (the default): each statement then takes a fresh snapshot after the lock is won.
+   */
+  async getLocked<K extends SettingKey>(
+    tx: DbTransaction,
+    key: K,
+  ): Promise<{ value: SettingValue<K>; version: number | null }> {
+    const context = await readTxContext(tx, 'SettingsService.getLocked');
+    await this.lockWith(tx, context, key);
+    const result = await tx.execute<{ version: number; value: unknown }>(sql`
+      SELECT version, value FROM app.settings
+       WHERE tenant_id = ${context.tenantId}::uuid AND organization_id = ${context.organizationId}::uuid
+         AND key = ${key}::text
+       ORDER BY version DESC LIMIT 1`);
+    const row = result.rows[0];
+    if (row) return { value: row.value as SettingValue<K>, version: Number(row.version) };
+    return { value: structuredClone(SETTING_DEFAULTS[key]), version: null };
+  }
+
+  private async lockWith(tx: DbTransaction, context: TxContext, key: SettingKey): Promise<void> {
+    const lockText = settingLockKey(context.tenantId, context.organizationId, key);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockText}::text, 0))`);
+  }
+
   /** The value in force for `key`: the latest version, or the default when none was ever written. */
   async get<K extends SettingKey>(scope: TxScope, key: K): Promise<SettingValue<K>> {
     return (await this.getCurrent(scope, key)).value;
@@ -128,9 +170,7 @@ export class SettingsService {
 
     const { tenantId, organizationId, userId } = await readTxContext(tx, 'SettingsService.set');
 
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${tenantId}:${organizationId}:${key}`}::text, 0))`,
-    );
+    await this.lockWith(tx, { tenantId, organizationId, userId }, key);
 
     // The parsed value, not the raw one: a schema may fill in defaults, and the stored row should be complete.
     const result = await tx.execute<{ version: number }>(sql`
