@@ -65,6 +65,7 @@ function submittedRow(extra: Partial<VersionRow> = {}): VersionRow {
     scope: 'Supply and install',
     assumptions: null,
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: null,
     paymentTermId: null,
     paymentSchedule: [],

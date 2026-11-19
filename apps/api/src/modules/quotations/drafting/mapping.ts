@@ -141,6 +141,7 @@ export function toQuotationVersionDto(parts: QuotationVersionParts): QuotationVe
     scope: v.scope,
     assumptions: v.assumptions,
     exclusions: v.exclusions,
+    termsAndConditions: v.termsAndConditions,
     deliveryTimeline: v.deliveryTimeline,
     paymentTermId: v.paymentTermId,
     // jsonb is untyped: check it against the contract instead of casting.

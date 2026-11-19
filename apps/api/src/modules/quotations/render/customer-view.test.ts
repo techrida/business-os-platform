@@ -29,6 +29,7 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
     scope: 'Supply and install 12 panels',
     assumptions: null,
     exclusions: 'Civil works',
+    termsAndConditions: null,
     deliveryTimeline: '6 weeks',
     paymentSchedule: [{ label: 'Advance', percent: '60', dueDescription: 'On order' }],
     subtotal: '540000.00',
@@ -92,6 +93,7 @@ describe('toCustomerQuotationView', () => {
       address,
     });
     expect(view.contact).toEqual({ fullName: 'Sita Rai', email: 'sita@himal.example' });
+    expect(view.termsAndConditions).toBeNull();
     expect(view.paymentTermName).toBe('Net 30');
     expect(view.paymentSchedule).toEqual([
       { label: 'Advance', percent: '60', dueDescription: 'On order' },
@@ -103,6 +105,16 @@ describe('toCustomerQuotationView', () => {
       taxAmount: '70200.00',
       total: '610200.00',
     });
+  });
+
+  it('passes the terms and conditions through unchanged', () => {
+    const base = input();
+    const view = toCustomerQuotationView({
+      ...base,
+      version: { ...base.version, termsAndConditions: 'Payment within 15 days.' },
+    });
+    expect(view.termsAndConditions).toBe('Payment within 15 days.');
+    expect(CustomerQuotationViewSchema.safeParse(view).success).toBe(true);
   });
 
   it('leaks no internal column: cost, margin, FX, NPR equivalent, approval, hashes', () => {

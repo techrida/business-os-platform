@@ -44,6 +44,7 @@ export type CustomerViewVersion = Pick<
   | 'scope'
   | 'assumptions'
   | 'exclusions'
+  | 'termsAndConditions'
   | 'deliveryTimeline'
   | 'paymentSchedule'
   | 'subtotal'
@@ -167,6 +168,7 @@ export function toCustomerQuotationView(
     scope: version.scope,
     assumptions: version.assumptions,
     exclusions: version.exclusions,
+    termsAndConditions: version.termsAndConditions,
     deliveryTimeline: version.deliveryTimeline,
     paymentTermName: paymentTerm ? paymentTerm.name : null,
     paymentSchedule: schedule.map((m) => ({

@@ -58,6 +58,7 @@ const source = (versionId: string, number = 'QT-2082-0042'): RenderSource => ({
     scope: 'Supply and install 12 panels',
     assumptions: null,
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: '6 weeks',
     paymentSchedule: [{ label: 'Advance', percent: '100' }],
     subtotal: '1000.00',

@@ -63,6 +63,7 @@ const versionRow = (over: Partial<QuotationVersionRow> = {}): QuotationVersionRo
   scope: null,
   assumptions: null,
   exclusions: null,
+  termsAndConditions: null,
   deliveryTimeline: null,
   paymentTermId: null,
   paymentSchedule: [],

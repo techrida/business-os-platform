@@ -392,6 +392,7 @@ describe('QuotationVersionDtoSchema', () => {
     scope: null,
     assumptions: null,
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: null,
     paymentTermId: null,
     paymentSchedule: [],
@@ -481,6 +482,7 @@ describe('QuotationVersionDtoSchema.renderedScanStatus', () => {
     scope: null,
     assumptions: null,
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: null,
     paymentTermId: null,
     paymentSchedule: [],
@@ -743,6 +745,7 @@ describe('UpdateQuotationDraftBodySchema clears with null', () => {
     'scope',
     'assumptions',
     'exclusions',
+    'termsAndConditions',
     'deliveryTimeline',
     'paymentTermId',
     'discount',
@@ -753,6 +756,14 @@ describe('UpdateQuotationDraftBodySchema clears with null', () => {
     const parsed = UpdateQuotationDraftBodySchema.safeParse({ expectedVersion: 2, [key]: null });
     expect(parsed.success).toBe(true);
     expect(parsed.data?.[key]).toBeNull();
+  });
+
+  it('limits termsAndConditions to 10000 characters, like exclusions, and trims it', () => {
+    const body = (termsAndConditions: string) =>
+      UpdateQuotationDraftBodySchema.safeParse({ expectedVersion: 2, termsAndConditions });
+    expect(body('x'.repeat(10000)).success).toBe(true);
+    expect(body('x'.repeat(10001)).success).toBe(false);
+    expect(body('  Net 30  ').data?.termsAndConditions).toBe('Net 30');
   });
 
   it('accepts an empty payment schedule as a clear too', () => {

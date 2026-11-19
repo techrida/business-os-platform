@@ -42,6 +42,8 @@ export function sampleQuotationView(): CustomerQuotationView {
     scope: 'Deliver and configure the platform and train your team.',
     assumptions: 'You provide timely access to your sites and data.',
     exclusions: 'Third-party licence fees.',
+    termsAndConditions:
+      'Prices are valid until the date shown. Payment is due within 15 days of invoice.',
     deliveryTimeline: 'Eight weeks from the advance payment.',
     paymentTermName: '50% advance, balance on go-live',
     paymentSchedule: [

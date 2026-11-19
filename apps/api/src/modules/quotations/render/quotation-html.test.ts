@@ -38,6 +38,7 @@ const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = 
     scope: 'Supply and install 12 panels\nIncludes commissioning',
     assumptions: 'Site access is available',
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: '6 weeks',
     paymentTermName: 'Net 30',
     paymentSchedule: [
@@ -264,6 +265,7 @@ describe('renderQuotationHtml', () => {
         scope: evil,
         assumptions: evil,
         exclusions: evil,
+        termsAndConditions: evil,
         deliveryTimeline: evil,
         paymentTermName: evil,
         paymentSchedule: [{ label: evil, percent: '100', dueDescription: evil }],
@@ -284,7 +286,19 @@ describe('renderQuotationHtml', () => {
     expect(html).not.toContain('</b>');
     expect(html).toContain('&lt;b&gt;x&lt;/b&gt; &amp; &quot;q&quot; &#39;a&#39;');
     // Every field was escaped, not just one of them.
-    expect(html.match(/&lt;b&gt;x&lt;\/b&gt;/g)!.length).toBeGreaterThanOrEqual(18);
+    expect(html.match(/&lt;b&gt;x&lt;\/b&gt;/g)!.length).toBeGreaterThanOrEqual(19);
+  });
+
+  it('prints the terms and conditions after the delivery timeline, and nothing when there are none', () => {
+    const terms = 'Payment within 15 days.\nPrices exclude freight.';
+    const html = renderQuotationHtml(sample('USD', { termsAndConditions: terms }));
+    expect(html).toContain('<h2>Terms and conditions</h2>');
+    expect(html).toContain('Payment within 15 days.\nPrices exclude freight.');
+    expect(html.indexOf('<h2>Delivery timeline</h2>')).toBeGreaterThan(-1);
+    expect(html.indexOf('<h2>Terms and conditions</h2>')).toBeGreaterThan(
+      html.indexOf('<h2>Delivery timeline</h2>'),
+    );
+    expect(renderQuotationHtml(sample('USD'))).not.toContain('Terms and conditions');
   });
 
   it('marks a version that is no longer open to accept', () => {
@@ -339,6 +353,13 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     const found = cssOf(render()).match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     expect(found.length).toBeGreaterThan(0);
     expect(found.filter((hex) => !allowed.has(hex.toLowerCase()))).toEqual([]);
+  });
+
+  it('prints the terms and conditions in every layout', () => {
+    const html = render(sample('NPR', { termsAndConditions: 'Goods remain ours until paid.' }));
+    expect(html).toContain('<h2>Terms and conditions</h2>');
+    expect(html).toContain('Goods remain ours until paid.');
+    expect(render()).not.toContain('Terms and conditions');
   });
 
   it('prints the amount in words in both number systems', () => {

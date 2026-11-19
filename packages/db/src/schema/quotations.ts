@@ -97,6 +97,7 @@ export const QUOTATION_VERSION_MATERIAL_COLUMNS = [
   'scope',
   'assumptions',
   'exclusions',
+  'terms_and_conditions',
   'delivery_timeline',
   'payment_term_id',
   'payment_schedule',
@@ -323,6 +324,8 @@ export const quotationVersions = appSchema.table(
     scope: text('scope'),
     assumptions: text('assumptions'),
     exclusions: text('exclusions'),
+    /** Free text printed as "Terms and conditions" (0047); frozen with the content once submitted. */
+    termsAndConditions: text('terms_and_conditions'),
     deliveryTimeline: text('delivery_timeline'),
     paymentTermId: uuid('payment_term_id'),
     /** The PaymentMilestone array of @bos/contracts. */

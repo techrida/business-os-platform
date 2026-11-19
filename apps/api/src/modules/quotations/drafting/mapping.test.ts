@@ -73,6 +73,7 @@ const version = (over: Partial<VersionRow> = {}): VersionRow => ({
   scope: null,
   assumptions: null,
   exclusions: null,
+  termsAndConditions: null,
   deliveryTimeline: null,
   paymentTermId: null,
   paymentSchedule: [],
@@ -232,6 +233,15 @@ describe('toQuotationVersionDto', () => {
       createdAt: '2026-11-01T08:00:00.000Z',
       submittedAt: null,
     });
+  });
+
+  it('carries the terms and conditions, and null when there are none', () => {
+    expect(toQuotationVersionDto(draftParts()).termsAndConditions).toBeNull();
+    const dto = toQuotationVersionDto(
+      draftParts({ version: version({ termsAndConditions: 'Payment within 30 days.' }) }),
+    );
+    expect(dto.termsAndConditions).toBe('Payment within 30 days.');
+    expect(QuotationVersionDtoSchema.safeParse(dto).success).toBe(true);
   });
 
   it('keeps money, quantities and percentages as the strings the database returned', () => {

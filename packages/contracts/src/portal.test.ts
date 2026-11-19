@@ -30,6 +30,7 @@ const view = () => ({
   scope: 'Supply and install 12 panels',
   assumptions: null,
   exclusions: null,
+  termsAndConditions: null,
   deliveryTimeline: '6 weeks',
   paymentTermName: 'Net 30',
   paymentSchedule: [{ label: 'Advance', percent: '60' }],

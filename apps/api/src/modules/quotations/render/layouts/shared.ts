@@ -255,6 +255,7 @@ export const textBlocks = (ctx: RenderContext): string =>
     textBlock('Assumptions', ctx.view.assumptions),
     textBlock('Exclusions', ctx.view.exclusions),
     textBlock('Delivery timeline', ctx.view.deliveryTimeline),
+    textBlock('Terms and conditions', ctx.view.termsAndConditions),
   ].join('');
 
 export function signatory(ctx: RenderContext): string {

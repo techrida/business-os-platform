@@ -34,6 +34,19 @@ describe('mergeDraftPatch', () => {
     expect(merged.scope).toBe('Phase 1 and 2');
   });
 
+  it('sets, keeps and clears the terms and conditions like any other text field', () => {
+    const withTerms = { ...saved, termsAndConditions: 'Payment within 30 days.' };
+    expect(mergeDraftPatch(saved, { termsAndConditions: 'Net 30' }).termsAndConditions).toBe(
+      'Net 30',
+    );
+    expect(mergeDraftPatch(withTerms, { scope: 'Phase 1 only' }).termsAndConditions).toBe(
+      'Payment within 30 days.',
+    );
+    expect(mergeDraftPatch(withTerms, { termsAndConditions: null })).not.toHaveProperty(
+      'termsAndConditions',
+    );
+  });
+
   it('replaces the schedule with an empty one', () => {
     expect(mergeDraftPatch(saved, { paymentSchedule: [] }).paymentSchedule).toEqual([]);
   });

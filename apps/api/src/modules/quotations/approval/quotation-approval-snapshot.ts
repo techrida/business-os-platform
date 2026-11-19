@@ -39,6 +39,13 @@ const MATERIAL_KEYS: readonly (keyof MaterialVersionFields)[] =
       ) as keyof MaterialVersionFields,
   );
 
+/**
+ * Material columns that were added after versions were already hashed. A NULL one is left out of the hashed
+ * object, so a version that never had it hashes to the same bytes as before the column existed; only a value
+ * enters the hash. Adding a column here is only safe if NULL means "never set" (nullable, no default).
+ */
+const OMIT_WHEN_NULL: ReadonlySet<keyof MaterialVersionFields> = new Set(['termsAndConditions']);
+
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export interface BuildApprovalSnapshotInput {
@@ -85,7 +92,11 @@ export function materialFieldsOf(
   taxSummary: readonly TaxSummaryRow[],
 ): MaterialFields {
   const picked: Record<string, unknown> = {};
-  for (const key of MATERIAL_KEYS) picked[key] = version[key];
+  for (const key of MATERIAL_KEYS) {
+    const value = version[key];
+    if ((value === null || value === undefined) && OMIT_WHEN_NULL.has(key)) continue;
+    picked[key] = value;
+  }
   return {
     version: picked as unknown as MaterialVersionFields,
     lines: lines
