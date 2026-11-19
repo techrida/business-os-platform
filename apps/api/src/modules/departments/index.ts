@@ -1,7 +1,7 @@
 export {
   ACCESS_REVISION_PORT,
   type AccessRevisionPort,
-  SettingsAccessRevisionStore,
+  AccessRevisionTableStore,
 } from './access-revision.port';
 export {
   applyDepartmentChanges,

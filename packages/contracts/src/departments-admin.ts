@@ -120,7 +120,7 @@ export type RestoreDepartmentBody = z.infer<typeof RestoreDepartmentBodySchema>;
 
 export const UpdateDepartmentPeopleBodySchema = z.strictObject({
   changes: z.array(DepartmentChangeSchema).min(1).max(DEPARTMENT_PEOPLE_MAX_CHANGES),
-  expectedRevision: z.number().int().min(0),
+  expectedRevision: z.string().min(1),
   note: z
     .string()
     .trim()
@@ -181,7 +181,7 @@ export const AdminDepartmentDetailSchema = z.object({
   memberCount: z.number().int().nonnegative(),
   members: z.array(DepartmentMemberSchema),
   version: z.number().int().min(1),
-  revision: z.number().int().min(0),
+  revision: z.string().min(1),
 });
 export type AdminDepartmentDetail = z.infer<typeof AdminDepartmentDetailSchema>;
 

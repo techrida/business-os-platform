@@ -1,7 +1,7 @@
 // Integration tests for the Departments admin API (/v1/admin/departments, U20b / US-106) against
 // a real Postgres 16 container (Testcontainers, needs Docker): real migrations (including 0079 and
 // 0086), real bos_app role, real DepartmentsAdminController + DepartmentsAdminService + AuditService
-// + SettingsAccessRevisionStore + ErrorBodyFilter + production body parser.
+// + AccessRevisionTableStore + ErrorBodyFilter + production body parser.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/departments/departments.integration.test.ts
 import 'reflect-metadata';
 
@@ -46,7 +46,7 @@ import type { Principal, ResourceRef } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { type Actor, systemActor, type TxScope, withTx } from '../../platform/db/tx';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
-import { SettingsAccessRevisionStore } from './access-revision.port';
+import { AccessRevisionTableStore } from './access-revision.port';
 import type { DepartmentsCaller } from './departments.caller';
 import { DepartmentsAdminController } from './departments.controller';
 import { DepartmentsAdminService } from './departments.service';
@@ -310,7 +310,7 @@ beforeAll(async () => {
   } as unknown as AuthzService;
 
   const audit = new AuditService(db);
-  const revisions = new SettingsAccessRevisionStore();
+  const revisions = new AccessRevisionTableStore();
   const service = new DepartmentsAdminService(db, fakeCaller, fakeAuthz, audit, revisions);
 
   const moduleRef = await Test.createTestingModule({
