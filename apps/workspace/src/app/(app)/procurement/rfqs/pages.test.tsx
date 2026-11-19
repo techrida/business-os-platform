@@ -245,6 +245,19 @@ describe('the detail', () => {
     expect(out).toContain('Enter a quotation');
   });
 
+  it('names the invited and quoting vendors from the RFQ itself, with no vendor directory read', async () => {
+    vendorApi.listVendors.mockRejectedValue(apiError(403));
+    const out = await detail();
+    expect(out).toContain('Everest Supplies Pvt Ltd, Himal Traders Pvt Ltd');
+    expect(out).not.toContain('Vendor name unavailable');
+    expect(vendorApi.listVendors).not.toHaveBeenCalled();
+    const quote = await quotePage();
+    expect(quote).toContain('Everest Supplies Pvt Ltd');
+    expect(quote).toContain('Himal Traders Pvt Ltd');
+    expect(quote).not.toContain('Vendor name unavailable');
+    expect(vendorApi.listVendors).not.toHaveBeenCalled();
+  });
+
   it('only a clean scan gets a Convert button; the others say why', async () => {
     rfqApi.listSubmissions.mockResolvedValue([
       submission(),
