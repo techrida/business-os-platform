@@ -1,0 +1,268 @@
+'use client';
+
+import type { ActivityDto, LeadOwnerOption, SchedulableActivityKind } from '@bos/contracts';
+import { useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from 'react';
+
+import {
+  rescheduleFollowUpAction,
+  scheduleFollowUpAction,
+  type FollowUpState,
+} from '@/app/(app)/leads/actions';
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose } from '@/components/ui/dialog';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { toast } from '@/components/ui/toast';
+
+import { ActivityTypeButtons } from './activity-type-buttons';
+import { SCHEDULE_ACTIVITY_KINDS, type FieldErrors } from './forms';
+import styles from './follow-ups-card.module.css';
+
+/** An ISO time as the Kathmandu wall time a `datetime-local` input shows, or '' when unreadable. */
+export function toKathmanduLocal(iso: string | null | undefined): string {
+  const at = iso ? Date.parse(iso) : Number.NaN;
+  if (!Number.isFinite(at)) return '';
+  return new Date(at + 345 * 60_000).toISOString().slice(0, 16);
+}
+
+interface Outcome {
+  ok?: boolean | undefined;
+  error?: string | undefined;
+  fieldErrors?: FieldErrors | undefined;
+}
+
+/**
+ * Dialog submit plumbing shared by Schedule and Reschedule: the action runs in a transition, a
+ * success closes the dialog and toasts, a refusal stays open with field errors and an alert (the
+ * toast alone is not enough for a blocking error, UIP-FEED-001). Opening again starts clean.
+ */
+function useDialogSubmit(run: (data: FormData) => Promise<Outcome>, success: string) {
+  const [open, setOpenState] = useState(false);
+  const [outcome, setOutcome] = useState<Outcome>({});
+  const [pending, startTransition] = useTransition();
+  // Bumped on every open, so the form remounts with its defaults instead of the last attempt.
+  const [round, setRound] = useState(0);
+
+  function setOpen(next: boolean) {
+    if (next) {
+      setOutcome({});
+      setRound((r) => r + 1);
+    }
+    setOpenState(next);
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    startTransition(async () => {
+      const result = await run(data);
+      setOutcome(result);
+      if (result.ok) {
+        setOpenState(false);
+        toast.success(success);
+      }
+    });
+  }
+
+  return { open, setOpen, outcome, pending, round, onSubmit };
+}
+
+function Footer({ formId, pending, label }: { formId: string; pending: boolean; label: string }) {
+  return (
+    <>
+      <DialogClose asChild>
+        <Button variant="secondary" disabled={pending}>
+          Cancel
+        </Button>
+      </DialogClose>
+      <Button type="submit" form={formId} disabled={pending} aria-busy={pending || undefined}>
+        {pending ? 'Saving' : label}
+      </Button>
+    </>
+  );
+}
+
+function FormAlert({ error }: { error: string | undefined }) {
+  return error ? (
+    <Alert tone="error" role="alert">
+      {error}
+    </Alert>
+  ) : null;
+}
+
+/** The people a follow-up can go to; `empty` adds a first choice that leaves it to the API. */
+function assigneeOptions(owners: readonly LeadOwnerOption[], empty?: string) {
+  const people = owners.map((o) => ({ value: o.userId, label: o.displayName || o.email }));
+  return empty === undefined ? people : [{ value: '', label: empty }, ...people];
+}
+
+const has = (owners: readonly LeadOwnerOption[], id: string | null | undefined) =>
+  id !== null && id !== undefined && owners.some((o) => o.userId === id);
+
+export interface ScheduleFollowUpDialogProps {
+  leadId: string;
+  /** The lead owner, the default assignee. */
+  ownerUserId: string | null;
+  /** People the caller may assign to (`GET /v1/leads/owners`). */
+  owners: readonly LeadOwnerOption[];
+  /** The opening control. Default: a secondary "Schedule follow-up" button. */
+  trigger?: ReactNode;
+}
+
+/**
+ * Schedule follow-up (D39, D40): type buttons (call, meeting, email), an optional subject that
+ * defaults to the type's label, the due time in Kathmandu time, the assignee (the lead owner by
+ * default) and a note. Saving plans an activity on the lead; it shows on the Follow-ups card.
+ */
+export function ScheduleFollowUpDialog({
+  leadId,
+  ownerUserId,
+  owners,
+  trigger,
+}: ScheduleFollowUpDialogProps) {
+  const formId = useId();
+  const [kind, setKind] = useState<SchedulableActivityKind>('call');
+  // The key the next submit sends: the same one after an unknown outcome, so a retry cannot plan
+  // the follow-up twice; the action hands back a fresh one after a save or a refusal.
+  const key = useRef<string | null>(null);
+
+  const dialog = useDialogSubmit(async (data) => {
+    data.set('idempotencyKey', (key.current ??= crypto.randomUUID()));
+    const result = await scheduleFollowUpAction({ values: {}, fieldErrors: {} }, data);
+    if (result.key) key.current = result.key;
+    return result;
+  }, 'Follow-up scheduled.');
+
+  const ownerListed = has(owners, ownerUserId);
+  const defaultAssignee = ownerListed ? (ownerUserId ?? '') : '';
+  const options = assigneeOptions(owners, ownerListed ? undefined : 'Lead owner');
+  const shown = dialog.outcome.fieldErrors ?? {};
+
+  return (
+    <Dialog
+      trigger={trigger ?? <Button variant="secondary">Schedule follow-up</Button>}
+      open={dialog.open}
+      onOpenChange={(next) => {
+        if (next) setKind('call');
+        dialog.setOpen(next);
+      }}
+      title="Schedule follow-up"
+      locked={dialog.pending}
+      closeOnOutsideClick={false}
+      footer={<Footer formId={formId} pending={dialog.pending} label="Schedule" />}
+    >
+      <form
+        key={dialog.round}
+        id={formId}
+        noValidate
+        onSubmit={dialog.onSubmit}
+        className={styles.dialogForm}
+      >
+        <input type="hidden" name="subjectKind" value="leadId" />
+        <input type="hidden" name="subjectId" value={leadId} />
+        <FormAlert error={dialog.outcome.error} />
+        <ActivityTypeButtons
+          kinds={SCHEDULE_ACTIVITY_KINDS}
+          value={kind}
+          onChange={setKind}
+          name="kind"
+          label="Type"
+          error={shown['kind']}
+        />
+        <Field
+          label="Subject"
+          hint="Optional. Leave it empty to use the type."
+          error={shown['subject']}
+        >
+          {(c) => <Input name="subject" maxLength={200} {...c} />}
+        </Field>
+        <Field label="Due" hint="Kathmandu time." error={shown['dueAt']}>
+          {(c) => <Input name="dueAt" type="datetime-local" required {...c} />}
+        </Field>
+        <Field label="Assigned to" error={shown['assigneeUserId']}>
+          {(c) => (
+            <Select name="assigneeUserId" defaultValue={defaultAssignee} options={options} {...c} />
+          )}
+        </Field>
+        <Field label="Note" hint="Optional." error={shown['body']}>
+          {(c) => <Textarea name="body" rows={3} maxLength={10000} {...c} />}
+        </Field>
+      </form>
+    </Dialog>
+  );
+}
+
+export interface RescheduleFollowUpDialogProps {
+  leadId: string;
+  item: Pick<ActivityDto, 'id' | 'subject' | 'dueAt' | 'assigneeUserId' | 'version'>;
+  owners: readonly LeadOwnerOption[];
+  trigger: ReactNode;
+}
+
+/**
+ * Move a planned follow-up to a new time, optionally to someone else. When the current assignee
+ * is not in the caller's list, the default is "Keep current assignee" (nothing sent), so opening
+ * and saving never reassigns it silently.
+ */
+export function RescheduleFollowUpDialog({
+  leadId,
+  item,
+  owners,
+  trigger,
+}: RescheduleFollowUpDialogProps) {
+  const formId = useId();
+  const dialog = useDialogSubmit(
+    (data): Promise<FollowUpState> => rescheduleFollowUpAction({}, data),
+    'Follow-up rescheduled.',
+  );
+  const listed = has(owners, item.assigneeUserId);
+  const options = assigneeOptions(owners, listed ? undefined : 'Keep current assignee');
+  const err = dialog.outcome.fieldErrors ?? {};
+
+  return (
+    <Dialog
+      trigger={trigger}
+      open={dialog.open}
+      onOpenChange={dialog.setOpen}
+      title="Reschedule follow-up"
+      description={item.subject}
+      locked={dialog.pending}
+      closeOnOutsideClick={false}
+      footer={<Footer formId={formId} pending={dialog.pending} label="Reschedule" />}
+    >
+      <form
+        key={dialog.round}
+        id={formId}
+        noValidate
+        onSubmit={dialog.onSubmit}
+        className={styles.dialogForm}
+      >
+        <input type="hidden" name="leadId" value={leadId} />
+        <input type="hidden" name="activityId" value={item.id} />
+        <input type="hidden" name="expectedVersion" value={item.version} />
+        <FormAlert error={dialog.outcome.error} />
+        <Field label="New due time" hint="Kathmandu time." error={err['dueAt']}>
+          {(c) => (
+            <Input
+              name="dueAt"
+              type="datetime-local"
+              defaultValue={toKathmanduLocal(item.dueAt)}
+              required
+              {...c}
+            />
+          )}
+        </Field>
+        <Field label="Assigned to" error={err['assigneeUserId']}>
+          {(c) => (
+            <Select
+              name="assigneeUserId"
+              defaultValue={listed ? (item.assigneeUserId ?? '') : ''}
+              options={options}
+              {...c}
+            />
+          )}
+        </Field>
+      </form>
+    </Dialog>
+  );
+}
