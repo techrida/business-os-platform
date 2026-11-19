@@ -76,9 +76,12 @@ function PersonSelect({
   options,
   value,
   onChange,
+  emptyLabel,
 }: {
   name: string;
   label: string;
+  /** A first choice that posts nothing, so the API applies its default (the caller, the owner). */
+  emptyLabel?: string | undefined;
   hint?: string | undefined;
   error?: string | undefined;
   options: readonly OwnerOption[];
@@ -98,6 +101,7 @@ function PersonSelect({
           </>
         ) : (
           <Select name={name} value={value} onChange={(e) => onChange(e.target.value)} {...c}>
+            {emptyLabel ? <option value="">{emptyLabel}</option> : null}
             {options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -133,7 +137,9 @@ export function LeadForm({
   });
   const [values, setValues] = useState<Record<string, string>>(() => ({
     ...EMPTY,
-    ownerUserId: defaultOwnerId ?? owners[0]?.value ?? '',
+    // Never preselect someone else: when the signed-in user is not placed in the list, the empty
+    // "You" choice posts nothing and the API makes the lead the caller's.
+    ownerUserId: defaultOwnerId ?? (owners.length === 1 ? (owners[0]?.value ?? '') : ''),
   }));
   const [followUpKind, setFollowUpKind] = useState<FollowUpKind>('call');
   const summary = useRef<HTMLDivElement>(null);
@@ -145,6 +151,7 @@ export function LeadForm({
   const formId = useId();
   const err = state.fieldErrors;
   const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
+  const unplaced = defaultOwnerId === undefined;
 
   useEffect(() => {
     if (state.error) summary.current?.focus();
@@ -243,6 +250,7 @@ export function LeadForm({
                 hint={owners.length === 1 ? 'You can create leads for yourself only.' : undefined}
                 error={err['ownerUserId']}
                 options={owners}
+                emptyLabel={unplaced ? 'You' : undefined}
                 value={values['ownerUserId'] ?? ''}
                 onChange={(value) => update('ownerUserId', value)}
               />
@@ -440,6 +448,7 @@ export function LeadForm({
                 hint="Starts as the lead owner."
                 error={err['followUpAssigneeUserId']}
                 options={owners}
+                emptyLabel={unplaced ? 'The lead owner' : undefined}
                 value={assignee}
                 onChange={(value) => update('followUpAssigneeUserId', value)}
               />
