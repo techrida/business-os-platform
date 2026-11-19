@@ -7,6 +7,8 @@ export interface FieldControlProps {
   id: string;
   'aria-describedby': string | undefined;
   'aria-invalid': true | undefined;
+  /** The label's id, for controls that are not a labelable element (the Select). */
+  'aria-labelledby': string;
 }
 
 /**
@@ -37,6 +39,7 @@ export function Field({
   className?: string;
 }) {
   const base = useId();
+  const labelId = `${base}-label`;
   const hintId = `${base}-hint`;
   const errorId = `${base}-error`;
   const describedBy =
@@ -44,7 +47,7 @@ export function Field({
   const cls = [styles.field, className].filter(Boolean).join(' ');
   return (
     <div className={cls}>
-      <label htmlFor={base} className={styles.label}>
+      <label id={labelId} htmlFor={base} className={styles.label}>
         {label}
       </label>
       {hint ? (
@@ -56,6 +59,7 @@ export function Field({
         id: base,
         'aria-describedby': describedBy,
         'aria-invalid': error ? true : undefined,
+        'aria-labelledby': labelId,
       })}
       {error ? (
         <span id={errorId} className={styles.error}>

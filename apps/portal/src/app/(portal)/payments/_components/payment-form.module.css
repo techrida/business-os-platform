@@ -6,10 +6,6 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-.select {
-  appearance: auto;
-}
-
 .context {
   display: grid;
   gap: 2px;

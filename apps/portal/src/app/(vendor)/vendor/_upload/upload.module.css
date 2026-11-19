@@ -7,10 +7,6 @@
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-.select {
-  appearance: auto;
-}
-
 .upload {
   display: grid;
   gap: 8px;

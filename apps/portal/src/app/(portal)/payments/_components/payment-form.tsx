@@ -6,9 +6,9 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 import { type PaymentFormState, submitPaymentAction } from '@/app/(portal)/payments/actions';
 import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
-import fieldStyles from '@/components/portal/field.module.css';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 
 import styles from './payment-form.module.css';
 import { METHOD_LABEL } from './payment-status';
@@ -141,12 +141,11 @@ export function PaymentForm({
       <div className={styles.grid}>
         <Field label="Currency" error={fe.currency}>
           {(control) => (
-            <select
+            <Select
               name="currency"
               required
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
-              className={`${styles.select} ${fieldStyles.control}`}
               {...control}
             >
               {CURRENCIES.map((c) => (
@@ -154,7 +153,7 @@ export function PaymentForm({
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </Field>
         <Field
@@ -179,12 +178,11 @@ export function PaymentForm({
       <div className={styles.grid}>
         <Field label="How you paid" error={fe.method}>
           {(control) => (
-            <select
+            <Select
               name="method"
               required
               value={method}
               onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-              className={`${styles.select} ${fieldStyles.control}`}
               {...control}
             >
               {PAYMENT_METHODS.map((m) => (
@@ -192,7 +190,7 @@ export function PaymentForm({
                   {METHOD_LABEL[m]}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </Field>
         <Field label="Date you paid" error={fe.receivedOn}>

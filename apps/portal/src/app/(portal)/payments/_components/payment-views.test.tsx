@@ -105,7 +105,7 @@ describe('PaymentForm', () => {
     expect(html).toContain('INV-2083/84-00001');
     expect(html).toContain(`name="invoice" value="${INVOICE.id}"`);
     expect(html).toContain('value="1000000.00"');
-    expect(html).toMatch(/<option value="USD" selected="">USD<\/option>/);
+    expect(html).toContain('<input type="hidden" name="currency" value="USD"/>');
   });
 });
 

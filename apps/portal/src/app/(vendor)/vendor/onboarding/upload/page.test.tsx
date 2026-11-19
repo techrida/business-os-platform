@@ -48,12 +48,11 @@ describe('send a KYC document page', () => {
 
   it('starts on a document that still needs sending, or on the one asked for', async () => {
     // The first checklist item that is missing, rejected or expired: tax clearance (rejected).
-    expect(await render()).toMatch(/<option value="tax_clearance" selected/);
-    expect(await render({ doc: 'bank_proof' })).toMatch(/<option value="bank_proof" selected/);
+    const chosen = (docType: string) => `<input type="hidden" name="docType" value="${docType}"/>`;
+    expect(await render()).toContain(chosen('tax_clearance'));
+    expect(await render({ doc: 'bank_proof' })).toContain(chosen('bank_proof'));
     // An unknown or unlisted ?doc= falls back to the default.
-    expect(await render({ doc: 'foreign_registration' })).toMatch(
-      /<option value="tax_clearance" selected/,
-    );
+    expect(await render({ doc: 'foreign_registration' })).toContain(chosen('tax_clearance'));
   });
 
   it('asks for the expiry date on a tax clearance only', async () => {
