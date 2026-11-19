@@ -79,3 +79,15 @@ it("shows each department with the API's counts, the No department row and named
   expect(html).toContain('aria-label="More actions for Sales"');
   expect(html).toContain('New department');
 });
+
+it('hides New department and every row action when the viewer may only read', async () => {
+  flags.canWrite = false;
+  const { seen } = stubApi([sales], 7);
+  const html = renderToStaticMarkup(await DepartmentsPage({ searchParams: Promise.resolve({}) }));
+  expect(html).toContain('Sales');
+  expect(html).not.toContain('New department');
+  expect(html).not.toContain('Rename Sales');
+  expect(html).not.toContain('Retire Sales');
+  expect(html).not.toContain('More actions for Sales');
+  expect(seen.some((url) => url.pathname === '/v1/admin/users')).toBe(false);
+});
