@@ -130,10 +130,12 @@ export class DocumentSettingsService {
       dateFormat,
       enabledCurrencies,
       sellerContact: {
-        phones: [...profile.phones],
-        email: profile.email,
-        signatoryName: profile.signatoryName,
-        signatoryTitle: profile.signatoryTitle,
+        // A hand-edited row may miss a key: the contact block is then empty rather than failing the whole read,
+        // which every staff screen needs for its number, date and currency settings.
+        phones: Array.isArray(profile.phones) ? [...profile.phones] : [],
+        email: profile.email ?? null,
+        signatoryName: profile.signatoryName ?? null,
+        signatoryTitle: profile.signatoryTitle ?? null,
       },
     };
   }
