@@ -169,6 +169,46 @@ describe('per-workflow state', () => {
     assert.deepEqual(readState(path.join(dir, 'state.json'), 'sales'), {});
     assert.equal(readState(path.join(dir, 'state.json'), 'start').memoUrl, '/memos/1');
   });
+
+  test('a run that could not start does not count as an earlier run', () => {
+    const dir = freshDir();
+    const cfg = {
+      outDir: dir,
+      label: 'x',
+      viewportText: '1440x900',
+      appUrl: 'https://a.localhost',
+    };
+    saveResults(cfg, {
+      name: 'sales',
+      title: 't',
+      runId: 'r1',
+      status: 'FAIL',
+      error: 'Could not start: TLS',
+      steps: [],
+      videos: [],
+      wallMs: 0,
+    });
+    assert.equal(hasEarlierRun(dir, 'sales'), false);
+    const step = {
+      id: 'sales-1',
+      title: 's',
+      status: 'FAIL',
+      durationMs: 0,
+      checks: [],
+      findings: [],
+      records: {},
+    };
+    saveResults(cfg, {
+      name: 'sales',
+      title: 't',
+      runId: 'r2',
+      status: 'FAIL',
+      steps: [step],
+      videos: [],
+      wallMs: 0,
+    });
+    assert.equal(hasEarlierRun(dir, 'sales'), true);
+  });
 });
 
 describe('payments are recorded at most once per run', () => {
