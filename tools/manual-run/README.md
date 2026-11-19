@@ -89,7 +89,7 @@ Point `APP_URL`, `MAIL_URL`, `PERSONAS_FILE` and `CA_FILE` at that stack and pic
 - **One recorded context per workflow per viewport.** Personas switch inside that context through the real `/dev/personas` page, one click each. The step then confirms the role through `/dev/api/whoami`. Authentication is never bypassed. start-6 signs in for real in a second recorded window, with password plus a TOTP code computed from the personas file.
 - **TLS.** Node checks each origin's certificate chain against the stack CA. Chromium is then told to trust only those certificate keys (`--ignore-certificate-errors-spki-list`). `ignoreHTTPSErrors` stays false.
 - **Network isolation (`lib/netns.mjs`).** Chromium runs in its own user and network namespace (`unshare -Urn`), and socat forwards the loopback ports. Without this, host network changes (VPN, Wi-Fi, Docker bridges) aborted page loads with `ERR_NETWORK_CHANGED`.
-- **Hydration wait.** Next.js pages render before React attaches handlers, and a click in that window does nothing. Before each click, `Session.click` waits until React has hydrated the element (the `__reactProps$` key), and reloads up to twice if it never does.
+- **Hydration wait.** Next.js pages render before React attaches handlers, and a click in that window does nothing. Before each click, `Session.click` waits up to 30 s for React to hydrate the element (the `__reactProps$` key). It reloads up to four times, and only under the conditions listed below.
 - **Dev-server hiccups.** `next dev` restarts itself when it nears its memory limit ("Server is approaching the used memory threshold, restarting…"). For up to a minute after that, pages, script chunks and stylesheets answer 502. The driver recovers without hiding real failures:
   - `goto` and `see` reload a Chrome error page or the app's "This … did not open" panel (a plain GET, at most three times) and write a `note:` line in the step's checks.
   - Before each click or fill, a page that never hydrated, or whose Next stylesheet failed while no field holds typed input, is reloaded.
@@ -113,7 +113,7 @@ Inside `run(s)`, use the `Session` API from `lib/session.mjs`. Never call `page.
 - `s.finding(text, severity)` for a real product bug. Do not work around a product bug; assert only the behaviour that works.
 - `s.caption(text)`, `s.pause(ms)`
 
-Make every step retry-safe. If `s.state` already holds the record the step creates, open that record instead of creating it again (sales-10, sales-11). A record found by this run's unique name works too (`adoptPayment` in sales-12 and sales-15). Submit once, then wait for the result or a stated refusal. Never click Submit again on a timeout.
+Make every step retry-safe. If `s.state` already holds the record the step creates, open that record instead of creating it again (sales-2, sales-8, sales-10, sales-11, start-5). A record found by this run's unique name works too (`adoptPayment` in sales-12 and sales-15). Submit once, then wait for the result or a stated refusal. Never click Submit again on a timeout.
 
 Assert on something the action changes. For example, count the rows that carry a `Deallocate` action before and after allocating. An old row with the same text would make a plain "row is visible" check pass even when the action was refused.
 
@@ -137,7 +137,7 @@ Assert on something the action changes. For example, count the rows that carry a
 
 - One uninterrupted `--workflow all --viewport 1440x900` run (start + sales) took 22 min on the shared omarchy machine (label SCR2, 20 Nov 2026). Most of that is waiting for the dev server to compile routes and render PDFs, not the driver.
 
-- `--from` reloads `state.json` and skips the earlier steps; their results are kept from the earlier run. sales-10 to sales-15 are retry-safe after a partial run. An earlier step that already changed data (a converted lead or a submitted memo, say) cannot be re-run on the same label: resume from the step after it, or start a new label.
+- `--from` reloads `state.json` and skips the earlier steps; their results are kept from the earlier run. Retry-safe after a partial run: start-5, sales-2, sales-8 and sales-10 to sales-15. Any other step that already changed data (a created lead, a submitted memo or a built quotation, say) cannot be re-run on the same label. Resume from the step after it, or start a new label.
 - The workspace dev server restarts itself under memory pressure, so a run on a loaded machine may need one or two `--from` resumes. The segments together form the run's video.
 - The browser print dialog cannot be shown headless. start-3 checks the print frame's content instead of a printed page.
 - The TOTP code appears briefly in the private-window video of start-6. It expires within 30 s, but treat that video as internal.
