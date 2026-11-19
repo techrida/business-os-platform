@@ -148,6 +148,28 @@ describe('submitPaymentAction submit', () => {
     expect(bad.error).toMatch(/Check the details/);
   });
 
+  it('names the switched-off currency on the API 422 CURRENCY_NOT_ENABLED and rotates the key', async () => {
+    // The body the API's error filter sends for D44 (`currencyNotEnabled` in the API).
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'CURRENCY_NOT_ENABLED',
+            message: 'Currency INR is not enabled for this company',
+            correlationId: 'req-12345678',
+            details: { currency: 'INR' },
+          },
+        },
+        422,
+      ),
+    );
+    const res = await submitPaymentAction({ key: IDEM }, form({ currency: 'INR' }));
+    expect(JSON.parse(callOf(fetchMock).init.body as string)).toMatchObject({ currency: 'INR' });
+    expect(res.error).toBe('INR is switched off for the company. Choose another currency.');
+    expect(res.key).not.toBe(IDEM);
+    expect(res.error).not.toMatch(/req-12345678|Reload/);
+  });
+
   it('sends a signed-out user, and a 401 from the API, to sign in and back to the form', async () => {
     const back = `/auth/login?returnTo=${encodeURIComponent(`/payments/new?invoice=${ID}`)}`;
     getSession.mockResolvedValue(null);

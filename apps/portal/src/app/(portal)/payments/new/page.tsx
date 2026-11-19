@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { portalEnabledCurrencies } from '@bos/contracts';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
@@ -7,6 +8,7 @@ import { todayInKathmandu } from '@/components/portal/quotation-status';
 import styles from '@/components/portal/page.module.css';
 import { ApiError } from '@/lib/api';
 import { getPortalInvoice, getPortalInvoiceSettlement } from '@/lib/api.billing';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { PaymentForm } from '../_components/payment-form';
@@ -19,7 +21,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * Submit a payment, optionally from an invoice (`?invoice=<id>`). From an invoice, the currency and
  * the amount still open are the server's figures. A bad invoice id, a 404 and a 403 all show the
  * invoice not-found page, so this URL cannot be used to probe for invoices that are not the
- * customer's.
+ * customer's. The currency list is the company's enabled currencies, read once per request.
  */
 export default async function NewPaymentPage({
   searchParams,
@@ -35,6 +37,8 @@ export default async function NewPaymentPage({
 
   const session = await getSession();
   if (!session) redirect(returnTo);
+  // Started before the invoice reads so they overlap; it never throws.
+  const display = getPortalDisplay(session);
 
   let context: { id: string; number: string } | undefined;
   let currency: 'NPR' | 'INR' | 'USD' = 'NPR';
@@ -55,6 +59,8 @@ export default async function NewPaymentPage({
     }
   }
 
+  const enabledCurrencies = portalEnabledCurrencies(await display);
+
   return (
     <main className={styles.main}>
       <p className={styles.back}>
@@ -74,6 +80,7 @@ export default async function NewPaymentPage({
         today={todayInKathmandu()}
         invoice={context}
         defaultCurrency={currency}
+        enabledCurrencies={enabledCurrencies}
         suggestedAmount={suggestedAmount}
       />
     </main>
