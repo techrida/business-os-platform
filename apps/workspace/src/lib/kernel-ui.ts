@@ -101,6 +101,40 @@ export function describeFailure(input: FailureInput, context: FailureContext = '
   return { message, reload, definite };
 }
 
+/** The API's text for D44 (`currencyNotEnabled` in the API). Anchored, so no other 422 matches. */
+const NOT_ENABLED_TEXT = /^Currency ([A-Z]{3}) is not enabled for this company$/;
+const CURRENCY_CODE = /^[A-Z]{3}$/;
+
+/**
+ * The words for the API's 422 "currency not enabled" refusal (D44: the company switched the currency
+ * off, perhaps after the page loaded), or undefined for any other failure. Reads the `ApiError` shape
+ * (`status`, `body`) without importing it, so this file stays free of server-only code. The API names
+ * the refusal `CURRENCY_NOT_ENABLED` with `details.currency`, but its error filter passes that code
+ * only once it is on its 422 list; until then the body says `bad_request` and the currency is only in
+ * the message, so both shapes are read. Only a three-letter code is echoed.
+ */
+export function currencyNotEnabledText(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const { status, body } = err as { status?: unknown; body?: unknown };
+  if (status !== 422 || typeof body !== 'object' || body === null) return undefined;
+  const error = (body as { error?: unknown }).error;
+  if (typeof error !== 'object' || error === null) return undefined;
+  const { code, message, details } = error as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+  const fromText = typeof message === 'string' ? NOT_ENABLED_TEXT.exec(message)?.[1] : undefined;
+  if (code !== 'CURRENCY_NOT_ENABLED' && fromText === undefined) return undefined;
+  const fromDetails =
+    typeof details === 'object' && details !== null
+      ? (details as { currency?: unknown }).currency
+      : undefined;
+  const currency =
+    typeof fromDetails === 'string' && CURRENCY_CODE.test(fromDetails) ? fromDetails : fromText;
+  return `${currency ?? 'This currency'} is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.`;
+}
+
 /**
  * Returns `raw` only when it is a same-origin path: one leading `/`, no second `/`, no backslash
  * and no control characters. A notification link comes from the database, but it ends up in an

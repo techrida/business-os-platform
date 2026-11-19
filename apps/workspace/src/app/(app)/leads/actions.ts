@@ -9,6 +9,7 @@ import { ApiError } from '@/lib/api';
 import { apiCodeOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { currencyNotEnabledText } from '@/lib/kernel-ui';
 import type { Session } from '@/lib/session';
 
 import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
@@ -61,7 +62,9 @@ export async function createLeadAction(_prev: FormState, form: FormData): Promis
   try {
     id = (await createLead(session, parsed.data, key)).id;
   } catch (err) {
-    return { values, fieldErrors: {}, error: failureOf(err).message, key: nextKey(err, key) };
+    // A currency switched off for the company (D44) gets its own words; the rest the kernel's.
+    const error = currencyNotEnabledText(err) ?? failureOf(err).message;
+    return { values, fieldErrors: {}, error, key: nextKey(err, key) };
   }
   revalidatePath('/leads');
   redirect(`/leads/${id}`);

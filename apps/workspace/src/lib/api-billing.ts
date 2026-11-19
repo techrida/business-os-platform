@@ -35,6 +35,7 @@ import { isIdempotencyInProgress } from '@/components/p2/quote-builder/failure';
 
 import { ApiError, apiFetch } from './api';
 import { failureOf } from './api-kernel';
+import { currencyNotEnabledText } from './kernel-ui';
 import type { Session } from './session';
 
 /**
@@ -411,7 +412,8 @@ export function describeBillingFailure(err: unknown): BillingFailure {
       kind: 'invalid',
       message:
         status === 422
-          ? 'The platform did not accept this. Check what you entered and try again.'
+          ? (currencyNotEnabledText(err) ??
+            'The platform did not accept this. Check what you entered and try again.')
           : base.message,
     };
   }

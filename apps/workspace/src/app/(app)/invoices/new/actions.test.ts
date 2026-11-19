@@ -13,8 +13,12 @@ const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   redirect: vi.fn(),
   revalidatePath: vi.fn(),
+  loadEnabledCurrencies: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/lib/enabled-currencies.server', () => ({
+  loadEnabledCurrencies: mocks.loadEnabledCurrencies,
+}));
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   apiFetch: mocks.apiFetch,
@@ -71,6 +75,7 @@ const call = () => mocks.apiFetch.mock.calls[0] as [unknown, string, RequestInit
 beforeEach(async () => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+  mocks.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   const body = await detailBody();
   mocks.apiFetch.mockImplementation(() => answer(201, body));
   mocks.redirect.mockImplementation((to: string) => {
@@ -159,6 +164,38 @@ describe('createManualInvoiceAction', () => {
     expect(state.key).not.toBe(KEY);
     expect(state.key).toMatch(UUID);
     expect(state.error).toMatch(/did not accept/i);
+  });
+
+  it('names a currency the company switched off when the API refuses it (422)', async () => {
+    // The body the API sends today: its error filter does not pass CURRENCY_NOT_ENABLED yet.
+    mocks.apiFetch.mockImplementation(() =>
+      answer(422, {
+        error: {
+          code: 'bad_request',
+          message: 'Currency INR is not enabled for this company',
+          correlationId: 'req-12345678',
+        },
+      }),
+    );
+    const state = await createManualInvoiceAction(prev, form({ currency: 'INR' }));
+    // Fails on the old code: it said "The platform did not accept this. Check what you entered".
+    expect(state.error).toBe(
+      'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+    );
+    expect(state.key).not.toBe(KEY);
+  });
+
+  it('refuses a currency switched off since the page loaded, before the API', async () => {
+    mocks.loadEnabledCurrencies.mockResolvedValue(['NPR', 'USD']);
+    const state = await createManualInvoiceAction(prev, form({ currency: 'INR' }));
+    // Fails on the old code: no enabled list was passed, so INR went to the API.
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(mocks.loadEnabledCurrencies).toHaveBeenCalledWith({
+      accessToken: 't',
+      roles: ['accountant'],
+    });
+    expect(state.key).toBe(KEY);
+    expect(state.errors['currency']).toMatch(/Only these currencies are switched on/);
   });
 
   it('does not forward a key that is not ours', async () => {

@@ -281,6 +281,24 @@ describe('describeBillingFailure', () => {
     expect(f.reload).toBe(false);
   });
 
+  it('names a currency the company switched off (422), with the body the API sends today', () => {
+    // Fails on the old code: every 422 read "The platform did not accept this".
+    const f = describeBillingFailure(
+      new ApiError(422, 'x', {
+        error: {
+          code: 'bad_request',
+          message: 'Currency INR is not enabled for this company',
+          correlationId: 'c',
+        },
+      }),
+    );
+    expect(f.kind).toBe('invalid');
+    expect(f.definite).toBe(true);
+    expect(f.message).toBe(
+      'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+    );
+  });
+
   it('names the currency and the rate date of a stale exchange rate', () => {
     const f = describeBillingFailure(
       refusal(409, 'fx_rate_stale', {
