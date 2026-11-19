@@ -26,6 +26,7 @@ import { systemActor, withTx } from '../../platform/db/tx';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsService } from '../leads/leads.service';
+import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { startHarness, type Harness } from '../leads/test/harness';
 import { ActivitiesController } from './activities.controller';
 import { ActivitiesService } from './activities.service';
@@ -47,6 +48,7 @@ beforeAll(async () => {
     new AuditService(h.db),
     new NumberingService(),
     h.caller,
+    new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
   );
   const service = new ActivitiesService(h.db, authz, new AuditService(h.db), h.caller);
   const moduleRef = await Test.createTestingModule({
