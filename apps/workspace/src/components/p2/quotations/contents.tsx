@@ -1,5 +1,5 @@
 import { richTextToPlain, type QuotationVersionDto } from '@bos/contracts';
-import { Dec, formatCustomerDate, type NumberSystems } from '@bos/locale';
+import { Dec, formatCustomerDate, type CustomerDateFormat, type NumberSystems } from '@bos/locale';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -35,9 +35,12 @@ function percentText(value: string): string {
   return n.isFinite() ? `${n.toFixed()}%` : value;
 }
 
-/** `2026-11-19` -> `19 Nov 2026`; free text (a due description such as "On delivery") passes through. */
-function dateText(value: string): string {
-  return formatCustomerDate(value);
+/**
+ * `2026-11-19` -> `19 Nov 2026` (or the tenant's pattern); free text (a due description such as
+ * "On delivery") passes through.
+ */
+function dateText(value: string, dateFormat?: CustomerDateFormat): string {
+  return formatCustomerDate(value, dateFormat);
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -111,9 +114,11 @@ function LineItems({
 function PaymentSchedule({
   version,
   numberSystems,
+  dateFormat,
 }: {
   version: QuotationVersionDto;
   numberSystems?: NumberSystems | undefined;
+  dateFormat?: CustomerDateFormat | undefined;
 }) {
   const { currency, paymentSchedule } = version;
   return (
@@ -136,7 +141,9 @@ function PaymentSchedule({
             <Td align="end" nowrap>
               {money(milestone.amount, currency, numberSystems)}
             </Td>
-            <Td>{milestone.dueDescription ? dateText(milestone.dueDescription) : '–'}</Td>
+            <Td>
+              {milestone.dueDescription ? dateText(milestone.dueDescription, dateFormat) : '–'}
+            </Td>
           </tr>
         ))}
       </tbody>
@@ -158,6 +165,7 @@ export function QuotationContents({
   paymentTermsName,
   today,
   numberSystems,
+  dateFormat,
 }: {
   version: QuotationVersionDto;
   /** The payment term's name; the DTO has only its id, so the caller resolves it. Omitted when absent. */
@@ -166,6 +174,8 @@ export function QuotationContents({
   today?: string | undefined;
   /** How amounts are grouped (the tenant setting); omitted keeps the per-currency default. */
   numberSystems?: NumberSystems | undefined;
+  /** The tenant's date pattern (`getDateFormat()`); omitted keeps `dd MMM yyyy`. */
+  dateFormat?: CustomerDateFormat | undefined;
 }) {
   const internalCostTotal = version.internalCostTotal ?? null;
   const marginPct = version.marginPct ?? null;
@@ -174,8 +184,8 @@ export function QuotationContents({
   const termsName = paymentTermsName?.trim();
 
   const facts: Fact[] = [
-    { key: 'issue', label: 'Issue date', value: dateText(version.issueDate) },
-    { key: 'valid', label: 'Valid until', value: dateText(version.validUntil) },
+    { key: 'issue', label: 'Issue date', value: dateText(version.issueDate, dateFormat) },
+    { key: 'valid', label: 'Valid until', value: dateText(version.validUntil, dateFormat) },
   ];
   if (!NO_EXPIRY_STATUSES.includes(version.status) && isIsoCalendarDate(version.validUntil)) {
     const expiry = expiryState(version.validUntil, today ?? kathmanduToday());
@@ -231,7 +241,11 @@ export function QuotationContents({
               <FactList facts={[{ key: 'terms', label: 'Payment terms', value: termsName }]} />
             ) : null}
             {version.paymentSchedule.length > 0 ? (
-              <PaymentSchedule version={version} numberSystems={numberSystems} />
+              <PaymentSchedule
+                version={version}
+                numberSystems={numberSystems}
+                dateFormat={dateFormat}
+              />
             ) : null}
           </Section>
         ) : null}

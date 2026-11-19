@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { canSeeAdmin, money, snapshotEntries, when } from './kernel-format';
 import {
+  currencyNotEnabledText,
   describeFailure,
   formatBytes,
   guessMime,
@@ -70,6 +71,48 @@ describe('describeFailure', () => {
     expect(f.reload).toBe(true);
     expect(f.definite).toBe(true);
     expect(f.message).toContain('draft or returned');
+  });
+});
+
+/** Today's wire body: the API's error filter does not pass CURRENCY_NOT_ENABLED yet (D44). */
+const NOT_ENABLED_TODAY = {
+  error: {
+    code: 'bad_request',
+    message: 'Currency INR is not enabled for this company',
+    correlationId: 'req-12345678',
+  },
+};
+const SWITCHED_OFF =
+  'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.';
+
+describe('currencyNotEnabledText', () => {
+  it('names the currency from the message of the body the API sends today', () => {
+    expect(currencyNotEnabledText({ status: 422, body: NOT_ENABLED_TODAY })).toBe(SWITCHED_OFF);
+  });
+
+  it('reads the code and details once the API passes them', () => {
+    const coded = {
+      error: {
+        code: 'CURRENCY_NOT_ENABLED',
+        message: 'Currency INR is not enabled for this company',
+        correlationId: 'req-12345678',
+        details: { currency: 'INR' },
+      },
+    };
+    expect(currencyNotEnabledText({ status: 422, body: coded })).toBe(SWITCHED_OFF);
+    const bare = { error: { code: 'CURRENCY_NOT_ENABLED', details: { currency: '<b>' } } };
+    expect(currencyNotEnabledText({ status: 422, body: bare })).toMatch(
+      /^This currency is switched off/,
+    );
+  });
+
+  it('leaves every other failure alone', () => {
+    expect(currencyNotEnabledText({ status: 400, body: NOT_ENABLED_TODAY })).toBeUndefined();
+    const other = { error: { code: 'bad_request', message: 'Currency INR is wrong' } };
+    expect(currencyNotEnabledText({ status: 422, body: other })).toBeUndefined();
+    expect(currencyNotEnabledText({ status: 422, body: 'text' })).toBeUndefined();
+    expect(currencyNotEnabledText(new Error('offline'))).toBeUndefined();
+    expect(currencyNotEnabledText(null)).toBeUndefined();
   });
 });
 

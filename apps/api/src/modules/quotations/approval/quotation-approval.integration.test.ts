@@ -52,8 +52,10 @@ import type { Principal } from '../../../platform/authz/principal';
 import type { DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { buildLink, renderEmail } from '../../../platform/notify/templates';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../../approvals/admin.service';
 import type { ApprovalEmailTemplate } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
@@ -298,6 +300,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     audit,
     caller,
+    new CurrencyEnabledService(new SettingsService(db)),
   );
   submitter = new QuotationSubmitService(
     db,

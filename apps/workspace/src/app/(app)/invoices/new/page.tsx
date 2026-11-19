@@ -11,6 +11,7 @@ import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 import { createManualInvoiceAction } from './actions';
 import { ManualInvoiceForm, type CustomerOption } from './manual-invoice-form';
@@ -37,9 +38,10 @@ export default async function NewInvoicePage() {
     );
   }
 
-  const [customerResult, taxResult] = await Promise.allSettled([
-    listCustomers(session, { limit: CUSTOMER_LIMIT }),
-    listTaxCodes(session),
+  // `loadEnabledCurrencies` never throws: a failed read falls back to the default list.
+  const [[customerResult, taxResult], enabledCurrencies] = await Promise.all([
+    Promise.allSettled([listCustomers(session, { limit: CUSTOMER_LIMIT }), listTaxCodes(session)]),
+    loadEnabledCurrencies(session),
   ]);
 
   if (customerResult.status === 'rejected') {
@@ -95,6 +97,7 @@ export default async function NewInvoicePage() {
               : undefined
           }
           taxCodes={taxCodes}
+          enabledCurrencies={enabledCurrencies}
           // One key per render of this page: a double click or a retry creates the invoice once.
           idempotencyKey={randomUUID()}
         />
