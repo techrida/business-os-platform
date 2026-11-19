@@ -7,6 +7,7 @@ import {
   CreateLeadLostReasonBodySchema,
   type LeadLostReason,
   ReorderLeadLostReasonsBodySchema,
+  ResetLeadLostReasonsBodySchema,
   UpdateLeadLostReasonBodySchema,
 } from '@bos/contracts';
 import {
@@ -67,12 +68,12 @@ export class LeadLostReasonsController {
     return this.reasons.reorder(parseOr400(ReorderLeadLostReasonsBodySchema, body));
   }
 
-  /** 200 with the whole list back at the defaults (D32). */
+  /** 200 with the whole list back at the defaults (D32); 409 when the list changed since it was loaded (D54-4). */
   @Post('admin/lead-lost-reasons/reset')
   @HttpCode(200)
   @Can('admin.settings.write')
-  reset(): Promise<LeadLostReason[]> {
-    return this.reasons.reset();
+  reset(@Body() body: unknown): Promise<LeadLostReason[]> {
+    return this.reasons.reset(parseOr400(ResetLeadLostReasonsBodySchema, body));
   }
 
   /** 200 with the edited option. 404 unknown, 409 stale version or a label already in use. */
