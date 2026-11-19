@@ -4,7 +4,7 @@ import { IDLE } from '../action-state';
 import { inviteUserAction, setRolesAction } from './actions';
 
 vi.mock('server-only', () => ({}));
-vi.mock('../guard', () => ({ requireSession: () => ({ accessToken: 'test-token' }) }));
+vi.mock('../guard', () => ({ requireSection: () => ({ accessToken: 'test-token' }) }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/lib/env', () => ({ getEnv: () => ({ API_INTERNAL_URL: 'http://api.test' }) }));
 

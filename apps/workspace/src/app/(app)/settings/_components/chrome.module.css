@@ -1,0 +1,253 @@
+/* Settings chrome: the sub-sidebar beside the content, the phone menu, the back link.
+   Tokens only. Sub-sidebar: 232px from 1024px, 200px from 768px, hidden below 768px (CSS only,
+   so the server never sniffs the viewport). Below 768px `/settings` is the menu and each section
+   page shows a "Settings" back link instead. */
+
+.frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.content {
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .frame {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .frame {
+    grid-template-columns: 232px minmax(0, 1fr);
+  }
+}
+
+/* ---- sub-sidebar ------------------------------------------------------------------------------- */
+
+.sidebar {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .sidebar {
+    position: sticky;
+    inset-block-start: var(--bos-header-height);
+    display: block;
+    height: calc(100dvh - var(--bos-header-height));
+    padding: 8px 12px 24px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-inline-end: var(--border-width-thin) solid var(--border-default);
+    scrollbar-width: thin;
+  }
+}
+
+.group + .group {
+  margin-block-start: 4px;
+}
+
+.groupLabel {
+  padding: 12px 10px 8px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.items {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  text-decoration: none;
+  transition: background-color 120ms ease;
+}
+
+.item:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.item:active {
+  background: var(--interactive-pressed);
+}
+
+.item[aria-current='page'] {
+  background: var(--interactive-selected);
+  color: var(--text-primary);
+}
+
+.icon {
+  flex: none;
+  color: var(--icon-default);
+  stroke-width: 1.5;
+}
+
+.item[aria-current='page'] .icon {
+  color: var(--action-primary);
+}
+
+.itemLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- back link (shown only where the sub-sidebar is hidden) ------------------------------------ */
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  min-height: 44px;
+  margin-block: -8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.back:hover {
+  color: var(--text-primary);
+}
+
+@media (min-width: 768px) {
+  .back {
+    display: none;
+  }
+}
+
+/* ---- index: the phone menu, a card grid from 768px --------------------------------------------- */
+
+.groups {
+  display: grid;
+  gap: 24px;
+}
+
+.groupHead {
+  margin-block-end: 8px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-caption);
+}
+
+.rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 16px;
+  transition: background-color 120ms ease;
+}
+
+.row + .row {
+  border-block-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.row:hover {
+  background: var(--surface-subtle);
+}
+
+.rowLink {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+/* The link stretches over the row, so the whole row is the hit area. */
+.rowLink::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.rowLink:focus-visible {
+  box-shadow: none;
+}
+
+.rowLink:focus-visible::after {
+  box-shadow: var(--bos-focus-shadow);
+  border-radius: var(--radius-lg);
+}
+
+.rowText {
+  display: grid;
+  min-width: 0;
+}
+
+.rowDescription {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+  overflow-wrap: anywhere;
+}
+
+.chevron {
+  color: var(--icon-default);
+}
+
+@media (min-width: 768px) {
+  .rows {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 8px;
+    padding: 16px 20px;
+    border: var(--border-width-thin) solid var(--card-border);
+    border-radius: var(--radius-xl);
+    background: var(--card-bg);
+  }
+
+  .row + .row {
+    border-block-start: var(--border-width-thin) solid var(--card-border);
+  }
+
+  .row:hover {
+    border-color: var(--border-strong);
+  }
+
+  .chevron {
+    display: none;
+  }
+}

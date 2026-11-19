@@ -52,7 +52,7 @@ export default async function OverviewPage() {
               Memos
             </LinkButton>
             {canSeeAdmin(session.roles) && (
-              <LinkButton className={styles.shortcut} variant="tertiary" href="/admin/users/new">
+              <LinkButton className={styles.shortcut} variant="tertiary" href="/settings/users/new">
                 <Icon name="users" size={20} />
                 Add user
               </LinkButton>

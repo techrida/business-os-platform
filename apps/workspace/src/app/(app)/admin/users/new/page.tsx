@@ -1,19 +1,6 @@
-import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 
-import { Breadcrumb, Page } from '@/components/ui/page';
-
-import admin from '../../admin.module.css';
-import { requireSession } from '../../guard';
-import { InviteForm } from '../invite-form';
-
-export const metadata: Metadata = { title: 'Add New User · Business OS' };
-
-export default async function InviteUserPage() {
-  await requireSession('/admin/users/new');
-  return (
-    <Page className={admin.page}>
-      <Breadcrumb items={[{ label: 'Users', href: '/admin/users' }, { label: 'Add New User' }]} />
-      <InviteForm />
-    </Page>
-  );
+// Old bookmark and notification links keep working: this page only forwards to its new home.
+export default function Page(): never {
+  redirect('/settings/users/new');
 }

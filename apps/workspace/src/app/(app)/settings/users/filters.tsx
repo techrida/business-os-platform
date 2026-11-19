@@ -53,7 +53,7 @@ export function UsersFilters({
     for (const [key, value] of new FormData(form)) {
       if (typeof value === 'string' && value.trim()) query.set(key, value.trim());
     }
-    startTransition(() => router.replace(`/admin/users?${query}`, { scroll: false }));
+    startTransition(() => router.replace(`/settings/users?${query}`, { scroll: false }));
   }
 
   function schedule(form: HTMLFormElement | null) {
@@ -66,7 +66,7 @@ export function UsersFilters({
       ref={formRef}
       className={styles.filters}
       role="search"
-      action="/admin/users"
+      action="/settings/users"
       aria-busy={pending}
       onSubmit={(event) => {
         event.preventDefault();

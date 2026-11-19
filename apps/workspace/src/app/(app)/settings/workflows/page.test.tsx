@@ -14,7 +14,7 @@ vi.mock('@/lib/api', async (original) => ({
   ...(await original<typeof import('@/lib/api')>()),
   apiFetch: vi.fn(),
 }));
-vi.mock('../guard', () => ({ requireSession: () => Promise.resolve(session) }));
+vi.mock('../guard', () => ({ requireSection: () => Promise.resolve(session) }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 let session: Session;
 const first = '11111111-1111-4111-8111-000000000200';

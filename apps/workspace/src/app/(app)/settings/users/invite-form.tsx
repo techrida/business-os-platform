@@ -42,7 +42,7 @@ export function InviteForm() {
         description="Add a colleague and choose the roles they hold."
         actions={
           <>
-            <LinkButton href="/admin/users" variant="secondary">
+            <LinkButton href="/settings/users" variant="secondary">
               {state.status === 'ok' ? 'Back to users' : 'Cancel'}
             </LinkButton>
             <Button type="submit" disabled={pending}>

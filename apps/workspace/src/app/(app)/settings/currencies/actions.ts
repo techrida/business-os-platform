@@ -1,20 +1,19 @@
 'use server';
 
-import { RateString, SettingKeySchema } from '@bos/contracts';
+import { RateString } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { addFxRate, putSetting } from '@/lib/api-admin';
+import { addFxRate } from '@/lib/api-admin';
 
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
-import { requireSession } from '../guard';
-import { parseSettingInput } from './setting-input';
+import { requireSection } from '../guard';
 
-// Server Actions for the settings page (FX rates and settings values). The session is re-checked
-// here because each action is its own request, apart from the page that rendered the form.
+// Server Action for the exchange-rate form. The section permission is re-checked here because each
+// action is its own request, apart from the page that rendered the form.
 
-const PATH = '/admin/settings';
+const PATH = '/settings/currencies';
 
 const FxSchema = z.object({
   currency: z.enum(['INR', 'USD'], 'Choose INR or USD. NPR is the books currency.'),
@@ -32,7 +31,7 @@ export async function addFxRateAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const session = await requireSession(PATH);
+  const session = await requireSection('currencies');
   const fields = {
     currency: text(formData, 'currency'),
     rateNpr: text(formData, 'rateNpr').trim(),
@@ -61,29 +60,4 @@ export async function addFxRateAction(
   return ok(
     `Added ${parsed.data.currency} rate ${parsed.data.rateNpr} for ${parsed.data.rateDate}.`,
   );
-}
-
-export async function saveSettingAction(
-  _previous: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const session = await requireSession(PATH);
-  const key = SettingKeySchema.safeParse(text(formData, 'key'));
-  if (!key.success) return fail('Unknown setting.');
-
-  const raw = formData.getAll('value').filter((v): v is string => typeof v === 'string');
-  const input = parseSettingInput(key.data, raw);
-  if (!input.ok)
-    return {
-      ...fail(input.message, { value: raw.join(',') }),
-      fieldErrors: { value: input.message },
-    };
-
-  try {
-    const { version } = await putSetting(session, key.data, input.value);
-    revalidatePath(PATH);
-    return ok(`Saved as version ${version}.`);
-  } catch (error) {
-    return fail(describeError(error, 'change settings'), { value: raw.join(',') });
-  }
 }

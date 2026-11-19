@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 
 import type { NavIconName } from '@/lib/nav';
+import type { SettingsIconName } from '@/lib/settings-nav';
 
 /** Sidebar icons plus the few the shell itself needs. */
 export type IconName =
   | NavIconName
+  | SettingsIconName
   | 'mail'
   | 'user'
   | 'check-circle'
@@ -240,6 +242,36 @@ const DRAWINGS: Record<IconName, ReactNode> = {
       <circle cx="18" cy="6" r="3" />
       <circle cx="6" cy="18" r="3" />
       <path d="M18 9a9 9 0 0 1-9 9" />
+    </>
+  ),
+  'layout-template': (
+    <>
+      <rect width="18" height="7" x="3" y="3" rx="1" />
+      <rect width="9" height="7" x="3" y="14" rx="1" />
+      <rect width="5" height="7" x="16" y="14" rx="1" />
+    </>
+  ),
+  'calendar-days': (
+    <>
+      <path d="M8 2v4" />
+      <path d="M16 2v4" />
+      <rect width="18" height="18" x="3" y="4" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M8 14h.01" />
+      <path d="M12 14h.01" />
+      <path d="M16 14h.01" />
+      <path d="M8 18h.01" />
+      <path d="M12 18h.01" />
+      <path d="M16 18h.01" />
+    </>
+  ),
+  bookmark: <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
+  hash: (
+    <>
+      <line x1="4" x2="20" y1="9" y2="9" />
+      <line x1="4" x2="20" y1="15" y2="15" />
+      <line x1="10" x2="8" y1="3" y2="21" />
+      <line x1="16" x2="14" y1="3" y2="21" />
     </>
   ),
 };

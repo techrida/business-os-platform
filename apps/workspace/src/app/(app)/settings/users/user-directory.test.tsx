@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import UsersPage from './page';
 
 vi.mock('server-only', () => ({}));
-vi.mock('../guard', () => ({ requireSession: () => ({ accessToken: 'test-token' }) }));
+vi.mock('../guard', () => ({ requireSection: () => ({ accessToken: 'test-token' }) }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock('@/lib/env', () => ({ getEnv: () => ({ API_INTERNAL_URL: 'http://api.test' }) }));
 

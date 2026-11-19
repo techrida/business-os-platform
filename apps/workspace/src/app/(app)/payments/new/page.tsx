@@ -4,7 +4,7 @@ import type { CustomerDto } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { todayInKathmandu } from '@/app/(app)/admin/format';
+import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { getCustomer, listCustomers } from '@/components/p2/customers/api';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
