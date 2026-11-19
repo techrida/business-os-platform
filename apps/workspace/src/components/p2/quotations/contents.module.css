@@ -1,0 +1,121 @@
+/* The quotation Contents card: line items, payment, validity and the free-text sections.
+   Tables scroll inside their own wrapper (components/ui/table), so nothing here may widen the
+   page at 390 px. Colours are Figma tokens. */
+
+.contents {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.section {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.lineNo {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.uom {
+  color: var(--text-secondary);
+}
+
+.internal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.internal dt {
+  display: inline;
+}
+
+.internal dd {
+  display: inline;
+  margin: 0 0 0 4px;
+  color: var(--text-primary);
+}
+
+.expiry {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ---- LongText ---- */
+
+.longText {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prose {
+  margin: 0;
+  max-width: 100%;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.toggle {
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--action-primary);
+  font: inherit;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  text-decoration: underline;
+}
+
+.toggle:focus-visible {
+  border-radius: var(--radius-sm, 4px);
+  box-shadow: var(--bos-focus-shadow);
+  outline: none;
+}
+
+@media (max-width: 600px) {
+  .contents {
+    gap: 20px;
+  }
+}

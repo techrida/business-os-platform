@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type {
   QuotationCapabilities,
   QuotationContact,
@@ -6,9 +7,22 @@ import type {
 } from '@bos/contracts';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { click, mountForm } from '@/test/form-interactions';
 import { DetailActions } from './detail-actions';
+
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+});
+afterEach(() => {
+  document.body.innerHTML = '';
+});
 
 // The dialogs import the server actions, which import server-only modules.
 vi.mock('server-only', () => ({}));
@@ -68,6 +82,26 @@ function render(
       today={TODAY}
     />,
   );
+}
+
+async function mountSend(over: Partial<QuotationVersionDto> = {}) {
+  return mountForm(
+    <DetailActions
+      quotationId={Q}
+      number="QT-2082-0042"
+      current={current(over)}
+      contacts={contacts}
+      capabilities={ALLOWED}
+      reloadHref={`/quotations/${Q}`}
+      today={TODAY}
+    />,
+  );
+}
+
+async function openContactList(container: HTMLElement): Promise<HTMLElement[]> {
+  const field = container.querySelector('input[name="recipientContactId"]');
+  await click(field?.parentElement?.querySelector('button') ?? null);
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
 }
 
 const triggers = (html: string): string[] =>
@@ -169,20 +203,41 @@ describe('Send', () => {
     expect(html).not.toContain('aria-disabled');
   });
 
-  it('preselects the version contact and disables contacts without an email', () => {
+  it('preselects the version contact and disables contacts without an email', async () => {
     const html = render();
     expect(html).toMatch(
-      new RegExp(`<option value="${ADA}" selected="">Ada Lovelace \\(ada@example.com\\)`),
+      new RegExp(`<input type="hidden" name="recipientContactId" value="${ADA}"`),
     );
-    expect(html).toMatch(
-      new RegExp(`<option value="${BOB}" disabled="">Bob NoMail \\(no email address\\)`),
-    );
+    expect(html).toContain('Ada Lovelace (ada@example.com)');
+    // The list can only be opened on a mounted page: Bob is listed but cannot be picked.
+    const { container, unmount } = await mountSend();
+    try {
+      const options = await openContactList(container);
+      expect(options.map((o) => o.textContent?.trim())).toEqual([
+        'Choose a contact',
+        'Ada Lovelace (ada@example.com)',
+        'Bob NoMail (no email address)',
+      ]);
+      expect(options[1]!.getAttribute('aria-disabled')).toBeNull();
+      expect(options[2]!.getAttribute('aria-disabled')).toBe('true');
+    } finally {
+      await unmount();
+    }
   });
 
-  it('does not preselect a version contact that has no email', () => {
-    const html = render({ contactId: BOB });
-    expect(html).toContain('<option value="" selected="">Choose a contact</option>');
-    expect(html.match(/selected=""/g)).toHaveLength(1);
+  it('does not preselect a version contact that has no email', async () => {
+    const { container, unmount } = await mountSend({ contactId: BOB });
+    try {
+      const field = container.querySelector<HTMLInputElement>('input[name="recipientContactId"]')!;
+      // The empty value is submitted and the trigger shows "Choose a contact", not Bob or Ada.
+      expect(field.value).toBe('');
+      const label = field.parentElement!.querySelector('button')!.textContent;
+      expect(label).toContain('Choose a contact');
+      expect(label).not.toContain('Bob');
+      expect(label).not.toContain('Ada');
+    } finally {
+      await unmount();
+    }
   });
 
   it('sends the version row version, not the quotation one, and its own idempotency key', () => {

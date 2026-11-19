@@ -67,7 +67,7 @@ test('the invoice page shows lines, VAT, totals, due date and status, and no int
   await expect(page.getByText('Due', { exact: true })).toBeVisible();
   await expect(page.getByText(/^(Unpaid|Partly paid|Overdue)$/)).toBeVisible();
   expect(await page.locator('main').innerText()).not.toMatch(FORBIDDEN);
-  await expect(page.getByRole('link', { name: 'Download PDF' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'Download', exact: true })).toHaveAttribute(
     'href',
     `/invoices/${invoiceId}/document`,
   );

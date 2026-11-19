@@ -25,7 +25,8 @@
   background: var(--modal-bg);
   color: var(--modal-text);
   box-shadow: var(--shadow-section, var(--toast-shadow));
-  overflow: hidden;
+  /* Visible, so a dropdown list portalled into the dialog can extend past its edge; the rounded corners are kept by the footer. */
+  overflow: visible;
 }
 
 .content:focus {
@@ -116,6 +117,7 @@
   padding: 14px var(--dialog-gutter);
   border-top: var(--border-width-thin) solid var(--modal-border);
   background: var(--modal-bg);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 }
 
 .body:empty + .footer {

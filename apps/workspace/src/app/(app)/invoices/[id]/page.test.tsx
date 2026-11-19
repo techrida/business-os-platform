@@ -157,9 +157,9 @@ describe('invoice detail page', () => {
     expect(await render()).toMatch(/no approval/i);
   });
 
-  it('offers a dialog trigger for the issued PDF without a prefetching download link', async () => {
+  it('offers a View PDF dialog trigger for the issued PDF without a prefetching download link', async () => {
     const html = await render();
-    expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>.*Preview invoice<\/button>/);
+    expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>.*View PDF<\/button>/);
     expect(html).not.toMatch(/<a[^>]+href="\/invoices\/[^"]+\/document"/);
   });
 

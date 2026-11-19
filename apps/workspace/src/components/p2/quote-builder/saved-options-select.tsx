@@ -4,7 +4,7 @@ import { TERM_PRESET_KIND_LABELS, type TermPreset, type TermPresetKind } from '@
 import { useState } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/dialog';
-// The one place the dropdown control is chosen. A shared Select from another unit replaces this import.
+// The one place the dropdown control is chosen: the shared Select.
 import { Select } from '@/components/ui/field';
 
 import { offeredPresets, pickOutcome } from './saved-options';
@@ -48,6 +48,7 @@ export function SavedOptionsSelect({
     <div className={styles.wrap}>
       {/* Always shows "Saved options": the field holds plain text, not a chosen option. */}
       <Select
+        name={`saved-${kind}`}
         aria-label={`Saved options for ${TERM_PRESET_KIND_LABELS[kind]}`}
         value=""
         onChange={(event) => {

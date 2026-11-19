@@ -1,8 +1,16 @@
-import { QuotationDetailSchema, type QuotationDetail } from '@bos/contracts';
-import type { ComponentProps } from 'react';
+import {
+  QuotationDetailSchema,
+  type QuotationDetail,
+  type QuotationVersionDto,
+} from '@bos/contracts';
+import type { ComponentProps, ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  PAYMENT_TERM_ID,
+  version as contentsVersion,
+} from '@/components/p2/quotations/contents.fixture';
 import { ApiError } from '@/lib/api';
 import { __resetEnvForTests } from '@/lib/env';
 
@@ -15,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getQuotation: vi.fn(),
   listSalesOrders: vi.fn(),
+  listPaymentTerms: vi.fn(),
+  refresh: vi.fn(),
+  seen: [] as { component: string; version: QuotationVersionDto }[],
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -23,7 +34,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/api-billing', () => ({ listSalesOrders: mocks.listSalesOrders }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('@/components/p2/quote-builder/api', () => ({
+  listPaymentTerms: mocks.listPaymentTerms,
+}));
+// `PreparingRefresh` (the words for a PDF on its way) reads the router.
+vi.mock('next/navigation', () => ({
+  notFound: mocks.notFound,
+  redirect: vi.fn(),
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 // Open the revision drawer and render its portal inline for assertions on server-provided rows.
@@ -35,6 +54,50 @@ vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
     Portal: ({ children }: ComponentProps<typeof radix.Portal>) => children,
   };
 });
+
+// Record the version each component is handed: the page must strip internal figures before the data reaches
+// any of them (a client component's props are serialized into the page), not only hide them when rendering.
+vi.mock('@/components/p2/quotations/contents', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/p2/quotations/contents')>();
+  return {
+    QuotationContents: (props: ComponentProps<typeof real.QuotationContents>) => {
+      mocks.seen.push({ component: 'QuotationContents', version: props.version });
+      return real.QuotationContents(props);
+    },
+  };
+});
+vi.mock('@/components/p2/quotations/detail-actions', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/components/p2/quotations/detail-actions')>();
+  return {
+    DetailActions: (props: ComponentProps<typeof real.DetailActions>) => {
+      mocks.seen.push({ component: 'DetailActions', version: props.current });
+      return real.DetailActions(props);
+    },
+    ClientDecision: (props: ComponentProps<typeof real.ClientDecision>) => {
+      mocks.seen.push({ component: 'ClientDecision', version: props.current });
+      return real.ClientDecision(props);
+    },
+  };
+});
+
+// The viewer dialog draws PDF pages in the browser (it reads `window` once open, which the forced-open dialog
+// above would reach). The page only needs its trigger, and the URL it would fetch once opened.
+vi.mock('@/components/ui/file-preview-dialog', () => ({
+  DownloadIcon: () => null,
+  FilePreviewDialog: ({
+    trigger,
+    previewUrl,
+    downloadUrl,
+  }: {
+    trigger: ReactNode;
+    previewUrl: string;
+    downloadUrl: string;
+  }) => (
+    <span data-preview-url={previewUrl} data-download-url={downloadUrl}>
+      {trigger}
+    </span>
+  ),
+}));
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const V1 = '22222222-2222-4222-8222-222222222221';
@@ -151,8 +214,13 @@ function detail(over: Record<string, unknown> = {}): QuotationDetail {
   });
 }
 
-async function render(id: string = ID): Promise<string> {
-  return renderToStaticMarkup(await QuotationDetailPage({ params: Promise.resolve({ id }) }));
+async function render(id: string = ID, rev?: string | string[]): Promise<string> {
+  return renderToStaticMarkup(
+    await QuotationDetailPage({
+      params: Promise.resolve({ id }),
+      ...(rev !== undefined ? { searchParams: Promise.resolve({ rev }) } : {}),
+    }),
+  );
 }
 
 beforeEach(() => {
@@ -160,6 +228,9 @@ beforeEach(() => {
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
   mocks.notFound.mockClear();
   mocks.listSalesOrders.mockReset().mockResolvedValue([]);
+  mocks.listPaymentTerms.mockReset().mockResolvedValue([]);
+  mocks.refresh.mockReset();
+  mocks.seen.length = 0;
 });
 
 describe('quotation detail page', () => {
@@ -205,6 +276,22 @@ describe('quotation detail page', () => {
     expect(html).toContain('Not available');
   });
 
+  it('opens the PDF in the viewer: a View PDF button and no request while rendering', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const html = await render();
+      expect(html).toContain('View PDF');
+      expect(html).not.toContain('Download PDF');
+      expect(html).toContain(
+        `data-preview-url="/quotations/${ID}/versions/${V2}/document/preview" data-download-url="/quotations/${ID}/versions/${V2}/document"`,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('offers no link at all while the file is still being scanned', async () => {
     const d = detail();
     const current = d.versions.find((v) => v.id === V2);
@@ -217,6 +304,7 @@ describe('quotation detail page', () => {
     const html = await render();
     expect(html).toContain('Being scanned');
     expect(html).not.toContain('/document"');
+    expect(html).not.toContain('View PDF');
   });
 
   it('puts the actions of the current status in the action slot', async () => {
@@ -383,5 +471,164 @@ describe('quotation detail page: names come with the quotation', () => {
     expect(html).toContain('Sita Gurung');
     expect(html).toContain('Mina Rai');
     expect(html).not.toContain('name unavailable');
+  });
+});
+
+const CONTENTS_V1 = contentsVersion({
+  id: V1,
+  revisionNo: 1,
+  status: 'superseded',
+  scope: 'Scope of the first revision',
+  supersededByVersionId: V2,
+});
+const CONTENTS_V2 = contentsVersion({
+  id: V2,
+  revisionNo: 2,
+  status: 'sent',
+  scope: 'Scope of the second revision',
+  paymentTermId: PAYMENT_TERM_ID,
+  supersedesVersionId: V1,
+});
+
+function withContents() {
+  const d = detail();
+  return { ...d, versions: [CONTENTS_V1, CONTENTS_V2] } satisfies QuotationDetail;
+}
+
+describe('quotation detail page: contents', () => {
+  it('shows the contents of the current revision, with its payment term by name', async () => {
+    mocks.getQuotation.mockResolvedValue(withContents());
+    mocks.listPaymentTerms.mockResolvedValue([{ id: PAYMENT_TERM_ID, label: 'Net 30 days' }]);
+    const html = await render();
+    expect(html).toContain('Contents');
+    expect(html).toContain('Line items');
+    expect(html).toContain('Site survey');
+    expect(html).toContain('Scope of the second revision');
+    expect(html).not.toContain('Scope of the first revision');
+    expect(html).toContain('Net 30 days');
+    expect(html).not.toContain('Back to current revision');
+  });
+
+  it('asks for the payment terms only when the revision has one, and survives a failed lookup', async () => {
+    mocks.getQuotation.mockResolvedValue(detail());
+    await render();
+    expect(mocks.listPaymentTerms).not.toHaveBeenCalled();
+
+    mocks.getQuotation.mockResolvedValue(withContents());
+    mocks.listPaymentTerms.mockRejectedValue(new ApiError(502, 'bad'));
+    const html = await render();
+    expect(mocks.listPaymentTerms).toHaveBeenCalledTimes(1);
+    expect(html).toContain('Scope of the second revision');
+    expect(html).not.toContain('Net 30 days');
+  });
+});
+
+describe('quotation detail page: a selected revision', () => {
+  beforeEach(() => {
+    mocks.getQuotation.mockResolvedValue(withContents());
+  });
+
+  it.each([
+    ['its id', V1],
+    ['its number', '1'],
+  ])('shows an earlier revision named by %s, with a way back', async (_name, rev) => {
+    const html = await render(ID, rev);
+    expect(html).toContain('Rev 1 of 2');
+    expect(html).toContain('Revision 1 contents');
+    expect(html).toContain('Scope of the first revision');
+    expect(html).not.toContain('Scope of the second revision');
+    expect(html).toContain(`href="/quotations/${ID}"`);
+    expect(html).toContain('Back to current revision');
+  });
+
+  it('keeps the header, the sales-order lookup and the actions on the current revision', async () => {
+    const html = await render(ID, V1);
+    expect(html).toMatch(/headerFact[^>]*>Revision 2</);
+    expect(html).toContain('>Revise</button>');
+  });
+
+  it('takes the PDF fact from the selected revision', async () => {
+    const d = withContents();
+    d.versions = [
+      {
+        ...CONTENTS_V1,
+        renderedDocumentId: '44444444-4444-4444-8444-444444444441',
+        renderedScanStatus: 'clean',
+      },
+      CONTENTS_V2,
+    ];
+    mocks.getQuotation.mockResolvedValue(d);
+    const html = await render(ID, V1);
+    expect(html).toContain(`href="/quotations/${ID}/versions/${V1}/document"`);
+    expect(html).toContain('View PDF');
+  });
+
+  it.each([
+    ['unknown number', '99'],
+    ['zero', '0'],
+    ['not a number', 'abc'],
+    ['an id of no revision', '99999999-9999-4999-8999-999999999999'],
+    ['repeated', [V1, V2]],
+    ['the current revision itself', V2],
+  ])('shows the current revision for %s', async (_name, rev) => {
+    const html = await render(ID, rev);
+    expect(html).toContain('Rev 2 of 2');
+    expect(html).toContain('Scope of the second revision');
+    expect(html).not.toContain('Back to current revision');
+    expect(html).not.toContain('contents</span>');
+  });
+
+  it('links every row of the revision list to its page, and the current one to the bare path', async () => {
+    const html = await render();
+    expect(html).toMatch(new RegExp(`<a [^>]*href="/quotations/${ID}\\?rev=${V1}"[^>]*>Rev 1</a>`));
+    expect(html).toMatch(new RegExp(`<a [^>]*href="/quotations/${ID}"[^>]*>Rev 2</a>`));
+  });
+});
+
+describe('quotation detail page: internal figures', () => {
+  beforeEach(() => {
+    mocks.getQuotation.mockResolvedValue(withContents());
+  });
+
+  it('leaves cost and margin out of the page for a role that may not see them', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['warehouse'] });
+    for (const rev of [undefined, V1]) {
+      const html = await render(ID, rev);
+      expect(html).toContain('Site survey');
+      expect(html).not.toContain('Unit cost');
+      expect(html).not.toContain('800.25');
+      expect(html).not.toContain('2,231.40');
+      expect(html).not.toContain('35.32%');
+    }
+  });
+
+  it('strips them from the data before any component is handed it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['warehouse'] });
+    await render(ID, V1);
+    await render();
+    expect(new Set(mocks.seen.map((s) => s.component))).toEqual(
+      new Set(['QuotationContents', 'DetailActions', 'ClientDecision']),
+    );
+    for (const { version } of mocks.seen) {
+      expect(version.internalCostTotal).toBeNull();
+      expect(version.marginPct).toBeNull();
+      expect(version.lines.length).toBeGreaterThan(0);
+      expect(version.lines.every((l) => l.unitCost === null)).toBe(true);
+    }
+  });
+
+  it('hands them over unchanged to the people who draft quotations', async () => {
+    await render();
+    const contents = mocks.seen.find((s) => s.component === 'QuotationContents');
+    expect(contents?.version.internalCostTotal).toBe('2231.40');
+    expect(contents?.version.lines[0]?.unitCost).toBe('800.25');
+  });
+
+  it('shows them to the people who draft quotations', async () => {
+    const html = await render();
+    expect(html).toContain('Unit cost');
+    expect(html).toContain('NPR 800.25');
+    expect(html).toContain('NPR 2,231.40');
+    expect(html).toContain('35.32%');
   });
 });

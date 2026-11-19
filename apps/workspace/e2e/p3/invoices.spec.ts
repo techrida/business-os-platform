@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { chooseOption, selectByLabel, selectByName } from '../helpers/select';
 
 /**
  * The P3 invoice screens against the real stack: the list, the detail page with its credit-note and
@@ -105,7 +106,7 @@ test('the new invoice form names every missing field and has no number or date t
     await expect(page.getByLabel(/^Number/)).toHaveCount(0);
     await expect(page.getByLabel(/^Issue date/)).toHaveCount(0);
 
-    await page.getByLabel('Currency').selectOption('NPR');
+    await chooseOption(selectByName(page, 'currency'), 'NPR');
     await page.getByLabel('Quantity (line 1)').fill('0');
     await page.getByRole('button', { name: 'Save draft invoice' }).click();
 
@@ -142,11 +143,11 @@ test.describe('invoice document preview', () => {
       const response = page.waitForResponse(
         (res) => new URL(res.url()).pathname === path + '/preview',
       );
-      await page.getByRole('button', { name: 'Preview invoice', exact: true }).click();
+      await page.getByRole('button', { name: 'View PDF', exact: true }).click();
 
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      await expect(dialog.locator('iframe')).toBeVisible();
+      await expect(dialog.locator('canvas').first()).toBeVisible();
       await expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('href', path);
       const preview = await response;
       expect(preview.ok()).toBe(true);
@@ -168,14 +169,9 @@ test('the accountant can save, reopen, and submit a manual invoice', async ({
     await page.getByRole('link', { name: 'Create Invoice' }).click();
     await heading(page, 'Create Invoice');
 
-    const customer = page.getByLabel('Organization legal name', { exact: true });
-    const customerValue = await customer
-      .locator('option', { hasText: customerName ?? '' })
-      .first()
-      .getAttribute('value');
-    expect(customerValue, 'the disposable customer is in the picker').toBeTruthy();
-    await customer.selectOption(customerValue ?? '');
-    await page.getByLabel('Currency', { exact: true }).selectOption('NPR');
+    // Fails here, naming the option, when the disposable customer is not in the picker.
+    await chooseOption(selectByName(page, 'customerId'), { label: customerName ?? '' });
+    await chooseOption(selectByName(page, 'currency'), 'NPR');
 
     const description = `Invoice draft workflow ${Date.now()}`;
     await page.getByLabel('Why is there no sales order?').fill('One-time staff training');
@@ -183,8 +179,8 @@ test('the accountant can save, reopen, and submit a manual invoice', async ({
     await page.getByLabel('Unit (line 1)').fill('hr');
     await page.getByLabel('Quantity (line 1)').fill('2');
     await page.getByLabel('Unit price (NPR) (line 1)').fill('125.00');
-    const tax = page.getByLabel('Tax code (line 1)');
-    await tax.selectOption({ index: 1 });
+    // Index 0 is the "Choose" placeholder option.
+    await chooseOption(selectByLabel(page, 'Tax code (line 1)'), { index: 1 });
     await page.getByRole('button', { name: 'Save draft invoice' }).click();
 
     await expect(page).toHaveURL(/\/invoices\/[a-f0-9-]{36}$/);

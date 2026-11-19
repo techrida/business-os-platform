@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { chooseOption, selectByName } from '../helpers/select';
 
 /**
  * Journey 11 browser checkpoints against the real, disposable P4 stack. No API is mocked.
@@ -54,8 +55,8 @@ test('procurement raises a PR, its department head alone approves, then three ve
         await page.goto('/procurement/requests/new');
         await page.waitForLoadState('networkidle');
         await page.getByLabel('Needed by').fill('2030-12-31');
-        await page.getByLabel('Department').selectOption(departmentId);
-        await page.getByLabel('Cost centre').selectOption(costCenterId);
+        await chooseOption(selectByName(page, 'departmentId'), departmentId);
+        await chooseOption(selectByName(page, 'costCenterId'), costCenterId);
         await page.getByLabel('Budget code').fill('P4-EXIT');
         await page.getByLabel('Why is this needed?').fill(`Journey 11 browser ${Date.now()}`);
         await page.getByLabel('Description', { exact: true }).fill('Two serialized devices');
@@ -166,7 +167,7 @@ test('the completed Journey 11 remains connected across requests, sourcing, rece
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
       await expect(page.getByRole('region', { name: 'Profile', exact: true })).toBeVisible();
       await page.goto(`/procurement/orders/${poId}`);
-      const pdf = page.getByRole('link', { name: 'Download PDF of version 1', exact: true });
+      const pdf = page.getByRole('link', { name: 'Download of version 1', exact: true });
       await expect(pdf).toBeVisible();
       const href = await pdf.getAttribute('href');
       expect(href).toBeTruthy();

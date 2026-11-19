@@ -2,6 +2,7 @@ import { expect, type Page, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { minimalPdf } from '../helpers/pdf-fixture';
+import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The staff Record payment form, against the real stack. Not run by the unit that wrote it: it needs
@@ -26,13 +27,8 @@ test.skip(CUSTOMER === undefined, 'BOS_E2E_PAYMENT_CUSTOMER is not set');
 
 /** Chooses the customer whose option text starts with the name in the env var. */
 async function pickCustomer(page: Page): Promise<void> {
-  const select = page.getByLabel('Customer', { exact: true });
-  const value = await select
-    .locator('option', { hasText: CUSTOMER ?? '' })
-    .first()
-    .getAttribute('value');
-  expect(value, 'the customer is in the picker').toBeTruthy();
-  await select.selectOption(value ?? '');
+  // Fails here, naming the option, when the customer is not in the picker.
+  await chooseOption(selectByLabel(page, 'Customer'), { label: CUSTOMER ?? '' });
 }
 
 async function open(browser: Parameters<typeof signInAs>[0], base: string, persona: string) {

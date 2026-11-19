@@ -1,6 +1,5 @@
 import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
 
-import { Icon } from './icon';
 import styles from './field.module.css';
 
 /** What `Field` hands to its control so the label, hint and error are all wired up. */
@@ -84,17 +83,5 @@ export function Textarea({ className, ...rest }: ComponentPropsWithRef<'textarea
   );
 }
 
-/** Native select (Figma Dropdown 430:8428) with the design's chevron. Pass `<option>`s as children. */
-export function Select({ className, children, ...rest }: ComponentPropsWithRef<'select'>) {
-  return (
-    <span className={styles.selectWrap}>
-      <select
-        className={[styles.control, styles.select, className].filter(Boolean).join(' ')}
-        {...rest}
-      >
-        {children}
-      </select>
-      <Icon name="chevron-down" size={20} className={styles.caret} />
-    </span>
-  );
-}
+/** The one dropdown. Lives in select.tsx; re-exported so forms import their controls from here. */
+export { Select } from './select';

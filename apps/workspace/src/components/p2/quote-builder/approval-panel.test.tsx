@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import type { PreviewResult } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { click, mountForm } from '@/test/form-interactions';
 import { ApprovalPanel, approverOptionLabel } from './approval-panel';
 
 const ACC = '11111111-1111-4111-8111-111111111111';
@@ -57,16 +59,36 @@ const render = (approver: string) =>
     />,
   );
 
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+});
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
 describe('ApprovalPanel approver picker', () => {
-  it('offers "anyone eligible" first, then each person with their role and a missing address', () => {
-    const html = render('');
-    expect(html).toContain('Approver for step 1');
-    expect(html).toContain(
-      '<option value="" selected="">Any accountant (anyone eligible)</option>',
+  it('offers "anyone eligible" first, then each person with their role and a missing address', async () => {
+    const mounted = await mountForm(
+      <ApprovalPanel state="ready" preview={preview} approver="" onApproverChange={vi.fn()} />,
     );
-    expect(html).toContain(`<option value="${ACC}">Sita Sharma · Accountant</option>`);
-    expect(html).toContain(`<option value="${MATE}">Mina Rai · Sales · no email</option>`);
-    expect(html).not.toContain('No email');
+    try {
+      const { container } = mounted;
+      expect(container.textContent).toContain('Approver for step 1');
+      const trigger = container.querySelector<HTMLElement>('button[aria-haspopup="listbox"]')!;
+      // Nobody is chosen: the picker reads "anyone eligible".
+      expect(trigger.textContent).toContain('Any accountant (anyone eligible)');
+      await click(trigger);
+      const options = Array.from(document.querySelectorAll('[role="option"]'));
+      expect(options.map((o) => o.textContent?.trim())).toEqual([
+        'Any accountant (anyone eligible)',
+        'Sita Sharma · Accountant',
+        'Mina Rai · Sales · no email',
+      ]);
+      expect(options[0]!.getAttribute('aria-selected')).toBe('true');
+      expect(container.textContent).not.toContain('No email');
+    } finally {
+      await mounted.unmount();
+    }
   });
 
   it('names the chosen person on the step and flags that they get no email', () => {

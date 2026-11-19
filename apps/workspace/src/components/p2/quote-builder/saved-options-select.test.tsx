@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { click, fill, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
 import { SavedOptionsSelect } from './saved-options-select';
 
@@ -41,8 +41,10 @@ function Host({
   );
 }
 
-const select = () =>
-  document.querySelector<HTMLSelectElement>('select[aria-label="Saved options for Scope"]');
+const NAME = 'saved-scope';
+const pick = (preset: TermPreset) => choose(document.body, NAME, preset.name);
+const chosenValue = () =>
+  document.querySelector<HTMLInputElement>(`input[type="hidden"][name="${NAME}"]`)?.value;
 const textarea = () => document.querySelector<HTMLTextAreaElement>('textarea')!;
 const button = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent === label) ?? null;
@@ -79,16 +81,22 @@ afterEach(() => {
 describe('SavedOptionsSelect', () => {
   it('lists this kind by name under "Saved options" and nothing from other kinds', async () => {
     const view = await mountForm(<Host />);
-    const options = [...select()!.options].map((o) => o.textContent);
+    const trigger = document
+      .querySelector(`input[type="hidden"][name="${NAME}"]`)
+      ?.parentElement?.querySelector('button');
+    await click(trigger ?? null);
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) =>
+      o.textContent?.trim(),
+    );
     expect(options).toEqual(['Saved options', 'Annual support', 'Standard build']);
     await view.unmount();
   });
 
   it('fills an empty field and leaves it editable', async () => {
     const view = await mountForm(<Host />);
-    await fill(select(), standard.id);
+    await pick(standard);
     expect(textarea().value).toBe('We build it.');
-    expect(select()!.value).toBe('');
+    expect(chosenValue()).toBe('');
     expect(document.body.textContent).not.toContain('Replace the text you typed?');
 
     await type('We build it. Plus training.');
@@ -98,8 +106,8 @@ describe('SavedOptionsSelect', () => {
 
   it('fills another option without asking while the field still holds the last fill', async () => {
     const view = await mountForm(<Host />);
-    await fill(select(), standard.id);
-    await fill(select(), support.id);
+    await pick(standard);
+    await pick(support);
     expect(textarea().value).toBe(support.body);
     expect(document.body.textContent).not.toContain('Replace the text you typed?');
     await view.unmount();
@@ -107,10 +115,10 @@ describe('SavedOptionsSelect', () => {
 
   it('asks before replacing edited text; Keep my text leaves it, Replace text swaps it', async () => {
     const view = await mountForm(<Host />);
-    await fill(select(), standard.id);
+    await pick(standard);
     await type('We build it, but only the first phase.');
 
-    await fill(select(), support.id);
+    await pick(support);
     await settle();
     expect(document.body.textContent).toContain('Replace the text you typed?');
     expect(textarea().value).toBe('We build it, but only the first phase.');
@@ -119,9 +127,9 @@ describe('SavedOptionsSelect', () => {
     await settle();
     expect(document.body.textContent).not.toContain('Replace the text you typed?');
     expect(textarea().value).toBe('We build it, but only the first phase.');
-    expect(select()!.value).toBe('');
+    expect(chosenValue()).toBe('');
 
-    await fill(select(), support.id);
+    await pick(support);
     await settle();
     await click(button('Replace text'));
     await settle();
@@ -132,7 +140,7 @@ describe('SavedOptionsSelect', () => {
 
   it('asks before replacing text that arrived with a saved draft', async () => {
     const view = await mountForm(<Host initial="Drafted earlier" />);
-    await fill(select(), standard.id);
+    await pick(standard);
     await settle();
     expect(document.body.textContent).toContain('Replace the text you typed?');
     await view.unmount();
@@ -141,14 +149,13 @@ describe('SavedOptionsSelect', () => {
   it('renders no dropdown when the kind has no options, or none were loaded', async () => {
     for (const list of [[presets[2]!], []] as const) {
       const view = await mountForm(<Host list={list} />);
-      expect(select()).toBeNull();
-      expect(document.querySelector('select')).toBeNull();
+      expect(chosenValue()).toBeUndefined();
       await view.unmount();
     }
     const view = await mountForm(
       <SavedOptionsSelect kind="scope" presets={null} value="" maxLength={10} onFill={() => {}} />,
     );
-    expect(document.querySelector('select')).toBeNull();
+    expect(chosenValue()).toBeUndefined();
     await view.unmount();
   });
 });

@@ -5,9 +5,9 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/portal/alert';
 import { Field, Input } from '@/components/portal/field';
-import fieldStyles from '@/components/portal/field.module.css';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 
 import { FileUpload } from '../../../_upload/file-upload';
 import styles from '../../../_upload/upload.module.css';
@@ -70,12 +70,11 @@ export function KycForm({
 
       <Field label="Document" error={fe.docType}>
         {(control) => (
-          <select
+          <Select
             name="docType"
             required
             value={docType}
             onChange={(e) => setDocType(e.target.value)}
-            className={`${styles.select} ${fieldStyles.control}`}
             {...control}
           >
             {choices.map((c) => (
@@ -83,7 +82,7 @@ export function KycForm({
                 {c.label}
               </option>
             ))}
-          </select>
+          </Select>
         )}
       </Field>
 

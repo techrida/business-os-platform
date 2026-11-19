@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { chooseOption, selectByName } from '../helpers/select';
 
 /**
  * The P4 purchase request screens, against the real stack. Not run by the unit that wrote it: it
@@ -35,7 +36,7 @@ test('the purchase request list loads and filters', async ({ browser, baseURL })
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'Purchase requests' }),
     ).toBeVisible();
-    await founder.page.getByLabel('Status').selectOption('closed');
+    await chooseOption(selectByName(founder.page, 'status'), 'closed');
     await founder.page.getByRole('button', { name: 'Apply' }).click();
     await expect(founder.page).toHaveURL(/status=closed/);
   } finally {
@@ -59,8 +60,8 @@ test('a draft is saved with a server total, then cancelled and read-only', async
       await page.goto('/procurement/requests/new');
       await page.waitForLoadState('networkidle');
       await page.getByLabel('Needed by').fill('2026-12-31');
-      await page.getByLabel('Department').selectOption(DEPARTMENT);
-      await page.getByLabel('Cost centre').selectOption(COST_CENTER);
+      await chooseOption(selectByName(page, 'departmentId'), DEPARTMENT);
+      await chooseOption(selectByName(page, 'costCenterId'), COST_CENTER);
       await page.getByLabel('Budget code').fill('E2E-26');
       await page.getByLabel('Why is this needed?').fill(`E2E request ${Date.now()}`);
       await page.getByLabel('Description').fill('Office chair');

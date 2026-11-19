@@ -338,6 +338,7 @@
   --radius-xs: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+  --shadow-section: 0 12px 32px #2c244018;
   --radius-xl: 12px;
   --radius-2xl: 24px;
   --radius-full: 9999px;

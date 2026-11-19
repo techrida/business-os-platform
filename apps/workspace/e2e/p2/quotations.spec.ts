@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { getJson } from '../helpers/api';
 import { signInAs, type Signed } from '../helpers/memo-flow';
 import { mailOrigin, sentTo, waitForMessage } from '../helpers/mailpit';
+import { chooseOption, selectByLabel } from '../helpers/select';
 
 /**
  * The quotation detail page, against the real stack: the summary and totals, the revisions dialog,
@@ -79,7 +80,7 @@ test('the customer PDF downloads from one click on the link', async ({ browser, 
   await withSales(browser, baseURL, async ({ page }) => {
     await open(page, id ?? '');
     const download = page.waitForEvent('download');
-    await page.getByRole('link', { name: 'Download PDF' }).first().click();
+    await page.getByRole('link', { name: /^Download/ }).first().click();
     expect((await download).suggestedFilename()).toMatch(/\.pdf$/i);
   });
 });
@@ -117,7 +118,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     const dialog = page.getByRole('dialog', { name: /^Send / });
     await expect(dialog).toContainText('never sent as a file');
 
-    const select = dialog.getByLabel('Send to');
+    const select = selectByLabel(dialog, 'Send to');
     const message = dialog.getByLabel('Message (optional)');
     const footer = dialog.locator('footer');
     const submit = footer.getByRole('button', { name: 'Send to customer' });
@@ -126,7 +127,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     expect(initialKey).toBeTruthy();
 
     // Clear the preselected contact. Hold this request to check the pending state before validation.
-    await select.selectOption('');
+    await chooseOption(select, '');
     await message.fill('Thank you for considering this quotation.');
     let releaseRequest: () => void = () => {};
     const pendingRequest = new Promise<void>((resolve) => {
@@ -156,8 +157,7 @@ test('Send gives the customer a portal link by email, never the file', async ({
     await expect(message).toHaveValue('Thank you for considering this quotation.');
     await expect(key).toHaveValue(initialKey);
 
-    const value = await select.locator('option', { hasText: contact ?? '' }).getAttribute('value');
-    await select.selectOption({ value: value ?? '' });
+    await chooseOption(select, { label: contact ?? '' });
     await submit.click();
     await expect(dialog.getByRole('status')).toContainText('Sent to', { timeout: 30_000 });
 

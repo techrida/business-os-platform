@@ -9,15 +9,40 @@
   gap: 8px;
   width: 100%;
   min-height: 42px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border: var(--border-width-thin) solid var(--select-border);
   border-radius: var(--radius-lg);
   background: var(--select-bg);
   color: var(--select-text);
   font: inherit;
   font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
   text-align: start;
   cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.trigger[data-focus-visible] {
+  border-color: var(--select-focus-border);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chevron {
+  color: var(--icon-secondary);
+  transition: transform 120ms ease;
+}
+
+.select[data-open] .chevron {
+  transform: rotate(180deg);
+}
+
+.trigger:disabled .chevron {
+  color: var(--icon-disabled);
+}
+
+.tick {
+  color: var(--brand-500);
 }
 
 .trigger svg,
@@ -33,6 +58,7 @@
   border-color: var(--select-focus-border);
 }
 
+.select.invalid .trigger,
 .select[data-invalid] .trigger {
   border-color: var(--select-error-border);
 }
@@ -43,15 +69,25 @@
   cursor: not-allowed;
 }
 
+.value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .value[data-placeholder] {
   color: var(--select-placeholder);
 }
 
 .popover {
   z-index: 60;
-  width: var(--trigger-width);
-  max-width: calc(100vw - 24px);
+  width: max-content;
+  min-width: max(var(--trigger-width), 160px);
+  max-width: min(360px, calc(100vw - 24px));
   padding: 8px;
+  overflow: hidden;
   border: var(--border-width-thin) solid var(--dropdown-border);
   border-radius: var(--radius-lg);
   background: var(--dropdown-bg);
@@ -81,7 +117,7 @@
 
 .item[data-selected] {
   background: var(--interactive-selected);
-  color: var(--action-primary);
+  color: var(--brand-500);
 }
 
 .item[data-hovered],
@@ -103,4 +139,24 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* Keep the text at 16px on touch screens, as the text inputs do, to avoid focus zoom. */
+@media (pointer: coarse) {
+  .trigger {
+    font-size: max(16px, var(--font-size-body-small));
+  }
+}
+
+/* The panel and list take focus for keyboard handling; the focused item shows the ring, not the box. */
+.popover:focus-visible,
+.popover :focus:not([data-focus-visible]),
+.list:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
 }

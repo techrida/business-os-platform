@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
+import {
+  chooseOption,
+  optionLabels,
+  selectByLabel,
+  selectByName,
+  selectedInput,
+} from '../helpers/select';
 
 test.skip(process.env.BOS_E2E_P4 !== '1', 'set BOS_E2E_P4=1 to run P4 payment requests');
 
@@ -12,10 +19,10 @@ test('payment requests load and filter by status', async ({ browser, baseURL }) 
     await expect(
       signed.page.getByRole('heading', { level: 1, name: 'Payment requests' }),
     ).toBeVisible();
-    await signed.page.getByLabel('Status', { exact: true }).selectOption('draft');
+    await chooseOption(selectByName(signed.page, 'status'), 'draft');
     await signed.page.getByRole('button', { name: 'Show requests' }).click();
     await expect(signed.page).toHaveURL(/status=draft/);
-    await expect(signed.page.getByLabel('Status', { exact: true })).toHaveValue('draft');
+    await expect(selectedInput(selectByName(signed.page, 'status'))).toHaveValue('draft');
     await expect(signed.page.getByRole('link', { name: 'New payment request' })).toBeVisible();
   } finally {
     await signed.context.close();
@@ -33,7 +40,7 @@ test('new requests offer eligible bills or explain that none are available', asy
     await expect(
       signed.page.getByRole('heading', { level: 1, name: 'New payment request' }),
     ).toBeVisible();
-    const vendor = signed.page.getByLabel('Vendor', { exact: true });
+    const vendor = selectByLabel(signed.page, 'Vendor');
     const empty = signed.page.getByText(
       'No approved bill balances are available for a payment request.',
       { exact: false },
@@ -43,18 +50,18 @@ test('new requests offer eligible bills or explain that none are available', asy
       await expect(
         signed.page.getByRole('button', { name: 'Create draft request' }),
       ).toBeDisabled();
-      await expect(signed.page.getByLabel('Bill 1', { exact: true })).toBeDisabled();
-      const value = await vendor.locator('option').nth(1).getAttribute('value');
-      if (!value) throw new Error('An eligible vendor option must have an ID');
-      await vendor.selectOption(value);
-      await expect(signed.page.getByLabel('Bill 1', { exact: true })).toBeEnabled();
-      await expect(
-        signed.page.getByLabel('Bill 1', { exact: true }).locator('option'),
-      ).not.toHaveCount(1);
+      await expect(selectByLabel(signed.page, 'Bill 1')).toBeDisabled();
+      // Index 0 is the "Choose a vendor" option; index 1 is the first eligible vendor.
+      await chooseOption(vendor, { index: 1 });
+      await expect(selectByLabel(signed.page, 'Bill 1')).toBeEnabled();
+      // More than the "Choose an approved bill" option alone.
+      await expect
+        .poll(async () => (await optionLabels(selectByLabel(signed.page, 'Bill 1'))).length)
+        .toBeGreaterThan(1);
       await signed.page.getByRole('button', { name: 'Add a payable item' }).click();
-      await expect(signed.page.getByLabel('Bill 2', { exact: true })).toBeVisible();
+      await expect(selectByLabel(signed.page, 'Bill 2')).toBeVisible();
       await signed.page.getByRole('button', { name: 'Remove item 2' }).click();
-      await expect(signed.page.getByLabel('Bill 2', { exact: true })).toHaveCount(0);
+      await expect(selectByLabel(signed.page, 'Bill 2')).toHaveCount(0);
     }
   } finally {
     await signed.context.close();

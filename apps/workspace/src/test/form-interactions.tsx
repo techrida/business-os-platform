@@ -41,3 +41,19 @@ export async function submit(container: HTMLElement) {
   if (!form) throw new Error('Missing form');
   await act(() => Promise.resolve(form.requestSubmit()));
 }
+
+/**
+ * Pick an option in the shared Select the way a user does: open the trigger, click the option.
+ * `name` is the form field name; `label` is the option's visible text.
+ */
+export async function choose(container: HTMLElement, name: string, label: string) {
+  const field = container.querySelector(`input[type="hidden"][name="${name}"]`);
+  const trigger = field?.parentElement?.querySelector('button');
+  if (!trigger) throw new Error(`No Select named ${name}`);
+  await click(trigger);
+  const option = Array.from(document.querySelectorAll('[role="option"]')).find(
+    (el) => el.textContent?.trim() === label,
+  );
+  if (!option) throw new Error(`No option "${label}" in ${name}`);
+  await click(option);
+}

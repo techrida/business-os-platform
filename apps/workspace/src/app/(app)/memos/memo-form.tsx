@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import type { SelectHandle } from '@/components/ui/select';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
 import { memoPdfInputOf } from '@/lib/memo-pdf-input';
@@ -119,7 +120,7 @@ function MemoFormInner({
   );
   const summaryRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
-  const departmentRef = useRef<HTMLSelectElement>(null);
+  const departmentRef = useRef<SelectHandle>(null);
   const paperId = useId();
 
   const set = (key: 'title' | 'body') => (e: { target: { value: string } }) =>

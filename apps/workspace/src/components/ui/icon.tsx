@@ -10,6 +10,7 @@ export type IconName =
   | 'mail'
   | 'user'
   | 'check-circle'
+  | 'check'
   | 'star'
   | 'search'
   | 'menu'
@@ -108,6 +109,7 @@ const DRAWINGS: Record<IconName, ReactNode> = {
       <path d="M18 5v14" />
     </>
   ),
+  check: <path d="M20 6 9 17l-5-5" />,
   'check-circle': (
     <>
       <circle cx="12" cy="12" r="10" />
