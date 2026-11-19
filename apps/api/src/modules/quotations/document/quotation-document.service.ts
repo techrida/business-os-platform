@@ -37,9 +37,12 @@ export interface QuotationDocumentHead {
   renderedDocumentId: string | null;
   /** The render job's state for the version: none, pending, rendered or failed. */
   renderState: QuotationRenderState;
+  /** The version's status; the render sweeper only renders an approved one. */
+  status: QuotationVersionStatus;
 }
 
 export type QuotationRenderState = (typeof quotationVersions.$inferSelect)['renderState'];
+export type QuotationVersionStatus = (typeof quotationVersions.$inferSelect)['status'];
 
 /** What the retry answers: the version is back in the render queue. */
 export interface QuotationPdfRetryDto {
@@ -91,6 +94,7 @@ export class QuotationDocumentStore {
         organizationId: quotationVersions.organizationId,
         renderedDocumentId: quotationVersions.renderedDocumentId,
         renderState: quotationVersions.renderState,
+        status: quotationVersions.status,
       })
       .from(quotationVersions)
       .innerJoin(
@@ -113,8 +117,9 @@ export class QuotationDocumentStore {
   }
 
   /**
-   * Puts a failed render back in the queue: one conditional UPDATE, render_state failed -> none. The render sweeper
-   * takes a `none` version of status approved on its next pass (no other column is needed). True only for the
+   * Puts a failed render back in the queue: one conditional UPDATE, render_state failed -> none, only for a version
+   * of status approved (the sweeper renders no other status, so resetting one would only hide the failure). The
+   * render sweeper takes a `none` approved version on its next pass (no other column is needed). True only for the
    * caller that moved it, so a second click, or a sweeper claim in between, changes nothing.
    */
   async requeueFailed(
@@ -132,6 +137,7 @@ export class QuotationDocumentStore {
           eq(quotationVersions.organizationId, head.organizationId),
           eq(quotationVersions.id, versionId),
           eq(quotationVersions.renderState, 'failed'),
+          eq(quotationVersions.status, 'approved'),
         ),
       )
       .returning({ id: quotationVersions.id });
@@ -192,7 +198,7 @@ export class QuotationDocumentService {
   /**
    * Puts the PDF of a version whose render failed back in the render queue: 202 `{ state: 'queued' }`. 403 for a
    * portal caller; 404 for a version outside the caller's read scope; 409 `quotation_pdf_retry_not_needed` when the
-   * render did not fail (so a second click, or a click while the sweeper already took it, is refused and changes
+   * render did not fail or the version is not approved (so a second click, or a click while the sweeper already took it, is refused and changes
    * nothing). The state change and its audit row are one transaction under the caller's scope and actor.
    */
   async retry(quotationId: string, versionId: string): Promise<QuotationPdfRetryDto> {
@@ -201,7 +207,7 @@ export class QuotationDocumentService {
     await withTx(this.db, scope, actor, async (tx) => {
       const head = await this.store.head(tx, principal, quotationId, versionId);
       if (head === undefined) throw versionNotFound();
-      if (head.renderState !== 'failed') throw retryNotNeeded();
+      if (head.renderState !== 'failed' || head.status !== 'approved') throw retryNotNeeded();
       if (!(await this.store.requeueFailed(tx, head, versionId, new Date()))) {
         throw retryNotNeeded();
       }

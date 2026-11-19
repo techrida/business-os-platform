@@ -440,6 +440,21 @@ async function setRenderState(versionId: string, state: 'none' | 'pending' | 'fa
     [versionId, state],
   );
 }
+/** Moves a Draft version to approved the way the schema allows (draft -> submitted -> approved). */
+async function approveVersion(versionId: string) {
+  await asSystem(
+    `UPDATE app.quotation_versions
+        SET status = 'submitted', submitted_at = now(), fx_rate = 1, amount_npr = total,
+            npr_taxable_amount = taxable_amount, content_sha256 = decode(repeat('ab', 32), 'hex'),
+            snapshot_sha256 = decode(repeat('ab', 32), 'hex')
+      WHERE id = $1::uuid`,
+    [versionId],
+  );
+  await asSystem(
+    `UPDATE app.quotation_versions SET status = 'approved', approved_at = now() WHERE id = $1::uuid`,
+    [versionId],
+  );
+}
 const renderStateOf = async (versionId: string) =>
   (
     await ownerPool.query<{ render_state: string }>(
@@ -524,6 +539,7 @@ describe('QuotationDocumentService.link: the three refusals', () => {
 describe('QuotationDocumentService.retry', () => {
   it('requeues a failed render (failed -> none), audits it, and the link then reads 409 not ready', async () => {
     const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
     await setRenderState(q.currentVersionId, 'failed');
 
     await expect(service.retry(q.id, q.currentVersionId)).resolves.toEqual({ state: 'queued' });
@@ -541,6 +557,7 @@ describe('QuotationDocumentService.retry', () => {
 
   it('is idempotent: a second click is a 409 quotation_pdf_retry_not_needed and adds no audit row', async () => {
     const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
     await setRenderState(q.currentVersionId, 'failed');
     await service.retry(q.id, q.currentVersionId);
 
@@ -557,6 +574,7 @@ describe('QuotationDocumentService.retry', () => {
 
   it('two simultaneous clicks queue it once: one 202, one 409', async () => {
     const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
     await setRenderState(q.currentVersionId, 'failed');
 
     const results = await Promise.allSettled([
@@ -573,6 +591,7 @@ describe('QuotationDocumentService.retry', () => {
 
   it('is a 409 quotation_pdf_retry_not_needed from none, pending and rendered, and changes nothing', async () => {
     const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
     for (const state of ['none', 'pending'] as const) {
       await setRenderState(q.currentVersionId, state);
       const { status, body } = await answerOf(service.retry(q.id, q.currentVersionId));
@@ -588,8 +607,24 @@ describe('QuotationDocumentService.retry', () => {
     expect(await renderStateOf(rendered.currentVersionId)).toBe('rendered');
   });
 
+  it('is a 409 quotation_pdf_retry_not_needed for a failed render of a version that is not approved: the state stays failed and no audit row is written', async () => {
+    const q = await createQuotation(); // Draft: the sweeper never renders it
+    await setRenderState(q.currentVersionId, 'failed');
+
+    const { status, body } = await answerOf(service.retry(q.id, q.currentVersionId));
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
+    expect(await renderStateOf(q.currentVersionId)).toBe('failed');
+    const events = (
+      await audit.list(scopeA, { entityType: 'quotations', entityId: q.id, limit: 100 })
+    ).filter((e) => e.action === 'quotation.pdf_retry_requested');
+    expect(events).toHaveLength(0);
+  });
+
   it('is a 404 from another entity, for another owner under own scope, and for an unknown version; state unchanged', async () => {
     const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
     await setRenderState(q.currentVersionId, 'failed');
 
     current.scope = scopeB;
@@ -607,6 +642,7 @@ describe('QuotationDocumentService.retry', () => {
 
   it('is a 403 for a portal caller, and the failed state stays', async () => {
     const q = await createQuotation();
+    await approveVersion(q.currentVersionId);
     await setRenderState(q.currentVersionId, 'failed');
     current.orgKind = 'customer';
 

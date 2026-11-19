@@ -51,6 +51,7 @@ const head = (over: Partial<QuotationDocumentHead> = {}): QuotationDocumentHead 
   organizationId: ORG,
   renderedDocumentId: DOCUMENT,
   renderState: 'rendered',
+  status: 'approved',
   ...over,
 });
 
@@ -303,6 +304,31 @@ describe('QuotationDocumentService.retry', () => {
       const { status, body } = await answerOf(service.retry(QID, VID));
 
       expect(status).toBe(409);
+      expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
+      expect(store.requeueFailed).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'draft',
+    'submitted',
+    'returned',
+    'sent',
+    'accepted',
+    'rejected',
+    'expired',
+    'cancelled',
+    'superseded',
+  ] as const)(
+    'is a 409 quotation_pdf_retry_not_needed for a failed render of a %s version (the sweeper renders only approved), and changes nothing',
+    async (status) => {
+      const { service, store, audit } = setup();
+      store.head.mockResolvedValue(head({ renderState: 'failed', status }));
+
+      const { status: http, body } = await answerOf(service.retry(QID, VID));
+
+      expect(http).toBe(409);
       expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
       expect(store.requeueFailed).not.toHaveBeenCalled();
       expect(audit.record).not.toHaveBeenCalled();
