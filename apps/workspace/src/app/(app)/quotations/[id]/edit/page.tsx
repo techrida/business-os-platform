@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation';
 
 import * as api from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
+import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { ContextCard } from '@/components/p2/quote-builder/context-card';
 import { describeQuoteFailure } from '@/components/p2/quote-builder/failure';
 import { LoadFailure } from '@/components/p2/quote-builder/load-failure';
@@ -13,7 +14,6 @@ import { loadLookups } from '@/components/p2/quote-builder/lookups';
 import { valuesFromVersion } from '@/components/p2/quote-builder/model';
 import { QuoteBuilder } from '@/components/p2/quote-builder/quote-builder';
 import { Alert } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
@@ -80,7 +80,15 @@ export default async function EditQuotationPage({
     return (
       <Page width="narrow">
         <Breadcrumb items={crumbs} />
-        <PageHeader title={title} status={<Badge tone="info">{version.status}</Badge>} />
+        <PageHeader
+          title={title}
+          status={
+            <QuotationStatusBadge
+              status={version.status}
+              rejectionSource={version.rejectionSource}
+            />
+          }
+        />
         <Alert
           tone="info"
           role="status"
@@ -105,7 +113,15 @@ export default async function EditQuotationPage({
     return (
       <Page width="narrow">
         <Breadcrumb items={crumbs} />
-        <PageHeader title={title} status={<Badge tone="info">{version.status}</Badge>} />
+        <PageHeader
+          title={title}
+          status={
+            <QuotationStatusBadge
+              status={version.status}
+              rejectionSource={version.rejectionSource}
+            />
+          }
+        />
         <Alert
           tone="info"
           role="status"
@@ -143,7 +159,9 @@ export default async function EditQuotationPage({
       <Breadcrumb items={crumbs} />
       <QuoteBuilder
         title={title}
-        status={<Badge tone="neutral">{version.status}</Badge>}
+        status={
+          <QuotationStatusBadge status={version.status} rejectionSource={version.rejectionSource} />
+        }
         description="Save the draft, then submit it for approval."
         cancelHref={`/quotations/${encodeURIComponent(quotation.id)}`}
         target={{

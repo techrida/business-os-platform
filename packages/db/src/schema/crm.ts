@@ -27,7 +27,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { documents } from './documents.js';
-import { users } from './identity.js';
+import { departments, users } from './identity.js';
 import { appSchema, organizations, PARTY_KINDS, parties, tenants } from './platform.js';
 
 // These mirror the catalogues in @bos/contracts crm.ts (the db package does not depend on contracts).
@@ -321,6 +321,39 @@ export const partyAccounts = appSchema.table(
   ],
 );
 
+/**
+ * A lost reason (D49, 0071): an option of the tenant's list a lead is marked Lost with. Tenant-level, like
+ * payment_terms: one list for every legal entity. `label_norm` is the trimmed, lower-cased label, unique per tenant,
+ * so "price" and "Price " are one option. `default_key` names the seven options the app ships (null for one the
+ * tenant added); reset-to-default restores them. A retired option keeps its row and stays on old leads.
+ */
+export const leadLostReasons = appSchema.table(
+  'lead_lost_reasons',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    label: text('label').notNull(),
+    labelNorm: text('label_norm').notNull(),
+    position: integer('position').notNull(),
+    defaultKey: text('default_key'),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    version: integer('version').notNull().default(1),
+    ...timestamps,
+  },
+  (t): PgTableExtraConfigValue[] => [
+    unique('lead_lost_reasons_tenant_id_unique').on(t.tenantId, t.id),
+    unique('lead_lost_reasons_tenant_label_unique').on(t.tenantId, t.labelNorm),
+    unique('lead_lost_reasons_tenant_default_key_unique').on(t.tenantId, t.defaultKey),
+    index('lead_lost_reasons_tenant_position_idx').on(t.tenantId, t.position),
+    check('lead_lost_reasons_label_check', sql`btrim(${t.label}) <> ''`),
+    check('lead_lost_reasons_label_norm_check', sql`${t.labelNorm} = lower(btrim(${t.label}))`),
+    check('lead_lost_reasons_position_check', sql`${t.position} >= 0`),
+    check('lead_lost_reasons_version_check', sql`${t.version} >= 1`),
+  ],
+);
+
 /** A lead. Company and contact are free text until conversion links a customer and a contact. */
 export const leads = appSchema.table(
   'leads',
@@ -336,6 +369,10 @@ export const leads = appSchema.table(
     source: text('source', { enum: LEAD_SOURCES }).notNull(),
     campaign: text('campaign'),
     ownerUserId: uuid('owner_user_id'),
+    /** The owner's department, stamped by a trigger when the owner is set or changes (migration 0080). */
+    departmentId: uuid('department_id'),
+    /** Who entered the lead (migration 0080); NULL for rows that predate it. */
+    createdByUserId: uuid('created_by_user_id'),
     companyName: text('company_name').notNull(),
     contactName: text('contact_name').notNull(),
     emailNorm: text('email_norm'),
@@ -352,8 +389,11 @@ export const leads = appSchema.table(
     nextFollowUpAt: timestamp('next_follow_up_at', { withTimezone: true }),
     notes: text('notes'),
     stage: text('stage', { enum: LEAD_STAGES }).notNull().default('new'),
+    /** For lost, the words of the chosen option when it was chosen (a snapshot); the label shown is the option's. */
     stageReason: text('stage_reason'),
     stageNote: text('stage_note'),
+    /** 0071 (D49): the lost reason option; set with stage = 'lost' (leads_lost_reason_fk). */
+    lostReasonId: uuid('lost_reason_id'),
     /** Set exactly when stage = 'converted' (leads_converted_check). */
     convertedOpportunityId: uuid('converted_opportunity_id'),
     version: integer('version').notNull().default(1),
@@ -374,9 +414,26 @@ export const leads = appSchema.table(
       foreignColumns: [users.tenantId, users.id],
     }),
     foreignKey({
+      name: 'leads_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    foreignKey({
+      name: 'leads_created_by_user_fk',
+      columns: [t.tenantId, t.createdByUserId],
+      foreignColumns: [users.tenantId, users.id],
+    }),
+    index('leads_tenant_org_department_idx').on(t.tenantId, t.organizationId, t.departmentId),
+    index('leads_tenant_created_by_idx').on(t.tenantId, t.organizationId, t.createdByUserId),
+    foreignKey({
       name: 'leads_customer_fk',
       columns: [t.tenantId, t.customerId],
       foreignColumns: [customers.tenantId, customers.id],
+    }),
+    foreignKey({
+      name: 'leads_lost_reason_fk',
+      columns: [t.tenantId, t.lostReasonId],
+      foreignColumns: [leadLostReasons.tenantId, leadLostReasons.id],
     }),
     foreignKey({
       name: 'leads_contact_fk',
@@ -446,6 +503,8 @@ export const opportunities = appSchema.table(
     contactId: uuid('contact_id'),
     leadId: uuid('lead_id'),
     ownerUserId: uuid('owner_user_id'),
+    /** The owner's department, stamped by a trigger when the owner is set or changes (migration 0080). */
+    departmentId: uuid('department_id'),
     stage: text('stage', { enum: OPPORTUNITY_STAGES }).notNull().default('qualified'),
     stageReason: text('stage_reason'),
     stageNote: text('stage_note'),
@@ -488,6 +547,16 @@ export const opportunities = appSchema.table(
       columns: [t.tenantId, t.ownerUserId],
       foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+      name: 'opportunities_department_fk',
+      columns: [t.tenantId, t.organizationId, t.departmentId],
+      foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    index('opportunities_tenant_org_department_idx').on(
+      t.tenantId,
+      t.organizationId,
+      t.departmentId,
+    ),
     index('opportunities_tenant_org_stage_idx').on(t.tenantId, t.organizationId, t.stage),
     index('opportunities_tenant_customer_idx').on(t.tenantId, t.customerId),
     index('opportunities_tenant_org_lead_idx').on(t.tenantId, t.organizationId, t.leadId),
@@ -660,9 +729,7 @@ export const activities = appSchema.table(
     /** 0062: the planned rows (follow-ups) of a lead, earliest first. */
     index('activities_tenant_org_lead_planned_idx')
       .on(t.tenantId, t.organizationId, t.leadId, t.dueAt)
-      .where(
-        sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`,
-      ),
+      .where(sql`${t.dueAt} IS NOT NULL AND ${t.completedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
     index('activities_tenant_org_opportunity_idx').on(
       t.tenantId,
       t.organizationId,

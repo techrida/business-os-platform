@@ -21,7 +21,13 @@ export function ShellNavSearch({ className }: { className?: string | undefined }
   );
 }
 
-export function ShellNav({ groups }: { groups: readonly NavGroup[] }) {
+export function ShellNav({
+  groups,
+  counts = {},
+}: {
+  groups: readonly NavGroup[];
+  counts?: Readonly<Record<string, number>>;
+}) {
   const { navQuery } = useShell();
   const matches = searchNavGroups(groups, navQuery);
 
@@ -44,7 +50,7 @@ export function ShellNav({ groups }: { groups: readonly NavGroup[] }) {
                     href={item.href}
                     label={item.label}
                     icon={item.icon}
-                    count={item.count}
+                    count={counts[item.href] ?? item.count}
                   />
                 </li>
               ))}

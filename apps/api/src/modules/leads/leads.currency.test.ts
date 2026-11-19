@@ -22,6 +22,7 @@ import type { NumberingService } from '../../platform/settings/numbering.service
 import { SettingsService } from '../../platform/settings/settings.service';
 import type { LeadsCaller } from './leads.caller';
 import { LeadsService } from './leads.service';
+import type { LeadLostReasonsService } from './lost-reasons.service';
 import type { LeadRow } from './leads.types';
 
 const TENANT = '0a000000-0000-4000-8000-000000000001';
@@ -38,6 +39,7 @@ function leadRow(over: Partial<LeadRow> = {}): LeadRow {
     id: LEAD_ID,
     tenantId: TENANT,
     organizationId: ENTITY,
+    departmentId: null,
     number: 'LD-2083/84-00001',
     title: 'Website for Acme',
     source: 'referral',
@@ -59,6 +61,8 @@ function leadRow(over: Partial<LeadRow> = {}): LeadRow {
     stage: 'new',
     stageReason: null,
     stageNote: null,
+    lostReasonId: null,
+    createdByUserId: null,
     convertedOpportunityId: null,
     version: 1,
     createdAt: at,
@@ -146,6 +150,7 @@ function serviceWith(saved: readonly string[] | null, stored: LeadRow = leadRow(
     numbering,
     caller,
     new CurrencyEnabledService(new SettingsService(db)),
+    {} as LeadLostReasonsService,
   );
   return { service, seen };
 }

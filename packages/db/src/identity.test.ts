@@ -24,6 +24,7 @@ import { runMigrations } from './migrate.js';
 import {
   authzVersions,
   departments,
+  rolePermissionLevels,
   rolePermissions,
   syncCursors,
   userEntities,
@@ -166,6 +167,7 @@ describe('the Drizzle schema mirrors the SQL', () => {
     userEntities,
     userRoles,
     rolePermissions,
+    rolePermissionLevels,
     authzVersions,
     zitadelEvents,
     syncCursors,

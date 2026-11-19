@@ -13,6 +13,7 @@ import {
   activities,
   customerContacts,
   customers,
+  leadLostReasons,
   leads,
   opportunities,
   partyAccounts,
@@ -183,6 +184,17 @@ describe('0015_crm and src/schema/crm.ts', () => {
     parsed,
     readFileSync(new URL('../migrations/0062_activity_follow_ups.sql', import.meta.url), 'utf8'),
   );
+  // 0071 adds leads.lost_reason_id (with its FK) and creates lead_lost_reasons, checked on its own below.
+  const lostReasonsSql = readFileSync(
+    new URL('../migrations/0071_lead_lost_reasons.sql', import.meta.url),
+    'utf8',
+  );
+  applyAlters(parsed, lostReasonsSql);
+  // 0080 adds leads.department_id and created_by_user_id and opportunities.department_id, with their keys and indexes.
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0080_lead_department_stamp.sql', import.meta.url), 'utf8'),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
@@ -193,6 +205,13 @@ describe('0015_crm and src/schema/crm.ts', () => {
     if (table === undefined) throw new Error(`no Drizzle table for ${name}`);
     expect(getTableConfig(table).schema).toBe('app');
     expect(sorted(drizzleShape(table))).toEqual(sorted(parsed.get(name) ?? empty()));
+  });
+
+  it('0071 lead_lost_reasons: same columns, keys, checks and indexes', () => {
+    const created = parseSql(lostReasonsSql).get('lead_lost_reasons');
+    expect(getTableConfig(leadLostReasons).schema).toBe('app');
+    expect(sorted(drizzleShape(leadLostReasons))).toEqual(sorted(created ?? empty()));
+    expect(lostReasonsSql).toContain("SELECT audit.attach('app.lead_lost_reasons');");
   });
 
   it('audits every table it creates', () => {

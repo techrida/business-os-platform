@@ -1,6 +1,7 @@
 import { NoticeCard } from '@/components/shell/notice-card';
 import { Badge } from '@/components/ui/badge';
 import { CenteredPage } from '@/components/ui/centered-page';
+import { getFooterLinks } from '@/lib/env';
 import { LinkButton } from '@/components/ui/button';
 
 export const dynamic = 'force-dynamic';
@@ -21,8 +22,9 @@ export default async function AuthErrorPage({
 }) {
   const code = knownCode((await searchParams).code);
   return (
-    <CenteredPage>
+    <CenteredPage width="split">
       <NoticeCard
+        footerLinks={getFooterLinks()}
         title="We could not sign you in"
         actions={
           // A plain link on purpose: /auth/login is a route handler, not a page to prefetch.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { memoRowNote, safeCursor } from './memo-list-view';
+import { memoRowNote, memoSummaryCards, safeCursor } from './memo-list-view';
 
 describe('memoRowNote', () => {
   it('joins department and creator', () => {
@@ -29,5 +29,27 @@ describe('safeCursor', () => {
     expect(safeCursor('a b')).toBeUndefined();
     expect(safeCursor("x';--")).toBeUndefined();
     expect(safeCursor('a'.repeat(301))).toBeUndefined();
+  });
+});
+
+describe('memoSummaryCards', () => {
+  it('sums every status into "All memos", including statuses without a card', () => {
+    const cards = memoSummaryCards({
+      draft: 2,
+      submitted: 3,
+      returned: 1,
+      approved: 4,
+      rejected: 5,
+    });
+    expect(cards.map((c) => [c.label, c.value])).toEqual([
+      ['All memos', 15],
+      ['Drafts', 2],
+      ['Waiting for approval', 3],
+      ['Returned', 1],
+      ['Approved', 4],
+    ]);
+  });
+  it('shows a real zero for a status with no memos', () => {
+    expect(memoSummaryCards({ draft: 1 }).find((c) => c.key === 'approved')?.value).toBe(0);
   });
 });

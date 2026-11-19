@@ -28,6 +28,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
+import { LeadLostReasonsService } from './lost-reasons.service';
 import { startHarness, type Harness } from './test/harness';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -48,6 +49,7 @@ beforeAll(async () => {
     new NumberingService(),
     h.caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
+    new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -583,16 +585,21 @@ describe('PATCH /v1/leads/:id/stage', () => {
     const lead = await seed();
     expect((await patchStage(lead.id, { stage: 'lost', expectedVersion: 1 })).status).toBe(400);
     expect(
-      (await patchStage(lead.id, { stage: 'lost', reason: 'price', expectedVersion: 1 })).status,
+      (await patchStage(lead.id, { stage: 'lost', newLostReason: 'Price', expectedVersion: 1 }))
+        .status,
     ).toBe(400);
     const lost = await patchStage(lead.id, {
       stage: 'lost',
-      reason: 'price',
+      newLostReason: 'Too dear for them',
       note: 'too dear',
       expectedVersion: 1,
     });
     expect(lost.status, JSON.stringify(lost.body)).toBe(200);
-    expect(dto(lost.body)).toMatchObject({ stageReason: 'price', stageNote: 'too dear' });
+    expect(dto(lost.body)).toMatchObject({
+      stageReason: 'Too dear for them',
+      stageNote: 'too dear',
+      lostReason: { label: 'Too dear for them', retired: false },
+    });
     const reopen = await patchStage(lead.id, { stage: 'contacted', expectedVersion: 2 });
     expect(reopen.status).toBe(403);
   });

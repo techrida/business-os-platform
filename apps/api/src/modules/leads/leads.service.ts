@@ -12,6 +12,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
   LEAD_STAGES,
   type LeadDto,
+  type LeadLostReasonRef,
   type LeadOwnerOption,
   type LeadStage,
   type LeadStageChangeBody,
@@ -44,6 +45,7 @@ import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { isPlannedSql, nextFollowUpSql } from '../activities/activities.types';
 import { activeStaffOfEntity, assertLeadAssignee, mayAssignLead } from './lead-assignee';
 import { LeadsCaller } from './leads.caller';
+import { LeadLostReasonsService, lostReasonRefs } from './lost-reasons.service';
 import {
   changedLeadFields,
   type LeadRow,
@@ -126,6 +128,7 @@ export class LeadsService {
     private readonly numbering: NumberingService,
     private readonly caller: LeadsCaller,
     private readonly currencies: CurrencyEnabledService,
+    private readonly lostReasons: LeadLostReasonsService,
   ) {}
 
   // -------------------------------------------------------------------------------------------------- read
@@ -157,9 +160,19 @@ export class LeadsService {
       scope.tenantId,
       rows.map((r) => r.ownerUserId),
     );
+    const refs = await lostReasonRefs(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.lostReasonId),
+    );
     return {
       rows: rows.map(({ nextFollowUp, ...row }) =>
-        toLeadDto(row, nextFollowUp, nameIn(names, row.ownerUserId)),
+        toLeadDto(
+          row,
+          nextFollowUp,
+          nameIn(names, row.ownerUserId),
+          refs.get(row.lostReasonId ?? '') ?? null,
+        ),
       ),
       total,
     };
@@ -201,7 +214,12 @@ export class LeadsService {
     if (found === undefined) throw notFound();
     const { nextFollowUp, ...row } = found;
     this.assertVisible('crm.lead.read', row);
-    return toLeadDto(row, nextFollowUp, await this.ownerNameOf(this.db, row));
+    return toLeadDto(
+      row,
+      nextFollowUp,
+      await this.ownerNameOf(this.db, row),
+      await this.lostReasonOf(this.db, row),
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -278,7 +296,7 @@ export class LeadsService {
           after: { number, stage: row!.stage, ownerUserId },
         });
         const ownerName = await this.ownerNameOf(tx, row!);
-        if (followUp === undefined) return toLeadDto(row!, null, ownerName);
+        if (followUp === undefined) return toLeadDto(row!, null, ownerName, null);
         const dueAt = new Date(followUp.dueAt);
         const [planned] = await tx
           .insert(activities)
@@ -300,7 +318,7 @@ export class LeadsService {
           after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
         });
         // The only planned activity of a new lead, so it is the next follow-up.
-        return toLeadDto(row!, dueAt, ownerName);
+        return toLeadDto(row!, dueAt, ownerName, null);
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -327,19 +345,40 @@ export class LeadsService {
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
       this.assertVisible('crm.lead.write', row);
 
+      // Lost carries an option of the tenant's list (D49), or a new one added in this same step. The planner still
+      // sees a `reason`: the option's words, which the lead keeps as a snapshot beside the reference.
+      let reason = body.reason;
+      let lostReasonId: string | null = null;
+      const planProbe = planLeadStageChange({
+        current: row.stage,
+        currentVersion: row.version,
+        to: body.stage,
+        by,
+        reason: body.stage === 'lost' ? 'probe' : body.reason,
+        note: body.note,
+        expectedVersion: body.expectedVersion,
+      });
+      if (!planProbe.ok) throw refusalToException(planProbe.kind, planProbe.message);
+      if (body.stage === 'lost') {
+        const chosen = await this.lostReasons.choose(tx, scope.tenantId, body);
+        reason = chosen.label;
+        lostReasonId = chosen.id;
+      }
       const plan = planLeadStageChange({
         current: row.stage,
         currentVersion: row.version,
         to: body.stage,
         by,
-        reason: body.reason,
+        reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
+      // Leaving lost (or any move that is not to lost) clears the reference with the text.
       const updated = await updateVersioned(tx, leads, id, body.expectedVersion, {
         ...plan.set,
+        lostReasonId,
         updatedAt: new Date(),
       });
       await this.audit.record(tx, {
@@ -348,7 +387,7 @@ export class LeadsService {
         entityId: id,
         before: { stage: row.stage, version: row.version },
         after: { stage: updated.stage, version: updated.version },
-        meta: { reason: plan.set.stageReason, note: plan.set.stageNote },
+        meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
       });
       await tx.insert(activities).values({
         ...scope,
@@ -358,7 +397,12 @@ export class LeadsService {
         leadId: id,
         createdByUserId: principal.userId,
       });
-      return toLeadDto(updated, await this.nextFollowUpOf(tx, id), await this.ownerNameOf(tx, updated));
+      return toLeadDto(
+        updated,
+        await this.nextFollowUpOf(tx, id),
+        await this.ownerNameOf(tx, updated),
+        await this.lostReasonOf(tx, updated),
+      );
     });
   }
 
@@ -428,7 +472,12 @@ export class LeadsService {
         });
         await this.moveFollowUps(tx, scope, id, row.ownerUserId, newOwner);
       }
-      return toLeadDto(updated, await this.nextFollowUpOf(tx, id), await this.ownerNameOf(tx, updated));
+      return toLeadDto(
+        updated,
+        await this.nextFollowUpOf(tx, id),
+        await this.ownerNameOf(tx, updated),
+        await this.lostReasonOf(tx, updated),
+      );
     });
   }
 
@@ -597,6 +646,17 @@ export class LeadsService {
         meta: { reason: 'lead_owner_changed', leadId },
       });
     }
+  }
+
+  /** The lost reason option of a lead, by its current label (D49); null for a lead without one. */
+  private async lostReasonOf(
+    q: Db | DbTransaction,
+    row: Pick<LeadRow, 'tenantId' | 'lostReasonId'>,
+  ): Promise<LeadLostReasonRef | null> {
+    if (row.lostReasonId === null) return null;
+    return (
+      (await lostReasonRefs(q, row.tenantId, [row.lostReasonId])).get(row.lostReasonId) ?? null
+    );
   }
 
   /** The owner's display name (D46), read in the lead's tenant. */

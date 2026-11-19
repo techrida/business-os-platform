@@ -26,6 +26,9 @@ export async function listActivitiesPage(
     /** `planned` (earliest due first) or `logged` (newest first); omitted lists every non-cancelled one. */
     status?: ActivityStatus;
     q?: string | undefined;
+    /** Due days (`YYYY-MM-DD`, Asia/Kathmandu), both inclusive. */
+    dueFrom?: string | undefined;
+    dueTo?: string | undefined;
     limit: number;
     offset?: number;
   },
@@ -34,6 +37,8 @@ export async function listActivitiesPage(
   for (const kind of opts.kind ?? []) params.append('kind', kind);
   if (opts.q) params.set('q', opts.q);
   if (opts.status) params.set('status', opts.status);
+  if (opts.dueFrom) params.set('dueFrom', opts.dueFrom);
+  if (opts.dueTo) params.set('dueTo', opts.dueTo);
   params.set('limit', String(opts.limit));
   if (opts.offset) params.set('offset', String(opts.offset));
 

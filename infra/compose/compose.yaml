@@ -579,6 +579,9 @@ services:
       # falls back to empty/k1 so an older .env still starts. Not consumed by the app yet.
       SESSION_ENC_KEY: ${SESSION_ENC_KEY:-}
       SESSION_ENC_KEY_ID: ${SESSION_ENC_KEY_ID:-k1}
+      # Optional footer links on the notice pages; empty hides the link.
+      BOS_HELP_URL: ${BOS_HELP_URL:-}
+      BOS_PRIVACY_URL: ${BOS_PRIVACY_URL:-}
       NODE_EXTRA_CA_CERTS: /certs/caddy-root.crt
     env_file:
       - path: ../../.dev/zitadel.env

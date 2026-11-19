@@ -45,6 +45,18 @@ import { useMemoPdfActions } from './use-memo-pdf-actions';
 
 const NO_SOURCE: PdfSource = { kind: 'saved', memoId: '' };
 
+/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+function SectionTitle({ eyebrow, children }: { eyebrow: string; children: string }) {
+  return (
+    <>
+      <span aria-hidden="true" className={templateStyles.eyebrow}>
+        {eyebrow}
+      </span>
+      {children}
+    </>
+  );
+}
+
 /**
  * The memo create and edit form. One component for both, because they share fields and rules; the
  * server action passed in decides what happens on submit. Inputs are controlled so a refusal does
@@ -271,7 +283,13 @@ function MemoFormInner({
           </Alert>
         ) : null}
 
-        <Panel title={memoId ? 'Edit memo' : 'Memo details'}>
+        <Panel
+          title={
+            <SectionTitle eyebrow="01 · The basics">
+              {memoId ? 'Edit memo' : 'Memo details'}
+            </SectionTitle>
+          }
+        >
           {directory ? (
             <div className={templateStyles.metadataRow}>
               <Field label="Department" error={err.template}>
@@ -352,7 +370,7 @@ function MemoFormInner({
         </Panel>
 
         {directory ? (
-          <Panel title="Sign-off">
+          <Panel title={<SectionTitle eyebrow="02 · Sign-off">Sign-off</SectionTitle>}>
             <SignerSection
               people={directory.people}
               currentUserId={preparedBy}

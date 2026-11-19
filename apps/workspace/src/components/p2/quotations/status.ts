@@ -3,11 +3,15 @@
 // shows data the contract does not promise": the filter accepts only the contract's statuses.
 import { QUOTATION_STATUSES, type QuotationStatus } from '@bos/contracts';
 
+import type { IconName } from '@/components/ui/icon';
+
 export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
 
 export interface QuotationStatusMeta {
   label: string;
   tone: StatusTone;
+  /** Drawn beside the label so the state reads without colour. */
+  icon: IconName;
 }
 
 /**
@@ -16,16 +20,16 @@ export interface QuotationStatusMeta {
  * Submitted version stays Submitted while the approvers decide (A2 C3).
  */
 const META: Record<QuotationStatus, QuotationStatusMeta> = {
-  draft: { label: 'Draft', tone: 'neutral' },
-  submitted: { label: 'Awaiting approval', tone: 'warning' },
-  returned: { label: 'Returned', tone: 'warning' },
-  approved: { label: 'Approved', tone: 'info' },
-  sent: { label: 'Sent', tone: 'info' },
-  accepted: { label: 'Accepted', tone: 'success' },
-  rejected: { label: 'Rejected', tone: 'error' },
-  expired: { label: 'Expired', tone: 'neutral' },
-  cancelled: { label: 'Cancelled', tone: 'neutral' },
-  superseded: { label: 'Superseded', tone: 'neutral' },
+  draft: { label: 'Draft', tone: 'neutral', icon: 'file-text' },
+  submitted: { label: 'Awaiting approval', tone: 'warning', icon: 'shield-check' },
+  returned: { label: 'Returned', tone: 'warning', icon: 'undo-2' },
+  approved: { label: 'Approved', tone: 'info', icon: 'check' },
+  sent: { label: 'Sent', tone: 'info', icon: 'mail' },
+  accepted: { label: 'Accepted', tone: 'success', icon: 'check-circle' },
+  rejected: { label: 'Rejected', tone: 'error', icon: 'x-circle' },
+  expired: { label: 'Expired', tone: 'neutral', icon: 'calendar-days' },
+  cancelled: { label: 'Cancelled', tone: 'neutral', icon: 'x' },
+  superseded: { label: 'Superseded', tone: 'neutral', icon: 'layers' },
 };
 
 export function quotationStatusMeta(status: QuotationStatus): QuotationStatusMeta {

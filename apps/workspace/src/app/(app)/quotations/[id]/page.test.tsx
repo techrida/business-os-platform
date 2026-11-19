@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getQuotation: vi.fn(),
   listSalesOrders: vi.fn(),
   listPaymentTerms: vi.fn(),
+  getOpportunity: vi.fn(),
   refresh: vi.fn(),
   seen: [] as { component: string; version: QuotationVersionDto }[],
   notFound: vi.fn(() => {
@@ -38,6 +39,7 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
 vi.mock('@/components/p2/quote-builder/api', () => ({
   listPaymentTerms: mocks.listPaymentTerms,
+  getOpportunity: mocks.getOpportunity,
 }));
 // `PreparingRefresh` (the words for a PDF on its way) reads the router.
 vi.mock('next/navigation', () => ({
@@ -243,6 +245,8 @@ beforeEach(() => {
   mocks.notFound.mockClear();
   mocks.listSalesOrders.mockReset().mockResolvedValue([]);
   mocks.listPaymentTerms.mockReset().mockResolvedValue([]);
+  // A denied read is the common case for roles without CRM access: the plain link stays.
+  mocks.getOpportunity.mockReset().mockRejectedValue(new ApiError(403, 'no'));
   mocks.refresh.mockReset();
   mocks.seen.length = 0;
   mocks.getSession.mockReset().mockResolvedValue(null);
@@ -667,6 +671,22 @@ describe('quotation detail page: linked records', () => {
       `/opportunities/${CUSTOMER}`,
     ]);
     expect(html).toContain('Kathmandu &lt;expo&gt; lead');
+  });
+
+  it('names the opportunity by its number and stage when the viewer may read it', async () => {
+    mocks.getOpportunity.mockResolvedValue({ number: 'DEAL-2026-0095', stage: 'proposal_sent' });
+    const html = await render();
+    expect(mocks.getOpportunity).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
+    expect(html).toContain('DEAL-2026-0095');
+    expect(html).toContain('Proposal Sent');
+    expect(html).not.toContain('View opportunity');
+    expect(linked(html)).toContain(`/opportunities/${CUSTOMER}`);
+  });
+
+  it('keeps the plain opportunity link when the opportunity cannot be read', async () => {
+    const html = await render();
+    expect(html).toContain('View opportunity');
+    expect(linked(html)).toContain(`/opportunities/${CUSTOMER}`);
   });
 
   it.each([['no lead, or one the viewer may not read (absent)', {}]])(
