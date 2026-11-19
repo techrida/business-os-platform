@@ -7,10 +7,16 @@ const env = process.env;
 
 export const WORKFLOWS = ['start', 'sales', 'procurement', 'branches'];
 
+/**
+ * `1440x900` → { width: 1440, height: 900, text: '1440x900' }. Leading zeros are refused, so one
+ * viewport has exactly one spelling, one output folder and one run key.
+ */
 export function parseViewport(text) {
-  const m = /^(\d{3,4})x(\d{3,4})$/.exec(String(text ?? '').trim());
-  if (!m) throw new Error(`Viewport must look like 1440x900, got "${text}"`);
-  return { width: Number(m[1]), height: Number(m[2]) };
+  const m = /^([1-9]\d{2,3})x([1-9]\d{2,3})$/.exec(String(text ?? '').trim());
+  if (!m) throw new Error(`Viewport must look like 1440x900 (no leading zeros), got "${text}"`);
+  const width = Number(m[1]);
+  const height = Number(m[2]);
+  return { width, height, text: `${width}x${height}` };
 }
 
 /** `--name value` and `--name=value`; bare `--flag` becomes true. */
@@ -68,7 +74,7 @@ export function checkOrigin(name, value, { allowNonLocal = false } = {}) {
 /**
  * Run labels are case-insensitive and lower-cased here: the app matches names case-insensitively,
  * so SCR1 and scr1 would otherwise find each other's records. No dashes: `-` separates the label
- * from the viewport width in the run key (see runKeyFor).
+ * from the viewport in the run key (see runKeyFor).
  */
 export function normaliseLabel(raw) {
   const label = String(raw ?? '')
@@ -83,13 +89,21 @@ export function normaliseLabel(raw) {
 
 export const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const pad4 = (n) => String(n).padStart(4, '0');
+
 /**
- * `<label>-<width as 4 digits>`, e.g. `scr1-1440`, `scr1-0390`. The label holds no dash and the
- * width always has four digits, so one run key is never the start of another, and a name carrying
- * it can be found as plain text even where a table row runs the next cell straight on after it
- * (`…SCR-scr1-1440Dev Sales`).
+ * `<label>-<width>x<height>`, each as 4 digits: `scr1-1440x0900`, `scr1-0390x0844`. The label holds
+ * no dash and both sizes always have four digits, so one run key is never the start of another,
+ * two viewports never share one, and a name carrying it can be found as plain text even where a
+ * table row runs the next cell straight on after it (`…SCR-scr1-1440x0900Dev Sales`).
  */
-export const runKeyFor = (label, width) => `${label}-${String(width).padStart(4, '0')}`;
+export const runKeyFor = (label, width, height) => `${label}-${pad4(width)}x${pad4(height)}`;
+
+/**
+ * The run key of output folders from before 20 Nov 2026 (width only, `scr1-1440`). A resumed
+ * folder whose state.json stores no run key keeps using it, so its records are still found.
+ */
+export const legacyRunKeyFor = (label, width) => `${label}-${pad4(width)}`;
 
 /** This run's unique text (a name carrying the run key, a record number): literal and case-sensitive. */
 export const runMatch = (text) => new RegExp(escapeRe(text));
@@ -98,9 +112,16 @@ const bool = (v, dflt) =>
   v === undefined || v === '' ? dflt : !/^(0|false|no|off)$/i.test(String(v));
 
 export function loadConfig(args = {}) {
+  // Node would then accept any certificate for the Mailpit API and the TLS checks.
+  if (env.NODE_TLS_REJECT_UNAUTHORIZED === '0')
+    throw new Error(
+      'NODE_TLS_REJECT_UNAUTHORIZED=0 turns off certificate checks; unset it. The driver verifies ' +
+        "TLS against the stack's CA itself.",
+    );
   const label = normaliseLabel(args.label ?? env.RUN_LABEL);
-  const viewportText = String(args.viewport ?? env.VIEWPORT ?? '1440x900');
-  const viewport = parseViewport(viewportText);
+  const { text: viewportText, ...viewport } = parseViewport(
+    args.viewport ?? env.VIEWPORT ?? '1440x900',
+  );
   const personasFile = env.PERSONAS_FILE;
   if (!personasFile)
     throw new Error(
@@ -127,9 +148,10 @@ export function loadConfig(args = {}) {
     personasFile,
     caFile,
     label,
-    // Unique values (names, PAN, references) derive from label + viewport width, so the three
-    // viewport runs of one label do not collide with each other.
-    runKey: runKeyFor(label, viewport.width),
+    // Unique values (names, PAN, references) derive from label + viewport, so the viewport runs
+    // of one label do not collide with each other. run.mjs replaces it with the key an output
+    // folder already stores (or its legacy key) so a resumed folder keeps finding its records.
+    runKey: runKeyFor(label, viewport.width, viewport.height),
     viewport,
     viewportText,
     outDir,

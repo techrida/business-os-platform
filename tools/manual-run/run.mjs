@@ -7,13 +7,22 @@
 //
 // Environment: see README.md (APP_URL, PORTAL_URL, MAIL_URL, AUTH_URL, PERSONAS_FILE, CA_FILE,
 // VIEWPORT, VIDEO_DIR, RUN_LABEL, SLOWMO, PACE, HEADLESS, CAPTIONS, DEMO_FILES, NETNS).
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { WORKFLOWS, loadConfig, parseArgs } from './lib/config.mjs';
+import { onCleanup } from './lib/cleanup.mjs';
+import { WORKFLOWS, legacyRunKeyFor, loadConfig, parseArgs, parseViewport } from './lib/config.mjs';
 import { planRuns } from './lib/plan.mjs';
-import { runWorkflow, saveResults } from './lib/runner.mjs';
-import { hasEarlierRun, readJson, resetWorkflow } from './lib/store.mjs';
+import { redactText } from './lib/redact.mjs';
+import { runWorkflow, saveDriverError, saveResults } from './lib/runner.mjs';
+import {
+  acquireLock,
+  hasEarlierRun,
+  readFolderMeta,
+  readJson,
+  resetWorkflow,
+  writeJson,
+} from './lib/store.mjs';
 
 const ALL_VIEWPORTS = ['1440x900', '820x1180', '390x844'];
 
@@ -28,14 +37,26 @@ if (args.help || !args.workflow) {
 
 /** Everything wrong with the command line or environment stops here, before a browser starts. */
 function usageError(message) {
-  console.error(`manual-run: ${message}`);
+  console.error(`manual-run: ${redactText(message)}`);
   process.exit(2);
 }
 
 const workflowNames = args.workflow === 'all' ? WORKFLOWS : String(args.workflow).split(',');
 for (const w of workflowNames) if (!WORKFLOWS.includes(w)) usageError(`unknown workflow ${w}`);
+if (new Set(workflowNames).size !== workflowNames.length)
+  usageError(`--workflow ${args.workflow} names a workflow twice`);
 const vpArg = args.viewport ?? process.env.VIEWPORT ?? '1440x900';
-const viewports = vpArg === 'all' ? ALL_VIEWPORTS : String(vpArg).split(',');
+let viewports;
+try {
+  // One spelling per viewport (390x844, never 0390x844), so a viewport is listed at most once.
+  viewports = (vpArg === 'all' ? ALL_VIEWPORTS : String(vpArg).split(',')).map(
+    (v) => parseViewport(v).text,
+  );
+} catch (error) {
+  usageError(error.message);
+}
+if (new Set(viewports).size !== viewports.length)
+  usageError(`--viewport ${vpArg} names a viewport twice`);
 if (args['no-captions']) args.captions = 'false';
 
 let configs;
@@ -64,10 +85,38 @@ try {
   usageError(error.message);
 }
 
+if (args.fresh && (args.from !== undefined || args.only !== undefined))
+  usageError('--fresh starts a workflow over; it cannot be combined with --from or --only.');
+
+// One run per output folder: the lock is held until this process exits, and it is taken before
+// any check of the folder's earlier runs, so two invocations can never both pass those checks.
+const releases = [];
+onCleanup(() => releases.forEach((release) => release()));
+for (const cfg of configs) {
+  try {
+    mkdirSync(cfg.outDir, { recursive: true });
+    releases.push(acquireLock(cfg.outDir));
+  } catch (error) {
+    usageError(error.message);
+  }
+}
+
+// A folder's records belong to one stack and one run key. Resuming against another stack is
+// refused; a folder keeps the run key it was created with (folders from before the key carried
+// the height use the old width-only key), so its records are still found.
+for (const cfg of configs) {
+  const meta = readFolderMeta(cfg.outDir);
+  if (meta.appUrl && meta.appUrl !== cfg.appUrl)
+    usageError(
+      `${cfg.outDir} holds records of ${meta.appUrl}, not APP_URL ${cfg.appUrl}. ` +
+        'Use a new label for this stack.',
+    );
+  if (meta.runKey) cfg.runKey = meta.runKey;
+  else if (meta.hasRecords) cfg.runKey = legacyRunKeyFor(cfg.label, cfg.viewport.width);
+}
+
 // Never mix a new run into an earlier one silently: a full run of a workflow that already ran in
 // this label's folder needs --fresh (or a new label); a partial run continues the earlier one.
-if (args.fresh && (args.from || args.only))
-  usageError('--fresh starts a workflow over; it cannot be combined with --from or --only.');
 const conflicts = configs.flatMap((cfg) =>
   plan
     .filter((item) => item.mode === 'full' && hasEarlierRun(cfg.outDir, item.name))
@@ -164,16 +213,14 @@ for (const s of summary) {
   );
 }
 const prev = readJson(path.join(root, 'summary.json'), []);
-writeFileSync(
-  path.join(root, 'summary.json'),
-  JSON.stringify(
-    [...prev, { at: new Date().toISOString(), wallMs: Date.now() - t0, runs: summary }],
-    null,
-    2,
-  ),
-);
-writeFileSync(path.join(root, 'summary.md'), lines.join('\n') + '\n');
-console.log(lines.join('\n'));
+writeJson(path.join(root, 'summary.json'), [
+  ...prev,
+  { at: new Date().toISOString(), wallMs: Date.now() - t0, runs: summary },
+]);
+const text = redactText(lines.join('\n'));
+writeFileSync(path.join(root, 'summary.md'), text + '\n');
+console.log(text);
+releases.forEach((release) => release());
 process.exit(
   summary.every((s) => ['PASS', 'NOT-IMPLEMENTED', 'NOT-RUN'].includes(s.status)) ? 0 : 1,
 );
