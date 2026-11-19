@@ -7,6 +7,7 @@ import { PersonNameSchema, RoutePlanSchema } from './approvals.js';
 import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
+import { richTextSchema } from './rich-text.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const isoDate = z.iso.date();
@@ -237,11 +238,11 @@ const contentObject = z.strictObject({
   currency: CurrencySchema,
   issueDate: isoDate,
   validUntil: isoDate,
-  scope: text(10000).optional(),
-  assumptions: text(10000).optional(),
-  exclusions: text(10000).optional(),
-  termsAndConditions: text(10000).optional(),
-  deliveryTimeline: text(2000).optional(),
+  scope: richTextSchema(10000).optional(),
+  assumptions: richTextSchema(10000).optional(),
+  exclusions: richTextSchema(10000).optional(),
+  termsAndConditions: richTextSchema(10000).optional(),
+  deliveryTimeline: richTextSchema(2000).optional(),
   paymentTermId: z.guid().optional(),
   paymentSchedule: z.array(PaymentMilestoneSchema).max(12).optional(),
   discount: DiscountSchema.optional(),

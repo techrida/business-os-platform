@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema } from './money.js';
 import { NonNegativeDecimalString, PercentFourDecimals, QuantityString } from './quotations.js';
+import { richTextSchema } from './rich-text.js';
 
 const isoDate = z.iso.date();
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -252,7 +253,7 @@ const quotationFields = {
   currency: CurrencySchema,
   deliveryDays: z.number().int().min(0).max(3650).optional(),
   warranty: text(500).optional(),
-  terms: text(2000).optional(),
+  terms: richTextSchema(2000).optional(),
   lines: z.array(QuotationLineBodySchema).min(1).max(200),
 };
 
