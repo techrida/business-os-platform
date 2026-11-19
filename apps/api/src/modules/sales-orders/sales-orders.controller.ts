@@ -20,6 +20,7 @@ import { SalesOrdersService } from './sales-orders.service';
 export const ListSalesOrdersQuerySchema = z.strictObject({
   status: SalesOrderStatusSchema.optional(),
   customerId: z.guid().optional(),
+  quotationVersionId: z.guid().optional(),
 });
 
 @Controller('v1/sales-orders')
