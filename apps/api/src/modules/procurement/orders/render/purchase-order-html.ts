@@ -3,7 +3,15 @@
 // font file, and a CSP that forbids anything else, so a render never reaches the network. The function takes the
 // allow-list view and nothing else, so it cannot print an NPR value or a rate. Money goes through `@bos/locale`
 // `formatMoney`, so NPR has lakh grouping (`NPR 20,18,180.00`).
-import { formatCustomerDate, formatMoney, toBs, type NumberSystem } from '@bos/locale';
+import {
+  DEFAULT_CUSTOMER_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
+  formatCustomerDate,
+  formatMoney,
+  toBs,
+  type CustomerDateFormat,
+  type NumberSystems,
+} from '@bos/locale';
 
 import type { PurchaseOrderRenderView } from './purchase-order-view';
 
@@ -19,8 +27,8 @@ const escapeHtml = (text: string): string =>
 const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+05:45`);
 
 /** The Gregorian date with the Bikram Sambat date beside it (the given one, or converted when none is given). */
-function dateCell(isoDate: string, bs: string | null): string {
-  const gregorian = escapeHtml(formatCustomerDate(isoDate));
+function dateCell(isoDate: string, bs: string | null, dateFormat: CustomerDateFormat): string {
+  const gregorian = escapeHtml(formatCustomerDate(isoDate, dateFormat));
   if (bs !== null) return `${gregorian} <span class="bs">(${escapeHtml(bs)} BS)</span>`;
   try {
     const converted = toBs(kathmanduNoon(isoDate));
@@ -82,8 +90,10 @@ function partyBlock(
 }
 
 export interface RenderPurchaseOrderOptions {
-  /** The tenant's `format.number_system`. Left out, each currency keeps its own grouping (NPR/INR lakh, USD western). */
-  numberSystem?: NumberSystem;
+  /** The company's `format.number_systems`, by currency. Left out, NPR/INR keep lakh grouping and USD thousands. */
+  numberSystems?: NumberSystems;
+  /** The company's `format.date`. Left out, the default `19 Nov 2026`. */
+  dateFormat?: CustomerDateFormat;
 }
 
 /** Returns the full HTML document for one issued version of a purchase order. Every text is escaped. */
@@ -91,23 +101,25 @@ export function renderPurchaseOrderHtml(
   view: PurchaseOrderRenderView,
   opts: RenderPurchaseOrderOptions = {},
 ): string {
-  const numberSystem = opts.numberSystem;
+  const dateFormat = opts.dateFormat ?? DEFAULT_CUSTOMER_DATE_FORMAT;
   const fmt = (amount: string): string =>
     escapeHtml(
-      formatMoney(amount, view.currency, numberSystem === undefined ? undefined : { numberSystem }),
+      formatMoney(amount, view.currency, {
+        numberSystems: opts.numberSystems ?? DEFAULT_NUMBER_SYSTEMS,
+      }),
     );
   const text = (value: string): string => escapeHtml(value);
 
   const meta: [string, string][] = [
     ['PO no.', text(view.number)],
     ['Version', String(view.version)],
-    ['Issue date', dateCell(view.issueDate, view.issueDateBs)],
+    ['Issue date', dateCell(view.issueDate, view.issueDateBs, dateFormat)],
     ['Currency', text(view.currency)],
     ['Payment terms', `${view.paymentTermsDays} days`],
   ];
   if (view.advancePercent !== null) meta.push(['Advance', `${text(view.advancePercent)}%`]);
   if (view.requiredBy !== null)
-    meta.push(['Delivery required by', dateCell(view.requiredBy, null)]);
+    meta.push(['Delivery required by', dateCell(view.requiredBy, null, dateFormat)]);
   if (view.deliveryLocation !== null) meta.push(['Delivery location', text(view.deliveryLocation)]);
 
   const rows = view.lines

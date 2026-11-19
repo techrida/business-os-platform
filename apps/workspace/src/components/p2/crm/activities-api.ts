@@ -1,6 +1,11 @@
 import 'server-only';
 
-import { type ActivityDto, ActivityDtoSchema, type ActivityKind } from '@bos/contracts';
+import {
+  type ActivityDto,
+  ActivityDtoSchema,
+  type ActivityKind,
+  type ActivityStatus,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from '@/lib/api';
@@ -18,6 +23,8 @@ export async function listActivitiesPage(
   session: Session,
   opts: {
     kind?: readonly ActivityKind[];
+    /** `planned` (earliest due first) or `logged` (newest first); omitted lists every non-cancelled one. */
+    status?: ActivityStatus;
     q?: string | undefined;
     limit: number;
     offset?: number;
@@ -26,6 +33,7 @@ export async function listActivitiesPage(
   const params = new URLSearchParams();
   for (const kind of opts.kind ?? []) params.append('kind', kind);
   if (opts.q) params.set('q', opts.q);
+  if (opts.status) params.set('status', opts.status);
   params.set('limit', String(opts.limit));
   if (opts.offset) params.set('offset', String(opts.offset));
 

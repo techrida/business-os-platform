@@ -215,6 +215,24 @@ describe('toContent', () => {
     );
   });
 
+  it("sends the rich text editors' HTML as it is (trimmed), and nothing for an empty editor", () => {
+    const html = '<p>Net <strong>30</strong></p><ul><li>One</li></ul>';
+    const v = filled();
+    v.scope = `  ${html}\n`;
+    v.termsAndConditions = '<ol><li>First</li><li><em>Second</em></li></ol>';
+    v.deliveryTimeline = ''; // what the editor reports for a document without words
+    const create = toContent(v);
+    expect(create.scope).toBe(html);
+    expect(create.termsAndConditions).toBe('<ol><li>First</li><li><em>Second</em></li></ol>');
+    expect(create).not.toHaveProperty('deliveryTimeline');
+    const update = toContent(v, 'update');
+    expect(update.scope).toBe(html);
+    expect(update.deliveryTimeline).toBeNull();
+    expect(
+      UpdateQuotationDraftBodySchema.safeParse({ ...update, expectedVersion: 2 }).success,
+    ).toBe(true);
+  });
+
   it('in update mode still sends what was typed', () => {
     const v = filled();
     v.scope = '  Phase 1  ';
@@ -273,6 +291,22 @@ describe('editing a saved quotation', () => {
     // A line that had none sends none (the API reads a missing key as null).
     expect(c.lines[1]).not.toHaveProperty('unitCost');
     expect(c.lines[1]).not.toHaveProperty('catalogItemId');
+    expect(UpdateQuotationDraftBodySchema.safeParse({ ...c, expectedVersion: 2 }).success).toBe(
+      true,
+    );
+  });
+
+  it('are absent for a viewer without quotation.cost.read: no cost is held and none is sent (D29)', () => {
+    // The API leaves `unitCost` out of every line for such a viewer and keeps the stored costs itself.
+    const noCost = version();
+    const lines = noCost.lines.map(({ unitCost: _unitCost, ...line }) => line);
+    const v = valuesFromVersion({ ...noCost, lines });
+    expect(v.lines.map((l) => l.unitCost)).toEqual([null, null]);
+    const c = toContent(v, 'update');
+    expect(c.lines[0]).not.toHaveProperty('unitCost');
+    expect(c.lines[1]).not.toHaveProperty('unitCost');
+    // The catalog link still travels, and the body is still valid.
+    expect(c.lines[0]).toMatchObject({ catalogItemId: CAT });
     expect(UpdateQuotationDraftBodySchema.safeParse({ ...c, expectedVersion: 2 }).success).toBe(
       true,
     );

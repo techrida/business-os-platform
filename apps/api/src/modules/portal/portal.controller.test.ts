@@ -1,20 +1,23 @@
 // Unit tests of the portal read routes with the real PortalService and fake reads: every route carries
 // @Can('portal.quotation.read'), the id carries a UUID pipe, a staff caller (even a founder, who holds the portal
 // grants at `all`) gets 403 without a single read, and a customer gets the service's answer.
+// `GET /v1/portal/display` is open to any active principal at route level (customers and vendors hold different
+// portal permissions); the service refuses every caller but a customer or vendor with a party.
 import 'reflect-metadata';
 
 import { ForbiddenException, ParseUUIDPipe } from '@nestjs/common';
-import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CAN_KEY } from '../../platform/authz/decorators';
+import { IS_PUBLIC_KEY } from '../../platform/auth/public.decorator';
+import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../platform/authz/decorators';
 import type { Principal } from '../../platform/authz/principal';
 import { findUnmarkedRoutes } from '../../platform/authz/route-policy.check';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { PortalCaller } from './portal.caller';
-import { PortalController } from './portal.controller';
+import { PortalController, PortalDisplayController } from './portal.controller';
 import { PortalService } from './portal.service';
 import { PORTAL_QUOTATION_STORE } from './portal.store';
 
@@ -42,9 +45,13 @@ async function setup(caller: Principal) {
     loadDocumentHead: vi.fn().mockResolvedValue(undefined),
   };
   const documents = { listForOwner: vi.fn(), issueLinkForOwner: vi.fn() };
-  const settings = { get: vi.fn() };
+  const settings = {
+    get: vi.fn((_scope: unknown, key: string) =>
+      Promise.resolve(key === 'format.date' ? 'dd/MM/yyyy' : DISPLAY.numberSystems),
+    ),
+  };
   const moduleRef = await Test.createTestingModule({
-    controllers: [PortalController],
+    controllers: [PortalController, PortalDisplayController],
     providers: [
       PortalService,
       { provide: PortalCaller, useValue: { current: () => caller } },
@@ -53,8 +60,20 @@ async function setup(caller: Principal) {
       { provide: SettingsService, useValue: settings },
     ],
   }).compile();
-  return { moduleRef, store, documents, settings, controller: moduleRef.get(PortalController) };
+  return {
+    moduleRef,
+    store,
+    documents,
+    settings,
+    controller: moduleRef.get(PortalController),
+    displayController: moduleRef.get(PortalDisplayController),
+  };
 }
+
+const DISPLAY = {
+  numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+  dateFormat: 'dd/MM/yyyy',
+} as const;
 
 const CUSTOMER = principalOf({});
 const FOUNDER = principalOf({ orgKind: 'staff', partyId: null, roles: ['founder'] });
@@ -111,5 +130,42 @@ describe('PortalController', () => {
     await expect(controller.document(ID)).rejects.toMatchObject({ status: 404 });
     expect(store.loadDocumentHead).toHaveBeenCalledWith(CUSTOMER, ID);
     await moduleRef.close();
+  });
+
+  it('serves GET /v1/portal/display to any signed-in, active principal at route level, never publicly', async () => {
+    const { moduleRef } = await setup(CUSTOMER);
+    expect(Reflect.getMetadata(PATH_METADATA, PortalDisplayController)).toBe('v1/portal');
+    const handler = PortalDisplayController.prototype.display;
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe('display');
+    expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, handler)).toBe(true);
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBeUndefined();
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, PortalDisplayController)).toBeUndefined();
+    await moduleRef.close();
+  });
+
+  it('answers a customer 200 with { numberSystems, dateFormat }', async () => {
+    const { moduleRef, displayController } = await setup(CUSTOMER);
+    await expect(displayController.display()).resolves.toEqual(DISPLAY);
+    await moduleRef.close();
+  });
+
+  it('answers a vendor portal caller too', async () => {
+    const vendor = principalOf({
+      orgKind: 'vendor',
+      partyId: '0a000000-0000-4000-8000-00000000000b',
+      grants: new Map([['portal.vendor.read', 'customer_org']]),
+    });
+    const { moduleRef, displayController } = await setup(vendor);
+    await expect(displayController.display()).resolves.toEqual(DISPLAY);
+    await moduleRef.close();
+  });
+
+  it('answers 403 to a staff founder on the display, as on the quotation reads, without reading settings', async () => {
+    for (const caller of [FOUNDER, principalOf({ partyId: null })]) {
+      const { moduleRef, displayController, settings } = await setup(caller);
+      await expect(displayController.display()).rejects.toBeInstanceOf(ForbiddenException);
+      expect(settings.get).not.toHaveBeenCalled();
+      await moduleRef.close();
+    }
   });
 });

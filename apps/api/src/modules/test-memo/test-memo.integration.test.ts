@@ -116,6 +116,7 @@ let app: INestApplication;
 let baseUrl: string;
 let storageRoot: string;
 let service: TestMemoService;
+let settingsService: SettingsService;
 let documents: DocumentsService;
 let roleCache: RoleCache;
 let approvals: ApprovalsService;
@@ -311,7 +312,8 @@ beforeAll(async () => {
     audit,
   );
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => now);
-  const money = new MoneyService(db, new SettingsService(db));
+  settingsService = new SettingsService(db);
+  const money = new MoneyService(db, settingsService);
   // The real cache over the real role_permissions table (empty here, so the defaults), as the route guard reads it.
   roleCache = new RoleCache(db);
   service = new TestMemoService(
@@ -324,6 +326,7 @@ beforeAll(async () => {
     roleCache,
     caller,
     () => now,
+    settingsService,
     notify as never,
   );
   // onModuleInit (owner policy for attachments and the approval subject) runs when the Nest app below starts.
@@ -533,6 +536,45 @@ describe('POST /v1/test-memos', () => {
       (await request(baseUrl).post('/v1/test-memos').send(draftBody())).body,
     );
     expect(Number(second.number.slice(-5))).toBe(Number(memo.number.slice(-5)) + 1);
+  });
+
+  it('prints numbering.memo_prefix on new numbers without resetting or forking the series', async () => {
+    const fy = fiscalYearOf(now);
+    const setPrefix = (prefix: string) =>
+      withTx(db, scope, systemActor('test'), (tx) =>
+        settingsService.set(tx, 'numbering.memo_prefix', prefix),
+      );
+    const create = async () =>
+      MemoDtoSchema.parse((await request(baseUrl).post('/v1/test-memos').send(draftBody())).body);
+    const seqOf = (number: string) => Number(number.slice(-5));
+    // No setting written yet: the default MEMO prints exactly what the series printed before the setting existed.
+    const before = await create();
+    expect(before.number).toMatch(new RegExp(`^MEMO-${fy.replace('/', '\\/')}-\\d{5}$`));
+    try {
+      await setPrefix('NOTE');
+      const renamed = await create();
+      expect(renamed.number).toBe(
+        `NOTE-${fy}-${String(seqOf(before.number) + 1).padStart(5, '0')}`,
+      );
+      await setPrefix('MEMO');
+      const back = await create();
+      expect(back.number).toBe(`MEMO-${fy}-${String(seqOf(before.number) + 2).padStart(5, '0')}`);
+      // Numbers already issued keep the prefix they were stored with.
+      expect((await statusOf(before.id)).number).toBe(before.number);
+      expect((await statusOf(renamed.id)).number).toBe(renamed.number);
+      // One counter row: the prefix is presentation only, the series key stays MEMO.
+      // Read as the app role inside the entity's transaction, the way NumberingService itself reads the row.
+      const { rows } = await withTx(db, scope, systemActor('test'), (tx) =>
+        tx.execute<{ key: string; n: string }>(sql`
+          SELECT key, count(*)::text AS n FROM app.number_series
+           WHERE tenant_id = ${scope.tenantId}::uuid AND organization_id = ${scope.organizationId}::uuid
+             AND key IN ('MEMO', 'NOTE')
+           GROUP BY key`),
+      );
+      expect(rows).toEqual([{ key: 'MEMO', n: '1' }]);
+    } finally {
+      await setPrefix('MEMO');
+    }
   });
 
   it('converts a foreign amount at the latest rate on or before the day', async () => {

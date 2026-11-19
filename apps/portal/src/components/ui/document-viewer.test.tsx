@@ -149,7 +149,7 @@ it('closes on a backdrop click and on the native close event (Esc)', async () =>
   expect(dialog().children).toHaveLength(0);
 });
 
-it.each([404, 409, 425])(
+it.each([409, 425])(
   'shows Preparing on %i and Retry makes one request per click, never polling',
   async (status) => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -158,6 +158,9 @@ it.each([404, 409, 425])(
       await mount(<ViewDocument {...PROPS} />);
       await open();
       expect(dialog().textContent).toContain('Preparing…');
+      expect(dialog().textContent).toContain(
+        'Your document is being prepared. Please check again shortly.',
+      );
       expect(fetchMock).toHaveBeenCalledTimes(1);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
@@ -173,6 +176,21 @@ it.each([404, 409, 425])(
     }
   },
 );
+
+it('shows a plain "not available" message on a 404, with no Retry and no technical reason', async () => {
+  fetchMock.mockImplementationOnce(() =>
+    Promise.resolve(new Response('Quotation not found.', { status: 404 })),
+  );
+  await mount(<ViewDocument {...PROPS} />);
+  await open();
+  const text = dialog().textContent ?? '';
+  expect(text).toContain('This document is not available.');
+  expect(text).not.toContain('Preparing');
+  expect(text).not.toMatch(/retry|render|scan|quarantine|virus/i);
+  expect(byText('Retry')).toBeUndefined();
+  await settle();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
 
 it('shows an error with Retry on a 500 and on a network failure', async () => {
   fetchMock.mockImplementationOnce(() => Promise.resolve(new Response('', { status: 500 })));

@@ -118,26 +118,23 @@ describe('signedFileResponse', () => {
   });
 
   it.each([
-    ['download', 409],
-    ['download', 404],
-    ['preview', 409],
-    ['preview', 404],
-  ] as const)('says the PDF is not available to %s on a %i', async (mode, status) => {
+    ['download', 409, 'This PDF is still being prepared.'],
+    ['preview', 409, 'This PDF is still being prepared.'],
+    ['download', 424, 'The PDF could not be prepared.'],
+    ['preview', 424, 'The PDF could not be prepared.'],
+    ['download', 404, 'This PDF is not available.'],
+    ['preview', 404, 'This PDF is not available.'],
+    ['preview', 410, 'This PDF is not available.'],
+  ] as const)('says the right plain words to %s on a %i', async (mode, status, message) => {
     issueLink.mockRejectedValue(new ApiError(status, 'nope'));
     const res = await signedFileResponse({ mode, issueLink });
     expect(res.status).toBe(status);
     expect(res.headers.get('content-type')).toContain('text/plain');
-    expect(await res.text()).toBe(
-      `This PDF is not available to ${mode}. It may still be preparing or scanning, or it did not pass the scan.`,
-    );
+    const text = await res.text();
+    expect(text).toBe(message);
+    expect(text).not.toMatch(/scan/i);
     expect(issueLink).toHaveBeenCalledTimes(1);
     expect(mocks.openSignedFile).not.toHaveBeenCalled();
-  });
-
-  it('lets a caller reword the "not available" verb', async () => {
-    issueLink.mockRejectedValue(new ApiError(404, 'gone'));
-    const res = await signedFileResponse({ mode: 'preview', notAvailable: 'view', issueLink });
-    expect(await res.text()).toContain('not available to view.');
   });
 
   it('keeps other 4xx statuses and turns the rest into 502 without the token', async () => {

@@ -17,8 +17,9 @@ import {
 } from '@/lib/api-rfqs';
 import { requireStaffSession } from '@/lib/bff';
 
-import { rfqFailure } from './_lib/failure';
+import { isDeadlineInPast, rfqFailure } from './_lib/failure';
 import {
+  DEADLINE_IN_PAST,
   parseQuoteValues,
   parseRecommendValues,
   parseRfqValues,
@@ -74,6 +75,10 @@ export async function createRfqAction(_prev: RfqFormState, form: FormData): Prom
     id = (await createRfq(session, parsed.data, key)).id;
   } catch (err) {
     const f = rfqFailure(err, 'create');
+    // The deadline passed between the check above and the API's: say so next to the field.
+    if (isDeadlineInPast(err)) {
+      return { key: keyAfter(f, key), errors: { deadline: DEADLINE_IN_PAST } };
+    }
     return {
       key: keyAfter(f, key),
       errors: {},

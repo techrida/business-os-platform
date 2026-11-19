@@ -1,9 +1,10 @@
 import { LEAD_SOURCES, LEAD_STAGES, type LeadDto, pageWindow } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
+import { listLeadOwners } from '@/components/p2/crm/crm-api';
 import {
   getLeadSummary,
   type LeadSummary,
@@ -27,8 +28,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { userNames } from '@/lib/business-labels';
-import { getNumberSystem } from '@/lib/display-settings';
-import { when } from '@/lib/kernel-format';
+import { getNumberSystems } from '@/lib/display-settings';
 import {
   activeFilterLabels,
   clearFiltersHref,
@@ -38,6 +38,7 @@ import {
 } from '@/lib/list-params';
 
 import { moveLeadStageAction } from './actions';
+import { NextFollowUpCell, OwnerCell } from './lead-cells';
 import { LeadFilters } from './lead-filters';
 import styles from './leads.module.css';
 import { QualifyLead } from './qualify-lead';
@@ -53,7 +54,7 @@ const ROWS = { allowed: PAGE_SIZES, default: 5 };
 const stageOptions = LEAD_STAGES.map((value) => ({ value, label: stageLabel('lead', value) }));
 const sourceOptions = LEAD_SOURCES.map((value) => ({ value, label: sentence(value) }));
 
-function columnsFor(leads: LeadDto[], numberSystem: NumberSystem): BoardColumnData[] {
+function columnsFor(leads: LeadDto[], numberSystems: NumberSystems): BoardColumnData[] {
   const groups = groupByStage('lead', leads);
   return boardColumns('lead').map((column) => ({
     stage: column.stage,
@@ -65,7 +66,7 @@ function columnsFor(leads: LeadDto[], numberSystem: NumberSystem): BoardColumnDa
       title: lead.title,
       number: lead.number,
       subtitle: `${lead.companyName} · ${lead.contactName}`,
-      value: moneyOrNull(lead.expectedValue, lead.currency, numberSystem),
+      value: moneyOrNull(lead.expectedValue, lead.currency, numberSystems),
       version: lead.version,
       moves: userMoves('lead', lead.stage),
     })),
@@ -81,7 +82,7 @@ const summaryStages = [
 
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const session = await requireStaffSession(PATH);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const names = await userNames(session);
   const ownerOptions = [...names]
@@ -150,6 +151,17 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const pageCount = pageInfo.pageCount;
   const currentPage = pageInfo.page;
   const pageHref = (page: number) => hrefWith(PATH, sp, { page: page > 1 ? page : null });
+
+  // Owner names: the people the caller may assign to, plus the users directory for administrators.
+  // Either failing only blanks names; the list still renders.
+  const ownerNames = new Map(names);
+  try {
+    for (const o of await listLeadOwners(session))
+      ownerNames.set(o.userId, o.displayName || o.email);
+  } catch {
+    // Names stay as the directory gave them.
+  }
+  const now = new Date();
   const pageLinks = Array.from({ length: pageCount }, (_, index) => index + 1)
     .filter((page) => Math.abs(page - currentPage) <= 2)
     .map((page) => ({ page, href: pageHref(page) }));
@@ -229,19 +241,20 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           )
         ) : board ? (
           <Board
-            columns={columnsFor(matches, numberSystem)}
+            columns={columnsFor(matches, numberSystems)}
             action={moveLeadStageAction}
             noun="lead"
           />
         ) : (
           <div className={styles.listCard}>
-            <Table caption="Leads" minWidth={900} className={styles.table ?? ''}>
+            <Table caption="Leads" minWidth={1080} className={styles.table ?? ''}>
               <thead>
                 <tr>
                   <Th>Lead name</Th>
                   <Th>Organization</Th>
                   <Th>Contact person</Th>
                   <Th>Source</Th>
+                  <Th>Owner</Th>
                   <Th className={styles.followUpColumn}>Status</Th>
                   <Th className={styles.followUpColumn}>Next follow-up</Th>
                   <Th className={styles.followUpColumn}>Quick action</Th>
@@ -250,7 +263,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               <tbody>
                 {matches.map((lead) => {
                   const leadHref = `/leads/${lead.id}`;
-                  const value = moneyOrNull(lead.expectedValue, lead.currency, numberSystem);
+                  const value = moneyOrNull(lead.expectedValue, lead.currency, numberSystems);
                   const canQualify = userMoves('lead', lead.stage).some(
                     (move) => move.stage === 'qualified',
                   );
@@ -277,17 +290,17 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                       <Td>
                         <Badge tone="neutral">{sentence(lead.source)}</Badge>
                       </Td>
+                      <Td>
+                        <OwnerCell
+                          owned={lead.ownerUserId !== null}
+                          name={lead.ownerUserId ? ownerNames.get(lead.ownerUserId) : undefined}
+                        />
+                      </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         <StageBadge kind="lead" stage={lead.stage} />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
-                        {lead.nextFollowUpAt ? (
-                          <time dateTime={lead.nextFollowUpAt}>
-                            {when(lead.nextFollowUpAt, 'date')}
-                          </time>
-                        ) : (
-                          <span className={styles.quiet}>None planned</span>
-                        )}
+                        <NextFollowUpCell at={lead.nextFollowUpAt} now={now} />
                       </Td>
                       <Td nowrap className={styles.followUpColumn}>
                         {canQualify ? (

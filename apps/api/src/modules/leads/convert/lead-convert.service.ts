@@ -236,6 +236,7 @@ export class LeadConvertService {
       subject: `Stage changed from ${lead.stage} to ${updated.stage}`,
       body: `Converted to opportunity ${number}`,
       leadId: lead.id,
+      createdByUserId: principal.userId,
     });
     return { opportunityId, customerId };
   }

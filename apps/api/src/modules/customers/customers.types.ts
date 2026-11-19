@@ -9,6 +9,7 @@ import {
   searchParam,
   type CustomerDto,
   type PartyAccountDto,
+  type PersonName,
 } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 import { z } from 'zod';
@@ -32,8 +33,14 @@ export interface CustomerList {
   total: number;
 }
 
-/** GET /v1/customers/:id: the customer plus its terms with the legal entities the caller can act for (staff only). */
-export type CustomerDetailDto = CustomerDto & { accounts?: PartyAccountDto[] };
+/**
+ * GET /v1/customers/:id: the customer plus, for staff only, its terms with the legal entities the caller can act
+ * for and the name of its account owner (`people`), so the page needs no admin directory to label the owner.
+ */
+export type CustomerDetailDto = CustomerDto & {
+  accounts?: PartyAccountDto[];
+  people?: PersonName[];
+};
 
 /** Printable ASCII, 1 to 200 characters (a UUID from the client is the expected value). Same rule as approvals. */
 const IdempotencyKeySchema = z.string().regex(/^[\x21-\x7e]{1,200}$/);

@@ -48,6 +48,7 @@ import { updateVersioned, withIdempotency } from '../../platform/db/idempotency'
 import { withTx, type TxScope } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import { personNames } from '../../platform/users/person-names';
 import { CustomersCaller } from './customers.caller';
 import { escapeLike, normalizeEmail, normalizeName, normalizePan } from './customers.normalize';
 import {
@@ -252,7 +253,12 @@ export class CustomersService {
     // The terms are entity-owned: show the ones of the entities this user may act for. A portal caller has
     // no entities, so the field is left out (not an empty list, which would claim "no terms set").
     if (principal.orgKind !== 'staff') return dto;
-    return { ...dto, accounts: await this.accountsFor(scope.tenantId, principal.userId, id) };
+    // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
+    const [accounts, people] = await Promise.all([
+      this.accountsFor(scope.tenantId, principal.userId, id),
+      personNames(this.db, row.tenantId, [row.ownerUserId]),
+    ]);
+    return { ...dto, accounts, people };
   }
 
   // ------------------------------------------------------------------------------------------------- create

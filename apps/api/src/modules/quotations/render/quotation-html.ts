@@ -5,13 +5,16 @@
 // takes the whitelist view and the frozen style snapshot and nothing else, so it cannot print a cost or a rate.
 import {
   DEFAULT_DOCUMENT_STYLE,
+  DEFAULT_NUMBER_SYSTEMS,
   EMPTY_COMPANY_PROFILE,
   LogoDataUrlSchema,
   deriveBrandPalette,
+  snapshotNumberSystems,
   type CustomerQuotationView,
   type DocumentLayout,
   type DocumentStyleSnapshot,
 } from '@bos/contracts';
+import { DEFAULT_CUSTOMER_DATE_FORMAT } from '@bos/locale';
 
 import { banded } from './layouts/banded';
 import { duoCards } from './layouts/duo-cards';
@@ -56,7 +59,8 @@ export function renderQuotationHtml(
     view,
     palette: deriveBrandPalette(style.primaryColour),
     profile,
-    numberSystem: opts.snapshot?.numberSystem ?? 'south_asian',
+    numberSystems: opts.snapshot ? snapshotNumberSystems(opts.snapshot) : DEFAULT_NUMBER_SYSTEMS,
+    dateFormat: opts.snapshot?.dateFormat ?? DEFAULT_CUSTOMER_DATE_FORMAT,
     showBs: opts.showBsDate !== false,
     logo: logo?.success ? logo.data : null,
   };

@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   contrastRatio,
+  DEFAULT_DOCUMENT_STYLE,
   deriveBrandPalette,
   DOCUMENT_LAYOUTS,
+  DocumentStyleSnapshotSchema,
+  EMPTY_COMPANY_PROFILE,
   HexColourSchema,
   PRESET_BRAND_COLOURS,
+  snapshotNumberSystems,
   TermPresetListSchema,
 } from './document-style.js';
 import { DOCUMENT_SETTING_DEFAULTS, SETTINGS } from './settings.js';
@@ -82,5 +86,36 @@ describe('document settings', () => {
         signatoryTitle: null,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('snapshot readers (D30)', () => {
+  const base = {
+    style: DEFAULT_DOCUMENT_STYLE,
+    profile: EMPTY_COMPANY_PROFILE,
+    capturedAt: '2026-11-18T10:00:00.000Z',
+  };
+
+  it('still parses a snapshot taken with one number system and applies it to every currency', () => {
+    const parsed = DocumentStyleSnapshotSchema.parse({ ...base, numberSystem: 'international' });
+    expect(snapshotNumberSystems(parsed)).toEqual({
+      NPR: 'international',
+      INR: 'international',
+      USD: 'international',
+    });
+  });
+
+  it('reads the per-currency map of a new snapshot and its date format', () => {
+    const parsed = DocumentStyleSnapshotSchema.parse({
+      ...base,
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
+      dateFormat: 'dd/MM/yyyy',
+    });
+    expect(snapshotNumberSystems(parsed).NPR).toBe('international');
+    expect(parsed.dateFormat).toBe('dd/MM/yyyy');
+  });
+
+  it('refuses a snapshot with neither shape', () => {
+    expect(DocumentStyleSnapshotSchema.safeParse(base).success).toBe(false);
   });
 });

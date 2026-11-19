@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { TermPreset } from '@bos/contracts';
 
+import { hasPermission } from '@/components/p2/customers/permissions';
 import type { Session } from '@/lib/session';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { listTermPresets } from '@/lib/api-term-presets';
@@ -15,8 +16,10 @@ export interface Lookups {
   taxCodes: TaxCode[] | null;
   paymentTerms: PaymentTerm[] | null;
   contacts: ContactOption[] | null;
-  /** Saved wording for the Terms fields. null when the call failed or the caller may not read it: the builder then shows no dropdown and no error. */
+  /** Saved term sets for the Terms fields. null when the call failed or the caller may not read it: the builder then shows no dropdown and no error. */
   termPresets: TermPreset[] | null;
+  /** True for a session that may edit saved terms (`admin.settings.write`, the Founder): the Terms dropdowns then end with "Add more". Read from the session's role defaults, as the settings pages do; the API still enforces every edit. */
+  canAddTerms: boolean;
 }
 
 /** The lists the form's selects need. A failed list degrades that select; it never fails the page. */
@@ -38,5 +41,6 @@ export async function loadLookups(session: Session, customerId: string): Promise
           }))
         : null,
     termPresets: presets.status === 'fulfilled' ? presets.value : null,
+    canAddTerms: hasPermission(session.roles, 'admin.settings.write'),
   };
 }

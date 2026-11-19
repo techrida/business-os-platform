@@ -1,7 +1,7 @@
 import { type InboxItemDto, pageWindow, ROWS_OPTIONS } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { ListFooter } from '@/components/p2/crm/list-footer';
 import { Alert } from '@/components/ui/alert';
@@ -11,7 +11,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf, getInboxPage, type InboxPage } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
 
@@ -26,7 +26,7 @@ export const dynamic = 'force-dynamic';
 
 const PATH = '/inbox';
 
-function InboxRow({ item, numberSystem }: { item: InboxItemDto; numberSystem: NumberSystem }) {
+function InboxRow({ item, numberSystems }: { item: InboxItemDto; numberSystems: NumberSystems }) {
   return (
     <tr>
       <Td>
@@ -43,7 +43,7 @@ function InboxRow({ item, numberSystem }: { item: InboxItemDto; numberSystem: Nu
       <Td className={styles.reason}>{item.reason}</Td>
       <Td align="end" nowrap>
         {item.amountNpr !== null ? (
-          <span className={styles.amount}>{money(item.amountNpr, 'NPR', numberSystem)}</span>
+          <span className={styles.amount}>{money(item.amountNpr, 'NPR', numberSystems)}</span>
         ) : (
           <span className={styles.quiet}>No amount</span>
         )}
@@ -57,7 +57,7 @@ function InboxRow({ item, numberSystem }: { item: InboxItemDto; numberSystem: Nu
 
 export default async function InboxPage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const session = await requireStaffSession(PATH);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const sp = await searchParams;
   const state = readList(sp, INBOX_LIST);
   const { q } = state;
@@ -144,7 +144,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                 </thead>
                 <tbody>
                   {items.map((item) => (
-                    <InboxRow numberSystem={numberSystem} key={item.requestId} item={item} />
+                    <InboxRow numberSystems={numberSystems} key={item.requestId} item={item} />
                   ))}
                 </tbody>
               </Table>

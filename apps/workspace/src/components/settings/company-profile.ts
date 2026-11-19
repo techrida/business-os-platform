@@ -8,6 +8,7 @@
 import {
   AddressSchema,
   CompanyProfileSchema,
+  EMPTY_COMPANY_PROFILE,
   LogoDataUrlSchema,
   PanVatNoSchema,
   type Address,
@@ -405,6 +406,90 @@ export function planCard(
     }
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Versions: what the page loaded, sent back so a save never overwrites a newer one
+// ---------------------------------------------------------------------------------------------
+
+/** The three settings this screen reads and writes. */
+export type CompanyKey = 'entity.profile' | 'entity.address' | 'entity.pan_vat_no';
+
+/** The version of each setting as the page loaded it; null when the page loaded the default. */
+export type CompanyVersions = Record<CompanyKey, number | null>;
+
+export const NO_VERSIONS: CompanyVersions = {
+  'entity.profile': null,
+  'entity.address': null,
+  'entity.pan_vat_no': null,
+};
+
+/** The form field that carries the loaded version of one setting. An empty value means "the default". */
+export const versionFieldName = (key: CompanyKey): string => `expectedVersion:${key}`;
+
+export const versionFieldValue = (version: number | null): string =>
+  version === null ? '' : String(version);
+
+/**
+ * Reads the version a form carried for `key`: a number, null (the empty string: the page loaded the
+ * default), or undefined when the field is missing or is not a whole number. The caller refuses an
+ * undefined: a save with no loaded version cannot be checked, so it must not go through.
+ */
+export function readExpectedVersion(form: FormLike, key: CompanyKey): number | null | undefined {
+  const value = form.get(versionFieldName(key));
+  if (typeof value !== 'string') return undefined;
+  if (value === '') return null;
+  return /^\d{1,15}$/.test(value) ? Number(value) : undefined;
+}
+
+/** The FormData the logo card submits: the card, the picture (empty to remove) and the loaded profile version. */
+export function logoFormData(value: string | null, profileVersion: number | null): FormData {
+  const data = new FormData();
+  data.set('card', 'logo');
+  data.set('logo', value ?? '');
+  data.set(versionFieldName('entity.profile'), versionFieldValue(profileVersion));
+  return data;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Undo (D32): put one card back to empty
+// ---------------------------------------------------------------------------------------------
+
+/** The cards that show an undo icon: the address (a whole setting) and two parts of the profile. */
+export const RESETTABLE_CARDS = ['address', 'contact', 'signatory'] as const;
+export type ResettableCard = (typeof RESETTABLE_CARDS)[number];
+
+export const isResettableCard = (value: string): value is ResettableCard =>
+  (RESETTABLE_CARDS as readonly string[]).includes(value);
+
+/** The setting a card's undo writes. */
+export const RESET_KEY = {
+  address: 'entity.address',
+  contact: 'entity.profile',
+  signatory: 'entity.profile',
+} as const satisfies Record<ResettableCard, CompanyKey>;
+
+/** This card's profile fields at their empty values: logo, display name and the rest are not named, so they stay. */
+export function emptyProfilePatch(card: 'contact' | 'signatory'): ProfilePatch {
+  const { phones, email, website, signatoryName, signatoryTitle } = EMPTY_COMPANY_PROFILE;
+  return card === 'contact' ? { phones, email, website } : { signatoryName, signatoryTitle };
+}
+
+/** True when what is saved for this card is already empty: no undo icon is drawn then. */
+export function isCardEmpty(card: ResettableCard, settings: CompanySettings): boolean {
+  switch (card) {
+    case 'address':
+      return settings.address === null;
+    case 'contact':
+    case 'signatory':
+      return sameProfileFields(settings.profile, emptyProfilePatch(card));
+  }
+}
+
+const sameProfileFields = (profile: CompanyProfile, patch: ProfilePatch): boolean =>
+  Object.entries(patch).every(
+    ([field, value]) =>
+      JSON.stringify(profile[field as keyof CompanyProfile]) === JSON.stringify(value),
+  );
 
 /** The stored profile with only this card's fields replaced. The other cards' values (and panVatNo) stay. */
 export function mergeProfile(current: CompanyProfile, patch: ProfilePatch): CompanyProfile {

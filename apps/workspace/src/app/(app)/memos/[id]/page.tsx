@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { Alert } from '@/components/ui/alert';
+import { hasPermission } from '@/components/p2/customers/permissions';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Disclosure } from '@/components/ui/disclosure';
@@ -17,7 +18,7 @@ import {
   type MemoDetail,
 } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { userNames } from '@/lib/business-labels';
 import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
@@ -87,7 +88,7 @@ export default async function MemoPage({
   const { id } = await params;
   const path = `/memos/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
   const query = await searchParams;
   const people = await userNames(session);
   const saved = query.saved === '1';
@@ -126,7 +127,12 @@ export default async function MemoPage({
 
   // The API builds this route with the same people and the same separation-of-duties list as submit, so
   // it shows what submit will create: for an internal memo, the people the author selected, in order.
-  const entityIds = [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])];
+  // `GET /v1/audit` needs `audit.read`. Without it the page asks nothing (as `userNames` does for the
+  // directory), so the API logs no 403 per view; a 403 from a grant revoked later still reads as hidden.
+  const mayReadAudit = hasPermission(session.roles, 'audit.read');
+  const entityIds = mayReadAudit
+    ? [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])]
+    : [];
   const [previewResult, ...auditResults] = await Promise.allSettled([
     editable ? getMemoRoute(session, memo.id) : Promise.resolve(null as RoutePlan | null),
     ...entityIds.map((entityId) => listAudit(session, { entityId, limit: 50 })),
@@ -139,9 +145,9 @@ export default async function MemoPage({
   const auditOk = auditResults.filter(
     (r): r is PromiseFulfilledResult<AuditEventDto[]> => r.status === 'fulfilled',
   );
-  const auditDenied = auditResults.some(
-    (r) => r.status === 'rejected' && failureOf(r.reason).status === 403,
-  );
+  const auditDenied =
+    !mayReadAudit ||
+    auditResults.some((r) => r.status === 'rejected' && failureOf(r.reason).status === 403);
   const auditFailed = auditResults.some(
     (r) => r.status === 'rejected' && failureOf(r.reason).status !== 403,
   );
@@ -174,11 +180,11 @@ export default async function MemoPage({
             value: (
               <>
                 <span className={styles.amount}>
-                  {money(memo.amount, memo.currency, numberSystem)}
+                  {money(memo.amount, memo.currency, numberSystems)}
                 </span>
                 {memo.currency !== 'NPR' ? (
                   <span className={styles.caption}>
-                    {money(memo.amountNpr, 'NPR', numberSystem)} at {memo.fxRate} ({memo.fxSource},{' '}
+                    {money(memo.amountNpr, 'NPR', numberSystems)} at {memo.fxRate} ({memo.fxSource},{' '}
                     {when(memo.fxDate, 'date')})
                   </span>
                 ) : null}

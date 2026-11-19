@@ -166,6 +166,23 @@
   --avatar-border: var(--border-default);
   --avatar-icon: var(--icon-default);
   --avatar-text: var(--text-secondary);
+  /* Activity type (hand-added for D40, not from Figma). Each kind is a hue at the primary blue's
+     saturation and lightness (brand-600: hsl(221 83% 53%)) where that passes; email and note are
+     darker because the same HSL lightness is not the same brightness (green at 53% was 1.6:1 on
+     white). Every fill is 5.2-6.8:1 against the white page and under its white text (WCAG 1.4.11,
+     1.4.3). The ring is the selected button's outline, darker than the fill (8.8-14.8:1). */
+  --activity-call-bg: var(--brand-600);
+  --activity-call-text: var(--neutral-0);
+  --activity-call-ring: hsl(221deg 83% 37%);
+  --activity-meeting-bg: hsl(262deg 83% 53%);
+  --activity-meeting-text: var(--neutral-0);
+  --activity-meeting-ring: hsl(262deg 83% 37%);
+  --activity-email-bg: hsl(152deg 83% 26%);
+  --activity-email-text: var(--neutral-0);
+  --activity-email-ring: hsl(152deg 83% 10%);
+  --activity-note-bg: hsl(330deg 83% 44%);
+  --activity-note-text: var(--neutral-0);
+  --activity-note-ring: hsl(330deg 83% 28%);
   /* Badge */
   --accent-vibrant-blue: #0a99ff;
   --shadow-section: 0 12px 32px #2c244018;
@@ -500,6 +517,22 @@
   --text-link: var(--neutral-400);
   --text-primary: var(--neutral-50);
   --text-secondary: var(--neutral-400);
+
+  /* Activity type: the same hues at the dark primary's saturation and lightness
+     (brand-400: hsl(213 94% 68%)); every fill is 5.2:1 or more against the page and under its ink
+     text. On a dark page the selected ring is a lighter tint of the hue, not a darker one. */
+  --activity-call-bg: var(--brand-400);
+  --activity-call-text: var(--neutral-950);
+  --activity-call-ring: hsl(213deg 94% 84%);
+  --activity-meeting-bg: hsl(262deg 94% 68%);
+  --activity-meeting-text: var(--neutral-950);
+  --activity-meeting-ring: hsl(262deg 94% 84%);
+  --activity-email-bg: hsl(152deg 94% 68%);
+  --activity-email-text: var(--neutral-950);
+  --activity-email-ring: hsl(152deg 94% 84%);
+  --activity-note-bg: hsl(330deg 94% 68%);
+  --activity-note-text: var(--neutral-950);
+  --activity-note-ring: hsl(330deg 94% 84%);
 
   /* Component (only rows whose Figma alias differs between Light and Dark) */
   --button-danger-bg-active: var(--error-200);

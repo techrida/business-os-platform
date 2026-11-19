@@ -1,0 +1,103 @@
+/* Follow-ups card (D39): planned calls, meetings and emails on a lead, earliest first. */
+
+.list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: var(--border-width-thin) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  transition: opacity 160ms ease;
+}
+
+/* Overdue: the warning surface and the "Overdue" badge carry it, never colour alone. */
+.item[data-overdue='true'] {
+  border-color: var(--status-warning);
+  background: var(--status-warning-subtle);
+}
+
+.item[aria-busy='true'] {
+  opacity: 0.6;
+}
+
+.main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.subject {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.kind {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-regular);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.item[data-overdue='true'] .meta time {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Touch screens and narrow widths get 44px targets; the row wraps instead of shrinking them. */
+@media (pointer: coarse), (max-width: 40rem) {
+  .action.action {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .trigger.trigger {
+    min-height: 44px;
+  }
+}
+
+.dialogForm {
+  display: grid;
+  gap: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item {
+    transition: none;
+  }
+}

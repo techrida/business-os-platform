@@ -1,4 +1,4 @@
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { money } from '@/lib/kernel-format';
 
@@ -14,7 +14,7 @@ type Currency = 'NPR' | 'INR' | 'USD';
 export function moneyOrNull(
   value: string | null,
   currency: Currency,
-  numberSystem?: NumberSystem,
+  numberSystems?: NumberSystems,
 ): string | null {
-  return value === null ? null : money(value, currency, numberSystem);
+  return value === null ? null : money(value, currency, numberSystems);
 }

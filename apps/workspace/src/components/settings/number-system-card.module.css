@@ -1,18 +1,51 @@
-/* Two radio cards, each with a worked example. Tokens only; hover and focus are colour changes. */
+/* One row per currency: its name and undo icon, two radio tiles with worked examples, and the amount
+   in words. Rows are told apart by a hairline, not by nested cards. Tokens only; hover and focus are
+   colour changes. */
 
-.group {
+.rows {
   display: grid;
+  min-width: 0;
+}
+
+.row {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding-block: 20px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.row:last-child {
+  padding-bottom: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
+  min-height: 32px;
+}
+
+.currency {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
 }
 
 .options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
 }
 
 .option {
@@ -20,7 +53,7 @@
   align-items: flex-start;
   gap: 12px;
   min-width: 0;
-  padding: 16px;
+  padding: 12px 16px;
   border: var(--border-width-thin) solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--surface-default);
@@ -54,15 +87,24 @@
 
 .body {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
 .name {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
   color: var(--text-primary);
   font-size: var(--font-size-body);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-body);
+}
+
+.hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-regular);
 }
 
 .amount {
@@ -74,10 +116,16 @@
 }
 
 .words {
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-body-small);
   line-height: var(--line-height-body-small);
   overflow-wrap: anywhere;
+}
+
+.wordsLabel {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
 }
 
 .error {

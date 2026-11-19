@@ -10,6 +10,7 @@ import { ApiError } from '@/lib/api';
 import { listPortalPayments } from '@/lib/api.billing';
 import { matchesSelection, matchesText } from '@/lib/list-filter';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import {
@@ -33,6 +34,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
   const session = await getSession();
   if (!session) redirect(LOGIN);
 
+  const display = getPortalDisplay(session);
   let items;
   try {
     items = await listPortalPayments(session);
@@ -104,7 +106,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
               clearHref={clearFiltersHref(HERE, raw, PAYMENT_FILTER_SPEC)}
             />
           ) : (
-            <PaymentList items={shown} />
+            <PaymentList items={shown} display={await display} />
           )}
         </>
       )}

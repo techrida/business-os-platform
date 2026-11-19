@@ -1,3 +1,4 @@
+import type { NumberSystems } from '@bos/locale';
 import { formatMoney, type Currency } from '@bos/locale';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -5,12 +6,14 @@ import { describe, expect, it } from 'vitest';
 import type { PreviewResult } from '@/components/p2/quote-builder/schemas';
 import { TotalsPanel } from '@/components/p2/quote-builder/totals-panel';
 
-import { NumberSystemProvider, useNumberSystem } from './number-system-context';
+import { NumberSystemProvider, useNumberSystems } from './number-system-context';
 
 function Amount({ currency }: { currency: Currency }) {
-  const numberSystem = useNumberSystem();
-  return <span>{formatMoney('2018180', currency, { numberSystem })}</span>;
+  const numberSystems = useNumberSystems();
+  return <span>{formatMoney('2018180', currency, { numberSystems })}</span>;
 }
+
+const INTL: NumberSystems = { NPR: 'international', INR: 'international', USD: 'international' };
 
 describe('NumberSystemProvider', () => {
   it('defaults to South Asian grouping without a provider', () => {
@@ -19,7 +22,7 @@ describe('NumberSystemProvider', () => {
 
   it.each(['NPR', 'USD'] as const)('groups %s as international when the tenant says so', (c) => {
     const html = renderToStaticMarkup(
-      <NumberSystemProvider value="international">
+      <NumberSystemProvider value={INTL}>
         <Amount currency={c} />
       </NumberSystemProvider>,
     );
@@ -42,9 +45,7 @@ describe('NumberSystemProvider', () => {
     const panel = <TotalsPanel currency="NPR" state="ready" preview={preview} />;
     expect(renderToStaticMarkup(panel)).toContain('NPR 20,18,180.00');
     expect(
-      renderToStaticMarkup(
-        <NumberSystemProvider value="international">{panel}</NumberSystemProvider>,
-      ),
+      renderToStaticMarkup(<NumberSystemProvider value={INTL}>{panel}</NumberSystemProvider>),
     ).toContain('NPR 2,018,180.00');
   });
 });

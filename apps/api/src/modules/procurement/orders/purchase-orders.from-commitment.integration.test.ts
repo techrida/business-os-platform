@@ -322,9 +322,18 @@ it('issues the lineless draft of an approved commitment with lines copied from t
     tx.select().from(purchaseOrders).where(eq(purchaseOrders.vendorQuotationId, quote.id)),
   );
   expect(draft).toMatchObject({ status: 'draft', currentVersion: 0 });
-  expect((await service.get(draft!.id)).lines).toEqual([]);
+  // I-32: the draft has no lines yet, but its detail shows the approved quotation's lines it will be issued with.
+  const before = await service.get(draft!.id);
+  expect(before.lines).toEqual([]);
+  expect(before.proposedLines).toHaveLength(1);
+  expect(before.proposedLines![0]).toMatchObject({ cancelledQuantity: '0.0000' });
 
   const dto = await service.issue(draft!.id, randomUUID());
+  // What issue wrote is what the draft showed, apart from the new line id.
+  const strip = ({ id: _id, ...l }: (typeof dto.lines)[number]) => l;
+  expect(dto.lines.map(strip)).toEqual(before.proposedLines!.map(strip));
+  const after = await service.get(draft!.id);
+  expect(after).not.toHaveProperty('proposedLines');
   expect(dto).toMatchObject({ status: 'issued', currentVersion: 1, number: draft!.number });
   expect(dto.lines).toHaveLength(1);
   expect(dto.lines[0]).toMatchObject({

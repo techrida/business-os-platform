@@ -9,11 +9,35 @@ import { ApiError } from '@/lib/api';
 import { apiCodeOf } from '@/lib/api-code';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import type { Session } from '@/lib/session';
 
 import { echo, IDEMPOTENCY_KEY, runStageMove, UUID } from '@/components/p2/crm/action-helpers';
-import { convertLead, createLead } from '@/components/p2/crm/crm-api';
+import {
+  cancelActivity,
+  completeActivity,
+  convertLead,
+  createActivity,
+  createLead,
+  rescheduleActivity,
+  updateLead,
+} from '@/components/p2/crm/crm-api';
 import { duplicatesFrom } from '@/components/p2/crm/duplicates';
-import { parseConvert, parseLead } from '@/components/p2/crm/forms';
+import {
+  followUpPaths,
+  isFollowUpSubjectKind,
+  type FollowUpSubject,
+} from '@/components/p2/crm/follow-up-subject';
+import {
+  parseCancelActivity,
+  parseCompleteActivity,
+  parseConvert,
+  parseLead,
+  parseLeadUpdate,
+  parseRescheduleActivity,
+  parseScheduleFollowUp,
+  type FieldErrors,
+  type Parsed,
+} from '@/components/p2/crm/forms';
 import { keyOf, nextKey } from '@/components/p2/crm/idempotency';
 import type { ConvertState, FormState, MoveState } from '@/components/p2/crm/types';
 
@@ -96,4 +120,170 @@ export async function convertLeadAction(
   revalidatePath(`/leads/${leadId}`);
   revalidatePath('/opportunities');
   redirect(`/opportunities/${opportunityId}`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Follow-ups (D39): planned calls, meetings and emails on a lead
+// ---------------------------------------------------------------------------------------------
+
+const INCOMPLETE = 'This form is incomplete. Reload the page.';
+
+/** What a follow-up change (complete, reschedule, cancel) hands back to its control. */
+export interface FollowUpState {
+  ok?: boolean;
+  error?: string;
+  fieldErrors?: FieldErrors;
+  /** The follow-up changed underneath the page (stale version, already done): reloading fixes it. */
+  reload?: boolean;
+}
+
+function revalidateLead(leadId: string) {
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  revalidatePath('/activities');
+}
+
+/**
+ * Schedule a follow-up on a lead. The dialog posts `subjectKind=leadId` and `subjectId`; any other
+ * subject is refused here, as this action only revalidates lead pages. The key handling matches
+ * `logActivityAction`: the same key after an unknown outcome, a new one after a save or a refusal.
+ */
+export async function scheduleFollowUpAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const kind = form.get('subjectKind');
+  const id = form.get('subjectId');
+  const values = echo(form);
+  const key = keyOf(form);
+  if (kind !== 'leadId' || typeof id !== 'string' || !UUID.test(id)) {
+    return { values, fieldErrors: {}, error: INCOMPLETE, key };
+  }
+  const session = await requireStaffSession(`/leads/${id}`);
+
+  const parsed = parseScheduleFollowUp(form);
+  if (!parsed.ok) {
+    const { form: formError, ...fieldErrors } = parsed.fieldErrors;
+    return { values, fieldErrors, ...(formError ? { error: formError } : {}), key };
+  }
+  try {
+    await createActivity(session, parsed.data, key);
+  } catch (err) {
+    return { values, fieldErrors: {}, error: failureOf(err).message, key: nextKey(err, key) };
+  }
+  revalidateLead(id);
+  return { values: {}, fieldErrors: {}, ok: true, key: randomUUID() };
+}
+
+/**
+ * The record a follow-up change refreshes, from `subjectKind` + `subjectId` (or the older `leadId`
+ * field). `null` when the form names none (only `/activities` is refreshed); `false` when it names
+ * one that is not a known kind and an id, which means the form was tampered with or is stale.
+ */
+function changedSubject(form: FormData): FollowUpSubject | null | false {
+  const kind = form.get('subjectKind');
+  const id = form.get('subjectId');
+  if ((kind !== null && kind !== '') || (id !== null && id !== '')) {
+    return isFollowUpSubjectKind(kind) && typeof id === 'string' && UUID.test(id)
+      ? { kind, id }
+      : false;
+  }
+  const leadId = form.get('leadId');
+  if (leadId === null || leadId === '') return null;
+  return typeof leadId === 'string' && UUID.test(leadId) ? { kind: 'leadId', id: leadId } : false;
+}
+
+/**
+ * The shared body of complete, reschedule and cancel: check the activity id, the subject and the
+ * session, parse, call, revalidate. Any subject works (a lead, an opportunity, a migrated task on a
+ * customer); the pages refreshed are built here from its kind and id, never from a client path. A
+ * bad `expectedVersion` is not something the person can fix in a field, so it comes back as the
+ * reload message instead of a field error.
+ */
+async function changeFollowUp<T>(
+  form: FormData,
+  parse: (form: FormData) => Parsed<T>,
+  send: (session: Session, id: string, body: T) => Promise<unknown>,
+): Promise<FollowUpState> {
+  const activityValue = form.get('activityId');
+  const activityId = typeof activityValue === 'string' ? activityValue : '';
+  const subject = changedSubject(form);
+  if (!UUID.test(activityId) || subject === false) return { error: INCOMPLETE, reload: true };
+  const paths = followUpPaths(subject);
+  const session = await requireStaffSession(paths[0] ?? '/activities');
+
+  const parsed = parse(form);
+  if (!parsed.ok) {
+    const { expectedVersion, ...fieldErrors } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    return { fieldErrors };
+  }
+  try {
+    await send(session, activityId, parsed.data);
+  } catch (err) {
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  for (const path of paths) revalidatePath(path);
+  return { ok: true };
+}
+
+/** Mark a planned follow-up done. It leaves the Follow-ups card and shows in History. */
+export async function completeFollowUpAction(
+  _prev: FollowUpState,
+  form: FormData,
+): Promise<FollowUpState> {
+  return changeFollowUp(form, parseCompleteActivity, completeActivity);
+}
+
+/** Move a planned follow-up to a new time, optionally to another person. */
+export async function rescheduleFollowUpAction(
+  _prev: FollowUpState,
+  form: FormData,
+): Promise<FollowUpState> {
+  return changeFollowUp(form, parseRescheduleActivity, rescheduleActivity);
+}
+
+/** Drop a planned follow-up. It shows nowhere afterwards (neither planned nor History). */
+export async function cancelFollowUpAction(
+  _prev: FollowUpState,
+  form: FormData,
+): Promise<FollowUpState> {
+  return changeFollowUp(form, parseCancelActivity, cancelActivity);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Lead owner (D38)
+// ---------------------------------------------------------------------------------------------
+
+/** What the owner control gets back. `reload` means the lead changed underneath the page. */
+export type LeadOwnerState = FollowUpState;
+
+/**
+ * Hand the lead to another person (`PATCH /v1/leads/:id` with only `ownerUserId` and the version
+ * the page showed). The API applies the create-time rule, so a refusal (403) comes back as words
+ * for the form; a stale version (409) comes back as the reload message.
+ */
+export async function updateLeadOwnerAction(
+  _prev: LeadOwnerState,
+  form: FormData,
+): Promise<LeadOwnerState> {
+  const leadValue = form.get('leadId');
+  const leadId = typeof leadValue === 'string' ? leadValue : '';
+  if (!UUID.test(leadId)) return { error: INCOMPLETE, reload: true };
+  const session = await requireStaffSession(`/leads/${leadId}`);
+
+  const parsed = parseLeadUpdate(form);
+  if (!parsed.ok) {
+    // A bad version is not something the person can fix in the field: it asks for a reload.
+    const { ownerUserId, expectedVersion } = parsed.fieldErrors;
+    if (expectedVersion) return { error: expectedVersion, reload: true };
+    return { fieldErrors: { ownerUserId: ownerUserId ?? 'Choose who owns this lead.' } };
+  }
+  try {
+    await updateLead(session, leadId, parsed.data);
+  } catch (err) {
+    const f = failureOf(err);
+    return { error: f.message, reload: f.reload };
+  }
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath('/leads');
+  return { ok: true };
 }

@@ -1,8 +1,7 @@
-import type { PortalInvoiceListItem } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
+import type { PortalDisplay, PortalInvoiceListItem } from '@bos/contracts';
 
-import { formatDay } from '@/components/portal/quotation-status';
 import styles from '@/components/portal/quotation.module.css';
+import { displayFormat } from '@/lib/display';
 
 import { KIND_LABEL } from './invoice-status';
 
@@ -12,7 +11,14 @@ import { KIND_LABEL } from './invoice-status';
  * server's figure; the status word lives on the invoice page, where the server sends it. The number
  * is a plain link (no prefetch), and the table scrolls sideways in its frame on a narrow screen.
  */
-export function InvoiceList({ items }: { items: readonly PortalInvoiceListItem[] }) {
+export function InvoiceList({
+  items,
+  display,
+}: {
+  items: readonly PortalInvoiceListItem[];
+  display?: PortalDisplay;
+}) {
+  const { money, day: formatDay } = displayFormat(display);
   return (
     <div className={styles.tableFrame}>
       <table className={styles.table}>
@@ -42,11 +48,9 @@ export function InvoiceList({ items }: { items: readonly PortalInvoiceListItem[]
               <td className={styles.nowrap}>{KIND_LABEL[inv.kind]}</td>
               <td className={styles.nowrap}>{formatDay(inv.issueDate)}</td>
               <td className={styles.nowrap}>{inv.dueDate ? formatDay(inv.dueDate) : '—'}</td>
+              <td className={`${styles.num} ${styles.nowrap}`}>{money(inv.total, inv.currency)}</td>
               <td className={`${styles.num} ${styles.nowrap}`}>
-                {formatMoney(inv.total, inv.currency)}
-              </td>
-              <td className={`${styles.num} ${styles.nowrap}`}>
-                {formatMoney(inv.openAmount, inv.currency)}
+                {money(inv.openAmount, inv.currency)}
               </td>
             </tr>
           ))}

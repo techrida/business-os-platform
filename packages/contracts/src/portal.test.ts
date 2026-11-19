@@ -6,10 +6,12 @@ import {
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   CUSTOMER_VISIBLE_STATUSES,
   CustomerQuotationViewSchema,
+  PortalDisplaySchema,
   PortalQuotationListItemSchema,
   QUOTATION_STATUSES,
   QuotationVersionDtoSchema,
   RejectQuotationBodySchema,
+  defaultPortalDisplay,
   isCustomerVisibleStatus,
 } from './index.js';
 
@@ -33,7 +35,7 @@ const view = () => ({
   termsAndConditions: null,
   deliveryTimeline: '6 weeks',
   paymentTermName: 'Net 30',
-  paymentSchedule: [{ label: 'Advance', percent: '60' }],
+  paymentSchedule: [{ label: 'Advance', percent: '60', amount: '366120.00' }],
   lines: [
     {
       lineNo: 1,
@@ -52,6 +54,10 @@ const view = () => ({
     total: '610200.00',
   },
   taxSummary: [{ label: 'VAT', percent: '13', base: '540000.00', tax: '70200.00' }],
+  display: {
+    numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+    dateFormat: 'dd MMM yyyy',
+  },
   file: { documentId: id(), filename: 'QT-2082-0042-R2.pdf', sha256: 'a'.repeat(64) },
 });
 
@@ -84,8 +90,12 @@ function schemaKeys(schema: z.ZodType): string[] {
   return keys;
 }
 
+// The display block is keyed by currency code (NPR, INR, USD); a code is not an NPR equivalent or a rate.
+const CURRENCY_CODE_KEYS = new Set(['NPR', 'INR', 'USD']);
 const leaks = (keys: string[]) =>
-  keys.filter((k) => words(k).some((w) => CUSTOMER_VIEW_FORBIDDEN_WORDS.includes(w)));
+  keys
+    .filter((k) => !CURRENCY_CODE_KEYS.has(k))
+    .filter((k) => words(k).some((w) => CUSTOMER_VIEW_FORBIDDEN_WORDS.includes(w)));
 
 describe('CustomerQuotationView carries no cost, margin or rate', () => {
   it('has no such key anywhere in its schema, at any depth', () => {
@@ -93,6 +103,10 @@ describe('CustomerQuotationView carries no cost, margin or rate', () => {
     expect(keys).toContain('lines');
     expect(keys).toContain('unitPrice');
     expect(keys).toContain('percent');
+    // The display block holds only formatting enums: number grouping per currency and a date pattern.
+    expect(keys).toContain('display');
+    expect(keys).toContain('numberSystems');
+    expect(keys).toContain('dateFormat');
     expect(leaks(keys)).toEqual([]);
   });
 
@@ -198,6 +212,40 @@ describe('CustomerQuotationView carries no cost, margin or rate', () => {
     expect(
       CustomerQuotationViewSchema.safeParse({ ...v, file: { ...v.file, sha256: 'xyz' } }).success,
     ).toBe(false);
+  });
+});
+
+describe('PortalDisplaySchema', () => {
+  it('needs the display on every view, and refuses an unknown date pattern or number system', () => {
+    const { display: _display, ...withoutDisplay } = view();
+    expect(CustomerQuotationViewSchema.safeParse(withoutDisplay).success).toBe(false);
+    const v = view();
+    expect(
+      CustomerQuotationViewSchema.safeParse({
+        ...v,
+        display: { ...v.display, dateFormat: 'MM/dd/yyyy' },
+      }).success,
+    ).toBe(false);
+    expect(
+      PortalDisplaySchema.safeParse({
+        ...v.display,
+        numberSystems: { ...v.display.numberSystems, USD: 'arabic' },
+      }).success,
+    ).toBe(false);
+    expect(PortalDisplaySchema.safeParse({ ...v.display, locale: 'en-IN' }).success).toBe(false);
+  });
+
+  it('defaults to lakh/crore for NPR and INR, thousands for USD, and dd MMM yyyy', () => {
+    expect(defaultPortalDisplay()).toEqual({
+      numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd MMM yyyy',
+    });
+    expect(PortalDisplaySchema.safeParse(defaultPortalDisplay()).success).toBe(true);
+    // A fresh object each call: editing one never changes the next.
+    const first = defaultPortalDisplay();
+    first.numberSystems.NPR = 'international';
+    expect(defaultPortalDisplay().numberSystems.NPR).toBe('south_asian');
+    expect(leaks(schemaKeys(PortalDisplaySchema))).toEqual([]);
   });
 });
 

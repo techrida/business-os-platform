@@ -23,17 +23,20 @@ import {
 } from '@bos/contracts';
 import {
   createParty,
+  leads,
   opportunities,
   quotationLines,
   quotations,
   quotationStatusHistory,
   quotationTaxSummary,
   quotationVersions,
+  rolePermissions,
   runMigrations,
   verificationCases,
 } from '@bos/db';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   NotFoundException,
@@ -45,9 +48,10 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuditService } from '../../../platform/audit/audit.service';
-import type { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal } from '../../../platform/authz/principal';
+import { RoleCache } from '../../../platform/authz/role-cache';
 import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
@@ -55,7 +59,10 @@ import { PricingService } from '../pricing/pricing.service';
 import { DraftingService, pricingInputOf } from './drafting.service';
 import {
   GOLDEN_DISCOUNT,
+  GOLDEN_INTERNAL_COST,
   GOLDEN_TOTALS,
+  GOLDEN_UNIT_COSTS,
+  goldenCostedLines,
   goldenCreateBody,
   goldenLines,
   seedOtherStaffUser,
@@ -1058,5 +1065,481 @@ describe('DraftingService.summary', () => {
         (await service.summary({ q: 'Summary Himalyan', customerId: [c.customerId] })).total,
       ).toBe(2);
     });
+  });
+});
+
+// ------------------------------------------------------------------------------------------ cost figures
+
+// D29b: unitCost, internalCostTotal and marginPct leave the API only for a caller whose LIVE grants hold
+// quotation.cost.read. The grants here come from the real RoleCache over real app.role_permissions rows, and a
+// change is published with AuthzService.invalidate (the authz_versions bump), as an admin's role edit does.
+describe('quotation cost figures follow the live role grants (D29b)', () => {
+  let roleCache: RoleCache;
+  let liveAuthz: AuthzService;
+
+  beforeAll(() => {
+    roleCache = new RoleCache(db);
+    liveAuthz = new AuthzService(db, roleCache);
+  });
+  afterAll(async () => {
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, f.tenantId));
+    });
+    await liveAuthz.invalidate(f.tenantId, f.entityId);
+  });
+
+  /** The tenant's rows: `sales` as customised (with or without the cost grant), `operations_head` as shipped. */
+  async function customiseRoles(salesMayReadCost: boolean): Promise<void> {
+    const rows = (['sales', 'operations_head'] as const).flatMap((roleKey) =>
+      [...grantsOf(roleKey)]
+        .filter(
+          ([permission]) =>
+            !(roleKey === 'sales' && !salesMayReadCost && permission === 'quotation.cost.read'),
+        )
+        .map(([permission, scope]) => ({ tenantId: f.tenantId, roleKey, permission, scope })),
+    );
+    await withTx(db, scopeA, systemActor('test'), async (tx) => {
+      await tx.delete(rolePermissions).where(eq(rolePermissions.tenantId, f.tenantId));
+      await tx.insert(rolePermissions).values(rows);
+    });
+    await liveAuthz.invalidate(f.tenantId, f.entityId);
+  }
+  /** The caller's grants as the request would read them now: the real cache over the real rows. */
+  const live = async (role: RoleKey): Promise<Map<Permission, Scope>> =>
+    new Map(await roleCache.grantsFor(f.tenantId, f.entityId, [role]));
+
+  const costedBody = () => goldenCreateBody(f, { lines: goldenCostedLines(f) });
+  const storedLines = (versionId: string) =>
+    db
+      .select()
+      .from(quotationLines)
+      .where(eq(quotationLines.versionId, versionId))
+      .orderBy(asc(quotationLines.lineNo));
+  const storedVersion = async (versionId: string) => {
+    const [row] = await db
+      .select()
+      .from(quotationVersions)
+      .where(eq(quotationVersions.id, versionId));
+    return row!;
+  };
+  const expectNoCostKeys = (v: { lines: readonly object[] }) => {
+    expect('internalCostTotal' in v).toBe(false);
+    expect('marginPct' in v).toBe(false);
+    for (const line of v.lines) expect('unitCost' in line).toBe(false);
+  };
+
+  it('shows the figures to a role that holds quotation.cost.read and drops them for the same role once it is removed', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    expect(current.grants.has('quotation.cost.read')).toBe(true);
+    const created = await service.create(costedBody(), 'cost-read-1');
+
+    const shown = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(shown.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+    expect(shown.marginPct).toMatch(/^-?\d+\.\d{4}$/);
+    expect(shown.lines.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+    const shownDetail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(shownDetail.versions[0]).toEqual(shown);
+
+    // The admin removes the permission from the role; the bump makes the next request see it at once.
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    expect(current.grants.has('quotation.cost.read')).toBe(false);
+    expect(current.grants.has('quotation.draft')).toBe(true);
+
+    const hidden = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expectNoCostKeys(hidden);
+    // Everything else is untouched.
+    expect(hidden.totals).toEqual(shown.totals);
+    expect(hidden.lines.map((l) => l.unitPrice)).toEqual(shown.lines.map((l) => l.unitPrice));
+    const hiddenDetail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(hiddenDetail.versions.length).toBeGreaterThan(0);
+    hiddenDetail.versions.forEach(expectNoCostKeys);
+
+    // Granted back: the figures return, and the stored costs were never touched.
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    expect((await service.getVersion(created.id, created.currentVersionId)).internalCostTotal).toBe(
+      GOLDEN_INTERNAL_COST,
+    );
+  });
+
+  it('shows no figures to a reader whose role never had the permission (operations_head)', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-read-2');
+
+    current.grants = await live('operations_head');
+    expect(current.grants.has('quotation.read')).toBe(true);
+    expect(current.grants.has('quotation.cost.read')).toBe(false);
+    const dto = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expectNoCostKeys(dto);
+    QuotationDetailSchema.parse(await service.detail(created.id)).versions.forEach(
+      expectNoCostKeys,
+    );
+  });
+
+  it('keeps the stored costs when a drafter without the permission saves lines that omit them, and recomputes the totals from them', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-save-1');
+    const before = await storedVersion(created.currentVersionId);
+    expect(before.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    // The workspace sends the lines it was shown: no unitCost anywhere. Line 1 now sells two; line 2 tries to
+    // set a cost, which a drafter without the permission cannot do.
+    const lines = goldenLines(f).map((l, i) => ({
+      ...l,
+      ...(i === 0 ? { quantity: '2' } : {}),
+      ...(i === 1 ? { unitCost: '1.00' } : {}),
+    }));
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      lines,
+    });
+
+    const stored = await storedLines(created.currentVersionId);
+    expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+    expect(stored[0]!.quantity).toMatch(/^2(\.0+)?$/);
+    // 2 x 1,000,000 + 1 x 400,000 + 3 x 20,000: the preserved costs, not the attempted 1.00.
+    const after = await storedVersion(created.currentVersionId);
+    expect(after.internalCostTotal).toBe('2460000.00');
+    expect(after.marginPct).not.toBeNull();
+
+    // A text-only save keeps them too.
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: after.version,
+      scope: 'Phase 1 only',
+    });
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      ...GOLDEN_UNIT_COSTS,
+    ]);
+    expect((await storedVersion(created.currentVersionId)).internalCostTotal).toBe('2460000.00');
+
+    // The permitted viewer reads the preserved figures.
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const seen = await service.getVersion(created.id, created.currentVersionId);
+    expect(seen.internalCostTotal).toBe('2460000.00');
+  });
+
+  describe('a drafter without the permission cannot change which lines a costed quotation has', () => {
+    /** A costed quotation, then the caller loses quotation.cost.read. */
+    async function costedThenRestricted(key: string) {
+      await customiseRoles(true);
+      current.grants = await live('sales');
+      const created = await service.create(costedBody(), key);
+      const before = await storedVersion(created.currentVersionId);
+      await customiseRoles(false);
+      current.grants = await live('sales');
+      return { created, before };
+    }
+    const restricted = async (promise: Promise<unknown>) => {
+      const error = await promise.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'cost_figures_restricted',
+      });
+    };
+    /** Nothing was written: every line keeps its cost and the version is untouched. */
+    async function expectUntouched(versionId: string, version: number) {
+      const stored = await storedLines(versionId);
+      expect(stored.map((l) => l.description)).toEqual(['Implementation', 'Licences', 'Training']);
+      expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+      const row = await storedVersion(versionId);
+      expect(row.version).toBe(version);
+      expect(row.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+    }
+
+    it('drafter without cost read deletes line 1: refused, stored unit_cost of every line unchanged', async () => {
+      const { created, before } = await costedThenRestricted('cost-del-1');
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: goldenLines(f).slice(1),
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('refuses a reorder', async () => {
+      const { created, before } = await costedThenRestricted('cost-reorder-1');
+      const [first, second, third] = goldenLines(f);
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: [second!, first!, third!],
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('refuses an inserted line and an appended line', async () => {
+      const { created, before } = await costedThenRestricted('cost-insert-1');
+      const lines = goldenLines(f);
+      const extra = { ...lines[0]!, description: 'Extra', unitCost: '5.00' };
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: [lines[0]!, extra, lines[1]!, lines[2]!],
+        }),
+      );
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: [...lines, extra],
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('refuses an edit of a stored line identity (its description)', async () => {
+      const { created, before } = await costedThenRestricted('cost-identity-1');
+      await restricted(
+        service.updateDraft(created.id, created.currentVersionId, {
+          expectedVersion: before.version,
+          lines: goldenLines(f).map((l, i) => (i === 1 ? { ...l, description: 'Renamed' } : l)),
+        }),
+      );
+      await expectUntouched(created.currentVersionId, before.version);
+    });
+
+    it('allows a same-structure edit (quantity, price): costs kept, totals recomputed from them', async () => {
+      const { created, before } = await costedThenRestricted('cost-same-1');
+      await service.updateDraft(created.id, created.currentVersionId, {
+        expectedVersion: before.version,
+        lines: goldenLines(f).map((l, i) =>
+          i === 0 ? { ...l, quantity: '2', unitPrice: '1900000.00' } : l,
+        ),
+      });
+      const stored = await storedLines(created.currentVersionId);
+      expect(stored.map((l) => l.unitCost)).toEqual([...GOLDEN_UNIT_COSTS]);
+      expect(stored[0]!.unitPrice).toBe('1900000.00');
+      const after = await storedVersion(created.currentVersionId);
+      expect(after.internalCostTotal).toBe('2460000.00');
+      expect(after.marginPct).not.toBeNull();
+    });
+
+    it('lets a drafter who holds the permission delete a line, as before: the other lines keep their own costs', async () => {
+      await customiseRoles(true);
+      current.grants = await live('sales');
+      const created = await service.create(costedBody(), 'cost-del-2');
+      const before = await storedVersion(created.currentVersionId);
+      await service.updateDraft(created.id, created.currentVersionId, {
+        expectedVersion: before.version,
+        lines: goldenCostedLines(f).slice(1),
+      });
+      const stored = await storedLines(created.currentVersionId);
+      expect(stored.map((l) => l.description)).toEqual(['Licences', 'Training']);
+      expect(stored.map((l) => l.unitCost)).toEqual(['400000.00', '20000.00']);
+    });
+  });
+
+  it('stores no cost for a quotation created by a drafter without the permission', async () => {
+    await customiseRoles(false);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-create-1');
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    const stored = await storedVersion(created.currentVersionId);
+    expect(stored.internalCostTotal).toBeNull();
+    expect(stored.marginPct).toBeNull();
+  });
+
+  it('still lets a drafter who holds the permission clear or change a cost, as before', async () => {
+    await customiseRoles(true);
+    current.grants = await live('sales');
+    const created = await service.create(costedBody(), 'cost-save-3');
+    const before = await storedVersion(created.currentVersionId);
+
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: before.version,
+      lines: goldenCostedLines(f).map((l, i) => (i === 2 ? { ...l, unitCost: '30000.00' } : l)),
+    });
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      '1000000.00',
+      '400000.00',
+      '30000.00',
+    ]);
+    expect((await storedVersion(created.currentVersionId)).internalCostTotal).toBe('1490000.00');
+
+    const mid = await storedVersion(created.currentVersionId);
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: mid.version,
+      lines: goldenLines(f),
+    });
+    expect((await storedLines(created.currentVersionId)).map((l) => l.unitCost)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+  });
+});
+
+// ------------------------------------------------------------------ D35 lead and D36 schedule amounts
+
+/** A lead of `scope` owned by `ownerUserId`, and an opportunity of the same entity that hangs under it. */
+async function seedLeadOpportunity(
+  scope: TxScope,
+  ownerUserId: string,
+  title: string,
+): Promise<{ leadId: string; opportunityId: string }> {
+  return withTx(db, scope, systemActor('test'), async (tx) => {
+    const [lead] = await tx
+      .insert(leads)
+      .values({
+        ...scope,
+        number: `LD-${randomUUID().slice(0, 8)}`,
+        title,
+        source: 'website',
+        ownerUserId,
+        companyName: 'Acme Pvt. Ltd.',
+        contactName: 'Asha Shrestha',
+      })
+      .returning({ id: leads.id });
+    const [opportunity] = await tx
+      .insert(opportunities)
+      .values({
+        ...scope,
+        number: `DEAL-${randomUUID().slice(0, 8)}`,
+        name: `Deal of ${title}`,
+        customerId: f.customerPartyId,
+        leadId: lead!.id,
+        ownerUserId,
+        stage: 'qualified',
+      })
+      .returning({ id: opportunities.id });
+    return { leadId: lead!.id, opportunityId: opportunity!.id };
+  });
+}
+
+describe('DraftingService.detail lead (D35)', () => {
+  it('gives the lead of the opportunity to a viewer who may read it', async () => {
+    const { leadId, opportunityId } = await seedLeadOpportunity(
+      scopeA,
+      f.ownerUserId,
+      'Own enquiry',
+    );
+    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-own');
+    // sales holds crm.lead.read as `own` and owns this lead.
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.lead).toEqual({ id: leadId, name: 'Own enquiry' });
+
+    // A read-all role sees it too.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect((await service.detail(created.id)).lead).toEqual({ id: leadId, name: 'Own enquiry' });
+    });
+  });
+
+  it("leaves the lead out when sales holds `own` scope and the lead is someone else's", async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const { leadId, opportunityId } = await seedLeadOpportunity(
+      scopeA,
+      otherUserId,
+      'Their enquiry',
+    );
+    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-theirs');
+
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect('lead' in detail).toBe(false);
+    expect(JSON.stringify(detail)).not.toContain(leadId);
+
+    // Positive control: the same quotation shows the lead to a read-all role, so the omission is the scope.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect((await service.detail(created.id)).lead).toEqual({
+        id: leadId,
+        name: 'Their enquiry',
+      });
+    });
+  });
+
+  it('leaves the lead out for a viewer who holds no crm.lead.read at all', async () => {
+    const { opportunityId } = await seedLeadOpportunity(scopeA, f.ownerUserId, 'Own enquiry 2');
+    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-no-grant');
+    const grants = new Map(grantsOf('sales'));
+    grants.delete('crm.lead.read');
+    await asCaller({ grants }, async () => {
+      expect('lead' in (await service.detail(created.id))).toBe(false);
+    });
+  });
+
+  it('leaves the lead out when the opportunity has no lead, exactly as for a hidden one', async () => {
+    // The fixture opportunity has no lead. (quotations.opportunity_id is NOT NULL, so "no opportunity" cannot occur.)
+    const created = await service.create(goldenCreateBody(f), 'lead-none');
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect('lead' in detail).toBe(false);
+  });
+
+  it("never shows a lead of another entity: it is read in its own entity, and A's detail does not carry B's", async () => {
+    const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+    const b = await seedLeadOpportunity(scopeB, f.ownerUserId, 'Entity B enquiry');
+    const inB = await asCaller({ scope: scopeB }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: b.opportunityId }), 'lead-entity-b'),
+    );
+    // Positive control: entity B's own caller reads it.
+    await asCaller({ scope: scopeB }, async () => {
+      expect((await service.detail(inB.id)).lead).toEqual({
+        id: b.leadId,
+        name: 'Entity B enquiry',
+      });
+    });
+    // Entity A cannot reach the quotation, and an entity-A quotation never names B's lead.
+    expect(await statusOf(service.detail(inB.id))).toBe(404);
+    const inA = await service.create(goldenCreateBody(f), 'lead-entity-a');
+    expect(JSON.stringify(await service.detail(inA.id))).not.toContain(b.leadId);
+  });
+});
+
+describe('DraftingService payment schedule amounts (D36)', () => {
+  it('returns each milestone with its amount, remainder on the last row, on detail and getVersion', async () => {
+    const created = await service.create(
+      goldenCreateBody(f, {
+        paymentSchedule: [
+          { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
+          { label: 'Delivery', percent: '33.3333' },
+          { label: 'Go-live', percent: '33.3334' },
+        ],
+      }),
+      'schedule-amounts',
+    );
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.versions[0]!.totals.total).toBe(GOLDEN_TOTALS.total);
+    expect(detail.versions[0]!.paymentSchedule).toEqual([
+      { label: 'Advance', percent: '33.3333', dueDescription: 'On order', amount: '896999.10' },
+      { label: 'Delivery', percent: '33.3333', amount: '896999.10' },
+      { label: 'Go-live', percent: '33.3334', amount: '897001.79' },
+    ]);
+    const version = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(version.paymentSchedule).toEqual(detail.versions[0]!.paymentSchedule);
+
+    // The stored jsonb stays amount-free, and a later draft save (merge base from the DTO) still works.
+    const stored = await db
+      .select({ paymentSchedule: quotationVersions.paymentSchedule })
+      .from(quotationVersions)
+      .where(eq(quotationVersions.id, created.currentVersionId));
+    expect(JSON.stringify(stored[0]!.paymentSchedule)).not.toContain('amount');
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: version.version,
+      scope: 'Changed scope',
+    });
+    expect(
+      (await service.getVersion(created.id, created.currentVersionId)).paymentSchedule,
+    ).toEqual(version.paymentSchedule);
   });
 });

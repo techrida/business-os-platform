@@ -3,6 +3,7 @@ import {
   CreateRfqBodySchema,
   RecommendQuotationBodySchema,
   RecordQuotationBodySchema,
+  richTextToPlain,
   ScoreQuotationBodySchema,
   type ConvertSubmissionBody,
   type CreateRfqBody,
@@ -74,15 +75,29 @@ const RFQ_WORDS: Record<string, string> = {
 
 export type ParsedRfq = { ok: true; data: CreateRfqBody } | { ok: false; errors: FieldErrors };
 
-export function parseRfqValues(input: RfqValues): ParsedRfq {
+/** Shown next to the deadline when it is not after now (the API answers 400 `deadline_in_past` the same). */
+export const DEADLINE_IN_PAST =
+  'The quotation deadline has passed. Choose a date and time in the future.';
+
+/**
+ * Checks the typed RFQ against the contract and against `now`: a deadline that is not after now would open an
+ * RFQ no invited vendor can quote on. The deadline is compared as the Kathmandu instant it is sent as.
+ */
+export function parseRfqValues(input: RfqValues, now: Date = new Date()): ParsedRfq {
   const distinct = [...new Set(input.vendorIds.map(trim).filter((v) => v !== ''))];
   const parsed = CreateRfqBodySchema.safeParse({
     purchaseRequestId: trim(input.purchaseRequestId),
     deadline: deadlineToIso(input.deadline) ?? '',
     vendorIds: distinct,
   });
-  if (parsed.success) return { ok: true, data: parsed.data };
   const errors: FieldErrors = {};
+  if (parsed.success) {
+    if (new Date(parsed.data.deadline).getTime() > now.getTime()) {
+      return { ok: true, data: parsed.data };
+    }
+    errors.deadline = DEADLINE_IN_PAST;
+    return { ok: false, errors };
+  }
   for (const issue of parsed.error.issues) {
     const head = issue.path[0];
     if (typeof head === 'string') errors[head] ??= RFQ_WORDS[head] ?? issue.message;
@@ -184,6 +199,7 @@ const QUOTE_WORDS: Record<string, string> = {
   currency: 'Choose NPR, INR or USD.',
   deliveryDays: 'Enter the delivery time as a whole number of days, 0 to 3650.',
   warranty: 'The warranty can be up to 500 characters.',
+  // The schema counts the words of the terms (richTextToPlain), not their markup.
   terms: 'The terms can be up to 2000 characters.',
   quantity: 'Enter a quantity with up to 4 decimal places.',
   unitPrice: 'Enter a unit price of 0 or more, with up to 2 decimal places.',
@@ -222,7 +238,9 @@ export function parseQuoteValues(input: QuoteValues): ParsedQuote {
     currency: trim(input.currency),
     ...(days !== '' && errors.deliveryDays === undefined ? { deliveryDays: Number(days) } : {}),
     ...(trim(input.warranty) !== '' ? { warranty: trim(input.warranty) } : {}),
-    ...(trim(input.terms) !== '' ? { terms: trim(input.terms) } : {}),
+    // The terms are the editor's HTML (or older plain text): trimmed and sent as is, the API sanitises.
+    // A value without words (an empty paragraph) is the same as nothing typed.
+    ...(richTextToPlain(input.terms).trim() !== '' ? { terms: trim(input.terms) } : {}),
     lines,
   };
   const result =

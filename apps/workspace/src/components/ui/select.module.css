@@ -160,3 +160,11 @@
     transition: none;
   }
 }
+
+.separated {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle, var(--border-default, #e5e7eb));
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: 8px;
+}

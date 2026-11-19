@@ -13,17 +13,30 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getOpportunity: vi.fn(),
   listActivities: vi.fn(),
+  listLeadOwners: vi.fn(),
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
+  userNames: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/crm/crm-api', () => ({
   getOpportunity: mocks.getOpportunity,
   listActivities: mocks.listActivities,
+  listLeadOwners: mocks.listLeadOwners,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
+vi.mock('@/lib/business-labels', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  userNames: mocks.userNames,
+}));
+vi.mock('@/app/(app)/leads/actions', () => ({
+  completeFollowUpAction: vi.fn(),
+  rescheduleFollowUpAction: vi.fn(),
+  cancelFollowUpAction: vi.fn(),
+  scheduleFollowUpAction: vi.fn(),
+}));
 vi.mock('../../activities/actions', () => ({ logActivityAction: vi.fn() }));
 vi.mock('../actions', () => ({ moveOpportunityStageAction: vi.fn() }));
 vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: vi.fn() }));
@@ -83,8 +96,10 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getOpportunity.mockReset().mockResolvedValue(opportunity());
   mocks.listActivities.mockReset().mockResolvedValue([]);
+  mocks.listLeadOwners.mockReset().mockResolvedValue([]);
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
+  mocks.userNames.mockReset().mockResolvedValue(new Map());
 });
 
 describe('opportunity quotation actions (demo feedback: New quotation made four quotations)', () => {
@@ -153,5 +168,73 @@ describe('opportunity quotation actions (demo feedback: New quotation made four 
     expect(html).toContain(`href="/quotations/${Q2}">QT-2</a>`);
     expect(html).toContain('data-accepted="true"');
     expect(html).not.toContain('name="stage"');
+  });
+});
+
+describe('opportunity follow-ups (migrated open tasks on the deal)', () => {
+  const ASSIGNEE = '77777777-7777-4777-8777-777777777777';
+  const planned = {
+    id: '66666666-6666-4666-8666-666666666666',
+    kind: 'call',
+    subject: 'Chase the signed scope',
+    body: null,
+    leadId: null,
+    opportunityId: OPP,
+    customerId: null,
+    contactId: null,
+    quotationId: null,
+    dueAt: '2099-01-02T04:00:00.000Z',
+    assigneeUserId: ASSIGNEE,
+    completedAt: null,
+    cancelledAt: null,
+    planned: true,
+    createdByUserId: null,
+    occurredAt: WHEN,
+    version: 2,
+  };
+
+  beforeEach(() => {
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      Promise.resolve(opts.status === 'planned' ? [planned] : []),
+    );
+  });
+
+  it('lists planned rows on a Follow-ups card with Complete, Reschedule and Cancel, and no Schedule', async () => {
+    const html = await render();
+    expect(mocks.listActivities).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ opportunityId: OPP, status: 'planned' }),
+    );
+    expect(html).toContain('>Follow-ups</h2>');
+    expect(html).toContain('Chase the signed scope');
+    for (const action of ['Complete', 'Reschedule', 'Cancel']) {
+      expect(html).toContain(`aria-label="${action} Chase the signed scope"`);
+    }
+    expect(html).not.toContain('Schedule follow-up');
+  });
+
+  it('names the assignee from the users directory, never by id', async () => {
+    mocks.userNames.mockResolvedValue(new Map([[ASSIGNEE, 'Mira Thapa']]));
+    const html = await render();
+    expect(html).toContain('Mira Thapa');
+    expect(html).not.toContain('Another teammate');
+    expect(html).not.toContain(`>${ASSIGNEE}<`);
+  });
+
+  it('does not ask for lead owners without crm.lead.write, and still renders', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['no-such-role'] });
+    const html = await render();
+    expect(mocks.listLeadOwners).not.toHaveBeenCalled();
+    expect(html).toContain('Chase the signed scope');
+    expect(html).toContain('Another teammate');
+  });
+
+  it('says the follow-ups did not load instead of showing an empty card', async () => {
+    mocks.listActivities.mockImplementation((_s: unknown, opts: { status?: string }) =>
+      opts.status === 'planned' ? Promise.reject(new ApiError(503, 'down')) : Promise.resolve([]),
+    );
+    const html = await render();
+    expect(html).toContain('Follow-ups did not load');
+    expect(html).not.toContain('No follow-ups planned');
   });
 });

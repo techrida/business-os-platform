@@ -28,14 +28,14 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill('Binford Ltd.');
       await page.getByLabel('Contact person').fill('Sunita Shrestha');
-      await page.getByRole('button', { name: 'Save lead' }).click();
+      await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     });
 
     await test.step('a refused form keeps what was typed and names the field', async () => {
       await page.goto('/leads/new');
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill('Half a lead');
-      await page.getByRole('button', { name: 'Save lead' }).click();
+      await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByText('Choose where the lead came from.')).toBeVisible();
       await expect(page.getByRole('textbox', { name: 'Lead title', exact: true })).toHaveValue(
         'Half a lead',
@@ -57,13 +57,16 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
     });
 
-    await test.step('Lost needs a reason and a note', async () => {
-      await chooseOption(selectByName(page, 'stage'), 'lost');
-      await page.getByRole('button', { name: 'Move', exact: true }).click();
-      await expect(page.getByText('Give a reason, up to 200 characters.')).toBeVisible();
+    await test.step('Mark lost needs a reason and a note', async () => {
+      await page.getByRole('button', { name: 'Mark lost', exact: true }).click();
+      const lost = page.getByRole('dialog', { name: 'Mark this lead lost?' });
+      await lost.getByRole('button', { name: 'Mark lost', exact: true }).click();
+      await expect(lost.getByText('Give a reason, up to 200 characters.')).toBeVisible();
       await expect(
-        page.getByText('Add a note for the record, up to 2,000 characters.'),
+        lost.getByText('Add a note for the record, up to 2,000 characters.'),
       ).toBeVisible();
+      await lost.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(lost).toBeHidden();
     });
 
     await test.step('the board shows the lead in Contacted and Converted takes no cards', async () => {
@@ -96,7 +99,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill(`Board Test ${stamp} Pvt. Ltd.`);
       await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
-      await page.getByRole('button', { name: 'Save lead' }).click();
+      await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
       await page.waitForLoadState('networkidle');
 
@@ -104,7 +107,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
       await chooseOption(selectByName(page, 'stage'), 'contacted');
       await page.getByRole('button', { name: 'Move', exact: true }).click();
       await expect(page.getByText('Moved to Contacted.')).toBeVisible();
-      await page.getByRole('button', { name: 'Qualify lead', exact: true }).click();
+      await page.getByRole('button', { name: 'Qualify', exact: true }).click();
       await page
         .getByRole('dialog', { name: 'Qualify this lead?' })
         .getByRole('button', { name: 'Qualify lead', exact: true })

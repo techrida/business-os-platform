@@ -53,7 +53,9 @@ import { PricingService } from '../pricing/pricing.service';
 import { QUOTATION_OWNER_TYPE } from '../quotation-owner.policy';
 import { DraftingService } from './drafting.service';
 import {
+  GOLDEN_INTERNAL_COST,
   GOLDEN_TOTALS,
+  goldenCostedLines,
   goldenCreateBody,
   seedQuotationFixture,
   type QuotationFixture,
@@ -371,6 +373,35 @@ describe('ReviseService.revise', () => {
       .from(quotationVersions)
       .where(eq(quotationVersions.quotationId, q.id));
     expect(versions).toHaveLength(2);
+  });
+
+  it('omits the cost figures from the answer of a caller without quotation.cost.read, and replays them in full for one who has it (D29b)', async () => {
+    const q = await drafting.create(
+      goldenCreateBody(f, { lines: goldenCostedLines(f) }),
+      `create-${randomUUID()}`,
+    );
+    const expectedVersion = await advance(q.currentVersionId, 'approved');
+    const key = `revise-${randomUUID()}`;
+
+    const noCost = new Map(current.grants);
+    noCost.delete('quotation.cost.read');
+    current.grants = noCost;
+    const hidden = QuotationVersionDtoSchema.parse(
+      await service.revise(q.id, { reason: REASON, expectedVersion }, key),
+    );
+    expect('internalCostTotal' in hidden).toBe(false);
+    expect('marginPct' in hidden).toBe(false);
+    for (const line of hidden.lines) expect('unitCost' in line).toBe(false);
+
+    // The stored answer is full: the same retry as a caller who may read costs shows them.
+    current.grants = grantsOf('sales');
+    const shown = QuotationVersionDtoSchema.parse(
+      await service.revise(q.id, { reason: REASON, expectedVersion }, key),
+    );
+    expect(shown.id).toBe(hidden.id);
+    expect(shown.internalCostTotal).toBe(GOLDEN_INTERNAL_COST);
+    expect(shown.marginPct).not.toBeNull();
+    expect(shown.lines.map((l) => l.unitCost)).toEqual(['1000000.00', '400000.00', '20000.00']);
   });
 
   it('answers 409 for a Draft current version, and changes nothing', async () => {

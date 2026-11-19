@@ -1,13 +1,14 @@
 import { trimPercent, type CustomerQuotationView } from '@bos/contracts';
-import { formatMoney } from '@bos/locale';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { ViewDocument } from '@/components/ui/document-viewer';
+import { displayFormat } from '@/lib/display';
 
 import styles from './quotation.module.css';
-import { displayStatus, formatDay, STATUS_LOOK } from './quotation-status';
+import { RichText } from './rich-text';
+import { displayStatus, STATUS_LOOK } from './quotation-status';
 
 type View = CustomerQuotationView;
 type Party = View['issuer'];
@@ -15,7 +16,8 @@ type Party = View['issuer'];
 /**
  * One quotation as the customer sees it. It reads only `CustomerQuotationView`, a strict whitelist
  * with no cost, margin, FX or approval data, so nothing internal can reach this markup. A test
- * renders it and scans the words. `respond` is the accept/reject panel the page puts beside it.
+ * renders it and scans the words. Amounts and dates use `view.display`, the setting this version
+ * was sent with. `respond` is the accept/reject panel the page puts beside it.
  */
 export function QuotationView({
   view,
@@ -27,7 +29,8 @@ export function QuotationView({
   respond?: ReactNode;
 }) {
   const look = STATUS_LOOK[displayStatus(view.status, view.validUntil, today)];
-  const money = (amount: string) => formatMoney(amount, view.currency);
+  const { money: formatAmount, day: formatDay } = displayFormat(view.display);
+  const money = (amount: string) => formatAmount(amount, view.currency);
   const hasDiscount = !/^0+(\.0+)?$/.test(view.totals.discountAmount);
 
   return (
@@ -178,11 +181,11 @@ export function QuotationView({
             Terms
           </h2>
           <dl className={styles.terms}>
-            <Term label="Scope" value={view.scope} />
-            <Term label="Assumptions" value={view.assumptions} />
-            <Term label="Exclusions" value={view.exclusions} />
-            <Term label="Terms and conditions" value={view.termsAndConditions} />
-            <Term label="Delivery timeline" value={view.deliveryTimeline} />
+            <Term label="Scope" value={view.scope} rich />
+            <Term label="Assumptions" value={view.assumptions} rich />
+            <Term label="Exclusions" value={view.exclusions} rich />
+            <Term label="Terms and conditions" value={view.termsAndConditions} rich />
+            <Term label="Delivery timeline" value={view.deliveryTimeline} rich />
             <Term label="Payment terms" value={view.paymentTermName} />
           </dl>
           {view.paymentSchedule.length > 0 ? (
@@ -198,6 +201,8 @@ export function QuotationView({
                         <span className={styles.muted}> · {formatDay(m.dueDescription)}</span>
                       ) : null}
                     </span>
+                    {/* The amount is the server's split of the total (D36); the portal never recomputes it. */}
+                    <span className={styles.scheduleAmount}>{money(m.amount)}</span>
                   </li>
                 ))}
               </ul>
@@ -236,12 +241,18 @@ function PartyBlock({ heading, party }: { heading: string; party: Party }) {
   );
 }
 
-function Term({ label, value }: { label: string; value: string | null }) {
+function Term({ label, value, rich }: { label: string; value: string | null; rich?: boolean }) {
   if (value === null || value.trim() === '') return null;
   return (
     <div>
       <dt>{label}</dt>
-      <dd className={styles.longText}>{value}</dd>
+      {rich ? (
+        <dd>
+          <RichText value={value} />
+        </dd>
+      ) : (
+        <dd className={styles.longText}>{value}</dd>
+      )}
     </div>
   );
 }

@@ -226,6 +226,53 @@ it('includes second-page users in workflow page selectors when the general direc
   expect(workflows).toContain(`<option value="${second}">Second page person</option>`);
 });
 
+// The timing block of the new-workflow form: from its first label to the submit button.
+const newWorkflowTimes = (html: string): string[] => {
+  const end = html.indexOf('Create as draft');
+  const form = html.slice(html.lastIndexOf('Remind after (hours)', end), end);
+  return [
+    form.match(/value="(\d+)"/)?.[1] ?? '',
+    form.match(/Escalate after \(hours\)[\s\S]*?value="(\d+)"/)?.[1] ?? '',
+    form.match(/<option value="([a-z_]+)" selected="">/)?.[1] ?? '',
+  ];
+};
+
+it('starts the new-workflow form from the saved default reminder times', async () => {
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
+    path === '/v1/admin/settings/approvals.sla_defaults'
+      ? Promise.resolve(
+          Response.json({
+            key: 'approvals.sla_defaults',
+            value: {
+              remindAfterHours: 8,
+              escalateAfterHours: 36,
+              escalateTo: { role: 'management' },
+            },
+            version: 3,
+          }),
+        )
+      : respond(caller, path, init),
+  );
+  const [remind, escalate, role] = newWorkflowTimes(renderToStaticMarkup(await WorkflowsPage()));
+  expect(remind).toBe('8');
+  expect(escalate).toBe('36');
+  expect(role).toBe('management');
+});
+
+it('starts the new-workflow form from the built-in times when the saved ones cannot be read', async () => {
+  const respond = vi.mocked(apiFetch).getMockImplementation()!;
+  vi.mocked(apiFetch).mockImplementation((caller, path, init) =>
+    path === '/v1/admin/settings/approvals.sla_defaults'
+      ? Promise.resolve(Response.json({}, { status: 503 }))
+      : respond(caller, path, init),
+  );
+  const [remind, escalate, role] = newWorkflowTimes(renderToStaticMarkup(await WorkflowsPage()));
+  expect(remind).toBe('24');
+  expect(escalate).toBe('72');
+  expect(role).toBe('founder');
+});
+
 it('rejects a stuck cursor instead of silently returning an incomplete picker', async () => {
   vi.mocked(apiFetch).mockImplementation(() =>
     Promise.resolve(Response.json({ items: [person(first)], nextAfter: first })),

@@ -15,6 +15,7 @@ import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { getVendorOnboarding, listVendorBills } from '@/lib/api.vendor';
 import { matchesSelection, matchesText } from '@/lib/list-filter';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { loadVendor } from '../load';
@@ -32,6 +33,7 @@ export default async function BillsPage({ searchParams }: { searchParams: Promis
   const session = await getSession();
   if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(HERE)}`);
 
+  const display = getPortalDisplay(session);
   const [result, capability] = await Promise.all([
     loadVendor(() => listVendorBills(session), HERE),
     getVendorOnboarding(session).then(
@@ -66,7 +68,7 @@ export default async function BillsPage({ searchParams }: { searchParams: Promis
           </div>
         ) : null}
         {result.data.length === 0 ? (
-          <BillList items={result.data} />
+          <BillList items={result.data} display={await display} />
         ) : (
           <>
             <ListFilters
@@ -93,7 +95,7 @@ export default async function BillsPage({ searchParams }: { searchParams: Promis
                 clearHref={clearFiltersHref(HERE, raw, BILL_FILTER_SPEC)}
               />
             ) : (
-              <BillList items={shown} />
+              <BillList items={shown} display={await display} />
             )}
           </>
         )}

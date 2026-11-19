@@ -170,6 +170,17 @@ export function goldenLines(
 
 export const GOLDEN_DISCOUNT: Discount = { mode: 'pct', value: '8' };
 
+/** Unit costs of the three golden lines; with the golden quantities (1, 1, 3) they sum to 1,460,000.00. */
+export const GOLDEN_UNIT_COSTS = ['1000000.00', '400000.00', '20000.00'] as const;
+export const GOLDEN_INTERNAL_COST = '1460000.00';
+
+/** The golden lines, each with its unit cost (D29b: cost figures are shown only to `quotation.cost.read`). */
+export function goldenCostedLines(
+  f: Pick<QuotationFixture, 'taxCodeVat13Id' | 'taxCodeExemptId'>,
+): QuotationLineInput[] {
+  return goldenLines(f).map((line, i) => ({ ...line, unitCost: GOLDEN_UNIT_COSTS[i]! }));
+}
+
 /** The stored totals of the golden case. */
 export const GOLDEN_TOTALS = {
   subtotal: '2599999.99',

@@ -13,6 +13,7 @@ import { VendorNoAccess } from '@/components/vendor/vendor-no-access';
 import { listVendorPurchaseOrders } from '@/lib/api.vendor';
 import { matchesSelection, matchesText } from '@/lib/list-filter';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
+import { getPortalDisplay } from '@/lib/portal-display';
 import { getSession } from '@/lib/session';
 
 import { loadVendor } from '../load';
@@ -33,6 +34,7 @@ export default async function PurchaseOrdersPage({
   const session = await getSession();
   if (!session) redirect(`/auth/login?returnTo=${encodeURIComponent(HERE)}`);
 
+  const display = getPortalDisplay(session);
   const result = await loadVendor(() => listVendorPurchaseOrders(session), HERE);
   if (result.kind === 'forbidden') return <VendorNoAccess />;
   if (result.kind === 'missing') notFound();
@@ -51,7 +53,7 @@ export default async function PurchaseOrdersPage({
         <p className={pageStyles.lede}>Orders we have issued to you, at their latest version.</p>
       </div>
       {result.data.length === 0 ? (
-        <PurchaseOrderList items={result.data} />
+        <PurchaseOrderList items={result.data} display={await display} />
       ) : (
         <>
           <ListFilters
@@ -78,7 +80,7 @@ export default async function PurchaseOrdersPage({
               clearHref={clearFiltersHref(HERE, raw, PO_FILTER_SPEC)}
             />
           ) : (
-            <PurchaseOrderList items={shown} />
+            <PurchaseOrderList items={shown} display={await display} />
           )}
         </>
       )}

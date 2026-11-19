@@ -19,6 +19,7 @@ import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/
 
 import { RejectDialog } from '../_components/bill-actions';
 import { billFailure } from '../_lib/failure';
+import { amountText } from '../_lib/duplicates';
 import { billGrants, fileStatusLabel } from '../_lib/model';
 import styles from '../payables.module.css';
 import { InboxFilters } from './inbox-filters';
@@ -143,6 +144,7 @@ export default async function BillInboxPage({
                   <Th>Vendor</Th>
                   <Th>Invoice</Th>
                   <Th>Invoice date</Th>
+                  <Th align="end">Amount</Th>
                   <Th>Order</Th>
                   <Th>File</Th>
                   <Th>Received</Th>
@@ -170,12 +172,23 @@ export default async function BillInboxPage({
                         ) : (
                           <span className={styles.quiet}>Missing</span>
                         )}
+                        {s.duplicates.length > 0 ? (
+                          <>
+                            {' '}
+                            <Badge tone="warning">Duplicate invoice number</Badge>
+                          </>
+                        ) : null}
                       </Td>
                       <Td nowrap>
                         {s.invoiceDate !== null ? (
                           <time dateTime={s.invoiceDate}>{when(s.invoiceDate, 'date')}</time>
                         ) : (
                           <span className={styles.quiet}>Missing</span>
+                        )}
+                      </Td>
+                      <Td align="end" nowrap>
+                        {amountText(s.claimedTotal, s.currency) ?? (
+                          <span className={styles.quiet}>Not given</span>
                         )}
                       </Td>
                       <Td nowrap>

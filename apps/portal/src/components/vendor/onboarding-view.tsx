@@ -1,9 +1,9 @@
-import { formatCustomerDate } from '@bos/locale';
-import type { VendorPortalOnboardingView } from '@bos/contracts';
+import type { PortalDisplay, VendorPortalOnboardingView } from '@bos/contracts';
 import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { displayFormat } from '@/lib/display';
 
 import styles from './vendor.module.css';
 import { KYC_DOC_LABEL, KYC_STATE_LOOK, VENDOR_STATUS_LOOK } from './vendor-status';
@@ -13,7 +13,14 @@ import { KYC_DOC_LABEL, KYC_STATE_LOOK, VENDOR_STATUS_LOOK } from './vendor-stat
  * KYB checklist with one state per document. It reads only `VendorPortalOnboardingView`, which has
  * no reviewer note, so nothing a reviewer wrote can reach this markup.
  */
-export function OnboardingView({ view }: { view: VendorPortalOnboardingView }) {
+export function OnboardingView({
+  view,
+  display,
+}: {
+  view: VendorPortalOnboardingView;
+  display?: PortalDisplay;
+}) {
+  const { day } = displayFormat(display);
   const look = VENDOR_STATUS_LOOK[view.status];
   // A blocked vendor cannot send anything; every other capability can send a KYC document.
   const canSend = view.capability !== 'none';
@@ -62,7 +69,7 @@ export function OnboardingView({ view }: { view: VendorPortalOnboardingView }) {
                         <Badge tone={state.tone}>{state.label}</Badge>
                       </td>
                       <td className={styles.nowrap}>
-                        {doc.validUntil ? formatCustomerDate(doc.validUntil) : '—'}
+                        {doc.validUntil ? day(doc.validUntil) : '—'}
                       </td>
                       {canSend ? (
                         <td className={styles.nowrap}>

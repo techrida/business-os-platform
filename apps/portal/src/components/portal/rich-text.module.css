@@ -1,0 +1,46 @@
+.richText {
+  max-width: 75ch;
+  overflow-wrap: anywhere;
+}
+
+.richText p {
+  margin: 0 0 8px;
+}
+
+.richText ul,
+.richText ol {
+  margin: 0 0 8px;
+  padding-left: 24px;
+}
+
+.richText ul {
+  list-style: disc;
+}
+
+.richText ol {
+  list-style: decimal;
+}
+
+.richText li {
+  margin: 0 0 4px;
+}
+
+/* A list inside an item sits under its text, one step in. */
+.richText li > ul,
+.richText li > ol {
+  margin: 4px 0 0;
+}
+
+.richText li > ul {
+  list-style: circle;
+}
+
+.richText > :last-child,
+.richText li:last-child {
+  margin-bottom: 0;
+}
+
+.richText strong {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}

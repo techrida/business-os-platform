@@ -64,12 +64,8 @@ test('the KYB queue opens a case and refuses a decision without a reason', async
 
   try {
     const page = reviewer.page;
-    await page.goto('/verification');
+    await page.goto('/verification?status=submitted');
     await expect(page.getByRole('heading', { level: 1, name: 'Verification' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Awaiting review' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
 
     const firstCase = page
       .getByRole('table', { name: 'Verification cases' })

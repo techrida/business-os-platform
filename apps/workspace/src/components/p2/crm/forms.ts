@@ -1,17 +1,30 @@
 import {
   ACTIVITY_SUBJECT_KEYS,
+  CancelActivityBodySchema,
+  CompleteActivityBodySchema,
   ConvertLeadBodySchema,
   CreateActivityBodySchema,
   CreateLeadBodySchema,
   LeadStageChangeBodySchema,
   OpportunityStageChangeBodySchema,
+  RescheduleActivityBodySchema,
+  SCHEDULABLE_ACTIVITY_KINDS,
+  USER_ACTIVITY_KINDS,
+  UpdateLeadBodySchema,
+  type ActivityDto,
+  type CancelActivityBody,
+  type CompleteActivityBody,
   type ConvertLeadBody,
   type CreateActivityBody,
   type CreateLeadBody,
   type LeadStageChangeBody,
   type OpportunityStageChangeBody,
   type RecordKind,
+  type RescheduleActivityBody,
+  type SchedulableActivityKind,
+  type UpdateLeadBody,
 } from '@bos/contracts';
+import type { ZodType } from 'zod';
 
 /**
  * Turns submitted forms into the contracts' request bodies, or into one plain sentence per field.
@@ -129,13 +142,49 @@ const LEAD_MESSAGES: Record<string, string> = {
   nextFollowUpAt: 'Enter a date and time.',
   notes: 'The notes are too long. The limit is 5,000 characters.',
   campaign: 'The campaign is too long. The limit is 100 characters.',
+  ownerUserId: 'Choose who owns this lead.',
+  followUpKind: 'Choose call, meeting or email.',
+  followUpAt: 'Choose when to follow up.',
+  followUpAssigneeUserId: 'Choose who does the follow-up.',
+  followUpSubject: 'Say what the follow-up is about, up to 200 characters.',
+  followUpBody: 'The follow-up details are too long. The limit is 10,000 characters.',
 };
 
+/** `['followUp', 'dueAt']` belongs to the `followUpAt` input; the other follow-up keys add a prefix. */
+function leadKey(path: PropertyKey[]): string {
+  if (path[0] !== 'followUp') return lastKey(path);
+  const key = String(path[1] ?? 'dueAt');
+  if (key === 'dueAt') return 'followUpAt';
+  return `followUp${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+}
+
+/**
+ * The first follow-up is planned only when it has a time. The type buttons always post a kind, so
+ * a kind, assignee or subject without a time is left out rather than refused.
+ */
+function leadFollowUp(form: FormData): Record<string, unknown> | undefined {
+  const dueAt = kathmanduLocalToIso(field(form, 'followUpAt'));
+  if (dueAt === undefined) return undefined;
+  return defined({
+    kind: field(form, 'followUpKind'),
+    dueAt,
+    assigneeUserId: field(form, 'followUpAssigneeUserId'),
+    subject: field(form, 'followUpSubject'),
+    body: field(form, 'followUpBody'),
+  });
+}
+
+/**
+ * Lead create. `ownerUserId` comes from the "Lead owner" select (the API defaults to the caller
+ * when it is absent). The first follow-up arrives as `followUpKind` + `followUpAt` (+ optional
+ * assignee, subject, details); the older single `nextFollowUpAt` input is still read.
+ */
 export function parseLead(form: FormData): Parsed<CreateLeadBody> {
   const input = defined({
     title: field(form, 'title'),
     source: field(form, 'source'),
     campaign: field(form, 'campaign'),
+    ownerUserId: field(form, 'ownerUserId'),
     companyName: field(form, 'companyName'),
     contactName: field(form, 'contactName'),
     email: field(form, 'email'),
@@ -146,55 +195,209 @@ export function parseLead(form: FormData): Parsed<CreateLeadBody> {
     probability: numberField(form, 'probability'),
     expectedClose: field(form, 'expectedClose'),
     nextFollowUpAt: kathmanduLocalToIso(field(form, 'nextFollowUpAt')),
+    followUp: leadFollowUp(form),
     notes: field(form, 'notes'),
   });
   const r = CreateLeadBodySchema.safeParse(input);
   if (r.success) return { ok: true, data: r.data };
   return {
     ok: false,
-    fieldErrors: collect(r.error.issues, lastKey, LEAD_MESSAGES, 'Check this field.'),
+    fieldErrors: collect(r.error.issues, leadKey, LEAD_MESSAGES, 'Check this field.'),
   };
+}
+
+/**
+ * Lead edit. Today the detail page edits only the owner (D39: follow-ups are activities, not a
+ * lead field), so the owner is required here; the body is the contract's partial update.
+ */
+export function parseLeadUpdate(form: FormData): Parsed<UpdateLeadBody> {
+  const ownerUserId = field(form, 'ownerUserId');
+  const expectedVersion = numberField(form, 'expectedVersion') ?? Number.NaN;
+  const r = UpdateLeadBodySchema.safeParse(defined({ ownerUserId, expectedVersion }));
+  // Only the submitted keys: the contract's partial still applies the create-time currency
+  // default, and sending it would reset a USD lead to NPR on an owner change.
+  if (r.success && ownerUserId !== undefined) {
+    return { ok: true, data: { ownerUserId, expectedVersion: r.data.expectedVersion } };
+  }
+  const errors: FieldErrors = r.success
+    ? {}
+    : collect(r.error.issues, lastKey, { ...LEAD_MESSAGES, expectedVersion: RELOAD }, RELOAD);
+  if (ownerUserId === undefined) errors['ownerUserId'] = LEAD_MESSAGES['ownerUserId'];
+  return { ok: false, fieldErrors: errors };
 }
 
 // ---------------------------------------------------------------------------------------------
 // Activity
 // ---------------------------------------------------------------------------------------------
 
+/** Button labels for the activity kinds a person logs or plans (D40). */
+export const ACTIVITY_KIND_LABELS: Record<(typeof USER_ACTIVITY_KINDS)[number], string> = {
+  call: 'Call',
+  meeting: 'Meeting',
+  email: 'Email',
+  note: 'Note',
+};
+
+/** Log activity offers every user kind; Schedule follow-up offers only the schedulable ones. */
+export const LOG_ACTIVITY_KINDS = USER_ACTIVITY_KINDS;
+export const SCHEDULE_ACTIVITY_KINDS = SCHEDULABLE_ACTIVITY_KINDS;
+
+const NOTE_NOT_SCHEDULABLE =
+  'A note records something that happened. Choose call, meeting or email to plan it.';
+
 const ACTIVITY_MESSAGES: Record<string, string> = {
-  kind: 'Choose call, meeting, email, note or task.',
+  kind: 'Choose call, meeting, email or note.',
   subject: 'Say what it was about, up to 200 characters.',
   body: 'The details are too long. The limit is 10,000 characters.',
   dueAt: 'Enter a date and time.',
+  occurredAt: 'Enter a date and time.',
+  assigneeUserId: 'Choose who does it.',
 };
 
+const activityKey = (path: PropertyKey[]): string =>
+  String(path[0]) in ACTIVITY_MESSAGES ? String(path[0]) : 'form';
+
+/** The two hidden inputs naming the record, or undefined when they are missing or unknown. */
+function activitySubject(form: FormData): { key: string; id: string } | undefined {
+  const key = field(form, 'subjectKind');
+  const id = field(form, 'subjectId');
+  const known = (ACTIVITY_SUBJECT_KEYS as readonly string[]).includes(key ?? '');
+  return known && key !== undefined && id !== undefined ? { key, id } : undefined;
+}
+
 /**
- * The record an activity belongs to arrives as two hidden inputs, `subjectKind` (one of the five
- * id keys) and `subjectId`, so a body can never carry two subjects. The contract's own refine
- * (exactly one) runs on top. The activity's `subject` is its one-line topic, not the record.
+ * Log an activity. The record it belongs to arrives as two hidden inputs, `subjectKind` (one of
+ * the five id keys) and `subjectId`, so a body can never carry two subjects. The contract's own
+ * refine (exactly one) runs on top. The activity's `subject` is its one-line topic, not the record.
+ * `task` is not a user kind any more (D39), and a note with a due time is refused (a note is not
+ * schedulable).
  */
 export function parseActivity(form: FormData): Parsed<CreateActivityBody> {
-  const subjectKind = field(form, 'subjectKind');
-  const subjectId = field(form, 'subjectId');
-  const known = (ACTIVITY_SUBJECT_KEYS as readonly string[]).includes(subjectKind ?? '');
-  if (!known || subjectKind === undefined || subjectId === undefined) {
-    return { ok: false, fieldErrors: { form: INCOMPLETE } };
-  }
+  const subject = activitySubject(form);
+  if (subject === undefined) return { ok: false, fieldErrors: { form: INCOMPLETE } };
   const input = defined({
     kind: field(form, 'kind'),
     subject: field(form, 'subject'),
     body: field(form, 'body'),
     dueAt: kathmanduLocalToIso(field(form, 'dueAt')),
-    [subjectKind]: subjectId,
+    occurredAt: kathmanduLocalToIso(field(form, 'occurredAt')),
+    assigneeUserId: field(form, 'assigneeUserId'),
+    [subject.key]: subject.id,
   });
   const r = CreateActivityBodySchema.safeParse(input);
   if (r.success) return { ok: true, data: r.data };
   const errors = collect(
     r.error.issues,
-    (path) => (String(path[0]) in ACTIVITY_MESSAGES ? String(path[0]) : 'form'),
+    activityKey,
     { ...ACTIVITY_MESSAGES, form: INCOMPLETE },
     INCOMPLETE,
   );
+  if (input['kind'] === 'note' && input['dueAt'] !== undefined)
+    errors['kind'] = NOTE_NOT_SCHEDULABLE;
   return { ok: false, fieldErrors: errors };
+}
+
+const SCHEDULE_MESSAGES: Record<string, string> = {
+  ...ACTIVITY_MESSAGES,
+  kind: 'Choose call, meeting or email.',
+  dueAt: 'Choose when the follow-up is due.',
+};
+
+/**
+ * Schedule a follow-up: a planned call, meeting or email (D39). The due time is required, a note
+ * is refused, and an empty subject becomes the kind's label ("Call"), as the API does for the
+ * follow-up planned with a new lead. No assignee means the API picks (the lead owner for a lead).
+ */
+export function parseScheduleFollowUp(form: FormData): Parsed<CreateActivityBody> {
+  const subject = activitySubject(form);
+  if (subject === undefined) return { ok: false, fieldErrors: { form: INCOMPLETE } };
+  const kind = field(form, 'kind');
+  const schedulable = (SCHEDULABLE_ACTIVITY_KINDS as readonly string[]).includes(kind ?? '');
+  const dueAt = kathmanduLocalToIso(field(form, 'dueAt'));
+  const errors: FieldErrors = {};
+  if (!schedulable)
+    errors['kind'] = kind === 'note' ? NOTE_NOT_SCHEDULABLE : SCHEDULE_MESSAGES['kind'];
+  if (dueAt === undefined) errors['dueAt'] = SCHEDULE_MESSAGES['dueAt'];
+  const input = defined({
+    kind,
+    subject:
+      field(form, 'subject') ??
+      (schedulable ? ACTIVITY_KIND_LABELS[kind as SchedulableActivityKind] : undefined),
+    body: field(form, 'body'),
+    dueAt,
+    assigneeUserId: field(form, 'assigneeUserId'),
+    [subject.key]: subject.id,
+  });
+  const r = CreateActivityBodySchema.safeParse(input);
+  if (r.success && Object.keys(errors).length === 0) return { ok: true, data: r.data };
+  const fromSchema = r.success
+    ? {}
+    : collect(r.error.issues, activityKey, { ...SCHEDULE_MESSAGES, form: INCOMPLETE }, INCOMPLETE);
+  return { ok: false, fieldErrors: { ...fromSchema, ...errors } };
+}
+
+const FOLLOW_UP_MESSAGES: Record<string, string> = {
+  expectedVersion: RELOAD,
+  note: 'The note is too long. The limit is 10,000 characters.',
+  occurredAt: 'Enter a date and time.',
+  dueAt: 'Choose the new due time.',
+  assigneeUserId: 'Choose who does the follow-up.',
+};
+
+function parseWith<T>(schema: ZodType<T>, input: Record<string, unknown>): Parsed<T> {
+  const r = schema.safeParse(input);
+  if (r.success) return { ok: true, data: r.data };
+  return { ok: false, fieldErrors: collect(r.error.issues, lastKey, FOLLOW_UP_MESSAGES, RELOAD) };
+}
+
+/** Complete a planned follow-up: an optional note (appended to its details) and when it happened. */
+export function parseCompleteActivity(form: FormData): Parsed<CompleteActivityBody> {
+  return parseWith(
+    CompleteActivityBodySchema,
+    defined({
+      expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN,
+      note: field(form, 'note'),
+      occurredAt: kathmanduLocalToIso(field(form, 'occurredAt')),
+    }),
+  );
+}
+
+/** Move a planned follow-up to a new time, optionally to another person. */
+export function parseRescheduleActivity(form: FormData): Parsed<RescheduleActivityBody> {
+  return parseWith(
+    RescheduleActivityBodySchema,
+    defined({
+      expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN,
+      dueAt: kathmanduLocalToIso(field(form, 'dueAt')),
+      assigneeUserId: field(form, 'assigneeUserId'),
+    }),
+  );
+}
+
+export function parseCancelActivity(form: FormData): Parsed<CancelActivityBody> {
+  return parseWith(
+    CancelActivityBodySchema,
+    defined({ expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN }),
+  );
+}
+
+/** A due time strictly before `now`. Null or unreadable times are never overdue. */
+export function isPastDue(dueAt: string | null | undefined, now: Date = new Date()): boolean {
+  if (dueAt === null || dueAt === undefined) return false;
+  const at = Date.parse(dueAt);
+  return Number.isFinite(at) && at < now.getTime();
+}
+
+/**
+ * Overdue = planned and its due time has passed (D39; clients compute it, nothing is stored).
+ * Completed, cancelled and logged activities are never overdue. For a lead's next follow-up
+ * (`LeadDto.nextFollowUpAt`, already the earliest planned due time) use `isPastDue`.
+ */
+export function isOverdue(
+  activity: Pick<ActivityDto, 'planned' | 'dueAt'>,
+  now: Date = new Date(),
+): boolean {
+  return activity.planned && isPastDue(activity.dueAt, now);
 }
 
 // ---------------------------------------------------------------------------------------------

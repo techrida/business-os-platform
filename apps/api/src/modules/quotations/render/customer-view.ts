@@ -9,6 +9,7 @@ import {
   isCustomerVisibleStatus,
   type CustomerQuotationView,
   type CustomerVisibleStatus,
+  type PortalDisplay,
 } from '@bos/contracts';
 import type {
   customerContacts,
@@ -19,6 +20,8 @@ import type {
   quotationTaxSummary,
   quotationVersions,
 } from '@bos/db';
+
+import { paymentScheduleAmounts } from '../drafting/payment-schedule';
 
 type Row<T extends { $inferSelect: object }> = T['$inferSelect'];
 
@@ -80,6 +83,12 @@ export interface CustomerViewInput {
   taxSummary: readonly Pick<Row<typeof quotationTaxSummary>, 'label' | 'rate' | 'base' | 'tax'>[];
   issuer: CustomerViewIssuer;
   /**
+   * The number grouping and date pattern the portal draws this version with: the portal passes the ones frozen with
+   * the version (else the live settings). The PDF renderer ignores it (it reads the snapshot itself) and passes
+   * `defaultPortalDisplay()`.
+   */
+  display: PortalDisplay;
+  /**
    * True once the rendered PDF's malware scan came back clean. The file goes in the view only then; the
    * default is deny.
    */
@@ -132,7 +141,11 @@ export function toCustomerQuotationView(
     throw new QuotationNotCustomerVisibleError(version.status);
   }
 
-  const schedule = PaymentMilestoneSchema.array().parse(version.paymentSchedule);
+  // The same split the staff API makes (D36), so the portal and the PDF never differ from the workspace.
+  const schedule = paymentScheduleAmounts(
+    version.total,
+    PaymentMilestoneSchema.array().parse(version.paymentSchedule),
+  );
 
   const file =
     input.renderedScanClean === true &&
@@ -174,6 +187,7 @@ export function toCustomerQuotationView(
     paymentSchedule: schedule.map((m) => ({
       label: m.label,
       percent: m.percent,
+      amount: m.amount,
       ...(m.dueDescription === undefined ? {} : { dueDescription: m.dueDescription }),
     })),
     lines: [...input.lines]
@@ -199,6 +213,14 @@ export function toCustomerQuotationView(
       base: t.base,
       tax: t.tax,
     })),
+    display: {
+      numberSystems: {
+        NPR: input.display.numberSystems.NPR,
+        INR: input.display.numberSystems.INR,
+        USD: input.display.numberSystems.USD,
+      },
+      dateFormat: input.display.dateFormat,
+    },
     file,
   });
 }

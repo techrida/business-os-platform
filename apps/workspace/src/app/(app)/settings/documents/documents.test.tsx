@@ -104,6 +104,22 @@ describe('the Document templates page', () => {
     ]);
   });
 
+  it('offers the undo icon for a style that differs from the default, naming the default', async () => {
+    const html = renderToStaticMarkup((await DocumentsPage()) as ReactElement);
+    expect(html).toContain('aria-label="Reset Document style to default"');
+    expect(html).toContain('title="Reset to default (Banded, Ocean)"');
+  });
+
+  it('shows no undo icon while the saved style is the default', async () => {
+    getSetting.mockResolvedValue({
+      key: 'document.style',
+      value: { layout: 'banded', primaryColour: '#1D4ED8' },
+      version: 1,
+    });
+    const html = renderToStaticMarkup((await DocumentsPage()) as ReactElement);
+    expect(html).not.toContain('Reset Document style to default');
+  });
+
   it('falls back to the default style when the stored value cannot be read', async () => {
     getSetting.mockResolvedValue({ key: 'document.style', value: { layout: 'neon' }, version: 1 });
     const html = renderToStaticMarkup((await DocumentsPage()) as ReactElement);

@@ -10,13 +10,15 @@
 // What it holds:
 //   * done check 1: the golden invoice (1,880,000.00 less 5%, VAT 13%) reaches Gotenberg printing `NPR 20,18,180.00`,
 //     titled "Tax Invoice" with the seller's PAN; a proforma prints "Proforma Invoice";
-//   * the PDF is stored as a generated document owned by the invoice, goes through quarantine and the scan to `clean`
-//     (done check 13 step 2), print 1 is logged with no user, and the invoice row itself is untouched;
-//   * a reprint (the original's document removed) prints "Copy of original (1)" as print 2;
+//   * the PDF is stored as a generated document owned by the invoice and is `clean` at once: it skips the virus
+//     scan (D28), so no scan job is queued; print 1 is logged with no user, and the invoice row itself is untouched;
+//   * print 1 stores the number grouping and date pattern it printed with (`render_format`);
+//   * a reprint (the original's document removed) prints "Copy of original (1)" as print 2, with print 1's grouping
+//     and date pattern even after the settings changed; a copy of a print with no stored format uses the settings;
 //   * candidates: issued tax invoices and proformas without a live document, never drafts or rendered ones;
 //   * two renders at once give one document and one print; Gotenberg 500 and a draft leave no document and no print;
 //   * an orphan generated document older than 1 h is soft-removed by a sweep, a younger one is kept;
-//   * GET /v1/invoices/:id/document: a link for the clean PDF; 404 before the scan, for a draft, for another entity
+//   * GET /v1/invoices/:id/document: a link for the clean PDF right after the render; 404 for a draft, for another entity
 //     and for a random id; 403 for a portal caller.
 //
 // Needs Docker. Run: pnpm --filter @bos/api exec vitest run src/modules/invoices/render/invoice-render.integration.test.ts
@@ -31,6 +33,7 @@ import { join } from 'node:path';
 
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  DocumentFormatSnapshotSchema,
   type Permission,
   type RoleKey,
   type Scope,
@@ -57,7 +60,7 @@ import { ScanProcessor } from '../../../platform/documents/scan.processor';
 import { SignedLinks, type LinkStore } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../../platform/documents/storage.adapter';
 import { GotenbergClient } from '../../quotations/render/gotenberg.client';
-import type { RunInTx } from '../../quotations/render/quotation-render.sweeper';
+import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   drizzleInvoiceHeadLoader,
   INVOICE_OWNER_TYPE,
@@ -118,8 +121,17 @@ const authz = { assert: vi.fn() };
 const audit = { record: vi.fn().mockResolvedValue(undefined) };
 const notify = { notifyUser: vi.fn().mockResolvedValue(undefined) };
 const queue = { add: vi.fn().mockResolvedValue({}) };
-// The render reads only `format.number_system`; NPR documents group the same under the default.
-const settings = { get: vi.fn().mockResolvedValue('south_asian') };
+// The render reads `format.number_systems` and `format.date`. These are the defaults; a test that changes them
+// puts them back with `resetSettings`.
+const DEFAULT_SETTINGS: Record<string, unknown> = {
+  'format.number_systems': { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+  'format.date': 'dd MMM yyyy',
+};
+const liveSettings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+const resetSettings = () => Object.assign(liveSettings, DEFAULT_SETTINGS);
+const settings = {
+  get: vi.fn((_scope: TxScope, key: string) => Promise.resolve(liveSettings[key])),
+} as unknown as RenderSettings;
 
 const runTx: RunInTx = (scope, actor, fn) => withTx(db, scope, actor, fn);
 const seedActor = () => systemActor('invoice-render-test-seed');
@@ -243,6 +255,7 @@ beforeEach(() => {
   authz.assert.mockReset();
   audit.record.mockClear();
   queue.add.mockReset().mockResolvedValue({});
+  resetSettings();
 });
 
 // ---------------------------------------------------------------------------------------- helpers
@@ -366,6 +379,15 @@ async function printRows(invoiceId: string) {
   return rows;
 }
 
+/** Each print's stored `render_format`, by print number. Kept apart from printRows so its equality checks stay as they are. */
+async function printFormats(invoiceId: string) {
+  const { rows } = await pool.query<{ print_no: number; render_format: unknown }>(
+    'SELECT print_no, render_format FROM app.invoice_print_log WHERE invoice_id = $1 ORDER BY print_no',
+    [invoiceId],
+  );
+  return rows;
+}
+
 async function invoiceRow(invoiceId: string) {
   const { rows } = await pool.query<{ version: number; updated_at: Date; status: string }>(
     'SELECT version, updated_at, status FROM app.invoices WHERE id = $1',
@@ -399,10 +421,10 @@ async function createOrphan(scope: TestScope, invoiceId: string, ageMs: number):
   return created.documentId;
 }
 
-async function renderAndScan(scope: TestScope, inv: Seeded): Promise<void> {
+/** Renders the invoice; the generated PDF is clean at once (D28), with no scan to wait for. */
+async function renderClean(inv: Seeded): Promise<void> {
   expect(await sweeper.renderOne(inv)).toBe('rendered');
-  const doc = first(await documentRows(inv.invoiceId));
-  expect(await processor.scanVersion(scanJob(scope, doc.version_id), true)).toBe('clean');
+  expect(first(await documentRows(inv.invoiceId)).status).toBe('clean');
 }
 
 // ------------------------------------------------------------------------------------------- tests
@@ -474,9 +496,7 @@ describe('invoice render', () => {
     expect(await sweeper.renderOne(inv)).toBe('rendered');
     const docs = await documentRows(inv.invoiceId);
     expect(docs).toHaveLength(1);
-    expect(first(docs).status).toBe('quarantined');
-    expect(await processor.scanVersion(scanJob(scope, first(docs).version_id), true)).toBe('clean');
-    expect(first(await documentRows(inv.invoiceId)).status).toBe('clean');
+    expect(first(docs).status).toBe('clean');
   });
 
   it('prints the golden invoice as NPR 20,18,180.00 and stores a clean PDF owned by the invoice', async () => {
@@ -504,18 +524,22 @@ describe('invoice render', () => {
     expect(doc.uploaded_by).toBeNull();
     expect(doc.removed_at).toBeNull();
     expect(doc.filename).toBe(`${(inv.number ?? '').replaceAll('/', '-')}.pdf`);
-    // It reached the scan pipeline like any generated file, and clears (done check 13 step 2).
-    expect(doc.status).toBe('quarantined');
-    expect(queue.add).toHaveBeenCalledWith(
-      expect.any(String),
-      scanJob(scope, doc.version_id),
-      expect.objectContaining({ jobId: doc.version_id }),
-    );
-    expect(await processor.scanVersion(scanJob(scope, doc.version_id), true)).toBe('clean');
-    expect(first(await documentRows(inv.invoiceId)).status).toBe('clean');
+    // Generated bytes skip the virus scan (D28): clean at once, no scan job, and a stray scan job is a no-op.
+    expect(doc.status).toBe('clean');
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(await processor.scanVersion(scanJob(scope, doc.version_id), true)).toBe('skipped');
 
     // Print 1 is logged, by no one; the frozen invoice row did not move.
     expect(await printRows(inv.invoiceId)).toEqual([{ print_no: 1, printed_by: null }]);
+    // ...and it keeps the format it printed with, for any later copy.
+    const formats = await printFormats(inv.invoiceId);
+    expect(formats.map((p) => p.print_no)).toEqual([1]);
+    // What a later copy will read back must parse as a format snapshot.
+    const stored = DocumentFormatSnapshotSchema.parse(first(formats).render_format);
+    expect(stored).toMatchObject({
+      numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd MMM yyyy',
+    });
     const after = await invoiceRow(inv.invoiceId);
     expect(after.version).toBe(before.version);
     expect(after.updated_at).toEqual(before.updated_at);
@@ -531,10 +555,19 @@ describe('invoice render', () => {
     expect(html).not.toContain('<h1>Tax Invoice</h1>');
   });
 
-  it('prints a reprint as "Copy of original (1)", print 2, in its own file', async () => {
+  it('prints a reprint as "Copy of original (1)", print 2, in its own file, formatted like print 1', async () => {
     const scope = await newScope();
     const inv = await seedInvoice(scope);
     expect(await sweeper.renderOne(inv)).toBe('rendered');
+    expect(first(gotenberg.requests)).toContain('NPR 20,18,180.00');
+    expect(first(gotenberg.requests)).toContain('09 Nov 2026');
+    // The company changes its grouping and date pattern after the original went out.
+    liveSettings['format.number_systems'] = {
+      NPR: 'international',
+      INR: 'international',
+      USD: 'international',
+    };
+    liveSettings['format.date'] = 'dd/MM/yyyy';
     // The original's document is taken away; the invoice has none again, but the log remembers print 1.
     await withTx(db, scope, seedActor(), (tx) =>
       tx.execute(
@@ -545,12 +578,48 @@ describe('invoice render', () => {
 
     expect(await sweeper.renderOne(inv)).toBe('rendered');
 
-    expect(first(gotenberg.requests)).toContain('Copy of original (1)');
+    const copy = first(gotenberg.requests);
+    expect(copy).toContain('Copy of original (1)');
+    // Print 1's stored format, not today's settings.
+    expect(copy).toContain('NPR 20,18,180.00');
+    expect(copy).not.toContain('NPR 2,018,180.00');
+    expect(copy).toContain('09 Nov 2026');
+    expect(copy).not.toContain('09/11/2026');
     const live = (await documentRows(inv.invoiceId)).filter((d) => d.removed_at === null);
     expect(live.map((d) => d.filename)).toEqual([
       `${(inv.number ?? '').replaceAll('/', '-')}-copy1.pdf`,
     ]);
     expect((await printRows(inv.invoiceId)).map((p) => p.print_no)).toEqual([1, 2]);
+    // Only the original stores a format.
+    expect((await printFormats(inv.invoiceId)).map((p) => p.render_format === null)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it('prints a copy of a print made before render_format existed with the settings in force', async () => {
+    const scope = await newScope();
+    const inv = await seedInvoice(scope);
+    // Print 1 as a print before migration 0051 left it: logged, no stored format, no live document.
+    await withTx(db, scope, seedActor(), (tx) =>
+      tx.execute(sql`
+        INSERT INTO app.invoice_print_log (tenant_id, organization_id, invoice_id, print_no, printed_by, printed_at)
+        VALUES (${scope.tenantId}::uuid, ${scope.organizationId}::uuid, ${inv.invoiceId}::uuid, 1, NULL, now())`),
+    );
+    liveSettings['format.number_systems'] = {
+      NPR: 'international',
+      INR: 'international',
+      USD: 'international',
+    };
+    liveSettings['format.date'] = 'dd/MM/yyyy';
+
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
+
+    const copy = first(gotenberg.requests);
+    expect(copy).toContain('Copy of original (1)');
+    expect(copy).toContain('NPR 2,018,180.00');
+    expect(copy).toContain('09/11/2026');
+    expect((await printFormats(inv.invoiceId)).map((p) => p.render_format)).toEqual([null, null]);
   });
 
   it('picks issued tax invoices and proformas without a live document, nothing else', async () => {
@@ -644,16 +713,13 @@ describe('GET /v1/invoices/:id/document', () => {
     current.orgKind = 'staff';
   };
 
-  it('links the clean PDF, and refuses before the scan', async () => {
+  it('links the clean PDF right after the render, with no scan in between', async () => {
     const scope = await newScope();
     asStaff(scope);
     const inv = await seedInvoice(scope);
-    expect(await sweeper.renderOne(inv)).toBe('rendered');
-    // Quarantined, not scanned yet: not served.
+    // Not rendered yet: nothing to serve.
     await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
-
-    const doc = first(await documentRows(inv.invoiceId));
-    expect(await processor.scanVersion(scanJob(scope, doc.version_id), true)).toBe('clean');
+    expect(await sweeper.renderOne(inv)).toBe('rendered');
 
     const link = await service.link(inv.invoiceId);
     expect(link.url.length).toBeGreaterThan(0);
@@ -666,7 +732,7 @@ describe('GET /v1/invoices/:id/document', () => {
     const draft = await seedInvoice(scope, { status: 'draft' });
     const unrendered = await seedInvoice(scope);
     const issued = await seedInvoice(scope);
-    await renderAndScan(scope, issued);
+    await renderClean(issued);
 
     asStaff(scope);
     await expect(service.link(draft.invoiceId)).rejects.toBeInstanceOf(NotFoundException);
@@ -682,7 +748,7 @@ describe('GET /v1/invoices/:id/document', () => {
   it('is a 403 for a portal caller', async () => {
     const scope = await newScope();
     const inv = await seedInvoice(scope);
-    await renderAndScan(scope, inv);
+    await renderClean(inv);
     current.scope = scope;
     current.orgKind = 'customer';
     await expect(service.link(inv.invoiceId)).rejects.toBeInstanceOf(ForbiddenException);

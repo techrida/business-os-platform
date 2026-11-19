@@ -2,12 +2,18 @@ import 'server-only';
 
 import {
   type ActivityKind,
+  type ActivityStatus,
   ActivityDtoSchema,
+  type CancelActivityBody,
+  type CompleteActivityBody,
   type ConvertLeadBody,
   type CreateActivityBody,
   type CreateLeadBody,
   type LeadStageChangeBody,
   LeadDtoSchema,
+  LeadOwnerOptionSchema,
+  type RescheduleActivityBody,
+  type UpdateLeadBody,
   type OpportunityStage,
   type OpportunityStageChangeBody,
   OpportunityDtoSchema,
@@ -112,6 +118,19 @@ export function createLead(session: Session, body: CreateLeadBody, idempotencyKe
   );
 }
 
+/**
+ * People the caller may hand a lead (or its follow-up) to. A caller with `own` scope gets only
+ * themselves, so the select then has one option.
+ */
+export function listLeadOwners(session: Session) {
+  return call(session, '/v1/leads/owners', listOf(LeadOwnerOptionSchema));
+}
+
+/** Edit the lead's own fields (today: the owner). Answers the updated lead; 409 when stale. */
+export function updateLead(session: Session, id: string, body: UpdateLeadBody) {
+  return call(session, `/v1/leads/${seg(id)}`, LeadDtoSchema, json('PATCH', body));
+}
+
 /** The stage route answers the updated lead. */
 export function changeLeadStage(session: Session, id: string, body: LeadStageChangeBody) {
   return call(session, `/v1/leads/${seg(id)}/stage`, LeadDtoSchema, json('PATCH', body));
@@ -170,12 +189,46 @@ export function changeOpportunityStage(
 // Activities
 // ---------------------------------------------------------------------------------------------
 
-/** Query params the screens send: one subject id (`leadId` or `opportunityId`), `kind`, `limit`. */
+/**
+ * Query params the screens send: one subject id (`leadId` or `opportunityId`), `kind`, `limit`
+ * and `status`: `planned` (the Follow-ups card, earliest due first) or `logged` (History, newest
+ * first). Without `status` every non-cancelled activity is listed.
+ */
 export function listActivities(
   session: Session,
-  opts: { leadId?: string; opportunityId?: string; kind?: ActivityKind; limit?: number } = {},
+  opts: {
+    leadId?: string;
+    opportunityId?: string;
+    kind?: ActivityKind;
+    status?: ActivityStatus;
+    limit?: number;
+  } = {},
 ) {
   return call(session, `/v1/activities${query(opts)}`, listOf(ActivityDtoSchema));
+}
+
+/** Complete a planned follow-up; it becomes a logged activity. Answers the updated activity. */
+export function completeActivity(session: Session, id: string, body: CompleteActivityBody) {
+  return call(
+    session,
+    `/v1/activities/${seg(id)}/complete`,
+    ActivityDtoSchema,
+    json('PATCH', body),
+  );
+}
+
+export function rescheduleActivity(session: Session, id: string, body: RescheduleActivityBody) {
+  return call(
+    session,
+    `/v1/activities/${seg(id)}/reschedule`,
+    ActivityDtoSchema,
+    json('PATCH', body),
+  );
+}
+
+/** A cancelled follow-up leaves both the Follow-ups card and History. */
+export function cancelActivity(session: Session, id: string, body: CancelActivityBody) {
+  return call(session, `/v1/activities/${seg(id)}/cancel`, ActivityDtoSchema, json('PATCH', body));
 }
 
 /** Sent with an `idempotency-key`, so a double click logs the activity once. */

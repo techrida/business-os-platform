@@ -232,7 +232,15 @@ const BLOCKED_PLAN: RoutePlan = {
   blockReason: 'No eligible approver for step 1',
 };
 
-function setup(h: SubmitHead = head()) {
+/** The caller as the service reads it: a staff principal whose live grants may or may not hold the cost grant. */
+const callerPrincipal = (mayReadCost: boolean) => ({
+  userId: CALLER,
+  orgKind: 'staff',
+  status: 'active',
+  grants: new Map<string, string>(mayReadCost ? [['quotation.cost.read', 'all']] : []),
+});
+
+function setup(h: SubmitHead = head(), mayReadCost = true) {
   const store = {
     load: vi.fn().mockResolvedValue(h),
     customerName: vi.fn().mockResolvedValue('Himal Traders Pvt Ltd'),
@@ -249,7 +257,7 @@ function setup(h: SubmitHead = head()) {
   const notify = { notifyRole: vi.fn().mockResolvedValue(undefined) };
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const caller = {
-    current: () => ({ scope: SCOPE, actor: ACTOR, principal: { userId: CALLER } }),
+    current: () => ({ scope: SCOPE, actor: ACTOR, principal: callerPrincipal(mayReadCost) }),
   };
   const service = new QuotationSubmitService(
     {} as never,
@@ -407,6 +415,57 @@ describe('QuotationSubmitService.submit', () => {
       expect.objectContaining({ action: 'quotation.submitted', entityId: QID }),
     );
     expect(dto).toMatchObject({ id: VID, status: 'submitted', number: 'QT-2082/83-00042' });
+  });
+
+  describe('cost figures in the answer (D29b)', () => {
+    const COSTED: PricedVersion = {
+      ...PRICED,
+      lines: [{ ...PRICED.lines[0]!, unitCost: '300.00' }],
+      columns: { ...PRICED.columns, internalCostTotal: '600.00', marginPct: '34.7826' },
+    };
+    const costedSetup = (mayReadCost: boolean) => {
+      const ctx = setup(head(), mayReadCost);
+      ctx.pricing.priceVersion.mockResolvedValue(COSTED);
+      ctx.store.replacePriced.mockResolvedValue({
+        lines: [storedLine({ unitCost: '300.00' })],
+        taxSummary: [storedTax()],
+      });
+      fakeUpdateVersioned(versionRow());
+      return ctx;
+    };
+
+    it('includes unitCost, internalCostTotal and marginPct for a caller holding quotation.cost.read', async () => {
+      const { service } = costedSetup(true);
+      const dto = await service.submit(QID, VID, BODY, 'key-1');
+      expect(dto).toMatchObject({ internalCostTotal: '600.00', marginPct: '34.7826' });
+      expect(dto.lines[0]).toMatchObject({ unitCost: '300.00' });
+    });
+
+    it('omits all three (keys absent) for a caller without it, yet still stores and snapshots them', async () => {
+      const { service, store, approvals } = costedSetup(false);
+      const dto = await service.submit(QID, VID, BODY, 'key-1');
+      expect(dto).toMatchObject({ id: VID, status: 'submitted', number: 'QT-2082/83-00042' });
+      expect('internalCostTotal' in dto).toBe(false);
+      expect('marginPct' in dto).toBe(false);
+      for (const l of dto.lines) expect('unitCost' in l).toBe(false);
+      // The write path is untouched: the approval snapshot (the approver's figures) is frozen in full.
+      expect(store.replacePriced).toHaveBeenCalledWith(TX, expect.anything(), COSTED);
+      expect(approvals.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('filters a replayed answer per caller: the stored first answer stays full', async () => {
+      const { service } = costedSetup(false);
+      const full = await costedSetup(true).service.submit(QID, VID, BODY, 'key-1');
+      vi.mocked(withIdempotency).mockResolvedValueOnce({
+        status: 200,
+        response: full,
+        replayed: true,
+      });
+      const replay = await service.submit(QID, VID, BODY, 'key-1');
+      expect('marginPct' in replay).toBe(false);
+      expect(replay.lines.every((l) => !('unitCost' in l))).toBe(true);
+      expect(full.marginPct).toBe('34.7826');
+    });
   });
 
   it('hashes the rows as Postgres returns them (full scale), not the in-memory priced strings', async () => {

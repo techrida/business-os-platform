@@ -23,6 +23,7 @@ import { AuthModule } from '../../platform/auth/auth.module';
 import { STEP_UP_MAX_AGE_SECONDS, stepUpMaxAgeFromEnv } from '../../platform/auth/step-up';
 import { NotifyModule } from '../../platform/notify/notify.module';
 import { NotifyService } from '../../platform/notify/notify.service';
+import { SettingsModule } from '../../platform/settings/settings.module';
 import {
   APPROVALS_CLOCK,
   ApprovalsAudit,
@@ -33,7 +34,8 @@ import {
 import { ApprovalsService } from './requests.service';
 
 @Module({
-  imports: [AuditModule, NotifyModule],
+  // SettingsModule: the admin service reads `approvals.sla_defaults` for specs that leave `sla` out.
+  imports: [AuditModule, NotifyModule, SettingsModule],
   providers: [
     ApprovalsService,
     ApprovalsAdminService,

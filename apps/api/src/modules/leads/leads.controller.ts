@@ -2,7 +2,13 @@
 // permission with @Can (route level); the service then checks the record itself (entity, own scope), so a
 // salesperson cannot read a colleague's lead by guessing its id. POST /v1/leads/:id/convert is in
 // convert/lead-convert.controller.ts.
-import { CreateLeadBodySchema, LeadStageChangeBodySchema, type LeadDto } from '@bos/contracts';
+import {
+  CreateLeadBodySchema,
+  type LeadDto,
+  type LeadOwnerOption,
+  LeadStageChangeBodySchema,
+  UpdateLeadBodySchema,
+} from '@bos/contracts';
 import {
   Body,
   Controller,
@@ -49,6 +55,16 @@ export class LeadsController {
     return this.leads.summary(parseOr400(LeadSummaryQuerySchema, query));
   }
 
+  /**
+   * 200 with the LeadOwnerOption[] the caller may hand a lead to: just the caller for an `own` grant. Declared before
+   * ':id' so "owners" is never read as an id.
+   */
+  @Get('owners')
+  @Can('crm.lead.write')
+  owners(): Promise<LeadOwnerOption[]> {
+    return this.leads.owners();
+  }
+
   /** 200 with the LeadDto. 404 for a record of another entity or outside the caller's scope. */
   @Get(':id')
   @Can('crm.lead.read')
@@ -65,6 +81,17 @@ export class LeadsController {
   ): Promise<LeadDto> {
     const key = idempotencyKey === undefined ? undefined : requireIdempotencyKey(idempotencyKey);
     return this.leads.create(parseOr400(CreateLeadBodySchema, body), key);
+  }
+
+  /**
+   * 200 with the edited LeadDto; only the fields sent change. 404 out of scope, 409 stale version, 400 for a
+   * converted lead, an edit that changes nothing or an owner who is not a user of the tenant, 403 for an owner the
+   * caller's grant does not reach (an `own` grant cannot hand the lead to someone else).
+   */
+  @Patch(':id')
+  @Can('crm.lead.write')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown): Promise<LeadDto> {
+    return this.leads.update(id, parseOr400(UpdateLeadBodySchema, body));
   }
 
   /**

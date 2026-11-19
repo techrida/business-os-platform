@@ -1,4 +1,4 @@
-import type { TermPreset } from '@bos/contracts';
+import { DEFAULT_TERM_PRESETS, SETTING_DEFAULTS, type TermPreset } from '@bos/contracts';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,9 +28,25 @@ const api = vi.hoisted(() => ({
   deleteTermPreset: vi.fn(),
 }));
 vi.mock('@/lib/api-term-presets', () => api);
+const putSetting =
+  vi.fn<
+    (
+      session: Session,
+      key: string,
+      value: unknown,
+      expectedVersion?: number | null,
+    ) => Promise<unknown>
+  >();
+const getSetting = vi.fn<(session: Session, key: string) => Promise<unknown>>();
+vi.mock('@/lib/api-admin', () => ({
+  putSetting: (session: Session, key: string, value: unknown, expectedVersion?: number | null) =>
+    putSetting(session, key, value, expectedVersion),
+  getSetting: (session: Session, key: string) => getSetting(session, key),
+}));
 
 const { default: TermsPage } = await import('./page');
 const { savePresetAction, removePresetAction } = await import('./actions');
+const { resetSettingAction } = await import('../_components/actions');
 const { ApiError } = await import('@/lib/api');
 
 const session = (roles: string[]): Session =>
@@ -41,12 +57,16 @@ const preset: TermPreset = {
   id: ID,
   kind: 'scope',
   name: 'Standard build',
-  body: 'We build it.\nIn two phases.',
+  body: '<p>We build it.</p><ul><li>In two phases.</li></ul>',
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   getSession.mockReset();
+  putSetting.mockReset();
+  putSetting.mockResolvedValue({ version: 2 });
+  getSetting.mockReset();
+  getSetting.mockResolvedValue({ key: 'quotation.term_presets', value: [], version: 3 });
 });
 
 describe('the Saved terms page', () => {
@@ -67,7 +87,7 @@ describe('the Saved terms page', () => {
     await expect(TermsPage()).rejects.toThrow('REDIRECT:/staff-only');
   });
 
-  it('shows the founder one tab per kind, each option with its name and first line, and Add option', async () => {
+  it('shows the founder one tab per kind, each term set with its name and a one-line plain preview', async () => {
     getSession.mockResolvedValue(session(['founder']));
     api.listTermPresets.mockResolvedValue([preset]);
     const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
@@ -82,27 +102,69 @@ describe('the Saved terms page', () => {
       expect(html).toContain(label);
     }
     expect(html).toContain('Standard build');
-    expect(html).toContain('We build it.');
-    expect(html).not.toContain('In two phases.');
+    // Plain words on one line: no markup, no list marker.
+    expect(html).toContain('We build it. · In two phases.');
+    expect(html).not.toContain('<ul><li>');
     expect(html).toContain('aria-label="Edit Standard build"');
     expect(html).toContain('aria-label="Remove Standard build"');
-    expect(html).toContain('Add option');
+    expect(html).toContain('Add term set');
+    expect(html).not.toContain('Saved option');
   });
 
-  it('shows the empty state with Add option when nothing is saved', async () => {
+  it('labels only the app default sets, and leaves them editable', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    // The page opens on the Scope tab, so the default's id is carried by a Scope set here.
+    const shipped: TermPreset = { ...(DEFAULT_TERM_PRESETS[0] as TermPreset), kind: 'scope' };
+    api.listTermPresets.mockResolvedValue([shipped, preset]);
+    const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(html.match(/App default/g)).toHaveLength(1);
+    expect(html).toContain(`aria-label="Edit ${shipped.name}"`);
+    expect(html).toContain(`aria-label="Remove ${shipped.name}"`);
+    expect(html).toContain('aria-label="Edit Standard build"');
+  });
+
+  it('offers Reset all term sets to default only while the list differs from the defaults', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    api.listTermPresets.mockResolvedValue([...DEFAULT_TERM_PRESETS].reverse());
+    const same = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(same).not.toContain('Reset all term sets to default');
+
+    api.listTermPresets.mockResolvedValue([...DEFAULT_TERM_PRESETS, preset]);
+    const custom = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(custom).toContain('aria-label="Reset all term sets to default"');
+    expect(custom).toContain('aria-haspopup="dialog"');
+
+    api.listTermPresets.mockResolvedValue([{ ...DEFAULT_TERM_PRESETS[0]!, name: 'Edited' }]);
+    expect(renderToStaticMarkup((await TermsPage()) as ReactElement)).toContain(
+      'aria-label="Reset all term sets to default"',
+    );
+  });
+
+  it('keeps the list but offers no reset when the saved version cannot be read', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    getSetting.mockRejectedValue(new ApiError(403, 'no'));
+    api.listTermPresets.mockResolvedValue([...DEFAULT_TERM_PRESETS, preset]);
+    const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(html).toContain('aria-label="Edit Standard build"');
+    expect(html).not.toContain('Reset all term sets to default');
+  });
+
+  it('shows the empty state with Add term set when nothing is saved', async () => {
     getSession.mockResolvedValue(session(['founder']));
     api.listTermPresets.mockResolvedValue([]);
     const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
-    expect(html).toContain('No saved options for Scope yet');
-    expect(html).toContain('Add option');
+    expect(html).toContain('No term sets for Scope yet');
+    expect(html).toContain('Add term set');
+    expect(html).toContain('aria-label="Reset all term sets to default"');
   });
 
   it('says what went wrong, in words, when the list cannot be read', async () => {
     getSession.mockResolvedValue(session(['founder']));
     api.listTermPresets.mockRejectedValue(new ApiError(403, 'no'));
     const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
-    expect(html).toContain('You don&#x27;t have permission to view saved terms.');
-    expect(html).not.toContain('Add option');
+    expect(html).toContain('You don&#x27;t have permission to view term sets.');
+    expect(html).not.toContain('Add term set');
+    expect(html).not.toContain('Reset all term sets to default');
   });
 });
 
@@ -115,7 +177,7 @@ describe('savePresetAction', () => {
     expect(api.createTermPreset).not.toHaveBeenCalled();
   });
 
-  it('adds a trimmed option for a founder and refreshes the list', async () => {
+  it('adds a trimmed term set for a founder and refreshes the list', async () => {
     getSession.mockResolvedValue(session(['founder']));
     api.createTermPreset.mockResolvedValue(preset);
     expect(await savePresetAction(add)).toMatchObject({ status: 'ok' });
@@ -141,6 +203,48 @@ describe('savePresetAction', () => {
     expect(api.createTermPreset).not.toHaveBeenCalled();
   });
 
+  it('sanitises the rich text on the server: a script, handler or link typed anywhere never reaches the API', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    api.createTermPreset.mockResolvedValue(preset);
+    await savePresetAction({
+      kind: 'terms_conditions',
+      name: 'Casual website terms',
+      body:
+        '<p onclick="steal()">Pay <strong>half</strong> first.</p><script>alert(1)</script>' +
+        '<ul><li><a href="javascript:x()">Two rounds</a></li></ul><img src=x onerror=y()>',
+    });
+    const sent = api.createTermPreset.mock.calls[0]?.[1] as { body: string };
+    expect(sent.body).toBe('<p>Pay <strong>half</strong> first.</p><ul><li>Two rounds</li></ul>');
+    expect(sent.body).not.toMatch(/script|onclick|onerror|href|<img|alert/);
+  });
+
+  it('refuses a body that is only markup or an empty list, at the text field', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    for (const body of ['<p></p>', '<ul><li></li></ul>', '<p> </p>', '   ']) {
+      const result = await savePresetAction({ kind: 'scope', name: 'a', body });
+      expect(result.fieldErrors).toHaveProperty('body');
+    }
+    expect(api.createTermPreset).not.toHaveBeenCalled();
+  });
+
+  it('counts the words, not the markup, against the limit', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    api.createTermPreset.mockResolvedValue(preset);
+    const words = 'x'.repeat(2_000);
+    const ok = await savePresetAction({
+      kind: 'delivery_timeline',
+      name: 'a',
+      body: `<p><strong>${words}</strong></p>`,
+    });
+    expect(ok.status).toBe('ok');
+    const over = await savePresetAction({
+      kind: 'delivery_timeline',
+      name: 'b',
+      body: `<p><strong>${words}x</strong></p>`,
+    });
+    expect(over.fieldErrors).toHaveProperty('body');
+  });
+
   it('shows a taken name at the name field', async () => {
     getSession.mockResolvedValue(session(['founder']));
     api.createTermPreset.mockRejectedValue(new ApiError(409, 'dup'));
@@ -157,20 +261,22 @@ describe('savePresetAction', () => {
       id: ID,
       kind: 'scope',
       name: 'Standard build',
-      body: 'New text',
+      body: '<p>New text</p>',
       initialName: 'Standard build',
-      initialBody: 'We build it.',
+      initialBody: preset.body,
     });
-    expect(api.updateTermPreset).toHaveBeenCalledWith(expect.anything(), ID, { body: 'New text' });
+    expect(api.updateTermPreset).toHaveBeenCalledWith(expect.anything(), ID, {
+      body: '<p>New text</p>',
+    });
 
     api.updateTermPreset.mockClear();
     const same = await savePresetAction({
       id: ID,
       kind: 'scope',
       name: 'Standard build',
-      body: 'We build it.',
+      body: preset.body,
       initialName: 'Standard build',
-      initialBody: 'We build it.',
+      initialBody: preset.body,
     });
     expect(same.status).toBe('ok');
     expect(api.updateTermPreset).not.toHaveBeenCalled();
@@ -184,7 +290,7 @@ describe('removePresetAction', () => {
     expect(api.deleteTermPreset).not.toHaveBeenCalled();
   });
 
-  it('removes for a founder, treats an already-removed option as done, and rejects a bad id', async () => {
+  it('removes for a founder, treats an already-removed term set as done, and rejects a bad id', async () => {
     getSession.mockResolvedValue(session(['founder']));
     api.deleteTermPreset.mockResolvedValue(undefined);
     expect((await removePresetAction(ID)).status).toBe('ok');
@@ -196,5 +302,41 @@ describe('removePresetAction', () => {
     api.deleteTermPreset.mockClear();
     expect((await removePresetAction('../x')).status).toBe('error');
     expect(api.deleteTermPreset).not.toHaveBeenCalled();
+  });
+});
+
+describe('resetting every term set to the app defaults', () => {
+  it('writes exactly DEFAULT_TERM_PRESETS to quotation.term_presets for a founder and refreshes the page', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    expect(await resetSettingAction('terms', 'quotation.term_presets', 3)).toMatchObject({
+      status: 'ok',
+    });
+    expect(putSetting).toHaveBeenCalledTimes(1);
+    expect(putSetting).toHaveBeenCalledWith(
+      expect.anything(),
+      'quotation.term_presets',
+      DEFAULT_TERM_PRESETS,
+      3,
+    );
+    expect(SETTING_DEFAULTS['quotation.term_presets']).toBe(DEFAULT_TERM_PRESETS);
+    expect(revalidatePath).toHaveBeenCalledWith('/settings/terms');
+  });
+
+  it('refuses a person without the terms permission before any write', async () => {
+    getSession.mockResolvedValue(session(['sales']));
+    await expect(resetSettingAction('terms', 'quotation.term_presets', 3)).rejects.toThrow(
+      'REDIRECT:/settings/denied',
+    );
+    getSession.mockResolvedValue(null);
+    await expect(resetSettingAction('terms', 'quotation.term_presets', 3)).rejects.toThrow(
+      'REDIRECT:',
+    );
+    expect(putSetting).not.toHaveBeenCalled();
+  });
+
+  it('writes no other setting through the terms section', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    expect(await resetSettingAction('terms', 'tax.vat_rate', 3)).toMatchObject({ status: 'error' });
+    expect(putSetting).not.toHaveBeenCalled();
   });
 });

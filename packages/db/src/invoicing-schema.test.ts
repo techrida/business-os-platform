@@ -27,6 +27,10 @@ const SQL_0023 = readFileSync(
   new URL('../migrations/0023_invoice_credit_release.sql', import.meta.url),
   'utf8',
 );
+const SQL_0051 = readFileSync(
+  new URL('../migrations/0051_render_format_snapshot.sql', import.meta.url),
+  'utf8',
+);
 const SQL_0024 = readFileSync(
   new URL('../migrations/0024_credit_note_line_link.sql', import.meta.url),
   'utf8',
@@ -159,7 +163,7 @@ function checkList(constraint: string, column: string): string[] {
 }
 
 describe('0021_invoices and src/schema/invoicing.ts', () => {
-  const parsed = parseSql(`${SQL_TEXT}\n${SQL_0023}\n${SQL_0024}`);
+  const parsed = parseSql(`${SQL_TEXT}\n${SQL_0023}\n${SQL_0024}\n${SQL_0051}`);
 
   it('create the same four tables', () => {
     const created = [...SQL_TEXT.matchAll(/CREATE TABLE "app"\."(\w+)"/g)].map((m) => m[1]);

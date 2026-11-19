@@ -31,7 +31,10 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
     exclusions: 'Civil works',
     termsAndConditions: null,
     deliveryTimeline: '6 weeks',
-    paymentSchedule: [{ label: 'Advance', percent: '60', dueDescription: 'On order' }],
+    paymentSchedule: [
+      { label: 'Advance', percent: '60', dueDescription: 'On order' },
+      { label: 'Delivery', percent: '40' },
+    ],
     subtotal: '540000.00',
     discountAmount: '0.00',
     taxableAmount: '540000.00',
@@ -76,6 +79,10 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
   ],
   taxSummary: [{ label: 'VAT', rate: '13.0000', base: '540000.00', tax: '70200.00' }],
   issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', address },
+  display: {
+    numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+    dateFormat: 'dd/MM/yyyy',
+  },
   ...over,
 });
 
@@ -95,8 +102,10 @@ describe('toCustomerQuotationView', () => {
     expect(view.contact).toEqual({ fullName: 'Sita Rai', email: 'sita@himal.example' });
     expect(view.termsAndConditions).toBeNull();
     expect(view.paymentTermName).toBe('Net 30');
+    // The amounts are the server's split of 610,200.00 (D36), not stored.
     expect(view.paymentSchedule).toEqual([
-      { label: 'Advance', percent: '60', dueDescription: 'On order' },
+      { label: 'Advance', percent: '60', amount: '366120.00', dueDescription: 'On order' },
+      { label: 'Delivery', percent: '40', amount: '244080.00' },
     ]);
     expect(view.totals).toEqual({
       subtotal: '540000.00',
@@ -105,6 +114,22 @@ describe('toCustomerQuotationView', () => {
       taxAmount: '70200.00',
       total: '610200.00',
     });
+  });
+
+  it('carries the display it was given, copied field by field', () => {
+    const base = input();
+    const view = toCustomerQuotationView(base);
+    expect(view.display).toEqual({
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd/MM/yyyy',
+    });
+    expect(view.display).not.toBe(base.display);
+    // An extra key riding on the display input never reaches the view.
+    const extra = toCustomerQuotationView({
+      ...base,
+      display: { ...base.display, marginPct: '25' } as CustomerViewInput['display'],
+    });
+    expect(JSON.stringify(extra)).not.toContain('marginPct');
   });
 
   it('passes the terms and conditions through unchanged', () => {
@@ -118,7 +143,8 @@ describe('toCustomerQuotationView', () => {
   });
 
   it('leaks no internal column: cost, margin, FX, NPR equivalent, approval, hashes', () => {
-    const json = JSON.stringify(toCustomerQuotationView(input()));
+    const view = toCustomerQuotationView(input());
+    const json = JSON.stringify(view);
     for (const secret of [
       'unitCost',
       'internalCostTotal',
@@ -137,7 +163,11 @@ describe('toCustomerQuotationView', () => {
     ]) {
       expect(json, secret).not.toContain(secret);
     }
-    const keys = [...json.matchAll(/"([A-Za-z]+)":/g)].map((m) => m[1]!.toLowerCase());
+    // `display` is formatting choices keyed by currency code (NPR, INR, USD); the code is not an NPR equivalent.
+    const { display: _display, ...rest } = view;
+    const keys = [...JSON.stringify(rest).matchAll(/"([A-Za-z]+)":/g)].map((m) =>
+      m[1]!.toLowerCase(),
+    );
     for (const word of CUSTOMER_VIEW_FORBIDDEN_WORDS) {
       expect(
         keys.filter((k) => k.includes(word)),

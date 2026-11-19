@@ -1,3 +1,4 @@
+import { InvoiceSettlementSchema } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getInvoice: vi.fn(),
   listTaxCodes: vi.fn(),
+  getCustomerStatement: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -25,6 +27,7 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
   getInvoice: mocks.getInvoice,
 }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: mocks.listTaxCodes }));
+vi.mock('@/lib/api-receivables', () => ({ getCustomerStatement: mocks.getCustomerStatement }));
 vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 // A marked anchor, so a test can tell the PDF link (a plain anchor) from a prefetching Link.
@@ -47,6 +50,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['finance'] });
   mocks.getInvoice.mockReset().mockResolvedValue(issued());
   mocks.listTaxCodes.mockReset().mockResolvedValue([{ id: TAX, label: 'VAT 13%' }]);
+  mocks.getCustomerStatement.mockReset().mockResolvedValue([]);
   mocks.notFound.mockClear();
 });
 
@@ -57,6 +61,96 @@ describe('invoice detail page', () => {
     expect(html).toContain('2083-07-23');
     expect(html).toContain('Himalayan Agro Foods');
     expect(html).not.toMatch(/<input[^>]*(number|issueDate)/i);
+  });
+
+  it('names the customer of a draft, which has no buyer snapshot yet, from the name the API sends', async () => {
+    // An accountant reads invoices; the page asks no customer route, so it needs no customer.read.
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getInvoice.mockResolvedValue(
+      invoiceDetail({ status: 'draft', buyer: null }, { customerName: 'Himalayan Agro Foods' }),
+    );
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).toContain('Himalayan Agro Foods');
+    expect(text).not.toContain('Customer details unavailable');
+  });
+
+  it('keeps the name frozen at issue on an issued invoice, even after the customer is renamed', async () => {
+    mocks.getInvoice.mockResolvedValue(
+      invoiceDetail(
+        {
+          status: 'issued',
+          approvalRequestId: APPROVAL,
+          buyer: { legalName: 'Old Name Pvt. Ltd.', panVatNo: null, address: null },
+        },
+        { customerName: 'New Name Pvt. Ltd.' },
+      ),
+    );
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).toContain('Old Name Pvt. Ltd.');
+    expect(text).not.toContain('New Name Pvt. Ltd.');
+  });
+
+  /** A statement row as the receivables API sends it, checked against the contract. */
+  const statementRow = (over: Record<string, unknown> = {}) =>
+    InvoiceSettlementSchema.parse({
+      invoiceId: ID,
+      number: 'INV-2083/84-00001',
+      kind: 'tax_invoice',
+      customerId: CUSTOMER,
+      currency: 'NPR',
+      issueDate: '2026-11-08',
+      total: '2018180.00',
+      allocatedAmount: '2018180.00',
+      openAmount: '0.00',
+      dueDate: '2026-12-08',
+      daysOverdue: 0,
+      settlement: 'paid',
+      ...over,
+    });
+
+  it('shows a fully paid invoice as Paid with a zero open amount, from the receivables statement', async () => {
+    mocks.getCustomerStatement.mockResolvedValue([
+      statementRow({ invoiceId: CUSTOMER, settlement: 'unpaid', openAmount: '5.00' }),
+      statementRow(),
+    ]);
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(mocks.getCustomerStatement).toHaveBeenCalledWith(expect.anything(), CUSTOMER, {
+      currency: 'NPR',
+    });
+    expect(text).toContain('Paid');
+    expect(text).toMatch(/Open amount\s+[^0-9]*0\.00/);
+  });
+
+  it('shows a partly paid invoice with its open amount in lakh grouping', async () => {
+    mocks.getCustomerStatement.mockResolvedValue([
+      statementRow({
+        allocatedAmount: '1000000.00',
+        openAmount: '1018180.00',
+        settlement: 'partly_paid',
+      }),
+    ]);
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).toContain('Partly paid');
+    expect(text).toContain('10,18,180.00');
+  });
+
+  it('asks for no payment position on a draft, or for a role without ar.read', async () => {
+    mocks.getInvoice.mockResolvedValue(invoiceDetail({ status: 'draft' }));
+    let text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).not.toContain('Open amount');
+
+    mocks.getInvoice.mockResolvedValue(issued());
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(mocks.getCustomerStatement).not.toHaveBeenCalled();
+    expect(text).not.toContain('Open amount');
+  });
+
+  it('still renders the invoice when the statement fails to load', async () => {
+    mocks.getCustomerStatement.mockRejectedValue(new ApiError(500, 'down'));
+    const text = (await render()).replace(/<[^>]*>/g, ' ');
+    expect(text).toContain('INV-2083/84-00001');
+    expect(text).not.toContain('Open amount');
   });
 
   it('uses readable relationship labels without exposing database IDs', async () => {

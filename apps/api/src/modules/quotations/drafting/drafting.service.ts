@@ -21,6 +21,7 @@ import {
   type QuotationCapabilities,
   type QuotationDetail,
   type QuotationDto,
+  type QuotationLead,
   type QuotationListItem,
   QUOTATION_STATUSES,
   type QuotationStatus,
@@ -34,6 +35,7 @@ import {
   customerContacts,
   customers,
   documentVersions,
+  leads,
   opportunities,
   paymentTerms,
   quotationLines,
@@ -67,6 +69,12 @@ import { quotationRef } from '../preview/quotation-preview.service';
 import { personNames } from '../../../platform/users/person-names';
 import { PricingService } from '../pricing/pricing.service';
 import type { PricingInput } from '../pricing/pricing.types';
+import {
+  canReadCost,
+  detailVisibleTo,
+  pricingWithAllowedCosts,
+  versionVisibleTo,
+} from './cost-visibility';
 import { DraftingCaller } from './drafting.caller';
 import {
   toQuotationDetail,
@@ -188,7 +196,8 @@ function contentOf(v: QuotationVersionDto): Record<string, unknown> {
     termsAndConditions: v.termsAndConditions,
     deliveryTimeline: v.deliveryTimeline,
     paymentTermId: v.paymentTermId,
-    paymentSchedule: v.paymentSchedule,
+    // The DTO rows carry a computed `amount` (D36); the draft input contract is strict and has none.
+    paymentSchedule: v.paymentSchedule.map(({ amount: _amount, ...milestone }) => milestone),
     discount: v.discount,
     lines: v.lines.map((l) =>
       definedOnly({
@@ -284,13 +293,14 @@ export class DraftingService {
     // Decided before any read: a caller who may not draft learns nothing about the opportunity.
     this.assertMayDraft(principal, scope);
     const now = this.clock();
+    const mayCost = canReadCost(principal);
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'quotation.create', key: idempotencyKey, body },
         async () => ({
           status: 201,
-          response: await this.createInTx(tx, scope, actor, principal.userId, body, now),
+          response: await this.createInTx(tx, scope, actor, principal.userId, body, now, mayCost),
         }),
       );
       return done.response;
@@ -305,6 +315,7 @@ export class DraftingService {
     ownerUserId: string,
     body: CreateQuotationBody,
     now: Date,
+    mayCost: boolean,
   ): Promise<QuotationDto> {
     const opportunity = await this.findOpportunity(tx, scope, body.opportunityId);
     const customerPartyId = opportunity.customerId;
@@ -320,7 +331,12 @@ export class DraftingService {
       throw badRequest('attachmentDocumentIds are not supported yet');
     }
 
-    const priced = await this.pricing.priceVersion(tx, scope, pricingInputOf(body));
+    // A drafter who may not read costs cannot set them either: a new quotation has no stored cost to keep.
+    const priced = await this.pricing.priceVersion(
+      tx,
+      scope,
+      pricingWithAllowedCosts(pricingInputOf(body), mayCost, []),
+    );
     const { number } = await this.numbering.issue(tx, QUOTATION_SERIES, now);
     const owned = { tenantId: scope.tenantId, organizationId: scope.organizationId };
 
@@ -582,7 +598,8 @@ export class DraftingService {
         quotation.ownerUserId,
         ...statusHistory.map((h) => h.actorId),
       ]);
-      return toQuotationDetail({
+      const lead = await this.leadOf(tx, scope, principal, quotation.opportunityId);
+      const answer = toQuotationDetail({
         quotation,
         versions,
         statusHistory,
@@ -594,8 +611,42 @@ export class DraftingService {
             ? { canEdit: false, canRevise: false }
             : capabilitiesOf(principal, quotation, current.status),
         people,
+        ...(lead === undefined ? {} : { lead }),
       });
+      return detailVisibleTo(principal, answer);
     });
+  }
+
+  /**
+   * The lead behind a quotation (D35): its opportunity's parent lead, only when the caller may read it. undefined,
+   * so the key is left out, when there is no lead (or the opportunity is gone) AND when the caller may not read it:
+   * "none" and "hidden" must look the same, or the difference would disclose a hidden lead. The lead is read through
+   * scoped() and the same rule as the lead page (`crm.lead.read` with its scope on the lead's record, as
+   * scopeWhereFor), so another owner's lead under `own` scope, and any lead of another entity, never appears.
+   */
+  private async leadOf(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    opportunityId: string,
+  ): Promise<QuotationLead | undefined> {
+    const [opportunity] = await tx
+      .select({ leadId: opportunities.leadId })
+      .from(opportunities)
+      .where(scoped(scope).where(opportunities, eq(opportunities.id, opportunityId)))
+      .limit(1);
+    if (opportunity === undefined || opportunity.leadId === null) return undefined;
+    const [lead] = await tx
+      .select({ id: leads.id, name: leads.title })
+      .from(leads)
+      .where(
+        scoped(scope).where(
+          leads,
+          and(eq(leads.id, opportunity.leadId), scopeWhereFor(principal, leads, 'crm.lead.read')),
+        ),
+      )
+      .limit(1);
+    return lead;
   }
 
   /** One version of a visible quotation; a version of another quotation is a 404 like a missing one. */
@@ -606,7 +657,7 @@ export class DraftingService {
       const quotation = await this.findVisible(tx, principal, id);
       const version = await this.findVersion(tx, quotation, versionId);
       const [parts] = await this.withParts(tx, quotation.tenantId, [version]);
-      return toQuotationVersionDto({ ...parts!, quotation });
+      return versionVisibleTo(principal, toQuotationVersionDto({ ...parts!, quotation }));
     });
   }
 
@@ -680,7 +731,15 @@ export class DraftingService {
       await this.assertPaymentTerm(tx, scope.tenantId, patch.paymentTermId);
     }
 
-    const priced = await this.pricing.priceVersion(tx, scope, pricingInputOf(content));
+    // A drafter who may not read costs keeps the stored cost of each line (the DTO the content was merged from is
+    // full, so a body that omits a line's cost must not wipe it) and cannot set one, but only while the lines are
+    // structurally the stored ones: any add, remove, reorder or identity edit is refused (409) before a write. The
+    // margin and the internal cost total are recomputed from those costs. `saved.lines` is in line order.
+    const priced = await this.pricing.priceVersion(
+      tx,
+      scope,
+      pricingWithAllowedCosts(pricingInputOf(content), canReadCost(principal), saved.lines),
+    );
     const owned = { tenantId: quotation.tenantId, organizationId: quotation.organizationId };
     await tx
       .delete(quotationLines)

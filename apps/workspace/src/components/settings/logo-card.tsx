@@ -14,6 +14,7 @@ import {
   LOGO_ACCEPT,
   LOGO_HINT,
   isLogoDataUrl,
+  logoFormData,
   validateLogoFile,
   type LogoDraft,
 } from './company-profile';
@@ -40,10 +41,13 @@ export function LogoCard({
   draft,
   onDraft,
   action,
+  profileVersion,
 }: {
   draft: LogoDraft;
   onDraft: (next: LogoDraft | undefined) => void;
   action: (previous: ActionState, formData: FormData) => Promise<ActionState>;
+  /** The version of `entity.profile` the page loaded (null: the default). Sent with every save. */
+  profileVersion: number | null;
 }) {
   const [state, formAction, pending] = useActionState(action, IDLE);
   const [, startTransition] = useTransition();
@@ -59,9 +63,7 @@ export function LogoCard({
   }, [state]);
 
   const save = (value: string | null) => {
-    const data = new FormData();
-    data.set('card', 'logo');
-    data.set('logo', value ?? '');
+    const data = logoFormData(value, profileVersion);
     startTransition(() => formAction(data));
   };
 

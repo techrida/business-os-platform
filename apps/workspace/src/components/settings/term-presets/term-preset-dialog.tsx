@@ -6,7 +6,8 @@ import { useState, type FormEvent } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose } from '@/components/ui/dialog';
-import { Field, Input, Textarea } from '@/components/ui/field';
+import { Field, Input } from '@/components/ui/field';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { toast } from '@/components/ui/toast';
 import { savePresetAction } from '@/app/(app)/settings/terms/actions';
 
@@ -21,9 +22,11 @@ import styles from './term-presets.module.css';
 const FORM_ID = 'term-preset-form';
 
 /**
- * Add or edit one saved option: name and text, with the kind's character limit. Actions sit in the
- * dialog's fixed footer (UIP-DLG-001). Mount it only while open (the parent keys it), so each opening
- * starts from the saved values. A click outside does not close it, so typed text is not lost.
+ * Add or edit one term set: a name and rich text (lists, bold, italic; D31) with the kind's character
+ * limit and counter. The editor reports sanitised HTML, and the server action sanitises it again.
+ * Actions sit in the dialog's fixed footer (UIP-DLG-001). Mount it only while open (the parent keys
+ * it), so each opening starts from the saved values. A click outside does not close it, so typed
+ * text is not lost.
  */
 export function TermPresetDialog({
   kind,
@@ -44,6 +47,7 @@ export function TermPresetDialog({
   const limit = TERM_BODY_LIMITS[kind];
   const label = termKindLabel(kind);
   const dirty = preset === undefined || name !== preset.name || body !== preset.body;
+  const title = preset ? 'Edit term set' : 'Add term set';
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -61,8 +65,9 @@ export function TermPresetDialog({
       const result = await savePresetAction({
         id: preset?.id,
         kind,
-        name,
-        body,
+        // What the contract will store: the name trimmed, the text rebuilt from the allow-list.
+        name: checked.value.name,
+        body: checked.value.body,
         initialName: preset?.name,
         initialBody: preset?.body,
       });
@@ -86,8 +91,8 @@ export function TermPresetDialog({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title={preset ? `Edit option` : `Add option`}
-      description={`Saved option for the ${label} field.`}
+      title={title}
+      description={`Term set for the ${label} field.`}
       size="large"
       className={styles.dialog ?? ''}
       locked={pending}
@@ -105,7 +110,7 @@ export function TermPresetDialog({
             disabled={pending || !dirty}
             aria-busy={pending || undefined}
           >
-            {preset ? 'Save changes' : 'Add option'}
+            {preset ? 'Save changes' : 'Add term set'}
           </Button>
         </>
       }
@@ -116,7 +121,7 @@ export function TermPresetDialog({
             {failure}
           </Alert>
         ) : null}
-        <Field label="Name" hint="Shown in the Saved options list." error={errors.name}>
+        <Field label="Name" hint="Shown in the term sets list." error={errors.name}>
           {(control) => (
             <Input
               value={name}
@@ -127,19 +132,18 @@ export function TermPresetDialog({
             />
           )}
         </Field>
-        <Field
-          label="Text"
-          hint={`${body.length.toLocaleString('en-US')} of ${limit.toLocaleString('en-US')} characters`}
-          error={errors.body}
-        >
+        <Field label="Text" error={errors.body}>
           {(control) => (
-            <Textarea
-              className={styles.bodyText}
-              rows={8}
+            <RichTextEditor
+              id={control.id}
+              aria-labelledby={control['aria-labelledby']}
+              aria-describedby={control['aria-describedby']}
+              invalid={Boolean(control['aria-invalid'])}
               value={body}
-              maxLength={limit}
-              onChange={(e) => setBody(e.target.value)}
-              {...control}
+              onChange={setBody}
+              maxChars={limit}
+              disabled={pending}
+              minHeight={200}
             />
           )}
         </Field>

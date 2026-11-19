@@ -7,7 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Page, PageHeader } from '@/components/ui/page';
 
 /** Last-resort boundary for the builder page: say what happened, offer a retry. */
-export default function EditQuotationError({ error, retry }: { error: unknown; retry: () => void }) {
+export default function EditQuotationError({
+  error,
+  retry,
+}: {
+  error: unknown;
+  retry: () => void;
+}) {
   if (isSessionUnavailable(error)) return <SessionUnavailableNotice retry={retry} />;
   return (
     <Page width="narrow">

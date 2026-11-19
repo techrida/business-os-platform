@@ -9,7 +9,10 @@
 //   exactly when it has none. The document goes in through the documents module's generated-file path under the actor
 //   `system:invoice-render`, which InvoiceOwnerPolicy allows only for an issued invoice.
 // - `invoice_print_log` (append-only): print 1 is the original; a later print renders "Copy of original (n)". It is
-//   written only after the bytes were accepted, so a crash never leaves a print behind that no one received.
+//   written only after the bytes were accepted, so a crash never leaves a print behind that no one received. Print 1
+//   also keeps the number grouping and date pattern it was printed with (`render_format`), so a copy printed after
+//   the settings changed still looks like the original. A copy of a print made before 0051 (no stored format) uses
+//   the settings in force when the copy is printed.
 //
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per invoice by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
@@ -21,7 +24,13 @@
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { SETTINGS } from '@bos/contracts';
+import {
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
+  DocumentFormatSnapshotSchema,
+  SETTINGS,
+  type DocumentFormatSnapshot,
+} from '@bos/contracts';
 import {
   documents,
   documentVersions,
@@ -31,7 +40,6 @@ import {
   invoiceTaxSummary,
   scoped,
 } from '@bos/db';
-import { DEFAULT_NUMBER_SYSTEM } from '@bos/locale';
 import {
   HttpException,
   Inject,
@@ -86,8 +94,14 @@ export interface RenderCandidate {
   invoiceId: string;
 }
 
-/** What the mapper needs of an invoice's rows, and the number this print will take in the print log. */
-export type RenderSource = Omit<InvoiceViewInput, 'printNo'> & { nextPrintNo: number };
+/**
+ * What the mapper needs of an invoice's rows, the number this print will take in the print log, and print 1's stored
+ * `render_format` as it is in the row (unvalidated; null when there is no print 1 yet or it predates 0051).
+ */
+export type RenderSource = Omit<InvoiceViewInput, 'printNo'> & {
+  nextPrintNo: number;
+  originalFormat: unknown;
+};
 
 export interface OrphanDocument {
   tenantId: string;
@@ -105,8 +119,17 @@ export interface RenderStore {
    * is what makes the answer stay true until the caller commits.
    */
   lockAndHasDocument(tx: DbTransaction, c: RenderCandidate): Promise<boolean>;
-  /** Appends the print to the log; a print number that is already there is left as it is. */
-  recordPrint(tx: DbTransaction, c: RenderCandidate, printNo: number, now: Date): Promise<void>;
+  /**
+   * Appends the print to the log; a print number that is already there is left as it is. `format` is what the print
+   * used; the sweeper passes it for print 1 only (null for a copy), and it is stored as `render_format`.
+   */
+  recordPrint(
+    tx: DbTransaction,
+    c: RenderCandidate,
+    printNo: number,
+    now: Date,
+    format: DocumentFormatSnapshot | null,
+  ): Promise<void>;
   orphans(cutoff: Date, limit: number): Promise<OrphanDocument[]>;
   removeOrphan(tx: DbTransaction, o: OrphanDocument, now: Date): Promise<void>;
 }
@@ -202,16 +225,13 @@ export class InvoiceRenderSweeper {
     try {
       const source = await this.runTx(scope, actor, (tx) => this.store.load(tx, c));
       if (source === undefined) throw new RenderSourceMissingError();
-      const { nextPrintNo, ...rows } = source;
+      const { nextPrintNo, originalFormat, ...rows } = source;
       const view = toInvoiceRenderView({ ...rows, printNo: nextPrintNo });
-      // The setting is read at render time, as the document is first stored. An invalid value (a hand-edited row)
-      // prints the default grouping; it never fails the render.
-      const numberSystem = SETTINGS['format.number_system'].safeParse(
-        await this.settings.get(scope, 'format.number_system'),
-      );
+      const format = await this.formatFor(scope, nextPrintNo, originalFormat);
       const bytes = await this.pdf.htmlToPdf(
         renderInvoiceHtml(view, {
-          numberSystem: numberSystem.success ? numberSystem.data : DEFAULT_NUMBER_SYSTEM,
+          numberSystems: format.numberSystems,
+          dateFormat: format.dateFormat,
         }),
       );
       const file = {
@@ -236,7 +256,7 @@ export class InvoiceRenderSweeper {
 
       // The bytes are in and queued for the scan: now the print is real.
       await this.runTx(scope, actor, (tx) =>
-        this.store.recordPrint(tx, c, nextPrintNo, this.clock()),
+        this.store.recordPrint(tx, c, nextPrintNo, this.clock(), nextPrintNo === 1 ? format : null),
       );
       this.failedAt.delete(c.invoiceId);
       return { outcome: 'rendered' };
@@ -246,6 +266,33 @@ export class InvoiceRenderSweeper {
       this.logger.warn(`invoice render failed: invoice=${c.invoiceId} kind=${kind}`);
       return { outcome: 'failed', kind };
     }
+  }
+
+  /**
+   * The grouping and date pattern this print uses. A copy reuses what print 1 stored; print 1, or a copy of a print
+   * made before 0051 (or one whose stored value no longer parses), reads the settings in force now. An invalid
+   * setting (a hand-edited row) prints the default; it never fails the render.
+   */
+  private async formatFor(
+    scope: TxScope,
+    printNo: number,
+    originalFormat: unknown,
+  ): Promise<DocumentFormatSnapshot> {
+    if (printNo > 1) {
+      const stored = DocumentFormatSnapshotSchema.safeParse(originalFormat);
+      if (stored.success) return stored.data;
+    }
+    const numberSystems = SETTINGS['format.number_systems'].safeParse(
+      await this.settings.get(scope, 'format.number_systems'),
+    );
+    const dateFormat = SETTINGS['format.date'].safeParse(
+      await this.settings.get(scope, 'format.date'),
+    );
+    return {
+      numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
+      dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
+      capturedAt: this.clock().toISOString(),
+    };
   }
 
   /** Generated documents that never got their bytes (the render crashed between the two steps) are soft-removed. */
@@ -372,7 +419,25 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
         .orderBy(desc(invoicePrintLog.printNo))
         .limit(1);
 
-      return { invoice, lines, taxSummary, nextPrintNo: (last?.printNo ?? 0) + 1 };
+      // Print 1 is the original: a copy prints with the format it stored.
+      const [original] = await tx
+        .select({ renderFormat: invoicePrintLog.renderFormat })
+        .from(invoicePrintLog)
+        .where(
+          s.where(
+            invoicePrintLog,
+            and(eq(invoicePrintLog.invoiceId, c.invoiceId), eq(invoicePrintLog.printNo, 1)),
+          ),
+        )
+        .limit(1);
+
+      return {
+        invoice,
+        lines,
+        taxSummary,
+        nextPrintNo: (last?.printNo ?? 0) + 1,
+        originalFormat: original?.renderFormat ?? null,
+      };
     },
 
     async lockAndHasDocument(tx, c) {
@@ -397,7 +462,7 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
       return found !== undefined;
     },
 
-    async recordPrint(tx, c, printNo, now) {
+    async recordPrint(tx, c, printNo, now, format) {
       await tx
         .insert(invoicePrintLog)
         .values(
@@ -407,6 +472,7 @@ export function drizzleInvoiceRenderStore(db: Db): RenderStore {
             // A background render has no person behind it.
             printedBy: null,
             printedAt: now,
+            renderFormat: format,
           }),
         )
         .onConflictDoNothing();

@@ -16,10 +16,12 @@
 // filling every batch; a restart forgets both the backoff and cursor. A document that never got its bytes (a crash
 // between the two steps) is soft-removed after ORPHAN_AFTER_MS, which makes its version a candidate again.
 //
+// Number and date format: a delivered PO PDF is never rendered again (its document cannot be removed), so the format
+// is the one in force at the first render. No snapshot column is needed.
+//
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
-import { SETTINGS } from '@bos/contracts';
-import { DEFAULT_NUMBER_SYSTEM } from '@bos/locale';
+import { DEFAULT_DATE_FORMAT, DEFAULT_NUMBER_SYSTEMS, SETTINGS } from '@bos/contracts';
 import {
   documents,
   documentVersions,
@@ -208,9 +210,12 @@ export class PurchaseOrderRenderSweeper {
       const pan = SETTINGS['entity.pan_vat_no'].safeParse(
         await this.settings.get(scope, 'entity.pan_vat_no'),
       );
-      // An invalid value (a hand-edited row) prints the default grouping; it never fails the render.
-      const numberSystem = SETTINGS['format.number_system'].safeParse(
-        await this.settings.get(scope, 'format.number_system'),
+      // An invalid value (a hand-edited row) prints the default grouping or date; it never fails the render.
+      const numberSystems = SETTINGS['format.number_systems'].safeParse(
+        await this.settings.get(scope, 'format.number_systems'),
+      );
+      const dateFormat = SETTINGS['format.date'].safeParse(
+        await this.settings.get(scope, 'format.date'),
       );
       const view = toPurchaseOrderRenderView({
         ...rows,
@@ -218,7 +223,8 @@ export class PurchaseOrderRenderSweeper {
       });
       const bytes = await this.pdf.htmlToPdf(
         renderPurchaseOrderHtml(view, {
-          numberSystem: numberSystem.success ? numberSystem.data : DEFAULT_NUMBER_SYSTEM,
+          numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
+          dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
         }),
       );
       const file = {

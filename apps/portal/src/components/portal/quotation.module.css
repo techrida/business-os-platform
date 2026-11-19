@@ -290,6 +290,12 @@
   text-align: right;
 }
 
+.scheduleAmount {
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ---- Respond panel ---------------------------------------------------------------------- */
 
 .panel {
