@@ -1,26 +1,22 @@
 // Runs one workflow's steps in order in one recorded browser context and writes the results.
 // A failed step gets a screenshot; the steps after it are BLOCKED; the next workflow still runs.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launch, newRecordedContext } from './browser.mjs';
 import { redactText, redactUrl } from './redact.mjs';
 import { Session, StepFailure } from './session.mjs';
+import {
+  placeResult,
+  readJson,
+  readState,
+  uniquePath,
+  videoBase,
+  writeJson,
+  writeState,
+} from './store.mjs';
 
 const now = () => new Date().toISOString();
-
-export function readJson(file, fallback) {
-  try {
-    return JSON.parse(readFileSync(file, 'utf8'));
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(file, value) {
-  writeFileSync(`${file}.tmp`, JSON.stringify(value, null, 2));
-  renameSync(`${file}.tmp`, file);
-}
 
 export function origins(cfg) {
   return [cfg.appUrl, cfg.portalUrl, cfg.mailUrl, cfg.authUrl];
@@ -52,24 +48,33 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   for (const d of [shotsDir, filesDir, videoTmp]) mkdirSync(d, { recursive: true });
 
   const stateFile = path.join(cfg.outDir, 'state.json');
-  const state = readJson(stateFile, {});
+  // A partial run (--from, --only) continues with the records of the earlier run; a full run
+  // starts empty (run.mjs refuses a full run over an earlier one unless --fresh).
+  const partial = Boolean(opts.from || opts.only);
+  const state = partial ? readState(stateFile, workflow.name) : {};
   const log = (line) => console.log(`[${cfg.viewportText} ${workflow.name}] ${redactText(line)}`);
+  const startedAt = now();
   const result = {
     name: workflow.name,
     title: workflow.title,
+    // Saves of the same run replace each other; a different run's entry moves to history.
+    runId: `${startedAt}-${process.pid}`,
+    mode: opts.from ? 'from' : opts.only ? 'only' : 'full',
     status: 'PASS',
-    startedAt: now(),
+    startedAt,
     steps: [],
     videos: [],
     resumedFrom: opts.from ?? null,
+    only: opts.only ?? null,
   };
   const t0 = Date.now();
-  // The earlier run's result, read once: a resumed run is merged with it on every save.
-  const earlier = opts.from
+  // The earlier run's result, read once: a partial run is merged with it on every save, and the
+  // earlier entry itself is kept under history.
+  const earlier = partial
     ? (readJson(path.join(cfg.outDir, 'results.json'), {}).workflows?.[workflow.name] ?? null)
     : null;
-  // A resumed run records its own video segment, so the earlier segment is kept.
-  const base = opts.from ? `${workflow.name}-from-${opts.from}` : workflow.name;
+  // Every run records its own video segment; an existing file is never replaced.
+  const base = videoBase(workflow.name, opts);
   // Checked by run.mjs before any launch; repeated here for direct callers.
   const fromIndex = opts.from ? workflow.steps.findIndex((s) => s.id === opts.from) : 0;
   if (fromIndex < 0) throw new Error(`--from ${opts.from}: no such step in ${workflow.name}`);
@@ -142,7 +147,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
             error.message.split('\n').slice(0, 6).join(' | '),
         );
         entry.url = redactUrl(session.page.url());
-        const shot = path.join(shotsDir, `${step.id}-FAIL.png`);
+        const shot = uniquePath(shotsDir, `${step.id}-FAIL`, '.png');
         await session.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         entry.screenshot = shot;
         log(`FAIL ${step.id}: ${entry.error}`);
@@ -160,7 +165,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       for (const [k, v] of Object.entries(state))
         if (JSON.stringify(before[k]) !== JSON.stringify(v))
           entry.records[k] = typeof v === 'string' ? redactText(v) : v;
-      writeJson(stateFile, state);
+      writeState(stateFile, workflow.name, state);
       log(`${entry.status} ${step.id} (${(entry.durationMs / 1000).toFixed(1)} s)`);
     }
   } catch (error) {
@@ -175,6 +180,9 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     await context.close().catch(() => {});
     for (const c of extra) await c.context.close().catch(() => {});
     await browser.close().catch(() => {});
+    // One suffix for the run's main video (sales.webm, then sales-2.webm …); extra pages and
+    // windows take it too and are themselves never overwritten.
+    const stem = path.basename(uniquePath(cfg.outDir, base, '.webm'), '.webm');
     let n = 0;
     for (const p of pages) {
       const v = await p
@@ -182,8 +190,10 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
         ?.path()
         .catch(() => null);
       if (v && existsSync(v)) {
-        const name = n === 0 ? `${base}.webm` : `${base}-page${n + 1}.webm`;
-        const dest = path.join(cfg.outDir, name);
+        const dest =
+          n === 0
+            ? path.join(cfg.outDir, `${stem}.webm`)
+            : uniquePath(cfg.outDir, `${stem}-page${n + 1}`, '.webm');
         renameSync(v, dest);
         result.videos.push(dest);
         n++;
@@ -196,7 +206,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
           ?.path()
           .catch(() => null);
         if (v && existsSync(v)) {
-          const dest = path.join(cfg.outDir, `${base}-${c.name}.webm`);
+          const dest = uniquePath(cfg.outDir, `${stem}-${c.name}`, '.webm');
           renameSync(v, dest);
           result.videos.push(dest);
         }
@@ -258,7 +268,7 @@ export function saveResults(cfg, workflowResult, earlier = null) {
   const merged = earlier ? mergeResumed(earlier, workflowResult) : workflowResult;
   // An unfinished run stays RUNNING; if no later save replaces it, the run was interrupted.
   if (workflowResult.status === 'RUNNING') merged.status = 'RUNNING';
-  all.workflows[workflowResult.name] = merged;
+  placeResult(all, workflowResult.name, merged);
   all.updatedAt = now();
   writeJson(file, all);
   writeFileSync(path.join(cfg.outDir, 'results.md'), renderMarkdown(all));

@@ -33,21 +33,26 @@ node tools/manual-run/run.mjs --workflow sales --label scr1 --from sales-7  # re
 node tools/manual-run/run.mjs --workflow sales --label scr1 --only sales-3,sales-4
 ```
 
-Flags: `--workflow start|sales|procurement|branches|all` (comma list allowed), `--viewport 1440x900|820x1180|390x844|all`, `--label`, `--from <step>`, `--only <step,step>`, `--headed`, `--no-captions`.
+Flags: `--workflow start|sales|procurement|branches|all` (comma list allowed), `--viewport 1440x900|820x1180|390x844|all`, `--label`, `--from <step>`, `--only <step,step>`, `--fresh`, `--headed`, `--no-captions`.
 
-The exit code is 0 only when every workflow is PASS (or NOT-IMPLEMENTED).
+- `--from <step>` resumes one workflow at that step with the records of the earlier run. With several workflows, the ones listed before the owner of that step are not run (`NOT-RUN`; their results stay as they are), and the ones after it run in full. `--workflow all --from sales-7` therefore leaves `start` alone, resumes `sales` and runs the rest.
+- `--only <step,step>` runs just those steps with the earlier run's records; a workflow with none of them is not run.
+- A full run of a workflow that already ran under this label and viewport stops before launch. Use a new label, resume with `--from`, or pass `--fresh` to start that workflow over: its records are cleared (a copy is kept as `state-before-fresh.json`), its earlier result moves to `history` in `results.json`, and the earlier run's records still carry the same unique names, so a new label is safer.
+- An unknown workflow, step or label, a bad origin and a missing CA file stop the run with exit code 2 before any browser starts.
+
+The exit code is 0 only when every workflow is PASS, NOT-IMPLEMENTED or NOT-RUN.
 
 Output goes to `$VIDEO_DIR/<label>/<viewport>/`:
 
-- `<workflow>.webm`: the main recorded window. `<workflow>-pageN.webm` holds extra tabs, and `<workflow>-<window>.webm` holds a second window, such as start-6's private window. A `--from <step>` run records its own segment, `<workflow>-from-<step>.webm`, and keeps the earlier segment.
-- `results.json` and `results.md` record, per step: the status (PASS, FAIL, BLOCKED or SKIPPED), duration, every assertion, the record numbers created, findings, console and network errors, and the video paths.
-- `shots/<step>-FAIL.png`: a full-page screenshot taken when a step fails.
-- `state.json`: the records passed between steps (URLs, numbers).
+- `<workflow>.webm`: the main recorded window. `<workflow>-pageN.webm` holds extra tabs, and `<workflow>-<window>.webm` holds a second window, such as start-6's private window. A `--from <step>` run records its own segment, `<workflow>-from-<step>.webm`, and an `--only` run `<workflow>-only-<step>_<step>.webm`. No file is ever replaced: a name that exists gets `-2`, `-3` … (`sales-2.webm`, `sales-from-sales-7-2.webm`).
+- `results.json` and `results.md` record, per step: the status (PASS, FAIL, BLOCKED or SKIPPED), duration, every assertion, the record numbers created, findings, console and network errors, and the video paths. A run that could not start (TLS check, browser launch) is a FAIL with its reason. `--from` and `--only` runs merge with the earlier result; every replaced result is kept under `history.<workflow>` in `results.json`.
+- `shots/<step>-FAIL.png` (then `-FAIL-2.png` …): a full-page screenshot taken when a step fails.
+- `state.json`: the records passed between steps (URLs, numbers), per workflow. Only `--from` and `--only` read it.
 - `downloads/` and `demo-files/`.
 
 `$VIDEO_DIR/<label>/summary.md` and `summary.json` hold the totals for one invocation.
 
-When a step fails, the rest of that workflow is BLOCKED and the run moves on to the next workflow. `results.json` is saved before every step. A run that is killed therefore keeps the steps it finished, with workflow status `RUNNING`. Its video stays unnamed in `.video-tmp/` and has no duration header; `ffmpeg -i <file> -c copy <out>.webm` makes it playable.
+When a step fails, the rest of that workflow is BLOCKED and the run moves on to the next workflow. A workflow that cannot start, or a driver error, is saved as FAIL and the next workflow still runs; the browser and network forwarders are closed in every case. `results.json` is saved before every step. A run that is killed therefore keeps the steps it finished, with workflow status `RUNNING`. Its video stays unnamed in `.video-tmp/` and has no duration header; `ffmpeg -i <file> -c copy <out>.webm` makes it playable.
 
 Step authoring helper (records nothing):
 
