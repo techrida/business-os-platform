@@ -67,8 +67,8 @@ describe('getGrants', () => {
     expect(grantScope(grants, 'verification.read')).toBe('all');
     // The old default-role check says the opposite for both, which is the dead end this replaces.
     expect(hasPermission(['sales'], 'customer.write')).toBe(true);
-    const [url] = fetchMock.mock.calls[0] ?? [];
-    expect(String(url)).toBe('http://api:3001/v1/me');
+    const [url] = (fetchMock.mock.calls[0] ?? []) as [unknown?];
+    expect(url instanceof URL ? url.href : url).toBe('http://api:3001/v1/me');
   });
 
   it('answers no grants when the API is unreachable, refuses, or sends no list', async () => {
