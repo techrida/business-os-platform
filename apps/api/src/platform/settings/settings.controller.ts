@@ -1,6 +1,11 @@
 // Admin routes for settings, number series and FX rates. Serves the NFR "authorization is deny-by-default":
 // every route names the permission it needs, and every write goes through withTx so it is audited.
-import { RateString, SettingKeySchema, type SettingKey } from '@bos/contracts';
+import {
+  RateString,
+  SettingKeySchema,
+  type SettingKey,
+  type SettingValue,
+} from '@bos/contracts';
 import { Dec } from '@bos/locale';
 import {
   BadRequestException,
@@ -57,6 +62,27 @@ function settingKey(raw: string): SettingKey {
   return parsed.data;
 }
 
+/**
+ * The company logo is not this route's to change. `logoDocumentId` moves only through ImagesService.set (a scanned
+ * upload, an `image.set` audit, the previous document removed) and `legacyLogoDataUrl` only through the legacy logo
+ * migration; both write through SettingsService directly. Whatever the request holds for them is replaced by the
+ * stored value, read under the setting's lock (`getLocked`), so a concurrent logo change is never reverted either.
+ * A value that is not an object is passed through for the service to refuse with 400.
+ */
+function withStoredLogo(value: unknown, stored: SettingValue<'entity.profile'>): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  const {
+    logoDocumentId: _ignoredDocument,
+    legacyLogoDataUrl: _ignoredLegacy,
+    ...rest
+  } = value as Record<string, unknown>;
+  return {
+    ...rest,
+    logoDocumentId: stored.logoDocumentId,
+    ...(stored.legacyLogoDataUrl === undefined ? {} : { legacyLogoDataUrl: stored.legacyLogoDataUrl }),
+  };
+}
+
 @Controller('v1/admin')
 export class SettingsController {
   constructor(
@@ -86,11 +112,15 @@ export class SettingsController {
     const { scope, actor } = requestTx();
     // The service validates `value` against SETTINGS[key] and answers 400 when it does not fit, and 409
     // `stale_setting` when `expectedVersion` is given and is no longer the saved version.
-    return withTx(this.db, scope, actor, (tx) =>
-      expectedVersion === undefined
-        ? this.settings.set(tx, key, value)
-        : this.settings.set(tx, key, value, { expectedVersion }),
-    );
+    return withTx(this.db, scope, actor, async (tx) => {
+      const next =
+        key === 'entity.profile'
+          ? withStoredLogo(value, (await this.settings.getLocked(tx, 'entity.profile')).value)
+          : value;
+      return expectedVersion === undefined
+        ? this.settings.set(tx, key, next)
+        : this.settings.set(tx, key, next, { expectedVersion });
+    });
   }
 
   @Get('number-series')
