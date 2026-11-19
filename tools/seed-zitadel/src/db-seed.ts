@@ -185,8 +185,8 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
       keptPermissions.push(permission);
       // WHERE ... IS DISTINCT FROM makes an unchanged row a no-op, so rowCount is 0 on a re-run.
       const result = await client.query(
-        `INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope, seeded)
+         VALUES ($1, $2, $3, $4, true)
          ON CONFLICT (tenant_id, role_key, permission) DO UPDATE
            SET scope = EXCLUDED.scope
            WHERE role_permissions.scope IS DISTINCT FROM EXCLUDED.scope
