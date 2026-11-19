@@ -214,7 +214,7 @@ const companyProfileFields = {
  */
 export const CompanyProfileSchema = z.strictObject({
   ...companyProfileFields,
-  logoDocumentId: z.guid().nullable(),
+  logoDocumentId: z.guid().nullable().default(null),
   legacyLogoDataUrl: LogoDataUrlSchema.nullable().optional(),
 });
 export type CompanyProfile = z.infer<typeof CompanyProfileSchema>;
