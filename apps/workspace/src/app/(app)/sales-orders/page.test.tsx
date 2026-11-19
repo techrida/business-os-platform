@@ -117,7 +117,7 @@ describe('sales orders list', () => {
     mocks.listSalesOrdersPage.mockResolvedValue(
       page([listItem({ number: null, status: 'draft', confirmedAt: null })]),
     );
-    expect(await render()).toContain('aria-label="View Draft order"');
+    expect(await render()).toContain('aria-label="View Draft order from QT-2082-0042"');
   });
 
   it('sends repeated statuses and customers, the search and the page window to the API', async () => {

@@ -7,7 +7,7 @@ import {
 } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { invoiceGates, recordPaymentHref } from './gates';
+import { invoiceGates, recordPaymentHref, settlementMayOwe } from './gates';
 
 const ACCOUNTANT = ['accountant'];
 const FINANCE = ['finance'];
@@ -117,5 +117,14 @@ describe('recordPaymentHref', () => {
     expect(href('tax_invoice', 'issued', ACCOUNTANT, 'paid')).toBeNull();
     expect(href('tax_invoice', 'issued', ACCOUNTANT, 'credited')).toBeNull();
     expect(href('tax_invoice', 'issued', ACCOUNTANT, null)).toBeNull();
+  });
+});
+
+describe('settlementMayOwe', () => {
+  it('offers Record payment with no filter or any owing state, never for paid or credited only', () => {
+    expect(settlementMayOwe([])).toBe(true);
+    expect(settlementMayOwe(['paid', 'overdue'])).toBe(true);
+    expect(settlementMayOwe(['paid'])).toBe(false);
+    expect(settlementMayOwe(['paid', 'credited'])).toBe(false);
   });
 });

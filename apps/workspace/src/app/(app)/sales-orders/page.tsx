@@ -83,7 +83,11 @@ function OrderRow({
         <Badge tone={tone}>{label}</Badge>
       </Td>
       <Td nowrap className={local.pinned}>
-        <Link href={href} className={local.rowAction} aria-label={`View ${name}`}>
+        <Link
+          href={href}
+          className={local.rowAction}
+          aria-label={`View ${name}${item.number === null ? ` from ${item.quotationNumber}` : ''}`}
+        >
           <Icon name="chevron-right" size={20} />
         </Link>
       </Td>

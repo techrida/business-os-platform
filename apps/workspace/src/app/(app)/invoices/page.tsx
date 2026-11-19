@@ -47,7 +47,7 @@ import { InvoiceFilters } from './_components/invoice-filters';
 import { InvoiceStatusBadge } from './_components/badges';
 import styles from './_components/invoice.module.css';
 import { ListPager } from './_components/list-pager';
-import { recordPaymentHref } from './_lib/gates';
+import { recordPaymentHref, settlementMayOwe } from './_lib/gates';
 import { kindMeta, settlementLabel, statusMeta } from './_lib/meta';
 
 export const metadata: Metadata = { title: 'Invoices · Business OS' };
@@ -57,15 +57,17 @@ function InvoiceRow({
   item,
   numberSystems,
   roles,
+  mayOwe,
 }: {
   item: InvoiceListItem;
   numberSystems: NumberSystems;
   roles: readonly string[];
+  mayOwe: boolean;
 }) {
   const kind = kindMeta(item.kind).label;
   const name = item.number ?? `${kind} (${statusMeta(item.status).label.toLowerCase()})`;
   const href = `/invoices/${encodeURIComponent(item.id)}`;
-  const pay = recordPaymentHref(item, roles);
+  const pay = mayOwe ? recordPaymentHref(item, roles) : null;
   return (
     <tr>
       <Th scope="row">
@@ -332,6 +334,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                   key={item.id}
                   item={item}
                   roles={session.roles}
+                  mayOwe={settlementMayOwe(multi.settlement)}
                 />
               ))}
             </tbody>
