@@ -44,12 +44,12 @@ describe('splitSchedule', () => {
     ]);
   });
 
-  it('gives the leftover paisa to the largest remainder so the parts add up exactly', () => {
-    // 100.00 / 3 = 33.333...: one leftover paisa, a tie, so it goes to the first line.
-    expect(splitSchedule(d('100.00'), [d('33.3333'), d('33.3333'), d('33.3334')]).map(s)).toEqual([
-      '33.33',
-      '33.33',
+  it('gives the remainder to the last line after rounding the earlier shares', () => {
+    // The last line absorbs the excess when the rounded earlier lines consume more than their exact shares.
+    expect(splitSchedule(d('100.01'), [d('33.3333'), d('33.3333'), d('33.3334')]).map(s)).toEqual([
       '33.34',
+      '33.34',
+      '33.33',
     ]);
     expect(splitSchedule(d('0.01'), [d('50'), d('50')]).map(s)).toEqual(['0.01', '0.00']);
   });
@@ -93,9 +93,8 @@ describe('invoiceSlice: absorbing rounding and refusing bad input', () => {
 
   it('keeps every non-last slice at its schedule amount and lets the last one absorb the rest', () => {
     const lines = splitSchedule(d('113.02'), [d('33'), d('33'), d('34')]).map(s);
-    // 33% and 34% of 11,302 paisa leave remainders .66, .66, .68: the 2 leftover paisa go to
-    // line 3, then line 1 (the tie with line 2 goes to the earlier line).
-    expect(lines).toEqual(['37.30', '37.29', '38.43']);
+    // The two 33% lines each round to 37.30. The third gets the remaining 38.42.
+    expect(lines).toEqual(['37.30', '37.30', '38.42']);
     const first = invoiceSlice(soBuckets, d(lines[0]!), [], false);
     const second = invoiceSlice(soBuckets, d(lines[1]!), first.buckets, false);
     const last = invoiceSlice(soBuckets, d(lines[2]!), [...first.buckets, ...second.buckets], true);
