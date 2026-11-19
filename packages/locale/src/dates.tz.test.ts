@@ -1,6 +1,6 @@
 // Inner file of dates.matrix.test.ts: it only runs when that parent re-launches vitest with TZ set.
 import { describe, expect, it } from 'vitest';
-import { fiscalYearOf, kathmanduDate, toBs } from './dates.js';
+import { fiscalYearOf, kathmanduDate, kathmanduDateString, toBs } from './dates.js';
 
 describe.skipIf(!process.env['LOCALE_TZ_RUN'])(
   `BS dates and fiscal year under TZ=${process.env['TZ']}`,
@@ -37,6 +37,13 @@ describe.skipIf(!process.env['LOCALE_TZ_RUN'])(
       expect(toBs(before)).toMatchObject({ year: 2082, month: 3, day: 32 });
       expect(fiscalYearOf(after)).toBe('2082/83');
       expect(fiscalYearOf(before)).toBe('2081/82');
+    });
+
+    it('formats the Kathmandu day as YYYY-MM-DD, flipping at 18:15 UTC', () => {
+      expect(kathmanduDateString(new Date('2026-11-19T18:14:59Z'))).toBe('2026-11-19');
+      expect(kathmanduDateString(new Date('2026-11-19T18:15:00Z'))).toBe('2026-11-20');
+      expect(kathmanduDateString(new Date('2026-11-19T20:30:00Z'))).toBe('2026-11-20');
+      expect(kathmanduDateString(new Date('2026-12-31T18:15:00Z'))).toBe('2027-01-01');
     });
 
     it('computes the fiscal year across the BS year boundary', () => {
