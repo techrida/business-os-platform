@@ -63,9 +63,10 @@ export function approvalStages(
   const person = (id: string) =>
     names.get(id) ?? names.get(id.toLowerCase()) ?? 'Approver name unavailable';
   const who = (step: ApprovalStepDto): string => {
+    // The request's own assignee is what was frozen at submit; the template may have changed since.
+    if (step.assigneeUserId) return person(step.assigneeUserId);
     const named = signers[step.seq - 1]?.name;
     if (named) return named;
-    if (step.assigneeUserId) return person(step.assigneeUserId);
     if (step.kind === 'role' && step.roleKey) return `Anyone with the ${step.roleKey} role`;
     if (step.kind === 'group') return step.groupName ?? 'An approval group';
     if (step.kind === 'user' && step.userId) return person(step.userId);

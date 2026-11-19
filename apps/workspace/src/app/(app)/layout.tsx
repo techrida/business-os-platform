@@ -27,12 +27,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   const roles = accountLabel(session.roles);
   // Never throws: a failed read falls back to the default grouping.
-  const numberSystems = await getNumberSystems();
-  // A failed or refused read leaves the badge out; it never shows a zero in its place.
-  const approvalsWaiting = await getInboxPage(session, { limit: 1 }).then(
-    (page) => page.total,
-    () => undefined,
-  );
+  // A failed or refused inbox read leaves the badge out; it never shows a zero in its place.
+  const [numberSystems, approvalsWaiting] = await Promise.all([
+    getNumberSystems(),
+    getInboxPage(session, { limit: 1 }).then(
+      (page) => page.total,
+      () => undefined,
+    ),
+  ]);
 
   return (
     <ShellFrame>
