@@ -204,7 +204,7 @@ describe('vendor views with the company display setting', () => {
     expect(list).toContain('NPR 1,250,000.50');
     expect(list).toContain('08/11/2026');
     expect(list).not.toContain('12,50,000.50');
-    const po = render(<PurchaseOrderView view={samplePo()} display={display} />);
+    const po = render(<PurchaseOrderView view={samplePo()} display={display} capability="full" />);
     expect(po).toContain('NPR 1,250,000.50');
     expect(po).toContain('08/11/2026');
     const bills = render(<BillList items={[sampleBill()]} display={display} />);
