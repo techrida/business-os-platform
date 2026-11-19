@@ -26,6 +26,7 @@ import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
 
+import { formatCustomerDate } from '@bos/locale';
 import { createParty, createStaffUser, createTenantWithEntity, runMigrations } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
@@ -496,7 +497,7 @@ describe('quotation expiring-soon email', () => {
     expect(row.subject).toContain(v.number);
     expect(row.body_text).toContain(`https://portal.example.com/quotations/${v.quotationId}`);
     expect(row.body_text).toContain('Himal Traders Pvt. Ltd.');
-    expect(row.body_text).toContain(IN_TWO_DAYS);
+    expect(row.body_text).toContain(formatCustomerDate(IN_TWO_DAYS));
     // The version itself is untouched: a notice is not a status change.
     expect((await versionRow(v.versionId)).status).toBe('sent');
     expect(await expiredHistory(v.versionId)).toEqual([]);
