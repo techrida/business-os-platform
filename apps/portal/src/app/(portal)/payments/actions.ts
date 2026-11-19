@@ -9,6 +9,7 @@ import { notFound, redirect } from 'next/navigation';
 import { todayInKathmandu } from '@/components/portal/quotation-status';
 import { ApiError } from '@/lib/api';
 import { submitPortalPayment } from '@/lib/api.billing';
+import { currencyNotEnabledText } from '@/lib/enabled-currencies';
 import { getSession } from '@/lib/session';
 
 /**
@@ -81,6 +82,9 @@ function failed(err: unknown, key: string, returnTo: string): PaymentFormState {
         'Your payment is still being recorded. Wait a moment and press Submit again; it will only be recorded once.',
     };
   }
+  // D44: the company switched the chosen currency off. Our words, naming only the currency code.
+  const switchedOff = currencyNotEnabledText(err);
+  if (switchedOff !== undefined) return { key: randomUUID(), error: switchedOff };
   if (status >= 400 && status < 500) {
     return {
       key: randomUUID(),

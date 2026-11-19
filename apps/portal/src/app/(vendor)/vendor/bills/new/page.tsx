@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { portalEnabledCurrencies } from '@bos/contracts';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 
@@ -48,7 +49,8 @@ export default async function NewBillPage({
   if (orders.kind === 'missing') notFound();
 
   const { po, sent } = await searchParams;
-  const { money } = displayFormat(await display);
+  const shown = await display;
+  const { money } = displayFormat(shown);
   const choices = orders.data
     .filter((o) => BILLABLE.includes(o.status))
     .map((o) => ({ id: o.id, label: `${o.number} (${money(o.total, o.currency)})` }));
@@ -77,6 +79,7 @@ export default async function NewBillPage({
         today={todayInKathmandu()}
         orders={choices}
         initialOrderId={initialOrderId}
+        currencies={portalEnabledCurrencies(shown)}
       />
       <p className={styles.back}>
         <Link href="/vendor/bills">Back to your bills</Link>
