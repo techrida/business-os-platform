@@ -504,6 +504,29 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     expect(events.some((e) => e.action === 'access.assignment_rule.changed')).toBe(true);
   });
 
+  it('keeps an unseeded tenant on its default grants when only an assignment rule is saved', async () => {
+    // The save invalidates the role cache, which writes the version row; a version row beside an empty grant table
+    // reads as a deliberately empty policy, so the Founder would lose Settings itself.
+    const env = await createSeededEnv();
+    const initial = await env.service.getCatalogue(env.scope);
+    await env.service.save(env.scope, userActor(env.founderId), {
+      expectedRevision: initial.revision,
+      changes: [
+        { kind: 'assignment', area: 'leads', staff: 'self_only', managers: 'self_and_staff', handOvers: [] },
+      ],
+      acknowledged: [],
+    });
+
+    const grants = await env.roleCache.grantsFor(env.scope.tenantId, env.scope.organizationId, [
+      'sales',
+    ]);
+    expect(grants.get('crm.lead.read')).toBe(DEFAULT_ROLE_PERMISSIONS.sales['crm.lead.read']);
+    const founder = await env.roleCache.grantsFor(env.scope.tenantId, env.scope.organizationId, [
+      'founder',
+    ]);
+    expect(founder.get('admin.settings.write')).toBe('all');
+  });
+
   it('rejects stale expectedRevision with 409 stale_access and leaves database untouched', async () => {
     const env = await createSeededEnv();
     const initial = await env.service.getCatalogue(env.scope);
