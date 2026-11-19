@@ -9,8 +9,10 @@ import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Disclosure } from '@/components/ui/disclosure';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { StatusTimeline } from '@/components/ui/status-timeline';
 import {
   failureOf,
+  getApprovalRequest,
   getMemoDirectory,
   getMemo,
   getMemoRoute,
@@ -21,7 +23,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import { userNames } from '@/lib/business-labels';
-import { humanizeKey, toAttachmentView } from '@/lib/kernel-ui';
+import { auditEventLabel, toAttachmentView } from '@/lib/kernel-ui';
 import { memoDraftAccount } from '@/lib/memo-working-draft';
 
 import styles from '../../kit.module.css';
@@ -31,7 +33,7 @@ import pageStyles from '../memo-pages.module.css';
 import { MemoPreview } from '../memo-preview';
 import { MemoReviewGate } from '../memo-review-gate';
 import { MemoStatus } from '../memo-status';
-import { submitMissing } from './detail-model';
+import { approvalStages, submitMissing } from './detail-model';
 import { HistoricalAttachments } from './historical-attachments';
 import { MemoFeedback } from './memo-feedback';
 import { SubmitForm } from './submit-form';
@@ -43,10 +45,6 @@ type SearchParams = Promise<{
   saved?: string | string[];
   submitted?: string | string[];
 }>;
-
-/** Present the historical test-memo action namespace using the product document name. */
-const auditLabel = (action: string): string =>
-  humanizeKey(action.replace(/^test_memos[.]/, 'memo.'));
 
 const MEMO_CONTEXT = {
   draft: 'This memo is a draft.',
@@ -62,7 +60,7 @@ function Timeline({ events, people }: { events: AuditEventDto[]; people: Map<str
       {events.map((e) => (
         <li key={e.id} className={styles.event}>
           <div className={styles.eventHead}>
-            <span className={styles.eventName}>{auditLabel(e.action)}</span>
+            <span className={styles.eventName}>{auditEventLabel(e.action)}</span>
             <span className={styles.eventMeta}>
               {e.actorKind === 'user'
                 ? (e.actorDisplayName ?? people.get(e.actorId) ?? 'Person name unavailable')
@@ -133,10 +131,24 @@ export default async function MemoPage({
   const entityIds = mayReadAudit
     ? [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])]
     : [];
+  // The submitted route, for the stage tracker. It is the same read the inbox detail makes; a failure only
+  // leaves the tracker out and the memo page unaffected.
+  const requestRead = memo.approval
+    ? getApprovalRequest(session, memo.approval.requestId).catch(() => null)
+    : Promise.resolve(null);
   const [previewResult, ...auditResults] = await Promise.allSettled([
     editable ? getMemoRoute(session, memo.id) : Promise.resolve(null as RoutePlan | null),
     ...entityIds.map((entityId) => listAudit(session, { entityId, limit: 50 })),
   ]);
+
+  const request = await requestRead;
+  const stages = request
+    ? approvalStages(
+        request.steps,
+        people,
+        memo.template ? [...memo.template.recommenders, memo.template.approvedBy] : [],
+      )
+    : [];
 
   const plan = previewResult?.status === 'fulfilled' ? previewResult.value : null;
   const previewFailure =
@@ -262,6 +274,12 @@ export default async function MemoPage({
             No approver is available for a step of the route. An administrator can update the route
             and reroute the memo.
           </Alert>
+        ) : null}
+
+        {stages.length > 0 ? (
+          <section className={pageStyles.tracker}>
+            <StatusTimeline label="Approval route steps" steps={stages} />
+          </section>
         ) : null}
 
         {showEditor && memo.template ? editor : null}
