@@ -130,6 +130,13 @@ describe('richTextToHtml', () => {
     );
   });
 
+  it('keeps the indent and the extra blank lines of legacy plain text', () => {
+    expect(richTextToHtml('Scope\n  - pages\n    - home\n\n\n\nPayment')).toBe(
+      '<p>Scope<br>&nbsp;&nbsp;- pages<br>&nbsp;&nbsp;&nbsp;&nbsp;- home</p><p><br></p><p><br></p><p>Payment</p>',
+    );
+    expect(richTextToHtml('\n\nA\r\n\r\nB\n\n')).toBe('<p>A</p><p>B</p>');
+  });
+
   it('sanitises rich text again at render time', () => {
     expect(richTextToHtml('<p>ok</p><script>x</script>')).toBe('<p>ok</p>');
   });

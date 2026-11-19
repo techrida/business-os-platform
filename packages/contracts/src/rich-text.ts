@@ -277,15 +277,29 @@ export function isRichText(value: string): boolean {
   return /^\s*<(p|ul|ol)(\s[^>]*)?>/i.test(value);
 }
 
-/** Plain wording as escaped paragraphs: a blank line starts a paragraph, a single newline is a line break. */
+/**
+ * Plain wording as escaped paragraphs: a blank line starts a paragraph, a single newline is a line break. Extra
+ * blank lines keep their height (one empty paragraph per blank line beyond the first) and spaces that start a line
+ * keep their indent, so a term typed before rich text existed looks as it was typed.
+ */
 function plainToHtml(value: string): string {
-  return value
-    .replace(/\r\n?/g, '\n')
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter((block) => block !== '')
-    .map((block) => `<p>${escapeText(block).replace(/\n/g, '<br>')}</p>`)
-    .join('');
+  const parts = value.replace(/\r\n?/g, '\n').split(/(\n{2,})/);
+  const out: string[] = [];
+  for (const part of parts) {
+    if (/^\n{2,}$/.test(part)) {
+      // Only gaps between two blocks count; the first blank line is the paragraph break itself.
+      if (out.length > 0) for (let i = 2; i < part.length; i++) out.push('<p><br></p>');
+      continue;
+    }
+    const block = part.replace(/^\n+/, '').trimEnd();
+    if (block.trim() === '') continue;
+    const lines = block.split('\n').map((line) => {
+      const indent = /^ +/.exec(line)?.[0].length ?? 0;
+      return '&nbsp;'.repeat(indent) + escapeText(line.slice(indent));
+    });
+    out.push(`<p>${lines.join('<br>')}</p>`);
+  }
+  return out.join('');
 }
 
 /**
