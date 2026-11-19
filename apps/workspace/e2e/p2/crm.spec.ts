@@ -28,14 +28,14 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill('Binford Ltd.');
       await page.getByLabel('Contact person').fill('Sunita Shrestha');
-      await page.getByRole('button', { name: 'Save lead' }).click();
+      await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     });
 
     await test.step('a refused form keeps what was typed and names the field', async () => {
       await page.goto('/leads/new');
       await page.getByRole('textbox', { name: 'Lead title', exact: true }).fill('Half a lead');
-      await page.getByRole('button', { name: 'Save lead' }).click();
+      await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByText('Choose where the lead came from.')).toBeVisible();
       await expect(page.getByRole('textbox', { name: 'Lead title', exact: true })).toHaveValue(
         'Half a lead',
@@ -96,7 +96,7 @@ test('opportunities never offer Won or Quotation Sent as a move', async ({ brows
         .getByRole('textbox', { name: 'Company or organization', exact: true })
         .fill(`Board Test ${stamp} Pvt. Ltd.`);
       await page.getByLabel('Contact person').fill(`Board Tester ${stamp}`);
-      await page.getByRole('button', { name: 'Save lead' }).click();
+      await page.getByRole('button', { name: 'Create lead' }).click();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
       await page.waitForLoadState('networkidle');
 
