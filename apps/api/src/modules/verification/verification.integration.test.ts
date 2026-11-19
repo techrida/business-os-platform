@@ -1407,6 +1407,30 @@ describe('evidence expiry uses the Kathmandu day, not the UTC day', () => {
     expect((await submitCase(tomorrow.id)).status).toBe(200);
   });
 
+  it('refuses to approve a row whose evidence expires today in Kathmandu and accepts tomorrow', async () => {
+    clock = new Date('2026-11-19T12:00:00Z');
+    const submit = async (expiresOn: string) => {
+      const res = await submitCase((await caseExpiring(expiresOn)).id);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return VerificationCaseDtoSchema.parse(res.body);
+    };
+    const today = await submit('2026-11-20');
+    const tomorrow = await submit('2026-11-21');
+    as(U.pmo, 'pmo');
+    clock = KATHMANDU_EARLY_MORNING;
+    const approve = (c: VerificationCaseDto) =>
+      api()
+        .post(`/v1/verification-cases/${c.id}/checklist/registration_certificate/decision`)
+        .set('Idempotency-Key', randomUUID())
+        .send({ decision: 'approve', expectedVersion: c.version });
+    const refused = await approve(today);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({
+      error: { message: 'Evidence must be clean and unexpired' },
+    });
+    expect((await approve(tomorrow)).status).toBe(200);
+  });
+
 });
 
 it('preserves real legacy case notes before correction and leaves legacy approved cases approved', async () => {
