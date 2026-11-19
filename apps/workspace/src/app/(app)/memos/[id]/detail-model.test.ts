@@ -60,10 +60,10 @@ describe('approvalStages', () => {
     expect(stages[0]?.detail).toBe('Approver named by the author · Decided by Dev Founder');
   });
 
-  it('names a stage by the memo signer first, then assignee, role or group', () => {
+  it('names a stage by the request, then the memo signer, then role or group', () => {
     const stages = approvalStages(
       [
-        step({ seq: 1, userId: 'u-1' }),
+        step({ seq: 1, userId: 'u-9' }),
         step({ seq: 2, kind: 'role', roleKey: 'finance' }),
         step({ seq: 3, kind: 'group', groupName: null }),
         step({ seq: 4, assigneeUserId: 'U-1' }),
@@ -77,6 +77,13 @@ describe('approvalStages', () => {
       'An approval group',
       'Dev Founder',
     ]);
+  });
+
+  it('names a step by the person the request froze, not by the signer now on the memo', () => {
+    const [stage] = approvalStages([step({ seq: 1, userId: 'u-1' })], names, [
+      { name: 'Someone added later' },
+    ]);
+    expect(stage?.title).toBe('Dev Founder');
   });
 
   it('never prints an id when the directory has no name', () => {

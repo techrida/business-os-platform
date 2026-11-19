@@ -210,7 +210,7 @@ export default async function VerificationQueuePage({
             >
               A customer appears here when their documents are submitted for verification.
             </EmptyState>
-          ) : filtersOn.length > 0 ? (
+          ) : filtersOn.length > 0 && !(isDefault && q === undefined && page > 1) ? (
             <EmptyState
               title="No cases match."
               icon="shield-check"
