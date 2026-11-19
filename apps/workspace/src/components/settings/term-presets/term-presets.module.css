@@ -1,0 +1,155 @@
+/* Saved terms screen, on the shared tokens only. One bordered list per tab; rows are dividers, not
+   nested cards. Phone: the add button takes the full width, the text wraps, actions stay at the end. */
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.hint {
+  flex: 1 1 260px;
+  max-width: 60ch;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.empty {
+  margin-block-start: 16px;
+}
+
+.list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-default);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px 12px 16px;
+  transition: background-color 120ms ease;
+}
+
+.row + .row {
+  border-block-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.row:hover {
+  background: var(--surface-subtle);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.preview {
+  display: -webkit-box;
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.rowActions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease-out;
+}
+
+.iconButton:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.iconButton:active {
+  transform: scale(0.97);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Text is --error-700 (6.5:1), as the admin pages do; the plain status colour fails AA on the tint. */
+.remove:hover {
+  background: var(--status-error-subtle);
+  color: var(--error-700);
+}
+
+.dialogForm {
+  display: grid;
+  gap: 16px;
+}
+
+.bodyText {
+  min-height: 160px;
+}
+
+/* On a phone the add/edit dialog takes the full height, with the text area growing to fill it.
+   Doubled class so it beats the dialog's own `.content` height whatever the stylesheet order. */
+@media (max-width: 479px) {
+  .dialog.dialog {
+    height: calc(100dvh - 32px);
+  }
+
+  .bodyText {
+    min-height: 40dvh;
+  }
+
+  .addButton {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row,
+  .iconButton {
+    transition: none;
+  }
+
+  .iconButton:active {
+    transform: none;
+  }
+}

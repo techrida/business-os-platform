@@ -77,8 +77,14 @@ describe('the founder', () => {
     ]) {
       expect(html).toContain(`href="${href}"`);
     }
-    // The four sections other workers are building are not linked until they are ready.
-    expect(html).not.toContain('/settings/company');
+    for (const href of [
+      '/settings/company',
+      '/settings/documents',
+      '/settings/formats',
+      '/settings/terms',
+    ]) {
+      expect(html).toContain(`href="${href}"`);
+    }
     expect(html).toContain('People and access');
     expect(html).not.toMatch(/version \d|\bfx\.max_rate/);
   });

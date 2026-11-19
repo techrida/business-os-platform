@@ -1,0 +1,199 @@
+/* Brand colour picker: a saturation and brightness area, a hue slider and a hex field.
+   Tokens only, apart from the picker's own rainbow, which is the control and not a theme colour.
+   --hue-colour is set inline on .root from the current hue. */
+
+.root {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  max-width: 304px;
+  min-width: 0;
+}
+
+/* The area: white fades in from the left, black from the bottom, over the pure hue. */
+.area {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+  aspect-ratio: 8 / 5;
+  border-radius: var(--radius-lg);
+  background-color: var(--hue-colour);
+  background-image:
+    linear-gradient(to top, #000000, transparent), linear-gradient(to right, #ffffff, transparent);
+  box-shadow: inset 0 0 0 var(--border-width-thin)
+    color-mix(in srgb, var(--neutral-950) 14%, transparent);
+  cursor: crosshair;
+  /* Without this a finger drag scrolls the page instead of moving the thumb. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.area:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.areaThumb {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: var(--border-width-medium) solid var(--neutral-0);
+  border-radius: var(--radius-full);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--neutral-950) 35%, transparent),
+    0 1px 4px color-mix(in srgb, var(--neutral-950) 35%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.hue {
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  --rainbow: linear-gradient(
+    to right,
+    hsl(0 100% 50%),
+    hsl(60 100% 50%),
+    hsl(120 100% 50%),
+    hsl(180 100% 50%),
+    hsl(240 100% 50%),
+    hsl(300 100% 50%),
+    hsl(360 100% 50%)
+  );
+}
+
+.hue::-webkit-slider-runnable-track {
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--rainbow);
+  box-shadow: inset 0 0 0 var(--border-width-thin)
+    color-mix(in srgb, var(--neutral-950) 14%, transparent);
+}
+
+.hue::-moz-range-track {
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--rainbow);
+  box-shadow: inset 0 0 0 var(--border-width-thin)
+    color-mix(in srgb, var(--neutral-950) 14%, transparent);
+}
+
+.hue::-webkit-slider-thumb {
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  margin-top: -5px;
+  border: var(--border-width-medium) solid var(--neutral-0);
+  border-radius: var(--radius-full);
+  background: var(--hue-colour);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--neutral-950) 35%, transparent),
+    0 1px 4px color-mix(in srgb, var(--neutral-950) 35%, transparent);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.hue::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border: var(--border-width-medium) solid var(--neutral-0);
+  border-radius: var(--radius-full);
+  background: var(--hue-colour);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--neutral-950) 35%, transparent),
+    0 1px 4px color-mix(in srgb, var(--neutral-950) 35%, transparent);
+}
+
+.hue:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-full);
+}
+
+.hexRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.swatch {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  /* A white or pale colour still needs an edge against the white card. */
+  box-shadow: inset 0 0 0 var(--border-width-thin)
+    color-mix(in srgb, var(--neutral-950) 18%, transparent);
+}
+
+.hexField {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+}
+
+.hexInput {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: var(--border-width-thin) solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--input-bg);
+  color: var(--input-text);
+  font: inherit;
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.hexInput:hover {
+  border-color: var(--input-hover-border);
+}
+
+.hexInput:focus-visible {
+  border-color: var(--input-focus-border);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.hexInput[aria-invalid='true'] {
+  border-color: var(--input-error-border);
+}
+
+.error {
+  margin: 0;
+  color: var(--status-error);
+  font-size: var(--font-size-body-small);
+  overflow-wrap: anywhere;
+}
+
+/* Bigger hit areas on touch screens. */
+@media (pointer: coarse) {
+  .hue {
+    height: 40px;
+  }
+}
+
+/* Only the border colour on the hex field eases; the controls under the pointer never lag it. */
+@media (prefers-reduced-motion: no-preference) {
+  .hexInput {
+    transition: border-color 120ms ease-out;
+  }
+}
