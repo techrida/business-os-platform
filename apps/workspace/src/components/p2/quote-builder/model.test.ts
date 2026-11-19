@@ -278,6 +278,22 @@ describe('editing a saved quotation', () => {
     );
   });
 
+  it('are absent for a viewer without quotation.cost.read: no cost is held and none is sent (D29)', () => {
+    // The API leaves `unitCost` out of every line for such a viewer and keeps the stored costs itself.
+    const noCost = version();
+    const lines = noCost.lines.map(({ unitCost: _unitCost, ...line }) => line);
+    const v = valuesFromVersion({ ...noCost, lines });
+    expect(v.lines.map((l) => l.unitCost)).toEqual([null, null]);
+    const c = toContent(v, 'update');
+    expect(c.lines[0]).not.toHaveProperty('unitCost');
+    expect(c.lines[1]).not.toHaveProperty('unitCost');
+    // The catalog link still travels, and the body is still valid.
+    expect(c.lines[0]).toMatchObject({ catalogItemId: CAT });
+    expect(UpdateQuotationDraftBodySchema.safeParse({ ...c, expectedVersion: 2 }).success).toBe(
+      true,
+    );
+  });
+
   it('survive in create mode too', () => {
     const c = toContent(valuesFromVersion(version()));
     expect(c.lines[0]).toMatchObject({ unitCost: '120000.00', catalogItemId: CAT });

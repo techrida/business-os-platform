@@ -12,10 +12,14 @@ vi.mock('@bos/pdf-viewer', () => ({
   },
 }));
 
+const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock('./toast', () => ({ toast: toasts }));
+
 import { FilePreviewDialog } from './file-preview-dialog';
 
 const PREVIEW = '/api/files/7/preview';
 const DOWNLOAD = '/api/files/7/download';
+const RETRY = '/api/files/7/retry';
 let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
 let fetchMock: Mock<(url: string, init?: RequestInit) => Promise<Response>>;
 
@@ -25,6 +29,8 @@ function respond(status: number, body = '%PDF-1.7'): Promise<Response> {
 
 beforeEach(() => {
   pdf.props = [];
+  toasts.success.mockReset();
+  toasts.error.mockReset();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   fetchMock = vi.fn((_url: string, _init?: RequestInit) => respond(200));
   vi.stubGlobal('fetch', fetchMock);
@@ -135,11 +141,97 @@ it('shows Preparing on 409 and fetches once more per Retry click, never on its o
   expect(document.querySelector('[data-testid="pdf-pages"]')).not.toBeNull();
 });
 
-it.each([404, 425])('treats %i as still preparing', async (status) => {
-  fetchMock.mockImplementation(() => respond(status));
+it('treats 425 as still preparing', async () => {
+  fetchMock.mockImplementation(() => respond(425));
   mounted = await mountForm(viewer({ defaultOpen: true }));
   await flush();
   expect(document.body.textContent).toContain('This PDF is still being prepared.');
+});
+
+it.each([404, 410])('says %i is not available and offers no Retry', async (status) => {
+  fetchMock.mockImplementation(() => respond(status));
+  mounted = await mountForm(viewer({ defaultOpen: true, retryUrl: RETRY }));
+  await flush();
+  expect(document.body.textContent).toContain('Not available');
+  expect(document.body.textContent).toContain('This PDF is not available.');
+  expect(document.body.textContent).not.toContain('still being prepared');
+  expect(() => button('Retry')).toThrow();
+});
+
+it('shows Could not prepare on 424 and offers no Retry without a retry route', async () => {
+  fetchMock.mockImplementation(() => respond(424));
+  mounted = await mountForm(viewer({ defaultOpen: true }));
+  await flush();
+  expect(document.body.textContent).toContain('Could not prepare');
+  expect(document.body.textContent).toContain('The PDF could not be prepared.');
+  expect(() => button('Retry')).toThrow();
+});
+
+it('on 424 Retry asks the retry route first, toasts, then loads the file again', async () => {
+  fetchMock.mockImplementation((url) => (url === RETRY ? respond(202, 'x') : respond(424)));
+  mounted = await mountForm(viewer({ defaultOpen: true, retryUrl: RETRY }));
+  await flush();
+  expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([PREVIEW]);
+
+  fetchMock.mockImplementation((url) => (url === RETRY ? respond(202, 'x') : respond(200)));
+  await click(button('Retry'));
+  await flush();
+  expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([PREVIEW, RETRY, PREVIEW]);
+  expect(fetchMock.mock.calls[1]?.[1]).toEqual(
+    expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
+  );
+  expect(toasts.success).toHaveBeenCalledWith('Retry requested', expect.anything());
+  expect(document.querySelector('[data-testid="pdf-pages"]')).not.toBeNull();
+});
+
+it('ignores a second click while the retry request is in flight', async () => {
+  fetchMock.mockImplementation(() => respond(424));
+  mounted = await mountForm(viewer({ defaultOpen: true, retryUrl: RETRY }));
+  await flush();
+  let release: (response: Response) => void = () => undefined;
+  fetchMock.mockImplementation((url) =>
+    url === RETRY
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : respond(424),
+  );
+  const retry = button('Retry');
+  await click(retry);
+  await click(retry);
+  expect(fetchMock.mock.calls.filter((call) => call[0] === RETRY)).toHaveLength(1);
+  const { act } = await import('react');
+  await act(async () => {
+    release(new Response('{}', { status: 202 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await flush();
+  expect(fetchMock.mock.calls.filter((call) => call[0] === RETRY)).toHaveLength(1);
+});
+
+it('toasts a failed retry request and does not load the file again', async () => {
+  fetchMock.mockImplementation(() => respond(424));
+  mounted = await mountForm(viewer({ defaultOpen: true, retryUrl: RETRY }));
+  await flush();
+  fetchMock.mockImplementation((url) => (url === RETRY ? respond(502) : respond(424)));
+  await click(button('Retry'));
+  await flush();
+  expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([PREVIEW, RETRY]);
+  expect(toasts.error).toHaveBeenCalledWith('Could not request a retry', expect.anything());
+  expect(toasts.success).not.toHaveBeenCalled();
+  expect(document.body.textContent).toContain('Could not prepare');
+});
+
+it('loads the file again when the retry route says no retry is needed (409)', async () => {
+  fetchMock.mockImplementation(() => respond(424));
+  mounted = await mountForm(viewer({ defaultOpen: true, retryUrl: RETRY }));
+  await flush();
+  fetchMock.mockImplementation((url) => (url === RETRY ? respond(409) : respond(200)));
+  await click(button('Retry'));
+  await flush();
+  expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([PREVIEW, RETRY, PREVIEW]);
+  expect(toasts.error).not.toHaveBeenCalled();
+  expect(document.querySelector('[data-testid="pdf-pages"]')).not.toBeNull();
 });
 
 it('shows an error with Retry on a server failure and on a network failure', async () => {

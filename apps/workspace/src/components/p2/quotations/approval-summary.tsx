@@ -96,7 +96,10 @@ export function QuotationApprovalSummary({
         <span className={styles.figure}>{trimPercent(snap.effectiveDiscountPct)}%</span>
       ),
     },
-    {
+  ];
+  // Absent: the viewer lacks `quotation.cost.read` (D29), so the row is not shown at all. Null: no cost is recorded.
+  if (snap.marginPct !== undefined) {
+    facts.push({
       key: 'margin',
       label: 'Margin',
       value:
@@ -105,8 +108,8 @@ export function QuotationApprovalSummary({
         ) : (
           <span className={styles.figure}>{trimPercent(snap.marginPct)}%</span>
         ),
-    },
-  ];
+    });
+  }
   if (foreign) {
     facts.push(
       { key: 'currency', label: 'Document currency', value: snap.currency },

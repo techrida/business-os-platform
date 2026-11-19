@@ -198,6 +198,8 @@ export function QuotationView({
                         <span className={styles.muted}> · {formatDay(m.dueDescription)}</span>
                       ) : null}
                     </span>
+                    {/* The amount is the server's split of the total (D36); the portal never recomputes it. */}
+                    <span className={styles.scheduleAmount}>{money(m.amount)}</span>
                   </li>
                 ))}
               </ul>

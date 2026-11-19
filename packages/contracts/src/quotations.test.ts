@@ -7,6 +7,8 @@ import {
   DiscountSchema,
   EVIDENCE_KINDS,
   NonNegativeDecimalString,
+  PaymentMilestoneDtoSchema,
+  PaymentMilestoneSchema,
   PaymentTermSchema,
   PreviewResultSchema,
   QUOTATION_REVISION_RULES,
@@ -442,6 +444,46 @@ describe('QuotationVersionDtoSchema', () => {
     ).toBe(true);
   });
 
+  it('parses a version whose viewer lacks quotation.cost.read: the cost fields are absent (D29a)', () => {
+    const line = {
+      lineNo: 1,
+      catalogItemId: null,
+      description: 'Rack server',
+      uom: 'pcs',
+      quantity: '2.0000',
+      unitPrice: '1000.00',
+      taxCodeId: id(),
+      gross: '2000.00',
+      discountAlloc: '0.00',
+      taxable: '2000.00',
+    };
+    const redacted: Record<string, unknown> = { ...version() };
+    delete redacted.internalCostTotal;
+    delete redacted.marginPct;
+    expect(QuotationVersionDtoSchema.safeParse({ ...redacted, lines: [line] }).success).toBe(true);
+    // Null still means "no cost recorded", and a recorded cost still parses.
+    expect(
+      QuotationVersionDtoSchema.safeParse({
+        ...redacted,
+        lines: [{ ...line, unitCost: null }],
+        internalCostTotal: null,
+        marginPct: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      QuotationVersionDtoSchema.safeParse({
+        ...redacted,
+        lines: [{ ...line, unitCost: '800.00' }],
+        internalCostTotal: '1600.00',
+        marginPct: '20.0000',
+      }).success,
+    ).toBe(true);
+    // A malformed cost is still refused rather than ignored.
+    expect(
+      QuotationVersionDtoSchema.safeParse({ ...redacted, internalCostTotal: 1600 }).success,
+    ).toBe(false);
+  });
+
   it('rejects a JS number for a total, and an unknown rejection source', () => {
     const v = version();
     expect(
@@ -460,6 +502,18 @@ describe('QuotationVersionDtoSchema', () => {
     );
     expect(
       QuotationVersionDtoSchema.safeParse({ ...version(), rejectionSource: 'internal' }).success,
+    ).toBe(false);
+  });
+
+  it('carries an amount on every payment schedule row of a version (D36)', () => {
+    const row = { label: 'Advance', percent: '100', amount: '2690999.99' };
+    const v = QuotationVersionDtoSchema.safeParse({ ...version(), paymentSchedule: [row] });
+    expect(v.success).toBe(true);
+    expect(
+      QuotationVersionDtoSchema.safeParse({
+        ...version(),
+        paymentSchedule: [{ label: 'Advance', percent: '100' }],
+      }).success,
     ).toBe(false);
   });
 });
@@ -670,6 +724,60 @@ describe('QuotationDetailSchema', () => {
     expect(
       QuotationDetailSchema.safeParse({ ...detail(), capabilities: { canEdit: true } }).success,
     ).toBe(false);
+  });
+
+  it('carries a lead only when the viewer may read one; no lead and a hidden lead are both absent, never null (D35)', () => {
+    const lead = { id: id(), name: 'Website redesign enquiry' };
+    const withLead = QuotationDetailSchema.parse({ ...detail(), lead });
+    expect(withLead.lead).toEqual(lead);
+    expect(QuotationDetailSchema.safeParse({ ...detail(), lead: null }).success).toBe(false);
+    const hidden = QuotationDetailSchema.parse(detail());
+    expect('lead' in hidden).toBe(false);
+  });
+
+  it('refuses a lead without an id or a name, and one that carries more than the id and name', () => {
+    expect(QuotationDetailSchema.safeParse({ ...detail(), lead: { name: 'No id' } }).success).toBe(
+      false,
+    );
+    expect(QuotationDetailSchema.safeParse({ ...detail(), lead: { id: id() } }).success).toBe(
+      false,
+    );
+    expect(
+      QuotationDetailSchema.safeParse({
+        ...detail(),
+        lead: { id: id(), name: 'x', ownerUserId: id() },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('PaymentMilestoneDtoSchema (D36)', () => {
+  const milestone = { label: 'Advance', percent: '33.3333', dueDescription: 'On order' };
+
+  it('is the draft milestone plus a two-decimal amount', () => {
+    expect(PaymentMilestoneDtoSchema.safeParse({ ...milestone, amount: '333.33' }).success).toBe(
+      true,
+    );
+    expect(
+      PaymentMilestoneDtoSchema.safeParse({ label: 'x', percent: '100', amount: '0.00' }).success,
+    ).toBe(true);
+  });
+
+  it('refuses a row without an amount, or with an amount that is not money', () => {
+    expect(PaymentMilestoneDtoSchema.safeParse(milestone).success).toBe(false);
+    expect(PaymentMilestoneDtoSchema.safeParse({ ...milestone, amount: '333.333' }).success).toBe(
+      false,
+    );
+    expect(PaymentMilestoneDtoSchema.safeParse({ ...milestone, amount: 333.33 }).success).toBe(
+      false,
+    );
+  });
+
+  it('leaves the draft input milestone amount-free: an amount is refused, never stored', () => {
+    expect(PaymentMilestoneSchema.safeParse(milestone).success).toBe(true);
+    expect(PaymentMilestoneSchema.safeParse({ ...milestone, amount: '333.33' }).success).toBe(
+      false,
+    );
   });
 });
 

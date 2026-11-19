@@ -78,6 +78,7 @@ import {
   type DirectoryData,
   type StepDecision,
 } from './router';
+import { requestVisibleTo } from './snapshot-visibility';
 
 /** A document type that can be approved. Every hook runs in the transaction that changes the request. */
 export interface ApprovalSubject {
@@ -470,7 +471,8 @@ export class ApprovalsService {
     // Refuse unassigned callers before acquiring the row lock; repeat eligibility under the lock.
     await this.eligibleRequest(requestId, { action, idempotencyKey });
 
-    return withTx(this.db, scope, actor, async (tx) => {
+    // The stored result (kept for replays) and the row keep the full snapshot; only the answer is filtered (D29).
+    const result = await withTx(this.db, scope, actor, async (tx) => {
       const now = this.clock();
       // 1. Lock: two approvers clicking at once are serialised here.
       const request = await this.lockRequest(tx, scope, requestId);
@@ -762,6 +764,7 @@ export class ApprovalsService {
       }
       return dto;
     });
+    return requestVisibleTo(principal, result);
   }
 
   /**
@@ -968,8 +971,8 @@ export class ApprovalsService {
     replay?: { action: ApprovalActionBody; idempotencyKey: string },
   ): Promise<ApprovalRequestDto> {
     await this.eligibleRequest(requestId, replay);
-    const { scope } = this.caller.current();
-    const dto = await this.loadDto(this.db, scope, requestId);
+    const { scope, principal } = this.caller.current();
+    const dto = requestVisibleTo(principal, await this.loadDto(this.db, scope, requestId));
     const people = await personNames(this.db, scope.tenantId, [
       dto.requesterUserId,
       ...dto.steps.flatMap((step) => [
@@ -1334,7 +1337,7 @@ export class ApprovalsService {
    */
   async reroute(requestId: string): Promise<ApprovalRequestDto> {
     const { scope, actor, principal } = this.caller.current();
-    return withTx(this.db, scope, actor, async (tx) => {
+    const result = await withTx(this.db, scope, actor, async (tx) => {
       const now = this.clock();
       const request = await this.lockRequest(tx, scope, requestId);
       if (request.status !== 'pending' && request.status !== 'blocked') {
@@ -1425,6 +1428,7 @@ export class ApprovalsService {
       }
       return this.loadDto(tx, scope, requestId);
     });
+    return requestVisibleTo(principal, result);
   }
 
   /** P1-PLAN 6.2 "Blocked": whoever may fix role assignments (admin.roles.write) is told. */
