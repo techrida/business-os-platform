@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { AccessLevelSchema, AccessScopeSchema } from './access-model.js';
 import { PermissionSchema, RoleKeySchema } from './authz.js';
+import { DepartmentChangeSchema } from './departments-admin.js';
 
 export const ACCESS_ROLE_KINDS = ['founder', 'staff', 'portal'] as const;
 export const AccessRoleKindSchema = z.enum(ACCESS_ROLE_KINDS);
@@ -229,64 +230,6 @@ export const ResetRoleChangeSchema = z.object({
 });
 export type ResetRoleChange = z.infer<typeof ResetRoleChangeSchema>;
 
-export const MemberLevelChangeSchema = z.object({
-  kind: z.literal('memberLevel'),
-  departmentId: z.guid(),
-  userId: z.guid(),
-  level: AccessLevelSchema,
-});
-export type MemberLevelChange = z.infer<typeof MemberLevelChangeSchema>;
-
-export const MemberAddChangeSchema = z.object({
-  kind: z.literal('memberAdd'),
-  departmentId: z.guid(),
-  userId: z.guid(),
-  level: AccessLevelSchema.optional(),
-  jobTitle: z.string().trim().max(80).nullable().optional(),
-});
-export type MemberAddChange = z.infer<typeof MemberAddChangeSchema>;
-
-export const MemberRemoveChangeSchema = z.object({
-  kind: z.literal('memberRemove'),
-  departmentId: z.guid(),
-  userId: z.guid(),
-});
-export type MemberRemoveChange = z.infer<typeof MemberRemoveChangeSchema>;
-
-export const MemberMoveChangeSchema = z.object({
-  kind: z.literal('memberMove'),
-  userId: z.guid(),
-  fromDepartmentId: z.guid(),
-  toDepartmentId: z.guid(),
-});
-export type MemberMoveChange = z.infer<typeof MemberMoveChangeSchema>;
-
-export const MemberJobTitleChangeSchema = z.object({
-  kind: z.literal('memberJobTitle'),
-  departmentId: z.guid(),
-  userId: z.guid(),
-  jobTitle: z.string().trim().max(80).nullable(),
-});
-export type MemberJobTitleChange = z.infer<typeof MemberJobTitleChangeSchema>;
-
-export const DepartmentHeadChangeSchema = z.object({
-  kind: z.literal('head'),
-  departmentId: z.guid(),
-  userId: z.guid().nullable(),
-});
-export type DepartmentHeadChange = z.infer<typeof DepartmentHeadChangeSchema>;
-
-/** Department membership and head changes, shared with the departments unit. */
-export const DepartmentChangeSchema = z.discriminatedUnion('kind', [
-  MemberLevelChangeSchema,
-  MemberAddChangeSchema,
-  MemberRemoveChangeSchema,
-  MemberMoveChangeSchema,
-  MemberJobTitleChangeSchema,
-  DepartmentHeadChangeSchema,
-]);
-export type DepartmentChange = z.infer<typeof DepartmentChangeSchema>;
-
 export const AccessPolicyChangeSchema = z.discriminatedUnion('kind', [
   GrantChangeSchema,
   LevelRuleChangeSchema,
@@ -300,12 +243,7 @@ export const AccessChangeSchema = z.discriminatedUnion('kind', [
   LevelRuleChangeSchema,
   AssignmentChangeSchema,
   ResetRoleChangeSchema,
-  MemberLevelChangeSchema,
-  MemberAddChangeSchema,
-  MemberRemoveChangeSchema,
-  MemberMoveChangeSchema,
-  MemberJobTitleChangeSchema,
-  DepartmentHeadChangeSchema,
+  ...DepartmentChangeSchema.options,
 ]);
 export type AccessChange = z.infer<typeof AccessChangeSchema>;
 
