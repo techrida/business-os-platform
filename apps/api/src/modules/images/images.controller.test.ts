@@ -1,7 +1,7 @@
 // Unit test of ImagesController (U12, D33): the route policy (any signed-in principal at the route; staff is checked
-// in the service), the image headers (inline, nosniff, immutable private cache, quoted ETag) and body, a 304 with no
-// body and no content headers, a refusal that sets no header, and the caller (scope, actor, principal) handed to the
-// service from the request context; the one-request POST upload (declared 200, the three headers and the request
+// in the service), the image headers (inline, nosniff, private no-cache so every use revalidates, quoted ETag) and
+// body, a 304 with no body and no content headers but the same no-cache, a refusal that sets no header, and the caller
+// (scope, actor, principal) handed to the service from the request context; the one-request POST upload (declared 200, the three headers and the request
 // stream handed through, refusals propagated). Fake ImagesService and response; the real request store.
 // Run: apps/api/node_modules/.bin/vitest run src/modules/images/images.controller.test.ts (from apps/api)
 import 'reflect-metadata';
@@ -122,7 +122,7 @@ describe('route policy', () => {
 });
 
 describe('GET /v1/images/:documentId', () => {
-  it('streams the bytes inline with its type, length, nosniff, an immutable private cache and a quoted ETag', async () => {
+  it('streams the bytes inline with its type, length, nosniff, a private must-revalidate cache and a quoted ETag', async () => {
     const versionId = randomUUID();
     images.open.mockResolvedValue({
       notModified: false,
@@ -138,13 +138,15 @@ describe('GET /v1/images/:documentId', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers).toEqual({
       ETag: `"${versionId}"`,
-      'Cache-Control': 'private, max-age=86400, immutable',
+      'Cache-Control': 'private, no-cache',
       'Content-Type': 'image/png',
       'Content-Length': String(PNG.length),
       'X-Content-Type-Options': 'nosniff',
       'Content-Disposition': 'inline',
     });
-    expect(IMAGE_CACHE_CONTROL).toBe('private, max-age=86400, immutable');
+    // A max-age or `immutable` would let the browser reuse the picture after a switch or logout without asking.
+    expect(IMAGE_CACHE_CONTROL).toBe('private, no-cache');
+    expect(IMAGE_CACHE_CONTROL).not.toMatch(/max-age|immutable/);
     expect(body().equals(PNG)).toBe(true);
     expect(res.writableEnded).toBe(true);
   });
@@ -159,7 +161,7 @@ describe('GET /v1/images/:documentId', () => {
     expect(images.open.mock.calls[0]?.[1]).toBe(id);
     expect(images.open.mock.calls[0]?.[2]).toBe(`W/"${versionId}"`);
     expect(res.statusCode).toBe(304);
-    expect(res.headers).toEqual({ ETag: `"${versionId}"`, 'Cache-Control': IMAGE_CACHE_CONTROL });
+    expect(res.headers).toEqual({ ETag: `"${versionId}"`, 'Cache-Control': 'private, no-cache' });
     expect(body().length).toBe(0);
     expect(res.writableEnded).toBe(true);
   });

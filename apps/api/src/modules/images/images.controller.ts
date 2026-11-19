@@ -16,8 +16,13 @@ import { requestTx } from '../../platform/db/tx';
 import { currentPrincipal } from '../../platform/tenancy/request-context';
 import { ImagesService, type ImageCaller } from './images.service';
 
-/** An image id names one version forever (its ETag), so the browser may keep it for a day without asking. */
-export const IMAGE_CACHE_CONTROL = 'private, max-age=86400, immutable';
+/**
+ * The browser may store the image but must revalidate it on every use: the bytes of an id never change, but who may
+ * see them does (account switch, logout, access removed, entity changed). Revalidation sends the ETag (the version
+ * id), so an unchanged picture is a cheap 304 that still runs every session and scope check. Never a max-age or
+ * `immutable`: either lets the browser show a cached picture without asking, past those checks.
+ */
+export const IMAGE_CACHE_CONTROL = 'private, no-cache';
 
 function caller(): ImageCaller {
   const { scope, actor } = requestTx();
