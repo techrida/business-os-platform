@@ -4,11 +4,17 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../../platform/audit/audit.module';
+import { DB } from '../../platform/db/db.module';
 import { DocumentsModule } from '../../platform/documents/documents.module';
 import { SettingsModule } from '../../platform/settings/settings.module';
 import { ImagesController } from './images.controller';
 import { ImageOwnerRegistrar } from './images.registrar';
 import { drizzleImagePointers, IMAGE_POINTER_STORE, ImagesService } from './images.service';
+import {
+  drizzleLegacyLogoStore,
+  LEGACY_LOGO_STORE,
+  LegacyLogoMigrator,
+} from './legacy-logo.migrator';
 
 @Module({
   imports: [DocumentsModule, SettingsModule, AuditModule],
@@ -17,6 +23,9 @@ import { drizzleImagePointers, IMAGE_POINTER_STORE, ImagesService } from './imag
     ImageOwnerRegistrar,
     ImagesService,
     { provide: IMAGE_POINTER_STORE, useFactory: drizzleImagePointers },
+    // API boot only (the worker never imports this module): moves 0058's legacy data-URL logos into documents.
+    LegacyLogoMigrator,
+    { provide: LEGACY_LOGO_STORE, inject: [DB], useFactory: drizzleLegacyLogoStore },
   ],
 })
 export class ImagesModule {}
