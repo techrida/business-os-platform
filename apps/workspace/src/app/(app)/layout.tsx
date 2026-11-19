@@ -13,14 +13,15 @@ import { getSession, type Session } from '@/lib/session';
 
 /**
  * The signed-in person's picture from `/v1/me`. Never throws: a failed read shows initials, it never breaks the shell.
- * The person's `app.users.id` is not in `/v1/me` yet (its `userId` is the identity provider's subject), so the
- * sidebar cannot offer the profile picture upload until it is.
  */
-async function ownAvatar(session: Session): Promise<string | null> {
+async function ownAvatar(
+  session: Session,
+): Promise<{ id: string | null; avatarDocumentId: string | null }> {
   try {
-    return (await getMe(session)).avatarDocumentId ?? null;
+    const me = await getMe(session);
+    return { id: me.id ?? null, avatarDocumentId: me.avatarDocumentId ?? null };
   } catch {
-    return null;
+    return { id: null, avatarDocumentId: null };
   }
 }
 
@@ -40,17 +41,19 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   const roles = accountLabel(session.roles);
   // Neither throws: a failed read falls back to the default grouping and to initials.
-  const [numberSystems, avatarDocumentId] = await Promise.all([
-    getNumberSystems(),
-    ownAvatar(session),
-  ]);
+  const [numberSystems, own] = await Promise.all([getNumberSystems(), ownAvatar(session)]);
 
   return (
     <ShellFrame>
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
       <Sidebar
-        user={{ name: roles, detail: session.orgKind, imageDocumentId: avatarDocumentId }}
+        user={{
+          name: roles,
+          detail: session.orgKind,
+          imageDocumentId: own.avatarDocumentId,
+          ...(own.id ? { id: own.id } : {}),
+        }}
         roles={session.roles}
       />
       <ShellMain>
