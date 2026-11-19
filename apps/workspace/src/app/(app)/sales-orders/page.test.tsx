@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE_PERMISSIONS, type RoleKey } from '@bos/contracts';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   listSalesOrders: vi.fn(),
   listQuotations: vi.fn(),
   listCustomers: vi.fn(),
+  getGrants: vi.fn(),
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
@@ -34,6 +36,10 @@ vi.mock('@/lib/api-billing', async (importOriginal) => ({
 }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
 vi.mock('@/components/p2/customers/api', () => ({ listCustomers: mocks.listCustomers }));
+vi.mock('@/lib/grants', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/grants')>()),
+  getGrants: mocks.getGrants,
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -59,6 +65,11 @@ async function render(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+  // The live grants of the session's role, as GET /v1/me would answer them for an unedited role.
+  mocks.getGrants.mockImplementation(async (session: { roles: RoleKey[] }) => {
+    const role = session.roles[0];
+    return new Map(role === undefined ? [] : Object.entries(DEFAULT_ROLE_PERMISSIONS[role]));
+  });
   mocks.listSalesOrders.mockResolvedValue([listItem()]);
   mocks.listQuotations.mockResolvedValue([QUOTATION]);
   mocks.listCustomers.mockResolvedValue({
@@ -167,3 +178,4 @@ describe('sales orders list', () => {
     expect(html).not.toContain('name="quotationVersionId"');
   });
 });
+
