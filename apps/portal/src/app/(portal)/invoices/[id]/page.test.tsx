@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callOf, ID, json, session, stubPortalEnv } from '@/lib/billing-test-support';
 import type { Session } from '@/lib/session';
 
-import { sampleInvoice, sampleSettlement } from '../_components/invoice-fixtures';
+import { sampleFormat, sampleInvoice, sampleSettlement } from '../_components/invoice-fixtures';
 
 vi.mock('server-only', () => ({}));
 const getSession = vi.fn<() => Promise<Session | null>>();
@@ -79,9 +79,9 @@ describe('invoice page', () => {
     expect(urls.some((u) => u.includes(`/v1/portal/invoices/${ID}`))).toBe(true);
   });
 
-  it('draws amounts with the number system the company chose', async () => {
+  it('draws amounts with the number system the company chose when the invoice has no stored format', async () => {
     api(
-      () => json(sampleInvoice()),
+      () => json(sampleInvoice({ format: null })),
       () => json(sampleSettlement({ settlement: 'partly_paid', openAmount: '1000000.00' })),
       () =>
         json({
@@ -92,6 +92,33 @@ describe('invoice page', () => {
     const html = renderToStaticMarkup(await render());
     expect(html).toContain('NPR 1,000,000.00');
     expect(html).not.toContain('NPR 10,00,000.00');
+    expect(html).toContain('08/11/2026');
+  });
+
+  it("keeps the first print's number grouping and date pattern after the company changes them", async () => {
+    api(
+      () =>
+        json(
+          sampleInvoice({
+            format: sampleFormat({
+              numberSystems: { NPR: 'international', INR: 'international', USD: 'international' },
+              dateFormat: 'dd/MM/yyyy',
+            }),
+          }),
+        ),
+      () => json(sampleSettlement({ settlement: 'partly_paid', openAmount: '1000000.00' })),
+      () =>
+        json({
+          numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+          dateFormat: 'dd MMM yyyy',
+        }),
+    );
+    const html = renderToStaticMarkup(await render());
+    expect(html).toContain('NPR 2,018,180.00');
+    expect(html).toContain('NPR 1,000,000.00');
+    expect(html).toContain('08/11/2026');
+    expect(html).not.toContain('NPR 20,18,180.00');
+    expect(html).not.toContain('8 Nov 2026');
   });
 
   it('shows the same not-found for a 404, a 403, a junk id and a draft-shaped body', async () => {
