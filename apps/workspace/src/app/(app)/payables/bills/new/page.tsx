@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { randomUUID } from 'node:crypto';
 
 import type { Metadata } from 'next';
@@ -27,6 +28,7 @@ import { PO_STATUS_LABEL, qtyText } from '../../../procurement/orders/_lib/model
 import { BillEntryForm, type OrderLine } from '../../_components/bill-entry-form';
 import { amountText, duplicateText } from '../../_lib/duplicates';
 import { billFailure } from '../../_lib/failure';
+import { NEW_BILL_HEADING } from '../../_lib/forms';
 import { fileStatusLabel } from '../../_lib/model';
 import styles from '../../payables.module.css';
 
@@ -35,14 +37,31 @@ export const dynamic = 'force-dynamic';
 
 const INBOX = '/payables/inbox';
 
-function Shell({ children }: { children: ReactNode }) {
+/**
+ * The page frame. A bill keyed from an inbox submission names the inbox in the trail. When the entry form is on
+ * screen it draws the heading itself, because the heading carries the form's Cancel and Create bill.
+ */
+function Shell({
+  children,
+  fromInbox = false,
+  heading = true,
+}: {
+  children: ReactNode;
+  fromInbox?: boolean;
+  heading?: boolean;
+}) {
   return (
     <Page>
-      <Breadcrumb items={[{ label: 'Inbox', href: INBOX }, { label: 'New bill' }]} />
-      <PageHeader
-        title="New bill"
-        description="Key in a vendor's invoice, or start from an invoice in the inbox. The platform calculates VAT, withholding and totals from the lines."
+      <Breadcrumb
+        items={[
+          { label: 'Bills', href: '/payables/bills' },
+          ...(fromInbox ? [{ label: 'Inbox', href: INBOX }] : []),
+          { label: 'New bill' },
+        ]}
       />
+      {heading ? (
+        <PageHeader title={NEW_BILL_HEADING.title} description={NEW_BILL_HEADING.description} />
+      ) : null}
       {children}
     </Page>
   );
@@ -91,7 +110,7 @@ export default async function NewBillPage({
           <Alert
             tone="warning"
             role="alert"
-            actions={<a href="/payables/bills/new">Start a new bill</a>}
+            actions={<Link href="/payables/bills/new">Start a new bill</Link>}
           >
             That link does not name a valid purchase order. Start a new bill, choose the vendor, and
             pick the order from the vendor&apos;s purchase orders.
@@ -170,8 +189,9 @@ export default async function NewBillPage({
           </Alert>
         </Shell>
       );
-    return (
-      <Shell>
+    // The vendor search is its own GET form: it sits beside the bill form, never inside it.
+    const lookup = (
+      <>
         {poId === '' ? (
           <form method="get" action="/payables/bills/new" className={styles.filter}>
             <Field label="Find a vendor">
@@ -199,50 +219,59 @@ export default async function NewBillPage({
             Showing the newest {ORDER_PICKER_LIMIT} purchase orders that can be billed.
           </p>
         ) : null}
-        {poId === '' && vendors.length === 0 ? (
+      </>
+    );
+    if (poId === '' && vendors.length === 0)
+      return (
+        <Shell>
+          {lookup}
           <Alert tone="info" role="status">
             No vendors match this search. Try another name, or ask Procurement to add the vendor.
           </Alert>
-        ) : (
-          <BillEntryForm
-            invoiceTitle={
-              standaloneOrder ? `Invoice for ${standaloneOrder.number}` : 'Vendor invoice'
-            }
-            idempotencyKey={randomUUID()}
-            orderLines={
-              standaloneOrder?.lines.map((line) => ({
-                poLineId: line.poLineId,
-                lineNo: line.lineNo,
-                description: line.description,
-                uom: line.uom,
-                open: qtyText(line.openQuantity),
-              })) ?? []
-            }
-            taxCodes={standaloneTax}
-            withholdingCodes={standaloneWithholding}
-            cancelHref="/payables/bills"
-            reloadHref={here}
-            entry={{
-              vendors,
-              orders,
-              // The invoice date starts at today in Kathmandu (the tenant's calendar), and stays editable.
-              today: todayInKathmandu(),
-              ...(standaloneOrder
-                ? {
-                    vendorPartyId: standaloneOrder.vendorId,
-                    vendorName: standaloneOrder.vendorName,
-                    purchaseOrderId: standaloneOrder.purchaseOrderId,
-                  }
-                : {}),
-            }}
-          />
-        )}
+        </Shell>
+      );
+    return (
+      <Shell heading={false}>
+        <BillEntryForm
+          invoiceTitle={
+            standaloneOrder ? `Invoice for ${standaloneOrder.number}` : 'Vendor invoice'
+          }
+          idempotencyKey={randomUUID()}
+          orderLines={
+            standaloneOrder?.lines.map((line) => ({
+              poLineId: line.poLineId,
+              lineNo: line.lineNo,
+              description: line.description,
+              uom: line.uom,
+              open: qtyText(line.openQuantity),
+            })) ?? []
+          }
+          taxCodes={standaloneTax}
+          withholdingCodes={standaloneWithholding}
+          cancelHref="/payables/bills"
+          reloadHref={here}
+          entry={{
+            vendors,
+            orders,
+            // The invoice date starts at today in Kathmandu (the tenant's calendar), and stays editable.
+            today: todayInKathmandu(),
+            ...(standaloneOrder
+              ? {
+                  vendorPartyId: standaloneOrder.vendorId,
+                  vendorName: standaloneOrder.vendorName,
+                  purchaseOrderId: standaloneOrder.purchaseOrderId,
+                }
+              : {}),
+          }}
+        >
+          {lookup}
+        </BillEntryForm>
       </Shell>
     );
   }
   if (!isGuid(submissionId))
     return (
-      <Shell>
+      <Shell fromInbox>
         <Alert tone="warning" role="alert">
           That is not a valid submission. Open the inbox again.
         </Alert>
@@ -255,7 +284,7 @@ export default async function NewBillPage({
   } catch (err) {
     const f = billFailure(err, 'load');
     return (
-      <Shell>
+      <Shell fromInbox>
         <Alert
           tone={f.status === 403 ? 'info' : 'error'}
           role="alert"
@@ -270,7 +299,7 @@ export default async function NewBillPage({
   // The inbox lists only received submissions: a missing one was converted, rejected or is another entity's.
   if (submission === undefined) {
     return (
-      <Shell>
+      <Shell fromInbox>
         <EmptyState
           title="That submission is not waiting any more."
           icon="check-circle"
@@ -366,45 +395,53 @@ export default async function NewBillPage({
           ? 'The invoice number or date is missing. Reject this submission and ask for it again.'
           : (orderProblem ?? taxProblem);
 
+  const fromSubmission = (
+    <>
+      <Panel title="From the submission">
+        <FactList facts={facts} />
+      </Panel>
+      {submission.duplicates.length > 0 ? (
+        <Alert tone="warning" title="Duplicate invoice number">
+          This vendor already sent invoice {submission.vendorInvoiceNo}. Check it is not the same
+          bill before you key it in:
+          <ul>
+            {submission.duplicates.map((d) => (
+              <li key={d.id}>{duplicateText(d)}</li>
+            ))}
+          </ul>
+        </Alert>
+      ) : null}
+    </>
+  );
+
+  if (blocked !== undefined)
+    return (
+      <Shell fromInbox>
+        {fromSubmission}
+        <Alert
+          tone="warning"
+          role="alert"
+          title="This bill cannot be keyed in yet"
+          actions={<a href={here}>Reload</a>}
+        >
+          {blocked}
+        </Alert>
+      </Shell>
+    );
   return (
-    <Shell>
-      <div className={styles.stack}>
-        <Panel title="From the submission">
-          <FactList facts={facts} />
-        </Panel>
-        {submission.duplicates.length > 0 ? (
-          <Alert tone="warning" title="Duplicate invoice number">
-            This vendor already sent invoice {submission.vendorInvoiceNo}. Check it is not the same
-            bill before you key it in:
-            <ul>
-              {submission.duplicates.map((d) => (
-                <li key={d.id}>{duplicateText(d)}</li>
-              ))}
-            </ul>
-          </Alert>
-        ) : null}
-        {blocked !== undefined ? (
-          <Alert
-            tone="warning"
-            role="alert"
-            title="This bill cannot be keyed in yet"
-            actions={<a href={here}>Reload</a>}
-          >
-            {blocked}
-          </Alert>
-        ) : (
-          <BillEntryForm
-            submissionId={submission.id}
-            // One key per render of this page: a double click or a retry creates the bill once.
-            idempotencyKey={randomUUID()}
-            orderLines={orderLines}
-            taxCodes={taxCodes}
-            withholdingCodes={withholdingCodes}
-            cancelHref={INBOX}
-            reloadHref={here}
-          />
-        )}
-      </div>
+    <Shell fromInbox heading={false}>
+      <BillEntryForm
+        submissionId={submission.id}
+        // One key per render of this page: a double click or a retry creates the bill once.
+        idempotencyKey={randomUUID()}
+        orderLines={orderLines}
+        taxCodes={taxCodes}
+        withholdingCodes={withholdingCodes}
+        cancelHref={INBOX}
+        reloadHref={here}
+      >
+        {fromSubmission}
+      </BillEntryForm>
     </Shell>
   );
 }

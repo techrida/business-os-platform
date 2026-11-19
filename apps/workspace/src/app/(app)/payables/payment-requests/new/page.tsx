@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { isGuid } from '@/components/p2/customers/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -15,12 +16,22 @@ import { PO_STATUS_LABEL } from '../../../procurement/orders/_lib/model';
 
 import { PaymentRequestEntry } from '../forms';
 import { paymentRequestFailure } from '../failure';
+import { NEW_REQUEST_HEADING, requestableItem } from '../model';
 
 export const metadata: Metadata = { title: 'New payment request · Business OS' };
 export const dynamic = 'force-dynamic';
 
-export default async function NewPaymentRequestPage() {
-  const session = await requireStaffSession('/payables/payment-requests/new');
+export default async function NewPaymentRequestPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ bill?: string | string[] }>;
+} = {}) {
+  // `?bill=` comes from a bill's "Request payment" link: that bill starts filled in when it can still be requested.
+  const bill = (await searchParams)?.bill;
+  const billId = typeof bill === 'string' && isGuid(bill) ? bill : undefined;
+  const session = await requireStaffSession(
+    `/payables/payment-requests/new${billId !== undefined ? `?bill=${billId}` : ''}`,
+  );
   const allowed = hasPermission(session.roles, 'payables.payment.request');
   let items: PaymentRequestItem[] = [];
   let orders: { id: string; vendorId: string; label: string }[] = [];
@@ -51,10 +62,13 @@ export default async function NewPaymentRequestPage() {
           { label: 'New request' },
         ]}
       />
-      <PageHeader
-        title="New payment request"
-        description="Settle approved bills for one vendor and one currency. The platform supplies the total and verified destination account."
-      />
+      {/* With the form on screen its heading carries Cancel and Create, so the form draws it. */}
+      {allowed && !problem && items.length > 0 ? null : (
+        <PageHeader
+          title={NEW_REQUEST_HEADING.title}
+          description={NEW_REQUEST_HEADING.description}
+        />
+      )}
       {allowed ? (
         problem ? (
           <Alert
@@ -75,6 +89,9 @@ export default async function NewPaymentRequestPage() {
             items={items}
             orders={orders}
             enabledCurrencies={enabledCurrencies}
+            start={
+              billId !== undefined ? requestableItem(items, billId, enabledCurrencies) : undefined
+            }
           />
         )
       ) : (
