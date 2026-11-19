@@ -67,7 +67,7 @@ describe('the founder', () => {
     const html = renderToStaticMarkup((await SettingsIndex()) as ReactElement);
     for (const href of [
       '/settings/users',
-      '/settings/roles',
+      '/settings/access',
       '/settings/workflows',
       '/settings/currencies',
       '/settings/tax',
@@ -101,7 +101,8 @@ describe('the settings layout', () => {
     expect(html).toContain('<nav aria-label="Settings"');
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     expect(html).toMatch(/aria-current="page" href="\/settings\/tax"/);
-    expect(html).toContain('Roles and permissions');
+    expect(html).toContain('href="/settings/access"');
+    expect(html).not.toContain('Roles and permissions');
   });
 
   it('renders no menu for a sales user or a signed-out visitor, but still the page', async () => {
