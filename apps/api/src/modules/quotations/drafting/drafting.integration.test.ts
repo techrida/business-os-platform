@@ -1647,7 +1647,7 @@ describe('saved reach on quotations (U20a phase 2)', () => {
       ['quotation.draft', 'department'],
     ]);
     expect((await service.detail(theirs.id)).capabilities.canEdit).toBe(true);
-    await expect(edit(theirs)).resolves.toMatchObject({ version: expect.any(Number) });
+    await expect(edit(theirs)).resolves.toMatchObject({ version: expect.any(Number) as number });
 
     // Another department reaches nothing of it.
     current.departmentId = (await createDepartment(appPool, scopeA)).departmentId;
