@@ -364,8 +364,8 @@ export const billingScheduleLines = appSchema.table(
     seq: integer('seq').notNull(),
     label: text('label').notNull(),
     trigger: text('trigger', { enum: BILLING_TRIGGERS }).notNull(),
-    /** Informational: 6000 = 60%. */
-    percentBp: integer('percent_bp'),
+    /** Informational exact share in percent, numeric(7,4): 33.3334 = 33.3334%. Null for a line added by amount. */
+    percent: numeric('percent', { precision: 7, scale: 4 }),
     amount: money('amount').notNull(),
     /** NPR value of `amount` at the order's rate. */
     amountNpr: money('amount_npr').notNull(),
@@ -428,7 +428,7 @@ export const billingScheduleLines = appSchema.table(
       'billing_schedule_lines_status_check',
       sql`${t.status} in ('planned', 'billable', 'drafted', 'invoiced', 'cancelled')`,
     ),
-    check('billing_schedule_lines_percent_bp_check', sql`${t.percentBp} BETWEEN 1 AND 10000`),
+    check('billing_schedule_lines_percent_check', sql`${t.percent} BETWEEN 0.0001 AND 100`),
     check('billing_schedule_lines_amount_check', sql`${t.amount} > 0 AND ${t.amountNpr} > 0`),
     check(
       'billing_schedule_lines_invoice_check',

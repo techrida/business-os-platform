@@ -4,19 +4,16 @@
 import { z } from 'zod';
 
 import { CurrencySchema, DecimalString, NprSnapshotSchema } from './money.js';
-import { NonNegativeDecimalString, QuantityString } from './quotations.js';
+import {
+  FULL_PAYMENT_PERCENT_UNITS,
+  NonNegativeDecimalString,
+  paymentPercentUnits,
+  PercentFourDecimals,
+  QuantityString,
+} from './quotations.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const text = (max: number) => z.string().trim().min(1).max(max);
-
-/** A percentage from 0 to 100 with up to 2 decimals, the same shape a quotation milestone uses. */
-const PercentTwoDecimals = z.string().regex(/^(?:\d{1,2}(?:\.\d{1,2})?|100(?:\.0{1,2})?)$/);
-
-/** "33.33" becomes 3333 (hundredths), so a schedule adds up in integers. Input is already validated. */
-function toHundredths(percent: string): number {
-  const [whole = '0', frac = ''] = percent.split('.');
-  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
-}
 
 // ---------------------------------------------------------------------------------------------
 // Statuses and triggers
@@ -58,7 +55,7 @@ export const SALES_EVIDENCE_KINDS = ['contract', 'purchase_order', 'signed_quote
 /** One planned slice of the order: a label, its share in percent, and what triggers the invoice. */
 export const ScheduleLineInputSchema = z.strictObject({
   label: text(100),
-  percent: PercentTwoDecimals,
+  percent: PercentFourDecimals,
   trigger: ScheduleTriggerSchema,
 });
 export type ScheduleLineInput = z.infer<typeof ScheduleLineInputSchema>;
@@ -68,9 +65,14 @@ export const ScheduleTemplateSchema = z
   .array(ScheduleLineInputSchema)
   .min(1)
   .max(12)
-  .refine((lines) => lines.reduce((sum, l) => sum + toHundredths(l.percent), 0) === 10000, {
-    message: 'percentages must add up to 100',
-  });
+  .refine(
+    (lines) =>
+      lines.reduce((sum, l) => sum + paymentPercentUnits(l.percent), 0) ===
+      FULL_PAYMENT_PERCENT_UNITS,
+    {
+      message: 'percentages must add up to 100',
+    },
+  );
 export type ScheduleTemplate = z.infer<typeof ScheduleTemplateSchema>;
 
 /** Plan A7: 60/20/20 when the accepted quotation carries no payment schedule of its own. */
@@ -92,7 +94,7 @@ export const ScheduleLineDtoSchema = z
     label: z.string().min(1),
     trigger: ScheduleTriggerSchema,
     /** Null for a line the revision flow added by amount. */
-    percent: PercentTwoDecimals.nullable(),
+    percent: PercentFourDecimals.nullable(),
     /** The VAT-inclusive slice of the order total. */
     amount: NonNegativeDecimalString,
     status: ScheduleLineStatusSchema,

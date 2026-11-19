@@ -1,6 +1,6 @@
 // Sales order rules (P3 unit U9; plan decision A7): turns a payment schedule into the billing schedule lines of an
 // order. Pure and I/O-free, so rules.test.ts pins every split. The amounts come from money-rules' splitSchedule
-// (largest remainder), so the lines add up to the order total to the paisa, which the database re-checks at commit
+// (last-line remainder), so the lines add up to the order total to the paisa, which the database re-checks at commit
 // (billing_schedule_lines_sum).
 import {
   PaymentMilestoneSchema,
@@ -26,22 +26,14 @@ export interface PlannedScheduleLine {
   seq: number;
   label: string;
   trigger: ScheduleTrigger;
-  /** The share as written ('60', '33.33'); informational next to the amount. */
+  /** The exact share as written ('60', '33.3334'); informational next to the amount. */
   percent: string;
-  /** 6000 = 60%. */
-  percentBp: number;
   /** VAT-inclusive slice of the order total, 2 decimals. */
   amount: string;
   /** The same slice of the order's NPR total, split on its own so it adds up in NPR too. */
   amountNpr: string;
   /** An advance line is billable the moment the order is confirmed; every other line waits for its trigger. */
   status: Extract<ScheduleLineStatus, 'billable' | 'planned'>;
-}
-
-/** "33.33" becomes 3333 (hundredths). Input is a validated percent with at most 2 decimals. */
-function toBasisPoints(percent: string): number {
-  const [whole = '0', frac = ''] = percent.split('.');
-  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
 }
 
 /**
@@ -75,7 +67,7 @@ export function scheduleTemplateOf(
 
 /**
  * Splits `total` (and `totalNpr`) over `template`. A line with 0% or an amount under one paisa is refused: the
- * table needs a positive amount and percent_bp from 1.
+ * table needs a positive amount and a positive percent.
  */
 export function planSchedule(
   template: ScheduleTemplate,
@@ -104,7 +96,6 @@ export function planSchedule(
       label: line.label,
       trigger: line.trigger,
       percent: line.percent,
-      percentBp: toBasisPoints(line.percent),
       amount: amount.toFixed(2),
       amountNpr: amountNpr.toFixed(2),
       status: line.trigger === 'advance' ? 'billable' : 'planned',
