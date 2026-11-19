@@ -1,11 +1,12 @@
 // Admin routes for users: list, invite, set roles.
 // Serves the NFR "role assignment has one source of truth": every change goes to ZITADEL first, then
 // the mirror, then the authz cache is invalidated, so the token, the mirror and the cache agree.
-import { RoleKeySchema } from '@bos/contracts';
+import { ADMIN_USERS_MAX_PAGE, AdminUsersQuerySchema, RoleKeySchema } from '@bos/contracts';
 import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   Inject,
@@ -20,16 +21,21 @@ import { z } from 'zod';
 
 import { AuthzService } from '../authz/authz.service';
 import { Can } from '../authz/decorators';
+import { principal } from '../authz/principal';
 import { DB, type Db } from '../db/db.module';
 import { requestTx, withTx } from '../db/tx';
 import { UsersService } from './users.service';
 import { ZitadelNotConfiguredError } from './zitadel-admin.client';
 
-// Local schemas: @bos/contracts has no admin-user DTOs yet (move them there when the UI needs them).
-const ListQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  after: z.guid().optional(),
-});
+// Password resets are account administration. Reuse the existing role administration grant
+// so existing deployments do not acquire a new grant implicitly.
+const RESET_PERMISSION = 'admin.roles.write';
+
+function canSendPasswordReset(): boolean {
+  const caller = principal();
+  return caller.orgKind === 'staff' && caller.grants.get(RESET_PERMISSION) === 'all';
+}
+
 const Roles = z.array(RoleKeySchema).max(20);
 const InviteBody = z.object({
   email: z.email().max(320),
@@ -71,10 +77,34 @@ export class AdminUsersController {
   @Get()
   @Can('admin.users.read')
   async list(@Query() query: unknown) {
-    const q = parse(ListQuery, query, 'query');
+    const q = parse(AdminUsersQuerySchema, query, 'query');
     const { scope } = requestTx();
-    const items = await this.users.list(scope, q);
-    return { items, nextAfter: items.length === q.limit ? (items.at(-1)?.id ?? null) : null };
+    const results = await this.users.list(scope, q);
+    const items = results.slice(0, q.limit);
+    const hasMore = results.length > q.limit;
+    const usingPages = q.page !== undefined || q.sort !== undefined;
+    const page = q.page ?? 1;
+    return {
+      items,
+      nextAfter: hasMore && !usingPages ? (items.at(-1)?.id ?? null) : null,
+      nextPage: hasMore && usingPages && page < ADMIN_USERS_MAX_PAGE ? page + 1 : null,
+    };
+  }
+
+  @Get('summary')
+  @Can('admin.users.read')
+  async summary() {
+    const { scope } = requestTx();
+    return { ...(await this.users.summary(scope)), canSendPasswordReset: canSendPasswordReset() };
+  }
+
+  @Post(':id/password-reset')
+  @HttpCode(204)
+  @Can(RESET_PERMISSION)
+  async sendPasswordReset(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    if (!canSendPasswordReset()) throw new ForbiddenException('Forbidden');
+    const { scope, actor } = requestTx();
+    await this.users.sendPasswordReset(scope, actor, id);
   }
 
   @Post('invite')

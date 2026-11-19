@@ -291,3 +291,50 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Directory additions are kept within the table's own scroll region. */
+.filterActions {
+  max-width: 100%;
+}
+
+.filterActions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.name,
+.department {
+  overflow-wrap: anywhere;
+}
+
+.directory .personText {
+  min-width: 7rem;
+  max-width: 13rem;
+}
+
+.department {
+  max-width: 12rem;
+}
+
+.rowActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.rowActions button {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+@media (max-width: 600px) {
+  .filterActions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filterActions select {
+    width: 100%;
+  }
+}
