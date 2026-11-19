@@ -446,6 +446,24 @@ describe('issue', () => {
     expect((failed.reason as HttpException).getStatus()).toBe(409);
     expect(await service.versions(po.id)).toHaveLength(1);
   });
+
+  it('tells the requester in the app that their order was issued, once, with no email', async () => {
+    const notifying = new PurchaseOrdersService(db, approvals, audit, caller, () => now, notify);
+    const po = await draftPo();
+    notify.notifyUser.mockClear();
+    const key = randomUUID();
+    const dto = await notifying.issue(po.id, key);
+    await notifying.issue(po.id, key);
+    expect(notify.notifyUser.mock.calls.map((c) => (c as unknown[])[1])).toEqual([
+      {
+        userId: U.req,
+        title: `Purchase order ${dto.number} issued`,
+        body: `Purchase order ${dto.number} was issued for PR-T-${po.prId.slice(0, 8)}.`,
+        link: `/procurement/requests/${po.prId}`,
+        dedupeKey: `purchase_order:${po.id}:issued`,
+      },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------- amend (AD7)
