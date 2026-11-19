@@ -1,20 +1,33 @@
 // --from/--only planning, no-overwrite names, per-workflow state, results history and the
 // payment reuse decision. Run: node --test 'tools/manual-run/selftest/*.selftest.mjs'
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
 
 import { planRuns } from '../lib/plan.mjs';
-import { saveResults } from '../lib/runner.mjs';
+import { clearSecrets, registerSecret } from '../lib/redact.mjs';
+import { saveDriverError, saveResults } from '../lib/runner.mjs';
 import {
+  acquireLock,
+  claimPath,
   hasEarlierRun,
   placeResult,
+  readFolderMeta,
   readState,
   resetWorkflow,
   uniquePath,
   videoBase,
+  writeJson,
   writeState,
 } from '../lib/store.mjs';
 import { uniqueValues } from '../lib/config.mjs';
@@ -213,34 +226,148 @@ describe('per-workflow state', () => {
 });
 
 describe('payments are recorded at most once per run', () => {
-  test('a recorded URL is reused', () => {
-    assert.deepEqual(
-      paymentDecision({ recordedUrl: '/payments/a', rowUrls: ['/payments/b'], knownUrls: [] }),
-      { action: 'reuse', url: '/payments/a' },
-    );
+  const ref = 'BOS-DEMO-PAY-01-x-1440x0900';
+  const ok = (rows) => ({ ok: true, rows });
+  test('a recorded URL is reused without a lookup', () => {
+    assert.deepEqual(paymentDecision({ recordedUrl: '/payments/a', ref, knownUrls: [] }), {
+      action: 'reuse',
+      url: '/payments/a',
+    });
   });
-  test('a payment of this customer that is not a known one is adopted, not duplicated', () => {
+  test('a failed lookup never counts as "no payment"', () => {
+    for (const lookup of [null, undefined, { ok: false, rows: [] }])
+      assert.equal(paymentDecision({ lookup, ref, knownUrls: [] }).action, 'fail');
+  });
+  test('the one payment with exactly this bank reference is adopted', () => {
     assert.deepEqual(
       paymentDecision({
-        recordedUrl: null,
-        rowUrls: ['/payments/one', '/payments/two', '/payments/two'],
+        lookup: ok([
+          { url: '/payments/one', ref: 'known' },
+          { url: '/payments/two', ref: ` ${ref} ` },
+        ]),
+        ref,
         knownUrls: ['/payments/one'],
       }),
-      { action: 'adopt', urls: ['/payments/two'] },
+      { action: 'adopt', url: '/payments/two' },
     );
   });
-  test('a new payment only when the customer has none besides the known ones', () => {
+  test('two payments with this reference fail loudly (possible duplicate)', () => {
+    const d = paymentDecision({
+      lookup: ok([
+        { url: '/payments/a', ref },
+        { url: '/payments/b', ref },
+      ]),
+      ref,
+      knownUrls: [],
+    });
+    assert.equal(d.action, 'fail');
+    assert.match(d.reason, /2 payments carry the bank reference/);
+  });
+  test('a reference that only contains this one is not a match, and stops the step', () => {
+    const d = paymentDecision({
+      lookup: ok([{ url: '/payments/a', ref: `${ref}0` }]),
+      ref,
+      knownUrls: [],
+    });
+    assert.equal(d.action, 'fail');
+    assert.match(d.reason, /another bank reference/);
+  });
+  test('an unreadable reference or a missing known payment fails', () => {
+    assert.match(
+      paymentDecision({ lookup: ok([{ url: '/payments/a', ref: null }]), ref, knownUrls: [] })
+        .reason,
+      /could not be read/,
+    );
+    assert.match(
+      paymentDecision({ lookup: ok([]), ref, knownUrls: ['/payments/one'] }).reason,
+      /may be incomplete/,
+    );
+  });
+  test('a new payment only after a lookup that loaded and shows none', () => {
     assert.deepEqual(
       paymentDecision({
-        recordedUrl: null,
-        rowUrls: ['/payments/one'],
+        lookup: ok([{ url: '/payments/one', ref: 'known' }]),
+        ref,
         knownUrls: ['/payments/one'],
       }),
       { action: 'record' },
     );
-    assert.deepEqual(paymentDecision({ recordedUrl: undefined, rowUrls: [], knownUrls: [] }), {
+    assert.deepEqual(paymentDecision({ lookup: ok([]), ref, knownUrls: [] }), {
       action: 'record',
     });
+  });
+});
+
+describe('results are saved redacted, and a driver error keeps the saved steps', () => {
+  const cfg = (outDir) => ({
+    outDir,
+    label: 'x',
+    viewportText: '1440x900',
+    appUrl: 'https://a.localhost',
+  });
+  const step = (id, extra = {}) => ({
+    id,
+    title: id,
+    status: 'PASS',
+    durationMs: 123456,
+    checks: [],
+    findings: [],
+    records: {},
+    ...extra,
+  });
+  after(clearSecrets);
+
+  test('a secret in an error, a check or a finding never reaches results.json or results.md', () => {
+    const dir = freshDir();
+    registerSecret('Pa55-w0rd"x');
+    saveResults(cfg(dir), {
+      name: 'start',
+      title: 't',
+      runId: 'r1',
+      status: 'FAIL',
+      wallMs: 123456,
+      videos: [],
+      steps: [
+        step('start-6', {
+          status: 'FAIL',
+          error: 'locator.fill: Timeout | - fill("Pa55-w0rd\\"x")',
+          checks: ['typed Pa55-w0rd"x'],
+          findings: [{ severity: 'normal', text: 'saw Pa55-w0rd"x' }],
+        }),
+      ],
+    });
+    for (const f of ['results.json', 'results.md']) {
+      const text = readFileSync(path.join(dir, f), 'utf8');
+      assert.ok(!text.includes('Pa55-w0rd'), `${f} holds the password`);
+      assert.ok(text.includes('[redacted]'), f);
+    }
+    const saved = JSON.parse(readFileSync(path.join(dir, 'results.json'), 'utf8'));
+    assert.equal(saved.workflows.start.steps[0].durationMs, 123456, 'numbers stay numbers');
+  });
+
+  test('saveDriverError marks this run FAIL and keeps its steps', () => {
+    const dir = freshDir();
+    const since = new Date(Date.now() - 1000).toISOString();
+    saveResults(cfg(dir), {
+      name: 'sales',
+      title: 't',
+      runId: `${new Date().toISOString()}-${process.pid}`,
+      startedAt: new Date().toISOString(),
+      status: 'RUNNING',
+      wallMs: 1,
+      videos: [],
+      steps: [step('sales-1'), step('sales-2')],
+    });
+    const r = saveDriverError(cfg(dir), 'sales', 'Driver error: boom', since);
+    assert.equal(r.status, 'FAIL');
+    assert.equal(r.error, 'Driver error: boom');
+    assert.deepEqual(
+      r.steps.map((st) => st.id),
+      ['sales-1', 'sales-2'],
+    );
+    // Without a result of this run, a FAIL without steps is written.
+    const other = freshDir();
+    assert.deepEqual(saveDriverError(cfg(other), 'sales', 'Driver error: x', since).steps, []);
   });
 });
 

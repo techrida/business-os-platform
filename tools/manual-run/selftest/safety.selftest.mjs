@@ -292,6 +292,37 @@ describe('step time limit', () => {
     );
     assert.deepEqual(order, ['cancel']);
   });
+  test('a body that resolves just after the deadline is still a FAIL', async () => {
+    let resolveBody;
+    const body = new Promise((r) => (resolveBody = r));
+    const outcome = withTimeout(body, 20, 'start-2 did not finish within 0.02 s', async () => {
+      // The body finishes while the step is being cancelled.
+      resolveBody('late success');
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    await assert.rejects(
+      outcome,
+      (e) => e instanceof StepFailure && /did not finish/.test(e.message),
+    );
+  });
+
+  test('after a timeout the step can neither record nor wait', async () => {
+    let persisted = 0;
+    const context = { route: async () => {}, pages: () => [] };
+    const s = new Session({ context, page: null, cfg: CFG, state: {}, log: () => {} });
+    s.persist = () => persisted++;
+    s.record('memoUrl', '/memos/1');
+    assert.equal(persisted, 1, 'record writes state.json at once');
+    const waiting = s.pause(60_000);
+    await s.abort('start-2 did not finish within 1 s');
+    await assert.rejects(waiting, StepFailure);
+    assert.throws(() => s.record('memoNumber', 'MEMO-1'), StepFailure);
+    assert.equal(s.state.memoNumber, undefined);
+    assert.equal(persisted, 1);
+    // Mailpit polling stops at once with the step's signal; no request is made.
+    await assert.rejects(findMail(CFG, 'subject:x', 60_000, { signal: s.signal }), StepFailure);
+  });
+
   test('a step that finishes in time is not cancelled', async () => {
     let cancelled = false;
     assert.equal(
