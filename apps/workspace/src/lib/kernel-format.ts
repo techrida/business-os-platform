@@ -222,7 +222,8 @@ export function snapshotEntries(
         if (key === 'kind' && documentTypeLabel(raw) !== raw) {
           return { key, label: 'Document type', value: documentTypeLabel(raw), block: false };
         }
-        if (documentNumberText(raw) !== raw) {
+        // Only the generated `reference` field: the same words typed into a reason or a subject stay as typed.
+        if (key === 'reference' && documentNumberText(raw) !== raw) {
           return { key, label, value: documentNumberText(raw), block: false };
         }
         if (/Npr$/.test(key) && DECIMAL.test(raw)) {
