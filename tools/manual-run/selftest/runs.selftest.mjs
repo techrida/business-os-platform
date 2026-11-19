@@ -17,7 +17,8 @@ import {
   videoBase,
   writeState,
 } from '../lib/store.mjs';
-import { paymentDecision } from '../workflows/sales.mjs';
+import { uniqueValues } from '../lib/config.mjs';
+import { contactEmailFor, paymentDecision } from '../workflows/sales.mjs';
 
 const WF = [
   { name: 'start', stepIds: ['start-1', 'start-2'] },
@@ -240,5 +241,28 @@ describe('payments are recorded at most once per run', () => {
     assert.deepEqual(paymentDecision({ recordedUrl: undefined, rowUrls: [], knownUrls: [] }), {
       action: 'record',
     });
+  });
+});
+
+describe('the customer e-mail on a resumed run', () => {
+  const u = uniqueValues('fix1-1440');
+  const v = {
+    email: `${u.emailLocal}@bos-demo.example.com`,
+    legacyEmail: `${u.legacyEmailLocal}@bos-demo.example.com`,
+  };
+  test('a new run uses the current address', () => {
+    assert.equal(contactEmailFor({}, v), 'anu.mr-fix1-1440@bos-demo.example.com');
+  });
+  test('the recorded address wins', () => {
+    assert.equal(
+      contactEmailFor({ contactEmail: 'a@b.example', opportunityUrl: '/o/1' }, v),
+      'a@b.example',
+    );
+  });
+  test('a folder whose customer was created before the address was recorded uses the old form', () => {
+    assert.equal(
+      contactEmailFor({ opportunityUrl: '/opportunities/1' }, v),
+      'anu.scr-fix1-1440@bos-demo.example.com',
+    );
   });
 });
