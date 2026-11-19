@@ -394,6 +394,25 @@ describe('PUT .../content (raw streamed upload)', () => {
     );
   });
 
+  it('cannot skip the scan from the request: no query, header or field makes the upload "generated" (D28)', async () => {
+    const bytes = PDF(2 * 1024);
+    const c = await create({ sizeBytes: bytes.length });
+    const res = await request(baseUrl)
+      .put(`${c.uploadPath}?generated=true&skipScan=true&scan_engine=generated&status=clean`)
+      .set('Content-Type', 'application/pdf')
+      .set('X-Skip-Scan', 'true')
+      .set('X-Generated', 'true')
+      .send(bytes);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(DocumentVersionDtoSchema.parse(res.body).status).toBe('quarantined');
+    expect((await row(c.versionId)).status).toBe('quarantined');
+    expect(queue.add).toHaveBeenCalledWith(
+      'docs.scan',
+      scanJob(c.versionId),
+      expect.objectContaining({ jobId: c.versionId }),
+    );
+  });
+
   it('answers 413 for Content-Length 25 MiB + 1 byte, and keeps the version open for a valid upload', async () => {
     const c = await create();
     const res = await put(
