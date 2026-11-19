@@ -6,10 +6,17 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DEFAULT_ROLE_PERMISSION_LEVELS,
   DEFAULT_ROLE_PERMISSIONS,
   PERMISSIONS,
   ROLE_KEYS,
+  type AccessCatalogueResponse,
+  type AccessChange,
+  type AccessLevel,
+  type AccessSettingAreaKey,
   type AccessWarning,
+  type Permission,
+  type RoleKey,
 } from '@bos/contracts';
 import {
   createDepartment,
@@ -31,6 +38,13 @@ import type { Principal } from '../../platform/authz/principal';
 import { RoleCache } from '../../platform/authz/role-cache';
 import type { Db } from '../../platform/db/db.module';
 import { type Actor, type TxScope, systemActor, withTx } from '../../platform/db/tx';
+import {
+  ACCESS_AREA_CATALOGUE,
+  ACCESS_ROLE_CATALOGUE,
+  levelRulePermissions,
+} from './access-catalogue';
+import { effectiveScopeForUser } from './access-evaluator';
+import { readAccessRevision } from './access-revision';
 import { AccessSettingsService } from './access-settings.service';
 
 const OWNER_PW = 'owner-test-pw';
@@ -171,6 +185,100 @@ async function seedLead(
   });
   return id;
 }
+
+/** Saves `changes` as the Founder, acknowledging whatever the preview asks to confirm. */
+async function saveAcknowledged(
+  env: SeededEnv,
+  changes: AccessChange[],
+): Promise<AccessCatalogueResponse> {
+  const current = await env.service.getCatalogue(env.scope);
+  const preview = await env.service.preview(env.scope, { changes });
+  const acknowledged = [
+    ...new Set(preview.warnings.filter((w) => w.severity === 'confirm').map((w) => w.code)),
+  ];
+  return env.service.save(env.scope, userActor(env.founderId), {
+    expectedRevision: current.revision,
+    changes,
+    acknowledged,
+  });
+}
+
+async function setMembershipLevel(
+  scope: TxScope,
+  userId: string,
+  level: AccessLevel,
+): Promise<void> {
+  await withTx(db, scope, systemActor('test-seed'), async (tx) => {
+    await tx.execute(sql`
+      UPDATE app.user_entities
+         SET level = ${level}
+       WHERE tenant_id = ${scope.tenantId}
+         AND organization_id = ${scope.organizationId}
+         AND user_id = ${userId}
+    `);
+  });
+}
+
+/**
+ * A seeded tenant: the default grants written out, as the seed does. With `levelRows`, also the
+ * default level rows the way migration 0088 writes them, leaving
+ * `access_revisions.level_rules_materialized` unset; without, the tenant runs on the code default
+ * level rows. A tenant with no grant rows at all is no model here: the first save bumps
+ * `authz_versions`, after which the role cache reads its empty grant table as an empty policy.
+ */
+async function seedPolicy(scope: TxScope, options: { levelRows: boolean }): Promise<void> {
+  await withTx(db, scope, systemActor('test-seed'), async (tx) => {
+    for (const role of ROLE_KEYS) {
+      for (const [permission, grantScope] of Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) {
+        if (grantScope === undefined) continue;
+        await tx.execute(sql`
+          INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope, seeded)
+          VALUES (${scope.tenantId}, ${role}, ${permission}, ${grantScope}, true)
+          ON CONFLICT (tenant_id, role_key, permission) DO NOTHING
+        `);
+      }
+      if (!options.levelRows) continue;
+      for (const row of DEFAULT_ROLE_PERMISSION_LEVELS[role]) {
+        await tx.execute(sql`
+          INSERT INTO app.role_permission_levels (
+            tenant_id, role_key, permission, min_level, scope, seeded
+          )
+          VALUES (
+            ${scope.tenantId}, ${role}, ${row.permission}, ${row.minLevel}, ${row.scope}, true
+          )
+          ON CONFLICT (tenant_id, role_key, permission, min_level) DO NOTHING
+        `);
+      }
+    }
+  });
+}
+
+async function liveScope(
+  env: SeededEnv,
+  roles: readonly RoleKey[],
+  level: AccessLevel,
+  permission: Permission,
+): Promise<string | null> {
+  const grants = await env.roleCache.grantsFor(
+    env.scope.tenantId,
+    env.scope.organizationId,
+    roles,
+    level,
+  );
+  return grants.get(permission) ?? null;
+}
+
+const DEPARTMENT_AREAS: readonly AccessSettingAreaKey[] = ACCESS_AREA_CATALOGUE.filter(
+  (a) => a.supportsDepartment,
+).map((a) => a.key);
+
+const switchEveryArea = (managers: boolean, heads: boolean): AccessChange[] =>
+  DEPARTMENT_AREAS.map((area): AccessChange => ({
+    kind: 'levelRule',
+    area,
+    managersSeeDepartment: managers,
+    headsSeeDepartment: heads,
+  }));
 
 function getHttpErrorBody(err: unknown): Record<string, unknown> {
   if (err instanceof ConflictException || err instanceof UnprocessableEntityException) {
@@ -614,5 +722,148 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     // Without advancing `now` (still within the 5 s VERSION_CHECK_TTL_MS window), the very next
     // request reloads from Postgres and sees both leads immediately.
     expect(await queryVisibleLeads()).toHaveLength(2);
+  });
+});
+
+describe('Access Settings level rules match the run-time grants (real Postgres)', () => {
+  it('writes the paired edit rows when a tenant on the code defaults first saves a level rule', async () => {
+    const env = await createSeededEnv();
+    await seedPolicy(env.scope, { levelRows: false });
+    expect(await liveScope(env, ['sales'], 'manager', 'crm.lead.write')).toBe('department');
+    // Unrelated to leads: the first level-rule save writes every default row out.
+    await saveAcknowledged(env, [
+      { kind: 'levelRule', area: 'procurement', managersSeeDepartment: true },
+    ]);
+
+    // D50: a Sales manager and head still edit the department's leads and opportunities.
+    for (const level of ['manager', 'head'] as const) {
+      expect(await liveScope(env, ['sales'], level, 'crm.lead.write')).toBe('department');
+      expect(await liveScope(env, ['sales'], level, 'crm.opportunity.write')).toBe('department');
+    }
+    expect(await liveScope(env, ['sales'], 'staff', 'crm.lead.write')).toBe('own');
+    // Finance only starts leads: its managers see the department's but edit none.
+    expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.read')).toBe('department');
+    expect(await liveScope(env, ['finance'], 'manager', 'crm.lead.write')).toBe('own');
+  });
+
+  it('takes the edit reach away with the switch, and keeps every switch off with zero rows', async () => {
+    const env = await createSeededEnv();
+    await seedPolicy(env.scope, { levelRows: true });
+    expect(await liveScope(env, ['sales'], 'manager', 'crm.lead.write')).toBe('department');
+
+    // Both leads switches off: managers and heads can no longer list the department's leads, and
+    // must not edit them by id either.
+    await saveAcknowledged(env, [
+      { kind: 'levelRule', area: 'leads', managersSeeDepartment: false, headsSeeDepartment: false },
+    ]);
+    for (const level of ['manager', 'head'] as const) {
+      expect(await liveScope(env, ['sales'], level, 'crm.lead.read')).toBe('own');
+      expect(await liveScope(env, ['sales'], level, 'crm.lead.write')).toBe('own');
+      // The opportunities switch is untouched.
+      expect(await liveScope(env, ['sales'], level, 'crm.opportunity.write')).toBe('department');
+    }
+
+    // Every switch off: zero level rows, and the rows stay the truth instead of the code defaults.
+    const saved = await saveAcknowledged(env, switchEveryArea(false, false));
+    const rowCount = await db.execute<{ count: string }>(sql`
+      SELECT count(*)::text AS count
+        FROM app.role_permission_levels
+       WHERE tenant_id = ${env.scope.tenantId}
+    `);
+    expect(Number(rowCount.rows[0]?.count ?? '-1')).toBe(0);
+    expect((await readAccessRevision(db, env.scope.tenantId)).levelRulesMaterialized).toBe(true);
+    for (const rule of saved.levelRules) {
+      expect(rule.managersSeeDepartment, rule.area).toBe(false);
+      expect(rule.headsSeeDepartment, rule.area).toBe(false);
+    }
+    for (const level of ['manager', 'head'] as const) {
+      expect(await liveScope(env, ['sales'], level, 'crm.lead.read')).toBe('own');
+      expect(await liveScope(env, ['sales'], level, 'crm.opportunity.read')).toBe('own');
+      expect(await liveScope(env, ['sales'], level, 'quotation.read')).toBe('own');
+      expect(await liveScope(env, ['procurement'], level, 'procurement.pr.read')).toBe(
+        await liveScope(env, ['procurement'], 'staff', 'procurement.pr.read'),
+      );
+    }
+  });
+
+  it('gives a role that a grant makes eligible its level rows, as Check a person shows', async () => {
+    const env = await createSeededEnv();
+    await seedPolicy(env.scope, { levelRows: false });
+    // Operations Head reads no leads by default (D50), so the code defaults hold no row for it.
+    const saved = await saveAcknowledged(env, [
+      { kind: 'grant', role: 'operations_head', permission: 'crm.lead.read', scope: 'own' },
+    ]);
+    const grantMap = new Map(saved.grants.map((g) => [`${g.role}:${g.permission}`, g.scope]));
+    const levelMap = new Map(saved.levelRules.map((l) => [l.area, l]));
+    const reported = effectiveScopeForUser(
+      { roles: ['operations_head'], departmentId: env.salesDeptId, level: 'manager' },
+      'crm.lead.read',
+      grantMap,
+      levelMap,
+    ).scope;
+    expect(reported).toBe('department');
+    expect(await liveScope(env, ['operations_head'], 'manager', 'crm.lead.read')).toBe(reported);
+  });
+
+  it('reports the scope the role cache enforces for every role, level and switch combination', async () => {
+    const env = await createSeededEnv();
+    await seedPolicy(env.scope, { levelRows: false });
+    const managerId = env.salesStaffBId;
+    await setMembershipLevel(env.scope, managerId, 'manager');
+
+    const staffRoles = ACCESS_ROLE_CATALOGUE.filter((r) => r.kind === 'staff').map((r) => r.key);
+    const roleSets: (readonly RoleKey[])[] = [
+      ...staffRoles.map((role) => [role] as const),
+      ['sales', 'finance'],
+      ['marketing', 'pmo'],
+    ];
+    // Every permission, so the check also proves no switch widens anything outside its area.
+    const permissions: readonly Permission[] = PERMISSIONS;
+    expect(DEPARTMENT_AREAS.flatMap((area) => levelRulePermissions(area))).toContain(
+      'crm.lead.write',
+    );
+
+    // The two mixed combinations are the ones that tell a head's fallback to the manager row apart.
+    for (const [managers, heads] of [
+      [true, true],
+      [true, false],
+      [false, true],
+      [false, false],
+    ] as const) {
+      const saved = await saveAcknowledged(env, switchEveryArea(managers, heads));
+      const grantMap = new Map(saved.grants.map((g) => [`${g.role}:${g.permission}`, g.scope]));
+      const levelMap = new Map(saved.levelRules.map((l) => [l.area, l]));
+
+      for (const roles of roleSets) {
+        for (const level of ['staff', 'manager', 'head'] as const) {
+          for (const permission of permissions) {
+            const reported = effectiveScopeForUser(
+              { roles, departmentId: env.salesDeptId, level },
+              permission,
+              grantMap,
+              levelMap,
+            ).scope;
+            expect(
+              await liveScope(env, roles, level, permission),
+              `${String([managers, heads])} ${roles.join('+')} ${level} ${permission}`,
+            ).toBe(reported);
+          }
+        }
+      }
+
+      // The live Check a person report on a real manager says what the role cache enforces.
+      const report = await env.service.checkPerson(env.scope, managerId);
+      const leadsRow = report.areas.find((a) => a.area === 'leads');
+      expect(leadsRow?.scope ?? null).toBe(
+        await liveScope(env, ['sales'], 'manager', 'crm.lead.read'),
+      );
+      expect(leadsRow?.actions.find((a) => a.permission === 'crm.lead.write')?.scope).toBe(
+        await liveScope(env, ['sales'], 'manager', 'crm.lead.write'),
+      );
+      const headReport = await env.service.checkPerson(env.scope, env.salesHeadId);
+      expect(headReport.areas.find((a) => a.area === 'leads')?.scope ?? null).toBe(
+        await liveScope(env, ['sales'], 'head', 'crm.lead.read'),
+      );
+    }
   });
 });

@@ -3,12 +3,15 @@
 // default-grant validity, and Spec section 9 plain-language vocabulary rules.
 import {
   ACCESS_SETTING_AREA_KEYS,
+  DEFAULT_ROLE_PERMISSION_LEVELS,
   DEFAULT_ROLE_PERMISSIONS,
+  LEVEL_RULE_AREAS,
   PERMISSIONS,
   ROLE_KEYS,
   type AccessAssignmentRule,
   type AccessGrantRow,
   type AccessLevelRule,
+  type LevelRuleArea,
 } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
@@ -21,7 +24,9 @@ import {
   DEFAULT_LEVEL_RULES,
   PERMISSION_BY_KEY,
   defaultScopeFor,
+  impliedLevelRows,
   isScopeAllowedForRole,
+  levelRulePermissions,
   reachLabel,
 } from './access-catalogue';
 import { buildAreaSummaries, buildAssignmentSummaries } from './access-summaries';
@@ -133,6 +138,56 @@ describe('access-catalogue completeness', () => {
   });
 });
 
+describe('department-reach switches agree with the contracts', () => {
+  const areas: readonly LevelRuleArea[] = LEVEL_RULE_AREAS;
+
+  it('takes see permissions, department support and default switches from LEVEL_RULE_AREAS', () => {
+    expect(
+      ACCESS_AREA_CATALOGUE.map((a) => [a.key, a.seePermission, a.supportsDepartment]),
+    ).toEqual(areas.map((a) => [a.key, a.seePermission, a.supportsDepartment]));
+    expect(DEFAULT_LEVEL_RULES).toEqual(
+      Object.fromEntries(
+        areas.map((a) => [
+          a.key,
+          {
+            managersSeeDepartment: a.managersSeeDepartment,
+            headsSeeDepartment: a.headsSeeDepartment,
+          },
+        ]),
+      ),
+    );
+  });
+
+  it('pairs only the leads and opportunities edit permissions with their switch', () => {
+    expect(levelRulePermissions('leads')).toEqual(['crm.lead.read', 'crm.lead.write']);
+    expect(levelRulePermissions('opportunities')).toEqual([
+      'crm.opportunity.read',
+      'crm.opportunity.write',
+    ]);
+    expect(levelRulePermissions('quotations')).toEqual(['quotation.read']);
+    expect(levelRulePermissions('procurement')).toEqual(['procurement.pr.read']);
+    expect(levelRulePermissions('invoices')).toEqual([]);
+  });
+
+  it('implies exactly DEFAULT_ROLE_PERMISSION_LEVELS from the default grants and switches', () => {
+    const grantMap = new Map(
+      defaultGrants().map((g) => [`${g.role}:${g.permission}`, g.scope] as const),
+    );
+    const implied = impliedLevelRows(grantMap, defaultLevelRules())
+      .map((r) => `${r.role} ${r.permission} ${r.minLevel} department`)
+      .sort();
+    const expected = ROLE_KEYS.flatMap((role) =>
+      DEFAULT_ROLE_PERMISSION_LEVELS[role].map(
+        (r) => `${role} ${r.permission} ${r.minLevel} ${r.scope}`,
+      ),
+    ).sort();
+    expect(implied).toEqual(expected);
+    // The intake roles start leads for Sales but never edit them, so no switch widens their write.
+    expect(implied).not.toContain('finance crm.lead.write manager department');
+    expect(implied).toContain('sales crm.lead.write manager department');
+  });
+});
+
 describe('access-summaries', () => {
   it('renders plain-language summaries for every area and reflects live edits (D29)', () => {
     const grants = defaultGrants();
@@ -147,6 +202,21 @@ describe('access-summaries', () => {
     }
     expect(before.leads.join(' ')).toContain('Sales and Marketing see their own leads.');
     expect(before.leads.join(' ')).toContain('Their managers and heads see their department.');
+
+    // A head with no head row keeps the manager row at run time, so the manager switch alone still
+    // reaches heads and the summary says so.
+    const managersOnly = defaultLevelRules().map((rule) =>
+      rule.area === 'leads' ? { ...rule, headsSeeDepartment: false } : rule,
+    );
+    expect(buildAreaSummaries(grants, managersOnly).leads.join(' ')).toContain(
+      'Their managers and heads see their department.',
+    );
+    const headsOnly = defaultLevelRules().map((rule) =>
+      rule.area === 'leads' ? { ...rule, managersSeeDepartment: false } : rule,
+    );
+    expect(buildAreaSummaries(grants, headsOnly).leads.join(' ')).toContain(
+      'Their heads see their department.',
+    );
 
     // Editing live grants changes the summary immediately (proving it does not read hardcoded defaults).
     const salesLead = grants.find((g) => g.role === 'sales' && g.permission === 'crm.lead.read')!;
