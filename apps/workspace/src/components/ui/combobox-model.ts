@@ -36,7 +36,7 @@ export const UNGROUPED_LABEL = 'Unassigned';
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
 /** Lower-cased, composed form used for matching, so "José" typed either way finds "José". */
-const fold = (value: string): string => value.normalize('NFC').toLocaleLowerCase();
+const fold = (value: string): string => value.normalize('NFC').toLowerCase();
 
 /** Every whitespace-separated word of the query must appear somewhere in the option's text. */
 export function matchesQuery(option: ComboboxOption, query: string): boolean {
