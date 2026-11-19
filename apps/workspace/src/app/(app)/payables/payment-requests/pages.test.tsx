@@ -4,7 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
 const session = vi.hoisted(() => ({ roles: ['finance'] as string[] }));
 const api = vi.hoisted(() => ({
-  listPaymentRequests: vi.fn(),
+  listPaymentRequestsPage: vi.fn(),
   getPaymentRequest: vi.fn(),
   listPaymentRequestItems: vi.fn(),
 }));
@@ -14,7 +14,9 @@ vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NOT_FOUND');
   },
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/payables/payment-requests',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('./actions', () => ({
   createPaymentRequestAction: vi.fn(),
@@ -48,7 +50,7 @@ const record = {
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['finance'];
-  api.listPaymentRequests.mockResolvedValue([record]);
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 1 });
   api.getPaymentRequest.mockResolvedValue(record);
   api.listPaymentRequestItems.mockResolvedValue([
     {
@@ -119,7 +121,7 @@ it('denies other roles without loading payment data', async () => {
   session.roles = ['accountant'];
   const html = renderToStaticMarkup(await ListPage({ searchParams: Promise.resolve({}) }));
   expect(html).toMatch(/roles/i);
-  expect(api.listPaymentRequests).not.toHaveBeenCalled();
+  expect(api.listPaymentRequestsPage).not.toHaveBeenCalled();
 });
 
 it('never sends a malformed detail id upstream', async () => {
@@ -147,4 +149,34 @@ it('keeps distinct non-ID bill labels when the reference lookup fails', async ()
   const html = renderToStaticMarkup(await DetailPage({ params: Promise.resolve({ id }) }));
   expect(html).toContain('Bill 1 of 1');
   expect(html).not.toContain('Bill reference unavailable');
+});
+
+const listOf = async (sp: Record<string, string | string[]> = {}) =>
+  renderToStaticMarkup(await ListPage({ searchParams: Promise.resolve(sp) }));
+
+it('sends repeated statuses, the search and the page window, and ignores a junk status', async () => {
+  await listOf({ status: ['draft', 'nope', 'approved'], q: 'Himal', page: '3' });
+  expect(api.listPaymentRequestsPage).toHaveBeenCalledWith(expect.anything(), {
+    status: ['draft', 'approved'],
+    q: 'Himal',
+    limit: 25,
+    offset: 50,
+  });
+});
+
+it('shows the server total and range, with no Show button', async () => {
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [record], total: 61 });
+  const html = await listOf();
+  expect(html).toContain('Showing 1 of 61 payment requests');
+  expect(html).toContain('Showing 1-25 of 61');
+  expect(html).toContain('type="search"');
+  expect(html).not.toContain('Show requests');
+});
+
+it('says so when there are none, and names the filters that match none', async () => {
+  api.listPaymentRequestsPage.mockResolvedValue({ items: [], total: 0 });
+  expect(await listOf()).toContain('No payment requests yet.');
+  const html = await listOf({ status: 'rejected', q: 'zzz' });
+  expect(html).toContain('No payment requests match.');
+  expect(html).toContain('Clear filters');
 });
