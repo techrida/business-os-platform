@@ -133,8 +133,14 @@ const TEMPLATE_LINKS: Record<
   'document.infected': APPROVAL_LINK,
   'outbox.dead_letter': APPROVAL_LINK,
   'quotation.accepted': { base: 'workspace', areas: ['quotations'], fallback: '/quotations/' },
-  'crm.assigned': { base: 'workspace', areas: ['crm'], fallback: '/crm/' },
-  'crm.follow_up_digest': { base: 'workspace', areas: ['crm'], fallback: '/crm/' },
+  // The workspace has no /crm page: work is opened on its own record (a lead, opportunity or quotation), and a
+  // follow-up on a customer or contact on the follow-ups page.
+  'crm.assigned': {
+    base: 'workspace',
+    areas: ['leads', 'opportunities', 'quotations', 'activities'],
+    fallback: '/activities/',
+  },
+  'crm.follow_up_digest': { base: 'workspace', areas: ['activities'], fallback: '/activities/' },
   'quotation.sent': PORTAL_QUOTATION_LINK,
   'quotation.expiring': PORTAL_QUOTATION_LINK,
   'quotation.expired': PORTAL_QUOTATION_LINK,
@@ -143,7 +149,14 @@ const TEMPLATE_LINKS: Record<
   'portal.invite': { base: 'portal', areas: ['sign-in'], fallback: '/sign-in/' },
 };
 
-const WORKSPACE_AREAS = ['inbox', 'memos', 'quotations', 'crm'] as const;
+const WORKSPACE_AREAS = [
+  'inbox',
+  'memos',
+  'quotations',
+  'leads',
+  'opportunities',
+  'activities',
+] as const;
 const PORTAL_AREAS = ['quotations', 'sign-in'] as const;
 
 /** /<area>/<id>: letters, digits and . _ ~ - only. No query, fragment, scheme or dot segments. */

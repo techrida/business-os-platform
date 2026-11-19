@@ -15,10 +15,16 @@
 // Sales and Marketing are told apart by role key, never by a department's name. A person holding both roles
 // counts as Marketing for the hand-off, so they can reach Sales. A refusal carries a reason code for the 400
 // message and the picker.
+//
+// The entity's stored rule (U20b, `loadAssignmentConfig`) replaces the D50 defaults inside a department (staff:
+// same-level peers, only themselves or anyone at or below; managers and heads: at or below, or only themselves and
+// people below them) and lists the department hand-overs. Under a stored list, a Sales user handing to Marketing
+// with no pair that covers it still reads `reverse_handoff`, so the 400 names the direction the hand-over runs.
 import {
   ACCESS_LEVEL_RANK,
   type AssignmentContext,
   type AssignmentDecision,
+  type AssignmentDenyReason,
   type AssignmentParty,
   LEAD_INTAKE_ROLE_KEYS,
   type ManagerAssignmentRule,
@@ -52,20 +58,43 @@ const rank = (party: AssignmentParty): number => ACCESS_LEVEL_RANK[party.level];
 const isIntake = (party: AssignmentParty): boolean =>
   LEAD_INTAKE_ROLE_KEYS.some((role) => holds(party, role));
 
-function permittedByLevel(
+/**
+ * Why `actor` may not hand work to `target` by level inside a department or across a hand-over, or null when the
+ * level allows it. Nobody assigns upward, whatever the stored rule says; the stored rule can only narrow further.
+ */
+function levelRefusal(
   actor: AssignmentParty,
   target: AssignmentParty,
   staffRule: StaffAssignmentRule,
   managersRule: ManagerAssignmentRule,
-): boolean {
-  // Unconditional invariant: nobody assigns upward, regardless of configured options.
-  if (rank(target) > rank(actor)) return false;
-  if (actor.level === 'staff' && staffRule === 'self_only') return false;
-  if (actor.level === 'manager' && managersRule === 'self_and_staff' && target.level !== 'staff') {
-    return false;
+): AssignmentDenyReason | null {
+  if (rank(target) > rank(actor)) return 'upward';
+  if (actor.level === 'staff' && staffRule === 'self_only') return 'self_only';
+  // Managers and heads limited to "themselves and people below their level": a peer at their own level is refused.
+  if (actor.level !== 'staff' && managersRule === 'self_and_staff' && rank(target) >= rank(actor)) {
+    return 'same_level';
   }
-  return true;
+  return null;
 }
+
+/** The level check as a decision: allowed with `reason`, or refused with the level's reason. */
+function byLevel(
+  actor: AssignmentParty,
+  target: AssignmentParty,
+  staffRule: StaffAssignmentRule,
+  managersRule: ManagerAssignmentRule,
+  reason: 'department' | 'sales_handoff',
+): AssignmentDecision {
+  const refusal = levelRefusal(actor, target, staffRule, managersRule);
+  return refusal === null ? { allowed: true, reason } : { allowed: false, reason: refusal };
+}
+
+/** A Sales user (not also Marketing) handing to a Marketing user (not also Sales): the direction D50 refuses. */
+const isReverseHandOff = (actor: AssignmentParty, target: AssignmentParty): boolean =>
+  holds(actor, SALES_ROLE_KEY) &&
+  !holds(actor, MARKETING_ROLE_KEY) &&
+  holds(target, MARKETING_ROLE_KEY) &&
+  !holds(target, SALES_ROLE_KEY);
 
 /** May `actor` hand work to `target`? */
 export function decideAssignment(
@@ -94,20 +123,12 @@ export function decideAssignment(
   const managersRule: ManagerAssignmentRule = config?.managers ?? 'any_at_or_below';
   const explicitHandOvers = config?.handOvers;
 
-  if (
-    explicitHandOvers === undefined &&
-    holds(actor, SALES_ROLE_KEY) &&
-    !holds(actor, MARKETING_ROLE_KEY) &&
-    holds(target, MARKETING_ROLE_KEY) &&
-    !holds(target, SALES_ROLE_KEY)
-  ) {
+  if (explicitHandOvers === undefined && isReverseHandOff(actor, target)) {
     return { allowed: false, reason: 'reverse_handoff' };
   }
 
   if (actor.departmentId !== null && actor.departmentId === target.departmentId) {
-    return permittedByLevel(actor, target, staffRule, managersRule)
-      ? { allowed: true, reason: 'department' }
-      : { allowed: false, reason: 'upward' };
+    return byLevel(actor, target, staffRule, managersRule, 'department');
   }
 
   if (explicitHandOvers !== undefined) {
@@ -118,19 +139,20 @@ export function decideAssignment(
       (pair) =>
         pair.fromDepartmentId === actor.departmentId && pair.toDepartmentId === target.departmentId,
     );
-    if (!matched) return { allowed: false, reason: 'other_department' };
-    return permittedByLevel(actor, target, staffRule, managersRule)
-      ? { allowed: true, reason: 'sales_handoff' }
-      : { allowed: false, reason: 'upward' };
+    if (!matched) {
+      return {
+        allowed: false,
+        reason: isReverseHandOff(actor, target) ? 'reverse_handoff' : 'other_department',
+      };
+    }
+    return byLevel(actor, target, staffRule, managersRule, 'sales_handoff');
   }
 
   if (holds(actor, MARKETING_ROLE_KEY) && holds(target, SALES_ROLE_KEY)) {
     if (actor.departmentId === null || target.departmentId === null) {
       return { allowed: false, reason: 'no_department' };
     }
-    return permittedByLevel(actor, target, staffRule, managersRule)
-      ? { allowed: true, reason: 'sales_handoff' }
-      : { allowed: false, reason: 'upward' };
+    return byLevel(actor, target, staffRule, managersRule, 'sales_handoff');
   }
 
   return {

@@ -27,7 +27,12 @@ import { type HeaderTarget, setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { LeadsService } from './leads.service';
-import { LeadSummaryQuerySchema, ListLeadsQuerySchema, type LeadSummary } from './leads.types';
+import {
+  LeadOwnersQuerySchema,
+  LeadSummaryQuerySchema,
+  ListLeadsQuerySchema,
+  type LeadSummary,
+} from './leads.types';
 
 @Controller('v1/leads')
 export class LeadsController {
@@ -56,13 +61,25 @@ export class LeadsController {
   }
 
   /**
-   * 200 with the LeadOwnerOption[] the caller may hand a lead to: just the caller for an `own` grant. Declared before
-   * ':id' so "owners" is never read as an id.
+   * 200 with the LeadOwnerOption[] the caller may hand a lead to under the assignment rule (`?context=create` for the
+   * new-lead form, else `reassign`): exactly whom create and PATCH accept. Declared before ':id' so "owners" is never
+   * read as an id.
    */
   @Get('owners')
   @Can('crm.lead.write')
-  owners(): Promise<LeadOwnerOption[]> {
-    return this.leads.owners();
+  owners(@Query() query: unknown): Promise<LeadOwnerOption[]> {
+    return this.leads.owners(parseOr400(LeadOwnersQuerySchema, query).context);
+  }
+
+  /**
+   * 200 with the LeadOwnerOption[] the leads list's Owner filter offers: the owners of leads the caller can read and
+   * the people they may hand a lead to, without addresses (`email` is empty). Needs only read, so every role that
+   * sees the list gets the filter. Declared before ':id'.
+   */
+  @Get('owner-filter')
+  @Can('crm.lead.read')
+  ownerFilter(): Promise<LeadOwnerOption[]> {
+    return this.leads.ownerFilter();
   }
 
   /** 200 with the LeadDto. 404 for a record of another entity or outside the caller's scope. */
@@ -85,8 +102,8 @@ export class LeadsController {
 
   /**
    * 200 with the edited LeadDto; only the fields sent change. 404 out of scope, 409 stale version, 400 for a
-   * converted lead, an edit that changes nothing or an owner who is not a user of the tenant, 403 for an owner the
-   * caller's grant does not reach (an `own` grant cannot hand the lead to someone else).
+   * converted lead, an edit that changes nothing, or an owner the assignment rule refuses (not active staff of the
+   * entity, upward, another department, cannot read leads; `details.assignmentReason` names it).
    */
   @Patch(':id')
   @Can('crm.lead.write')
