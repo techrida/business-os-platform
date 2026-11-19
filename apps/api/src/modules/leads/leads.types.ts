@@ -35,6 +35,15 @@ export const LeadSummaryQuerySchema = z.strictObject({
 });
 export type LeadSummaryQuery = z.infer<typeof LeadSummaryQuerySchema>;
 
+/**
+ * `GET /v1/leads/owners?context`: whom the caller may hand a lead to. `reassign` (the default) is the owner select of
+ * a lead that exists; `create` is the new-lead form, where Finance, Accountant and PMO pick a Sales owner.
+ */
+export const LeadOwnersQuerySchema = z.strictObject({
+  context: z.enum(['create', 'reassign']).default('reassign'),
+});
+export type LeadOwnersQuery = z.infer<typeof LeadOwnersQuerySchema>;
+
 /** Every stage is present, zero when empty, so the cards never depend on which stages the data has. */
 export interface LeadSummary {
   total: number;

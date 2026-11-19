@@ -6,10 +6,12 @@
 // - "no gaps in a numbered series": the LD number is taken inside the create transaction, from the acting entity's
 //   series (a lead is entity-owned, so unlike a customer there is no default-entity switch);
 // - "authorization is deny-by-default": a record outside the caller's entity or scope is a 404, never a 403.
+// Who may own a lead, and who the owner select offers, is the D50 assignment rule (lead-assignee.ts) under the
+// entity's stored rule, never a role default: the same check backs create, edit and the pickers.
 // Converted is never set here: it belongs to the convert action (a later unit).
 import {
+  type AssignmentContext,
   type CreateLeadBody,
-  DEFAULT_ROLE_PERMISSIONS,
   LEAD_STAGES,
   type LeadDto,
   type LeadLostReasonRef,
@@ -18,10 +20,9 @@ import {
   type LeadStageChangeBody,
   type Permission,
   type SchedulableActivityKind,
-  type Scope,
   type UpdateLeadBody,
 } from '@bos/contracts';
-import { activities, leads, rolePermissions, scoped, userRoles } from '@bos/db';
+import { activities, leads, scoped, users } from '@bos/db';
 import {
   BadRequestException,
   ConflictException,
@@ -30,20 +31,41 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, count, desc, eq, getTableColumns, inArray, type SQL, sql } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  type SQL,
+  sql,
+} from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
-import { type ResourceRef } from '../../platform/authz/can';
+import { can, type Principal, type ResourceRef } from '../../platform/authz/can';
+import { loadRecordReaders, type RecordReaders } from '../../platform/authz/record-reach';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
-import { nameIn, personNameMap } from '../../platform/users/person-names';
+import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
 import { isPlannedSql, nextFollowUpSql } from '../activities/activities.types';
-import { activeStaffOfEntity, assertLeadAssignee, mayAssignLead } from './lead-assignee';
+import {
+  actorParty,
+  type AssignmentCheck,
+  assertAssignable,
+  assignableParties,
+  assignmentRefused,
+  storedAssignmentRule,
+} from './lead-assignee';
+import { decideAssignment, defaultSalesOwner } from './lead-assignment-rule';
 import { LeadsCaller } from './leads.caller';
 import { LeadLostReasonsService, lostReasonRefs } from './lost-reasons.service';
 import {
@@ -74,24 +96,34 @@ const KIND_LABEL: Record<SchedulableActivityKind, string> = {
  */
 const leadWithNextFollowUp = () => ({ ...getTableColumns(leads), nextFollowUp: nextFollowUpSql() });
 
-/** Narrow to wide, as RoleCache merges roles: when two roles grant crm.lead.write, the wider scope counts. */
-const SCOPE_RANK: Readonly<Record<Scope, number>> = {
-  own: 0,
-  department: 1,
-  customer_org: 2,
-  all: 3,
-};
-
 const notFound = () => new NotFoundException({ code: 'not_found', message: 'Lead not found' });
 
-/** What authz decides on for one lead. No party column: a portal grant reaches no lead. */
+/** The name a person is shown by in a picker or a notice (D54-2): their display name, never part of an address. */
+const shownName = (displayName: string | null): string => displayName?.trim() || 'Unnamed user';
+
+/** Picker order: by name, then id, so two people of one name keep a stable order. */
+const byName = (a: LeadOwnerOption, b: LeadOwnerOption): number =>
+  a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId);
+
+/**
+ * What authz decides on for one lead. No party column: a portal grant reaches no lead. The department (stamped by
+ * the database from the owner, D55-4) lets a department grant reach the lead. `readers` (record-reach.ts
+ * `loadRecordReaders`) add the creator and the follow-up assignees, which only a read permission honours: pass them
+ * on a read so the record check agrees with the list query, and leave them out of a write.
+ */
 export function leadRef(
-  row: Pick<LeadRow, 'tenantId' | 'organizationId' | 'ownerUserId'>,
+  row: Pick<LeadRow, 'tenantId' | 'organizationId' | 'ownerUserId'> &
+    Partial<Pick<LeadRow, 'departmentId'>>,
+  readers?: RecordReaders,
 ): ResourceRef {
   return {
     tenantId: row.tenantId,
     organizationId: row.organizationId,
     ownerUserId: row.ownerUserId,
+    departmentId: row.departmentId ?? null,
+    ...(readers === undefined
+      ? {}
+      : { creatorUserId: readers.creatorUserId, assigneeUserIds: readers.assigneeUserIds }),
   };
 }
 
@@ -129,6 +161,8 @@ export class LeadsService {
     private readonly caller: LeadsCaller,
     private readonly currencies: CurrencyEnabledService,
     private readonly lostReasons: LeadLostReasonsService,
+    private readonly roleCache: RoleCache,
+    private readonly notify: NotifyService,
   ) {}
 
   // -------------------------------------------------------------------------------------------------- read
@@ -213,7 +247,8 @@ export class LeadsService {
       .where(scoped(scope).where(leads, eq(leads.id, id)));
     if (found === undefined) throw notFound();
     const { nextFollowUp, ...row } = found;
-    this.assertVisible('crm.lead.read', row);
+    // The creator and the follow-up assignees read the lead too (D50, D55-5), as the list query lets them.
+    this.assertVisible('crm.lead.read', row, await loadRecordReaders(this.db, scope, leads, row.id));
     return toLeadDto(
       row,
       nextFollowUp,
@@ -225,10 +260,14 @@ export class LeadsService {
   // ------------------------------------------------------------------------------------------------- create
 
   /**
-   * The owner defaults to the caller: a salesperson holding `own` scope could otherwise not see the lead they just
-   * made. Naming another owner needs a grant that reaches that owner (an `own` scope does not, 403), checked with
-   * the same authz rule as every other write; a named owner or follow-up assignee must also be someone the owner
-   * select offers (assertLeadAssignee, 400). The Idempotency-Key is optional: the workspace form does not send one.
+   * Who may start a lead is the route's `crm.lead.write`; who owns it is the assignment rule (context `create`).
+   * Without a named owner it is the caller when the rule lets them keep it; Finance, Accountant and PMO start leads
+   * for Sales (D50), so for them it is the Sales head (`defaultSalesOwner` over the people they may pick), and with
+   * no such head a 400 `sales_owner_required`. A named owner, and a named follow-up assignee, must pass the same rule
+   * and be able to read the lead (lead-assignee.ts, 400 with `details.assignmentReason`). The caller is recorded as
+   * the lead's creator (D55-2), which keeps it readable to them under an `own` read grant. A lead owned by someone
+   * else tells that owner (`crm.assigned`, #22). The Idempotency-Key is optional: the workspace form does not send
+   * one.
    *
    * `followUp` (or the old `nextFollowUpAt`, a call named "Follow up") plans the first follow-up as a planned
    * activity in the same transaction (D39): assigned to the owner unless named, named after its kind unless given a
@@ -239,28 +278,28 @@ export class LeadsService {
    */
   async create(body: CreateLeadBody, idempotencyKey?: string): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
-    const ownerUserId = body.ownerUserId ?? principal.userId;
-    this.authz.assert('crm.lead.write', leadRef({ ...scope, ownerUserId }));
+    this.authz.assert('crm.lead.write');
     const followUp =
       body.followUp ??
       (body.nextFollowUpAt === undefined
         ? undefined
         : { kind: 'call' as const, dueAt: body.nextFollowUpAt, subject: 'Follow up' });
     const now = new Date();
-    return withTx(this.db, scope, actor, async (tx) => {
+    // Set inside the transaction, read after it: a property, so the compiler does not narrow it to `false`.
+    const sent = { notice: false };
+    const created = await withTx(this.db, scope, actor, async (tx) => {
       const run = async (): Promise<LeadDto> => {
-        // Only a named person is checked: the defaults (the caller, then the owner) keep working as before.
-        if (body.ownerUserId !== undefined) {
-          await assertLeadAssignee(tx, principal, scope, body.ownerUserId, 'ownerUserId');
-        }
+        const check = this.assignmentCheck(tx, scope, 'create');
+        const ownerUserId = await this.ownerForCreate(tx, scope, principal, body.ownerUserId, check);
         const assigneeUserId = followUp?.assigneeUserId ?? ownerUserId;
         if (followUp?.assigneeUserId !== undefined) {
-          await assertLeadAssignee(
+          await assertAssignable(
             tx,
             principal,
             scope,
             followUp.assigneeUserId,
             'followUp.assigneeUserId',
+            check,
           );
         }
         await this.currencies.assertEnabled(scope, body.currency);
@@ -285,6 +324,7 @@ export class LeadsService {
             expectedClose: body.expectedClose ?? null,
             notes: body.notes ?? null,
             stage: 'new',
+            createdByUserId: principal.userId,
             createdAt: now,
             updatedAt: now,
           })
@@ -295,6 +335,10 @@ export class LeadsService {
           entityId: row!.id,
           after: { number, stage: row!.stage, ownerUserId },
         });
+        if (ownerUserId !== principal.userId) {
+          await this.notifyAssigned(tx, principal, row!);
+          sent.notice = true;
+        }
         const ownerName = await this.ownerNameOf(tx, row!);
         if (followUp === undefined) return toLeadDto(row!, null, ownerName, null);
         const dueAt = new Date(followUp.dueAt);
@@ -328,6 +372,9 @@ export class LeadsService {
       );
       return done.response;
     });
+    // After the commit, never inside it (NotifyService header): the drainer must find the outbox row.
+    if (sent.notice) await this.notify.nudge();
+    return created;
   }
 
   // ------------------------------------------------------------------------------------------ stage change
@@ -410,16 +457,23 @@ export class LeadsService {
 
   /**
    * An edit of the lead's own fields; only the fields sent change. Checks run in this order, the first failure is
-   * the answer: out of scope 404, stale version 409, converted 400, nothing changed 400, then a new owner (the same
-   * rule as create: an `own` grant cannot hand the lead to someone else, 403; not an active staff member of the
-   * entity, 400), then a new currency that the company has not switched on (D44, 422 CURRENCY_NOT_ENABLED).
-   * Currency has no default here, so an owner-only edit keeps the lead's currency. Only a changed currency is
-   * checked: a lead whose currency was switched off later can still have its other fields edited.
+   * the answer: out of scope 404 (the caller's write grant must reach the lead: its owner, or its department for a
+   * department grant), stale version 409, converted 400, nothing changed 400, then a new owner (the assignment rule,
+   * context `reassign`: an active staff member of the entity whom the rule lets the caller hand work to and who can
+   * read leads, else 400 with `details.assignmentReason`), then a new currency that the company has not switched on
+   * (D44, 422 CURRENCY_NOT_ENABLED). Currency has no default here, so an owner-only edit keeps the lead's currency.
+   * Only a changed currency is checked: a lead whose currency was switched off later can still have its other fields
+   * edited.
+   *
+   * Only changed fields are written, so `owner_user_id` is never set to its own value and the database re-stamps the
+   * lead's department only when the owner really changes (D55-4). A new owner other than the caller is told
+   * (`crm.assigned`, #22) after the follow-ups moved with them (D45).
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
     const { expectedVersion, ...fields } = body;
-    return withTx(this.db, scope, actor, async (tx) => {
+    const sent = { notice: false };
+    const edited = await withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       this.assertVisible('crm.lead.write', row);
       if (row.version !== expectedVersion) {
@@ -443,9 +497,14 @@ export class LeadsService {
       >;
       const newOwner = set.ownerUserId;
       if (typeof newOwner === 'string') {
-        // assert, not assertVisible: refusing a new owner is a 403, the lead itself is already in scope.
-        this.authz.assert('crm.lead.write', leadRef({ ...row, ownerUserId: newOwner }));
-        await assertLeadAssignee(tx, principal, scope, newOwner, 'ownerUserId');
+        await assertAssignable(
+          tx,
+          principal,
+          scope,
+          newOwner,
+          'ownerUserId',
+          this.assignmentCheck(tx, scope, 'reassign'),
+        );
       }
       if (changes.some((c) => c.field === 'currency')) {
         await this.currencies.assertEnabled(scope, fields.currency);
@@ -471,6 +530,10 @@ export class LeadsService {
           after: { ownerUserId: newOwner },
         });
         await this.moveFollowUps(tx, scope, id, row.ownerUserId, newOwner);
+        if (newOwner !== principal.userId) {
+          await this.notifyAssigned(tx, principal, updated);
+          sent.notice = true;
+        }
       }
       return toLeadDto(
         updated,
@@ -479,60 +542,77 @@ export class LeadsService {
         await this.lostReasonOf(tx, updated),
       );
     });
+    if (sent.notice) await this.notify.nudge();
+    return edited;
   }
 
   // ------------------------------------------------------------------------------------------------ owners
 
   /**
-   * The people the caller may hand a lead to (the owner select, and the follow-up assignee select). The caller is
-   * offered when their own grant reaches a lead they own, so an `own` grant offers only the caller. Everyone else
-   * must be an active staff member of the acting entity whose roles (narrowed by that membership, as in
-   * `UsersStore.userIdsWithRole`) grant crm.lead.write at a scope that reaches a lead they own (`own` or `all`;
-   * a lead has no department or party column, so no other scope reaches one), and the caller's grant must reach a
-   * lead owned by them: the same `can()` rule as PATCH, so the list never offers a 403.
+   * The people the caller may hand a lead to (the owner select, and the follow-up assignee select): exactly whom
+   * create and PATCH accept, so the select never offers a 400. That is the assignment rule's targets under the
+   * entity's stored rule (`assignableTargets`), among the active staff of the acting entity, kept only when their
+   * live grants read leads. `create` lists whom a new lead may be started for: for Finance, Accountant and PMO the
+   * Sales users, not themselves.
    */
-  async owners(): Promise<LeadOwnerOption[]> {
+  async owners(context: AssignmentContext = 'reassign'): Promise<LeadOwnerOption[]> {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const candidates = await activeStaffOfEntity(tx, scope);
-      const roleRows = await tx
-        .select({ userId: userRoles.userId, roleKey: userRoles.roleKey })
-        .from(userRoles)
-        .where(eq(userRoles.tenantId, scope.tenantId));
-      const writeScopeOf = await this.leadWriteScopes(tx, scope.tenantId);
-
-      const rolesOf = new Map<string, string[]>();
-      for (const r of roleRows)
-        rolesOf.set(r.userId, [...(rolesOf.get(r.userId) ?? []), r.roleKey]);
-      const ownsLeads = (userId: string, membershipRoles: string[] | null): boolean => {
-        const roles = (rolesOf.get(userId) ?? []).filter(
-          (role) => membershipRoles === null || membershipRoles.includes(role),
-        );
-        let widest: Scope | undefined;
-        for (const role of roles) {
-          const s = writeScopeOf.get(role);
-          if (s !== undefined && (widest === undefined || SCOPE_RANK[s] > SCOPE_RANK[widest])) {
-            widest = s;
-          }
-        }
-        return widest === 'own' || widest === 'all';
-      };
-
-      return candidates
-        .filter(
-          (c) =>
-            mayAssignLead(principal, scope, c.userId) &&
-            (c.userId === principal.userId || ownsLeads(c.userId, c.roleKeys)),
-        )
+      const people = await assignableParties(
+        tx,
+        principal,
+        scope,
+        this.assignmentCheck(tx, scope, context),
+      );
+      return people
         .map((c) => ({
           userId: c.userId,
-          displayName: c.displayName ?? c.email ?? 'Unnamed user',
+          displayName: shownName(c.displayName),
           email: c.email ?? '',
           avatarDocumentId: c.avatarDocumentId,
         }))
-        .sort(
-          (a, b) => a.displayName.localeCompare(b.displayName) || a.userId.localeCompare(b.userId),
+        .sort(byName);
+    });
+  }
+
+  /**
+   * The people the leads list's Owner filter offers: everyone who owns a lead the caller can read (the list's own
+   * scope, so it names nobody the list would not show), plus the people the caller may hand a lead to, so a
+   * salesperson can find a colleague before they own anything. Names come from the records' person names, never the
+   * admin directory, and no address is sent: the filter only needs to tell people apart.
+   */
+  async ownerFilter(): Promise<LeadOwnerOption[]> {
+    const { scope, actor, principal } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const owned = await tx
+        .selectDistinct({ userId: leads.ownerUserId })
+        .from(leads)
+        .where(
+          scoped(scope).where(
+            leads,
+            and(scopeWhereFor(principal, leads, 'crm.lead.read'), isNotNull(leads.ownerUserId)),
+          ),
         );
+      const ids = new Set<string>();
+      for (const { userId } of owned) if (userId !== null) ids.add(userId);
+      if (can(principal, 'crm.lead.write').allowed) {
+        const targets = await assignableParties(
+          tx,
+          principal,
+          scope,
+          this.assignmentCheck(tx, scope, 'reassign'),
+        );
+        for (const { userId } of targets) ids.add(userId);
+      }
+      const named = new Map((await personNames(tx, scope.tenantId, ids)).map((p) => [p.userId, p]));
+      return [...ids]
+        .map((userId) => ({
+          userId,
+          displayName: named.get(userId)?.name ?? 'Unnamed user',
+          email: '',
+          avatarDocumentId: named.get(userId)?.avatarDocumentId ?? null,
+        }))
+        .sort(byName);
     });
   }
 
@@ -555,43 +635,78 @@ export class LeadsService {
     return and(...filters);
   }
 
+  /** How a lead's owner is checked in this transaction: the leads area's stored rule, and lead read for the target. */
+  private assignmentCheck(
+    tx: DbTransaction,
+    scope: TxScope,
+    context: AssignmentContext,
+  ): AssignmentCheck {
+    return {
+      roleCache: this.roleCache,
+      context,
+      rule: storedAssignmentRule(tx, scope, 'leads'),
+      subjectRead: 'crm.lead.read',
+    };
+  }
+
   /**
-   * Role key to its crm.lead.write scope in this tenant. The tenant's `role_permissions` rows are the truth once it
-   * has any; a tenant with none uses the defaults, as RoleCache does.
+   * The owner of a new lead (see `create`). The caller's own claim needs no directory read: the rule answers it
+   * from the request's roles, so a salesperson's create costs nothing extra.
    */
-  private async leadWriteScopes(tx: DbTransaction, tenantId: string): Promise<Map<string, Scope>> {
-    const [any] = await tx
-      .select({ id: rolePermissions.id })
-      .from(rolePermissions)
-      .where(eq(rolePermissions.tenantId, tenantId))
-      .limit(1);
-    if (any === undefined) {
-      const defaults = new Map<string, Scope>();
-      for (const [role, grants] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
-        const s = grants['crm.lead.write'];
-        if (s !== undefined) defaults.set(role, s);
-      }
-      return defaults;
+  private async ownerForCreate(
+    tx: DbTransaction,
+    scope: TxScope,
+    principal: Principal,
+    named: string | undefined,
+    check: AssignmentCheck,
+  ): Promise<string> {
+    if (named !== undefined) {
+      await assertAssignable(tx, principal, scope, named, 'ownerUserId', check);
+      return named;
     }
-    const rows = await tx
-      .select({ roleKey: rolePermissions.roleKey, scope: rolePermissions.scope })
-      .from(rolePermissions)
-      .where(
-        and(
-          eq(rolePermissions.tenantId, tenantId),
-          eq(rolePermissions.permission, 'crm.lead.write'),
-        ),
-      );
-    return new Map(rows.map((r) => [r.roleKey, r.scope]));
+    const self = actorParty(principal);
+    const decision = decideAssignment(self, self, 'create');
+    if (decision.allowed) return principal.userId;
+    if (decision.reason === 'sales_owner_required') {
+      const owner = defaultSalesOwner(await assignableParties(tx, principal, scope, check));
+      if (owner !== null) return owner;
+    }
+    throw assignmentRefused('ownerUserId', decision.reason);
+  }
+
+  /**
+   * Tells the lead's owner it was handed to them (#22): a bell row and an email, in this transaction so a rolled
+   * back change tells nobody. The caller nudges the drainer after the commit. One notice per owner change: the key
+   * names the lead's version.
+   */
+  private async notifyAssigned(tx: DbTransaction, principal: Principal, lead: LeadRow): Promise<void> {
+    if (lead.ownerUserId === null) return;
+    const [me] = await tx
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(and(eq(users.tenantId, lead.tenantId), eq(users.id, principal.userId)));
+    const assignerName = shownName(me?.displayName ?? null);
+    const linkPath = `/leads/${lead.id}`;
+    await this.notify.notifyUser(tx, {
+      userId: lead.ownerUserId,
+      title: `Lead ${lead.number} assigned to you`,
+      body: `${assignerName} assigned the lead ${lead.number} (${lead.title}) to you.`,
+      link: linkPath,
+      email: {
+        template: 'crm.assigned',
+        vars: { entityType: 'lead', entityName: lead.number, assignerName, linkPath },
+      },
+      dedupeKey: `crm.assigned:lead:${lead.id}:${lead.version}`,
+    });
   }
 
   /**
    * Record-level authz that answers 404, not 403, for a lead outside the caller's scope: a 403 would confirm that a
-   * guessed id exists. Other denials (no grant at all, inactive user) stay 403.
+   * guessed id exists. Other denials (no grant at all, inactive user) stay 403. `readers` only on a read (leadRef).
    */
-  private assertVisible(action: Permission, row: LeadRow): void {
+  private assertVisible(action: Permission, row: LeadRow, readers?: RecordReaders): void {
     try {
-      this.authz.assert(action, leadRef(row));
+      this.authz.assert(action, leadRef(row, readers));
     } catch (error) {
       const reason =
         error instanceof ForbiddenException

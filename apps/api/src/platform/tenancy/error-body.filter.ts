@@ -598,6 +598,12 @@ export class ErrorBodyFilter implements ExceptionFilter {
       stepUp = isStepUp(exception);
       conflictCode = conflictCodeOf(exception) ?? unprocessableCodeOf(exception);
       if (conflictCode !== undefined) details = detailsOf(exception);
+      // A refused hand-over names its rule (`details.assignmentReason`) so the client can say why; nothing
+      // else rides on a plain 400.
+      else if (status === 400) {
+        const reasonCode = detailsOf(exception)?.assignmentReason;
+        if (typeof reasonCode === 'string') details = { assignmentReason: reasonCode };
+      }
       if (conflictCode === 'duplicate_found') duplicates = duplicatesOf(exception);
       if (conflictCode === 'confirmation_required' || conflictCode === 'unprocessable') {
         warnings = warningsOf(exception);
