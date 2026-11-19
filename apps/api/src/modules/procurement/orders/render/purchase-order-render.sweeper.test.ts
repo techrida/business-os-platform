@@ -21,6 +21,8 @@ const TX = { marker: 'tx' } as unknown as DbTransaction;
 const PDF = Buffer.from('%PDF-1.4 fake');
 const VAT = '6f1a0c7e-0000-4000-8000-000000000001';
 
+const STORED_SYSTEMS = { NPR: 'south_asian', INR: 'south_asian', USD: 'international' };
+
 const candidate = (n: number): RenderCandidate => ({
   tenantId: 'tenant-1',
   organizationId: 'org-1',
@@ -65,8 +67,10 @@ function fixture(
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
     pan?: unknown;
-    /** The raw `format.number_system` value; an omitted key reads as the stored default. */
-    numberSystem?: unknown;
+    /** The raw `format.number_systems` value; an omitted key reads as the stored default. */
+    numberSystems?: unknown;
+    /** The raw `format.date` value; an omitted key reads as the stored default. */
+    dateFormat?: unknown;
   } = {},
 ) {
   let now = NOW;
@@ -82,17 +86,15 @@ function fixture(
     receiveGenerated: vi.fn().mockResolvedValue({}),
   };
   const settings = {
-    get: vi.fn((_scope: TxScope, key: string) =>
-      Promise.resolve(
-        key === 'format.number_system'
-          ? 'numberSystem' in over
-            ? over.numberSystem
-            : 'south_asian'
-          : 'pan' in over
-            ? over.pan
-            : '301234567',
-      ),
-    ),
+    get: vi.fn((_scope: TxScope, key: string) => {
+      if (key === 'format.number_systems') {
+        return Promise.resolve('numberSystems' in over ? over.numberSystems : STORED_SYSTEMS);
+      }
+      if (key === 'format.date') {
+        return Promise.resolve('dateFormat' in over ? over.dateFormat : 'dd MMM yyyy');
+      }
+      return Promise.resolve('pan' in over ? over.pan : '301234567');
+    }),
   } as unknown as RenderSettings;
   const pdf = { htmlToPdf: vi.fn().mockResolvedValue(PDF) };
   const runTx: RunInTx = (_scope, _actor, fn) => fn(TX);
@@ -133,34 +135,66 @@ describe('PurchaseOrderRenderSweeper.renderOne', () => {
     );
   });
 
-  it('reads the number system for the version scope and groups by it', async () => {
-    const intl = fixture({ numberSystem: 'international' });
-    await expect(intl.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
-    expect(intl.settings.get).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', organizationId: 'org-1' },
-      'format.number_system',
-    );
-    const html = intl.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
-    expect(html).toContain('NPR 2,124,400.00');
+  it('reads the per-currency number systems and the date format for the version scope', async () => {
+    const f = fixture();
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const scope = { tenantId: 'tenant-1', organizationId: 'org-1' };
+    expect(f.settings.get).toHaveBeenCalledWith(scope, 'format.number_systems');
+    expect(f.settings.get).toHaveBeenCalledWith(scope, 'format.date');
+  });
+
+  it('groups each currency by its own system: lakh for NPR, thousands for USD, in one setting', async () => {
+    const npr = fixture();
+    await npr.sweeper.renderOne(candidate(1));
+    expect(npr.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('NPR 21,24,400.00');
+
+    const usd = fixture({ src: source(1, 'USD') });
+    await usd.sweeper.renderOne(candidate(1));
+    const html = usd.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+    expect(html).toContain('USD 2,124,400.00');
     expect(html).not.toContain('21,24,400');
   });
 
-  it('groups a USD purchase order by the setting, lakh under south_asian', async () => {
-    const usd = source(1, 'USD');
-    const south = fixture({ src: usd, numberSystem: 'south_asian' });
-    await south.sweeper.renderOne(candidate(1));
-    expect(south.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 21,24,400.00');
-    const intl = fixture({ src: usd, numberSystem: 'international' });
-    await intl.sweeper.renderOne(candidate(1));
-    expect(intl.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 2,124,400.00');
+  it('follows a changed setting: USD on lakh grouping, NPR on international grouping', async () => {
+    const swapped = { NPR: 'international', INR: 'south_asian', USD: 'south_asian' };
+    const usd = fixture({ src: source(1, 'USD'), numberSystems: swapped });
+    await usd.sweeper.renderOne(candidate(1));
+    expect(usd.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 21,24,400.00');
+    const npr = fixture({ numberSystems: swapped });
+    await npr.sweeper.renderOne(candidate(1));
+    expect(npr.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('NPR 2,124,400.00');
   });
 
-  it.each([['metric'], [null], [undefined], [42]])(
-    'falls back to south_asian grouping, and still renders, when the setting is %j',
+  it('prints the issue date in the chosen pattern', async () => {
+    const def = fixture();
+    await def.sweeper.renderOne(candidate(1));
+    expect(def.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('09 Nov 2026');
+
+    const chosen = fixture({ dateFormat: 'dd/MM/yyyy' });
+    await expect(chosen.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    const html = chosen.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+    expect(html).toContain('09/11/2026');
+    expect(html).not.toContain('09 Nov 2026');
+  });
+
+  it.each([['metric'], [null], [undefined], [42], [{ NPR: 'metric' }]])(
+    'falls back to the default grouping, and still renders, when number_systems is %j',
     async (bad) => {
-      const f = fixture({ numberSystem: bad });
+      const f = fixture({ numberSystems: bad });
       await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
       expect(f.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('NPR 21,24,400.00');
+      const usd = fixture({ src: source(1, 'USD'), numberSystems: bad });
+      await usd.sweeper.renderOne(candidate(1));
+      expect(usd.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 2,124,400.00');
+    },
+  );
+
+  it.each([['yyyy'], [null], [undefined], [42]])(
+    'falls back to the default date pattern, and still renders, when format.date is %j',
+    async (bad) => {
+      const f = fixture({ dateFormat: bad });
+      await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+      expect(f.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('09 Nov 2026');
     },
   );
 

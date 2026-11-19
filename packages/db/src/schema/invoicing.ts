@@ -398,6 +398,8 @@ export const invoicePrintLog = appSchema.table(
     printNo: integer('print_no').notNull(),
     printedBy: uuid('printed_by'),
     printedAt: timestamp('printed_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Number grouping and date pattern of this print (DocumentFormatSnapshot). NULL on prints before 0051. */
+    renderFormat: jsonb('render_format'),
   },
   (t) => [
     unique('invoice_print_log_tenant_id_unique').on(t.tenantId, t.id),

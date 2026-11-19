@@ -1,3 +1,4 @@
+import type { DocumentFormatSnapshot } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -27,7 +28,11 @@ const candidate = (n: number): RenderCandidate => ({
 });
 
 const party = { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: 'ABC-12345', address: 'Thamel 4' };
-const source = (nextPrintNo = 1, currency: 'NPR' | 'USD' = 'NPR'): RenderSource => ({
+const source = (
+  nextPrintNo = 1,
+  currency: 'NPR' | 'USD' = 'NPR',
+  originalFormat: unknown = null,
+): RenderSource => ({
   invoice: {
     kind: 'tax_invoice',
     status: 'issued',
@@ -58,15 +63,21 @@ const source = (nextPrintNo = 1, currency: 'NPR' | 'USD' = 'NPR'): RenderSource 
   ],
   taxSummary: [{ label: 'VAT 13%', rate: '13.0000', base: '1786000.00', tax: '232180.00' }],
   nextPrintNo,
+  originalFormat,
 });
+
+const SOUTH_ASIAN = { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' } as const;
+const INTERNATIONAL = { NPR: 'international', INR: 'international', USD: 'international' } as const;
 
 function fixture(
   over: {
     src?: RenderSource | undefined;
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
-    /** The raw `format.number_system` value; an omitted key reads as the stored default. */
-    numberSystem?: unknown;
+    /** The raw `format.number_systems` value; an omitted key reads as lakh grouping for every currency. */
+    numberSystems?: unknown;
+    /** The raw `format.date` value; an omitted key reads as the stored default. */
+    dateFormat?: unknown;
   } = {},
 ) {
   let now = NOW;
@@ -82,16 +93,12 @@ function fixture(
     createGenerated: vi.fn().mockResolvedValue({ documentId: 'doc-1', versionId: 'ver-1' }),
     receiveGenerated: vi.fn().mockResolvedValue({}),
   };
+  const live: Record<string, unknown> = {
+    'format.number_systems': 'numberSystems' in over ? over.numberSystems : SOUTH_ASIAN,
+    'format.date': 'dateFormat' in over ? over.dateFormat : 'dd MMM yyyy',
+  };
   const settings = {
-    get: vi.fn((_scope: TxScope, key: string) =>
-      Promise.resolve(
-        key === 'format.number_system'
-          ? 'numberSystem' in over
-            ? over.numberSystem
-            : 'south_asian'
-          : undefined,
-      ),
-    ),
+    get: vi.fn((_scope: TxScope, key: string) => Promise.resolve(live[key])),
   } as unknown as RenderSettings;
   const pdf = { htmlToPdf: vi.fn().mockResolvedValue(PDF) };
   const runTx: RunInTx = (_scope, _actor, fn) => fn(TX);
@@ -100,6 +107,7 @@ function fixture(
     store,
     documents,
     settings,
+    live,
     pdf,
     runTx,
     sweeper,
@@ -127,37 +135,105 @@ describe('InvoiceRenderSweeper.renderOne', () => {
       actor: { kind: string; id: string };
     };
     expect(who.actor).toMatchObject({ kind: 'system', id: 'system:invoice-render' });
-    expect(f.store.recordPrint).toHaveBeenCalledWith(TX, c, 1, NOW);
+    // Print 1 keeps the format it printed with.
+    expect(f.store.recordPrint).toHaveBeenCalledWith(TX, c, 1, NOW, {
+      numberSystems: SOUTH_ASIAN,
+      dateFormat: 'dd MMM yyyy',
+      capturedAt: NOW.toISOString(),
+    });
   });
 
-  it('reads the number system for the invoice scope and groups by it', async () => {
-    const intl = fixture({ numberSystem: 'international' });
+  it('reads the number systems and date format for the invoice scope and prints by them', async () => {
+    const intl = fixture({ numberSystems: INTERNATIONAL, dateFormat: 'dd/MM/yyyy' });
     await expect(intl.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
-    expect(intl.settings.get).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', organizationId: 'org-1' },
-      'format.number_system',
-    );
+    const scope = { tenantId: 'tenant-1', organizationId: 'org-1' };
+    expect(intl.settings.get).toHaveBeenCalledWith(scope, 'format.number_systems');
+    expect(intl.settings.get).toHaveBeenCalledWith(scope, 'format.date');
     const html = intl.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
     expect(html).toContain('NPR 2,018,180.00');
     expect(html).not.toContain('20,18,180');
+    expect(html).toContain('09/11/2026');
+    expect(html).not.toContain('09 Nov 2026');
   });
 
-  it('groups a USD invoice by the setting, lakh under south_asian', async () => {
+  it('groups a USD invoice by its own currency entry, lakh under south_asian', async () => {
     const usd = source(1, 'USD');
-    const south = fixture({ src: usd, numberSystem: 'south_asian' });
+    const south = fixture({ src: usd, numberSystems: { ...INTERNATIONAL, USD: 'south_asian' } });
     await south.sweeper.renderOne(candidate(1));
     expect(south.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 20,18,180.00');
-    const intl = fixture({ src: usd, numberSystem: 'international' });
+    const intl = fixture({ src: usd, numberSystems: { ...SOUTH_ASIAN, USD: 'international' } });
     await intl.sweeper.renderOne(candidate(1));
     expect(intl.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 2,018,180.00');
   });
 
-  it.each([['metric'], [null], [undefined], [42]])(
-    'falls back to south_asian grouping, and still renders, when the setting is %j',
+  it.each([['metric'], [null], [undefined], [42], [{ NPR: 'international' }]])(
+    'falls back to the default format, and still renders, when the settings are %j',
     async (bad) => {
-      const f = fixture({ numberSystem: bad });
+      const f = fixture({ numberSystems: bad, dateFormat: bad });
       await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
-      expect(f.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('NPR 20,18,180.00');
+      const html = f.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+      expect(html).toContain('NPR 20,18,180.00');
+      expect(html).toContain('09 Nov 2026');
+      expect(f.store.recordPrint).toHaveBeenCalledWith(TX, candidate(1), 1, NOW, {
+        numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+        dateFormat: 'dd MMM yyyy',
+        capturedAt: NOW.toISOString(),
+      });
+    },
+  );
+
+  it('prints a copy with the grouping and date of print 1, not the settings changed since', async () => {
+    // A store that remembers print 1's format and hands it back on the next load, as the print log does.
+    const f = fixture();
+    const c = candidate(1);
+    let printed = 0;
+    let stored: DocumentFormatSnapshot | null = null;
+    f.store.load.mockImplementation(() => Promise.resolve(source(printed + 1, 'NPR', stored)));
+    f.store.recordPrint.mockImplementation(
+      (_tx, _c, printNo: number, _now, format: DocumentFormatSnapshot | null) => {
+        printed = printNo;
+        if (printNo === 1) stored = format;
+        return Promise.resolve();
+      },
+    );
+
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    const original = f.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+    expect(original).toContain('NPR 20,18,180.00');
+    expect(original).toContain('09 Nov 2026');
+
+    // The company changes both settings before the copy is printed.
+    f.live['format.number_systems'] = INTERNATIONAL;
+    f.live['format.date'] = 'yyyy-MM-dd';
+    f.advance(24 * 60 * 60_000);
+
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    const copy = f.pdf.htmlToPdf.mock.calls[1]?.[0] as string;
+    expect(copy).toContain('Copy of original (1)');
+    expect(copy).toContain('NPR 20,18,180.00');
+    expect(copy).not.toContain('NPR 2,018,180.00');
+    expect(copy).toContain('09 Nov 2026');
+    expect(copy).not.toContain('2026-11-09 <span');
+    // Only print 1 stores a format; the copy does not overwrite or add one.
+    expect(f.store.recordPrint).toHaveBeenLastCalledWith(TX, c, 2, expect.any(Date), null);
+    expect(stored).toMatchObject({ numberSystems: SOUTH_ASIAN, dateFormat: 'dd MMM yyyy' });
+  });
+
+  it.each([[null], [{ numberSystems: 'south_asian' }]])(
+    'prints a copy with the live settings when print 1 has no usable stored format (%j)',
+    async (stored) => {
+      const f = fixture({
+        src: source(2, 'NPR', stored),
+        numberSystems: INTERNATIONAL,
+        dateFormat: 'yyyy-MM-dd',
+      });
+      await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+      const html = f.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+      expect(html).toContain('Copy of original (1)');
+      expect(html).toContain('NPR 2,018,180.00');
+      expect(html).toContain('2026-11-09 <span class="bs">');
+      expect(html).not.toContain('09 Nov 2026');
+      expect(f.store.recordPrint).toHaveBeenCalledWith(TX, candidate(1), 2, NOW, null);
     },
   );
 
@@ -168,7 +244,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
     expect(f.documents.createGenerated.mock.calls[0]?.[2]).toMatchObject({
       filename: 'INV-2083-84-00001-copy2.pdf',
     });
-    expect(f.store.recordPrint).toHaveBeenCalledWith(TX, candidate(1), 3, NOW);
+    expect(f.store.recordPrint).toHaveBeenCalledWith(TX, candidate(1), 3, NOW, null);
   });
 
   it('skips when a racing render already stored a document: no second file, no print', async () => {
