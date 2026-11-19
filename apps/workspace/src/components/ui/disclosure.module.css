@@ -1,0 +1,58 @@
+.disclosure {
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  font: inherit;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--focus-ring, currentColor);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.panel {
+  height: var(--disclosure-panel-height);
+  overflow: clip;
+}
+
+.content {
+  padding-top: 12px;
+}
+
+/* Grow and chevron turn run only when motion is welcome. With reduced motion the panel opens at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform 200ms ease-out;
+  }
+
+  .panel {
+    transition: height 200ms ease-out;
+  }
+}
+
+.disclosure[data-expanded] .chevron {
+  transform: rotate(180deg);
+}
