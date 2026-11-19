@@ -934,7 +934,11 @@ export class VerificationService implements OnModuleInit {
     if (!l) throw notFound('Verification case');
     this.assertVisible('verification.read', scope, l);
     const rows = await this.db
-      .select({ ...getTableColumns(verificationReviewEvents), reviewerName: users.displayName })
+      .select({
+        ...getTableColumns(verificationReviewEvents),
+        reviewerName: users.displayName,
+        reviewerAvatarDocumentId: users.avatarDocumentId,
+      })
       .from(verificationReviewEvents)
       .innerJoin(
         users,

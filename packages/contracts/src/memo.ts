@@ -48,7 +48,11 @@ export type MemoTemplateSnapshot = z.infer<typeof MemoTemplateSnapshotSchema>;
  * (the role_permissions rows, as the approval routes check them): only such people can decide a memo, so only they
  * may be named as a recommender or approver. It is a directory fact, never stored on a memo.
  */
-export const MemoDirectoryPersonSchema = MemoPersonSchema.extend({ canApprove: z.boolean() });
+export const MemoDirectoryPersonSchema = MemoPersonSchema.extend({
+  canApprove: z.boolean(),
+  /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
+});
 export type MemoDirectoryPerson = z.infer<typeof MemoDirectoryPersonSchema>;
 export const MemoDirectorySchema = z.object({
   organizationId: z.guid(),
@@ -152,6 +156,8 @@ export const MemoListItemSchema = z.object({
   ownerUserId: z.guid(),
   /** Display name of the creator; null when the directory has none. */
   ownerName: z.string().nullable(),
+  /** The creator's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  ownerAvatarDocumentId: z.guid().nullable().optional(),
   departmentName: z.string().nullable(),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),

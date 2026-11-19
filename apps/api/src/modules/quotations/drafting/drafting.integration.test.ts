@@ -410,6 +410,7 @@ describe('DraftingService reads', () => {
       ownerUserId: f.ownerUserId,
     });
     expect(typeof item!.ownerName).toBe('string');
+    expect(item!.ownerAvatarDocumentId).toBeNull();
     expect((await service.list({ status: 'draft' })).map((q) => q.id)).toContain(created.id);
     expect((await service.list({ status: 'submitted' })).map((q) => q.id)).not.toContain(
       created.id,
