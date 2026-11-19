@@ -39,6 +39,7 @@ import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service'
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { LedgerService } from '../ledger/ledger.service';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
 import { toInvoiceDetail, toInvoiceListItem } from './invoice-mapping';
@@ -88,6 +89,7 @@ export class InvoiceDraftingService {
     private readonly audit: AuditService,
     private readonly caller: InvoiceCaller,
     private readonly ledger: LedgerService,
+    private readonly currencies: CurrencyEnabledService,
     @Optional() @Inject(INVOICE_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -162,6 +164,9 @@ export class InvoiceDraftingService {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     this.authz.assert('invoice.draft', scope);
+    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). A pool read, so it runs before the
+    // transaction opens. A draft cut from a sales order copies the order's currency and is not checked again.
+    await this.currencies.assertEnabled(scope, typed.currency);
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(tx, { command, key: idempotencyKey, body }, async () => ({
