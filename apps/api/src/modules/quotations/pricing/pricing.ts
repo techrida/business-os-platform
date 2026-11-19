@@ -68,10 +68,11 @@ function marginOf(input: PricingInput, taxableTotal: Dec): Margin {
     return { internalCostTotal: null, marginPct: null, marginOutOfRange: false };
   }
   const cost = input.lines.reduce(
-    (sum, line) => sum.plus(parseQuantity(line.quantity).times(parseMoney(line.unitCost!))),
+    (sum, line) =>
+      sum.plus(roundMoney(parseQuantity(line.quantity).times(parseMoney(line.unitCost!)))),
     ZERO,
   );
-  const internalCostTotal = money(roundMoney(cost));
+  const internalCostTotal = money(cost);
   if (taxableTotal.isZero()) return { internalCostTotal, marginPct: null, marginOutOfRange: false };
   const margin = taxableTotal
     .minus(cost)
