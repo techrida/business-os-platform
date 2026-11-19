@@ -437,6 +437,22 @@ export const UpdateLeadBodySchema = LeadFieldsSchema.partial().extend({
 });
 export type UpdateLeadBody = z.infer<typeof UpdateLeadBodySchema>;
 
+/**
+ * A person a lead (or its follow-up) can be handed to: `GET /v1/leads/owners`. The list holds only users the
+ * caller may assign to, so a caller with `own` scope sees just themselves.
+ */
+export const LeadOwnerOptionSchema = z.object({
+  userId: z.guid(),
+  displayName: z.string(),
+  email: z.string(),
+});
+export type LeadOwnerOption = z.infer<typeof LeadOwnerOptionSchema>;
+
+/** `GET /v1/activities?status=`: planned ones belong on a Follow-ups card, logged ones in History. */
+export const ACTIVITY_STATUSES = ['planned', 'logged'] as const;
+export const ActivityStatusSchema = z.enum(ACTIVITY_STATUSES);
+export type ActivityStatus = z.infer<typeof ActivityStatusSchema>;
+
 export const LeadDtoSchema = z.object({
   id: z.guid(),
   /** Display number, for example LD-2026-0142. */
