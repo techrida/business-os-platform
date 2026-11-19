@@ -12,6 +12,7 @@ import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procureme
 import { getRfq, listSubmissions, type RfqDto } from '@/lib/api-rfqs';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { when } from '@/lib/kernel-format';
 
 import layout from '../../../../procurement.module.css';
@@ -147,12 +148,13 @@ export default async function NewQuotationPage({
     };
   }
 
-  const [vendorLookup, taxLookup] = await Promise.all([
+  const [vendorLookup, taxLookup, enabledCurrencies] = await Promise.all([
     loadVendors(session),
     listTaxCodes(session).then(
       (rows) => ({ taxCodes: rows, problem: undefined }),
       (err) => ({ taxCodes: null, problem: rfqFailure(err, 'load') }),
     ),
+    loadEnabledCurrencies(session),
   ]);
   const { taxCodes, problem: taxCodeProblem } = taxLookup;
   const names = nameIndex(vendorLookup);
@@ -185,6 +187,7 @@ export default async function NewQuotationPage({
         }))}
         taxCodes={taxCodes}
         {...(taxCodeProblem !== undefined ? { taxCodeProblem } : {})}
+        enabledCurrencies={enabledCurrencies}
         cancelHref={back}
         reloadHref={here}
       />

@@ -33,6 +33,8 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/api-procurement', () => api);
 const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
 vi.mock('@/lib/api-kernel', () => kernel);
+const currencies = vi.hoisted(() => ({ loadEnabledCurrencies: vi.fn() }));
+vi.mock('@/lib/enabled-currencies.server', () => currencies);
 
 const { default: ListPage } = await import('./page');
 const { default: DetailPage } = await import('./[id]/page');
@@ -116,6 +118,7 @@ const editHtml = async () => html(await EditPage({ params: Promise.resolve({ id:
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   api.listDepartments.mockResolvedValue([{ id: DEPT, name: 'Operations' }]);
   api.listCostCenters.mockResolvedValue([
     { id: DEPT, code: 'GENERAL', name: 'General', active: true },
@@ -457,5 +460,32 @@ describe('cost centre catalogue states', () => {
     const out = html(await NewPage());
     expect(out).toContain('No active cost centres');
     expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Save draft<\/button>/);
+  });
+});
+
+/** Values and labels of the currency picker: the shared Select's hidden native <select> after its named field. */
+function currencyOptions(out: string) {
+  const select = /name="currency" value="[^"]*"\/><button.*?<select[^>]*>(.*?)<\/select>/s.exec(
+    out,
+  )?.[1];
+  return [...(select ?? '').matchAll(/<option[^>]*value="([^"]+)"[^>]*>([^<]*)</g)].map(
+    (m) => `${m[1]}=${m[2]}`,
+  );
+}
+
+describe('currency picker (D44)', () => {
+  it('offers only the enabled currencies on a new request', async () => {
+    currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'USD']);
+    const out = html(await NewPage());
+    expect(currencies.loadEnabledCurrencies).toHaveBeenCalledOnce();
+    expect(currencyOptions(out)).toEqual(['NPR=NPR', 'USD=USD']);
+  });
+
+  it('keeps an edited request in a switched-off currency selected and marked', async () => {
+    currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'USD']);
+    api.getPurchaseRequest.mockResolvedValue(detail({ currency: 'INR' }));
+    const out = await editHtml();
+    expect(currencyOptions(out)).toEqual(['NPR=NPR', 'INR=INR (not enabled)', 'USD=USD']);
+    expect(out).toContain('name="currency" value="INR"');
   });
 });
