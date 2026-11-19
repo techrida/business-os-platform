@@ -1,4 +1,4 @@
-// Unit tests of the row-to-DTO mapping of quotations (no database). The point is the boundary: every DTO the
+﻿// Unit tests of the row-to-DTO mapping of quotations (no database). The point is the boundary: every DTO the
 // mapping builds from a row shaped like the schema's must parse with the contract schema the web app trusts,
 // money stays a string, and a bytea hash leaves as lower-case hex.
 import {
@@ -50,6 +50,7 @@ const quotation = (over: Partial<QuotationRow> = {}): QuotationRow => ({
   opportunityId: id(40),
   currentVersionId: VERSION_2,
   ownerUserId: id(50),
+  departmentId: null,
   legacySource: null,
   version: 3,
   createdAt: T0,
