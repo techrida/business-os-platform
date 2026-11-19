@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   CreateDocumentBodySchema,
   DOCUMENT_SETTING_DEFAULTS,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
   type DocumentStyleSnapshot,
 } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
@@ -394,7 +395,7 @@ describe('QuotationRenderSweeper', () => {
         style: { layout: 'tinted', primaryColour: '#b45309' },
         // The profile has no number of its own, so the entity's PAN/VAT setting fills it.
         profile: {
-          ...DOCUMENT_SETTING_DEFAULTS['entity.profile'],
+          ...EMPTY_SNAPSHOT_COMPANY_PROFILE,
           displayName: 'Techrida Nepal',
           panVatNo: '301234567',
         },

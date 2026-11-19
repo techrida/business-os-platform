@@ -7,9 +7,13 @@ import {
   DOCUMENT_LAYOUTS,
   DocumentStyleSnapshotSchema,
   EMPTY_COMPANY_PROFILE,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
   HexColourSchema,
+  LogoDataUrlSchema,
   PRESET_BRAND_COLOURS,
   snapshotNumberSystems,
+  SnapshotCompanyProfileSchema,
+  snapshotProfileFrom,
   TermPresetListSchema,
 } from './document-style.js';
 import { DOCUMENT_SETTING_DEFAULTS, SETTINGS } from './settings.js';
@@ -73,26 +77,115 @@ describe('document settings', () => {
     ).toBe(true);
   });
 
-  it('rejects a script-bearing logo', () => {
+  it('rejects a script-bearing legacy logo', () => {
     expect(
       SETTINGS['entity.profile'].safeParse({
-        displayName: null,
-        logoDataUrl: 'data:text/html;base64,AAAA',
-        phones: [],
-        email: null,
-        website: null,
-        panVatNo: null,
-        signatoryName: null,
-        signatoryTitle: null,
+        ...EMPTY_COMPANY_PROFILE,
+        legacyLogoDataUrl: 'data:text/html;base64,AAAA',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('company profile: the setting references a document, the snapshot holds bytes (U12)', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const DOC_ID = '0b8f7c1e-3d2a-4f5b-9c6d-7e8f9a0b1c2d';
+  const setting = SETTINGS['entity.profile'];
+
+  it('accepts a document id, no logo, and a not-yet-migrated legacy logo', () => {
+    expect(setting.safeParse(EMPTY_COMPANY_PROFILE).success).toBe(true);
+    expect(setting.safeParse({ ...EMPTY_COMPANY_PROFILE, logoDocumentId: DOC_ID }).success).toBe(
+      true,
+    );
+    expect(setting.safeParse({ ...EMPTY_COMPANY_PROFILE, legacyLogoDataUrl: PNG }).success).toBe(
+      true,
+    );
+    expect(setting.safeParse({ ...EMPTY_COMPANY_PROFILE, legacyLogoDataUrl: null }).success).toBe(
+      true,
+    );
+  });
+
+  it('refuses a data URL (or any non-id) as the logo document id', () => {
+    for (const bad of [PNG, 'logo.png', '', 42]) {
+      expect(setting.safeParse({ ...EMPTY_COMPANY_PROFILE, logoDocumentId: bad }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it('refuses the old setting shape: the bytes no longer live in the setting', () => {
+    expect(setting.safeParse({ ...EMPTY_SNAPSHOT_COMPANY_PROFILE, logoDataUrl: PNG }).success).toBe(
+      false,
+    );
+    expect(setting.safeParse({ ...EMPTY_COMPANY_PROFILE, logoDataUrl: PNG }).success).toBe(false);
+  });
+
+  it('caps a logo at 720,000 characters (a 512 KiB image)', () => {
+    const body = (chars: number) => 'A'.repeat(chars - 'data:image/png;base64,'.length);
+    expect(LogoDataUrlSchema.safeParse(`data:image/png;base64,${body(720_000)}`).success).toBe(
+      true,
+    );
+    expect(LogoDataUrlSchema.safeParse(`data:image/png;base64,${body(720_001)}`).success).toBe(
+      false,
+    );
+    // 512 KiB of bytes, base64 encoded, fits.
+    const kib512 = 'A'.repeat(Math.ceil((512 * 1024) / 3) * 4);
+    expect(LogoDataUrlSchema.safeParse(`data:image/png;base64,${kib512}`).success).toBe(true);
+  });
+
+  it('still parses a snapshot stored before U12, with its logo bytes', () => {
+    const stored = {
+      style: DEFAULT_DOCUMENT_STYLE,
+      profile: {
+        displayName: 'Techrida',
+        logoDataUrl: PNG,
+        phones: ['+977 1 5551234'],
+        email: 'sales@techrida.example',
+        website: null,
+        panVatNo: '301234567',
+        signatoryName: null,
+        signatoryTitle: null,
+      },
+      numberSystem: 'international',
+      capturedAt: '2026-11-01T05:00:00.000Z',
+    };
+    expect(DocumentStyleSnapshotSchema.parse(stored)).toEqual(stored);
+  });
+
+  it('refuses a snapshot whose profile is the setting shape (a reference is not frozen bytes)', () => {
+    expect(
+      SnapshotCompanyProfileSchema.safeParse({ ...EMPTY_COMPANY_PROFILE, logoDocumentId: DOC_ID })
+        .success,
+    ).toBe(false);
+  });
+
+  it('snapshotProfileFrom copies the company fields and the resolved bytes, never the reference', () => {
+    const profile = {
+      ...EMPTY_COMPANY_PROFILE,
+      displayName: 'Techrida',
+      phones: ['01-4000000'],
+      logoDocumentId: DOC_ID,
+      legacyLogoDataUrl: PNG,
+    };
+    const snapshot = snapshotProfileFrom(profile, PNG);
+    expect(snapshot).toEqual({
+      ...EMPTY_SNAPSHOT_COMPANY_PROFILE,
+      displayName: 'Techrida',
+      phones: ['01-4000000'],
+      logoDataUrl: PNG,
+    });
+    expect(SnapshotCompanyProfileSchema.safeParse(snapshot).success).toBe(true);
+    expect(snapshot.phones).not.toBe(profile.phones);
+    expect(snapshotProfileFrom(EMPTY_COMPANY_PROFILE, null)).toEqual(
+      EMPTY_SNAPSHOT_COMPANY_PROFILE,
+    );
   });
 });
 
 describe('snapshot readers (D30)', () => {
   const base = {
     style: DEFAULT_DOCUMENT_STYLE,
-    profile: EMPTY_COMPANY_PROFILE,
+    profile: EMPTY_SNAPSHOT_COMPANY_PROFILE,
     capturedAt: '2026-11-18T10:00:00.000Z',
   };
 

@@ -56,6 +56,7 @@ import { GotenbergError } from './gotenberg.client';
 import {
   buildDocumentStyleSnapshot,
   buildIssuer,
+  DocumentLogoUnavailableError,
   DocumentStyleInvalidError,
   IssuerIncompleteError,
   parseStoredDocumentStyle,
@@ -171,7 +172,8 @@ export function failureKind(error: unknown): string {
   if (
     error instanceof IssuerIncompleteError ||
     error instanceof RenderSourceMissingError ||
-    error instanceof DocumentStyleInvalidError
+    error instanceof DocumentStyleInvalidError ||
+    error instanceof DocumentLogoUnavailableError
   ) {
     return error.kind;
   }

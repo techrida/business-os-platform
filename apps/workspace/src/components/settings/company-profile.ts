@@ -169,7 +169,8 @@ export function draftsFromSettings({ profile, address, panVatNo }: CompanySettin
       email: profile.email ?? '',
       website: profile.website ?? '',
     },
-    logo: profile.logoDataUrl,
+    // Until the card uploads the logo as a document, it shows and edits the legacy data URL.
+    logo: profile.legacyLogoDataUrl ?? null,
     signatory: { name: profile.signatoryName ?? '', title: profile.signatoryTitle ?? '' },
   };
 }
@@ -317,7 +318,7 @@ export function parseSignatory(draft: SignatoryDraft): Parsed<ProfilePatch> {
 
 export function parseLogo(value: string): Parsed<ProfilePatch> {
   const url = value.trim();
-  if (url === '') return { ok: true, value: { logoDataUrl: null } };
+  if (url === '') return { ok: true, value: { logoDocumentId: null, legacyLogoDataUrl: null } };
   if (/^data:image\/svg/i.test(url)) {
     return {
       ok: false,
@@ -328,7 +329,8 @@ export function parseLogo(value: string): Parsed<ProfilePatch> {
   if (!parsed.success) {
     return { ok: false, errors: { logo: `That image cannot be saved. ${LOGO_HINT}.` } };
   }
-  return { ok: true, value: { logoDataUrl: parsed.data } };
+  // A picked logo replaces any document logo, so the snapshot prints the one the admin saw saved.
+  return { ok: true, value: { logoDocumentId: null, legacyLogoDataUrl: parsed.data } };
 }
 
 // ---------------------------------------------------------------------------------------------

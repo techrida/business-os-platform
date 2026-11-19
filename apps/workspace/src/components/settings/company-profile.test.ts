@@ -105,7 +105,7 @@ describe('profile merge', () => {
   const stored: CompanyProfile = {
     ...EMPTY_COMPANY_PROFILE,
     displayName: 'Acme',
-    logoDataUrl: PNG,
+    legacyLogoDataUrl: PNG,
     phones: ['01-4000000'],
     email: 'a@acme.test',
     signatoryName: 'Sita',
@@ -134,7 +134,7 @@ describe('profile merge', () => {
   it('keeps the logo and phones when the signatory card saves', () => {
     const signatory = parseSignatoryForTest();
     const merged = mergeProfile(stored, signatory);
-    expect(merged.logoDataUrl).toBe(PNG);
+    expect(merged.legacyLogoDataUrl).toBe(PNG);
     expect(merged.phones).toEqual(['01-4000000']);
     expect(merged.signatoryName).toBe('Ram');
   });
@@ -185,8 +185,14 @@ describe('parsers', () => {
       ok: false,
       errors: { logo: stringWith('SVG') },
     });
-    expect(parseLogo('')).toEqual({ ok: true, value: { logoDataUrl: null } });
-    expect(parseLogo(PNG)).toEqual({ ok: true, value: { logoDataUrl: PNG } });
+    expect(parseLogo('')).toEqual({
+      ok: true,
+      value: { logoDocumentId: null, legacyLogoDataUrl: null },
+    });
+    expect(parseLogo(PNG)).toEqual({
+      ok: true,
+      value: { logoDocumentId: null, legacyLogoDataUrl: PNG },
+    });
   });
 
   it('plans the writes each card asks for', () => {
@@ -310,7 +316,10 @@ describe('loaded versions', () => {
   it('reads the logo card form back as the version the page loaded', () => {
     const data = logoFormData(PNG, 4);
     expect(readExpectedVersion(data, 'entity.profile')).toBe(4);
-    expect(planCard('logo', data)).toEqual({ ok: true, value: { profile: { logoDataUrl: PNG } } });
+    expect(planCard('logo', data)).toEqual({
+      ok: true,
+      value: { profile: { logoDocumentId: null, legacyLogoDataUrl: PNG } },
+    });
   });
 });
 
@@ -319,7 +328,7 @@ describe('undo icons (D32)', () => {
     profile: {
       ...EMPTY_COMPANY_PROFILE,
       displayName: 'Acme',
-      logoDataUrl: PNG,
+      legacyLogoDataUrl: PNG,
       phones: ['01-4000000'],
       signatoryTitle: 'Director',
     },
@@ -338,7 +347,7 @@ describe('undo icons (D32)', () => {
     expect(emptyProfilePatch('contact')).toEqual({ phones: [], email: null, website: null });
     expect(emptyProfilePatch('signatory')).toEqual({ signatoryName: null, signatoryTitle: null });
     const merged = mergeProfile(settings.profile, emptyProfilePatch('contact'));
-    expect(merged.logoDataUrl).toBe(PNG);
+    expect(merged.legacyLogoDataUrl).toBe(PNG);
     expect(merged.displayName).toBe('Acme');
     expect(merged.signatoryTitle).toBe('Director');
   });
@@ -354,7 +363,7 @@ describe('undo icons (D32)', () => {
     // A logo or display name alone does not make Contact or Signatory look changed.
     const onlyLogo = {
       ...empty,
-      profile: { ...EMPTY_COMPANY_PROFILE, logoDataUrl: PNG, displayName: 'Acme' },
+      profile: { ...EMPTY_COMPANY_PROFILE, legacyLogoDataUrl: PNG, displayName: 'Acme' },
     };
     expect(isCardEmpty('contact', onlyLogo)).toBe(true);
     expect(isCardEmpty('signatory', onlyLogo)).toBe(true);
