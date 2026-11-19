@@ -135,6 +135,7 @@ export default async function NewQuotationPage({
         contacts={lookups.contacts}
         taxCodes={lookups.taxCodes}
         paymentTerms={lookups.paymentTerms}
+        termPresets={lookups.termPresets}
         idempotencyKey={randomUUID()}
       />
     </Page>

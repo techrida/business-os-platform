@@ -155,6 +155,7 @@ export default async function EditQuotationPage({
         contacts={lookups.contacts}
         taxCodes={lookups.taxCodes}
         paymentTerms={lookups.paymentTerms}
+        termPresets={lookups.termPresets}
         idempotencyKey={randomUUID()}
         savedNotice={query.saved === '1'}
       />

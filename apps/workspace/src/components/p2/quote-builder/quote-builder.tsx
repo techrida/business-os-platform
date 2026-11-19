@@ -1,5 +1,6 @@
 'use client';
 
+import type { TermPreset } from '@bos/contracts';
 import { unstable_rethrow, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -17,6 +18,7 @@ import { previewQuoteAction, saveDraftAction, submitQuoteAction } from './action
 import { ApprovalPanel, ApprovalSteps } from './approval-panel';
 import type { FailureKind } from './failure';
 import { LinesSection } from './lines-section';
+import { SavedOptionsSelect } from './saved-options-select';
 import {
   CURRENCY_OPTIONS,
   newMilestone,
@@ -103,6 +105,7 @@ export function QuoteBuilder({
   contacts,
   taxCodes,
   paymentTerms,
+  termPresets,
   idempotencyKey,
   savedNotice = false,
 }: {
@@ -119,6 +122,8 @@ export function QuoteBuilder({
   contacts: readonly ContactOption[] | null;
   taxCodes: readonly TaxCode[] | null;
   paymentTerms: readonly PaymentTerm[] | null;
+  /** Saved wording for the Terms fields; null when it could not be loaded (no dropdown is shown). */
+  termPresets?: readonly TermPreset[] | null;
   /** Made once per page render on the server; the actions hand back the key the next try uses. */
   idempotencyKey: string;
   savedNotice?: boolean;
@@ -763,46 +768,82 @@ export function QuoteBuilder({
           <div className={styles.sectionBody}>
             <Field label="Scope" hint="What is included." error={errors['scope']}>
               {(control) => (
-                <Textarea
-                  rows={4}
-                  maxLength={10000}
-                  value={values.scope}
-                  onChange={(e) => set('scope')(e.target.value)}
-                  {...control}
-                />
+                <>
+                  <SavedOptionsSelect
+                    kind="scope"
+                    presets={termPresets}
+                    value={values.scope}
+                    maxLength={10000}
+                    onFill={set('scope')}
+                  />
+                  <Textarea
+                    rows={4}
+                    maxLength={10000}
+                    value={values.scope}
+                    onChange={(e) => set('scope')(e.target.value)}
+                    {...control}
+                  />
+                </>
               )}
             </Field>
             <Field label="Assumptions" error={errors['assumptions']}>
               {(control) => (
-                <Textarea
-                  rows={3}
-                  maxLength={10000}
-                  value={values.assumptions}
-                  onChange={(e) => set('assumptions')(e.target.value)}
-                  {...control}
-                />
+                <>
+                  <SavedOptionsSelect
+                    kind="assumptions"
+                    presets={termPresets}
+                    value={values.assumptions}
+                    maxLength={10000}
+                    onFill={set('assumptions')}
+                  />
+                  <Textarea
+                    rows={3}
+                    maxLength={10000}
+                    value={values.assumptions}
+                    onChange={(e) => set('assumptions')(e.target.value)}
+                    {...control}
+                  />
+                </>
               )}
             </Field>
             <Field label="Exclusions" hint="What is not included." error={errors['exclusions']}>
               {(control) => (
-                <Textarea
-                  rows={3}
-                  maxLength={10000}
-                  value={values.exclusions}
-                  onChange={(e) => set('exclusions')(e.target.value)}
-                  {...control}
-                />
+                <>
+                  <SavedOptionsSelect
+                    kind="exclusions"
+                    presets={termPresets}
+                    value={values.exclusions}
+                    maxLength={10000}
+                    onFill={set('exclusions')}
+                  />
+                  <Textarea
+                    rows={3}
+                    maxLength={10000}
+                    value={values.exclusions}
+                    onChange={(e) => set('exclusions')(e.target.value)}
+                    {...control}
+                  />
+                </>
               )}
             </Field>
             <Field label="Delivery timeline" error={errors['deliveryTimeline']}>
               {(control) => (
-                <Textarea
-                  rows={2}
-                  maxLength={2000}
-                  value={values.deliveryTimeline}
-                  onChange={(e) => set('deliveryTimeline')(e.target.value)}
-                  {...control}
-                />
+                <>
+                  <SavedOptionsSelect
+                    kind="delivery_timeline"
+                    presets={termPresets}
+                    value={values.deliveryTimeline}
+                    maxLength={2000}
+                    onFill={set('deliveryTimeline')}
+                  />
+                  <Textarea
+                    rows={2}
+                    maxLength={2000}
+                    value={values.deliveryTimeline}
+                    onChange={(e) => set('deliveryTimeline')(e.target.value)}
+                    {...control}
+                  />
+                </>
               )}
             </Field>
           </div>

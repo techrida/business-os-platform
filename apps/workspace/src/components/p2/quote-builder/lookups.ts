@@ -1,7 +1,10 @@
 import 'server-only';
 
+import type { TermPreset } from '@bos/contracts';
+
 import type { Session } from '@/lib/session';
 import { listTaxCodes } from '@/lib/api-tax-codes';
+import { listTermPresets } from '@/lib/api-term-presets';
 
 import * as api from './api';
 import type { ContactOption } from './quote-builder';
@@ -12,14 +15,17 @@ export interface Lookups {
   taxCodes: TaxCode[] | null;
   paymentTerms: PaymentTerm[] | null;
   contacts: ContactOption[] | null;
+  /** Saved wording for the Terms fields. null when the call failed or the caller may not read it: the builder then shows no dropdown and no error. */
+  termPresets: TermPreset[] | null;
 }
 
-/** The three lists the form's selects need. A failed list degrades that select; it never fails the page. */
+/** The lists the form's selects need. A failed list degrades that select; it never fails the page. */
 export async function loadLookups(session: Session, customerId: string): Promise<Lookups> {
-  const [tax, terms, contacts] = await Promise.allSettled([
+  const [tax, terms, contacts, presets] = await Promise.allSettled([
     listTaxCodes(session),
     api.listPaymentTerms(session),
     api.listContacts(session, customerId),
+    listTermPresets(session),
   ]);
   return {
     taxCodes: tax.status === 'fulfilled' ? tax.value : null,
@@ -31,5 +37,6 @@ export async function loadLookups(session: Session, customerId: string): Promise
             label: [c.fullName, c.title, c.email].filter(Boolean).join(' · '),
           }))
         : null,
+    termPresets: presets.status === 'fulfilled' ? presets.value : null,
   };
 }
