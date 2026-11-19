@@ -51,15 +51,16 @@ export function MemoPaper({
         </p>
         <div className={styles.bandCompany}>
           <div className={styles.bandText}>
+            {/* Name, department, then the address: the order the PDF prints (memo-pdf.ts). */}
             <strong className={styles.bandName}>{template.organizationName}</strong>
+            {template.departmentName ? (
+              <span className={styles.bandDepartment}>{template.departmentName}</span>
+            ) : null}
             {band.addressLines.map((line, i) => (
               <span key={`${i}:${line}`} className={styles.bandLine}>
                 {line}
               </span>
             ))}
-            {template.departmentName ? (
-              <span className={styles.bandDepartment}>{template.departmentName}</span>
-            ) : null}
           </div>
           {band.logo ? (
             // A data URL that passed LogoDataUrlSchema (PNG, JPEG or WebP): drawn through <img> only, never inlined.
