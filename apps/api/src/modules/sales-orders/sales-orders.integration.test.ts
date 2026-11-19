@@ -97,27 +97,34 @@ let service: SalesOrdersService;
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { scope: TxScope; grants: Map<Permission, Scope> } = {
+const current: {
+  scope: TxScope;
+  grants: Map<Permission, Scope>;
+  userId?: string | undefined;
+  departmentId?: string | null;
+} = {
   scope: { tenantId: '', organizationId: '' },
   grants: grantsOf('sales'),
 };
+/** Who calls: the quotation owner of the fixture unless a test switches to someone else. */
+const callerId = () => current.userId ?? f.ownerUserId;
 
 const principalNow = (): Principal => ({
-  userId: f.ownerUserId,
-  zitadelUserId: `z-${f.ownerUserId}`,
+  userId: callerId(),
+  zitadelUserId: `z-${callerId()}`,
   ...current.scope,
   orgKind: 'staff',
   partyId: null,
   idpOrgId: 'unused',
   roles: [],
-  departmentId: null,
+  departmentId: current.departmentId ?? null,
   status: 'active',
   grants: current.grants,
 });
 const caller = {
   current: () => ({
     scope: current.scope,
-    actor: { kind: 'user' as const, id: f.ownerUserId, correlationId: 'test-corr' },
+    actor: { kind: 'user' as const, id: callerId(), correlationId: 'test-corr' },
     principal: principalNow(),
   }),
 };
@@ -223,6 +230,8 @@ afterAll(async () => {
 beforeEach(() => {
   current.scope = scopeA;
   current.grants = grantsOf('sales');
+  current.userId = undefined;
+  current.departmentId = null;
 });
 
 afterEach(async () => {
@@ -577,9 +586,13 @@ describe('SalesOrdersService.list and detail', () => {
     const otherQuote = await acceptedQuotation();
     const unassignedQuote = await acceptedQuotation();
     const own = await confirm(ownQuote);
+    const otherOwner = await seedOtherStaffUser(db, f);
+    // Someone else confirms the other two, as an accountant would: the salesperson neither created those orders
+    // nor (below) owns their quotations.
+    current.userId = otherOwner;
     const other = await confirm(otherQuote);
     const unassigned = await confirm(unassignedQuote);
-    const otherOwner = await seedOtherStaffUser(db, f);
+    current.userId = undefined;
 
     await withTx(db, scopeA, userActor(), async (tx) => {
       await tx
@@ -773,6 +786,11 @@ describe('SalesOrdersService.list and detail', () => {
 // ------------------------------------------------------------------------------------ mark billable
 
 describe('SalesOrdersService.markBillable', () => {
+  // Marking is the Accountant's (sales_order.mark_billable); Sales holds no such grant.
+  beforeEach(() => {
+    current.grants = grantsOf('accountant');
+  });
+
   const mark = (
     detail: SalesOrderDetail,
     lineIndex: number,
@@ -917,5 +935,80 @@ describe('SalesOrdersService.detail held invoices (audit #7)', () => {
     const asEditedSales = parsed(await service.detail(detail.order.id));
     expect(asEditedSales.schedule[0]!.can).toEqual({ openInvoice: true });
     expect(asEditedSales.can).toEqual({ markBillable: false, draftInvoice: false });
+  });
+});
+
+describe('saved reach on sales orders (U20a phase 2)', () => {
+  const ids = (rows: readonly { id: string }[]) => rows.map((r) => r.id);
+  const moveQuotation = (quotationId: string, ownerUserId: string) =>
+    withTx(db, scopeA, userActor(), (tx) =>
+      tx.update(quotations).set({ ownerUserId }).where(eq(quotations.id, quotationId)),
+    );
+
+  it('own and department read the orders the caller confirmed or whose quotation they own: list, summary and detail agree', async () => {
+    const otherOwner = await seedOtherStaffUser(db, f);
+    const myQuote = await acceptedQuotation();
+    const confirmedQuote = await acceptedQuotation();
+    const neitherQuote = await acceptedQuotation();
+    current.userId = otherOwner;
+    const ofMyQuote = await confirm(myQuote);
+    const neither = await confirm(neitherQuote);
+    current.userId = undefined;
+    const confirmedByMe = await confirm(confirmedQuote);
+    await moveQuotation(confirmedQuote.id, otherOwner);
+    await moveQuotation(neitherQuote.id, otherOwner);
+
+    // Orders carry no department, so `department` reaches exactly what `own` reaches.
+    for (const reach of ['own', 'department'] as const) {
+      current.grants = new Map([...grantsOf('sales'), ['sales_order.read', reach]]);
+      // A department of the caller's own, which no order carries.
+      current.departmentId = randomUUID();
+      const page = await service.list({});
+      expect(ids(page.rows), reach).toEqual(
+        expect.arrayContaining([ofMyQuote.order.id, confirmedByMe.order.id]),
+      );
+      expect(ids(page.rows), reach).not.toContain(neither.order.id);
+      expect(page.total, reach).toBe(page.rows.length);
+      expect((await service.summary({})).total, reach).toBe(page.total);
+      for (const visible of [ofMyQuote, confirmedByMe]) {
+        expect((await service.detail(visible.order.id)).order.id).toBe(visible.order.id);
+      }
+      expect(await statusOf(service.detail(neither.order.id)), reach).toEqual({
+        status: 404,
+        code: 'not_found',
+      });
+    }
+
+    current.grants = grantsOf('accountant');
+    expect((await service.detail(neither.order.id)).order.id).toBe(neither.order.id);
+    expect(ids((await service.list({})).rows)).toContain(neither.order.id);
+  });
+
+  it('mark billable is a 404 outside the read and a 403 outside the mark-billable reach', async () => {
+    const otherOwner = await seedOtherStaffUser(db, f);
+    const q = await acceptedQuotation();
+    current.userId = otherOwner;
+    const theirs = await confirm(q);
+    current.userId = undefined;
+    await moveQuotation(q.id, otherOwner);
+    // The milestone line needs evidence, so a caller who passes both checks gets that 422 and changes nothing.
+    const markMilestone = () =>
+      service.markBillable(
+        theirs.order.id,
+        theirs.schedule[1]!.id,
+        { expectedVersion: theirs.order.version },
+        `mark-${randomUUID()}`,
+      );
+
+    current.grants = new Map([...grantsOf('accountant'), ['sales_order.mark_billable', 'own']]);
+    expect(await statusOf(markMilestone())).toEqual({ status: 403, code: 'forbidden' });
+    expect((await service.detail(theirs.order.id)).can!.markBillable).toBe(false);
+
+    current.grants = new Map([...grantsOf('accountant'), ['sales_order.read', 'own']]);
+    expect(await statusOf(markMilestone())).toEqual({ status: 404, code: 'not_found' });
+
+    current.grants = grantsOf('accountant');
+    expect(await statusOf(markMilestone())).toEqual({ status: 422, code: 'evidence_required' });
+    expect((await service.detail(theirs.order.id)).can!.markBillable).toBe(true);
   });
 });

@@ -108,7 +108,13 @@ const roles: Partial<Record<RoleKey, string[]>> = {};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Live grants an admin edited, instead of the role default (`as` clears it). */
+  grants?: Map<Permission, Scope> | undefined;
+} = {
   userId: '',
   role: 'accountant',
   scope: null,
@@ -116,6 +122,7 @@ const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
 const as = (userId: string, role: RoleKey) => {
   current.userId = userId;
   current.role = role;
+  current.grants = undefined;
 };
 const scopeNow = (): TxScope => current.scope ?? scopeA;
 const principalNow = (): Principal => ({
@@ -128,7 +135,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -684,5 +691,31 @@ describe('notes outside the entity and approval', () => {
     });
     const events = await db.select().from(postingEvents).where(eq(postingEvents.sourceId, id));
     expect(events.map((e) => e.event)).toEqual(['debit_note_issued']);
+  });
+});
+
+describe('saved reach on credit notes (U20a phase 2)', () => {
+  it('checks invoice.credit_note on the original drafter after its read: 403 when readable, 404 when not', async () => {
+    const original = await issuedInvoice(); // drafted by U.acc
+    as(U.fin, 'finance');
+    current.grants = new Map([...grantsOf('finance'), ['invoice.credit_note', 'own']]);
+    await expect(notes.draftCreditNote(creditBody(original, '1'), key())).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(notes.draftDebitNote(debitBody(original), key())).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
+    current.grants = new Map([...grantsOf('finance'), ['invoice.read', 'own']]);
+    await expect(notes.draftCreditNote(creditBody(original, '1'), key())).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(await liveCreditNotes(original)).toEqual([]);
+
+    // The drafter with an `own` credit grant reaches their own invoice.
+    as(U.acc, 'accountant');
+    current.grants = new Map([...grantsOf('accountant'), ['invoice.credit_note', 'own']]);
+    const note = await notes.draftCreditNote(creditBody(original, '1'), key());
+    expect(note.invoice.kind).toBe('credit_note');
   });
 });
