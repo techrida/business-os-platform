@@ -7,8 +7,10 @@ import { after, beforeEach, describe, test } from 'node:test';
 
 import {
   checkOrigin,
+  legacyRunKeyFor,
   loadConfig,
   normaliseLabel,
+  parseViewport,
   runKeyFor,
   runMatch,
   uniqueValues,
@@ -32,34 +34,61 @@ describe('run labels', () => {
     assert.equal(normaliseLabel('a'.repeat(24)), 'a'.repeat(24));
   });
 
-  test('run keys have a fixed form, so one is never the start of another', () => {
-    assert.equal(runKeyFor('scr1', 1440), 'scr1-1440');
-    assert.equal(runKeyFor('scr1', 390), 'scr1-0390');
+  test('run keys carry width and height in a fixed form, so one is never the start of another', () => {
+    assert.equal(runKeyFor('scr1', 1440, 900), 'scr1-1440x0900');
+    assert.equal(runKeyFor('scr1', 390, 844), 'scr1-0390x0844');
+    assert.notEqual(runKeyFor('scr1', 390, 844), runKeyFor('scr1', 390, 900));
+    assert.equal(legacyRunKeyFor('scr1', 390), 'scr1-0390');
     const keys = [];
     for (const label of ['x', 'x1', 'ax', 'x14', 'scr1'])
-      for (const width of [144, 390, 820, 1440]) keys.push(`SCR-${runKeyFor(label, width)}`);
+      for (const [w, h] of [
+        [144, 900],
+        [390, 844],
+        [390, 900],
+        [820, 1180],
+        [1440, 900],
+      ])
+        keys.push(`SCR-${runKeyFor(label, w, h)}`);
     for (const a of keys)
       for (const b of keys) if (a !== b) assert.ok(!b.includes(a), `${a} is inside ${b}`);
   });
 
   test('a name is found in a row whose next cell follows it directly, and is case-sensitive', () => {
-    const mine = runMatch(`BOS Demo Himalayan Labs SCR-${runKeyFor('ab', 1440)}`);
-    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-1440'));
-    assert.ok(mine.test('RCPT-1BOS Demo Himalayan Labs SCR-ab-1440Verified'));
-    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-1440Dev Sales'));
-    assert.ok(!mine.test(`BOS Demo Himalayan Labs SCR-${runKeyFor('ab', 144)}`));
-    assert.ok(!mine.test('BOS Demo Himalayan Labs SCR-AB-1440'));
+    const mine = runMatch(`BOS Demo Himalayan Labs SCR-${runKeyFor('ab', 1440, 900)}`);
+    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-1440x0900'));
+    assert.ok(mine.test('RCPT-1BOS Demo Himalayan Labs SCR-ab-1440x0900Verified'));
+    assert.ok(mine.test('BOS Demo Himalayan Labs SCR-ab-1440x0900Dev Sales'));
+    assert.ok(!mine.test(`BOS Demo Himalayan Labs SCR-${runKeyFor('ab', 144, 900)}`));
+    assert.ok(!mine.test('BOS Demo Himalayan Labs SCR-AB-1440x0900'));
   });
 
   test('a label is not matched inside a longer label', () => {
-    const x = runMatch(`Labs SCR-${runKeyFor(normaliseLabel('x'), 1440)}`);
-    assert.ok(!x.test(`Labs SCR-${runKeyFor(normaliseLabel('ax'), 1440)}`));
-    assert.ok(!x.test(`Labs SCR-${runKeyFor(normaliseLabel('x1'), 1440)}`));
+    const x = runMatch(`Labs SCR-${runKeyFor(normaliseLabel('x'), 1440, 900)}`);
+    assert.ok(!x.test(`Labs SCR-${runKeyFor(normaliseLabel('ax'), 1440, 900)}`));
+    assert.ok(!x.test(`Labs SCR-${runKeyFor(normaliseLabel('x1'), 1440, 900)}`));
   });
 
   test('regular-expression characters in the text are literal', () => {
     assert.ok(runMatch('QT-2083/84-00006').test('QT-2083/84-00006 Rev 1'));
     assert.ok(!runMatch('a.b').test('axb'));
+  });
+});
+
+describe('viewports', () => {
+  test('have one spelling: leading zeros are refused, the text is canonical', () => {
+    assert.deepEqual(parseViewport('390x844'), { width: 390, height: 844, text: '390x844' });
+    assert.deepEqual(parseViewport(' 1440x900 '), { width: 1440, height: 900, text: '1440x900' });
+    for (const bad of [
+      '0390x844',
+      '390x0844',
+      '390X844',
+      '390x',
+      'x844',
+      '39x844',
+      '12345x900',
+      '',
+    ])
+      assert.throws(() => parseViewport(bad), /no leading zeros/, bad);
   });
 });
 
@@ -125,6 +154,7 @@ describe('loadConfig', () => {
   writeFileSync(personas, '[]');
   writeFileSync(path.join(dir, 'caddy-root.crt'), 'not read by loadConfig');
   const keys = [
+    'NODE_TLS_REJECT_UNAUTHORIZED',
     'APP_URL',
     'PORTAL_URL',
     'MAIL_URL',
@@ -150,9 +180,18 @@ describe('loadConfig', () => {
   test('defaults to the local test stack, derives AUTH_URL and lower-cases the label', () => {
     const cfg = loadConfig({ label: 'FIX1', viewport: '1440x900' });
     assert.equal(cfg.label, 'fix1');
-    assert.equal(cfg.runKey, 'fix1-1440');
+    assert.equal(cfg.runKey, 'fix1-1440x0900');
+    assert.equal(cfg.viewportText, '1440x900');
+    assert.ok(cfg.outDir.endsWith(path.join('fix1', '1440x900')));
     assert.equal(cfg.authUrl, 'https://auth.testrun.localhost:58343');
     assert.equal(cfg.caFile, path.join(dir, 'caddy-root.crt'));
+  });
+
+  test('refuses to start with NODE_TLS_REJECT_UNAUTHORIZED=0', () => {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    assert.throws(() => loadConfig({ label: 'x' }), /NODE_TLS_REJECT_UNAUTHORIZED=0/);
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';
+    assert.equal(loadConfig({ label: 'x' }).label, 'x');
   });
 
   test('refuses a public APP_URL unless ALLOW_NON_LOCAL_TARGET=1', () => {

@@ -160,6 +160,65 @@ describe('no overwrites', () => {
   });
 });
 
+describe('claimed names, temp files and the folder lock', () => {
+  test('claimPath takes the name: two claims never get the same path', () => {
+    const dir = freshDir();
+    const a = claimPath(dir, 'sales', '.webm');
+    const b = claimPath(dir, 'sales', '.webm');
+    assert.equal(path.basename(a), 'sales.webm');
+    assert.equal(path.basename(b), 'sales-2.webm');
+    assert.ok(existsSync(a) && statSync(a).size === 0, 'claimed as an empty file');
+  });
+
+  test('writeJson uses its own temporary file and leaves none behind', () => {
+    const dir = freshDir();
+    const file = path.join(dir, 'state.json');
+    writeJson(file, { a: 1 });
+    writeJson(file, { a: 2 });
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { a: 2 });
+    assert.deepEqual(readdirSync(dir), ['state.json']);
+  });
+
+  test('one live run per folder; a stale lock is taken over; release removes only its own', () => {
+    const dir = freshDir();
+    const release = acquireLock(dir);
+    assert.throws(() => acquireLock(dir), /in use by another manual-run \(pid \d+/);
+    release();
+    assert.ok(!existsSync(path.join(dir, '.lock')));
+    // A lock left by a process that no longer exists.
+    writeFileSync(path.join(dir, '.lock'), JSON.stringify({ pid: 2 ** 22 + 12345 }));
+    const again = acquireLock(dir);
+    assert.equal(JSON.parse(readFileSync(path.join(dir, '.lock'), 'utf8')).pid, process.pid);
+    again();
+  });
+});
+
+describe('a folder belongs to one stack and one run key', () => {
+  test('state.json keeps the appUrl and run key it was created with', () => {
+    const dir = freshDir();
+    const file = path.join(dir, 'state.json');
+    assert.deepEqual(readFolderMeta(dir), { appUrl: null, runKey: null, hasRecords: false });
+    const meta = { appUrl: 'https://app.a.localhost', runKey: 'x-1440x0900' };
+    writeState(file, 'start', { memoUrl: '/memos/1' }, meta);
+    writeState(file, 'sales', {}, { appUrl: 'https://app.b.localhost', runKey: 'y' });
+    assert.deepEqual(readFolderMeta(dir), { ...meta, hasRecords: true });
+  });
+
+  test('a folder from before the meta was stored: appUrl from results.json, no run key', () => {
+    const dir = freshDir();
+    writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ leadUrl: '/leads/1' }));
+    writeFileSync(
+      path.join(dir, 'results.json'),
+      JSON.stringify({ appUrl: 'https://app.old.localhost', workflows: {} }),
+    );
+    assert.deepEqual(readFolderMeta(dir), {
+      appUrl: 'https://app.old.localhost',
+      runKey: null,
+      hasRecords: true,
+    });
+  });
+});
+
 describe('per-workflow state', () => {
   test('workflows keep separate records; a legacy flat file is read for every workflow', () => {
     const dir = freshDir();
