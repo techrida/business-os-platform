@@ -42,8 +42,8 @@ const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = 
     deliveryTimeline: '6 weeks',
     paymentTermName: 'Net 30',
     paymentSchedule: [
-      { label: 'Advance', percent: '60', dueDescription: 'On order' },
-      { label: 'Balance', percent: '40' },
+      { label: 'Advance', percent: '60', amount: '366120.00', dueDescription: 'On order' },
+      { label: 'Balance', percent: '40', amount: '244080.00' },
     ],
     lines: [
       {
@@ -172,14 +172,20 @@ describe('renderQuotationHtml', () => {
     const html = renderQuotationHtml({
       ...sample('USD'),
       paymentSchedule: [
-        { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
-        { label: 'Delivery', percent: '33.3333', dueDescription: '2026-11-19' },
-        { label: 'Balance', percent: '33.3334', dueDescription: '2026-11-23' },
+        { label: 'Advance', percent: '33.3333', amount: '333.33', dueDescription: 'On order' },
+        { label: 'Delivery', percent: '33.3333', amount: '333.33', dueDescription: '2026-11-19' },
+        { label: 'Balance', percent: '33.3334', amount: '333.34', dueDescription: '2026-11-23' },
       ],
     });
-    expect(html).toContain('<td>Advance</td><td>33.3333%</td><td class="muted">On order</td>');
-    expect(html).toContain('<td>Delivery</td><td>33.3333%</td><td class="muted">19 Nov 2026</td>');
-    expect(html).toContain('<td>Balance</td><td>33.3334%</td><td class="muted">23 Nov 2026</td>');
+    expect(html).toContain(
+      '<td>Advance</td><td>33.3333%</td><td class="num">USD 333.33</td><td class="muted">On order</td>',
+    );
+    expect(html).toContain(
+      '<td>Delivery</td><td>33.3333%</td><td class="num">USD 333.33</td><td class="muted">19 Nov 2026</td>',
+    );
+    expect(html).toContain(
+      '<td>Balance</td><td>33.3334%</td><td class="num">USD 333.34</td><td class="muted">23 Nov 2026</td>',
+    );
   });
 
   it('shows the BS date next to the date, and leaves it out on request', () => {
@@ -271,7 +277,7 @@ describe('renderQuotationHtml', () => {
         termsAndConditions: evil,
         deliveryTimeline: evil,
         paymentTermName: evil,
-        paymentSchedule: [{ label: evil, percent: '100', dueDescription: evil }],
+        paymentSchedule: [{ label: evil, percent: '100', amount: '100.00', dueDescription: evil }],
         lines: [
           {
             lineNo: 1,

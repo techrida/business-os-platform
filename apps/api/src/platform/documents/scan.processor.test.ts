@@ -412,6 +412,55 @@ describe('R21: verdict handling', () => {
     expect((await row(s.versionId)).status).toBe('quarantined'); // rolled back, not scan_failed
   });
 
+  describe('a promoted file whose clean mark failed earlier (nothing is scanned on this run)', () => {
+    /** Seeds a quarantined version whose bytes were already promoted, with the given actor columns. */
+    async function promoted(who: { uploadedBy: string | null; createdBy: string | null }) {
+      const s = await seed();
+      await storage.promote(s.storageKey);
+      await withTx(db, scope, systemActor('test'), async (tx) => {
+        await tx.execute(
+          sql`UPDATE app.document_versions SET uploaded_by = ${who.uploadedBy} WHERE id = ${s.versionId}`,
+        );
+        await tx.execute(
+          sql`UPDATE app.documents SET created_by = ${who.createdBy} WHERE id = ${s.documentId}`,
+        );
+      });
+      return s;
+    }
+    const scanned = () =>
+      (audit.record.mock.calls as unknown as [unknown, { action: string; meta?: object }][])
+        .map(([, event]) => event)
+        .filter((event) => event.action === 'document.scanned');
+
+    it('labels a system-generated version (no uploader, no creator) generated, not with the scanner name', async () => {
+      const s = await promoted({ uploadedBy: null, createdBy: null });
+      const processor = processorFor(clamdAt(okClamd.port));
+      const scansBefore = okClamd.scans.length;
+
+      expect(await processor.scanVersion(s.job, false)).toBe('clean');
+
+      expect(await row(s.versionId)).toMatchObject({ status: 'clean', scan_engine: 'generated' });
+      expect(okClamd.scans).toHaveLength(scansBefore);
+      expect(scanned()).toHaveLength(1);
+      expect(scanned()[0]).toMatchObject({ meta: { result: 'generated', engine: 'generated' } });
+    });
+
+    it.each([
+      ['an uploader', { uploadedBy: randomUUID(), createdBy: null }],
+      ['a creator', { uploadedBy: null, createdBy: randomUUID() }],
+    ])('keeps the ordinary label for a version that has %s', async (_name, who) => {
+      const s = await promoted(who);
+      const processor = processorFor(clamdAt(okClamd.port));
+
+      expect(await processor.scanVersion(s.job, false)).toBe('clean');
+
+      const r = await row(s.versionId);
+      expect(r.status).toBe('clean');
+      expect(r.scan_engine).not.toBe('generated');
+      expect(scanned()[0]).toMatchObject({ meta: { result: 'clean' } });
+    });
+  });
+
   it('markClean errors propagate (normal path)', async () => {
     const s = await seed();
     audit.record.mockRejectedValueOnce(new Error('audit is down'));

@@ -145,6 +145,7 @@ const track =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mayReadCost = true;
   calls = [];
   store = {
     load: vi.fn(() => Promise.resolve(head())),
@@ -178,9 +179,18 @@ beforeEach(() => {
     opportunities as never,
     notify as never,
     store as never,
-    { current: () => ({ scope: SCOPE, actor: ACTOR }) } as never,
+    { current: () => ({ scope: SCOPE, actor: ACTOR, principal: callerPrincipal() }) } as never,
     () => NOW,
   );
+});
+
+/** The caller as the service reads it: a staff principal whose live grants may or may not hold the cost grant. */
+let mayReadCost = true;
+const callerPrincipal = () => ({
+  userId: CALLER,
+  orgKind: 'staff',
+  status: 'active',
+  grants: new Map<string, string>(mayReadCost ? [['quotation.cost.read', 'all']] : []),
 });
 
 const send = (body = BODY) => service.send(QID, VID, body, 'key-1');
@@ -252,6 +262,75 @@ describe('QuotationSendService.send', () => {
     expect(store.renderedScanStatus).toHaveBeenCalledWith(TX, TENANT, DOCUMENT);
   });
 
+  describe('cost figures in the answer (D29b)', () => {
+    const costedLine = {
+      id: id(100),
+      tenantId: TENANT,
+      organizationId: ORG,
+      versionId: VID,
+      lineNo: 1,
+      catalogItemId: null,
+      description: 'Design',
+      uom: 'job',
+      quantity: '2.0000',
+      unitPrice: '500.00',
+      unitCost: '300.00',
+      taxCodeId: id(31),
+      gross: '1000.00',
+      discountAlloc: '0.00',
+      taxable: '1000.00',
+      createdAt: T0,
+      updatedAt: T0,
+    };
+    const withCosts = () => {
+      store.parts.mockResolvedValue({ lines: [costedLine], taxSummary: [] });
+      vi.mocked(updateVersioned).mockImplementation((_tx, _table, _id, _expected, set) => {
+        calls.push('status');
+        return Promise.resolve(
+          versionRow({
+            internalCostTotal: '600.00',
+            marginPct: '40.0000',
+            ...(set as Partial<QuotationVersionRow>),
+            version: 7,
+          }),
+        );
+      });
+    };
+
+    it('includes unitCost, internalCostTotal and marginPct for a caller holding quotation.cost.read', async () => {
+      withCosts();
+      const dto = await send();
+      expect(dto).toMatchObject({ internalCostTotal: '600.00', marginPct: '40.0000' });
+      expect(dto.lines[0]).toMatchObject({ unitCost: '300.00' });
+    });
+
+    it('omits all three (keys absent) for a caller without it, and still sends', async () => {
+      withCosts();
+      mayReadCost = false;
+      const dto = await send();
+      expect(dto).toMatchObject({ id: VID, status: 'sent' });
+      expect('internalCostTotal' in dto).toBe(false);
+      expect('marginPct' in dto).toBe(false);
+      expect(dto.lines).toHaveLength(1);
+      for (const l of dto.lines) expect('unitCost' in l).toBe(false);
+      expect(calls).toEqual(['status', 'history', 'audit', 'opportunity', 'email', 'nudge']);
+    });
+
+    it('filters a replayed answer per caller', async () => {
+      withCosts();
+      const full = await send();
+      mayReadCost = false;
+      vi.mocked(withIdempotency).mockResolvedValueOnce({
+        status: 200,
+        response: full,
+        replayed: true,
+      });
+      const replay = await send();
+      expect('marginPct' in replay).toBe(false);
+      expect(full.marginPct).toBe('40.0000');
+    });
+  });
+
   it('hashes the ids and the whole body into the idempotency claim', async () => {
     await send();
     expect(vi.mocked(withIdempotency)).toHaveBeenCalledWith(
@@ -299,7 +378,7 @@ describe('QuotationSendService.send', () => {
       opportunities as never,
       notify as never,
       store as never,
-      { current: () => ({ scope: SCOPE, actor: ACTOR }) } as never,
+      { current: () => ({ scope: SCOPE, actor: ACTOR, principal: callerPrincipal() }) } as never,
       () => new Date('2026-11-15T18:30:00.000Z'),
     );
     const error = await errorOf(send());

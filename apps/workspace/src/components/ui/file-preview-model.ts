@@ -47,15 +47,19 @@ export function pdfViewerUrl(url: string): string {
   return url.includes('#') ? url : `${url}#view=Fit&navpanes=0`;
 }
 
-export type PreviewFetchOutcome = 'ready' | 'preparing' | 'denied' | 'error';
+export type PreviewFetchOutcome =
+  'ready' | 'preparing' | 'failed' | 'unavailable' | 'denied' | 'error';
 
 /**
- * What an HTTP status from the preview route means for the viewer. 409, 404 and 425 are "the PDF is still being
- * prepared" (the caller offers Retry), 401 and 403 mean the user lost access, anything else is a failure.
+ * What an HTTP status from the preview route means for the viewer. 409 and 425 are "the PDF is still being prepared"
+ * (the caller offers Retry), 424 is "preparing it failed", 404 and 410 are "there is no such PDF", 401 and 403 mean
+ * the user lost access, anything else is a failure.
  */
 export function previewFetchOutcome(status: number): PreviewFetchOutcome {
   if (status >= 200 && status < 300) return 'ready';
-  if (status === 404 || status === 409 || status === 425) return 'preparing';
+  if (status === 409 || status === 425) return 'preparing';
+  if (status === 424) return 'failed';
+  if (status === 404 || status === 410) return 'unavailable';
   if (status === 401 || status === 403) return 'denied';
   return 'error';
 }

@@ -13,6 +13,7 @@ import {
   previewKind,
 } from './file-preview-model';
 import styles from './file-preview-dialog.module.css';
+import { toast } from './toast';
 
 export interface FilePreviewDialogProps {
   /** Display name. It is the dialog title and the image's alt text, so use the real file name. */
@@ -27,6 +28,12 @@ export interface FilePreviewDialogProps {
   previewUrl: string;
   /** Where the file downloads from (attachment). Also same-origin only; a refused URL hides the Download button. */
   downloadUrl: string;
+  /**
+   * Staff only. A same-origin route that takes a POST to put a failed PDF back in the render queue. When the preview
+   * route answers 424 ("could not be prepared"), Retry posts here first, then loads the file again. Without it, a
+   * failed PDF shows its message and no Retry, because loading it again would fail the same way.
+   */
+  retryUrl?: string | undefined;
   /** The element that opens the preview (a button or a file-name button). Not a link to the file. */
   trigger?: ReactNode | undefined;
   open?: boolean | undefined;
@@ -49,9 +56,11 @@ export interface FilePreviewDialogProps {
 /**
  * The shared document viewer (UIP-FORM-003). Images are fitted to the box and keep their aspect ratio. A PDF is
  * fetched from `previewUrl` once each time the dialog opens and drawn by `PdfPages`, never in an iframe. While the
- * file is still being prepared (HTTP 409, 404 or 425) or fails, the dialog shows a message and a Retry button; Retry
+ * file is still being prepared (HTTP 409 or 425) or fails to load, the dialog shows a message and a Retry button; Retry
  * makes one new request per click and nothing polls, because every call to such a route issues a single-use signed
- * link. Download is a secondary action in the footer. Any other type or an unsafe URL shows a short message and
+ * link. A PDF that could not be prepared (424) offers Retry only when `retryUrl` is given (staff), and Retry asks
+ * that route to queue the render again before loading the file. A missing PDF (404 or 410) says so and offers no
+ * Retry. Download is a secondary action in the footer. Any other type or an unsafe URL shows a short message and
  * makes Download the main action.
  *
  * Safety: HTML, SVG and unknown types are never framed, and only same-origin URLs are loaded. The route behind
@@ -74,6 +83,7 @@ export function FilePreviewDialog({
   mimeType,
   previewUrl,
   downloadUrl,
+  retryUrl,
   trigger,
   open,
   defaultOpen,
@@ -94,6 +104,7 @@ export function FilePreviewDialog({
       name={name}
       mimeType={mimeType}
       previewUrl={previewUrl}
+      retryUrl={retryUrl}
       failed={failed}
       onFail={() => setFailedUrl(previewUrl)}
     />
@@ -189,12 +200,14 @@ function Stage({
   name,
   mimeType,
   previewUrl,
+  retryUrl,
   failed,
   onFail,
 }: {
   name: string;
   mimeType: string;
   previewUrl: string;
+  retryUrl: string | undefined;
   failed: boolean;
   onFail: () => void;
 }) {
@@ -215,7 +228,8 @@ function Stage({
     );
   }
 
-  if (kind === 'pdf') return <PdfStage key={previewUrl} name={name} previewUrl={previewUrl} />;
+  if (kind === 'pdf')
+    return <PdfStage key={previewUrl} name={name} previewUrl={previewUrl} retryUrl={retryUrl} />;
 
   return (
     <div className={styles.stage}>
@@ -229,6 +243,8 @@ type PdfState =
   | { status: 'loading' }
   | { status: 'ready'; data: Uint8Array }
   | { status: 'preparing' }
+  | { status: 'failed' }
+  | { status: 'unavailable' }
   | { status: 'denied' }
   | { status: 'error' };
 
@@ -237,8 +253,18 @@ type PdfState =
  * ref makes React's development double-effect issue one request, and a microtask check on cleanup aborts the request
  * only when the stage really unmounts.
  */
-function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
+function PdfStage({
+  name,
+  previewUrl,
+  retryUrl,
+}: {
+  name: string;
+  previewUrl: string;
+  retryUrl: string | undefined;
+}) {
   const [attempt, setAttempt] = useState(0);
+  const [asking, setAsking] = useState(false);
+  const asked = useRef(false);
   const [state, setState] = useState<PdfState>({ status: 'loading' });
   const requested = useRef<number | null>(null);
   const controller = useRef<AbortController | null>(null);
@@ -280,6 +306,34 @@ function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
     setAttempt((current) => current + 1);
   };
 
+  /** Failed render: ask the API to queue it again once, then load the file again. A second click while asking is ignored. */
+  const retryFailed = async () => {
+    if (asked.current || retryUrl === undefined) return;
+    asked.current = true;
+    setAsking(true);
+    let outcome: 'queued' | 'not-needed' | 'failed';
+    try {
+      const response = await fetch(retryUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      outcome = response.ok ? 'queued' : response.status === 409 ? 'not-needed' : 'failed';
+    } catch {
+      outcome = 'failed';
+    }
+    asked.current = false;
+    if (!mounted.current) return;
+    setAsking(false);
+    if (outcome === 'failed') {
+      toast.error('Could not request a retry', { id: 'pdf-retry' });
+      return;
+    }
+    // 409 means the render is no longer failed, so loading the file again shows what it is now.
+    if (outcome === 'queued') toast.success('Retry requested', { id: 'pdf-retry' });
+    retry();
+  };
+
   if (state.status === 'ready') {
     return (
       <div className={styles.pdfStage}>
@@ -301,21 +355,38 @@ function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
   }
   const message =
     state.status === 'preparing'
-      ? { title: 'Preparing…', text: 'This PDF is still being prepared.', retry: true }
-      : state.status === 'denied'
-        ? { title: 'No access', text: 'You no longer have access to this file.', retry: false }
-        : {
-            title: 'Could not load the PDF',
-            text: 'Something went wrong while loading it.',
-            retry: true,
-          };
+      ? { title: 'Preparing…', text: 'This PDF is still being prepared.', retry: retry }
+      : state.status === 'failed'
+        ? {
+            title: 'Could not prepare',
+            text: 'The PDF could not be prepared.',
+            retry: retryUrl === undefined ? null : ('ask' as const),
+          }
+        : state.status === 'unavailable'
+          ? { title: 'Not available', text: 'This PDF is not available.', retry: null }
+          : state.status === 'denied'
+            ? {
+                title: 'No access',
+                text: 'You no longer have access to this file.',
+                retry: null,
+              }
+            : {
+                title: 'Could not load the PDF',
+                text: 'Something went wrong while loading it.',
+                retry: 'load' as const,
+              };
   return (
     <div className={styles.fallback} role="status">
       <Icon name="file-text" size={40} className={styles.fallbackIcon} />
       <p className={styles.fallbackTitle}>{message.title}</p>
       <p className={styles.fallbackText}>{message.text}</p>
       {message.retry ? (
-        <Button variant="secondary" size="small" onClick={retry}>
+        <Button
+          variant="secondary"
+          size="small"
+          disabled={asking}
+          onClick={() => void (message.retry === 'ask' ? retryFailed() : retry())}
+        >
           Retry
         </Button>
       ) : null}
