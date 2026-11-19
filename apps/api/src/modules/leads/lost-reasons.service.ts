@@ -25,7 +25,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
@@ -39,6 +39,9 @@ type ReasonRow = typeof leadLostReasons.$inferSelect;
 
 /** The trimmed, lower-cased label the database keeps unique per tenant (label_norm). */
 export const normalizeReasonLabel = (label: string): string => label.trim().toLowerCase();
+
+/** The same key computed by Postgres, so the table's own check (label_norm = lower(btrim(label))) always accepts it. */
+const normSql = (label: string) => sql<string>`lower(btrim(${label}))`;
 
 export const toLostReason = (row: ReasonRow): LeadLostReason => ({
   id: row.id,
@@ -128,6 +131,7 @@ export class LeadLostReasonsService {
   async update(id: string, body: UpdateLeadLostReasonBody): Promise<LeadLostReason> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
+      await this.lockTenant(tx, scope.tenantId);
       const [current] = await tx
         .select()
         .from(leadLostReasons)
@@ -136,18 +140,20 @@ export class LeadLostReasonsService {
       if (current === undefined) throw notFound();
       const set: Partial<typeof leadLostReasons.$inferInsert> = { updatedAt: new Date() };
       if (body.label !== undefined) {
-        const norm = normalizeReasonLabel(body.label);
-        if (norm !== current.labelNorm) {
-          const [clash] = await tx
-            .select({ id: leadLostReasons.id })
-            .from(leadLostReasons)
-            .where(
-              and(eq(leadLostReasons.tenantId, scope.tenantId), eq(leadLostReasons.labelNorm, norm)),
-            );
-          if (clash !== undefined) throw duplicate(body.label.trim());
-        }
+        const [clash] = await tx
+          .select({ id: leadLostReasons.id })
+          .from(leadLostReasons)
+          .where(
+            and(
+              eq(leadLostReasons.tenantId, scope.tenantId),
+              eq(leadLostReasons.labelNorm, normSql(body.label.trim())),
+              ne(leadLostReasons.id, id),
+            ),
+          );
+        if (clash !== undefined) throw duplicate(body.label.trim());
         set.label = body.label.trim();
-        set.labelNorm = norm;
+        // Postgres computes the key (see normSql); the column's TypeScript type only says string.
+        set.labelNorm = normSql(body.label.trim()) as unknown as string;
       }
       if (body.retired !== undefined) {
         set.retiredAt = body.retired ? (current.retiredAt ?? new Date()) : null;
@@ -168,6 +174,7 @@ export class LeadLostReasonsService {
   async reorder(body: ReorderLeadLostReasonsBody): Promise<LeadLostReason[]> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
+      await this.lockTenant(tx, scope.tenantId);
       await this.seedDefaults(tx, scope.tenantId);
       const rows = await tx
         .select()
@@ -210,6 +217,7 @@ export class LeadLostReasonsService {
   async reset(): Promise<LeadLostReason[]> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
+      await this.lockTenant(tx, scope.tenantId);
       await this.seedDefaults(tx, scope.tenantId);
       const rows = await tx
         .select()
@@ -263,7 +271,7 @@ export class LeadLostReasonsService {
           .update(leadLostReasons)
           .set({
             label: t.label,
-            labelNorm: normalizeReasonLabel(t.label),
+            labelNorm: normSql(t.label),
             position: t.position,
             retiredAt: t.retired ? (row.retiredAt ?? new Date()) : null,
             updatedAt: new Date(),
@@ -309,11 +317,26 @@ export class LeadLostReasonsService {
       }
       return { id: row.id, label: row.label };
     }
-    const row = await this.insertOption(tx, tenantId, pick.newLostReason ?? '', 'mark_lost');
+    const typed = (pick.newLostReason ?? '').trim();
+    if (typed === '' || typed.length > LEAD_LOST_REASON_LABEL_MAX) {
+      throw new BadRequestException({
+        code: 'bad_request',
+        message: `Choose a lost reason, or add one of 1 to ${LEAD_LOST_REASON_LABEL_MAX} characters`,
+      });
+    }
+    const row = await this.insertOption(tx, tenantId, typed, 'mark_lost');
     return { id: row.id, label: row.label };
   }
 
   // --------------------------------------------------------------------------------------------- internals
+
+  /**
+   * One writer per tenant at a time for this list: two adds never share a position, two renames to the same words
+   * answer 409 instead of a unique-index error, and reorder, reset and update never wait on each other's row locks.
+   */
+  private async lockTenant(tx: DbTransaction, tenantId: string): Promise<void> {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lead_lost_reasons:${tenantId}`}))`);
+  }
 
   /** Adds an option at the end of the list; 409 when its normalised label is taken (active or retired). */
   private async insertOption(
@@ -323,8 +346,7 @@ export class LeadLostReasonsService {
     via: 'settings' | 'mark_lost',
   ): Promise<ReasonRow> {
     const label = rawLabel.trim();
-    // One writer per tenant picks the next position, so two adds at once never share a slot.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lead_lost_reasons:${tenantId}`}))`);
+    await this.lockTenant(tx, tenantId);
     const [last] = await tx
       .select({ position: sql<number>`coalesce(max(${leadLostReasons.position}), -1)::int` })
       .from(leadLostReasons)
@@ -334,7 +356,7 @@ export class LeadLostReasonsService {
       .values({
         tenantId,
         label,
-        labelNorm: normalizeReasonLabel(label),
+        labelNorm: normSql(label),
         position: (last?.position ?? -1) + 1,
       })
       .onConflictDoNothing()
