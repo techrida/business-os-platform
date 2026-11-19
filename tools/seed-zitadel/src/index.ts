@@ -60,6 +60,7 @@ export interface SeedDeps {
   log: (line: string) => void;
   issuer: string;
   workspaceUrl: string;
+  configureDevMailpit?: boolean;
 }
 
 export interface SeedResult {
@@ -263,12 +264,13 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
 
   // --- Activate local mail delivery for password reset and other ZITADEL notifications. ---
   if (
-    await api.ensureSmtp({
+    deps.configureDevMailpit &&
+    (await api.ensureSmtp({
       description: SMTP_DESCRIPTION,
       host: 'mailpit:1025',
       senderAddress: 'noreply@bos.test',
       senderName: 'Business OS (dev)',
-    })
+    }))
   ) {
     changed('activated the Mailpit email provider');
   }
@@ -432,6 +434,7 @@ export async function main(): Promise<void> {
     log: (line) => console.log(line),
     issuer,
     workspaceUrl,
+    configureDevMailpit: process.env['BOS_SEED_DEV_MAILPIT'] === 'true',
   });
   console.log(
     result.changes.length === 0 ? 'no changes' : `done: ${result.changes.length} change(s)`,

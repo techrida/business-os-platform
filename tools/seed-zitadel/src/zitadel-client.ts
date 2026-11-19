@@ -732,7 +732,7 @@ export class ZitadelClient implements ZitadelApi {
       'ListEmailProviders',
     );
     const existing = list.result.find((provider) => provider.description === spec.description);
-    if (existing?.state === 'EMAIL_PROVIDER_ACTIVE') return false;
+    if (list.result.some((provider) => provider.state === 'EMAIL_PROVIDER_ACTIVE')) return false;
     const provider =
       existing ??
       parse(
