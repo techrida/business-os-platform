@@ -918,3 +918,58 @@ describe('editing a request with a retired cost centre', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('department and cost-centre names on a request (I-27)', () => {
+  /** The stored names, read as the system so the test does not trust the service's own lookup. */
+  const namesOf = async (deptId: string, ccId: string) =>
+    read(async (tx) => {
+      const [d] = await tx
+        .execute<{ name: string }>(sql`SELECT name FROM app.departments WHERE id = ${deptId}`)
+        .then((r) => r.rows);
+      const [c] = await tx
+        .execute<{ name: string }>(sql`SELECT name FROM app.cost_centers WHERE id = ${ccId}`)
+        .then((r) => r.rows);
+      return { departmentName: d!.name, costCenterName: c!.name };
+    });
+
+  it("names another requester's department and cost centre for Procurement, in the detail and the list", async () => {
+    const mine = await draft();
+    const expected = await namesOf(dept.headed, centers.active);
+    as(U.proc, 'procurement');
+    const got = await service.get(mine.id);
+    expect(got.requesterUserId).toBe(U.req);
+    expect({ departmentName: got.departmentName, costCenterName: got.costCenterName }).toEqual(
+      expected,
+    );
+    const row = (await service.list({ limit: 100 })).find((r) => r.id === mine.id);
+    expect(row).toMatchObject(expected);
+  });
+
+  it('names each request by its own department when several are listed', async () => {
+    const other = await draft({ departmentId: dept.headless });
+    const expected = await namesOf(dept.headless, centers.active);
+    as(U.proc, 'procurement');
+    const row = (await service.list({ limit: 100 })).find((r) => r.id === other.id);
+    expect(row?.departmentName).toBe(expected.departmentName);
+  });
+
+  it("does not show another entity's request, or its names, to entity A's Procurement", async () => {
+    const { costCenterId } = await createCostCenter(appPool, {
+      ...scopeB,
+      name: `Entity B centre ${randomUUID()}`,
+    });
+    current.scope = scopeB;
+    const theirs = await service.create(
+      body({ departmentId: dept.otherEntity, costCenterId }),
+      randomUUID(),
+    );
+    const theirNames = await namesOf(dept.otherEntity, costCenterId);
+    current.scope = null;
+    as(U.proc, 'procurement');
+    const listed = await service.list({ limit: 100 });
+    expect(listed.some((r) => r.id === theirs.id)).toBe(false);
+    expect(JSON.stringify(listed)).not.toContain(theirNames.departmentName);
+    expect(JSON.stringify(listed)).not.toContain(theirNames.costCenterName);
+    expect((await httpErrorOf(service.get(theirs.id))).getStatus()).toBe(404);
+  });
+});
