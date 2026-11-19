@@ -1,6 +1,11 @@
 import {
+  DEFAULT_TERM_PRESETS,
   TERM_PRESET_KINDS,
   TERM_PRESET_KIND_LABELS,
+  isRichText,
+  richTextSchema,
+  richTextToPlain,
+  sanitizeRichText,
   type TermPreset,
   type TermPresetKind,
 } from '@bos/contracts';
@@ -10,9 +15,9 @@ import {
 export const TERM_NAME_LIMIT = 80;
 
 /**
- * The longest text each kind may hold. The contract caps every preset body at 10,000; the quotation's
- * delivery timeline field is 2,000, so a longer saved option could never be filled into it. The
- * contract has no per-kind limit to import, so this is the one local copy.
+ * The longest text each kind may hold, counted in words and not markup (D31). The contract caps every
+ * term set body at 10,000; the quotation's delivery timeline field is 2,000, so a longer set could
+ * never be filled into it. The contract has no per-kind limit to import, so this is the one local copy.
  */
 export const TERM_BODY_LIMITS: Record<TermPresetKind, number> = {
   scope: 10_000,
@@ -56,12 +61,40 @@ export function presetsOfKind(list: readonly TermPreset[], kind: TermPresetKind)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
-/** The first non-empty line of a text, cut to `max` characters with an ellipsis. */
-export function firstLine(body: string, max = 140): string {
-  const line = body.split(/\r?\n/).find((l) => l.trim() !== '') ?? '';
-  const trimmed = line.trim();
-  return trimmed.length > max ? `${trimmed.slice(0, max - 1).trimEnd()}…` : trimmed;
+/** The ids of the sets the app ships with. They are editable like any other set; this is only a label. */
+const APP_DEFAULT_IDS: ReadonlySet<string> = new Set(DEFAULT_TERM_PRESETS.map((p) => p.id));
+
+export const isAppDefaultSet = (id: string): boolean => APP_DEFAULT_IDS.has(id);
+
+/** True when the saved list is exactly the app's default sets (same ids, kinds, names and text), in any order. */
+export function termSetsAreDefault(list: readonly TermPreset[]): boolean {
+  if (list.length !== DEFAULT_TERM_PRESETS.length) return false;
+  const byId = new Map(list.map((p) => [p.id, p]));
+  return DEFAULT_TERM_PRESETS.every((d) => {
+    const saved = byId.get(d.id);
+    return (
+      saved !== undefined && saved.kind === d.kind && saved.name === d.name && saved.body === d.body
+    );
+  });
 }
+
+/**
+ * One line of plain words for the list: the text without markup, list items without their markers,
+ * lines joined by " · ", cut to `max` characters with an ellipsis. Works for rich text and for text
+ * saved before D31.
+ */
+export function previewLine(body: string, max = 160): string {
+  const line = richTextToPlain(body)
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/^(?:-|\d+\.)\s+/, ''))
+    .filter((l) => l !== '')
+    .join(' · ');
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
+/** What gets stored: rich text rebuilt from the allow-list, plain text trimmed. The contract's own rule. */
+export const normalizeBody = (body: string): string =>
+  isRichText(body) ? sanitizeRichText(body) : body.trim();
 
 export interface PresetInput {
   name: string;
@@ -72,21 +105,31 @@ export type PresetValidation =
   | { ok: true; value: PresetInput }
   | { ok: false; fieldErrors: Partial<Record<keyof PresetInput, string>> };
 
-/** The rules the API applies (trimmed, 1 to the limit characters), said at the field before the call. */
+/**
+ * The rules the API applies (name trimmed, 1 to 80 characters; text sanitised by the contract's
+ * `richTextSchema`, 1 to the kind's limit in words), said at the field before the call. The value
+ * returned is what the API will store, so a script or attribute typed anywhere is already gone.
+ */
 export function validatePreset(kind: TermPresetKind, input: PresetInput): PresetValidation {
   const name = input.name.trim();
-  const body = input.body.trim();
   const limit = TERM_BODY_LIMITS[kind];
   const fieldErrors: Partial<Record<keyof PresetInput, string>> = {};
-  if (name === '') fieldErrors.name = 'Give this option a name, so you can find it in the list.';
+  if (name === '') fieldErrors.name = 'Give this term set a name, so you can find it in the list.';
   else if (name.length > TERM_NAME_LIMIT) {
     fieldErrors.name = `Keep the name to ${TERM_NAME_LIMIT} characters or fewer.`;
   }
-  if (body === '') fieldErrors.body = 'Write the text this option fills in.';
-  else if (body.length > limit) {
+  const parsed = richTextSchema(limit).safeParse(input.body);
+  if (parsed.success) {
+    // Nothing but whitespace is also empty: the schema counts it as text.
+    if (richTextToPlain(parsed.data).trim() === '') {
+      fieldErrors.body = 'Write the text this term set fills in.';
+    }
+  } else if (input.body.trim() === '' || parsed.error.issues.some((i) => /empty/.test(i.message))) {
+    fieldErrors.body = 'Write the text this term set fills in.';
+  } else {
     fieldErrors.body = `Keep the text to ${limit.toLocaleString('en-US')} characters or fewer.`;
   }
-  return Object.keys(fieldErrors).length > 0
+  return Object.keys(fieldErrors).length > 0 || !parsed.success
     ? { ok: false, fieldErrors }
-    : { ok: true, value: { name, body } };
+    : { ok: true, value: { name, body: parsed.data } };
 }
