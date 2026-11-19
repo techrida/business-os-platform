@@ -1,13 +1,13 @@
 import 'server-only';
 
-import type { Permission, Scope } from '@bos/contracts';
+import type { AccessScope, Permission } from '@bos/contracts';
 import { cache } from 'react';
 
 import { getMe } from './api';
 import type { Session } from './session';
 
 /** The caller's live grants: each permission they hold, with the widest scope their roles give it. */
-export type Grants = ReadonlyMap<Permission, Scope>;
+export type Grants = ReadonlyMap<Permission, AccessScope>;
 
 const NONE: Grants = new Map();
 
@@ -42,6 +42,6 @@ export function hasGrant(grants: Grants, permission: Permission): boolean {
 }
 
 /** The scope the user holds `permission` at, or undefined without it. */
-export function grantScope(grants: Grants, permission: Permission): Scope | undefined {
+export function grantScope(grants: Grants, permission: Permission): AccessScope | undefined {
   return grants.get(permission);
 }

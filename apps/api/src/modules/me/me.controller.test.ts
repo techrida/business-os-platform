@@ -1,9 +1,9 @@
 import {
+  type AccessScope,
   DEFAULT_ROLE_PERMISSIONS,
   MeResponseSchema,
   type Permission,
   type RoleKey,
-  type Scope,
 } from '@bos/contracts';
 import { authzVersions } from '@bos/db';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -46,26 +46,30 @@ function fakeDb(rows: { avatarDocumentId: string | null }[] = [{ avatarDocumentI
 type Row = { roleKey: RoleKey; permission: string; scope: string };
 
 /**
- * A RoleCache over a fake database holding `rows` as the tenant's `role_permissions` (version 1). The cache's own
- * merge runs, so the principal carries exactly what the interceptor would build from the live table.
+ * A RoleCache over a fake database holding `rows` as the tenant's `role_permissions` (version 1) and no level rows
+ * of its own. The cache's own merge runs, so the principal carries exactly what the interceptor would build from
+ * the live table.
  */
 function cacheOver(rows: readonly Row[]): RoleCache {
   const db = {
     select: () => ({
       from: (table: unknown) => ({
         where: () => {
-          const result = Promise.resolve(table === authzVersions ? [{ version: 1 }] : [...rows]);
+          const result = Promise.resolve(table === authzVersions ? [{ version: 1 }] : []);
           return Object.assign(result, { limit: () => result });
         },
       }),
     }),
+    // The one load statement: base rows (no level rows, no materialized flag).
+    execute: () =>
+      Promise.resolve({ rows: rows.map((r) => ({ kind: 'base', minLevel: null, ...r })) }),
   } as unknown as Db;
   return new RoleCache(db, () => 0);
 }
 
 function principalOf(
   roles: RoleKey[],
-  grants: ReadonlyMap<Permission, Scope>,
+  grants: ReadonlyMap<Permission, AccessScope>,
   status: Principal['status'] = 'active',
 ): Principal {
   return {
@@ -135,12 +139,44 @@ describe('MeController', () => {
       correlationId: 'corr-12345678',
       permissions: [{ permission: 'portal.quotation.read', scope: 'customer_org' }],
       avatarDocumentId: null,
+      // The principal's own department (this fixture gives one) and, with no level on it, staff.
+      level: 'staff',
+      departmentId: DEPARTMENT,
     });
     expect(body.roles).not.toBe(roles);
-    // tokenExp, idpOrgId and departmentId are internal: they must not leak into the response.
+    // tokenExp and idpOrgId are internal: they must not leak into the response.
     expect(body).not.toHaveProperty('tokenExp');
     expect(body).not.toHaveProperty('idpOrgId');
-    expect(body).not.toHaveProperty('departmentId');
+  });
+
+  it('carries the level and department the grants were built for', async () => {
+    const manager = { ...principalOf(['sales'], new Map()), level: 'manager' as const };
+    const body = MeResponseSchema.parse(await meAs(manager));
+    expect(body.level).toBe('manager');
+    expect(body.departmentId).toBe(DEPARTMENT);
+
+    const noDepartment = MeResponseSchema.parse(
+      await meAs({ ...principalOf(['sales'], new Map()), departmentId: null }),
+    );
+    expect(noDepartment.level).toBe('staff');
+    expect(noDepartment.departmentId).toBeNull();
+  });
+
+  it('passes `assigned` through on a read it works on, and drops it on a write, as can() does', async () => {
+    const body = await meAs(
+      principalOf(
+        ['sales'],
+        new Map<Permission, AccessScope>([
+          ['crm.lead.read', 'assigned'],
+          ['crm.lead.write', 'assigned'],
+          ['customer.read', 'assigned'],
+        ]),
+      ),
+    );
+    // A read with assignee reach keeps the scope; a write and a read no assignment hands over grant nothing.
+    expect(MeResponseSchema.parse(body).permissions).toEqual([
+      { permission: 'crm.lead.read', scope: 'assigned' },
+    ]);
   });
 
   it("carries the caller's own avatar document id, read by tenant and app user id", async () => {
@@ -227,7 +263,9 @@ describe('MeController', () => {
       [
         'avatarDocumentId',
         'correlationId',
+        'departmentId',
         'id',
+        'level',
         'orgKind',
         'organizationId',
         'partyId',
@@ -242,11 +280,10 @@ describe('MeController', () => {
       expect(Object.keys(grant).sort()).toEqual(['permission', 'scope']);
     }
     // The ZITADEL sub is the public user id. The app uuid travels only as `id`, the owner id of the caller's
-    // profile picture; department and status stay internal.
+    // profile picture; the IdP org and status stay internal.
     expect(body.userId).toBe(SUB);
     expect(body.id).toBe(APP_USER);
     const text = JSON.stringify(body);
-    expect(text).not.toContain(DEPARTMENT);
     expect(text).not.toContain(IDP_ORG);
     expect(body).not.toHaveProperty('status');
     expect(body).not.toHaveProperty('zitadelUserId');
