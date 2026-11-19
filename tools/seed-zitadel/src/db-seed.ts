@@ -209,18 +209,20 @@ async function seedRolePermissions(client: pg.ClientBase, scope: SeedScope): Pro
     [scope.tenantId, keptRoles, keptPermissions],
   );
   changed += stale.rowCount ?? 0;
-  if (changed > 0) {
-    // The API caches grants per authz version; without a bump, running instances keep stale roles.
-    const bump = await client.query(
-      `INSERT INTO app.authz_versions (tenant_id, version)
-       VALUES ($1, 1)
-       ON CONFLICT (tenant_id) DO UPDATE
-         SET version = authz_versions.version + 1`,
-      [scope.tenantId],
-    );
-    changed += bump.rowCount ?? 0;
-  }
+  // The API caches grants per authz version; without a bump, running instances keep stale roles.
+  if (changed > 0) changed += await bumpAuthzVersion(client, scope);
   return changed;
+}
+
+async function bumpAuthzVersion(client: pg.ClientBase, scope: SeedScope): Promise<number> {
+  const bump = await client.query(
+    `INSERT INTO app.authz_versions (tenant_id, version)
+     VALUES ($1, 1)
+     ON CONFLICT (tenant_id) DO UPDATE
+       SET version = authz_versions.version + 1`,
+    [scope.tenantId],
+  );
+  return bump.rowCount ?? 0;
 }
 
 interface WorkflowSeed {
@@ -382,7 +384,52 @@ const VENDOR_CREATOR_KEY = 'procurement';
 const VENDOR_APPROVER_KEY = 'management';
 const DEPARTMENT_HEAD_KEY = 'depthead';
 const RECEIPT_CONFIRMER_KEY = 'warehouse';
-const DEV_DEPARTMENT_NAME = 'Operations';
+
+/** A membership level (app.user_entities.level, D50). */
+type DevLevel = 'staff' | 'manager' | 'head';
+
+interface DevDepartment {
+  name: string;
+  /** The persona named in departments.head_user_id; it is also filed below at level head. */
+  headKey: string;
+  members: readonly { key: string; level: DevLevel }[];
+}
+
+/**
+ * The dev departments and who is filed in which at what level. Operations serves the procurement flows (the PR
+ * route ends at its head, AD10); Sales and Marketing have a person at every level so the D50/D51 access model can
+ * be tried by switching user. Matched like the 0086 unique index (active, name without case or outer spaces), so a
+ * department made by an earlier run or by hand in Settings is reused rather than duplicated.
+ */
+export const DEV_DEPARTMENTS: readonly DevDepartment[] = [
+  {
+    name: 'Operations',
+    headKey: DEPARTMENT_HEAD_KEY,
+    members: [
+      { key: VENDOR_CREATOR_KEY, level: 'staff' },
+      { key: DEPARTMENT_HEAD_KEY, level: 'head' },
+    ],
+  },
+  {
+    name: 'Sales',
+    headKey: 'saleshead',
+    members: [
+      { key: 'sales', level: 'staff' },
+      { key: 'sales2', level: 'staff' },
+      { key: 'salesmgr', level: 'manager' },
+      { key: 'saleshead', level: 'head' },
+    ],
+  },
+  {
+    name: 'Marketing',
+    headKey: 'marketinghead',
+    members: [
+      { key: 'marketing', level: 'staff' },
+      { key: 'marketingmgr', level: 'manager' },
+      { key: 'marketinghead', level: 'head' },
+    ],
+  },
+];
 /** A nine-digit Nepal PAN (vendors_pan_check). Fictional: the dev vendor is not a real company. */
 const DEV_VENDOR_PAN = '123456789';
 /** The vendor party the tenancy step creates (SEED_PARTIES.vendor in index.ts; a test pins the two together). */
@@ -391,23 +438,26 @@ const DEV_VENDOR_TERM = 'NET30';
 
 /** The personas the dev people step needs, in a fixed order; a missing one is an error, not a skip. */
 function devPeople(personas: readonly DevPersona[]): (DevPersona & { role: string })[] {
-  return [VENDOR_CREATOR_KEY, VENDOR_APPROVER_KEY, DEPARTMENT_HEAD_KEY, RECEIPT_CONFIRMER_KEY].map(
-    (key) => {
-      const persona = personas.find((p) => p.personaKey === key);
-      if (!persona) throw new Error(`dev seed needs persona "${key}" but it was not passed`);
-      const role = PERSONAS.find((p) => p.key === key)?.role;
-      if (!role) throw new Error(`dev seed: persona "${key}" is not in PERSONAS`);
-      return { ...persona, role };
-    },
-  );
+  const keys = [VENDOR_CREATOR_KEY, VENDOR_APPROVER_KEY, DEPARTMENT_HEAD_KEY, RECEIPT_CONFIRMER_KEY];
+  for (const department of DEV_DEPARTMENTS) {
+    for (const member of department.members) if (!keys.includes(member.key)) keys.push(member.key);
+  }
+  return keys.map((key) => {
+    const persona = personas.find((p) => p.personaKey === key);
+    if (!persona) throw new Error(`dev seed needs persona "${key}" but it was not passed`);
+    const role = PERSONAS.find((p) => p.key === key)?.role;
+    if (!role) throw new Error(`dev seed: persona "${key}" is not in PERSONAS`);
+    return { ...persona, role };
+  });
 }
 
 /**
- * Dev data that the procurement flows need: procurement, management, department-head and warehouse users with a TR
- * membership each, a department headed by the department head (procurement belongs to it), and VEND-DEV as an
- * approved vendor with a TR account. The API's user mirror would create the users later (JIT or webhook); the
- * vendor's maker-checker columns need real user ids now. Same rules as the mirror: a user is inserted when
- * absent, a membership only when the user has none. Idempotent: a second run changes 0 rows.
+ * Dev data that the procurement flows and the access model need: procurement, management, department-head and
+ * warehouse users plus the Sales and Marketing people, with a TR membership each; the DEV_DEPARTMENTS with their
+ * heads and members filed at their level; and VEND-DEV as an approved vendor with a TR account. The API's user
+ * mirror would create the users later (JIT or webhook); the vendor's maker-checker columns and the department
+ * heads need real user ids now. Same rules as the mirror: a user is inserted when absent, a membership only when
+ * the user has none. Idempotent: a second run changes 0 rows.
  */
 async function seedDevPeopleAndVendor(
   client: pg.ClientBase,
@@ -457,39 +507,14 @@ async function seedDevPeopleAndVendor(
     changed += result.rowCount ?? 0;
   }
 
-  // The department: created once by name, then its head is kept equal to the department-head persona.
-  const headId = userIdOf(DEPARTMENT_HEAD_KEY);
-  const department = await client.query(
-    `INSERT INTO app.departments (tenant_id, organization_id, name, head_user_id)
-     SELECT $1::uuid, $2::uuid, $3, $4::uuid
-     WHERE NOT EXISTS (
-       SELECT 1 FROM app.departments WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND name = $3
-     )`,
-    [scope.tenantId, scope.organizationId, DEV_DEPARTMENT_NAME, headId],
-  );
-  changed += department.rowCount ?? 0;
-  const head = await client.query(
-    `UPDATE app.departments SET head_user_id = $4::uuid, updated_at = now()
-     WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND name = $3
-       AND head_user_id IS DISTINCT FROM $4::uuid`,
-    [scope.tenantId, scope.organizationId, DEV_DEPARTMENT_NAME, headId],
-  );
-  changed += head.rowCount ?? 0;
-  const departmentRow = await client.query<{ id: string }>(
-    `SELECT id FROM app.departments
-     WHERE tenant_id = $1 AND organization_id = $2 AND name = $3
-     ORDER BY created_at, id LIMIT 1`,
-    [scope.tenantId, scope.organizationId, DEV_DEPARTMENT_NAME],
-  );
-  const departmentId = departmentRow.rows[0]?.id;
-  if (!departmentId) throw new Error(`dev seed: department "${DEV_DEPARTMENT_NAME}" not found`);
-  const filed = await client.query(
-    `UPDATE app.user_entities SET department_id = $4::uuid
-     WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND user_id = $3::uuid
-       AND department_id IS DISTINCT FROM $4::uuid`,
-    [scope.tenantId, scope.organizationId, userIdOf(VENDOR_CREATOR_KEY), departmentId],
-  );
-  changed += filed.rowCount ?? 0;
+  let filed = 0;
+  for (const department of DEV_DEPARTMENTS) {
+    filed += await seedDevDepartment(client, scope, department, userIdOf);
+  }
+  // The API caches each user's membership (department, level) per authz version, so a refiled person would keep
+  // their old reach until the cache expires. Only when something moved: a re-run must still change 0 rows.
+  if (filed > 0) filed += await bumpAuthzVersion(client, scope);
+  changed += filed;
 
   // VEND-DEV: the party exists already (the tenancy step upserts it). The vendor row takes its id and legal name.
   const party = await client.query<{ id: string }>(
@@ -525,6 +550,62 @@ async function seedDevPeopleAndVendor(
   return changed;
 }
 
+/**
+ * One dev department: created once by name with its head, the head kept equal to the head persona, then each
+ * member filed with its department and level. The department row is written and locked before any membership
+ * (D55-8): the 0079 membership trigger locks the department after the membership, so taking the department
+ * first keeps one lock order with a concurrent Settings save. Each write is guarded by IS DISTINCT FROM, so a
+ * re-run changes nothing; the 0079 triggers then find head_user_id and level = 'head' already in step.
+ */
+async function seedDevDepartment(
+  client: pg.ClientBase,
+  scope: SeedScope,
+  department: DevDepartment,
+  userIdOf: (key: string) => string,
+): Promise<number> {
+  let changed = 0;
+  const headId = userIdOf(department.headKey);
+  const created = await client.query(
+    `INSERT INTO app.departments (tenant_id, organization_id, name, head_user_id)
+     SELECT $1::uuid, $2::uuid, $3, $4::uuid
+     WHERE NOT EXISTS (
+       SELECT 1 FROM app.departments
+       WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND status = 'active'
+         AND lower(btrim(name)) = lower(btrim($3))
+     )`,
+    [scope.tenantId, scope.organizationId, department.name, headId],
+  );
+  changed += created.rowCount ?? 0;
+  const head = await client.query(
+    `UPDATE app.departments SET head_user_id = $4::uuid, updated_at = now()
+     WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND status = 'active'
+       AND lower(btrim(name)) = lower(btrim($3))
+       AND head_user_id IS DISTINCT FROM $4::uuid`,
+    [scope.tenantId, scope.organizationId, department.name, headId],
+  );
+  changed += head.rowCount ?? 0;
+  // FOR UPDATE: on a re-run neither write above touched the row, and the lock must still come first.
+  const row = await client.query<{ id: string }>(
+    `SELECT id FROM app.departments
+     WHERE tenant_id = $1 AND organization_id = $2 AND status = 'active'
+       AND lower(btrim(name)) = lower(btrim($3))
+     FOR UPDATE`,
+    [scope.tenantId, scope.organizationId, department.name],
+  );
+  const departmentId = row.rows[0]?.id;
+  if (!departmentId) throw new Error(`dev seed: department "${department.name}" not found`);
+  for (const member of department.members) {
+    const filed = await client.query(
+      `UPDATE app.user_entities SET department_id = $4::uuid, level = $5
+       WHERE tenant_id = $1::uuid AND organization_id = $2::uuid AND user_id = $3::uuid
+         AND (department_id IS DISTINCT FROM $4::uuid OR level IS DISTINCT FROM $5)`,
+      [scope.tenantId, scope.organizationId, userIdOf(member.key), departmentId, member.level],
+    );
+    changed += filed.rowCount ?? 0;
+  }
+  return changed;
+}
+
 // `app.number_series` is not seeded: this package does not depend on @bos/locale (so no
 // fiscalYearOf), and the API's NumberingService creates each row lazily on first use (MEMO, the
 // P2 series QT, LD, DEAL and CUS, and the P4 series PR, RFQ, PO, GRN, BILL and PAY).
@@ -532,7 +613,9 @@ async function seedDevPeopleAndVendor(
 /**
  * Seeds the kernel rows in ONE transaction and returns how many rows were inserted or changed.
  * A second run changes nothing and returns 0. With `personas` (the dev personas, from index.ts) it also seeds
- * the dev department and VEND-DEV, which need real user ids; without them that part is skipped.
+ * the dev departments and VEND-DEV, which need real user ids; without them that part is skipped. It never writes
+ * app.role_permission_levels: until Settings > Access first saves, the engine derives the default level grants in
+ * code, and seeded rows there would change that.
  */
 export async function seedKernelRows(
   client: pg.ClientBase,
