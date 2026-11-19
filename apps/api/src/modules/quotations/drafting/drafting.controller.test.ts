@@ -107,12 +107,12 @@ describe('DraftingController', () => {
     expect(() => controller.create(undefined, null)).toThrow(/Idempotency-Key/);
   });
 
-  it('lists with the defaults, or with the parsed filters, and reports the total in X-Total-Count', async () => {
+  it('lists without a limit by default, or with the parsed filters, and reports the total in X-Total-Count', async () => {
     const { service, controller } = await setup();
     const res = { setHeader: vi.fn() };
     service.list.mockResolvedValue({ rows: [{ id: ID }], total: 41 });
     await expect(controller.list({}, res as never)).resolves.toEqual([{ id: ID }]);
-    expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    expect(service.list).toHaveBeenLastCalledWith({ offset: 0 });
     expect(res.setHeader).toHaveBeenLastCalledWith('X-Total-Count', '41');
 
     await controller.list(
@@ -138,7 +138,6 @@ describe('DraftingController', () => {
     expect(service.list).toHaveBeenLastCalledWith({
       status: ['returned'],
       q: undefined,
-      limit: 50,
       offset: 0,
     });
   });

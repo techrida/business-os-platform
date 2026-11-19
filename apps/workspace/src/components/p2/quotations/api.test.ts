@@ -91,8 +91,8 @@ describe('listQuotations', () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.customerName).toBe('Big Kahuna Burger Ltd.');
     expect(calledUrl().pathname).toBe('/v1/quotations');
-    // Callers of this helper want every row, so it asks for the API's maximum page.
-    expect(calledUrl().search).toBe('?limit=200');
+    // Callers of this helper want every row, so it sends no limit and the API returns every match.
+    expect(calledUrl().search).toBe('');
   });
 
   it('passes the status filter in the query string', async () => {
@@ -100,6 +100,7 @@ describe('listQuotations', () => {
     await listQuotations(session, { status: 'sent' });
     expect(calledUrl().searchParams.get('status')).toBe('sent');
     expect(calledUrl().searchParams.has('opportunityId')).toBe(false);
+    expect(calledUrl().searchParams.has('limit')).toBe(false);
   });
 
   it('passes the opportunity filter, alone or with a status', async () => {
@@ -141,6 +142,7 @@ describe('listQuotations', () => {
 });
 
 describe('listQuotationsPage', () => {
+  const WINDOW = { limit: 25, offset: 0 };
   const CUSTOMER_A = '3f1d2c3b-0d52-4d1e-9d8a-4f6c7a5e4a5f';
   const CUSTOMER_B = '9b1d2c3b-0d52-4d1e-9d8a-4f6c7a5e4a5f';
 
@@ -163,27 +165,29 @@ describe('listQuotationsPage', () => {
     expect(params.get('offset')).toBe('20');
   });
 
-  it('sends no default limit and drops values the API would refuse', async () => {
+  it('drops values the API would refuse, keeping the window it was given', async () => {
     fetchMock.mockResolvedValue(reply(200, [], { 'x-total-count': '0' }));
     await listQuotationsPage(session, {
+      limit: 25,
+      offset: 0,
       status: ['nonsense', 'draft', 'draft'],
       customerId: 'not-an-id',
       opportunityId: '../x',
       q: '  ',
     });
-    expect(calledUrl().search).toBe('?status=draft');
+    expect(calledUrl().search).toBe('?status=draft&limit=25&offset=0');
   });
 
   it.each([[null], ['abc'], ['-1']])('fails with 502 when X-Total-Count is %s', async (value) => {
     fetchMock.mockResolvedValue(
       reply(200, [listItem], value === null ? {} : { 'x-total-count': value }),
     );
-    await expect(listQuotationsPage(session)).rejects.toMatchObject({ status: 502 });
+    await expect(listQuotationsPage(session, WINDOW)).rejects.toMatchObject({ status: 502 });
   });
 
   it('keeps the upstream status for a refusal', async () => {
     fetchMock.mockResolvedValue(reply(403, { error: { code: 'forbidden' } }));
-    await expect(listQuotationsPage(session)).rejects.toMatchObject({ status: 403 });
+    await expect(listQuotationsPage(session, WINDOW)).rejects.toMatchObject({ status: 403 });
   });
 });
 

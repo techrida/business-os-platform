@@ -60,7 +60,7 @@ import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.servi
 import { can, type Principal, type ResourceRef } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
-import { type Reader, searchPage } from '../../../platform/list';
+import { NO_LIMIT, type Reader, searchPage } from '../../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { quotationRef } from '../preview/quotation-preview.service';
@@ -414,13 +414,14 @@ export class DraftingService {
    * The quotations of the acting entity the caller may read, newest first, one page of them and the total.
    * `status` is the current version's; `customerId` and `opportunityId` are filters on top of the read scope,
    * never a widening. `q` searches number, customer name and owner name (close matches when few match exactly).
+   * Without `limit` every match is returned (the pickers never page).
    */
   async list(
     query: Partial<ListQuotationsQuery> = {},
   ): Promise<{ rows: QuotationListItem[]; total: number }> {
     const { scope, actor, principal } = this.caller.current();
     this.assertStaff(principal);
-    const { status, limit = 50, offset = 0 } = query;
+    const { status, limit = NO_LIMIT, offset = 0 } = query;
     const where = and(
       scopeWhereFor(principal, quotations, 'quotation.read'),
       status?.length ? inArray(quotationVersions.status, status) : undefined,

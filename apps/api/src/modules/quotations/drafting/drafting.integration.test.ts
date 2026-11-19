@@ -911,6 +911,24 @@ describe('DraftingService.list filters and total', () => {
     expect(past.rows).toEqual([]);
   });
 
+  it('returns every match when no limit is given, however many there are', async () => {
+    const c = await seedCustomerWithOpportunity('Every Row Pvt. Ltd.');
+    const created: string[] = [];
+    for (let i = 0; i < 51; i += 1) {
+      const q = await service.create(
+        goldenCreateBody(f, { opportunityId: c.opportunityId }),
+        `list-nolimit-${i}`,
+      );
+      created.push(q.id);
+    }
+    // More rows than any page default, so a hidden cap would drop the oldest one.
+    const every = await service.list({ customerId: [c.customerId] });
+    expect(every.total).toBe(51);
+    expect(every.rows.map((q) => q.id).sort()).toEqual([...created].sort());
+    const page = await service.list({ customerId: [c.customerId], limit: 50 });
+    expect([page.rows.length, page.total]).toEqual([50, 51]);
+  });
+
   it('searches the number, the customer name and close spellings of it', async () => {
     const himalyan = await seedCustomerWithOpportunity('Himalyan Traders Pvt Ltd');
     const made = await service.create(

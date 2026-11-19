@@ -40,7 +40,7 @@ import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
-import { searchPage } from '../../platform/list';
+import { NO_LIMIT, searchPage } from '../../platform/list';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { LedgerService } from '../ledger/ledger.service';
 import { loadTaxCodePeriods } from '../quotations/pricing/tax-codes.resolver';
@@ -165,8 +165,7 @@ export class InvoiceDraftingService {
         columns: SEARCH_COLUMNS,
         where: and(visible, this.filterWhere(filter, today, true)),
         orderBy: [desc(invoices.createdAt), desc(invoices.id)],
-        // Postgres reads LIMIT NULL as no limit.
-        limit: filter.limit ?? (null as unknown as number),
+        limit: filter.limit ?? NO_LIMIT,
         offset: filter.offset ?? 0,
         rows: (r, p) =>
           r

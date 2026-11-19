@@ -57,7 +57,7 @@ import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
-import { searchPage } from '../../platform/list';
+import { NO_LIMIT, searchPage } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -153,8 +153,7 @@ export class PaymentsService {
       columns: SEARCH_COLUMNS,
       where: this.listWhere(scope, filter, true),
       orderBy: [desc(payments.createdAt), desc(payments.id)],
-      // Postgres reads LIMIT NULL as no limit.
-      limit: filter.limit ?? (null as unknown as number),
+      limit: filter.limit ?? NO_LIMIT,
       offset: filter.offset ?? 0,
       rows: (r, p) =>
         r
