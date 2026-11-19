@@ -1838,12 +1838,18 @@
   fill: currentColor;
 }
 
-/* Language picker: compact, so the footer stays a footer */
-.bos-footer-end button {
+/* Keep the switcher compact and reserve room for its centred chevron. */
+.bos-footer-end button[aria-haspopup='listbox'] {
   min-height: 28px;
-  padding: 2px 8px;
+  padding-block: 2px;
+  padding-inline: 8px 32px;
   font-size: 11px;
   line-height: 1.4;
+}
+
+.bos-footer-end button[aria-haspopup='listbox'] > svg {
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* Keep the hint clear of the button on the setup screen */
