@@ -1,10 +1,11 @@
 // Unit tests: a manual invoice or proforma in a currency the company switched off is refused before anything is
-// written (D44). No Docker: the database is a fake whose transaction only records that it was opened.
+// written (D44), and a retry of a create that already succeeded still replays its stored answer. No Docker:
+// withTx and withIdempotency are replaced by stand-ins that run the callback (or replay a stored answer).
 // Run with: pnpm --filter @bos/api exec vitest run src/modules/invoices/invoice-drafting.currency.test.ts
 //
 // Drafting from a sales order copies the order's currency and is not checked (decision for U16), so it is not here.
 import { UnprocessableEntityException } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
@@ -19,6 +20,18 @@ import type { LedgerService } from '../ledger/ledger.service';
 import { InvoiceDraftingService } from './invoice-drafting.service';
 import type { InvoiceCaller } from './invoice-support';
 
+const state = vi.hoisted(() => ({ replay: undefined as { id: string } | undefined }));
+vi.mock('../../platform/db/tx', () => ({
+  withTx: (_db: unknown, _scope: unknown, _actor: unknown, fn: (tx: unknown) => unknown) => fn({}),
+}));
+vi.mock('../../platform/db/idempotency', () => ({
+  withIdempotency: async (
+    _tx: unknown,
+    _input: unknown,
+    fn: () => Promise<{ response: unknown }>,
+  ) =>
+    state.replay === undefined ? fn() : { status: 201, response: state.replay, replayed: true },
+}));
 const scope: TxScope = {
   tenantId: '00000000-0000-4000-8000-000000000001',
   organizationId: '10000000-0000-4000-8000-000000000001',
@@ -36,8 +49,17 @@ const caller = {
 } as unknown as InvoiceCaller;
 const authz = { assert: () => undefined } as unknown as AuthzService;
 
-/** Reached only when the service gets past the currency check and opens its transaction. */
-const OPENED = new Error('transaction opened');
+/** What the stubbed insert returns: reached only when the service gets past the currency check. */
+const CREATED = { id: 'created' };
+const created = vi.spyOn(
+  InvoiceDraftingService.prototype as unknown as { createTypedInTx: () => Promise<unknown> },
+  'createTypedInTx',
+);
+beforeEach(() => {
+  state.replay = undefined;
+  created.mockReset();
+  created.mockResolvedValue(CREATED);
+});
 
 const line = {
   description: 'Consulting',
@@ -59,7 +81,7 @@ const proformaBody = (currency: 'NPR' | 'INR' | 'USD') => ({
 });
 
 function build(currencies: CurrencyEnabledService) {
-  const transaction = vi.fn(() => Promise.reject(OPENED));
+  const transaction = vi.fn();
   const db = { transaction } as unknown as Db;
   const service = new InvoiceDraftingService(
     db,
@@ -84,9 +106,9 @@ async function caught(fn: () => Promise<unknown>): Promise<unknown> {
 }
 
 describe('InvoiceDraftingService refuses a disabled currency', () => {
-  it('a manual invoice in a switched-off currency: 422 CURRENCY_NOT_ENABLED and no transaction', async () => {
+  it('a manual invoice in a switched-off currency: 422 CURRENCY_NOT_ENABLED and nothing is written', async () => {
     const assertEnabled = vi.fn(() => Promise.reject(currencyNotEnabled('INR')));
-    const { service, transaction } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
 
     const error = await caught(() => service.draftManual(manualBody('INR'), 'key-1'));
 
@@ -97,12 +119,12 @@ describe('InvoiceDraftingService refuses a disabled currency', () => {
       details: { currency: 'INR' },
     });
     expect(assertEnabled).toHaveBeenCalledWith(scope, 'INR');
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 
   it('a proforma in a switched-off currency is refused the same way', async () => {
     const assertEnabled = vi.fn(() => Promise.reject(currencyNotEnabled('USD')));
-    const { service, transaction } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
 
     const error = await caught(() => service.draftProforma(proformaBody('USD'), 'key-2'));
 
@@ -110,26 +132,37 @@ describe('InvoiceDraftingService refuses a disabled currency', () => {
       code: 'CURRENCY_NOT_ENABLED',
     });
     expect(assertEnabled).toHaveBeenCalledWith(scope, 'USD');
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 
   it('an enabled currency passes the check and the draft goes on to its transaction', async () => {
     const assertEnabled = vi.fn(() => Promise.resolve());
-    const { service, transaction } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
 
-    await expect(service.draftManual(manualBody('USD'), 'key-3')).rejects.toBe(OPENED);
+    await expect(service.draftManual(manualBody('USD'), 'key-3')).resolves.toBe(CREATED);
     expect(assertEnabled).toHaveBeenCalledWith(scope, 'USD');
-    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(created).toHaveBeenCalledTimes(1);
   });
 
-  it('the real check against a saved list without INR refuses INR before the transaction', async () => {
+  it('a retry of a create that already succeeded replays its stored answer after the currency was switched off', async () => {
+    state.replay = { id: 'stored-invoice' };
+    const assertEnabled = vi.fn(() => Promise.reject(currencyNotEnabled('USD')));
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+
+    await expect(service.draftManual(manualBody('USD'), 'key-5')).resolves.toEqual({
+      id: 'stored-invoice',
+    });
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('the real check against a saved list without INR refuses INR', async () => {
     const settings = {
       get: (_scope: unknown, key: string) =>
         key === 'currency.enabled'
           ? Promise.resolve(['NPR', 'USD'])
           : Promise.reject(new Error(`unexpected setting ${key}`)),
     } as unknown as SettingsService;
-    const { service, transaction } = build(new CurrencyEnabledService(settings));
+    const { service } = build(new CurrencyEnabledService(settings));
 
     const error = await caught(() => service.draftManual(manualBody('INR'), 'key-4'));
 
@@ -138,6 +171,6 @@ describe('InvoiceDraftingService refuses a disabled currency', () => {
       message: 'Currency INR is not enabled for this company',
       details: { currency: 'INR' },
     });
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 });
