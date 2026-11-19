@@ -383,6 +383,7 @@ export const ACCESS_PERMISSION_GROUPS: readonly AccessPermissionGroup[] = [
     permissions: [
       'admin.users.read',
       'admin.users.invite',
+      'profile.avatar.write',
       'admin.roles.read',
       'admin.roles.write',
       'admin.settings.write',
@@ -429,7 +430,7 @@ function perm(
   };
 }
 
-/** Catalogue entry for every one of the 67 permissions in PERMISSIONS. */
+/** Catalogue entry for every one of the 68 permissions in PERMISSIONS. */
 export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
   // Leads
   perm('crm.lead.read', 'See leads', 'record', RECORD_CRM_READ, []),
@@ -593,6 +594,13 @@ export const ACCESS_PERMISSION_CATALOGUE: readonly AccessPermissionInfo[] = [
     ON_OFF_STAFF,
     [],
     'Invites new people into the company.',
+  ),
+  perm(
+    'profile.avatar.write',
+    'Set profile pictures',
+    'record',
+    RECORD_NO_DEPT,
+    [],
   ),
   perm('admin.roles.read', 'See access settings', 'onOff', ON_OFF_STAFF, []),
   perm(
