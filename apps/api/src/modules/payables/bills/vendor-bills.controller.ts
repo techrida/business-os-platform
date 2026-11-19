@@ -4,7 +4,6 @@
 // needs payables.vat_register.read. Every write takes an Idempotency-Key. Approval is through the approvals inbox
 // (routes vendor_bill and match_exception).
 import {
-  BillStatusSchema,
   CreateVendorBillBodySchema,
   RequestMatchExceptionBodySchema,
   VoidVendorBillBodySchema,
@@ -19,12 +18,16 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { z } from 'zod';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
+import { ListBillsQuerySchema } from './vendor-bill.rules';
 import {
   VendorBillsService,
   type MatchExceptionDto,
@@ -32,7 +35,6 @@ import {
   type VendorBillDto,
 } from './vendor-bills.service';
 
-const ListBillsQuerySchema = z.strictObject({ status: BillStatusSchema.optional() });
 const VatRegisterQuerySchema = z
   .strictObject({ from: z.iso.date(), to: z.iso.date() })
   .refine((q) => q.from <= q.to, { message: 'from must not be after to', path: ['to'] });
@@ -41,11 +43,20 @@ const VatRegisterQuerySchema = z
 export class VendorBillsController {
   constructor(private readonly bills: VendorBillsService) {}
 
-  /** The entity's bills, newest first. Query: `status` (optional). */
+  /**
+   * The entity's bills, newest first. Query: `status` (repeatable), `q`, `limit` (default 25, at most 100),
+   * `offset`; X-Total-Count is the number of all matches.
+   */
   @Get('bills')
   @Can('payables.bill.read')
-  list(@Query() query: unknown): Promise<Omit<VendorBillDto, 'lines'>[]> {
-    return this.bills.list(parseOr400(ListBillsQuerySchema, query).status);
+  list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<VendorBillDto, 'lines'>[]> {
+    return this.bills.list(parseOr400(ListBillsQuerySchema, query)).then(({ rows, total }) => {
+      setTotalCount(res, total);
+      return rows;
+    });
   }
 
   /** 404 outside the acting entity. */

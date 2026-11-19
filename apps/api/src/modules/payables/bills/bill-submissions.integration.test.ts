@@ -429,6 +429,32 @@ const plainLines = () => [
   { accountId: randomUUID(), quantity: '2', unitPrice: '500.00', taxCodeId: vatCode },
 ];
 
+// ---------------------------------------------------------------------------------------- list
+describe('list search and paging', () => {
+  it('searches by invoice number or vendor name, pages by offset, counts all matches and stays in the entity', async () => {
+    const vendorId = await vendor();
+    const name = `Vendor ${vendorId.slice(0, 6)}`;
+    const a = await submission({ vendorId, invoiceNo: `FIND-${randomUUID().slice(0, 8)}` });
+    const b = await submission({ vendorId });
+    const orphan = await submission({ vendorId: null });
+    const foreign = await submission({ vendorId, scope: scopeB });
+    const ids = (page: { rows: { id: string }[] }) => page.rows.map((r) => r.id);
+
+    const byInvoice = await inbox.list({ offset: 0, q: a.invoiceNo });
+    expect(ids(byInvoice)).toContain(a.id);
+    const byVendor = await inbox.list({ offset: 0, q: name });
+    expect(ids(byVendor)).toEqual(expect.arrayContaining([a.id, b.id]));
+    expect(ids(byVendor)).not.toContain(foreign.id);
+
+    // No limit: every received row, the vendorless one included (left join).
+    const all = await inbox.list();
+    expect(ids(all)).toEqual(expect.arrayContaining([a.id, b.id, orphan.id]));
+    const one = await inbox.list({ limit: 1, offset: 1 });
+    expect(one.total).toBe(all.total);
+    expect(one.rows[0]?.id).toBe(all.rows[1]?.id);
+  });
+});
+
 // ---------------------------------------------------------------------------------------- convert
 
 describe('convert a bill submission', () => {
@@ -442,7 +468,7 @@ describe('convert a bill submission', () => {
     await service.discard(bill.id, key);
     await service.discard(bill.id, key);
     expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
-    expect((await inbox.list()).map((row) => row.id)).toContain(sub.id);
+    expect((await inbox.list()).rows.map((row) => row.id)).toContain(sub.id);
     expect(await policy.canAttach!(scopeA, vendorId, undefined, sub.documentId)).toBe(true);
     const replacement = await service.convertSubmission(
       sub.id,
@@ -519,7 +545,7 @@ describe('convert a bill submission', () => {
     await service.convertSubmission(done.id, { lines: plainLines() }, randomUUID());
     await inbox.reject(rejected.id, { reason: 'Not our invoice' }, randomUUID());
 
-    const rows = await inbox.list();
+    const { rows } = await inbox.list();
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(open.id);
     expect(ids).not.toContain(done.id);
@@ -660,7 +686,7 @@ describe('convert a bill submission', () => {
     expect(await rowOf(sub.id)).toMatchObject({ status: 'received', convertedBillId: null });
 
     current.scope = scopeB;
-    expect((await inbox.list()).map((r) => r.id)).toContain(sub.id);
+    expect((await inbox.list()).rows.map((r) => r.id)).toContain(sub.id);
     const bill = await service.convertSubmission(sub.id, { lines: plainLines() }, randomUUID());
     expect(bill.vendorPartyId).toBe(vendorId);
   });

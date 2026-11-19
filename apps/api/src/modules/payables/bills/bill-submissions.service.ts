@@ -15,7 +15,8 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx } from '../../../platform/db/tx';
-import type { RejectBillSubmissionBody } from './bill-submissions.types';
+import { searchPage } from '../../../platform/list';
+import type { ListBillSubmissionsQuery, RejectBillSubmissionBody } from './bill-submissions.types';
 import { VendorBillsCaller } from './vendor-bills.caller';
 
 /** Injection token for a test clock; production falls back to the system time. */
@@ -42,6 +43,9 @@ export interface RejectedBillSubmissionDto {
   rejectionReason: string;
 }
 
+/** LIMIT for a list without a limit: larger than any inbox, so every row is returned. */
+const NO_LIMIT = 2_147_483_647;
+
 @Injectable()
 export class BillSubmissionsService {
   constructor(
@@ -53,24 +57,49 @@ export class BillSubmissionsService {
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
-  /** The entity's `received` submissions, oldest first (the order to work them in). */
-  async list(): Promise<BillSubmissionDto[]> {
+  /**
+   * One page of the entity's `received` submissions, oldest first (the order to work them in), optionally searched
+   * by the vendor's invoice number or the vendor name, with the total of all matches. Without a limit every row
+   * comes back.
+   */
+  async list(
+    query: ListBillSubmissionsQuery = { offset: 0 },
+  ): Promise<{ rows: BillSubmissionDto[]; total: number }> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
-        .select({ sub: vendorBillSubmissions, vendorName: vendors.legalName })
-        .from(vendorBillSubmissions)
-        .leftJoin(
-          vendors,
-          and(
-            eq(vendors.tenantId, vendorBillSubmissions.tenantId),
-            eq(vendors.id, vendorBillSubmissions.vendorPartyId),
-          ),
-        )
-        .where(
-          scoped(scope).where(vendorBillSubmissions, eq(vendorBillSubmissions.status, 'received')),
-        )
-        .orderBy(asc(vendorBillSubmissions.receivedAt), asc(vendorBillSubmissions.id));
+      // The vendor is optional on a submission, so the join stays a left join in the rows and the count.
+      const vendorJoin = and(
+        eq(vendors.tenantId, vendorBillSubmissions.tenantId),
+        eq(vendors.id, vendorBillSubmissions.vendorPartyId),
+      );
+      const { rows, total } = await searchPage(tx, {
+        q: query.q,
+        columns: [vendorBillSubmissions.vendorInvoiceNo, vendors.legalName],
+        where: scoped(scope).where(
+          vendorBillSubmissions,
+          eq(vendorBillSubmissions.status, 'received'),
+        ),
+        orderBy: [asc(vendorBillSubmissions.receivedAt), asc(vendorBillSubmissions.id)],
+        limit: query.limit ?? NO_LIMIT,
+        offset: query.offset,
+        rows: (reader, p) =>
+          reader
+            .select({ sub: vendorBillSubmissions, vendorName: vendors.legalName })
+            .from(vendorBillSubmissions)
+            .leftJoin(vendors, vendorJoin)
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: async (reader, where) => {
+          const [row] = await reader
+            .select({ n: sql<number>`count(*)::int` })
+            .from(vendorBillSubmissions)
+            .leftJoin(vendors, vendorJoin)
+            .where(where);
+          return row?.n ?? 0;
+        },
+      });
       const documentIds = [...new Set(rows.map((r) => r.sub.documentId))];
       const fileStatus = new Map<string, string>();
       if (documentIds.length > 0) {
@@ -89,7 +118,7 @@ export class BillSubmissionsService {
         for (const v of versions)
           if (!fileStatus.has(v.documentId)) fileStatus.set(v.documentId, v.status);
       }
-      return rows.map(({ sub, vendorName }) => ({
+      const items = rows.map(({ sub, vendorName }) => ({
         id: sub.id,
         vendorPartyId: sub.vendorPartyId,
         vendorName: vendorName ?? null,
@@ -102,6 +131,7 @@ export class BillSubmissionsService {
         status: 'received' as const,
         receivedAt: sub.receivedAt.toISOString(),
       }));
+      return { rows: items, total };
     });
   }
 
