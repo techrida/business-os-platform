@@ -25,7 +25,6 @@ import {
   isGuid,
   VERIFICATION_STATUS_LABEL,
 } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Icon } from '@/components/ui/icon';
@@ -145,11 +144,14 @@ export default async function VerificationCasePage({
       : customerLabel(customer, c.partyId);
   const status = VERIFICATION_STATUS_LABEL[c.status];
   const progress = checklistProgress(c.checklist);
-  const mayReview = hasPermission(session.roles, 'verification.review');
-  const mayEdit = hasPermission(session.roles, vendor ? 'vendor.write' : 'customer.write');
+  // What this person may do with this case, decided by the API on the case (its party's owner and the person's
+  // scope), not by role defaults. Without flags (an older API) nothing is offered; the API decides every call.
+  const can = c.can ?? { review: false, edit: false, attach: false, remove: false };
+  const mayReview = can.review;
+  const mayEdit = can.edit;
   const editable = mayEdit && (c.status === 'draft' || c.status === 'rejected');
-  const mayAttach = editable && hasPermission(session.roles, 'documents.upload');
-  const mayRemove = editable && hasPermission(session.roles, 'verification.read');
+  const mayAttach = editable && can.attach;
+  const mayRemove = editable && can.remove;
   const legacy = !vendor && c.reviewPolicy === 'case_review_v0';
   const actions = legacy ? null : c.status === 'draft' && mayEdit ? (
     <SubmitForm
