@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { PersonNameSchema, RoutePlanSchema } from './approvals.js';
 import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
+import { multi, searchParam } from './list-query.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
 import { richTextSchema } from './rich-text.js';
 
@@ -583,15 +584,42 @@ export const QuotationListItemSchema = QuotationDtoSchema.extend({
 export type QuotationListItem = z.infer<typeof QuotationListItemSchema>;
 
 /**
- * `GET /v1/quotations` query. Both filters are optional and combine; `opportunityId` limits the
- * list to one opportunity's quotations (still only those the caller may read). Unknown keys are
- * ignored, as before.
+ * `GET /v1/quotations` query (strict: an unknown key is a 400). `status` and `customerId` repeat
+ * (`?status=draft&status=sent`) and match any of the values; `status` is the current version's. `q`
+ * searches the number, customer name and owner name. `opportunityId` limits the list to one opportunity's
+ * quotations. Every filter narrows what the caller may read, never widens it. Without `limit` every match
+ * is returned (at most 200 when given). The body is a bare array and `X-Total-Count` carries the number of
+ * all matches.
  */
-export const ListQuotationsQuerySchema = z.object({
-  status: QuotationStatusSchema.optional(),
+export const ListQuotationsQuerySchema = z.strictObject({
+  status: multi(QuotationStatusSchema),
+  customerId: multi(z.guid()),
   opportunityId: z.guid().optional(),
+  q: searchParam,
+  // No `limit` means every match (the pickers never page); a paged caller sends limit and offset.
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 export type ListQuotationsQuery = z.infer<typeof ListQuotationsQuerySchema>;
+
+/**
+ * `GET /v1/quotations/summary` query: the list's filters without `status` and paging, so the KPI cards
+ * count the same rows the list is filtered to, whatever status is picked.
+ */
+export const QuotationSummaryQuerySchema = z.strictObject({
+  customerId: multi(z.guid()),
+  opportunityId: z.guid().optional(),
+  q: searchParam,
+});
+export type QuotationSummaryQuery = z.infer<typeof QuotationSummaryQuerySchema>;
+
+/** `GET /v1/quotations/summary`: how many quotations match, in total and per current-version status. */
+export const QuotationSummarySchema = z.object({
+  total: z.number().int().min(0),
+  /** Every status is present, zero when none match. */
+  byStatus: z.record(QuotationStatusSchema, z.number().int().min(0)),
+});
+export type QuotationSummary = z.infer<typeof QuotationSummarySchema>;
 
 /**
  * What the caller may do with a quotation now, decided by the server with the same rules its

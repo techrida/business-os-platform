@@ -16,7 +16,9 @@ vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
   },
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/procurement/orders',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('./actions', () => ({
   amendAction: vi.fn(),
@@ -25,7 +27,7 @@ vi.mock('./actions', () => ({
   shortCloseAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
-  listPurchaseOrders: vi.fn(),
+  listPurchaseOrdersPage: vi.fn(),
   getPurchaseOrder: vi.fn(),
   listPoVersions: vi.fn(),
   getPoProgress: vi.fn(),
@@ -119,7 +121,8 @@ const progress = {
 };
 
 const html = (el: unknown) => renderToStaticMarkup(el as React.ReactElement);
-const list = async (sp: Record<string, string> = {}) =>
+const page = (items: unknown[], total = items.length) => ({ items, total });
+const list = async (sp: Record<string, string | string[]> = {}) =>
   html(await OrdersPage({ searchParams: Promise.resolve(sp) }));
 const detail = async (id = ID) => html(await OrderPage({ params: Promise.resolve({ id }) }));
 
@@ -133,41 +136,60 @@ beforeEach(() => {
 
 describe('the purchase order list', () => {
   it('shows each order with its server-formatted total, lakh grouping and vendor name', async () => {
-    api.listPurchaseOrders.mockResolvedValue([order()]);
+    api.listPurchaseOrdersPage.mockResolvedValue(page([order()]));
     const out = await list();
     expect(out).toContain('PO-2082-0001');
     expect(out).toContain('Himal Traders Pvt. Ltd.');
     expect(out).toMatch(/12,34,567/);
     expect(out).toContain(`/procurement/orders/${ID}`);
-    expect(api.listPurchaseOrders).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(api.listPurchaseOrdersPage).toHaveBeenCalledWith(expect.anything(), {
+      status: [],
+      limit: 25,
+      offset: 0,
+    });
   });
 
-  it('passes a valid status filter on and ignores a junk one', async () => {
-    api.listPurchaseOrders.mockResolvedValue([]);
-    await list({ status: 'issued' });
-    expect(api.listPurchaseOrders).toHaveBeenLastCalledWith(expect.anything(), 'issued');
-    await list({ status: 'nonsense' });
-    expect(api.listPurchaseOrders).toHaveBeenLastCalledWith(expect.anything(), undefined);
+  it('passes repeated statuses, the search and the page window, ignoring a junk status', async () => {
+    api.listPurchaseOrdersPage.mockResolvedValue(page([]));
+    await list({ status: ['issued', 'nonsense', 'draft'], q: 'Himal', page: '3', rows: '10' });
+    expect(api.listPurchaseOrdersPage).toHaveBeenLastCalledWith(expect.anything(), {
+      status: ['issued', 'draft'],
+      q: 'Himal',
+      limit: 25,
+      offset: 50,
+    });
   });
 
-  it('says so when there are none, and when a filter matches none', async () => {
-    api.listPurchaseOrders.mockResolvedValue([]);
+  it('shows the total beyond the old 500 cap, the range and no Apply button', async () => {
+    api.listPurchaseOrdersPage.mockResolvedValue(page([order()], 640));
+    const out = await list({ status: 'issued' });
+    expect(out).toContain('Showing 1 of 640 purchase orders');
+    expect(out).toContain('Showing 1-25 of 640');
+    expect(out).toContain('type="search"');
+    expect(out).not.toContain('>Apply<');
+  });
+
+  it('says so when there are none, and names the filters that match none', async () => {
+    api.listPurchaseOrdersPage.mockResolvedValue(page([]));
     expect(await list()).toContain('No purchase orders yet.');
-    expect(await list({ status: 'cancelled' })).toContain('No cancelled purchase orders.');
+    const out = await list({ status: 'cancelled', q: 'zzz' });
+    expect(out).toContain('No purchase orders match.');
+    expect(out).toContain('Status: Cancelled');
+    expect(out).toContain('Clear filters');
   });
 
   it('falls back to an unavailable-name label when the vendor cannot be read, and keeps a long name wrapping', async () => {
     vendors.getVendor.mockRejectedValue(apiError(403));
-    api.listPurchaseOrders.mockResolvedValue([order()]);
+    api.listPurchaseOrdersPage.mockResolvedValue(page([order()]));
     expect(await list()).toContain('Vendor name unavailable');
   });
 
   it('shows the no-access pattern for a 403 and a retry for any other failure', async () => {
-    api.listPurchaseOrders.mockRejectedValue(
+    api.listPurchaseOrdersPage.mockRejectedValue(
       apiError(403, 'forbidden', { reason: 'no_permission' }),
     );
     expect(await list()).toContain('Your roles do not include purchase orders');
-    api.listPurchaseOrders.mockRejectedValue(apiError(500));
+    api.listPurchaseOrdersPage.mockRejectedValue(apiError(500));
     const out = await list();
     expect(out).toContain('Purchase orders did not load');
     expect(out).toContain('Reload purchase orders');

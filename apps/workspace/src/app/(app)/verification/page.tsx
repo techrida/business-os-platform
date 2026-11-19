@@ -1,46 +1,59 @@
-import type { CustomerDto, VerificationCaseDto } from '@bos/contracts';
+import {
+  pageWindow,
+  type CustomerDto,
+  type VerificationCaseDto,
+  type VerificationStatus,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { getCustomer, listVerificationCases } from '@/components/p2/customers/api';
+import { getCustomer, listVerificationCasePage } from '@/components/p2/customers/api';
 import {
   checklistProgress,
   customerLabel,
-  parseStatusFilter,
+  parseStatusFilters,
   VERIFICATION_STATUS_LABEL,
-  type StatusFilter,
 } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
-import { TabNav } from '@/components/ui/tab-nav';
+import { Pagination } from '@/components/ui/pagination';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
 import type { Session } from '@/lib/session';
 
 import styles from './verification.module.css';
+import { VerificationFilters } from './verification-filters';
 
 export const metadata: Metadata = { title: 'Verification · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const FILTERS: readonly { value: StatusFilter; label: string }[] = [
-  { value: 'submitted', label: 'Awaiting review' },
-  { value: 'approved', label: 'Verified' },
-  { value: 'rejected', label: 'Rejected' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'draft', label: 'Draft' },
-  { value: 'all', label: 'All cases' },
-];
-
-function filterHref(status: StatusFilter) {
-  return status === 'submitted' ? '/verification' : `/verification?status=${status}`;
-}
+const DEFAULT_PAGE_SIZE = 25;
+/** The URL is the state: repeated `status`, `q`, `page` and `rows` (the API caps a page at 100). */
+const LIST = {
+  rows: { allowed: [10, DEFAULT_PAGE_SIZE, 50, 100], default: DEFAULT_PAGE_SIZE },
+} as const;
+const FILTER_LABELS = {
+  status: {
+    label: 'Status',
+    format: (v: string) => VERIFICATION_STATUS_LABEL[v as VerificationStatus]?.text ?? v,
+  },
+};
 
 /** The queue asks for customer names one by one; past this many cases it shows ids instead. */
 const NAME_LOOKUP_LIMIT = 50;
@@ -116,17 +129,26 @@ function Row({ c, customer }: { c: VerificationCaseDto; customer: CustomerDto | 
 export default async function VerificationQueuePage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string | string[] }>;
+  searchParams: Promise<RawParams>;
 }) {
   const session = await requireStaffSession('/verification');
-  const { status: rawStatus } = await searchParams;
-  const filter = parseStatusFilter(rawStatus);
+  const params = await searchParams;
+  // No default status: with none chosen the queue lists every case.
+  const status = parseStatusFilters(params.status);
+  const { q, page, rows: pageSize } = readList(params, { ...LIST, multi: {} });
+  const at = (patch: Parameters<typeof hrefWith>[2]) => hrefWith('/verification', params, patch);
 
   let cases: VerificationCaseDto[] | null = null;
   let total: number | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
-    const result = await listVerificationCases(session, filter === 'all' ? {} : { status: filter });
+    const window = pageWindow(page, pageSize);
+    const result = await listVerificationCasePage(session, {
+      ...(q !== undefined ? { q } : {}),
+      ...(status.length > 0 ? { status } : {}),
+      limit: window.limit,
+      offset: window.offset,
+    });
     cases = result.items;
     total = result.total;
   } catch (err) {
@@ -135,7 +157,15 @@ export default async function VerificationQueuePage({
   }
   const names =
     cases !== null ? await customerNames(session, cases) : new Map<string, CustomerDto>();
-  const here = filterHref(filter);
+  const hasNext =
+    cases !== null && (total !== null ? page * pageSize < total : cases.length === pageSize);
+  const first = (page - 1) * pageSize + 1;
+  const filtersOn = activeFilterLabels(
+    { q, multi: { status }, single: {} },
+    FILTER_LABELS,
+    'Search',
+  );
+  const clearHref = clearFiltersHref('/verification', params, { ...LIST, multi: { status: [] } });
 
   return (
     <Page>
@@ -145,11 +175,13 @@ export default async function VerificationQueuePage({
       />
 
       <div className={styles.queue}>
-        <TabNav
-          label="Filter cases by status"
-          activeHref={here}
-          items={FILTERS.map(({ value, label }) => ({ href: filterHref(value), label }))}
+        <VerificationFilters
+          status={status}
+          rows={pageSize !== DEFAULT_PAGE_SIZE ? pageSize : undefined}
         />
+        {total !== null && cases !== null ? (
+          <ResultCount shown={cases.length} total={total} noun="case" />
+        ) : null}
 
         {problem !== null ? (
           <Alert
@@ -160,23 +192,38 @@ export default async function VerificationQueuePage({
                 ? 'Your roles do not include verification'
                 : 'The verification queue did not load'
             }
-            actions={problem.status !== 403 ? <Link href={here}>Reload the queue</Link> : null}
+            actions={
+              problem.status !== 403 ? (
+                <Link href={at({ page: page > 1 ? page : null })}>Reload the queue</Link>
+              ) : null
+            }
           >
             {problem.status === 403
               ? 'Verification is for the people who review customer documents. Ask an administrator if you need it.'
               : problem.message}
           </Alert>
         ) : cases !== null && cases.length === 0 ? (
-          <EmptyState
-            title={
-              filter === 'submitted' ? 'No customers are waiting for review.' : 'No cases match.'
-            }
-            icon="shield-check"
-          >
-            {filter === 'submitted'
-              ? 'A customer appears here when their documents are submitted for verification.'
-              : 'Try another status above.'}
-          </EmptyState>
+          filtersOn.length > 0 ? (
+            <EmptyState
+              title="No cases match."
+              icon="shield-check"
+              action={
+                <LinkButton href={clearHref} variant="secondary">
+                  Clear filters
+                </LinkButton>
+              }
+            >
+              Hidden by {filtersOn.join('; ')}.
+            </EmptyState>
+          ) : page > 1 ? (
+            <EmptyState title="There are no more cases." icon="shield-check">
+              <Link href={at({ page: null })}>Back to the first page</Link>
+            </EmptyState>
+          ) : (
+            <EmptyState title="No verification cases yet." icon="shield-check">
+              A customer appears here when their documents are submitted for verification.
+            </EmptyState>
+          )
         ) : cases !== null ? (
           <Card className={styles.queueResults}>
             <Table caption="Verification cases" minWidth={610} className={styles.queueTable ?? ''}>
@@ -194,11 +241,12 @@ export default async function VerificationQueuePage({
                 ))}
               </tbody>
             </Table>
-            <p className={styles.resultsFooter}>
-              {total !== null && total > cases.length
-                ? `Showing the first ${cases.length} of ${total} cases. Filter by status to narrow the list.`
-                : `Showing ${cases.length} ${cases.length === 1 ? 'case' : 'cases'}`}
-            </p>
+            <Pagination
+              label="Case pages"
+              summary={`Showing ${first}–${first + cases.length - 1}${total !== null ? ` of ${total}` : ''}`}
+              {...(page > 1 ? { previousHref: at({ page: page - 1 > 1 ? page - 1 : null }) } : {})}
+              {...(hasNext ? { nextHref: at({ page: page + 1 }) } : {})}
+            />
           </Card>
         ) : null}
       </div>

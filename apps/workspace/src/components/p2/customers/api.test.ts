@@ -8,7 +8,9 @@ import {
   decideVerification,
   getCustomer,
   getVerificationCase,
+  listCustomerIndustries,
   listCustomers,
+  listVerificationCasePage,
   listVerificationCases,
 } from './api';
 
@@ -118,6 +120,35 @@ describe('customers', () => {
     expect(lastCall().url).toBe('http://api:3001/v1/customers');
   });
 
+  it('sends a repeated relationship and industry as one key per value', async () => {
+    fetchMock.mockResolvedValue(reply({ items: [customer], total: 1 }));
+    await listCustomers(session, {
+      relationship: ['active', 'prospect'],
+      industry: ['Construction', 'Food & Beverage'],
+      limit: 10,
+      offset: 20,
+    });
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/customers?relationship=active&relationship=prospect&industry=Construction&industry=Food+%26+Beverage&limit=10&offset=20',
+    );
+    fetchMock.mockResolvedValue(reply({ items: [], total: 0 }));
+    await listCustomers(session, { relationship: [], industry: [] });
+    expect(lastCall().url).toBe('http://api:3001/v1/customers');
+  });
+
+  it('reads the industries in use for the filter', async () => {
+    fetchMock.mockResolvedValue(reply(['Construction', 'Retail']));
+    expect(await listCustomerIndustries(session)).toEqual(['Construction', 'Retail']);
+    expect(lastCall().url).toBe('http://api:3001/v1/customers/industries');
+    expect(lastCall().headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('answers 502 when the industries are not a list of text', async () => {
+    fetchMock.mockResolvedValue(reply([1, 2]));
+    const err = await listCustomerIndustries(session).catch((e: unknown) => e);
+    expect((err as ApiError).status).toBe(502);
+  });
+
   it('encodes the id so a path cannot climb out of the route', async () => {
     fetchMock.mockResolvedValue(reply(customer));
     await getCustomer(session, '../admin');
@@ -141,6 +172,44 @@ describe('verification cases', () => {
     expect(lastCall().url).toBe(
       `http://api:3001/v1/verification-cases?status=submitted&partyId=${ID_A}`,
     );
+  });
+
+  it('pages the queue: repeated status, search, window and the total from X-Total-Count', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify([verificationCase]), {
+        status: 200,
+        headers: { 'x-total-count': '137' },
+      }),
+    );
+    const out = await listVerificationCasePage(session, {
+      q: 'Himal',
+      status: ['submitted', 'rejected'],
+      limit: 25,
+      offset: 50,
+    });
+    expect(out.items).toHaveLength(1);
+    expect(out.total).toBe(137);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/verification-cases?q=Himal&status=submitted&status=rejected&limit=25&offset=50',
+    );
+  });
+
+  it('has no total when the header is missing or not a number', async () => {
+    fetchMock.mockResolvedValue(reply([verificationCase]));
+    expect((await listVerificationCasePage(session, {})).total).toBeNull();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify([verificationCase]), { headers: { 'x-total-count': 'many' } }),
+    );
+    expect((await listVerificationCasePage(session, {})).total).toBeNull();
+  });
+
+  it('keeps the API status on a refusal and answers 502 for a case that breaks the contract', async () => {
+    fetchMock.mockResolvedValue(reply({ error: { code: 'forbidden' } }, 403));
+    const refused = await listVerificationCasePage(session, {}).catch((e: unknown) => e);
+    expect((refused as ApiError).status).toBe(403);
+    fetchMock.mockResolvedValue(reply([{ ...verificationCase, status: 'weird' }]));
+    const drift = await listVerificationCasePage(session, {}).catch((e: unknown) => e);
+    expect((drift as ApiError).status).toBe(502);
   });
 
   it('reads one case', async () => {

@@ -6,6 +6,7 @@ import 'reflect-metadata';
 import { BadRequestException, ParseUUIDPipe } from '@nestjs/common';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
+import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CAN_KEY } from '../../platform/authz/decorators';
@@ -19,7 +20,8 @@ const VID = '0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a4b';
 
 async function setup() {
   const service = {
-    list: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    summary: vi.fn().mockResolvedValue({ total: 0, byStatus: {} }),
     detail: vi.fn().mockResolvedValue({ order: { id: ID } }),
     confirmFromQuotation: vi.fn().mockResolvedValue({ order: { id: ID } }),
     markBillable: vi.fn().mockResolvedValue({ order: { id: ID } }),
@@ -28,7 +30,10 @@ async function setup() {
     controllers: [SalesOrdersController],
     providers: [{ provide: SalesOrdersService, useValue: service }],
   }).compile();
-  return { service, moduleRef, controller: moduleRef.get(SalesOrdersController) };
+  const controller = moduleRef.get(SalesOrdersController);
+  const res = { setHeader: vi.fn() };
+  const list = (query: unknown) => controller.list(query, res as unknown as Response);
+  return { service, moduleRef, controller, res, list };
 }
 
 describe('SalesOrdersController', () => {
@@ -37,26 +42,73 @@ describe('SalesOrdersController', () => {
     expect(findUnmarkedRoutes(moduleRef)).toEqual([]);
     const proto = SalesOrdersController.prototype;
     expect(Reflect.getMetadata(CAN_KEY, proto.list)).toBe('sales_order.read');
+    expect(Reflect.getMetadata(CAN_KEY, proto.summary)).toBe('sales_order.read');
     expect(Reflect.getMetadata(CAN_KEY, proto.detail)).toBe('sales_order.read');
     expect(Reflect.getMetadata(CAN_KEY, proto.confirm)).toBe('sales_order.confirm');
     expect(Reflect.getMetadata(CAN_KEY, proto.markBillable)).toBe('sales_order.mark_billable');
     await moduleRef.close();
   });
 
-  it('lists with the parsed filter, and with none', async () => {
-    const { service, controller } = await setup();
-    await controller.list({ status: 'confirmed', customerId: VID });
-    expect(service.list).toHaveBeenCalledWith({ status: 'confirmed', customerId: VID });
-    await controller.list({});
-    expect(service.list).toHaveBeenLastCalledWith({});
+  it('lists with the parsed filter as arrays, answers a bare array and sets the total header', async () => {
+    const { service, res, list } = await setup();
+    service.list.mockResolvedValue({ rows: [{ id: ID }], total: 12 });
+    await expect(
+      list({ status: 'confirmed', customerId: VID, q: ' acme ', limit: '10', offset: '20' }),
+    ).resolves.toEqual([{ id: ID }]);
+    expect(service.list).toHaveBeenCalledWith({
+      status: ['confirmed'],
+      customerId: [VID],
+      q: 'acme',
+      limit: 10,
+      offset: 20,
+    });
+    expect(res.setHeader).toHaveBeenCalledWith('X-Total-Count', '12');
+    await list({});
+    // No limit stays no limit: the confirm dialog and the quotation page read every match.
+    expect(service.list).toHaveBeenLastCalledWith({ offset: 0 });
   });
 
-  it('answers 400 to a bad list query (unknown status, repeated key, unknown key)', async () => {
-    const { service, controller } = await setup();
-    for (const query of [{ status: 'paid' }, { status: ['draft', 'confirmed'] }, { x: '1' }]) {
-      expect(() => controller.list(query), JSON.stringify(query)).toThrow(BadRequestException);
+  it('accepts repeated status and customerId, dedupes them, and treats a one-character q as no search', async () => {
+    const { service, list } = await setup();
+    await list({ status: ['draft', 'confirmed', 'draft'], customerId: [VID, VID], q: 'a' });
+    expect(service.list).toHaveBeenCalledWith({
+      status: ['draft', 'confirmed'],
+      customerId: [VID],
+      offset: 0,
+    });
+  });
+
+  it('answers 400 to a bad list query (unknown status or id, unknown key, repeated q, bad paging)', async () => {
+    const { service, list } = await setup();
+    for (const query of [
+      { status: 'paid' },
+      { status: ['draft', 'paid'] },
+      { customerId: 'nope' },
+      { x: '1' },
+      { q: ['ab', 'cd'] },
+      { limit: '0' },
+      { limit: '101' },
+      { offset: '-1' },
+      { status: Array.from({ length: 21 }, () => 'draft') },
+    ]) {
+      await expect(list(query), JSON.stringify(query)).rejects.toThrow(BadRequestException);
     }
     expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it('summarises with the parsed q and customers, and refuses status and unknown keys', async () => {
+    const { service, controller } = await setup();
+    await controller.summary({ q: 'acme', customerId: [VID] });
+    expect(service.summary).toHaveBeenCalledWith({ q: 'acme', customerId: [VID] });
+    for (const query of [{ status: 'draft' }, { limit: '5' }, { customerId: 'nope' }]) {
+      expect(() => controller.summary(query), JSON.stringify(query)).toThrow(BadRequestException);
+    }
+    expect(service.summary).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes /summary before /:id, so the word is not read as an order id', () => {
+    const names = Object.getOwnPropertyNames(SalesOrdersController.prototype);
+    expect(names.indexOf('summary')).toBeLessThan(names.indexOf('detail'));
   });
 
   it('confirms with the parsed body (evidence defaults to none) and the key', async () => {

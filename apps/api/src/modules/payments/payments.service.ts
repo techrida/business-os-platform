@@ -19,6 +19,8 @@ import {
   type PaymentChannel,
   type PaymentDto,
   type PaymentListItem,
+  type PaymentMethod,
+  PAYMENT_STATUSES,
   type PaymentStatus,
   type RejectPaymentBody,
   type ReversePaymentBody,
@@ -48,13 +50,14 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { and, asc, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, lte, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { NO_LIMIT, searchPage } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -67,6 +70,25 @@ export const RECEIPT_SERIES = 'RCPT';
 const AUDIT_ENTITY = 'payments';
 
 type PaymentRow = typeof payments.$inferSelect;
+
+/** Every field narrows; an empty or missing list means no filter. `limit` unset returns every match. */
+export interface PaymentListFilter {
+  status?: readonly PaymentStatus[] | undefined;
+  method?: readonly PaymentMethod[] | undefined;
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export interface PaymentsSummary {
+  total: number;
+  byStatus: Record<PaymentStatus, number>;
+}
+
+const SEARCH_COLUMNS = [payments.number, parties.name, payments.bankReference] as const;
+
+const customerJoin = () =>
+  and(eq(parties.tenantId, payments.tenantId), eq(parties.id, payments.customerPartyId));
 
 const notFound = () => new NotFoundException({ code: 'not_found', message: 'Payment not found' });
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
@@ -114,52 +136,130 @@ export class PaymentsService {
 
   // ------------------------------------------------------------------------------------------ reads
 
-  /** The acting entity's payments, newest first, optionally of one status. */
-  async list(scope: TxScope, status?: PaymentStatus): Promise<PaymentListItem[]> {
+  /**
+   * One page of the acting entity's payments, newest first (id breaks ties), and the number of all matches.
+   * The entity is part of every query, so a filter can only narrow it.
+   */
+  async list(
+    scope: TxScope,
+    filter: PaymentListFilter = {},
+  ): Promise<{ rows: PaymentListItem[]; total: number }> {
     this.authz.assert('payment.read', {
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     });
-    const rows = await this.db
-      .select({
-        p: payments,
-        customerName: parties.name,
-        openAmount: openItemBalances.openAmount,
-      })
-      .from(payments)
-      .innerJoin(
-        parties,
-        and(eq(parties.tenantId, payments.tenantId), eq(parties.id, payments.customerPartyId)),
-      )
-      .leftJoin(
-        openItemBalances,
-        and(
-          eq(openItemBalances.tenantId, payments.tenantId),
-          eq(openItemBalances.organizationId, payments.organizationId),
-          eq(openItemBalances.sourceType, 'payment'),
-          eq(openItemBalances.sourceId, payments.id),
-        ),
-      )
-      .where(
-        and(
-          eq(payments.tenantId, scope.tenantId),
-          eq(payments.organizationId, scope.organizationId),
-          status === undefined ? undefined : eq(payments.status, status),
-        ),
-      )
-      .orderBy(desc(payments.createdAt), desc(payments.id));
-    return rows.map(({ p, customerName, openAmount }) => ({
-      id: p.id,
-      customerId: p.customerPartyId ?? '',
-      customerName,
-      status: p.status,
-      number: p.number,
-      method: p.method,
-      currency: p.currency,
-      amount: money2(p.amount),
-      receivedOn: p.receivedOn,
-      unallocatedAmount: money2(openAmount ?? '0'),
-    }));
+    const { rows, total } = await searchPage(this.db, {
+      q: filter.q,
+      columns: SEARCH_COLUMNS,
+      where: this.listWhere(scope, filter, true),
+      orderBy: [desc(payments.createdAt), desc(payments.id)],
+      limit: filter.limit ?? NO_LIMIT,
+      offset: filter.offset ?? 0,
+      rows: (r, p) =>
+        r
+          .select({
+            p: payments,
+            customerName: parties.name,
+            openAmount: openItemBalances.openAmount,
+          })
+          .from(payments)
+          .innerJoin(parties, customerJoin())
+          .leftJoin(
+            openItemBalances,
+            and(
+              eq(openItemBalances.tenantId, payments.tenantId),
+              eq(openItemBalances.organizationId, payments.organizationId),
+              eq(openItemBalances.sourceType, 'payment'),
+              eq(openItemBalances.sourceId, payments.id),
+            ),
+          )
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: async (r, where) => {
+        const [row] = await r
+          .select({ n: count() })
+          .from(payments)
+          .innerJoin(parties, customerJoin())
+          .where(where);
+        return row?.n ?? 0;
+      },
+    });
+    return {
+      total,
+      rows: rows.map(({ p, customerName, openAmount }) => ({
+        id: p.id,
+        customerId: p.customerPartyId ?? '',
+        customerName,
+        status: p.status,
+        number: p.number,
+        method: p.method,
+        currency: p.currency,
+        amount: money2(p.amount),
+        receivedOn: p.receivedOn,
+        unallocatedAmount: money2(openAmount ?? '0'),
+      })),
+    };
+  }
+
+  /**
+   * How many payments match `q` and `method` (not `status`), in total and per status, so the stat cards stay right
+   * when the list is paged. Same entity and search as `list`.
+   */
+  async summary(
+    scope: TxScope,
+    filter: Pick<PaymentListFilter, 'q' | 'method'> = {},
+  ): Promise<PaymentsSummary> {
+    this.authz.assert('payment.read', {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    });
+    // searchPage settles exact vs close matches from the total; the per-status counts ride on its count
+    // callback so they describe the same match set. Its last call is the one it settled on.
+    let groups: { status: PaymentStatus; n: number }[] = [];
+    const { total } = await searchPage(this.db, {
+      q: filter.q,
+      columns: SEARCH_COLUMNS,
+      where: this.listWhere(scope, filter, false),
+      orderBy: [desc(payments.id)],
+      limit: 1,
+      offset: 0,
+      rows: () => Promise.resolve([]),
+      count: async (r, where) => {
+        groups = await r
+          .select({ status: payments.status, n: count() })
+          .from(payments)
+          .innerJoin(parties, customerJoin())
+          .where(where)
+          .groupBy(payments.status);
+        return groups.reduce((sum, g) => sum + g.n, 0);
+      },
+    });
+    const byStatus = Object.fromEntries(PAYMENT_STATUSES.map((st) => [st, 0])) as Record<
+      PaymentStatus,
+      number
+    >;
+    for (const g of groups) byStatus[g.status] = g.n;
+    return { total, byStatus };
+  }
+
+  /** The entity first, then the filters; a filter only ever narrows what the entity allows. */
+  private listWhere(
+    scope: TxScope,
+    filter: PaymentListFilter,
+    withStatus: boolean,
+  ): SQL | undefined {
+    return and(
+      eq(payments.tenantId, scope.tenantId),
+      eq(payments.organizationId, scope.organizationId),
+      withStatus && filter.status !== undefined && filter.status.length > 0
+        ? inArray(payments.status, [...filter.status])
+        : undefined,
+      filter.method !== undefined && filter.method.length > 0
+        ? inArray(payments.method, [...filter.method])
+        : undefined,
+    );
   }
 
   /** One payment of the acting entity; 404 for another entity's or an unknown id. */

@@ -1,12 +1,12 @@
-import { INVOICE_KINDS, INVOICE_STATUSES } from '@bos/contracts';
+import { INVOICE_KINDS, INVOICE_STATUSES, SETTLEMENT_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   approvalWords,
   KIND_FILTER_OPTIONS,
   kindMeta,
-  parseKindFilter,
-  parseStatusFilter,
+  SETTLEMENT_FILTER_OPTIONS,
+  settlementLabel,
   STATUS_FILTER_OPTIONS,
   statusMeta,
 } from './meta';
@@ -25,29 +25,19 @@ describe('labels', () => {
   });
 });
 
-describe('filters from the URL', () => {
-  it('accepts exactly one contract value', () => {
-    expect(parseKindFilter('credit_note')).toBe('credit_note');
-    expect(parseStatusFilter('issued')).toBe('issued');
+describe('settlement filter', () => {
+  it('words every derived state and keeps paid and overdue out of the status list', () => {
+    expect(SETTLEMENT_FILTER_OPTIONS.map((o) => o.value)).toEqual([...SETTLEMENT_STATUSES]);
+    expect(settlementLabel('overdue')).toBe('Overdue');
+    expect(settlementLabel('partly_paid')).toBe('Partly paid');
+    const statuses: string[] = STATUS_FILTER_OPTIONS.map((o) => o.value);
+    expect(statuses).not.toContain('overdue');
+    expect(statuses).not.toContain('paid');
   });
 
-  it.each([
-    undefined,
-    '',
-    'Issued',
-    'ISSUED',
-    'toString',
-    '__proto__',
-    'paid',
-    ['issued', 'draft'],
-  ])('turns %j into "no filter"', (raw) => {
-    expect(parseStatusFilter(raw)).toBeUndefined();
-    expect(parseKindFilter(raw)).toBeUndefined();
-  });
-
-  it('does not take a status as a kind or the other way round', () => {
-    expect(parseKindFilter('issued')).toBeUndefined();
-    expect(parseStatusFilter('tax_invoice')).toBeUndefined();
+  it('shows a value from a newer API as it came, never an object key', () => {
+    expect(settlementLabel('disputed')).toBe('disputed');
+    expect(settlementLabel('toString')).toBe('toString');
   });
 });
 

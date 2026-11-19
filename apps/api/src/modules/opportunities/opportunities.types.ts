@@ -1,19 +1,24 @@
 // Query and mapping types of the opportunities module. The body of a stage change is a contract
 // (OpportunityStageChangeBodySchema); only the list query and the row-to-DTO mapping live here.
-import { OPPORTUNITY_STAGES, type OpportunityDto, OpportunityStageSchema } from '@bos/contracts';
+import {
+  limitOffset,
+  multi,
+  type OpportunityDto,
+  OpportunityStageSchema,
+  searchParam,
+} from '@bos/contracts';
 import { type opportunities } from '@bos/db';
 import { z } from 'zod';
 
-/** Repeat `stage` to match any selected stage, up to the number of supported stages. */
-export const ListOpportunitiesQuerySchema = z.object({
-  q: z.string().trim().min(1).max(100).optional(),
-  stage: z
-    .union([
-      OpportunityStageSchema,
-      z.array(OpportunityStageSchema).min(1).max(OPPORTUNITY_STAGES.length),
-    ])
-    .optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+/**
+ * `GET /v1/opportunities?q&stage&owner&limit&offset`. `stage` and `owner` may repeat (any of the selected values
+ * matches). The board view asks for up to 200 rows at once, so the cap stays at 200 and the default at 50.
+ */
+export const ListOpportunitiesQuerySchema = z.strictObject({
+  q: searchParam,
+  stage: multi(OpportunityStageSchema),
+  owner: multi(z.guid()),
+  ...limitOffset({ max: 200, fallback: 50 }),
 });
 export type ListOpportunitiesQuery = z.infer<typeof ListOpportunitiesQuerySchema>;
 

@@ -17,7 +17,9 @@ vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
   },
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/payables/bills',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('./actions', () => ({
   matchBillAction: vi.fn(),
@@ -30,9 +32,10 @@ vi.mock('./actions', () => ({
   createBillAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
-  listBills: vi.fn(),
+  listBillsPage: vi.fn(),
   getBill: vi.fn(),
   listBillSubmissions: vi.fn(),
+  listBillSubmissionsPage: vi.fn(),
   getPoProgress: vi.fn(),
   getVendor: vi.fn(),
   listTaxCodes: vi.fn(),
@@ -40,9 +43,10 @@ const api = vi.hoisted(() => ({
   listVendors: vi.fn(),
 }));
 vi.mock('@/lib/api-payables', () => ({
-  listBills: api.listBills,
+  listBillsPage: api.listBillsPage,
   getBill: api.getBill,
   listBillSubmissions: api.listBillSubmissions,
+  listBillSubmissionsPage: api.listBillSubmissionsPage,
 }));
 vi.mock('@/lib/api-purchase-orders', () => ({ getPoProgress: api.getPoProgress }));
 vi.mock('@/lib/api-vendors', () => ({ getVendor: api.getVendor, listVendors: api.listVendors }));
@@ -176,35 +180,62 @@ beforeEach(() => {
   });
 });
 
+const page = (items: unknown[], total = items.length) => ({ items, total });
+const bills = (sp: Record<string, string | string[]> = {}) =>
+  html(BillsPage({ searchParams: Promise.resolve(sp) }));
+
 describe('bills list', () => {
-  it('shows each bill with lakh-grouped money, and filters by a valid status only', async () => {
-    api.listBills.mockResolvedValue([{ ...header, payableTotal: '1234567.00' }]);
-    const out = await html(BillsPage({ searchParams: Promise.resolve({ status: 'variance' }) }));
-    expect(api.listBills).toHaveBeenCalledWith(expect.anything(), 'variance');
+  it('shows each bill with lakh-grouped money, and sends repeated statuses, the search and the page window', async () => {
+    api.listBillsPage.mockResolvedValue(page([{ ...header, payableTotal: '1234567.00' }]));
+    const out = await bills({ status: ['variance', 'bogus', 'draft'], q: 'INV', page: '2' });
+    expect(api.listBillsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['variance', 'draft'],
+      q: 'INV',
+      limit: 25,
+      offset: 25,
+    });
     expect(out).toContain('BILL-2083-0001');
     expect(out).toContain('INV-001');
     expect(out).toContain('Himal Traders');
     expect(out).toContain('12,34,567.00');
-    api.listBills.mockClear();
-    const bad = await html(BillsPage({ searchParams: Promise.resolve({ status: 'bogus' }) }));
-    expect(api.listBills).toHaveBeenCalledWith(expect.anything(), undefined);
-    expect(bad).toContain('That is not a bill status');
+  });
+
+  it('shows the total beyond the page, the range and no Apply or Show button', async () => {
+    api.listBillsPage.mockResolvedValue(page([header], 240));
+    const out = await bills();
+    expect(api.listBillsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: [],
+      limit: 25,
+      offset: 0,
+    });
+    expect(out).toContain('Showing 1 of 240 bills');
+    expect(out).toContain('Showing 1-25 of 240');
+    expect(out).toContain('type="search"');
+    expect(out).not.toContain('Show bills');
   });
 
   it('says so when there are no bills, and points an accountant to the inbox', async () => {
-    api.listBills.mockResolvedValue([]);
-    const out = await html(BillsPage({ searchParams: Promise.resolve({}) }));
+    api.listBillsPage.mockResolvedValue(page([]));
+    const out = await bills();
     expect(out).toContain('No bills yet.');
     expect(out).toContain('/payables/inbox');
   });
 
+  it('names the filters that match none and offers Clear filters', async () => {
+    api.listBillsPage.mockResolvedValue(page([]));
+    const out = await bills({ status: 'variance', q: 'zzz', rows: '50' });
+    expect(out).toContain('No bills match.');
+    expect(out).toContain('Status: ');
+    expect(out).toContain('zzz');
+    expect(out).toContain('Clear filters');
+    expect(out).toContain('rows=50');
+  });
+
   it('shows the no-access pattern for a 403 and a retry for a 500', async () => {
-    api.listBills.mockRejectedValue(apiError(403, 'forbidden'));
-    expect(await html(BillsPage({ searchParams: Promise.resolve({}) }))).toContain(
-      'You cannot open the bills',
-    );
-    api.listBills.mockRejectedValue(apiError(500));
-    const out = await html(BillsPage({ searchParams: Promise.resolve({}) }));
+    api.listBillsPage.mockRejectedValue(apiError(403, 'forbidden'));
+    expect(await bills()).toContain('You cannot open the bills');
+    api.listBillsPage.mockRejectedValue(apiError(500));
+    const out = await bills();
     expect(out).toContain('The bills did not load');
     expect(out).toContain('Try again');
   });
@@ -378,13 +409,24 @@ describe('bill entry', () => {
   });
 });
 
+const inbox = (sp: Record<string, string | string[]> = {}) =>
+  html(InboxPage({ searchParams: Promise.resolve(sp) }));
+
 describe('inbox', () => {
   it('lists submissions with their scan status and offers Create bill only on a clean one', async () => {
-    api.listBillSubmissions.mockResolvedValue([
-      submission,
-      { ...submission, id: BILL, vendorName: null, vendorInvoiceNo: null, fileStatus: 'scanning' },
-    ]);
-    const out = await html(InboxPage());
+    api.listBillSubmissionsPage.mockResolvedValue(
+      page([
+        submission,
+        {
+          ...submission,
+          id: BILL,
+          vendorName: null,
+          vendorInvoiceNo: null,
+          fileStatus: 'scanning',
+        },
+      ]),
+    );
+    const out = await inbox();
     expect(out).toContain('Himal Traders');
     expect(out).toContain('Scanned clean');
     expect(out).toContain('Scanning');
@@ -394,11 +436,27 @@ describe('inbox', () => {
     expect(out).toContain('Reject');
   });
 
-  it('says when the inbox is empty, and shows a 403 as no access', async () => {
-    api.listBillSubmissions.mockResolvedValue([]);
-    expect(await html(InboxPage())).toContain('The inbox is empty.');
-    api.listBillSubmissions.mockRejectedValue(apiError(403, 'forbidden'));
-    expect(await html(InboxPage())).toContain('You cannot open the inbox');
+  it('searches and pages by the server total, with no status filter', async () => {
+    api.listBillSubmissionsPage.mockResolvedValue(page([submission], 61));
+    const out = await inbox({ q: 'Himal', page: '2', status: 'received' });
+    expect(api.listBillSubmissionsPage).toHaveBeenCalledWith(expect.anything(), {
+      q: 'Himal',
+      limit: 25,
+      offset: 25,
+    });
+    expect(out).toContain('Showing 1 of 61 submissions');
+    expect(out).toContain('Showing 26-50 of 61');
+    expect(out).not.toContain('name="status"');
+  });
+
+  it('says when the inbox is empty or a search matches none, and shows a 403 as no access', async () => {
+    api.listBillSubmissionsPage.mockResolvedValue(page([]));
+    expect(await inbox()).toContain('The inbox is empty.');
+    const none = await inbox({ q: 'zzz' });
+    expect(none).toContain('No submissions match.');
+    expect(none).toContain('Clear filters');
+    api.listBillSubmissionsPage.mockRejectedValue(apiError(403, 'forbidden'));
+    expect(await inbox()).toContain('You cannot open the inbox');
   });
 });
 

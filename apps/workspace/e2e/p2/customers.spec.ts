@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import { searchBox } from '../helpers/multi-select';
 
 /**
  * The P2 customer and KYB screens, against the real stack. Not run by the unit that wrote it: it
@@ -35,15 +36,14 @@ test('the customer list loads and searches', async ({ browser, baseURL }) => {
       await expect(
         founder.page.getByRole('heading', { level: 1, name: 'Organizations' }),
       ).toBeVisible();
-      await founder.page.getByLabel('Search organizations').fill('no-such-customer-xyz');
-      await founder.page.getByRole('button', { name: 'Search' }).click();
-      await expect(founder.page).toHaveURL(/q=no-such-customer-xyz/);
-      await expect(
-        founder.page.getByText('No organizations match "no-such-customer-xyz".'),
-      ).toBeVisible();
-      await expect(founder.page.getByLabel('Search organizations')).toHaveValue(
-        'no-such-customer-xyz',
-      );
+      // Search is instant (debounced) and lives in the URL: no Search button. A nonsense token,
+      // because the typo-tolerant search also returns close matches when few rows match exactly.
+      const query = 'qzxjwkv4471';
+      const search = searchBox(founder.page, 'Search organizations');
+      await search.fill(query);
+      await expect(founder.page).toHaveURL((url) => url.searchParams.get('q') === query);
+      await expect(founder.page.getByText('No organizations match.')).toBeVisible();
+      await expect(search).toHaveValue(query);
     });
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
@@ -64,12 +64,8 @@ test('the KYB queue opens a case and refuses a decision without a reason', async
 
   try {
     const page = reviewer.page;
-    await page.goto('/verification');
+    await page.goto('/verification?status=submitted');
     await expect(page.getByRole('heading', { level: 1, name: 'Verification' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Awaiting review' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
 
     const firstCase = page
       .getByRole('table', { name: 'Verification cases' })

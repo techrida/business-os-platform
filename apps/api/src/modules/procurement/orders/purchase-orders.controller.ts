@@ -12,9 +12,12 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
@@ -34,11 +37,21 @@ import {
 export class PurchaseOrdersController {
   constructor(private readonly orders: PurchaseOrdersService) {}
 
-  /** The entity's purchase orders, newest first. Query: `status` (optional). */
+  /**
+   * The entity's purchase orders, newest first. Query: `status` (repeatable), `q`, `limit` (default 25, at most
+   * 100), `offset`; X-Total-Count is the number of all matches.
+   */
   @Get()
   @Can('procurement.po.issue')
-  list(@Query() query: unknown): Promise<Omit<PurchaseOrderDto, 'lines'>[]> {
-    return this.orders.list(parseOr400(ListPurchaseOrdersQuerySchema, query).status);
+  list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<PurchaseOrderDto, 'lines'>[]> {
+    const parsed = parseOr400(ListPurchaseOrdersQuerySchema, query);
+    return this.orders.list(parsed).then(({ rows, total }) => {
+      setTotalCount(res, total);
+      return rows;
+    });
   }
 
   /** 404 outside the acting entity. */

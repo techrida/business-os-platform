@@ -8,7 +8,9 @@ import {
   convertBillSubmission,
   getBill,
   listBillSubmissions,
+  listBillSubmissionsPage,
   listBills,
+  listBillsPage,
   matchBill,
   rejectBillSubmission,
   submitBill,
@@ -135,6 +137,45 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+});
+
+const withTotal = (body: unknown, total: string): Response =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'x-total-count': total } });
+
+describe('bill pages', () => {
+  it('repeats the status key, sends the search and offset, and reads the total from the header', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(withTotal([header], '134')));
+    const out = await listBillsPage(session, {
+      status: ['draft', 'variance'],
+      q: 'INV-001',
+      limit: 25,
+      offset: 50,
+    });
+    expect(out.total).toBe(134);
+    expect(out.items).toHaveLength(1);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/payables/bills?status=draft&status=variance&q=INV-001&limit=25&offset=50',
+    );
+  });
+
+  it('refuses an unknown status before any call', () => {
+    expect(() =>
+      listBillsPage(session, { status: ['bogus' as never], limit: 25, offset: 0 }),
+    ).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('pages the inbox by search and offset, while the whole-list call sends no window', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(withTotal([submission], '9')));
+    const out = await listBillSubmissionsPage(session, { q: 'Himalayan', limit: 25, offset: 25 });
+    expect(out.total).toBe(9);
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/payables/bill-submissions?q=Himalayan&limit=25&offset=25',
+    );
+    answer(reply([submission]));
+    expect(await listBillSubmissions(session)).toHaveLength(1);
+    expect(lastCall().url).toBe('http://api:3001/v1/payables/bill-submissions');
+  });
 });
 
 describe('bill reads', () => {

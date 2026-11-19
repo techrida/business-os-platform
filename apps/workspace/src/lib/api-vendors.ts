@@ -127,10 +127,16 @@ function jsonInit(method: string, body: unknown, key?: string): RequestInit {
   };
 }
 
-function withQuery(path: string, params: Record<string, string | number | undefined>): string {
+function withQuery(
+  path: string,
+  params: Record<string, string | number | readonly string[] | undefined>,
+): string {
   const query = new URLSearchParams();
   for (const [name, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') query.set(name, String(value));
+    if (typeof value === 'object') {
+      // A repeated filter: one key per value, which is how the API reads a multi-select.
+      for (const item of value) if (item !== '') query.append(name, item);
+    } else if (value !== undefined && value !== '') query.set(name, String(value));
   }
   const text = query.toString();
   return text === '' ? path : `${path}?${text}`;
@@ -138,16 +144,28 @@ function withQuery(path: string, params: Record<string, string | number | undefi
 
 // ------------------------------------------------------------------------------------- vendors
 
-/** `GET /v1/vendors?q=&status=&limit=&offset=` (needs `vendor.read`). Answers `{ items, total }`. */
+/**
+ * `GET /v1/vendors?q=&status=&kind=&limit=&offset=` (needs `vendor.read`). Answers `{ items, total }`.
+ * `status` and `kind` take one value or several (sent as repeated keys).
+ */
 export function listVendors(
   session: Session,
-  query: { q?: string; status?: VendorStatus; limit?: number; offset?: number },
+  query: {
+    q?: string;
+    status?: VendorStatus | readonly VendorStatus[];
+    kind?: VendorDto['kind'] | readonly VendorDto['kind'][];
+    limit?: number;
+    offset?: number;
+  },
 ): Promise<VendorList> {
+  const many = <T extends string>(v: T | readonly T[] | undefined): T[] | undefined =>
+    v === undefined ? undefined : typeof v === 'string' ? [v] : [...v];
   return call(
     session,
     withQuery('/v1/vendors', {
       q: query.q,
-      status: query.status !== undefined ? VendorStatusSchema.parse(query.status) : undefined,
+      status: many(query.status)?.map((s) => VendorStatusSchema.parse(s)),
+      kind: many(query.kind),
       limit: query.limit,
       offset: query.offset,
     }),

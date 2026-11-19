@@ -1,11 +1,11 @@
-import { PAYMENT_STATUSES } from '@bos/contracts';
+import { PAYMENT_METHODS, PAYMENT_STATUSES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PAYMENT_METHOD_OPTIONS,
   PAYMENT_STATUS_OPTIONS,
   actionsFor,
   methodLabel,
-  parseStatusFilter,
   paymentStatusMeta,
 } from './status';
 
@@ -15,13 +15,9 @@ describe('payment status', () => {
     for (const s of PAYMENT_STATUSES) expect(paymentStatusMeta(s).label).not.toBe('');
   });
 
-  it('accepts only an exact contract status as a filter', () => {
-    expect(parseStatusFilter('verified')).toBe('verified');
-    expect(parseStatusFilter('Verified')).toBeUndefined();
-    expect(parseStatusFilter('toString')).toBeUndefined();
-    expect(parseStatusFilter(['verified', 'rejected'])).toBeUndefined();
-    expect(parseStatusFilter('')).toBeUndefined();
-    expect(parseStatusFilter(undefined)).toBeUndefined();
+  it('offers every contract method as a filter option, worded', () => {
+    expect(PAYMENT_METHOD_OPTIONS.map((o) => o.value)).toEqual([...PAYMENT_METHODS]);
+    expect(PAYMENT_METHOD_OPTIONS.find((o) => o.value === 'qr')?.label).toBe('QR payment');
   });
 
   it('offers actions by status: verify or reject while submitted, reverse once verified', () => {

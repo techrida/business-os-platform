@@ -1,7 +1,13 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
-import { chooseOption, selectByName, selectedInput } from '../helpers/select';
+import {
+  clearSelection,
+  expectParam,
+  expectSelected,
+  multiSelectByLabel,
+  toggleOptions,
+} from '../helpers/multi-select';
 
 /**
  * The P4 purchase order and receipt screens, against the real stack. Not run by the unit that
@@ -29,10 +35,14 @@ test('the purchase order list loads and filters', async ({ browser, baseURL }) =
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'Purchase orders' }),
     ).toBeVisible();
-    await chooseOption(selectByName(founder.page, 'status'), 'cancelled');
-    await founder.page.getByRole('button', { name: 'Apply' }).click();
-    await expect(founder.page).toHaveURL(/status=cancelled/);
-    await expect(selectedInput(selectByName(founder.page, 'status'))).toHaveValue('cancelled');
+    // Filters apply as they change: no Apply button, the URL is the state.
+    const status = multiSelectByLabel(founder.page, 'Status');
+    await toggleOptions(status, ['cancelled']);
+    await expectParam(founder.page, 'status', ['cancelled']);
+    await expectSelected(status, ['cancelled']);
+    await clearSelection(status);
+    await expectParam(founder.page, 'status', []);
+    await expectSelected(status, []);
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }
@@ -53,9 +63,7 @@ test('an issued purchase order shows its lines, versions and the right buttons',
     await founder.page.goto(`/procurement/orders/${id ?? ''}`);
     await expect(founder.page.getByRole('heading', { name: 'Lines' })).toBeVisible();
     await expect(founder.page.getByRole('heading', { name: 'Versions' })).toBeVisible();
-    await expect(
-      founder.page.getByRole('button', { name: /View PDF of version 1/ }),
-    ).toBeVisible();
+    await expect(founder.page.getByRole('button', { name: /View PDF of version 1/ })).toBeVisible();
     await expect(founder.page.getByRole('button', { name: 'Issue purchase order' })).toHaveCount(0);
 
     await founder.page.locator('main').getByRole('link', { name: 'Receipts', exact: true }).click();

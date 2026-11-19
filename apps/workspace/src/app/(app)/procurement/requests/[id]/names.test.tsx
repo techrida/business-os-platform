@@ -16,6 +16,8 @@ vi.mock('next/navigation', () => ({
   },
   redirect: vi.fn(),
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/procurement/requests',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('../actions', () => ({

@@ -6,15 +6,19 @@ import { ApiError } from '@/lib/api';
 
 vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({
-  listActivities: vi.fn(),
+  listActivitiesPage: vi.fn(),
   listLeadOwners: vi.fn(),
   requireStaffSession: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+vi.mock('@/components/p2/crm/activities-api', () => ({
+  listActivitiesPage: mocks.listActivitiesPage,
+}));
 vi.mock('@/components/p2/crm/crm-api', () => ({
-  listActivities: mocks.listActivities,
   listLeadOwners: mocks.listLeadOwners,
 }));
+// The filter bar is a client component that needs the app router; it has its own test.
+vi.mock('./filters', () => ({ ActivityFilters: () => null }));
 vi.mock('@/app/(app)/leads/actions', () => ({
   completeFollowUpAction: vi.fn(),
   rescheduleFollowUpAction: vi.fn(),
@@ -70,41 +74,41 @@ const DONE = activity('44444444-4444-4444-8444-444444444444', {
 });
 
 function byStatus(planned: ActivityDto[], logged: ActivityDto[]) {
-  mocks.listActivities.mockImplementation((_s: unknown, opts: { status: string }) =>
-    Promise.resolve(opts.status === 'planned' ? planned : logged),
-  );
+  mocks.listActivitiesPage.mockImplementation((_s: unknown, opts: { status: string }) => {
+    const items = opts.status === 'planned' ? planned : logged;
+    return Promise.resolve({ items, total: items.length });
+  });
 }
 
-async function render(kind?: string) {
-  const page = await ActivitiesPage({ searchParams: Promise.resolve(kind ? { kind } : {}) });
+async function render(kind?: string, params: Record<string, string> = kind ? { kind } : {}) {
+  const page = await ActivitiesPage({ searchParams: Promise.resolve(params) });
   return renderToStaticMarkup(page);
 }
 
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['sales'] });
-  mocks.listActivities.mockReset();
+  mocks.listActivitiesPage.mockReset();
   mocks.listLeadOwners.mockReset().mockResolvedValue([]);
   byStatus([], []);
 });
 
 it('asks for planned and logged activities separately', async () => {
   await render('meeting');
-  expect(mocks.listActivities).toHaveBeenCalledWith(expect.anything(), {
-    kind: 'meeting',
-    status: 'planned',
-    limit: 100,
-  });
-  expect(mocks.listActivities).toHaveBeenCalledWith(expect.anything(), {
-    kind: 'meeting',
-    status: 'logged',
-    limit: 100,
-  });
+  expect(mocks.listActivitiesPage).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ kind: ['meeting'], status: 'planned', limit: 100 }),
+  );
+  expect(mocks.listActivitiesPage).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ kind: ['meeting'], status: 'logged', limit: 25, offset: 0 }),
+  );
 });
 
 it('does not offer or apply task as a filter', async () => {
   const html = await render('task');
   expect(html).not.toMatch(/value="task"/);
-  for (const [, opts] of mocks.listActivities.mock.calls) expect(opts).not.toHaveProperty('kind');
+  for (const [, opts] of mocks.listActivitiesPage.mock.calls)
+    expect(opts).toMatchObject({ kind: [] });
 });
 
 it('lists planned ones earliest due first with Planned and Overdue badges, logged ones with Done', async () => {
@@ -119,8 +123,10 @@ it('lists planned ones earliest due first with Planned and Overdue badges, logge
 });
 
 it('keeps the logged list when the planned one fails to load', async () => {
-  mocks.listActivities.mockImplementation((_s: unknown, opts: { status: string }) =>
-    opts.status === 'planned' ? Promise.reject(new ApiError(503, 'down')) : Promise.resolve([DONE]),
+  mocks.listActivitiesPage.mockImplementation((_s: unknown, opts: { status: string }) =>
+    opts.status === 'planned'
+      ? Promise.reject(new ApiError(503, 'down'))
+      : Promise.resolve({ items: [DONE], total: 1 }),
   );
   const html = await render();
   expect(html).toContain('Planned follow-ups did not load');

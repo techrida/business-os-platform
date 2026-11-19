@@ -22,8 +22,6 @@
 }
 
 .toolbar,
-.filters,
-.filterControls,
 .contact,
 .detailMeta {
   display: flex;
@@ -33,24 +31,8 @@
 }
 
 .toolbar,
-.filters,
-.filterControls,
 .detailMeta {
   flex-wrap: wrap;
-}
-
-.filters {
-  flex: 1 1 480px;
-  justify-content: space-between;
-}
-
-.search {
-  flex: 0 1 280px;
-  min-width: min(100%, 200px);
-}
-
-.filter {
-  border-color: var(--button-secondary-border);
 }
 
 .listCard {
@@ -323,11 +305,6 @@
 
   .stats > :first-child {
     grid-column: 1 / -1;
-  }
-
-  .filters,
-  .search {
-    flex-basis: 100%;
   }
 
   .listFooter,

@@ -37,7 +37,9 @@ export class TestMemoController {
 
   /**
    * 200 with one page of the memos the caller may open, newest first. Scope comes from the caller's `memo.read`
-   * grant (own, department, entity), never from the query. Pass `nextCursor` back as `cursor` for the next page.
+   * grant (own, department, entity), never from the query; `status` (repeatable)
+   * and `q` only narrow it, and `total` counts every match, not just this page. Pass `nextCursor` back as `cursor`
+   * for the next page.
    */
   @Get()
   @Can('memo.read')
