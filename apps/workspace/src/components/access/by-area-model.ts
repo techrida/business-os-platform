@@ -292,10 +292,7 @@ export function areaChanges(
   if (rule && saved.assignment && draft.assignment) {
     const staffChanged = saved.assignment.staff !== draft.assignment.staff;
     const managersChanged = saved.assignment.managers !== draft.assignment.managers;
-    const handOversChanged = !sameHandOvers(
-      saved.assignment.handOvers,
-      draft.assignment.handOvers,
-    );
+    const handOversChanged = !sameHandOvers(saved.assignment.handOvers, draft.assignment.handOvers);
     if (staffChanged || managersChanged || handOversChanged) {
       changes.push({
         kind: 'assignment',

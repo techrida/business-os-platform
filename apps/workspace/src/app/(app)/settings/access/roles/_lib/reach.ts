@@ -3,7 +3,13 @@
 import type { AccessLevel, AccessPermissionKind, AccessScope } from '@bos/contracts';
 
 /** Display order of the reach options, narrowest first. */
-const REACH_ORDER: readonly AccessScope[] = ['assigned', 'own', 'department', 'all', 'customer_org'];
+const REACH_ORDER: readonly AccessScope[] = [
+  'assigned',
+  'own',
+  'department',
+  'all',
+  'customer_org',
+];
 
 export const REACH_LABEL: Readonly<Record<AccessScope, string>> = {
   assigned: 'Only work given to them',

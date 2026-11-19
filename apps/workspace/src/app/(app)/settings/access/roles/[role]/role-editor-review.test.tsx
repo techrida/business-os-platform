@@ -33,7 +33,11 @@ vi.mock('@/components/access/review-changes-dialog', () => ({
   ReviewChangesDialog: (props: DialogProps) => {
     dialog.last = props;
     return props.open ? (
-      <div data-testid="review" aria-label={props.title} data-changes={JSON.stringify(props.changes)} />
+      <div
+        data-testid="review"
+        aria-label={props.title}
+        data-changes={JSON.stringify(props.changes)}
+      />
     ) : null;
   },
 }));

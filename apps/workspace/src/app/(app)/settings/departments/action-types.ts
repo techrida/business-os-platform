@@ -13,8 +13,7 @@ export type DepartmentRecordResult =
 
 /** The review dialog's `runPreview` answer. */
 export type PeoplePreviewResult =
-  | { ok: true; preview: AccessPreviewResponse }
-  | { ok: false; message: string };
+  { ok: true; preview: AccessPreviewResponse } | { ok: false; message: string };
 
 /** The review dialog's `runSave` answer. */
 export type PeopleSaveResult =

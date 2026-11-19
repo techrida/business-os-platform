@@ -166,9 +166,8 @@ export function removePeople(state: PeopleState, userIds: readonly string[]): Pe
     ...state,
     people: state.people
       .filter((person) => !(ids.has(person.userId) && person.origin === 'added'))
-      .map(
-        (person): StagedPerson =>
-          ids.has(person.userId) ? { ...person, leaving: { kind: 'remove' } } : person,
+      .map((person): StagedPerson =>
+        ids.has(person.userId) ? { ...person, leaving: { kind: 'remove' } } : person,
       ),
   };
 }
@@ -185,9 +184,8 @@ export function movePeople(
     ...state,
     people: state.people
       .filter((person) => !(ids.has(person.userId) && person.origin === 'added'))
-      .map(
-        (person): StagedPerson =>
-          ids.has(person.userId) ? { ...person, leaving: { kind: 'move', to: { ...to } } } : person,
+      .map((person): StagedPerson =>
+        ids.has(person.userId) ? { ...person, leaving: { kind: 'move', to: { ...to } } } : person,
       ),
   };
 }

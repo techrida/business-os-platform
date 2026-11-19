@@ -24,7 +24,7 @@ export function PersonPicker({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   return (
-    <Field label="Person" className={styles.picker}>
+    <Field label="Person" className={styles.picker ?? ''}>
       {(control) => (
         <Combobox
           labelledBy={control['aria-labelledby']}

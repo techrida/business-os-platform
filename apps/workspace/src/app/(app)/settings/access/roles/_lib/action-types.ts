@@ -6,7 +6,6 @@ import type { AccessPreviewResponse } from '@bos/contracts';
 import type { AccessSaveFailure } from '@/lib/api-access';
 
 export type PreviewActionResult =
-  | { ok: true; preview: AccessPreviewResponse }
-  | { ok: false; message: string };
+  { ok: true; preview: AccessPreviewResponse } | { ok: false; message: string };
 
 export type SaveActionResult = { ok: true } | ({ ok: false } & AccessSaveFailure);

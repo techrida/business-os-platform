@@ -345,7 +345,9 @@ describe('api-access endpoints', () => {
     const people = await listAccessPeople(session);
     expect(people.map((p) => p.name)).toEqual(['Asha Rai', 'Zara Thapa']);
 
-    fetchMock.mockResolvedValueOnce(json({ error: { code: 'forbidden', message: 'Forbidden' } }, 403));
+    fetchMock.mockResolvedValueOnce(
+      json({ error: { code: 'forbidden', message: 'Forbidden' } }, 403),
+    );
     expect(await listAccessPeople(session)).toEqual([]);
   });
 });

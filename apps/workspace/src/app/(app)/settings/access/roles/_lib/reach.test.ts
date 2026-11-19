@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  peopleText,
-  reachFromValue,
-  reachHint,
-  reachOptions,
-  reachText,
-} from './reach';
+import { peopleText, reachFromValue, reachHint, reachOptions, reachText } from './reach';
 
 describe('reachOptions', () => {
   it('offers Nothing plus exactly the reaches the API lists, in spec order', () => {

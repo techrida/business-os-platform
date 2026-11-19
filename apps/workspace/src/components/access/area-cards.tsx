@@ -58,9 +58,7 @@ interface ReviewTarget {
   changes: AccessChange[];
 }
 
-type Pending =
-  | { kind: 'open'; key: AccessSettingAreaKey | null }
-  | { kind: 'leave'; href: string };
+type Pending = { kind: 'open'; key: AccessSettingAreaKey | null } | { kind: 'leave'; href: string };
 
 /**
  * Access > By area (spec 4): one card per area in the catalogue's order. One card is open at a

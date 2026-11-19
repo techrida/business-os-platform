@@ -85,7 +85,9 @@ describe('By role pages', () => {
   it('mark the open role and its edited state, with groups anchored by area', async () => {
     getSession.mockResolvedValue(session(['founder']));
     const page = await html(rolePage('sales'));
-    expect(page).toMatch(/aria-current="page"[^>]*href="\/settings\/access\/roles\/sales"|href="\/settings\/access\/roles\/sales"[^>]*aria-current="page"/);
+    expect(page).toMatch(
+      /aria-current="page"[^>]*href="\/settings\/access\/roles\/sales"|href="\/settings\/access\/roles\/sales"[^>]*aria-current="page"/,
+    );
     expect(page).toContain('Edited');
     expect(page).toContain('id="leads"');
     expect(page).toContain('Finds customers and prepares quotations.');
@@ -108,7 +110,7 @@ describe('By role pages', () => {
 
     api.getAccessCatalogue.mockRejectedValue(new ApiError(403, 'no'));
     expect(await html(RolesPage())).toContain(
-      "You don&#x27;t have permission to view access settings.",
+      'You don&#x27;t have permission to view access settings.',
     );
   });
 });

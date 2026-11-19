@@ -76,13 +76,7 @@ function readLevels(values: readonly string[]): AccessLevel[] {
   return ACCESS_LEVELS.filter((level) => values.includes(level));
 }
 
-function PersonCell({
-  person,
-  departmentName,
-}: {
-  person: StagedPerson;
-  departmentName: string;
-}) {
+function PersonCell({ person, departmentName }: { person: StagedPerson; departmentName: string }) {
   return (
     <span className={styles.person}>
       <Avatar name={person.name} size="small" shape="circle" />
