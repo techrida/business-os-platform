@@ -285,9 +285,8 @@ describe('opportunity noun (D54-3)', () => {
   it('uses opportunity copy and refuses an empty reason and note before any request', async () => {
     const mounted = await openOpportunity();
     expect(dialog()?.textContent).toContain('Mark this opportunity lost?');
-    expect(dialog()?.textContent).toContain(
-      'DEAL-7 will move to Lost. A manager can reopen it later.',
-    );
+    expect(dialog()?.textContent).toContain('DEAL-7 will move to Lost.');
+    expect(dialog()?.textContent).not.toContain('reopen');
     await click(footerButton('Mark lost'));
     await settle();
 
