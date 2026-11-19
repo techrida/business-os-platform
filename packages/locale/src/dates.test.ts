@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBs, formatKathmandu } from './dates.js';
+import { formatBs, formatCustomerDate, formatKathmandu } from './dates.js';
 
 describe('formatKathmandu', () => {
   it('shows date and time in UTC+05:45', () => {
@@ -27,5 +27,17 @@ describe('formatBs', () => {
 
   it('throws RangeError outside the supported range', () => {
     expect(() => formatBs(new Date('1900-01-01T00:00:00Z'), 'YYYY')).toThrow(RangeError);
+  });
+});
+
+describe('formatCustomerDate', () => {
+  it.each([
+    ['2026-11-19', '19 Nov 2026'],
+    ['2026-09-01', '01 Sep 2026'],
+    ['2028-02-29', '29 Feb 2028'],
+    ['2026-02-29', '2026-02-29'],
+    ['On order', 'On order'],
+  ])('formats %s as %s', (date, expected) => {
+    expect(formatCustomerDate(date)).toBe(expected);
   });
 });
