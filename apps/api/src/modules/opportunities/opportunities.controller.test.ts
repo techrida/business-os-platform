@@ -1,6 +1,7 @@
-// Unit tests of the opportunity routes without a database: every route carries a permission, reads need
-// crm.opportunity.read and the stage change needs crm.opportunity.write, and parsing happens before the service
-// is called (won and quotation_sent never reach it). The rules behind the routes are in the integration test.
+// Unit tests of the opportunity routes without a database: every route carries a permission, reads (the Owner
+// filter included) need crm.opportunity.read and the stage change needs crm.opportunity.write, and parsing happens
+// before the service is called (won and quotation_sent never reach it). The rules behind the routes are in the
+// integration tests.
 import 'reflect-metadata';
 
 import { OPPORTUNITY_STAGES } from '@bos/contracts';
@@ -13,6 +14,7 @@ import { CAN_KEY } from '../../platform/authz/decorators';
 import { findUnmarkedRoutes } from '../../platform/authz/route-policy.check';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
+import { OpportunityOwnersService } from './opportunity-owners.service';
 
 const ID = '4f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
 const OWNER = '9b2c1d3e-5f60-4a7b-8c9d-0e1f2a3b4c5d';
@@ -24,14 +26,18 @@ async function setup() {
     get: vi.fn().mockResolvedValue({}),
     changeStage: vi.fn().mockResolvedValue({}),
   };
+  const owners = { ownerFilter: vi.fn().mockResolvedValue([]) };
   const moduleRef = await Test.createTestingModule({
     controllers: [OpportunitiesController],
-    providers: [{ provide: OpportunitiesService, useValue: service }],
+    providers: [
+      { provide: OpportunitiesService, useValue: service },
+      { provide: OpportunityOwnersService, useValue: owners },
+    ],
   }).compile();
   const controller = moduleRef.get(OpportunitiesController);
   const res = { setHeader: vi.fn() };
   const list = (query: unknown) => controller.list(query, res as unknown as Response);
-  return { service, moduleRef, controller, res, list };
+  return { service, owners, moduleRef, controller, res, list };
 }
 
 describe('OpportunitiesController', () => {
@@ -41,12 +47,24 @@ describe('OpportunitiesController', () => {
     await moduleRef.close();
   });
 
-  it('requires read for the two GET routes and write for the stage change', () => {
+  it('requires read for the three GET routes and write for the stage change', () => {
     const can = (name: keyof OpportunitiesController) =>
       Reflect.getMetadata(CAN_KEY, OpportunitiesController.prototype[name]) as string;
     expect(can('list')).toBe('crm.opportunity.read');
+    expect(can('ownerFilter')).toBe('crm.opportunity.read');
     expect(can('get')).toBe('crm.opportunity.read');
     expect(can('changeStage')).toBe('crm.opportunity.write');
+  });
+
+  it('declares owner-filter before :id, so "owner-filter" is never parsed as an id', async () => {
+    const methods = Object.getOwnPropertyNames(OpportunitiesController.prototype);
+    expect(Reflect.getMetadata('path', OpportunitiesController.prototype.ownerFilter)).toBe(
+      'owner-filter',
+    );
+    expect(methods.indexOf('ownerFilter')).toBeLessThan(methods.indexOf('get'));
+    const { owners, controller } = await setup();
+    await controller.ownerFilter();
+    expect(owners.ownerFilter).toHaveBeenCalledOnce();
   });
 
   it('parses the list query: arrays, paging defaults and a total header; a bad value is a 400', async () => {

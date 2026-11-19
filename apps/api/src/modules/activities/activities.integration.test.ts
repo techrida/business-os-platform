@@ -1,7 +1,9 @@
 // Integration tests of the activities API on a real Postgres (Testcontainers, needs Docker in WSL). Real:
-// migrations, ActivitiesService, LeadsService (to make lead subjects), NumberingService, AuditService, and the
-// controller behind the production body parser and error filter. Faked: the request context and authz.assert
-// (see ../leads/test/harness.ts). Responses are parsed with the contract schema the workspace uses.
+// migrations, ActivitiesService, LeadsService (to make lead subjects), NumberingService, AuditService, the
+// RoleCache and NotifyService, and the controller behind the production body parser and error filter. Faked: the
+// request context and authz.assert (see ../leads/test/harness.ts). Responses are parsed with the contract schema
+// the workspace uses. The D50 assignment rule, assigned reach and `crm.assigned` are in
+// activities.access.integration.test.ts.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/activities
 import 'reflect-metadata';
 
@@ -52,8 +54,17 @@ beforeAll(async () => {
     h.caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
     new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
+    h.roleCache,
+    h.notify,
   );
-  const service = new ActivitiesService(h.db, authz, new AuditService(h.db), h.caller);
+  const service = new ActivitiesService(
+    h.db,
+    authz,
+    new AuditService(h.db),
+    h.caller,
+    h.roleCache,
+    h.notify,
+  );
   const moduleRef = await Test.createTestingModule({
     controllers: [ActivitiesController],
     providers: [{ provide: ActivitiesService, useValue: service }],
@@ -372,12 +383,13 @@ describe('planned and logged activities', () => {
         assigneeUserId: h.users.salesB,
         leadId: lead.id,
       });
-    // On a lead, an own-scope caller hands work only to themselves.
+    // On a lead, the assignment rule decides (D50): two salespeople with no department share no team to hand
+    // work within.
     const refused = await send();
     expect(refused.status, JSON.stringify(refused.body)).toBe(400);
     expect(errorOf(refused.body)).toMatchObject({
       code: 'bad_request',
-      message: 'assigneeUserId cannot be someone else: your access covers only your own leads',
+      message: 'assigneeUserId needs you and them to belong to a department',
     });
     h.as('boss', 'founder');
     const explicit = dto((await send()).body);
@@ -618,7 +630,7 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
       'second',
     ]);
 
-    // An own-scope caller cannot hand a lead's follow-up to a colleague; a wider grant can.
+    // The rule refuses a hand-over between two salespeople with no department; the Founder may hand it to anyone.
     const handed = await patch(first.id, 'reschedule', {
       expectedVersion: 1,
       dueAt: DUE_3,

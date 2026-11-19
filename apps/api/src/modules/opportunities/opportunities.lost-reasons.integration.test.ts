@@ -52,6 +52,7 @@ import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { startHarness, type Harness, type TestUser } from '../leads/test/harness';
 import { OpportunitiesController } from './opportunities.controller';
 import { OpportunitiesService } from './opportunities.service';
+import { OpportunityOwnersService } from './opportunity-owners.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -122,6 +123,8 @@ beforeAll(async () => {
     caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
     reasons,
+    h.roleCache,
+    h.notify,
   );
   opportunitiesService = new OpportunitiesService(
     h.db,
@@ -134,6 +137,10 @@ beforeAll(async () => {
     controllers: [OpportunitiesController, LeadsController, LeadLostReasonsController],
     providers: [
       { provide: OpportunitiesService, useValue: opportunitiesService },
+      {
+        provide: OpportunityOwnersService,
+        useValue: new OpportunityOwnersService(h.db, caller, h.roleCache),
+      },
       { provide: LeadsService, useValue: leadsService },
       { provide: LeadLostReasonsService, useValue: reasons },
       {
