@@ -64,7 +64,7 @@ it('passes directory filters to the API, preserves them across pages, and shows 
     expect(first).not.toContain('Person 6');
     expect(first).toContain('Total users');
     expect(first).toContain('Operations');
-    expect(first).toContain('datetime="2026-11-19T11:30:00.000Z"');
+    expect(first).toMatch(/datetime="2026-11-19T11:30:00\.000Z"/i);
     expect(first).toContain('Send password reset email to Person 1');
     const link = first.match(/<a[^>]*href="([^"]+)"[^>]*>Next<\/a>/)?.[1];
     expect(link).toBeTruthy();
