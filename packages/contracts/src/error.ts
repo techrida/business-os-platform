@@ -4,7 +4,8 @@ import { z } from 'zod';
  * Why a 403 (or a 400) was refused, so the workspace can show the right message. `inactive_user` is
  * not in the plan's section 6.1 list but is in the section 6.2 `Decision` type, so it is allowed here
  * too. ADR 0027 §4 adds `entity_not_permitted` (403: the caller may not act for that entity, or it is
- * unknown) and `invalid_entity` (400: a malformed `X-Entity-Id` header).
+ * unknown) and `invalid_entity` (400: a malformed `X-Entity-Id` header). `deadline_in_past` (400, P4 sourcing): an
+ * RFQ's quotation deadline is not after now, so no invited vendor could ever quote.
  */
 export const ERROR_REASONS = [
   'no_permission',
@@ -15,6 +16,7 @@ export const ERROR_REASONS = [
   'entity_not_permitted',
   'invalid_entity',
   'stale_memo',
+  'deadline_in_past',
 ] as const;
 export const ErrorReasonSchema = z.enum(ERROR_REASONS);
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>;

@@ -74,15 +74,29 @@ const RFQ_WORDS: Record<string, string> = {
 
 export type ParsedRfq = { ok: true; data: CreateRfqBody } | { ok: false; errors: FieldErrors };
 
-export function parseRfqValues(input: RfqValues): ParsedRfq {
+/** Shown next to the deadline when it is not after now (the API answers 400 `deadline_in_past` the same). */
+export const DEADLINE_IN_PAST =
+  'The quotation deadline has passed. Choose a date and time in the future.';
+
+/**
+ * Checks the typed RFQ against the contract and against `now`: a deadline that is not after now would open an
+ * RFQ no invited vendor can quote on. The deadline is compared as the Kathmandu instant it is sent as.
+ */
+export function parseRfqValues(input: RfqValues, now: Date = new Date()): ParsedRfq {
   const distinct = [...new Set(input.vendorIds.map(trim).filter((v) => v !== ''))];
   const parsed = CreateRfqBodySchema.safeParse({
     purchaseRequestId: trim(input.purchaseRequestId),
     deadline: deadlineToIso(input.deadline) ?? '',
     vendorIds: distinct,
   });
-  if (parsed.success) return { ok: true, data: parsed.data };
   const errors: FieldErrors = {};
+  if (parsed.success) {
+    if (new Date(parsed.data.deadline).getTime() > now.getTime()) {
+      return { ok: true, data: parsed.data };
+    }
+    errors.deadline = DEADLINE_IN_PAST;
+    return { ok: false, errors };
+  }
   for (const issue of parsed.error.issues) {
     const head = issue.path[0];
     if (typeof head === 'string') errors[head] ??= RFQ_WORDS[head] ?? issue.message;

@@ -31,7 +31,7 @@ function form(entries: [string, string][]): FormData {
 
 describe('deadlineToIso', () => {
   it('reads the typed time as Kathmandu time (+05:45), never the server zone', () => {
-    expect(deadlineToIso('2026-12-01T17:30')).toBe('2026-12-01T17:30:00+05:45');
+    expect(deadlineToIso('2030-12-01T17:30')).toBe('2030-12-01T17:30:00+05:45');
   });
   it('refuses text that is not a date and time', () => {
     expect(deadlineToIso('')).toBeNull();
@@ -45,7 +45,7 @@ describe('parseRfqValues', () => {
     const v = rfqValuesFromForm(
       form([
         ['purchaseRequestId', PR],
-        ['deadline', '2026-12-01T17:30'],
+        ['deadline', '2030-12-01T17:30'],
         ['vendorIds', V1],
         ['vendorIds', V2],
         ['vendorIds', V1],
@@ -56,10 +56,48 @@ describe('parseRfqValues', () => {
       ok: true,
       data: {
         purchaseRequestId: PR,
-        deadline: '2026-12-01T17:30:00+05:45',
+        deadline: '2030-12-01T17:30:00+05:45',
         vendorIds: [V1, V2],
       },
     });
+  });
+
+  it.each([
+    ['a past deadline', '2020-01-01T17:00'],
+    ['a deadline of exactly now (17:00 Kathmandu)', '2026-11-19T17:00'],
+  ])('refuses %s next to the deadline field (I-28)', (_label, deadline) => {
+    const now = new Date('2026-11-19T11:15:00Z'); // 17:00 in Kathmandu
+    const out = parseRfqValues(
+      rfqValuesFromForm(
+        form([
+          ['purchaseRequestId', PR],
+          ['deadline', deadline],
+          ['vendorIds', V1],
+        ]),
+      ),
+      now,
+    );
+    expect(out).toEqual({
+      ok: false,
+      errors: {
+        deadline: 'The quotation deadline has passed. Choose a date and time in the future.',
+      },
+    });
+  });
+
+  it('takes a deadline a minute after now, read in Kathmandu time (I-28)', () => {
+    const now = new Date('2026-11-19T11:15:00Z');
+    const out = parseRfqValues(
+      rfqValuesFromForm(
+        form([
+          ['purchaseRequestId', PR],
+          ['deadline', '2026-11-19T17:01'],
+          ['vendorIds', V1],
+        ]),
+      ),
+      now,
+    );
+    expect(out.ok).toBe(true);
   });
 
   it('names what is missing in words', () => {

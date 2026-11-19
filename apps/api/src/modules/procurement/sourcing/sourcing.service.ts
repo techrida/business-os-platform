@@ -179,6 +179,14 @@ export class SourcingService {
               `An RFQ needs a dept_approved purchase request; this one is ${pr.status}`,
             );
           }
+          // A deadline that has passed would open an RFQ no invited vendor can ever quote on.
+          if (new Date(body.deadline).getTime() <= now.getTime()) {
+            throw new BadRequestException({
+              code: 'bad_request',
+              reason: 'deadline_in_past',
+              message: 'The quotation deadline has passed. Choose a date and time in the future.',
+            });
+          }
           await this.assertInvitable(tx, scope, body.vendorIds);
 
           const { number } = await this.numbering.issue(tx, RFQ_SERIES, now);

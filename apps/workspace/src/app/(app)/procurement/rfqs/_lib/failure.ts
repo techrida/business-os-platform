@@ -55,6 +55,13 @@ const NOT_FOUND: Record<RfqOp, string> = {
 const STALE =
   'This RFQ changed since you opened it. Reload to see where it stands, then try again.';
 
+/** The API refused an RFQ because its quotation deadline is not after now (400 `deadline_in_past`). */
+export function isDeadlineInPast(err: unknown): boolean {
+  return (
+    err instanceof ApiError && err.status === 400 && fieldsOf(err).reason === 'deadline_in_past'
+  );
+}
+
 /** Turns anything an RFQ action or page caught into words, a reload flag and the key rule. */
 export function rfqFailure(err: unknown, op: RfqOp): RfqFailure {
   if (!(err instanceof ApiError)) {
