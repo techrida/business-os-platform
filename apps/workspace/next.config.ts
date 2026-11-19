@@ -19,6 +19,8 @@ const contentSecurityDirectives = [
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'self'",
+  // The PDF viewer's pdf.js worker is a bundled same-origin asset. No blob: and no CDN.
+  "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
 ];
@@ -32,6 +34,9 @@ const nextConfig: NextConfig = {
   // root so Next does not warn about two different roots.
   turbopack: { root: monorepoRoot },
   poweredByHeader: false,
+
+  // @bos/pdf-viewer ships TypeScript source and a CSS file (no dist build), so Next compiles it.
+  transpilePackages: ['@bos/pdf-viewer'],
 
   // The memo PDF (src/lib/memo-pdf.ts) uses pdfkit, which reads its own data files at runtime, so it stays an
   // external package instead of being bundled. The fonts it embeds are read from assets/fonts at request time,

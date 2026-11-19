@@ -183,6 +183,12 @@ describe('the purchase order page', () => {
     expect(out).toContain('Himal Traders Pvt. Ltd.');
     expect(out).toContain(`/procurement/orders/${ID}/versions/1/document`);
     expect(out).toContain(`/procurement/orders/${ID}/versions/2/document`);
+    // Each version opens in the viewer (a dialog trigger), with Download beside it; the label is not "Download PDF".
+    expect(
+      out.match(/<button[^>]*aria-haspopup="dialog"[^>]*>[^]*?View PDF<\/button>/g),
+    ).toHaveLength(2);
+    expect(out).toContain('of version 2');
+    expect(out).not.toContain('Download PDF');
     expect(out).toContain('Total, version 2');
     expect(out).toContain('Still open');
     expect(out).toMatch(/>6</);

@@ -18,6 +18,7 @@ function row(over: Partial<RevisionRow> = {}): RevisionRow {
   return {
     id: 'v1',
     label: 'Rev 1',
+    href: '/quotations/q1?rev=v1',
     current: false,
     status: <span>Superseded</span>,
     total: 'NPR 26,90,999.99',
@@ -32,6 +33,7 @@ const rows: RevisionRow[] = [
   row({
     id: 'v2',
     label: 'Rev 2',
+    href: '/quotations/q1',
     current: true,
     status: <span>Sent</span>,
     total: 'NPR 1,00,000',
@@ -59,6 +61,12 @@ describe('VersionDrawer', () => {
     expect(html).toContain('Rev 2');
     expect(html).toContain('NPR 1,00,000');
     expect(html).toContain('Customer asked for a smaller scope');
+  });
+
+  it('links each revision to its page, and the current one to the bare path', () => {
+    const html = render();
+    expect(html).toMatch(/<a [^>]*href="\/quotations\/q1\?rev=v1"[^>]*>Rev 1<\/a>/);
+    expect(html).toMatch(/<a [^>]*href="\/quotations\/q1"[^>]*>Rev 2<\/a>/);
   });
 
   it('marks the current revision in words', () => {
