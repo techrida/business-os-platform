@@ -84,3 +84,20 @@ describe('when() date pattern', () => {
     expect(when('soon', 'datetime')).toBe('soon');
   });
 });
+
+describe('snapshotEntries reference names', () => {
+  const id = '3F2A9C1E-7B44-4D6A-9E10-5C8D2A7B6F01';
+  const names = new Map([[id.toLowerCase(), 'Operations']]);
+
+  it('finds a name for an id written in upper case, top level and nested', () => {
+    const rows = snapshotEntries({ purchaseRequest: { departmentId: id }, ownerUserId: id }, names);
+    const text = rows.map((row) => row.value).join('\n');
+    expect(text).toContain('Operations');
+    expect(text).not.toContain('Name unavailable');
+  });
+
+  it('still says the name is unavailable for an unknown id', () => {
+    const rows = snapshotEntries({ ownerUserId: '00000000-0000-4000-8000-000000000000' }, names);
+    expect(rows.map((row) => row.value).join('\n')).toContain('Name unavailable');
+  });
+});
