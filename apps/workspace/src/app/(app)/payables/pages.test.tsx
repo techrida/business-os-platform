@@ -465,6 +465,28 @@ describe('bill entry', () => {
     expect(out).toContain('You cannot key in bills');
     expect(api.listBillSubmissions).not.toHaveBeenCalled();
   });
+
+  // The PO page offers Enter bill from the API's live grants; the page it opens must agree (U18 #12).
+  it("opens for Procurement after an admin granted payables.bill.enter, from the order's Enter bill link", async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([
+      ['procurement.po.issue', 'all'],
+      ['payables.bill.enter', 'all'],
+    ]);
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(out).not.toContain('You cannot key in bills');
+    expect(api.getPoProgress).toHaveBeenCalledWith(expect.anything(), PO);
+    expect(out).toContain(`name="purchaseOrderId" value="${PO}"`);
+  });
+
+  it('blocks an accountant whose payables.bill.enter an admin removed, before loading anything', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    const out = await html(NewBillPage({ searchParams: Promise.resolve({ po: PO }) }));
+    expect(out).toContain('You cannot key in bills');
+    expect(api.getPoProgress).not.toHaveBeenCalled();
+    expect(api.listBillableOrders).not.toHaveBeenCalled();
+    expect(out).not.toContain('Himal Traders');
+  });
 });
 
 const inbox = (sp: Record<string, string | string[]> = {}) =>
