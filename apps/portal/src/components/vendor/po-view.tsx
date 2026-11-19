@@ -4,6 +4,7 @@ import { formatMoney } from '@bos/locale';
 
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
+import { ViewDocument } from '@/components/ui/document-viewer';
 
 import styles from './vendor.module.css';
 import { PO_STATUS_LOOK, trimQuantity } from './vendor-status';
@@ -51,13 +52,15 @@ export function PurchaseOrderView({ view }: { view: VendorPortalPurchaseOrderVie
         </dl>
         {view.file ? (
           <div className={styles.download}>
-            <LinkButton
+            <ViewDocument
+              name={view.file.filename}
+              previewUrl={`/vendor/purchase-orders/${view.id}/pdf/preview`}
+              downloadUrl={`/vendor/purchase-orders/${view.id}/pdf`}
               variant="secondary"
-              href={`/vendor/purchase-orders/${view.id}/pdf`}
-              aria-describedby="po-file-name"
-            >
-              Download PDF
-            </LinkButton>
+              size="small"
+              withDownload
+              describedBy="po-file-name"
+            />
             <span id="po-file-name" className={styles.fileName}>
               {view.file.filename}
             </span>
