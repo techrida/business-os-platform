@@ -1,4 +1,6 @@
 // Billing schedule (P3 A7) and invoice slices of a sales order (P3 architect §3.5 step 7).
+import { allocatePaymentSchedule } from '@bos/locale';
+
 import { allocateLargestRemainder } from './allocate.js';
 import { Dec, roundMoney } from './money.js';
 import type { TaxBucket } from './tax.js';
@@ -61,8 +63,7 @@ export function proportionalSlice(buckets: readonly TaxBucket[], amount: Dec): S
 /**
  * Splits a sales order total over its billing schedule (A7: 60/20/20 by default). The percents
  * may have any decimals but must not be negative and must add up to exactly 100. Each part is a
- * whole paisa and the parts add up to `total` exactly (largest remainder; a tie goes to the
- * earlier line).
+ * whole paisa and the parts add up to `total` exactly. Each share rounds half up, then the last line takes the remaining amount.
  */
 export function splitSchedule(total: Dec, percents: readonly Dec[]): Dec[] {
   assertAmount(total, 'The schedule total');
@@ -74,7 +75,7 @@ export function splitSchedule(total: Dec, percents: readonly Dec[]): Dec[] {
   if (!percentSum.eq(HUNDRED)) {
     throw new RangeError(`Schedule percents add up to ${percentSum.toString()}, not 100.`);
   }
-  return allocateLargestRemainder(total, percents);
+  return allocatePaymentSchedule(total, percents);
 }
 
 /**

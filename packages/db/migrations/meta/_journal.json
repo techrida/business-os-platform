@@ -197,6 +197,13 @@
       "when": 1783000000040,
       "tag": "0040_verification_document_review",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1783000000042,
+      "tag": "0042_billing_schedule_percent_precision",
+      "breakpoints": true
     }
   ]
 }
