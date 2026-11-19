@@ -71,9 +71,11 @@ type PictureLoad = {
   errors: number;
   /** No image is drawn: a retry is waiting, or the waits are used up and the initials stay. */
   failed: boolean;
+  /** This try's picture arrived. Until then a retry stays transparent, so its pending box never covers the initials. */
+  loaded: boolean;
 };
 
-const FIRST_LOAD: PictureLoad = { attempt: 0, errors: 0, failed: false };
+const FIRST_LOAD: PictureLoad = { attempt: 0, errors: 0, failed: false, loaded: false };
 
 /** Keyed by the picture's path, so a new picture starts from a first try with no timer left over. */
 function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
@@ -99,7 +101,7 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
     const delay = scanPollDelays()[errors - 1];
     if (delay === undefined) return;
     const timer = window.setTimeout(
-      () => setLoad((prev) => ({ ...prev, attempt: prev.attempt + 1, failed: false })),
+      () => setLoad((prev) => ({ ...prev, attempt: prev.attempt + 1, failed: false, loaded: false })),
       delay,
     );
     return () => window.clearTimeout(timer);
@@ -110,7 +112,7 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
     if (!failed) return;
     const retry = (event: Event) => {
       if (event instanceof CustomEvent && event.detail === src) {
-        setLoad((prev) => ({ attempt: prev.attempt + 1, errors: 0, failed: false }));
+        setLoad((prev) => ({ attempt: prev.attempt + 1, errors: 0, failed: false, loaded: false }));
       }
     };
     window.addEventListener(IMAGE_READY_EVENT, retry);
@@ -118,6 +120,8 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
   }, [failed, src]);
 
   if (failed) return null;
+  // The first try draws as it always has; a retry shows only once its picture is there (opacity, so lazy still fetches).
+  const hidden = load.attempt > 0 && !load.loaded;
   return (
     // eslint-disable-next-line @next/next/no-img-element -- a same-origin, authenticated picture route: drawn through <img> only
     <img
@@ -130,6 +134,8 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
       alt=""
       loading="lazy"
       decoding="async"
+      style={hidden ? { opacity: 0 } : undefined}
+      onLoad={() => setLoad((prev) => (prev.loaded ? prev : { ...prev, loaded: true }))}
       onError={fail}
     />
   );

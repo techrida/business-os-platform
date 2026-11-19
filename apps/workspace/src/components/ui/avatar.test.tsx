@@ -136,6 +136,29 @@ describe('a picture that fails', () => {
     await view.unmount();
   });
 
+  it('keeps a retry transparent until its picture arrives, so the initials never blink', async () => {
+    const view = mountRoot();
+    await view.render();
+    // The first try draws as it always has.
+    expect(view.image()?.style.opacity).toBe('');
+    await view.fail();
+    await view.wait(1_000);
+    expect(view.image()?.style.opacity).toBe('0');
+    await act(() => Promise.resolve(view.image()!.dispatchEvent(new Event('load'))));
+    expect(view.image()?.style.opacity).toBe('');
+    await view.unmount();
+
+    // A retry started by an announcement is hidden the same way.
+    const announced = mountRoot();
+    await announced.render();
+    await announced.fail();
+    await act(() => Promise.resolve(announceImageReady(IMAGE_ID)));
+    expect(announced.image()?.style.opacity).toBe('0');
+    await act(() => Promise.resolve(announced.image()!.dispatchEvent(new Event('load'))));
+    expect(announced.image()?.style.opacity).toBe('');
+    await announced.unmount();
+  });
+
   it('gives up after the first request and seven retries, keeping the initials', async () => {
     const view = mountRoot();
     await view.render();
