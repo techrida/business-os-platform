@@ -35,6 +35,9 @@ export const ENDPOINTS = {
 
   listApps: '/zitadel.application.v2.ApplicationService/ListApplications',
   createApp: '/zitadel.application.v2.ApplicationService/CreateApplication',
+  // Verified at tag v4.20.1 (proto/zitadel/application/v2/application_service.proto): a repeated field that
+  // is sent replaces the stored list, one that is left out stays unchanged.
+  updateApp: '/zitadel.application.v2.ApplicationService/UpdateApplication',
 
   listUsers: '/zitadel.user.v2.UserService/ListUsers',
   createUser: '/zitadel.user.v2.UserService/CreateUser',
@@ -174,6 +177,9 @@ export interface AppInfo {
   id: string;
   clientId: string;
   accessTokenType: string;
+  /** Allowed callback URIs as ZITADEL stores them (an empty list is omitted in its JSON). */
+  redirectUris: string[];
+  postLogoutRedirectUris: string[];
 }
 export interface UserInfo {
   id: string;
@@ -233,6 +239,12 @@ export interface ZitadelApi {
 
   findOidcApp(projectId: string, name: string): Promise<AppInfo | undefined>;
   createOidcApp(projectId: string, spec: OidcAppSpec): Promise<AppInfo>;
+  /** Replaces the app's redirect and post-logout lists; send the full wanted lists, not a delta. */
+  setOidcAppRedirects(
+    projectId: string,
+    appId: string,
+    uris: Pick<OidcAppSpec, 'redirectUris' | 'postLogoutRedirectUris'>,
+  ): Promise<void>;
 
   findUser(orgId: string, username: string): Promise<UserInfo | undefined>;
   createHumanUser(spec: HumanSpec): Promise<UserInfo>;
@@ -451,7 +463,12 @@ const AppList = z.object({
         applicationId: Str.min(1),
         name: Str,
         oidcConfiguration: z
-          .object({ clientId: Str, accessTokenType: Str.default('OIDC_TOKEN_TYPE_BEARER') })
+          .object({
+            clientId: Str,
+            accessTokenType: Str.default('OIDC_TOKEN_TYPE_BEARER'),
+            redirectUris: z.array(Str).default([]),
+            postLogoutRedirectUris: z.array(Str).default([]),
+          })
           .optional(),
       }),
     )
@@ -773,6 +790,8 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
       id: app.applicationId,
       clientId: app.oidcConfiguration.clientId,
       accessTokenType: app.oidcConfiguration.accessTokenType,
+      redirectUris: app.oidcConfiguration.redirectUris,
+      postLogoutRedirectUris: app.oidcConfiguration.postLogoutRedirectUris,
     };
   }
 
@@ -808,7 +827,25 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
       id: res.applicationId,
       clientId: res.oidcConfiguration.clientId,
       accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+      redirectUris: spec.redirectUris,
+      postLogoutRedirectUris: spec.postLogoutRedirectUris,
     };
+  }
+
+  async setOidcAppRedirects(
+    projectId: string,
+    appId: string,
+    uris: Pick<OidcAppSpec, 'redirectUris' | 'postLogoutRedirectUris'>,
+  ): Promise<void> {
+    // Only the two URI lists: every other OIDC setting is left out, so ZITADEL keeps it as it is.
+    await this.transport.post(ENDPOINTS.updateApp, {
+      applicationId: appId,
+      projectId,
+      oidcConfiguration: {
+        redirectUris: uris.redirectUris,
+        postLogoutRedirectUris: uris.postLogoutRedirectUris,
+      },
+    });
   }
 
   async findUser(orgId: string, username: string): Promise<UserInfo | undefined> {

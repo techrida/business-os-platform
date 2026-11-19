@@ -8,6 +8,7 @@ import { EMPTY_CUSTOMER_VALUES } from '@/components/p2/customers/forms';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { getGrants, hasGrant } from '@/lib/grants';
 
 export const metadata: Metadata = { title: 'Create Organization · Business OS' };
@@ -16,6 +17,7 @@ export const dynamic = 'force-dynamic';
 export default async function NewCustomerPage() {
   const session = await requireStaffSession('/customers/new');
   const mayWrite = hasGrant(await getGrants(session), 'customer.write');
+  const enabledCurrencies = mayWrite ? await loadEnabledCurrencies(session) : [];
 
   return (
     <Page>
@@ -32,6 +34,7 @@ export default async function NewCustomerPage() {
           cancelHref="/customers"
           reloadHref="/customers/new"
           description="Add a company record and the primary contact for quotations."
+          enabledCurrencies={enabledCurrencies}
         />
       ) : (
         <>

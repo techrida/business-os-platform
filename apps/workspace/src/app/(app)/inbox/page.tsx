@@ -8,17 +8,21 @@ import { Alert } from '@/components/ui/alert';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
+import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { failureOf, getInboxPage, type InboxPage } from '@/lib/api-kernel';
+import { failureOf, getInbox, getInboxPage, type InboxPage } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
-import { money, when } from '@/lib/kernel-format';
+import { documentNumberText, money, when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
 
+import { EyeIcon } from '../memos/memo-icons';
+import { RowActionLink, RowActions } from '../memos/row-action-link';
 import { INBOX_DENIED, inboxDenialMessage } from './denial';
 import { DecisionFeedback } from './decision-feedback';
 import { InboxFilters } from './inbox-filters';
 import { documentTypeLabel, INBOX_LIST } from './inbox-params';
+import { inboxSummaryCards } from './inbox-summary';
 import styles from './inbox.module.css';
 
 export const metadata: Metadata = { title: 'Inbox · Business OS' };
@@ -35,7 +39,7 @@ function InboxRow({ item, numberSystems }: { item: InboxItemDto; numberSystems: 
           meta={
             <>
               <span className="sr-only">Document number: </span>
-              {item.documentNumber}
+              {documentNumberText(item.documentNumber)}
             </>
           }
         />
@@ -50,6 +54,17 @@ function InboxRow({ item, numberSystems }: { item: InboxItemDto; numberSystems: 
       </Td>
       <Td nowrap>
         <time dateTime={item.submittedAt}>{when(item.submittedAt)}</time>
+      </Td>
+      <Td align="end">
+        <RowActions>
+          <RowActionLink
+            href={`/inbox/${encodeURIComponent(item.requestId)}`}
+            label={`Review ${item.title}`}
+            tooltip="Review request"
+          >
+            <EyeIcon size={18} />
+          </RowActionLink>
+        </RowActions>
       </Td>
     </tr>
   );
@@ -88,6 +103,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     const f = failureOf(err);
     problem = { message: f.status === 403 ? inboxDenialMessage(err) : f.message, status: f.status };
   }
+  // The whole inbox, unfiltered, for the KPI cards; only read once the list itself was allowed.
+  // A failed read just leaves the cards out.
+  const summary = problem === null ? await getInbox(session).then(inboxSummaryCards, () => []) : [];
   const items = result?.items ?? null;
   const total = result?.total ?? 0;
   const hiding = activeFilterLabels(
@@ -120,6 +138,13 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         </EmptyState>
       ) : items !== null ? (
         <div className={styles.results}>
+          {summary.length > 0 ? (
+            <section className={styles.stats} aria-label="Inbox summary">
+              {summary.map((card) => (
+                <StatCard key={card.key} label={card.label} value={card.value} icon={card.icon} />
+              ))}
+            </section>
+          ) : null}
           <div className={styles.toolbar}>
             <InboxFilters documentType={documentType} rows={state.rows} decided={decided} />
             <ResultCount shown={items.length} total={total} noun="request" />
@@ -133,13 +158,16 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
             </EmptyState>
           ) : (
             <div className={styles.tableCard}>
-              <Table caption="Waiting approvals" minWidth={680} className={styles.table ?? ''}>
+              <Table caption="Waiting approvals" minWidth={760} className={styles.table ?? ''}>
                 <thead>
                   <tr>
                     <Th>Document</Th>
                     <Th>Approval reason</Th>
                     <Th align="end">Amount</Th>
                     <Th>Submitted</Th>
+                    <Th align="end">
+                      <span className="sr-only">Actions</span>
+                    </Th>
                   </tr>
                 </thead>
                 <tbody>

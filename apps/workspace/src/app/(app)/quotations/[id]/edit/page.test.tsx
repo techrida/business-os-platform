@@ -1,4 +1,5 @@
 import { QuotationDetailSchema, type QuotationDetail } from '@bos/contracts';
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getQuotation: vi.fn(),
   builderProps: vi.fn(),
+  // The display-settings read behind the real `loadEnabledCurrencies`.
+  call: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -25,6 +28,7 @@ vi.mock('@/components/p2/quote-builder/api', () => ({
   getCustomer: vi.fn(() => Promise.reject(new Error('not needed'))),
   getOpportunity: vi.fn(() => Promise.reject(new Error('not needed'))),
 }));
+vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
 vi.mock('@/components/p2/quote-builder/lookups', () => ({
   loadLookups: vi.fn(() => Promise.resolve({ contacts: [], taxCodes: [], paymentTerms: [] })),
 }));
@@ -161,6 +165,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
   mocks.builderProps.mockReset();
+  mocks.call.mockReset().mockResolvedValue({ enabledCurrencies: ['NPR', 'INR', 'USD'] });
   mocks.notFound.mockClear();
 });
 
@@ -186,6 +191,14 @@ describe('edit quotation page', () => {
     expect(props.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('shows the status as its label, not the stored lowercase value', async () => {
+    await render();
+    const props = mocks.builderProps.mock.calls[0]?.[0] as { status: ReactNode };
+    const badge = renderToStaticMarkup(<>{props.status}</>);
+    expect(badge).toContain('Returned');
+    expect(badge).not.toContain('>returned<');
+  });
+
   it('says the current revision is missing instead of editing another one', async () => {
     const d = detail();
     mocks.getQuotation.mockResolvedValue({ ...d, versions: d.versions.filter((v) => v.id !== V2) });
@@ -201,6 +214,8 @@ describe('edit quotation page', () => {
     });
     const html = await render();
     expect(html).toContain('You can view this quotation but not edit it');
+    expect(html).toContain('Returned');
+    expect(html).not.toContain('>returned<');
     expect(html).toContain(`href="/quotations/${ID}"`);
     expect(mocks.builderProps).not.toHaveBeenCalled();
   });
@@ -208,5 +223,24 @@ describe('edit quotation page', () => {
   it('answers 404 for a quotation the API cannot find', async () => {
     mocks.getQuotation.mockRejectedValue(new ApiError(404, 'missing'));
     await expect(render()).rejects.toThrow('NEXT_NOT_FOUND');
+  });
+});
+
+describe('edit quotation currencies (D44)', () => {
+  it("hands the builder the enabled list and the revision's own currency, even if switched off", async () => {
+    mocks.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'INR'] });
+    const d = detail();
+    mocks.getQuotation.mockResolvedValue({
+      ...d,
+      versions: d.versions.map((v) => (v.id === V2 ? { ...v, currency: 'USD' } : v)),
+    });
+    await render();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    const props = mocks.builderProps.mock.calls[0]?.[0] as {
+      enabledCurrencies: string[];
+      initial: { currency: string };
+    };
+    expect(props.enabledCurrencies).toEqual(['NPR', 'INR']);
+    expect(props.initial.currency).toBe('USD');
   });
 });

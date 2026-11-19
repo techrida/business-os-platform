@@ -8,6 +8,7 @@ import type { TxScope } from '../db/tx';
 import {
   type IdpOrgRow,
   type ListedUser,
+  type ListedUsers,
   type MembershipRow,
   type Queryable,
   type UserFields,
@@ -157,32 +158,35 @@ export class FakeUsersStore extends UsersStore {
   emailOf(id: string) {
     return Promise.resolve(this.users.find((u) => u.id === id)?.email ?? null);
   }
-  list(s: TxScope): Promise<ListedUser[]> {
-    return Promise.resolve(
-      this.users
-        .filter(
-          (u) =>
-            u.tenantId === s.tenantId &&
-            this.orgs.some((o) => o.idpOrgId === u.idpOrgId && o.kind === 'staff'),
-        )
-        .map((u) => ({
-          ...u,
-          roles: this.roles.get(u.id) ?? [],
-          department: null,
-          lastActiveAt: null,
-          createdAt: '2026-01-01T00:00:00.000Z',
-        })),
-    );
+  /** Every staff user of the tenant; filters, search and paging are the SQL store's job. */
+  list(s: TxScope): Promise<ListedUsers> {
+    const rows = this.staff(s);
+    return Promise.resolve({ rows, total: rows.length });
   }
-  async summary(scope: TxScope) {
-    const users = await this.list(scope);
-    return {
+  private staff(s: TxScope): ListedUser[] {
+    return this.users
+      .filter(
+        (u) =>
+          u.tenantId === s.tenantId &&
+          this.orgs.some((o) => o.idpOrgId === u.idpOrgId && o.kind === 'staff'),
+      )
+      .map((u) => ({
+        ...u,
+        roles: this.roles.get(u.id) ?? [],
+        department: null,
+        lastActiveAt: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }));
+  }
+  summary(scope: TxScope) {
+    const users = this.staff(scope);
+    return Promise.resolve({
       total: users.length,
       active: users.filter(({ status }) => status === 'active').length,
       invited: users.filter(({ status }) => status === 'invited').length,
       deactivated: users.filter(({ status }) => status === 'inactive').length,
       departments: [],
-    };
+    });
   }
   recordActivity() {
     return Promise.resolve();

@@ -10,6 +10,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { toast } from '@/components/ui/toast';
+import { currencyChoices } from '@/lib/enabled-currencies';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
 import { SCHEDULE_ACTIVITY_KINDS } from './forms';
@@ -22,12 +23,6 @@ export interface OwnerOption {
   value: string;
   label: string;
 }
-
-const CURRENCIES = [
-  { value: 'NPR', label: 'NPR (Nepalese rupee)' },
-  { value: 'INR', label: 'INR (Indian rupee)' },
-  { value: 'USD', label: 'USD (US dollar)' },
-];
 
 const EMPTY: Record<string, string> = {
   title: '',
@@ -50,7 +45,10 @@ const EMPTY: Record<string, string> = {
   followUpAssigneeUserId: '',
 };
 
-/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+/**
+ * Card heading with the eyebrow Figma shows above it (D47): only the cards Figma gives one carry one ("01 · The
+ * basics", "02 · The story"). The eyebrow is decoration.
+ */
 function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
   return (
     <>
@@ -119,11 +117,14 @@ export function LeadForm({
   action,
   sources,
   owners,
+  enabledCurrencies,
   defaultOwnerId,
   idempotencyKey,
 }: {
   action: FormAction;
   sources: { value: string; label: string }[];
+  /** The company's switched-on currencies (`currency.enabled`), read once by the page. */
+  enabledCurrencies: readonly string[];
   /** Who the lead can go to. Empty when the list did not load: the API then makes it the caller's. */
   owners: readonly OwnerOption[];
   /** The signed-in user when they are in `owners`; the select starts there. */
@@ -152,6 +153,8 @@ export function LeadForm({
   const err = state.fieldErrors;
   const assignee = values['followUpAssigneeUserId'] || values['ownerUserId'] || '';
   const unplaced = defaultOwnerId === undefined;
+  // The chosen value stays listed even if it is not in the enabled list, so the select never blanks.
+  const currencies = currencyChoices(enabledCurrencies, values['currency']);
 
   useEffect(() => {
     if (state.error) summary.current?.focus();
@@ -266,9 +269,7 @@ export function LeadForm({
           </div>
         </Panel>
 
-        <Panel
-          title={<SectionTitle eyebrow="02 · The prospect">Prospect and company</SectionTitle>}
-        >
+        <Panel title="Prospect and company">
           <div className={styles.formGrid}>
             <Field label="Company or organization" error={err['companyName']}>
               {(c) => (
@@ -342,7 +343,7 @@ export function LeadForm({
           </Field>
         </Panel>
 
-        <Panel title={<SectionTitle eyebrow="03 · The deal">Commercial details</SectionTitle>}>
+        <Panel title={<SectionTitle eyebrow="02 · The story">Commercial details</SectionTitle>}>
           <div className={styles.formGrid}>
             <Field
               label="Expected value"
@@ -368,7 +369,7 @@ export function LeadForm({
                   onChange={set('currency')}
                   {...c}
                 >
-                  {CURRENCIES.map((o) => (
+                  {currencies.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
@@ -418,7 +419,7 @@ export function LeadForm({
         </Panel>
 
         <Panel
-          title={<SectionTitle eyebrow="04 · Next step">Schedule a follow-up</SectionTitle>}
+          title="Schedule a follow-up"
           description="Optional. Leave the time empty to skip it; you can plan one from the lead later."
         >
           <ActivityTypeButtons

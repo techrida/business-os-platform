@@ -132,6 +132,29 @@ export function listCustomers(
   );
 }
 
+export type RelationshipCounts = Record<CustomerDto['relationship'], number>;
+
+/**
+ * How many customers are in each relationship, for the list's cards: one filtered read of a single row per
+ * relationship, so the numbers come from the same endpoint, filter and read scope as the list. `null` when
+ * any read fails or the API sent no total, so a card never shows a guess.
+ */
+export async function countCustomersByRelationship(
+  session: Session,
+): Promise<RelationshipCounts | null> {
+  try {
+    const [prospect, active, inactive] = await Promise.all(
+      (['prospect', 'active', 'inactive'] as const).map((relationship) =>
+        listCustomers(session, { relationship: [relationship], limit: 1 }),
+      ),
+    );
+    if (prospect?.total == null || active?.total == null || inactive?.total == null) return null;
+    return { prospect: prospect.total, active: active.total, inactive: inactive.total };
+  } catch {
+    return null;
+  }
+}
+
 /** `GET /v1/customers/industries`: the industries in use, for the list's Industry filter. */
 export function listCustomerIndustries(session: Session): Promise<string[]> {
   return call(session, '/v1/customers/industries', z.array(z.string()));

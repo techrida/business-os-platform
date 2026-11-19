@@ -2,11 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { updateCustomerAction } from '@/components/p2/customers/actions';
-import {
-  customerCan,
-  getCustomerDetail,
-  type CustomerDetail,
-} from '@/components/p2/customers/api';
+import { customerCan, getCustomerDetail, type CustomerDetail } from '@/components/p2/customers/api';
 import { CustomerForm } from '@/components/p2/customers/customer-form';
 import { valuesOfCustomer } from '@/components/p2/customers/forms';
 import { isGuid } from '@/components/p2/customers/format';
@@ -14,6 +10,7 @@ import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { getGrants, hasGrant } from '@/lib/grants';
 
 export const metadata: Metadata = { title: 'Edit Organization · Business OS' };
@@ -45,6 +42,8 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
   }
 
   let customer: CustomerDetail;
+  // Read alongside the customer; it never throws (a failed read gives the default list).
+  const enabledRead = loadEnabledCurrencies(session);
   try {
     customer = await getCustomerDetail(session, id);
   } catch (err) {
@@ -107,6 +106,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
     );
   }
 
+  const enabledCurrencies = await enabledRead;
   return (
     <Page>
       <Breadcrumb items={crumbs} />
@@ -119,6 +119,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         cancelHref={back}
         reloadHref={here}
         description={customer.number}
+        enabledCurrencies={enabledCurrencies}
       />
     </Page>
   );

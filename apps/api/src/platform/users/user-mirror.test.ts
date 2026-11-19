@@ -384,7 +384,7 @@ describe('Bootstrap rule (ADR 0027 section 3)', () => {
       NotFoundException,
     );
     expect(zitadel.setGrantsCalls).toEqual([]);
-    expect(await mirror.list(scope, { limit: 10 })).toEqual([]);
+    expect(await mirror.list(scope, { limit: 10 })).toEqual({ rows: [], total: 0 });
   });
 
   it('does not add a default membership to a staff user who already has one', async () => {

@@ -69,6 +69,58 @@ describe('ZitadelClient request shapes', () => {
     });
   });
 
+  it('reads an OIDC app with its redirect lists (absent lists mean empty)', async () => {
+    const listed = (oidcConfiguration: object) => ({
+      applications: [{ applicationId: 'a2', name: 'Business OS portal', oidcConfiguration }],
+    });
+    const full = recording({
+      [ENDPOINTS.listApps]: listed({
+        clientId: 'c2',
+        accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+        redirectUris: ['https://portal.localhost/auth/callback'],
+        postLogoutRedirectUris: ['https://portal.localhost/'],
+      }),
+    });
+    expect(await client(full.transport).findOidcApp('p1', 'Business OS portal')).toEqual({
+      id: 'a2',
+      clientId: 'c2',
+      accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+      redirectUris: ['https://portal.localhost/auth/callback'],
+      postLogoutRedirectUris: ['https://portal.localhost/'],
+    });
+    const bare = recording({
+      [ENDPOINTS.listApps]: listed({ clientId: 'c2', accessTokenType: 'OIDC_TOKEN_TYPE_JWT' }),
+    });
+    const app = await client(bare.transport).findOidcApp('p1', 'Business OS portal');
+    expect(app?.redirectUris).toEqual([]);
+    expect(app?.postLogoutRedirectUris).toEqual([]);
+  });
+
+  it('replaces only the two redirect lists of an OIDC app (UpdateApplication)', async () => {
+    const { transport, calls } = recording({});
+    await client(transport).setOidcAppRedirects('p1', 'a2', {
+      redirectUris: [
+        'https://portal.localhost/auth/callback',
+        'https://portal.x.localhost/auth/callback',
+      ],
+      postLogoutRedirectUris: ['https://portal.localhost/'],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/zitadel.application.v2.ApplicationService/UpdateApplication');
+    // Exact body: any other OIDC field sent here would overwrite the app's setting.
+    expect(calls[0]?.body).toEqual({
+      applicationId: 'a2',
+      projectId: 'p1',
+      oidcConfiguration: {
+        redirectUris: [
+          'https://portal.localhost/auth/callback',
+          'https://portal.x.localhost/auth/callback',
+        ],
+        postLogoutRedirectUris: ['https://portal.localhost/'],
+      },
+    });
+  });
+
   it('creates the project with role assertion on', async () => {
     const { transport, calls } = recording({ [ENDPOINTS.createProject]: { projectId: 'p1' } });
     await client(transport).createProject('org1', 'business-os');

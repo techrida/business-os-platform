@@ -4,6 +4,7 @@ import {
   addFxRate,
   addWorkflowVersion,
   createDelegation,
+  getApprovalSlaDefaults,
   getSetting,
   inviteUser,
   listApprovalGroups,
@@ -118,6 +119,23 @@ describe('users', () => {
     expect(call.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
   });
 
+  it('reads the total of all matches from X-Total-Count, and leaves it unknown without one', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], nextAfter: null, nextPage: 3 }), {
+        headers: { 'content-type': 'application/json', 'x-total-count': '134' },
+      }),
+    );
+    expect((await listUsers(session, { status: ['active'], page: 2 })).total).toBe(134);
+    fetchMock.mockResolvedValueOnce(json({ items: [], nextAfter: null, nextPage: null }));
+    expect((await listUsers(session)).total).toBeNull();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], nextAfter: null, nextPage: null }), {
+        headers: { 'content-type': 'application/json', 'x-total-count': '-1' },
+      }),
+    );
+    expect((await listUsers(session)).total).toBeNull();
+  });
+
   it('sends status and role filters as repeated params', async () => {
     fetchMock.mockResolvedValueOnce(json({ items: [], nextAfter: null, nextPage: null }));
     await listUsers(session, { status: ['active', 'invited'], role: ['sales'], q: 'ab', page: 2 });
@@ -189,6 +207,18 @@ describe('settings, number series and FX', () => {
     const s = await getSetting(session, 'tax.vat_rate');
     expect(s).toEqual({ key: 'tax.vat_rate', value: '13', version: null });
     expect(lastCall().url.pathname).toBe('/v1/admin/settings/tax.vat_rate');
+  });
+
+  it('reads the default approval times from the workflow-editor route, not the admin settings route', async () => {
+    const value = {
+      remindAfterHours: 8,
+      escalateAfterHours: 36,
+      escalateTo: { role: 'management' },
+    };
+    fetchMock.mockResolvedValueOnce(json({ key: 'approvals.sla_defaults', value, version: 3 }));
+    const s = await getApprovalSlaDefaults(session);
+    expect(s).toEqual({ key: 'approvals.sla_defaults', value, version: 3 });
+    expect(lastCall().url.pathname).toBe('/v1/admin/approval-sla-defaults');
   });
 
   it('writes a setting as { value }', async () => {

@@ -60,12 +60,16 @@ it('passes directory filters to the API, preserves them across pages, and shows 
     expect(searchParams.get('departmentId')).toBe(DEPARTMENT);
     expect(searchParams.get('sort')).toBe('lastActive');
     const first = searchParams.get('page') === '1';
+    // The total counts every match of the filters, not the tenant's 80 users.
     return Promise.resolve(
-      Response.json({
-        items: first ? users.slice(0, 5) : users.slice(5),
-        nextPage: first ? 2 : null,
-        nextAfter: null,
-      }),
+      Response.json(
+        {
+          items: first ? users.slice(0, 5) : users.slice(5),
+          nextPage: first ? 2 : null,
+          nextAfter: null,
+        },
+        { headers: { 'x-total-count': String(users.length) } },
+      ),
     );
   });
   try {
@@ -73,6 +77,9 @@ it('passes directory filters to the API, preserves them across pages, and shows 
     expect(first).toContain('Person 5');
     expect(first).not.toContain('Person 6');
     expect(first).toContain('Total users');
+    expect(first).toMatch(/Total users[\s\S]*?>80</);
+    expect(first).toContain('Showing 1–5 of 6');
+    expect(first).toMatch(/aria-label="Page 2"/);
     expect(first).toContain('Operations');
     expect(first).toMatch(/datetime="2026-11-19T11:30:00\.000Z"/i);
     expect(first).toContain('Send password reset email to Person 1');
@@ -95,6 +102,8 @@ it('passes directory filters to the API, preserves them across pages, and shows 
     expect(second).not.toContain('Person 5');
     expect(second).not.toMatch(/<a[^>]*>Next<\/a>/);
     expect(second).toMatch(/<a[^>]*>Previous<\/a>/);
+    expect(second).toContain('Showing 6–6 of 6');
+    expect(second).toMatch(/aria-current="page"[^>]*>2</);
     expect(second).toContain('Total users');
   } finally {
     request.mockRestore();

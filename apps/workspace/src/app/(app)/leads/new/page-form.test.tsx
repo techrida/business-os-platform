@@ -14,6 +14,7 @@ const OWNERS = [
   { value: ME, label: 'Asha Gurung' },
   { value: SITA, label: 'Sita Rai' },
 ];
+const ALL_CURRENCIES = ['NPR', 'INR', 'USD'];
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -27,6 +28,7 @@ it('submits the lead form from the page header with the action’s original fiel
       action={action}
       sources={[{ label: 'Referral', value: 'referral' }]}
       owners={OWNERS}
+      enabledCurrencies={ALL_CURRENCIES}
       defaultOwnerId={ME}
       idempotencyKey={idempotencyKey}
     />,
@@ -56,13 +58,18 @@ it('submits the lead form from the page header with the action’s original fiel
   }
 });
 
-async function mountLead(owners: typeof OWNERS, defaultOwnerId: string | undefined) {
+async function mountLead(
+  owners: typeof OWNERS,
+  defaultOwnerId: string | undefined,
+  enabledCurrencies: readonly string[] = ALL_CURRENCIES,
+) {
   const action = vi.fn<FormAction>().mockResolvedValue({ values: {}, fieldErrors: {} });
   const mounted = await mountForm(
     <LeadForm
       action={action}
       sources={[{ label: 'Referral', value: 'referral' }]}
       owners={owners}
+      enabledCurrencies={enabledCurrencies}
       defaultOwnerId={defaultOwnerId}
       idempotencyKey="44444444-4444-4444-8444-444444444444"
     />,
@@ -170,6 +177,28 @@ it('keeps a chosen assignee when the owner changes afterwards', async () => {
       ok: true,
       data: { ownerUserId: SITA, followUp: { kind: 'call', assigneeUserId: RAM } },
     });
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+it('offers only the enabled currencies and posts the one chosen', async () => {
+  const mounted = await mountLead(OWNERS, ME, ['NPR', 'USD']);
+  try {
+    const { container } = mounted;
+    const trigger = container
+      .querySelector('input[type="hidden"][name="currency"]')
+      ?.parentElement?.querySelector('button');
+    await click(trigger ?? null);
+    const labels = Array.from(document.querySelectorAll('[role="option"]')).map((o) =>
+      o.textContent?.trim(),
+    );
+    expect(labels).toEqual(['NPR (Nepalese rupee)', 'USD (US dollar)']);
+    await click(trigger ?? null);
+
+    await choose(container, 'currency', 'USD (US dollar)');
+    const parsed = parseLead(await mounted.send());
+    expect(parsed).toMatchObject({ ok: true, data: { currency: 'USD' } });
   } finally {
     await mounted.unmount();
   }

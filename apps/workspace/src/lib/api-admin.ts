@@ -164,7 +164,14 @@ const seg = (value: string | number): string => encodeURIComponent(String(value)
 // Users
 // ---------------------------------------------------------------------------------------------
 
-export function listUsers(session: Session, q: Partial<AdminUsersQuery> = {}) {
+/**
+ * One page of the staff directory. `total` is every user matching the same filters and search, from the
+ * API's `X-Total-Count`; it is null when the header is missing, so a caller never shows a made-up count.
+ */
+export async function listUsers(
+  session: Session,
+  q: Partial<AdminUsersQuery> = {},
+): Promise<z.infer<typeof AdminUsersPageSchema> & { total: number | null }> {
   const params = new URLSearchParams({ limit: '50' });
   for (const [key, value] of Object.entries(q)) {
     if (value === undefined) continue;
@@ -172,7 +179,17 @@ export function listUsers(session: Session, q: Partial<AdminUsersQuery> = {}) {
     if (Array.isArray(value)) for (const item of value) params.append(key, String(item));
     else params.set(key, String(value));
   }
-  return requestParsed(session, 'GET', `/v1/admin/users?${params}`, AdminUsersPageSchema);
+  const path = `/v1/admin/users?${params}`;
+  const res = await apiFetch(session, path, { method: 'GET' });
+  const body = await readBody(res);
+  if (!res.ok) throw new ApiError(res.status, `GET ${path} failed with ${res.status}`, body);
+  const parsed = AdminUsersPageSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, `GET ${path} returned an invalid body`, parsed.error.issues);
+  }
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : null;
+  return { ...parsed.data, total };
 }
 
 export function summarizeUsers(session: Session) {
@@ -235,6 +252,14 @@ export async function setUserRoles(
 
 export function getSetting(session: Session, key: SettingKey): Promise<SettingCurrent> {
   return requestParsed(session, 'GET', `/v1/admin/settings/${seg(key)}`, SettingCurrentSchema);
+}
+
+/**
+ * The saved default reminder and escalation times (`approvals.sla_defaults`). Readable by anyone who
+ * may edit approval workflows, unlike `getSetting`, which needs the settings admin permission.
+ */
+export function getApprovalSlaDefaults(session: Session): Promise<SettingCurrent> {
+  return requestParsed(session, 'GET', '/v1/admin/approval-sla-defaults', SettingCurrentSchema);
 }
 
 export function putSetting(

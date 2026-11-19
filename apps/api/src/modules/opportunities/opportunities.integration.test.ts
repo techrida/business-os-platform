@@ -199,12 +199,16 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------------------- helpers
 
 /** A customer party and its customers row (tenant-level), written under `inScope`'s entity. */
-async function seedCustomer(inScope: { tenantId: string; organizationId: string }) {
+async function seedCustomer(
+  inScope: { tenantId: string; organizationId: string },
+  legalName = 'Acme Pvt. Ltd.',
+) {
   const { partyId } = await createParty(appPool, { tenantId: inScope.tenantId, kind: 'customer' });
   await withTx(db, inScope, systemActor('test'), (tx) =>
     tx.execute(
       sql`INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
-          VALUES (${partyId}, ${inScope.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, 'Acme Pvt. Ltd.', 'acme', ${ADDRESS}::jsonb)`,
+          VALUES (${partyId}, ${inScope.tenantId}, ${`CUS-${partyId.slice(0, 8)}`}, ${legalName},
+                  ${legalName.toLowerCase()}, ${ADDRESS}::jsonb)`,
     ),
   );
   return partyId;
@@ -216,6 +220,7 @@ interface SeedOptions {
   name?: string;
   entity?: 'A' | 'B';
   createdAt?: Date;
+  customerId?: string;
 }
 
 /**
@@ -254,7 +259,7 @@ async function seed(options: SeedOptions = {}): Promise<string> {
         ...inScope,
         number: `DEAL-${randomUUID().slice(0, 8)}`,
         name: options.name ?? 'Acme website',
-        customerId: options.entity === 'B' ? customerB : customerA,
+        customerId: options.customerId ?? (options.entity === 'B' ? customerB : customerA),
         ownerUserId: options.owner ?? U.salesA,
         ...(options.createdAt !== undefined ? { createdAt: options.createdAt } : {}),
         // A won row needs the version it was won with, and the version needs the opportunity: insert at
@@ -356,6 +361,49 @@ describe('GET /v1/opportunities', () => {
       .array(OpportunityDtoSchema)
       .parse((await request(baseUrl).get('/v1/opportunities?q=zeta&limit=200')).body);
     expect(word.map((o) => o.id)).toEqual(expect.arrayContaining([hold, plain]));
+  });
+
+  it("matches the customer's name case-insensitively and with a typo, and counts the matches", async () => {
+    as(U.boss, 'founder');
+    const zorvane = await seedCustomer(scopeA, 'Zorvane Quartzwerk Co');
+    const deal = await seed({ name: 'Rooftop solar', customerId: zorvane });
+    const other = await seed({ name: 'Office chairs' });
+
+    const exact = await request(baseUrl).get('/v1/opportunities?q=QUARTZWERK&limit=200');
+    expect(exact.status, JSON.stringify(exact.body)).toBe(200);
+    const exactIds = z
+      .array(OpportunityDtoSchema)
+      .parse(exact.body)
+      .map((o) => o.id);
+    expect(exactIds[0]).toBe(deal);
+    expect(exactIds).not.toContain(other);
+    expect(Number(exact.headers['x-total-count'])).toBe(exactIds.length);
+
+    // Fewer than five exact hits, so the close matches are included: the typo still finds the deal.
+    const typo = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Quartzwrek&limit=200')).body)
+      .map((o) => o.id);
+    expect(typo).toContain(deal);
+  });
+
+  it("does not search the customer's name for a caller who may not read customers", async () => {
+    as(U.boss, 'founder');
+    const vanta = await seedCustomer(scopeA, 'Vantablack Fabrication Co');
+    const deal = await seed({ name: 'Press brake order', customerId: vanta });
+
+    const allowed = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Vantablack&limit=200')).body)
+      .map((o) => o.id);
+    expect(allowed).toContain(deal);
+
+    current.grants.delete('customer.read');
+    const denied = z
+      .array(OpportunityDtoSchema)
+      .parse((await request(baseUrl).get('/v1/opportunities?q=Vantablack&limit=200')).body)
+      .map((o) => o.id);
+    expect(denied).not.toContain(deal);
   });
 
   it('filters repeated stages together with search and scope before sorting and limiting', async () => {

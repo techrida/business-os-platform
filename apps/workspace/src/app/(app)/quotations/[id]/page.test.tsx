@@ -24,11 +24,14 @@ const mocks = vi.hoisted(() => ({
   getQuotation: vi.fn(),
   listSalesOrders: vi.fn(),
   listPaymentTerms: vi.fn(),
+  getOpportunity: vi.fn(),
   refresh: vi.fn(),
   seen: [] as { component: string; version: QuotationVersionDto }[],
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
+  getSession: vi.fn(),
+  apiFetch: vi.fn(),
 }));
 
 vi.mock('@/lib/api-billing', () => ({ listSalesOrders: mocks.listSalesOrders }));
@@ -36,6 +39,7 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/components/p2/quotations/api', () => ({ getQuotation: mocks.getQuotation }));
 vi.mock('@/components/p2/quote-builder/api', () => ({
   listPaymentTerms: mocks.listPaymentTerms,
+  getOpportunity: mocks.getOpportunity,
 }));
 // `PreparingRefresh` (the words for a PDF on its way) reads the router.
 vi.mock('next/navigation', () => ({
@@ -44,6 +48,16 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: mocks.refresh }),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+// The tenant's display settings come through the real `getDisplaySettings` read; only the session
+// and the HTTP call under it are stubbed. No session (the default) means the default settings.
+vi.mock('@/lib/session', async (original) => ({
+  ...(await original<typeof import('@/lib/session')>()),
+  getSession: mocks.getSession,
+}));
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  apiFetch: mocks.apiFetch,
+}));
 
 // Open the revision drawer and render its portal inline for assertions on server-provided rows.
 vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
@@ -231,8 +245,12 @@ beforeEach(() => {
   mocks.notFound.mockClear();
   mocks.listSalesOrders.mockReset().mockResolvedValue([]);
   mocks.listPaymentTerms.mockReset().mockResolvedValue([]);
+  // A denied read is the common case for roles without CRM access: the plain link stays.
+  mocks.getOpportunity.mockReset().mockRejectedValue(new ApiError(403, 'no'));
   mocks.refresh.mockReset();
   mocks.seen.length = 0;
+  mocks.getSession.mockReset().mockResolvedValue(null);
+  mocks.apiFetch.mockReset().mockRejectedValue(new Error('no API in this test'));
 });
 
 describe('quotation detail page', () => {
@@ -655,6 +673,22 @@ describe('quotation detail page: linked records', () => {
     expect(html).toContain('Kathmandu &lt;expo&gt; lead');
   });
 
+  it('names the opportunity by its number and stage when the viewer may read it', async () => {
+    mocks.getOpportunity.mockResolvedValue({ number: 'DEAL-2026-0095', stage: 'proposal_sent' });
+    const html = await render();
+    expect(mocks.getOpportunity).toHaveBeenCalledWith(expect.anything(), CUSTOMER);
+    expect(html).toContain('DEAL-2026-0095');
+    expect(html).toContain('Proposal Sent');
+    expect(html).not.toContain('View opportunity');
+    expect(linked(html)).toContain(`/opportunities/${CUSTOMER}`);
+  });
+
+  it('keeps the plain opportunity link when the opportunity cannot be read', async () => {
+    const html = await render();
+    expect(html).toContain('View opportunity');
+    expect(linked(html)).toContain(`/opportunities/${CUSTOMER}`);
+  });
+
   it.each([['no lead, or one the viewer may not read (absent)', {}]])(
     'shows no lead row for %s',
     async (_name, over) => {
@@ -664,4 +698,51 @@ describe('quotation detail page: linked records', () => {
       expect(html).not.toContain('/leads/');
     },
   );
+});
+
+describe("quotation detail page: the tenant's date format", () => {
+  beforeEach(() => {
+    mocks.getSession.mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
+    // A fresh body on every call: the settings may be read more than once in a test.
+    mocks.apiFetch.mockImplementation((_session: unknown, path: string) =>
+      path === '/v1/settings/display'
+        ? Response.json({
+            numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+            dateFormat: 'dd/MM/yyyy',
+          })
+        : Response.json({ error: 'unexpected' }, { status: 500 }),
+    );
+    const base = detail();
+    mocks.getQuotation.mockResolvedValue({
+      ...base,
+      versions: base.versions.map((v) =>
+        // 20:00 UTC on the 9th is 01:45 on the 10th in Kathmandu.
+        v.id === V2 ? { ...v, updatedAt: '2026-11-09T20:00:00.000Z' } : v,
+      ),
+    });
+  });
+
+  it('writes the issue date, valid-until, last changed and the history in that pattern', async () => {
+    const html = await render();
+    expect(mocks.apiFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      '/v1/settings/display',
+      undefined,
+    );
+    expect(html).toMatch(/<time dateTime="2026-11-08">08\/11\/2026<\/time>/);
+    expect(html).toMatch(/<time dateTime="2026-11-23">23\/11\/2026<\/time>/);
+    expect(html).toContain('Last changed 10/11/2026, 01:45');
+    expect(html).toContain(`<time dateTime="${WHEN}">08/11/2026, 11:30</time>`);
+    // The contents card writes its dates the same way.
+    expect(html).toMatch(/Issue date<\/dt><dd[^>]*>08\/11\/2026</);
+    // No date is left in the default wording.
+    expect(html).not.toMatch(/\d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4}/);
+  });
+
+  it('keeps the default wording when the settings read fails', async () => {
+    mocks.apiFetch.mockRejectedValue(new Error('network down'));
+    const html = await render();
+    expect(html).toMatch(/<time dateTime="2026-11-08">08 Nov 2026<\/time>/);
+    expect(html).toContain('Last changed 10 Nov 2026, 01:45');
+  });
 });

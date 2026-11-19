@@ -51,6 +51,8 @@ import { can } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { searchPage } from '../../../platform/list';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
@@ -189,6 +191,12 @@ export class PaymentRequestsService {
     // LedgerService holds no state, so the fallback is the same service (as in VendorBillsService).
     @Optional()
     private readonly ledger: LedgerService = new LedgerService(),
+    // The D44 currency check; SettingsModule provides it. The fallback reads the same settings through `db`, so a
+    // test that builds the service by hand gets the real check.
+    @Optional()
+    private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(
+      new SettingsService(db),
+    ),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -355,7 +363,8 @@ export class PaymentRequestsService {
    * A draft request to pay one vendor. 201 with the request. 404 for a vendor without an active account here or an
    * open item outside the acting entity; 409 `no_verified_bank_account` (check 14) or OVER_ALLOCATION (a line above
    * what is still open); 422 for an advance (no payout in Stage 1), an item named twice, an item that is not this
-   * vendor's approved bill, another currency or a PO that is not the vendor's.
+   * vendor's approved bill, another currency or a PO that is not the vendor's; 422 CURRENCY_NOT_ENABLED (D44) for a
+   * currency the company has not switched on in Settings, checked before the vendor or the lines are read.
    */
   async create(input: RequestPaymentBody, idempotencyKey: string): Promise<PaymentRequestDto> {
     // Ids are compared with the stored (lowercase) uuids as text below, so an uppercase id is folded first.
@@ -387,6 +396,7 @@ export class PaymentRequestsService {
           if (repeated !== undefined) {
             throw unprocessable('DUPLICATE_OPEN_ITEM', `Open item ${repeated} is named twice`);
           }
+          await this.currencies.assertEnabled(scope, body.currency);
           const vendorId = body.vendorPartyId;
           const [account] = await tx
             .select({ vendorId: vendorAccounts.vendorId })

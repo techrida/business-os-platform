@@ -26,6 +26,7 @@ import {
   createDepartment,
   createStaffUser,
   createTenantWithEntity,
+  departments,
   purchaseRequestLines,
   purchaseRequests,
   runMigrations,
@@ -450,6 +451,21 @@ describe('purchase request: the department route (AD10, AD11, AD12)', () => {
 });
 
 describe('purchase request: the decision', () => {
+  it('names the requesting department of the snapshot for its approver', async () => {
+    const { request } = await submitted();
+    const [d] = await withTx(db, scopeA, systemActor('test'), (tx) =>
+      tx
+        .select({ id: departments.id, name: departments.name })
+        .from(departments)
+        .where(eq(departments.id, dept.headed)),
+    );
+    as(U.head, 'operations_officer');
+    const dto = await approvals.get(request.id);
+    expect(dto.snapshot).toMatchObject({ purchaseRequest: { departmentId: dept.headed } });
+    // The cost centre is named too; the exact set is pinned in the I-27 block below.
+    expect(dto.references).toContainEqual({ id: dept.headed, name: d!.name });
+  });
+
   it('lets the designated officer read, see and decide only their active PR head step, with an exact replay', async () => {
     const { id, request } = await submitted();
     as(U.head, 'operations_officer');
