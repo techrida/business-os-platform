@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getQuotation: vi.fn(),
   builderProps: vi.fn(),
+  // The display-settings read behind the real `loadEnabledCurrencies`.
+  call: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -25,6 +27,7 @@ vi.mock('@/components/p2/quote-builder/api', () => ({
   getCustomer: vi.fn(() => Promise.reject(new Error('not needed'))),
   getOpportunity: vi.fn(() => Promise.reject(new Error('not needed'))),
 }));
+vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
 vi.mock('@/components/p2/quote-builder/lookups', () => ({
   loadLookups: vi.fn(() => Promise.resolve({ contacts: [], taxCodes: [], paymentTerms: [] })),
 }));
@@ -161,6 +164,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok' });
   mocks.getQuotation.mockReset().mockResolvedValue(detail());
   mocks.builderProps.mockReset();
+  mocks.call.mockReset().mockResolvedValue({ enabledCurrencies: ['NPR', 'INR', 'USD'] });
   mocks.notFound.mockClear();
 });
 
@@ -208,5 +212,24 @@ describe('edit quotation page', () => {
   it('answers 404 for a quotation the API cannot find', async () => {
     mocks.getQuotation.mockRejectedValue(new ApiError(404, 'missing'));
     await expect(render()).rejects.toThrow('NEXT_NOT_FOUND');
+  });
+});
+
+describe('edit quotation currencies (D44)', () => {
+  it("hands the builder the enabled list and the revision's own currency, even if switched off", async () => {
+    mocks.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'INR'] });
+    const d = detail();
+    mocks.getQuotation.mockResolvedValue({
+      ...d,
+      versions: d.versions.map((v) => (v.id === V2 ? { ...v, currency: 'USD' } : v)),
+    });
+    await render();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    const props = mocks.builderProps.mock.calls[0]?.[0] as {
+      enabledCurrencies: string[];
+      initial: { currency: string };
+    };
+    expect(props.enabledCurrencies).toEqual(['NPR', 'INR']);
+    expect(props.initial.currency).toBe('USD');
   });
 });

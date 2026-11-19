@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
   builderProps: vi.fn(),
+  // The display-settings read behind the real `loadEnabledCurrencies`.
+  call: vi.fn(),
   redirect: vi.fn((to: string) => {
     throw new Error(`NEXT_REDIRECT ${to}`);
   }),
@@ -27,6 +29,7 @@ vi.mock('@/components/p2/quote-builder/api', () => ({
   getCustomer: mocks.getCustomer,
 }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
+vi.mock('@/lib/api-procurement', () => ({ call: mocks.call }));
 vi.mock('@/components/p2/quote-builder/lookups', () => ({
   loadLookups: vi.fn(() => Promise.resolve({ contacts: [], taxCodes: [], paymentTerms: [] })),
 }));
@@ -69,6 +72,7 @@ beforeEach(() => {
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
   mocks.builderProps.mockReset();
+  mocks.call.mockReset().mockResolvedValue({ enabledCurrencies: ['NPR', 'INR', 'USD'] });
   mocks.redirect.mockClear();
 });
 
@@ -106,5 +110,40 @@ describe('new quotation for an opportunity (demo feedback: the New URL made a se
     mocks.listQuotations.mockRejectedValue(new ApiError(403, 'no'));
     await render();
     expect(mocks.builderProps).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('new quotation currencies (D44: only what the company switched on)', () => {
+  const builder = () =>
+    mocks.builderProps.mock.calls[0]?.[0] as {
+      enabledCurrencies: string[];
+      initial: { currency: string };
+    };
+
+  it('reads the enabled list once and hands it to the builder', async () => {
+    mocks.call.mockResolvedValue({ enabledCurrencies: ['USD', 'NPR'] });
+    await render();
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(mocks.call).toHaveBeenCalledWith(
+      expect.anything(),
+      '/v1/settings/display',
+      expect.anything(),
+    );
+    expect(builder().enabledCurrencies).toEqual(['NPR', 'USD']);
+  });
+
+  it("keeps the customer's currency when it is enabled", async () => {
+    mocks.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'USD'] });
+    mocks.getCustomer.mockResolvedValue({ id: CUSTOMER, defaultCurrency: 'USD' });
+    await render();
+    expect(builder().initial.currency).toBe('USD');
+  });
+
+  it("starts in NPR when the customer's currency has been switched off", async () => {
+    mocks.call.mockResolvedValue({ enabledCurrencies: ['NPR', 'USD'] });
+    mocks.getCustomer.mockResolvedValue({ id: CUSTOMER, defaultCurrency: 'INR' });
+    await render();
+    expect(builder().enabledCurrencies).toEqual(['NPR', 'USD']);
+    expect(builder().initial.currency).toBe('NPR');
   });
 });
