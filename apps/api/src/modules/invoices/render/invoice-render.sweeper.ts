@@ -21,6 +21,7 @@
 //
 // The tests drive the sweeper through a RenderStore fake; the drizzle store below is checked by the integration test.
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { SETTINGS } from '@bos/contracts';
 import {
   documents,
   documentVersions,
@@ -30,6 +31,7 @@ import {
   invoiceTaxSummary,
   scoped,
 } from '@bos/db';
+import { DEFAULT_NUMBER_SYSTEM } from '@bos/locale';
 import {
   HttpException,
   Inject,
@@ -47,6 +49,7 @@ import type {
   Clock,
   PdfRenderer,
   RenderDocuments,
+  RenderSettings,
   RunInTx,
 } from '../../quotations/render/quotation-render.sweeper';
 import { INVOICE_OWNER_TYPE, INVOICE_RENDER_JOB_PREFIX } from '../invoice-owner.policy';
@@ -73,6 +76,7 @@ const ORPHAN_BATCH = 50;
 export const INVOICE_RENDER_STORE = Symbol('INVOICE_RENDER_STORE');
 export const INVOICE_RENDER_TX = Symbol('INVOICE_RENDER_TX');
 export const INVOICE_RENDER_DOCUMENTS = Symbol('INVOICE_RENDER_DOCUMENTS');
+export const INVOICE_RENDER_SETTINGS = Symbol('INVOICE_RENDER_SETTINGS');
 export const INVOICE_RENDER_PDF = Symbol('INVOICE_RENDER_PDF');
 export const INVOICE_RENDER_CLOCK = Symbol('INVOICE_RENDER_CLOCK');
 
@@ -154,6 +158,7 @@ export class InvoiceRenderSweeper {
     @Inject(INVOICE_RENDER_STORE) private readonly store: RenderStore,
     @Inject(INVOICE_RENDER_TX) private readonly runTx: RunInTx,
     @Inject(INVOICE_RENDER_DOCUMENTS) private readonly documents: RenderDocuments,
+    @Inject(INVOICE_RENDER_SETTINGS) private readonly settings: RenderSettings,
     @Inject(INVOICE_RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(INVOICE_RENDER_CLOCK) private readonly clock: Clock,
   ) {}
@@ -199,7 +204,16 @@ export class InvoiceRenderSweeper {
       if (source === undefined) throw new RenderSourceMissingError();
       const { nextPrintNo, ...rows } = source;
       const view = toInvoiceRenderView({ ...rows, printNo: nextPrintNo });
-      const bytes = await this.pdf.htmlToPdf(renderInvoiceHtml(view));
+      // The setting is read at render time, as the document is first stored. An invalid value (a hand-edited row)
+      // prints the default grouping; it never fails the render.
+      const numberSystem = SETTINGS['format.number_system'].safeParse(
+        await this.settings.get(scope, 'format.number_system'),
+      );
+      const bytes = await this.pdf.htmlToPdf(
+        renderInvoiceHtml(view, {
+          numberSystem: numberSystem.success ? numberSystem.data : DEFAULT_NUMBER_SYSTEM,
+        }),
+      );
       const file = {
         filename: invoicePdfFilename(rows.invoice.number ?? c.invoiceId, view.copyNo),
         declaredMime: 'application/pdf',

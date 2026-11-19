@@ -3,7 +3,7 @@
 // font file, and a CSP that forbids anything else, so a render never reaches the network. The function takes the
 // allow-list view and nothing else, so it cannot print an NPR value or a rate. Money goes through `@bos/locale`
 // `formatMoney`, so NPR has lakh grouping (`NPR 20,18,180.00`).
-import { formatCustomerDate, formatMoney, toBs } from '@bos/locale';
+import { formatCustomerDate, formatMoney, toBs, type NumberSystem } from '@bos/locale';
 
 import type { PurchaseOrderRenderView } from './purchase-order-view';
 
@@ -81,9 +81,21 @@ function partyBlock(
       ${p.panVatNo ? `<div class="muted">PAN ${text(p.panVatNo)}</div>` : ''}`;
 }
 
+export interface RenderPurchaseOrderOptions {
+  /** The tenant's `format.number_system`. Left out, each currency keeps its own grouping (NPR/INR lakh, USD western). */
+  numberSystem?: NumberSystem;
+}
+
 /** Returns the full HTML document for one issued version of a purchase order. Every text is escaped. */
-export function renderPurchaseOrderHtml(view: PurchaseOrderRenderView): string {
-  const fmt = (amount: string): string => escapeHtml(formatMoney(amount, view.currency));
+export function renderPurchaseOrderHtml(
+  view: PurchaseOrderRenderView,
+  opts: RenderPurchaseOrderOptions = {},
+): string {
+  const numberSystem = opts.numberSystem;
+  const fmt = (amount: string): string =>
+    escapeHtml(
+      formatMoney(amount, view.currency, numberSystem === undefined ? undefined : { numberSystem }),
+    );
   const text = (value: string): string => escapeHtml(value);
 
   const meta: [string, string][] = [

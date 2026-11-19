@@ -6,7 +6,7 @@
 //
 // A tax invoice says "Tax Invoice". A proforma says "Proforma Invoice" and that it is not a tax invoice. A reprint
 // says "Copy of original (n)" beside the title.
-import { Dec, formatCustomerDate, formatMoney, toBs } from '@bos/locale';
+import { Dec, formatCustomerDate, formatMoney, toBs, type NumberSystem } from '@bos/locale';
 
 import type { InvoiceRenderView } from './invoice-view';
 
@@ -111,9 +111,21 @@ function partyBlock(heading: string, p: InvoiceRenderView['seller'], text: (v: s
       ${p.address ? `<div>${text(p.address)}</div>` : ''}`;
 }
 
+export interface RenderInvoiceOptions {
+  /** The tenant's `format.number_system`. Left out, each currency keeps its own grouping (NPR/INR lakh, USD western). */
+  numberSystem?: NumberSystem;
+}
+
 /** Returns the full HTML document for an issued invoice. Every text is escaped. */
-export function renderInvoiceHtml(view: InvoiceRenderView): string {
-  const fmt = (amount: string): string => escapeHtml(formatMoney(amount, view.currency));
+export function renderInvoiceHtml(
+  view: InvoiceRenderView,
+  opts: RenderInvoiceOptions = {},
+): string {
+  const numberSystem = opts.numberSystem;
+  const fmt = (amount: string): string =>
+    escapeHtml(
+      formatMoney(amount, view.currency, numberSystem === undefined ? undefined : { numberSystem }),
+    );
   const text = (value: string): string => escapeHtml(value);
   const title = TITLES[view.kind];
   const copy = view.copyNo === null ? '' : `Copy of original (${view.copyNo})`;

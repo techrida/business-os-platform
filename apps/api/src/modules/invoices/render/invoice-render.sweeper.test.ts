@@ -2,8 +2,9 @@ import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../../../platform/db/db.module';
+import type { TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
-import type { RunInTx } from '../../quotations/render/quotation-render.sweeper';
+import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
   FAILED_RETRY_MS,
@@ -26,7 +27,7 @@ const candidate = (n: number): RenderCandidate => ({
 });
 
 const party = { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: 'ABC-12345', address: 'Thamel 4' };
-const source = (nextPrintNo = 1): RenderSource => ({
+const source = (nextPrintNo = 1, currency: 'NPR' | 'USD' = 'NPR'): RenderSource => ({
   invoice: {
     kind: 'tax_invoice',
     status: 'issued',
@@ -34,7 +35,7 @@ const source = (nextPrintNo = 1): RenderSource => ({
     issueDate: '2026-11-09',
     issueDateBs: '2083-07-24',
     dueDate: null,
-    currency: 'NPR',
+    currency,
     subtotal: '1880000.00',
     discountAmount: '94000.00',
     taxableVatAmount: '1786000.00',
@@ -64,6 +65,8 @@ function fixture(
     src?: RenderSource | undefined;
     hasDocument?: boolean;
     candidates?: RenderCandidate[];
+    /** The raw `format.number_system` value; an omitted key reads as the stored default. */
+    numberSystem?: unknown;
   } = {},
 ) {
   let now = NOW;
@@ -79,12 +82,24 @@ function fixture(
     createGenerated: vi.fn().mockResolvedValue({ documentId: 'doc-1', versionId: 'ver-1' }),
     receiveGenerated: vi.fn().mockResolvedValue({}),
   };
+  const settings = {
+    get: vi.fn((_scope: TxScope, key: string) =>
+      Promise.resolve(
+        key === 'format.number_system'
+          ? 'numberSystem' in over
+            ? over.numberSystem
+            : 'south_asian'
+          : undefined,
+      ),
+    ),
+  } as unknown as RenderSettings;
   const pdf = { htmlToPdf: vi.fn().mockResolvedValue(PDF) };
   const runTx: RunInTx = (_scope, _actor, fn) => fn(TX);
-  const sweeper = new InvoiceRenderSweeper(store, runTx, documents, pdf, () => now);
+  const sweeper = new InvoiceRenderSweeper(store, runTx, documents, settings, pdf, () => now);
   return {
     store,
     documents,
+    settings,
     pdf,
     runTx,
     sweeper,
@@ -114,6 +129,37 @@ describe('InvoiceRenderSweeper.renderOne', () => {
     expect(who.actor).toMatchObject({ kind: 'system', id: 'system:invoice-render' });
     expect(f.store.recordPrint).toHaveBeenCalledWith(TX, c, 1, NOW);
   });
+
+  it('reads the number system for the invoice scope and groups by it', async () => {
+    const intl = fixture({ numberSystem: 'international' });
+    await expect(intl.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(intl.settings.get).toHaveBeenCalledWith(
+      { tenantId: 'tenant-1', organizationId: 'org-1' },
+      'format.number_system',
+    );
+    const html = intl.pdf.htmlToPdf.mock.calls[0]?.[0] as string;
+    expect(html).toContain('NPR 2,018,180.00');
+    expect(html).not.toContain('20,18,180');
+  });
+
+  it('groups a USD invoice by the setting, lakh under south_asian', async () => {
+    const usd = source(1, 'USD');
+    const south = fixture({ src: usd, numberSystem: 'south_asian' });
+    await south.sweeper.renderOne(candidate(1));
+    expect(south.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 20,18,180.00');
+    const intl = fixture({ src: usd, numberSystem: 'international' });
+    await intl.sweeper.renderOne(candidate(1));
+    expect(intl.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('USD 2,018,180.00');
+  });
+
+  it.each([['metric'], [null], [undefined], [42]])(
+    'falls back to south_asian grouping, and still renders, when the setting is %j',
+    async (bad) => {
+      const f = fixture({ numberSystem: bad });
+      await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+      expect(f.pdf.htmlToPdf.mock.calls[0]?.[0]).toContain('NPR 20,18,180.00');
+    },
+  );
 
   it('prints "Copy of original (n)" from the print log and names the file after the copy', async () => {
     const f = fixture({ src: source(3) });
