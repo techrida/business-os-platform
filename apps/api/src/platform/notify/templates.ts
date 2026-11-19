@@ -12,6 +12,8 @@
 //     and any host other than the one the template links to.
 // Keep the wording short and neutral: the email says "something needs you", the workspace shows the detail.
 
+import { formatCustomerDate } from '@bos/locale';
+
 /** Every email the platform can send. Mirrors the union in the P1 plan, section 6.2. */
 export const EMAIL_TEMPLATES = [
   'approval.pending',
@@ -295,7 +297,7 @@ function parts(template: EmailTemplate, v: Record<string, string>): Parts {
         subject: `Quotation ${v.quotationNumber} is ready for you`,
         heading: 'A quotation is ready for you',
         lines: [
-          `Hello ${v.customerName}, quotation ${v.quotationNumber} is ready to review. It is valid until ${v.validUntil}.`,
+          `Hello ${v.customerName}, quotation ${v.quotationNumber} is ready to review. It is valid until ${formatCustomerDate(v.validUntil ?? '')}.`,
           'Nothing is attached to this email: open the portal to see the quotation.',
         ],
         linkLabel: 'View the quotation',
@@ -305,7 +307,7 @@ function parts(template: EmailTemplate, v: Record<string, string>): Parts {
         subject: `Quotation ${v.quotationNumber} expires soon`,
         heading: 'A quotation is about to expire',
         lines: [
-          `Quotation ${v.quotationNumber} for ${v.customerName} is valid until ${v.validUntil}.`,
+          `Quotation ${v.quotationNumber} for ${v.customerName} is valid until ${formatCustomerDate(v.validUntil ?? '')}.`,
         ],
         linkLabel: 'View the quotation',
       };
@@ -314,7 +316,7 @@ function parts(template: EmailTemplate, v: Record<string, string>): Parts {
         subject: `Quotation ${v.quotationNumber} has expired`,
         heading: 'A quotation has expired',
         lines: [
-          `Quotation ${v.quotationNumber} for ${v.customerName} was valid until ${v.validUntil} and can no longer be accepted.`,
+          `Quotation ${v.quotationNumber} for ${v.customerName} was valid until ${formatCustomerDate(v.validUntil ?? '')} and can no longer be accepted.`,
         ],
         linkLabel: 'View the quotation',
       };

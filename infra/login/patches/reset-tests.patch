@@ -1,0 +1,28 @@
+diff --git c/apps/login/src/lib/server/password.test.ts w/apps/login/src/lib/server/password.test.ts
+index 87f43ff..3ecaa3f 100644
+--- c/apps/login/src/lib/server/password.test.ts
++++ w/apps/login/src/lib/server/password.test.ts
+@@ -606,6 +606,23 @@ describe("resetPassword", () => {
+     expect(mockPasswordReset).not.toHaveBeenCalled();
+   });
+ 
++  test("uses the configured HTTPS origin and hides provider details under enumeration protection", async () => {
++    vi.stubEnv("LOGIN_PUBLIC_ORIGIN", "https://auth.localhost:8443");
++    mockGetLoginSettings.mockResolvedValue({ ignoreUnknownUsernames: true });
++    mockSearchUsers.mockResolvedValue({
++      result: [{ userId: "user123", type: { case: "human", value: {} } }],
++    });
++    mockPasswordReset.mockResolvedValue({ details: { sequence: 1 } });
++    try {
++      await expect(resetPassword({ loginName: "user@example.com" })).resolves.toEqual({});
++      expect(mockPasswordReset).toHaveBeenCalledWith(expect.objectContaining({
++        urlTemplate: expect.stringMatching(/^https:\/\/auth\.localhost:8443\/.*password\/set\?/),
++      }));
++    } finally {
++      vi.unstubAllEnvs();
++    }
++  });
++
+   test("should return specific error when user not found and ignoreUnknownUsernames is false", async () => {
+     mockSearchUsers.mockResolvedValue({ result: [] });
+     mockGetLoginSettings.mockResolvedValue({ ignoreUnknownUsernames: false });

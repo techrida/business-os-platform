@@ -170,6 +170,7 @@ describe('sales.default_schedule setting', () => {
     [[line('50'), line('50')]],
     [[line('100', 'advance')]],
     [[line('33.33'), line('33.33'), line('33.34')]],
+    [[line('33.3333'), line('33.3333'), line('33.3334')]],
   ])('accepts slices that add up to 100: %j', (value) => {
     expect(schema.safeParse(value).success).toBe(true);
   });
@@ -180,7 +181,8 @@ describe('sales.default_schedule setting', () => {
     ['adds to 101', [line('60'), line('21'), line('20')]],
     ['over 100 in one slice', [line('101')]],
     ['unknown trigger', [line('50', 'whenever'), line('50')]],
-    ['three decimals', [line('33.333'), line('66.667')]],
+    ['short by one ten-thousandth', [line('33.3333'), line('33.3333'), line('33.3333')]],
+    ['five decimals', [line('33.33330'), line('66.6667')]],
     ['blank label', [{ label: ' ', percent: '100', trigger: 'advance' }]],
   ])('rejects %s', (_name, value) => {
     expect(schema.safeParse(value).success).toBe(false);

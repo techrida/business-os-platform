@@ -6,7 +6,7 @@
 //
 // A tax invoice says "Tax Invoice". A proforma says "Proforma Invoice" and that it is not a tax invoice. A reprint
 // says "Copy of original (n)" beside the title.
-import { Dec, formatKathmandu, formatMoney, toBs } from '@bos/locale';
+import { Dec, formatCustomerDate, formatMoney, toBs } from '@bos/locale';
 
 import type { InvoiceRenderView } from './invoice-view';
 
@@ -23,7 +23,7 @@ const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+0
 
 /** The Gregorian date with the Bikram Sambat date beside it. The issue date's BS form is the one frozen at issue. */
 function dateCell(isoDate: string, bsFrozen: string | null): string {
-  const gregorian = escapeHtml(formatKathmandu(kathmanduNoon(isoDate), 'date'));
+  const gregorian = escapeHtml(formatCustomerDate(isoDate));
   if (bsFrozen !== null) {
     return `${gregorian} <span class="bs">(${escapeHtml(bsFrozen)} BS)</span>`;
   }

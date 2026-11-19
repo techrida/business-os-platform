@@ -309,12 +309,12 @@ async function seedOrder(): Promise<{ salesOrderId: string; advanceId: string }>
           VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, ${f.taxCodeVat13Id}, 'VAT 13%', 13, 4465000.00, 580450.00)`,
     );
     const advanceId = await one(
-      sql`INSERT INTO app.billing_schedule_lines (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent_bp, amount, amount_npr, status)
-          VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, 1, 'Advance 40%', 'advance', 4000, 2018180.00, 2018180.00, 'billable') RETURNING id`,
+      sql`INSERT INTO app.billing_schedule_lines (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent, amount, amount_npr, status)
+          VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, 1, 'Advance 40%', 'advance', 40, 2018180.00, 2018180.00, 'billable') RETURNING id`,
     );
     await one(
-      sql`INSERT INTO app.billing_schedule_lines (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent_bp, amount, amount_npr, status)
-          VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, 2, 'Final 60%', 'delivery', 6000, 3027270.00, 3027270.00, 'planned') RETURNING id`,
+      sql`INSERT INTO app.billing_schedule_lines (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent, amount, amount_npr, status)
+          VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, 2, 'Final 60%', 'delivery', 60, 3027270.00, 3027270.00, 'planned') RETURNING id`,
     );
     return { salesOrderId, advanceId };
   });

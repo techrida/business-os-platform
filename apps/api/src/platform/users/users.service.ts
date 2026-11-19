@@ -2,22 +2,36 @@
 // Serves the NFR "authorization decisions use current data": the tenancy interceptor resolves every
 // caller through resolve() here. The logic lives in UserMirror (no authz imports, so the worker can
 // use it); this class adapts it to the port U1 injects, and repairs a half-finished invite.
-import type { RoleKey } from '@bos/contracts';
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import type { AdminUsersQuery, RoleKey } from '@bos/contracts';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 import { UserDirectory } from '../authz/user-directory';
-import type { DbTransaction } from '../db/db.module';
-import type { TxScope } from '../db/tx';
+import { AuditService } from '../audit/audit.service';
+import { DB, type Db, type DbTransaction } from '../db/db.module';
+import { type Actor, type TxScope, withTx } from '../db/tx';
 import { type ResolvedUser, UserMirror } from './user-mirror';
 import { type ListedUser, UsersStore } from './users.store';
 import { ZitadelAdminClient, type ZitadelUser } from './zitadel-admin.client';
 
 @Injectable()
 export class UsersService extends UserDirectory {
+  private readonly logger = new Logger(UsersService.name);
+  private readonly activityAttempts = new Map<string, number>();
+  private activityInFlight = 0;
+
   constructor(
     private readonly mirror: UserMirror,
     private readonly store: UsersStore,
     private readonly zitadel: ZitadelAdminClient,
+    @Inject(DB) private readonly db: Db,
+    private readonly audit: AuditService,
   ) {
     super();
   }
@@ -42,8 +56,77 @@ export class UsersService extends UserDirectory {
     return this.mirror.reconcile();
   }
 
-  list(scope: TxScope, q: { limit: number; after?: string | undefined }): Promise<ListedUser[]> {
+  list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
     return this.mirror.list(scope, q);
+  }
+
+  summary(scope: TxScope) {
+    return this.store.summary(scope);
+  }
+
+  override recordActivity(scope: TxScope, actor: Actor): void {
+    const key = `${scope.tenantId}:${actor.id}`;
+    const now = Date.now();
+    if ((this.activityAttempts.get(key) ?? 0) > now || this.activityInFlight >= 2) return;
+
+    this.activityAttempts.delete(key);
+    if (this.activityAttempts.size >= 10_000) {
+      const oldest = this.activityAttempts.keys().next();
+      if (!oldest.done) this.activityAttempts.delete(oldest.value);
+    }
+    this.activityAttempts.set(key, now + 5 * 60_000);
+    this.activityInFlight += 1;
+    void this.store
+      .recordActivity(scope, actor)
+      .catch(() => this.logger.warn('Could not record staff activity'))
+      .finally(() => {
+        this.activityInFlight -= 1;
+      });
+  }
+
+  async sendPasswordReset(scope: TxScope, actor: Actor, userId: string): Promise<void> {
+    const org = await this.store.staffIdpOrgOf(scope.tenantId);
+    const target = await this.store.findById(this.db, scope, userId);
+    if (!org || !target || target.idpOrgId !== org.idpOrgId) {
+      throw new NotFoundException('User not found');
+    }
+    if (target.status === 'inactive') {
+      throw new ConflictException('This user is deactivated');
+    }
+    // ZITADEL refuses a password reset for USER_STATE_INITIAL (Errors.User.NotInitialised): an
+    // invited user has no password yet and finishes the invitation instead.
+    if (target.status === 'invited') {
+      throw new ConflictException('This user has not accepted their invitation yet');
+    }
+    // Check the source of truth as well as the mirror. Reconcile can lag behind deactivation.
+    const live = await this.passwordResetProviderCall(() =>
+      this.zitadel.getUser(target.zitadelUserId),
+    );
+    if (!live || live.orgId !== org.zitadelOrgId) throw new NotFoundException('User not found');
+    if (live.status !== 'active' || !live.email) {
+      throw new ConflictException('This user cannot receive a password reset email');
+    }
+    // Commit the request audit before calling the provider. The event describes the admin's
+    // request, so it stays accurate even if the external email request fails or times out.
+    await withTx(this.db, scope, actor, (tx) =>
+      this.audit.record(tx, {
+        action: 'users.password_reset_requested',
+        entityType: 'users',
+        entityId: target.id,
+      }),
+    );
+    await this.passwordResetProviderCall(() =>
+      this.zitadel.sendPasswordReset(target.zitadelUserId),
+    );
+  }
+
+  private async passwordResetProviderCall<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch {
+      // Provider failure details can contain identity data. Keep them out of logs and responses.
+      throw new ServiceUnavailableException('Could not request a password reset email. Try again.');
+    }
   }
 
   /**

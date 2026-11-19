@@ -1,26 +1,26 @@
 'use client';
 
+import type { AdminUsersQuery } from '@bos/contracts';
+
 import { Select } from '@/components/ui/field';
 import styles from './users.module.css';
 
 export function PageSize({
   size,
   sizes,
-  q,
-  role,
-  status,
+  filters,
 }: {
   size: number;
   sizes: readonly number[];
-  q: string;
-  role: string;
-  status: string;
+  filters: Omit<AdminUsersQuery, 'page' | 'after'>;
 }) {
   return (
     <form action="/admin/users" className={styles.pageSize}>
-      {q && <input type="hidden" name="q" value={q} />}
-      {role && <input type="hidden" name="role" value={role} />}
-      {status && <input type="hidden" name="status" value={status} />}
+      {Object.entries(filters).map(([key, value]) =>
+        key !== 'limit' && value ? (
+          <input key={key} type="hidden" name={key} value={value} />
+        ) : null,
+      )}
       <label htmlFor="users-per-page">Rows</label>
       <Select
         id="users-per-page"

@@ -4,7 +4,7 @@ import { RoleKeySchema, type RoleKey } from '@bos/contracts';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { inviteUser, setUserRoles } from '@/lib/api-admin';
+import { inviteUser, sendPasswordReset, setUserRoles } from '@/lib/api-admin';
 
 import { describeError } from '../admin-errors';
 import { fail, ok, type ActionState } from '../action-state';
@@ -84,4 +84,17 @@ export async function setRolesAction(
   }
   revalidatePath(PATH);
   return ok(roles.length === 0 ? 'All roles removed.' : 'Roles saved.');
+}
+
+export async function sendPasswordResetAction(userId: string): Promise<ActionState> {
+  const session = await requireSession(PATH);
+  const parsed = z.uuid().safeParse(userId);
+  if (!parsed.success) return fail('Missing user.');
+
+  try {
+    await sendPasswordReset(session, parsed.data);
+    return ok('Password reset email sent.');
+  } catch (error) {
+    return fail(describeError(error, 'send password reset emails'));
+  }
 }

@@ -116,6 +116,20 @@ describe('renderQuotationHtml', () => {
     expect(html).toContain('23 Nov 2026');
   });
 
+  it('prints four-decimal shares and formats dated milestones in the PDF template', () => {
+    const html = renderQuotationHtml({
+      ...sample('USD'),
+      paymentSchedule: [
+        { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
+        { label: 'Delivery', percent: '33.3333', dueDescription: '2026-11-19' },
+        { label: 'Balance', percent: '33.3334', dueDescription: '2026-11-23' },
+      ],
+    });
+    expect(html).toContain('<td>Advance</td><td>33.3333%</td><td class="muted">On order</td>');
+    expect(html).toContain('<td>Delivery</td><td>33.3333%</td><td class="muted">19 Nov 2026</td>');
+    expect(html).toContain('<td>Balance</td><td>33.3334%</td><td class="muted">23 Nov 2026</td>');
+  });
+
   it('shows the BS date next to the date, and leaves it out on request', () => {
     // Kartik 1, 2083 fell on 18 Oct 2026, so 8 Nov 2026 is 22 Kartik 2083 and 23 Nov is 7 Mangsir.
     const html = renderQuotationHtml(sample('USD'));

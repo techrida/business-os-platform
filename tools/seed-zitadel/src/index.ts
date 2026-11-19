@@ -196,6 +196,7 @@ export interface SeedDeps {
   webhookUrl?: string;
   /** Login name of the first-instance human admin to retire. Defaults to DEFAULT_ADMIN_USERNAME. */
   adminUsername?: string;
+  configureDevMailpit?: boolean;
 }
 
 export interface SeedResult {
@@ -263,9 +264,14 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     }
   }
 
+  // Unscoped sign-ins read the instance policy before they discover the user's organization.
+  if (await api.ensureInstancePasswordReset()) {
+    changed('configured the instance login policy for private password reset');
+  }
+
   // Nobody may register themselves on the staff org: staff are invited.
-  if (await api.ensureOrgLoginPolicyNoRegister(staffOrgId)) {
-    changed('disabled self-registration on the staff org');
+  if (await api.ensureStaffLoginPolicy(staffOrgId)) {
+    changed('configured staff login policy for invitations and private password reset');
   }
 
   const haveRoles = new Set(await api.listProjectRoles(projectId));
@@ -557,17 +563,17 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     );
   }
 
-  // --- SMTP to Mailpit. Optional: the instance may not allow it, and login works without it. ---
-  try {
-    const created = await api.ensureSmtp({
+  // --- Activate local mail delivery for password reset and other ZITADEL notifications. ---
+  if (
+    deps.configureDevMailpit &&
+    (await api.ensureSmtp({
       description: SMTP_DESCRIPTION,
       host: 'mailpit:1025',
       senderAddress: 'noreply@bos.test',
       senderName: 'Business OS (dev)',
-    });
-    if (created) changed('configured SMTP provider to Mailpit');
-  } catch (error) {
-    log(`  ! SMTP setup skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }))
+  ) {
+    changed('activated the Mailpit email provider');
   }
 
   // --- Env file for the API and the workspace. Steps add keys to this record; one write at the end.
@@ -1006,6 +1012,7 @@ export async function main(): Promise<void> {
     workspaceUrl,
     webhookUrl: process.env['ZITADEL_WEBHOOK_URL'] ?? DEFAULT_WEBHOOK_URL,
     adminUsername: process.env['ZITADEL_ADMIN_USERNAME'] ?? DEFAULT_ADMIN_USERNAME,
+    configureDevMailpit: process.env['BOS_SEED_DEV_MAILPIT'] === 'true',
   });
   console.log(
     result.changes.length === 0 ? 'no changes' : `done: ${result.changes.length} change(s)`,

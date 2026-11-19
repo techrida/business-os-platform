@@ -290,6 +290,17 @@ describe('QuotationVersionContentSchema', () => {
     ).toBe(true);
   });
 
+  it('validates four-decimal payment shares and rejects a fifth digit or a short total', () => {
+    const parse = (percents: string[]) =>
+      QuotationVersionContentSchema.safeParse({
+        ...content,
+        paymentSchedule: percents.map((percent, i) => ({ label: `Step ${i + 1}`, percent })),
+      });
+    expect(parse(['33.3333', '33.3333', '33.3334']).success).toBe(true);
+    expect(parse(['33.33330', '33.3333', '33.3334']).success).toBe(false);
+    expect(parse(['33.3333', '33.3333', '33.3333']).success).toBe(false);
+  });
+
   it('only INR, NPR and USD', () => {
     expect(QuotationVersionContentSchema.safeParse({ ...content, currency: 'EUR' }).success).toBe(
       false,
