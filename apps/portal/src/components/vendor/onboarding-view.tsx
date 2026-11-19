@@ -1,10 +1,10 @@
+import { formatCustomerDate } from '@bos/locale';
 import type { VendorPortalOnboardingView } from '@bos/contracts';
 import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 
-import { formatDay } from '../portal/quotation-status';
 import styles from './vendor.module.css';
 import { KYC_DOC_LABEL, KYC_STATE_LOOK, VENDOR_STATUS_LOOK } from './vendor-status';
 
@@ -62,7 +62,7 @@ export function OnboardingView({ view }: { view: VendorPortalOnboardingView }) {
                         <Badge tone={state.tone}>{state.label}</Badge>
                       </td>
                       <td className={styles.nowrap}>
-                        {doc.validUntil ? formatDay(doc.validUntil) : '—'}
+                        {doc.validUntil ? formatCustomerDate(doc.validUntil) : '—'}
                       </td>
                       {canSend ? (
                         <td className={styles.nowrap}>

@@ -93,7 +93,7 @@ export const purchaseOrders = appSchema.table(
     currency: char('currency', { length: 3 }).notNull(),
     status: text('status', { enum: PO_STATUSES }).notNull().default('draft'),
     paymentTermsDays: integer('payment_terms_days').notNull(),
-    advancePercent: numeric('advance_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+    advancePercent: numeric('advance_percent', { precision: 7, scale: 4 }).notNull().default('0'),
     /** The total the commitment route approved, in the vendor's currency. */
     approvedTotal: money('approved_total').notNull(),
     /** NPR per unit (1 for NPR), with its source and date for a foreign currency. */

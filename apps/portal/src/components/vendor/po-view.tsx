@@ -1,10 +1,10 @@
+import { formatCustomerDate } from '@bos/locale';
 import type { VendorPortalPurchaseOrderView, VendorVisiblePoStatus } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
 
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 
-import { formatDay } from '../portal/quotation-status';
 import styles from './vendor.module.css';
 import { PO_STATUS_LOOK, trimQuantity } from './vendor-status';
 
@@ -38,7 +38,7 @@ export function PurchaseOrderView({ view }: { view: VendorPortalPurchaseOrderVie
         <dl className={styles.facts}>
           <div>
             <dt>Issued</dt>
-            <dd>{formatDay(view.issueDate)}</dd>
+            <dd>{formatCustomerDate(view.issueDate)}</dd>
           </div>
           <div>
             <dt>Payment terms</dt>

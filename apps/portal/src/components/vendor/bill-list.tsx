@@ -1,10 +1,10 @@
+import { formatCustomerDate } from '@bos/locale';
 import type { VendorPortalBillView } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
 
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 
-import { formatDay } from '../portal/quotation-status';
 import styles from './vendor.module.css';
 import { BILL_STATUS_LOOK } from './vendor-status';
 
@@ -43,7 +43,7 @@ export function BillList({ items }: { items: readonly VendorPortalBillView[] }) 
                   </a>
                 </th>
                 <td className={styles.description}>{bill.vendorInvoiceNo}</td>
-                <td className={styles.nowrap}>{formatDay(bill.invoiceDate)}</td>
+                <td className={styles.nowrap}>{formatCustomerDate(bill.invoiceDate)}</td>
                 <td>
                   <Badge tone={look.tone}>{look.label}</Badge>
                 </td>
