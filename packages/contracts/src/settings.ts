@@ -10,7 +10,11 @@ import {
   DEFAULT_DOCUMENT_STYLE,
   DocumentStyleSchema,
   EMPTY_COMPANY_PROFILE,
-  NumberSystemSchema,
+  DateFormatSchema,
+  DEFAULT_DATE_FORMAT,
+  DEFAULT_NUMBER_SYSTEMS,
+  DEFAULT_TERM_PRESETS,
+  NumberSystemsSchema,
   TermPresetListSchema,
 } from './document-style.js';
 import { CurrencySchema, DecimalString } from './money.js';
@@ -93,8 +97,10 @@ export const SETTINGS = {
   'entity.profile': CompanyProfileSchema,
   /** Layout and brand colour of customer documents. Per entity; only the Founder changes it. */
   'document.style': DocumentStyleSchema,
-  /** South Asian (lakh, crore) or International (million, billion): drives amount grouping and amount in words. */
-  'format.number_system': NumberSystemSchema,
+  /** Per currency, South Asian (lakh, crore) or International (million, billion): drives amount grouping and amount in words (D30). */
+  'format.number_systems': NumberSystemsSchema,
+  /** How customer-facing documents print calendar dates (D27 default `19 Nov 2026`). */
+  'format.date': DateFormatSchema,
   /** Saved wording the quotation form offers for payment terms, scope and the like. */
   'quotation.term_presets': TermPresetListSchema,
   ...P4_SETTINGS,
@@ -104,11 +110,17 @@ export const SETTINGS = {
 export const DOCUMENT_SETTING_DEFAULTS = {
   'entity.profile': EMPTY_COMPANY_PROFILE,
   'document.style': DEFAULT_DOCUMENT_STYLE,
-  'format.number_system': 'south_asian',
-  'quotation.term_presets': [],
+  'format.number_systems': DEFAULT_NUMBER_SYSTEMS,
+  'format.date': DEFAULT_DATE_FORMAT,
+  'quotation.term_presets': DEFAULT_TERM_PRESETS,
 } as const satisfies {
   [
-    K in 'entity.profile' | 'document.style' | 'format.number_system' | 'quotation.term_presets'
+    K in
+      | 'entity.profile'
+      | 'document.style'
+      | 'format.number_systems'
+      | 'format.date'
+      | 'quotation.term_presets'
   ]: z.infer<(typeof SETTINGS)[K]>;
 };
 
@@ -137,5 +149,22 @@ export const P3_SETTING_DEFAULTS = {
 
 export type SettingKey = keyof typeof SETTINGS;
 export type SettingValue<K extends SettingKey> = z.infer<(typeof SETTINGS)[K]>;
+
+/**
+ * What every key reads as before anyone writes it: today's behaviour (D32). The API reads it for an unset key and the
+ * workspace compares a saved value with it to show the undo icon, so there is one source. Each entry is checked
+ * against SETTINGS in a test.
+ */
+export const SETTING_DEFAULTS: { readonly [K in SettingKey]: SettingValue<K> } = {
+  'currency.enabled': ['NPR', 'INR', 'USD'],
+  'tax.vat_rate': '13',
+  'numbering.memo_prefix': 'MEMO',
+  // The schema fills in its own defaults (24 h, 72 h, founder), so the two never drift apart.
+  'approvals.sla_defaults': SlaSpecSchema.parse({}),
+  ...P2_SETTING_DEFAULTS,
+  ...P3_SETTING_DEFAULTS,
+  ...P4_SETTING_DEFAULTS,
+  ...DOCUMENT_SETTING_DEFAULTS,
+};
 export const SETTING_KEYS = Object.keys(SETTINGS) as SettingKey[];
 export const SettingKeySchema = z.enum(Object.keys(SETTINGS) as [SettingKey, ...SettingKey[]]);
