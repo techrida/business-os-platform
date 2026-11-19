@@ -8,8 +8,13 @@ export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A picture's bytes never change for a document id (one version per upload), so the browser keeps it a day. */
-const IMAGE_CACHE = 'private, max-age=86400, immutable';
+/**
+ * Same contract as the API's IMAGE_CACHE_CONTROL: the browser may store a picture but revalidates it on every use, so
+ * a switched, signed-out or no-longer-allowed session never sees a cached copy. The revalidation carries the ETag
+ * through to the API, so an unchanged picture is a cheap 304 that still passes the session check here and the scope
+ * check there. Never a max-age or `immutable`.
+ */
+const IMAGE_CACHE = 'private, no-cache';
 
 /**
  * `GET /api/images/:documentId`: the same-origin proxy of `GET /v1/images/:documentId`, so `<img src>` stays under

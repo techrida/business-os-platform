@@ -93,7 +93,8 @@ describe('GET /api/images/[documentId]', () => {
     expect(res.headers.get('content-type')).toBe('image/png');
     expect(res.headers.get('content-length')).toBe('4');
     expect(res.headers.get('etag')).toBe(ETAG);
-    expect(res.headers.get('cache-control')).toBe('private, max-age=86400, immutable');
+    // Stored but revalidated on every use: no max-age or `immutable` that would skip the session and scope checks.
+    expect(res.headers.get('cache-control')).toBe('private, no-cache');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('content-disposition')).toBe('inline');
     expect(res.headers.get('set-cookie')).toBeNull();
@@ -106,8 +107,35 @@ describe('GET /api/images/[documentId]', () => {
     expect(openImage).toHaveBeenCalledWith(staff, DOC, ETAG);
     expect(res.status).toBe(304);
     expect(res.headers.get('etag')).toBe(ETAG);
-    expect(res.headers.get('cache-control')).toBe('private, max-age=86400, immutable');
+    expect(res.headers.get('cache-control')).toBe('private, no-cache');
     expect(res.body).toBeNull();
+  });
+
+  it('answers 200 with the bytes when the API did, even though the browser sent If-None-Match', async () => {
+    const changed = '"44444444-4444-4444-8444-444444444444"';
+    openImage.mockResolvedValueOnce(
+      new Response(PNG, { status: 200, headers: { 'content-type': 'image/png', etag: changed } }),
+    );
+    const res = await get({ 'if-none-match': ETAG });
+    expect(openImage).toHaveBeenCalledWith(staff, DOC, ETAG);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('etag')).toBe(changed);
+    expect(res.headers.get('cache-control')).toBe('private, no-cache');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG);
+  });
+
+  it('runs the session and scope checks on a revalidation: no session is 401, a refused scope is 404', async () => {
+    getSession.mockResolvedValueOnce(null);
+    expect((await get({ 'if-none-match': ETAG })).status).toBe(401);
+    expect(openImage).not.toHaveBeenCalled();
+
+    openImage.mockRejectedValueOnce(
+      new ImageError(404, 'The picture or the record it belongs to was not found.'),
+    );
+    const res = await get({ 'if-none-match': ETAG });
+    expect(openImage).toHaveBeenCalledWith(staff, DOC, ETAG);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('refuses anything that is not PNG, JPEG or WebP with 415 JSON, whatever the API sent', async () => {
