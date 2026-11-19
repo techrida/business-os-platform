@@ -60,6 +60,7 @@ import { can, type Principal, type ResourceRef } from '../../../platform/authz/c
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { quotationRef } from '../preview/quotation-preview.service';
 import { personNames } from '../../../platform/users/person-names';
@@ -251,6 +252,7 @@ export class DraftingService {
     private readonly authz: AuthzService,
     private readonly audit: AuditService,
     private readonly caller: DraftingCaller,
+    private readonly currencies: CurrencyEnabledService,
     @Optional() @Inject(DRAFTING_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -303,6 +305,8 @@ export class DraftingService {
       // Refused rather than silently dropped until attachments are stored.
       throw badRequest('attachmentDocumentIds are not supported yet');
     }
+    // D44: only a currency the company switched on (422 CURRENCY_NOT_ENABLED), checked before any write.
+    await this.currencies.assertEnabled(scope, body.currency);
 
     // A drafter who may not read costs cannot set them either: a new quotation has no stored cost to keep.
     const priced = await this.pricing.priceVersion(
@@ -627,6 +631,10 @@ export class DraftingService {
     if (version.status !== 'draft' && version.status !== 'returned') throw notEditable();
 
     const { expectedVersion, ...patch } = body;
+    // D44: a changed currency must be switched on; the saved one stays editable even if since switched off.
+    if (patch.currency !== undefined && patch.currency !== version.currency) {
+      await this.currencies.assertEnabled(scope, patch.currency);
+    }
     if (patch.attachmentDocumentIds !== undefined && patch.attachmentDocumentIds.length > 0) {
       throw badRequest('attachmentDocumentIds are not supported yet');
     }

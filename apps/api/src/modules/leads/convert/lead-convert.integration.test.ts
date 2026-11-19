@@ -33,6 +33,8 @@ import { LeadsService } from '../leads.service';
 import { startHarness, type Harness } from '../test/harness';
 import { LeadConvertController } from './lead-convert.controller';
 import { LeadConvertService } from './lead-convert.service';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
+import { SettingsService } from '../../../platform/settings/settings.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -45,7 +47,14 @@ beforeAll(async () => {
   const authz = h.authz as unknown as AuthzService;
   const numbering = new NumberingService();
   const audit = new AuditService(h.db);
-  const leadsService = new LeadsService(h.db, authz, audit, numbering, h.caller);
+  const leadsService = new LeadsService(
+    h.db,
+    authz,
+    audit,
+    numbering,
+    h.caller,
+    new CurrencyEnabledService(new SettingsService(h.db)),
+  );
   const customersService = new CustomersService(h.db, numbering, authz, h.caller);
   const convertService = new LeadConvertService(
     h.db,
