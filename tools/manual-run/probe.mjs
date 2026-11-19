@@ -12,7 +12,7 @@ import { Session } from './lib/session.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const cfg = loadConfig({ label: 'probe', ...args, captions: 'false' });
-const browser = await launch(cfg, origins(cfg));
+const browser = await launch(cfg, [cfg.appUrl], origins(cfg));
 const context = await browser.newContext({ viewport: cfg.viewport, ignoreHTTPSErrors: false });
 context.setDefaultTimeout(cfg.actionTimeout);
 const session = await Session.open({ context, cfg, state: {}, log: (l) => console.error(l) });

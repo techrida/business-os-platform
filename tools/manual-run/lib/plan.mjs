@@ -1,0 +1,60 @@
+// What each selected workflow does in one invocation, decided before any browser starts, so a
+// mistyped --from or --only stops the run with a clear message instead of failing mid-run.
+
+/**
+ * @param {{ name: string, stepIds: string[] | null }[]} workflows in run order; stepIds is null for
+ *   a workflow that is not implemented yet
+ * @param {{ from?: string, only?: string }} args
+ * @returns {{ name: string, mode: 'full' | 'from' | 'only' | 'skip' | 'not-implemented',
+ *   from?: string, only?: string[], reason?: string }[]}
+ */
+export function planRuns(workflows, { from, only } = {}) {
+  if (from !== undefined && typeof from !== 'string') throw new Error('--from needs a step id');
+  if (only !== undefined && typeof only !== 'string') throw new Error('--only needs step ids');
+  if (from && only) throw new Error('Use either --from or --only, not both.');
+  const known = workflows
+    .filter((w) => w.stepIds)
+    .map((w) => `${w.name}: ${w.stepIds.join(', ')}`)
+    .join('; ');
+
+  if (from) {
+    const owner = workflows.findIndex((w) => w.stepIds?.includes(from));
+    if (owner < 0)
+      throw new Error(`--from ${from} is not a step of the selected workflows (${known}).`);
+    // Resuming an invocation: workflows listed before the resume point already ran and are left
+    // alone; the owner resumes at the step; the ones after it run in full.
+    return workflows.map((w, i) =>
+      i < owner
+        ? { name: w.name, mode: 'skip', reason: `listed before --from ${from}` }
+        : i === owner
+          ? { name: w.name, mode: 'from', from }
+          : full(w),
+    );
+  }
+
+  if (only) {
+    const ids = only
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!ids.length) throw new Error('--only needs at least one step id');
+    const unknown = ids.filter((id) => !workflows.some((w) => w.stepIds?.includes(id)));
+    if (unknown.length)
+      throw new Error(
+        `--only ${unknown.join(',')}: not a step of the selected workflows (${known}).`,
+      );
+    // A workflow with none of the listed steps is not run, so its stored results stay as they are.
+    return workflows.map((w) => {
+      const mine = ids.filter((id) => w.stepIds?.includes(id));
+      return mine.length
+        ? { name: w.name, mode: 'only', only: mine }
+        : { name: w.name, mode: 'skip', reason: '--only lists none of its steps' };
+    });
+  }
+
+  return workflows.map(full);
+}
+
+function full(w) {
+  return w.stepIds ? { name: w.name, mode: 'full' } : { name: w.name, mode: 'not-implemented' };
+}

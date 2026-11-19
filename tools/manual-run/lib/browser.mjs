@@ -58,33 +58,50 @@ export function tlsLaunchArgs(origins, caFile) {
   for (const pem of pems) hashes.add(spki(new X509Certificate(pem)));
   for (const origin of new Set(origins.filter((o) => o.startsWith('https:')))) {
     const u = new URL(origin);
-    const out = execFileSync(process.execPath, ['-e', PROBE, u.hostname, u.port || '443', caFile], {
-      encoding: 'utf8',
-      timeout: 20_000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let out;
+    try {
+      out = execFileSync(process.execPath, ['-e', PROBE, u.hostname, u.port || '443', caFile], {
+        encoding: 'utf8',
+        timeout: 20_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      const why = String(error.stderr ?? '').trim() || error.message.split('\n')[0];
+      throw new Error(`TLS check of ${origin} against ${caFile} failed: ${why}`);
+    }
     for (const h of out.trim().split(',').filter(Boolean)) hashes.add(h);
   }
   return [`--ignore-certificate-errors-spki-list=${[...hashes].join(',')}`, '--disable-quic'];
 }
 
-export async function launch(cfg, origins) {
+/**
+ * @param {string[]} probeOrigins the origins this run uses: their certificates are checked
+ *   against the stack CA before launch (a stack's portal being down must not stop a staff run)
+ * @param {string[]} allOrigins every configured origin: network isolation forwards their ports
+ */
+export async function launch(cfg, probeOrigins, allOrigins = probeOrigins) {
   const { chromium } = loadPlaywright();
   const options = {
     headless: cfg.headless,
     slowMo: cfg.slowMo || undefined,
-    args: tlsLaunchArgs(origins, cfg.caFile),
+    args: tlsLaunchArgs(probeOrigins, cfg.caFile),
   };
   let net = null;
-  if (netnsWanted(origins)) {
+  if (netnsWanted(allOrigins)) {
     net = prepareNetns(
       path.join(cfg.outDir, '.net'),
-      origins,
+      allOrigins,
       process.env.CHROMIUM_PATH || chromium.executablePath(),
     );
     options.executablePath = net.executablePath;
   }
-  const browser = await chromium.launch(options);
+  let browser;
+  try {
+    browser = await chromium.launch(options);
+  } catch (error) {
+    net?.stop(); // the forwarders were started for this browser only
+    throw error;
+  }
   if (net) browser.on('disconnected', () => net.stop());
   return browser;
 }

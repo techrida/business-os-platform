@@ -26,9 +26,23 @@ export function origins(cfg) {
   return [cfg.appUrl, cfg.portalUrl, cfg.mailUrl, cfg.authUrl];
 }
 
+const ORIGIN_KEYS = { app: 'appUrl', portal: 'portalUrl', mail: 'mailUrl', auth: 'authUrl' };
+
+/** The origins a workflow declares (`origins: ['app', 'mail']`); all of them when it declares none. */
+export function workflowOrigins(cfg, workflow) {
+  if (!workflow.origins) return origins(cfg);
+  return workflow.origins.map((k) => {
+    if (!ORIGIN_KEYS[k]) throw new Error(`${workflow.name}: unknown origin "${k}"`);
+    return cfg[ORIGIN_KEYS[k]];
+  });
+}
+
 /**
- * @param {object} workflow { name, title, steps: [{ id, title, run(session) }] }
- * @param {object} opts { from?: step id to resume at (earlier steps are SKIPPED, state is reloaded) }
+ * Runs one workflow and always returns its saved result: a failure before the first step (TLS
+ * check, browser launch, session setup) is saved as a FAIL with that error, and the browser, its
+ * contexts and the network forwarders are closed in every case.
+ * @param {object} workflow { name, title, origins?, steps: [{ id, title, run(session) }] }
+ * @param {object} opts { from?: resume at this step; only?: step ids to run (others SKIPPED) }
  */
 export async function runWorkflow(cfg, workflow, opts = {}) {
   mkdirSync(cfg.outDir, { recursive: true });
@@ -56,119 +70,143 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     : null;
   // A resumed run records its own video segment, so the earlier segment is kept.
   const base = opts.from ? `${workflow.name}-from-${opts.from}` : workflow.name;
-
-  const browser = await launch(cfg, origins(cfg));
-  const context = await newRecordedContext(browser, cfg, videoTmp);
-  const session = await Session.open({ context, cfg, state, log });
-  session.dirs = { shots: shotsDir, files: filesDir, video: videoTmp };
-  session.browser = browser;
-
-  let blocked = null;
+  // Checked by run.mjs before any launch; repeated here for direct callers.
   const fromIndex = opts.from ? workflow.steps.findIndex((s) => s.id === opts.from) : 0;
   if (fromIndex < 0) throw new Error(`--from ${opts.from}: no such step in ${workflow.name}`);
-  for (const [index, step] of workflow.steps.entries()) {
-    // Saved before every step, so a run that is killed keeps the results of the steps it finished.
-    saveResults(cfg, { ...result, status: 'RUNNING', wallMs: Date.now() - t0 }, earlier);
-    const skipping = index < fromIndex || (cfg.only && !cfg.only.includes(step.id));
-    const entry = {
-      id: step.id,
-      title: step.title,
-      status: 'PASS',
-      durationMs: 0,
-      checks: [],
-      findings: [],
-      records: {},
-    };
-    result.steps.push(entry);
-    if (skipping) {
-      entry.status = 'SKIPPED';
-      continue;
-    }
-    if (blocked) {
-      entry.status = 'BLOCKED';
-      entry.error = `Not run: ${blocked} failed`;
-      continue;
-    }
-    const before = { ...state };
-    session.checks = [];
-    session.findings = [];
-    session.consoleErrors = [];
-    const s0 = Date.now();
-    log(`${step.id} — ${step.title}`);
-    try {
-      await session.caption(`${step.id} — ${step.title}`);
-      const limit = step.timeoutMs ?? cfg.stepTimeout;
-      await withTimeout(
-        step.run(session),
-        limit,
-        `${step.id} did not finish within ${limit / 1000} s`,
-      );
-      await session.pause();
-    } catch (error) {
-      entry.status = 'FAIL';
-      entry.error = redactText(
-        (error instanceof StepFailure ? '' : 'Error: ') +
-          error.message.split('\n').slice(0, 6).join(' | '),
-      );
-      entry.url = redactUrl(session.page.url());
-      const shot = path.join(shotsDir, `${step.id}-FAIL.png`);
-      await session.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-      entry.screenshot = shot;
-      log(`FAIL ${step.id}: ${entry.error}`);
-      await session.caption(`${step.id} FAILED — ${entry.error.slice(0, 160)}`);
-      await session.pause(2500);
-      blocked = step.id;
-      result.status = 'FAIL';
-    }
-    entry.durationMs = Date.now() - s0;
-    // Playwright messages and checks can embed full URLs: strip their query strings before saving.
-    entry.checks = session.checks.map(redactText);
-    entry.findings = session.findings.map((f) => ({ ...f, text: redactText(f.text) }));
-    if (session.consoleErrors.length)
-      entry.consoleErrors = session.consoleErrors.slice(0, 12).map(redactText);
-    for (const [k, v] of Object.entries(state))
-      if (JSON.stringify(before[k]) !== JSON.stringify(v))
-        entry.records[k] = typeof v === 'string' ? redactText(v) : v;
-    writeJson(stateFile, state);
-    log(`${entry.status} ${step.id} (${(entry.durationMs / 1000).toFixed(1)} s)`);
+
+  let browser = null;
+  let context = null;
+  let session = null;
+  try {
+    browser = await launch(cfg, workflowOrigins(cfg, workflow), origins(cfg));
+    context = await newRecordedContext(browser, cfg, videoTmp);
+    session = await Session.open({ context, cfg, state, log });
+    session.dirs = { shots: shotsDir, files: filesDir, video: videoTmp };
+    session.browser = browser;
+  } catch (error) {
+    // Nothing ran: record why, so the summary and results.json show it instead of a crash.
+    result.status = 'FAIL';
+    result.error = redactText(`Could not start: ${error.message.split('\n')[0]}`);
+    log(result.error);
+    await context?.close().catch(() => {});
+    await browser?.close().catch(() => {});
+    result.finishedAt = now();
+    result.wallMs = Date.now() - t0;
+    return saveResults(cfg, result, earlier);
   }
 
-  // Videos are written when their page's context closes.
-  const pages = context.pages();
-  const extra = session.extraContexts ?? [];
-  await context.close().catch(() => {});
-  for (const c of extra) await c.context.close().catch(() => {});
-  await browser.close().catch(() => {});
-  let n = 0;
-  for (const p of pages) {
-    const v = await p
-      .video()
-      ?.path()
-      .catch(() => null);
-    if (v && existsSync(v)) {
-      const name = n === 0 ? `${base}.webm` : `${base}-page${n + 1}.webm`;
-      const dest = path.join(cfg.outDir, name);
-      renameSync(v, dest);
-      result.videos.push(dest);
-      n++;
+  try {
+    let blocked = null;
+    for (const [index, step] of workflow.steps.entries()) {
+      // Saved before every step, so a run that is killed keeps the results of the steps it finished.
+      saveResults(cfg, { ...result, status: 'RUNNING', wallMs: Date.now() - t0 }, earlier);
+      const skipping = index < fromIndex || (opts.only && !opts.only.includes(step.id));
+      const entry = {
+        id: step.id,
+        title: step.title,
+        status: 'PASS',
+        durationMs: 0,
+        checks: [],
+        findings: [],
+        records: {},
+      };
+      result.steps.push(entry);
+      if (skipping) {
+        entry.status = 'SKIPPED';
+        continue;
+      }
+      if (blocked) {
+        entry.status = 'BLOCKED';
+        entry.error = `Not run: ${blocked} failed`;
+        continue;
+      }
+      const before = { ...state };
+      session.checks = [];
+      session.findings = [];
+      session.consoleErrors = [];
+      const s0 = Date.now();
+      log(`${step.id} — ${step.title}`);
+      try {
+        await session.caption(`${step.id} — ${step.title}`);
+        const limit = step.timeoutMs ?? cfg.stepTimeout;
+        await withTimeout(
+          step.run(session),
+          limit,
+          `${step.id} did not finish within ${limit / 1000} s`,
+        );
+        await session.pause();
+      } catch (error) {
+        entry.status = 'FAIL';
+        entry.error = redactText(
+          (error instanceof StepFailure ? '' : 'Error: ') +
+            error.message.split('\n').slice(0, 6).join(' | '),
+        );
+        entry.url = redactUrl(session.page.url());
+        const shot = path.join(shotsDir, `${step.id}-FAIL.png`);
+        await session.page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        entry.screenshot = shot;
+        log(`FAIL ${step.id}: ${entry.error}`);
+        await session.caption(`${step.id} FAILED — ${entry.error.slice(0, 160)}`);
+        await session.pause(2500);
+        blocked = step.id;
+        result.status = 'FAIL';
+      }
+      entry.durationMs = Date.now() - s0;
+      // Playwright messages and checks can embed full URLs: strip their query strings before saving.
+      entry.checks = session.checks.map(redactText);
+      entry.findings = session.findings.map((f) => ({ ...f, text: redactText(f.text) }));
+      if (session.consoleErrors.length)
+        entry.consoleErrors = session.consoleErrors.slice(0, 12).map(redactText);
+      for (const [k, v] of Object.entries(state))
+        if (JSON.stringify(before[k]) !== JSON.stringify(v))
+          entry.records[k] = typeof v === 'string' ? redactText(v) : v;
+      writeJson(stateFile, state);
+      log(`${entry.status} ${step.id} (${(entry.durationMs / 1000).toFixed(1)} s)`);
     }
-  }
-  for (const c of extra) {
-    for (const p of c.pages) {
+  } catch (error) {
+    // A driver error outside a step (e.g. saving results): keep what ran and report it.
+    result.status = 'FAIL';
+    result.error = redactText(`Driver error: ${error.message.split('\n')[0]}`);
+    log(result.error);
+  } finally {
+    // Videos are written when their page's context closes; always close, even after an error.
+    const pages = context.pages();
+    const extra = session.extraContexts ?? [];
+    await context.close().catch(() => {});
+    for (const c of extra) await c.context.close().catch(() => {});
+    await browser.close().catch(() => {});
+    let n = 0;
+    for (const p of pages) {
       const v = await p
         .video()
         ?.path()
         .catch(() => null);
       if (v && existsSync(v)) {
-        const dest = path.join(cfg.outDir, `${base}-${c.name}.webm`);
+        const name = n === 0 ? `${base}.webm` : `${base}-page${n + 1}.webm`;
+        const dest = path.join(cfg.outDir, name);
         renameSync(v, dest);
         result.videos.push(dest);
+        n++;
+      }
+    }
+    for (const c of extra) {
+      for (const p of c.pages) {
+        const v = await p
+          .video()
+          ?.path()
+          .catch(() => null);
+        if (v && existsSync(v)) {
+          const dest = path.join(cfg.outDir, `${base}-${c.name}.webm`);
+          renameSync(v, dest);
+          result.videos.push(dest);
+        }
       }
     }
   }
   result.finishedAt = now();
   result.wallMs = Date.now() - t0;
-  if (result.steps.every((s) => s.status === 'SKIPPED')) result.status = 'SKIPPED';
+  if (result.status !== 'FAIL' && result.steps.every((s) => s.status === 'SKIPPED'))
+    result.status = 'SKIPPED';
   return saveResults(cfg, result, earlier);
 }
 
@@ -188,19 +226,23 @@ function withTimeout(promise, ms, message) {
  */
 function mergeResumed(prev, next) {
   const before = new Map(prev.steps.map((st) => [st.id, st]));
-  const steps = next.steps.map((st) =>
-    st.status === 'SKIPPED' && before.has(st.id) && before.get(st.id).status !== 'SKIPPED'
-      ? { ...before.get(st.id), fromEarlierRun: true }
-      : st,
-  );
+  // A run that could not start has no steps of its own: show the earlier ones.
+  const steps = next.steps.length
+    ? next.steps.map((st) =>
+        st.status === 'SKIPPED' && before.has(st.id) && before.get(st.id).status !== 'SKIPPED'
+          ? { ...before.get(st.id), fromEarlierRun: true }
+          : st,
+      )
+    : prev.steps.map((st) => ({ ...st, fromEarlierRun: true }));
   const has = (status) => steps.some((st) => st.status === status);
-  const status = has('FAIL')
-    ? 'FAIL'
-    : has('BLOCKED')
-      ? 'BLOCKED'
-      : steps.every((st) => st.status === 'PASS')
-        ? 'PASS'
-        : next.status;
+  const status =
+    next.error || has('FAIL')
+      ? 'FAIL'
+      : has('BLOCKED')
+        ? 'BLOCKED'
+        : steps.every((st) => st.status === 'PASS')
+          ? 'PASS'
+          : next.status;
   const videos = [...new Set([...(prev.videos ?? []), ...next.videos])];
   return { ...next, steps, status, videos, wallMs: (prev.wallMs ?? 0) + next.wallMs };
 }
@@ -239,6 +281,7 @@ export function renderMarkdown(all) {
         .map(([k, v]) => `${k} ${v}`)
         .join(', ')}`,
     );
+    if (wf.error) lines.push('', `**${wf.error}**`);
     for (const v of wf.videos) lines.push(`- video: ${v}`);
     lines.push('', '| step | status | s | notes |', '|---|---|---|---|');
     for (const s of wf.steps) {

@@ -3,14 +3,15 @@
 // one video per workflow per viewport.
 //
 //   node tools/manual-run/run.mjs --workflow start|sales|procurement|branches|all \
-//        --viewport 1440x900|390x844|820x1180|all --label SCR1 [--from sales-7] [--only sales-3,sales-4]
+//        --viewport 1440x900|390x844|820x1180|all --label scr1 [--from sales-7] [--only sales-3,sales-4]
 //
-// Environment: see README.md (APP_URL, PORTAL_URL, MAIL_URL, PERSONAS_FILE, VIEWPORT, VIDEO_DIR,
-// RUN_LABEL, SLOWMO, PACE, HEADLESS, CAPTIONS, DEMO_FILES).
+// Environment: see README.md (APP_URL, PORTAL_URL, MAIL_URL, AUTH_URL, PERSONAS_FILE, CA_FILE,
+// VIEWPORT, VIDEO_DIR, RUN_LABEL, SLOWMO, PACE, HEADLESS, CAPTIONS, DEMO_FILES, NETNS).
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { WORKFLOWS, loadConfig, parseArgs } from './lib/config.mjs';
+import { planRuns } from './lib/plan.mjs';
 import { readJson, runWorkflow, saveResults } from './lib/runner.mjs';
 
 const ALL_VIEWPORTS = ['1440x900', '820x1180', '390x844'];
@@ -19,26 +20,62 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help || !args.workflow) {
   console.log(
     'usage: node tools/manual-run/run.mjs --workflow start|sales|procurement|branches|all ' +
-      '--viewport 1440x900|820x1180|390x844|all --label SCR1 [--from <step>] [--only <step,step>] [--headed] [--no-captions]',
+      '--viewport 1440x900|820x1180|390x844|all --label scr1 [--from <step> | --only <step,step>] [--headed] [--no-captions]',
   );
   process.exit(args.help ? 0 : 2);
 }
 
+/** Everything wrong with the command line or environment stops here, before a browser starts. */
+function usageError(message) {
+  console.error(`manual-run: ${message}`);
+  process.exit(2);
+}
+
 const workflowNames = args.workflow === 'all' ? WORKFLOWS : String(args.workflow).split(',');
-for (const w of workflowNames) if (!WORKFLOWS.includes(w)) throw new Error(`Unknown workflow ${w}`);
+for (const w of workflowNames) if (!WORKFLOWS.includes(w)) usageError(`unknown workflow ${w}`);
 const vpArg = args.viewport ?? process.env.VIEWPORT ?? '1440x900';
 const viewports = vpArg === 'all' ? ALL_VIEWPORTS : String(vpArg).split(',');
 if (args['no-captions']) args.captions = 'false';
 
+let configs;
+try {
+  configs = viewports.map((viewport) => loadConfig({ ...args, viewport }));
+} catch (error) {
+  usageError(error.message);
+}
+
+const modules = {};
+for (const name of workflowNames) {
+  modules[name] = await import(`./workflows/${name}.mjs`).catch((e) =>
+    e.code === 'ERR_MODULE_NOT_FOUND' ? null : Promise.reject(e),
+  );
+}
+let plan;
+try {
+  plan = planRuns(
+    workflowNames.map((name) => ({
+      name,
+      stepIds: modules[name] ? modules[name].workflow(configs[0]).steps.map((s) => s.id) : null,
+    })),
+    { from: args.from, only: args.only },
+  );
+} catch (error) {
+  usageError(error.message);
+}
+
 const t0 = Date.now();
 const summary = [];
-for (const viewport of viewports) {
-  const cfg = loadConfig({ ...args, viewport });
-  for (const name of workflowNames) {
-    const mod = await import(`./workflows/${name}.mjs`).catch((e) =>
-      e.code === 'ERR_MODULE_NOT_FOUND' ? null : Promise.reject(e),
-    );
-    if (!mod) {
+for (const cfg of configs) {
+  const viewport = cfg.viewportText;
+  for (const item of plan) {
+    const { name } = item;
+    if (item.mode === 'skip') {
+      // Not run in this invocation; its stored results stay untouched.
+      summary.push({ viewport, name, status: 'NOT-RUN', wallMs: 0, videos: [] });
+      console.log(`[${viewport} ${name}] not run (${item.reason})`);
+      continue;
+    }
+    if (item.mode === 'not-implemented') {
       const skipped = {
         name,
         title: '(not implemented yet)',
@@ -52,7 +89,18 @@ for (const viewport of viewports) {
       console.log(`[${viewport} ${name}] not implemented yet`);
       continue;
     }
-    const r = await runWorkflow(cfg, mod.workflow(cfg), { from: args.from });
+    let r;
+    try {
+      r = await runWorkflow(cfg, modules[name].workflow(cfg), {
+        from: item.from,
+        only: item.only,
+      });
+    } catch (error) {
+      // runWorkflow saves its own failures; this is the last resort, so one workflow's crash
+      // never stops the others.
+      console.error(`[${viewport} ${name}] driver error: ${error.message.split('\n')[0]}`);
+      r = { status: 'FAIL', wallMs: 0, videos: [], steps: [] };
+    }
     const counts = r.steps.reduce((m, s) => ({ ...m, [s.status]: (m[s.status] ?? 0) + 1 }), {});
     summary.push({ viewport, name, status: r.status, wallMs: r.wallMs, videos: r.videos, counts });
     console.log(
@@ -61,8 +109,8 @@ for (const viewport of viewports) {
   }
 }
 
-const label = String(args.label ?? process.env.RUN_LABEL);
-const root = path.dirname(loadConfig({ ...args, viewport: viewports[0] }).outDir);
+const label = configs[0].label;
+const root = path.dirname(configs[0].outDir);
 const lines = [
   `# Manual-run summary · label ${label}`,
   '',
@@ -87,4 +135,6 @@ writeFileSync(
 );
 writeFileSync(path.join(root, 'summary.md'), lines.join('\n') + '\n');
 console.log(lines.join('\n'));
-process.exit(summary.every((s) => s.status === 'PASS' || s.status === 'NOT-IMPLEMENTED') ? 0 : 1);
+process.exit(
+  summary.every((s) => ['PASS', 'NOT-IMPLEMENTED', 'NOT-RUN'].includes(s.status)) ? 0 : 1,
+);

@@ -282,6 +282,8 @@ export function workflow(cfg) {
   return {
     name: 'sales',
     title: 'Lead → quotation → sales order → invoice → payment',
+    // The origins whose certificates are checked before launch.
+    origins: ['app', 'mail'],
     steps: [
       {
         id: 'sales-1',

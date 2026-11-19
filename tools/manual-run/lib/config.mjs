@@ -137,7 +137,6 @@ export function loadConfig(args = {}) {
     stepTimeout: Number(env.STEP_TIMEOUT_MS || 360_000),
     actionTimeout: Number(env.ACTION_TIMEOUT_MS || 45_000),
     navTimeout: Number(env.NAV_TIMEOUT_MS || 120_000),
-    only: args.only ? String(args.only).split(',') : null,
   };
 }
 

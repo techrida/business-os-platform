@@ -74,6 +74,8 @@ export function workflow(cfg) {
   return {
     name: 'start',
     title: 'Sign in and follow one memo',
+    // The origins whose certificates are checked before launch.
+    origins: ['app', 'mail', 'auth'],
     steps: [
       {
         id: 'start-1',
