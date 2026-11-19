@@ -69,7 +69,9 @@ const settle = async () => {
 it('lists the reasons in order with an App default label, and offers no reset while they are the defaults', async () => {
   const m = await mountForm(<LostReasonsCard reasons={DEFAULTS} />);
   expect(rows().map((r) => r.textContent)).toEqual(
-    DEFAULT_LEAD_LOST_REASONS.map((d) => expect.stringContaining(d.label)),
+    DEFAULT_LEAD_LOST_REASONS.map((d): string => d.label).map(
+      (label) => expect.stringContaining(label) as unknown,
+    ),
   );
   expect(rows()[0]?.textContent).toContain('App default');
   expect(button('Reset the lost reasons to default')).toBeNull();

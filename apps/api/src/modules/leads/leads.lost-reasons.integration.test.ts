@@ -215,14 +215,12 @@ describe('D49 lost reasons: marking a lead lost', () => {
 
   it('keeps On Hold on its free-text reason: no option, no reference', async () => {
     const held = await seed();
-    const res = await request(baseUrl)
-      .patch(`/v1/leads/${held.id}/stage`)
-      .send({
-        stage: 'on_hold',
-        reason: 'budget',
-        note: 'next year',
-        expectedVersion: held.version,
-      });
+    const res = await request(baseUrl).patch(`/v1/leads/${held.id}/stage`).send({
+      stage: 'on_hold',
+      reason: 'budget',
+      note: 'next year',
+      expectedVersion: held.version,
+    });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(dto(res.body)).toMatchObject({
       stage: 'on_hold',
@@ -270,7 +268,7 @@ describe('D49 lost reasons: retired and renamed options stay on old leads', () =
 
     const restored = await request(baseUrl)
       .patch(`/v1/admin/lead-lost-reasons/${timing.id}`)
-      .send({ retired: false, expectedVersion: retire.body.version });
+      .send({ retired: false, expectedVersion: LeadLostReasonSchema.parse(retire.body).version });
     expect(LeadLostReasonSchema.parse(restored.body)).toMatchObject({ retired: false });
     expect((await choices()).map((o) => o.label)).toContain('Timing');
   });
