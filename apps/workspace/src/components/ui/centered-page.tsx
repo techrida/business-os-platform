@@ -8,11 +8,11 @@ export function CenteredPage({
   width = 'narrow',
 }: {
   children: ReactNode;
-  width?: 'narrow' | 'wide';
+  width?: 'narrow' | 'wide' | 'split';
 }) {
   return (
     <div className={styles.page}>
-      <div className={width === 'wide' ? styles.wide : styles.narrow}>{children}</div>
+      <div className={styles[width]}>{children}</div>
     </div>
   );
 }
