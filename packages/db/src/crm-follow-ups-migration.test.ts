@@ -141,7 +141,13 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
           number: string,
           owner: string | null,
           followUp: string | null,
-          closed: { stage: string; stage_reason?: string; stage_note?: string; customer_id?: string; converted_opportunity_id?: string } = { stage: 'new' },
+          closed: {
+            stage: string;
+            stage_reason?: string;
+            stage_note?: string;
+            customer_id?: string;
+            converted_opportunity_id?: string;
+          } = { stage: 'new' },
         ) => {
           const { rows } = await c.query<{ id: string }>(
             `INSERT INTO app.leads (tenant_id, organization_id, number, title, source, owner_user_id,
@@ -166,7 +172,11 @@ describe('0062-0063 follow-ups on seeded old-shape rows', () => {
         await c.query(
           `INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, address)
            VALUES ($1, $2, 'CUS-1', 'Acme Pvt. Ltd.', 'acme', $3::jsonb)`,
-          [customerId, tenantId, JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' })],
+          [
+            customerId,
+            tenantId,
+            JSON.stringify({ line1: '1 Durbar Marg', city: 'Kathmandu', country: 'NP' }),
+          ],
         );
         const { rows: deal } = await c.query<{ id: string }>(
           `INSERT INTO app.opportunities (tenant_id, organization_id, number, name, customer_id)
