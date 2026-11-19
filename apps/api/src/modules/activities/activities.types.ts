@@ -4,11 +4,12 @@ import {
   ACTIVITY_SUBJECT_KEYS,
   ActivityKindSchema,
   ActivityStatusSchema,
+  SCHEDULABLE_ACTIVITY_KINDS,
   type ActivityDto,
   type Permission,
 } from '@bos/contracts';
 import { activities, leads } from '@bos/db';
-import { and, eq, isNotNull, isNull, min, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, min, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 export type SubjectKey = (typeof ACTIVITY_SUBJECT_KEYS)[number];
@@ -26,11 +27,13 @@ export const SUBJECT_PERMISSION: Record<SubjectKey, { read: Permission; write: P
 };
 
 /**
- * The one definition of a planned activity (D39): it has a due time and is neither completed nor cancelled.
- * Everything else that is not cancelled is logged. `planned` is never stored; queries use this and the mapper
- * below mirrors it. Never NULL, so `not(isPlannedSql)` is safe.
+ * The one definition of a planned activity (D39): a call, meeting or email that has a due time and is neither
+ * completed nor cancelled. Everything else that is not cancelled is logged: an old note, system or stage_change row
+ * that carries a due_at is never a follow-up. `planned` is never stored; queries use this and the mapper below
+ * mirrors it. Never NULL, so `not(isPlannedSql)` is safe.
  */
 export const isPlannedSql: SQL = and(
+  inArray(activities.kind, [...SCHEDULABLE_ACTIVITY_KINDS]),
   isNotNull(activities.dueAt),
   isNull(activities.completedAt),
   isNull(activities.cancelledAt),
@@ -77,8 +80,12 @@ export type ActivityRow = typeof activities.$inferSelect;
 
 /** Mirrors isPlannedSql on a row already read. */
 export const isPlannedRow = (
-  row: Pick<ActivityRow, 'dueAt' | 'completedAt' | 'cancelledAt'>,
-): boolean => row.dueAt !== null && row.completedAt === null && row.cancelledAt === null;
+  row: Pick<ActivityRow, 'kind' | 'dueAt' | 'completedAt' | 'cancelledAt'>,
+): boolean =>
+  (SCHEDULABLE_ACTIVITY_KINDS as readonly string[]).includes(row.kind) &&
+  row.dueAt !== null &&
+  row.completedAt === null &&
+  row.cancelledAt === null;
 
 export function toActivityDto(row: ActivityRow): ActivityDto {
   return {

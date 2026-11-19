@@ -337,6 +337,40 @@ describe('planned and logged activities', () => {
     expect(byId.get(b.id)?.toISOString()).toBe(DUE_1);
     expect(byId.get(none.id)).toBeNull();
   });
+
+  it('never counts an old note, system or stage_change row with a due time as planned', async () => {
+    const lead = await seedLead();
+    // Old shapes the API no longer writes: a due time on a kind that is not a call, meeting or email.
+    const old = await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .insert(activities)
+        .values(
+          (['note', 'system', 'stage_change'] as const).map((kind) => ({
+            ...h.scopeA,
+            kind,
+            subject: `old ${kind}`,
+            leadId: lead.id,
+            dueAt: new Date(DUE_1),
+          })),
+        )
+        .returning(),
+    );
+    const oldIds = old.map((a) => a.id);
+
+    expect(await listed(`?leadId=${lead.id}&status=planned`)).toEqual([]);
+    const logged = await listed(`?leadId=${lead.id}&status=logged`);
+    expect(logged.filter((a) => oldIds.includes(a.id)).map((a) => a.planned)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const [row] = await h.db
+      .select({ next: nextFollowUpSql() })
+      .from(leads)
+      .where(eq(leads.id, lead.id));
+    expect(row?.next).toBeNull();
+    expect(LeadDtoSchema.parse(await leadsService.get(lead.id)).nextFollowUpAt).toBeNull();
+  });
 });
 
 describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
