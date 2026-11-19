@@ -124,6 +124,19 @@ it('replaces the existing invoice document without creating a second document', 
   expect((upload as { body: unknown }).body).toBeInstanceOf(ReadableStream);
 });
 
+// The new-bill page opens on the live grants; the invoice upload it makes agrees with it.
+it('lets Procurement upload once an admin granted payables.bill.enter, and refuses an accountant without it', async () => {
+  session.roles = ['procurement'];
+  grants.live = new Map([['payables.bill.enter', 'all']]);
+  expect((await POST(req())).status).toBe(201);
+  expect(api.createBillDocument).toHaveBeenCalledOnce();
+  api.createBillDocument.mockClear();
+  session.roles = ['accountant'];
+  grants.live = new Map([['payables.bill.read', 'all']]);
+  expect((await POST(req())).status).toBe(403);
+  expect(api.createBillDocument).not.toHaveBeenCalled();
+});
+
 it('rejects a malformed replacement id instead of silently creating a new document', async () => {
   expect((await POST(req({ 'x-document-id': '../wrong' }))).status).toBe(400);
   expect(api.replaceBillDocument).not.toHaveBeenCalled();
