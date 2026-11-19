@@ -21,7 +21,9 @@ export function impactSentence(bucket: AccessImpactBucket, direction: 'more' | '
   if (bucket.people === 0) return `No one will see ${direction}.`;
   const who = bucket.people === 1 ? '1 person' : `${bucket.people} people`;
   const names = sampleNames(bucket);
-  return names ? `${who} will see ${direction}: ${names}.` : `${who} will see ${direction}.`;
+  if (!names) return `${who} will see ${direction}.`;
+  // "Asha K." already ends the sentence.
+  return `${who} will see ${direction}: ${names}${names.endsWith('.') ? '' : '.'}`;
 }
 
 /** The warnings that need their own tick box before saving. */
