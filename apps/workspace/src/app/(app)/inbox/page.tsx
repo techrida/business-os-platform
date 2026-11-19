@@ -1,25 +1,30 @@
-import type { InboxItemDto } from '@bos/contracts';
+import { type InboxItemDto, pageWindow, ROWS_OPTIONS } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystem } from '@bos/locale';
 
+import { ListFooter } from '@/components/p2/crm/list-footer';
 import { Alert } from '@/components/ui/alert';
-import { Button, LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
-import { SearchInput } from '@/components/ui/search-input';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { getInbox, failureOf } from '@/lib/api-kernel';
+import { failureOf, getInboxPage, type InboxPage } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
+import { activeFilterLabels, clearFiltersHref, readList, type RawParams } from '@/lib/list-params';
 
 import { INBOX_DENIED, inboxDenialMessage } from './denial';
 import { DecisionFeedback } from './decision-feedback';
+import { InboxFilters } from './inbox-filters';
+import { documentTypeLabel, INBOX_LIST } from './inbox-params';
 import styles from './inbox.module.css';
 
 export const metadata: Metadata = { title: 'Inbox · Business OS' };
 export const dynamic = 'force-dynamic';
+
+const PATH = '/inbox';
 
 function InboxRow({ item, numberSystem }: { item: InboxItemDto; numberSystem: NumberSystem }) {
   return (
@@ -50,31 +55,45 @@ function InboxRow({ item, numberSystem }: { item: InboxItemDto; numberSystem: Nu
   );
 }
 
-export default async function InboxPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ decided?: string | string[]; q?: string | string[] }>;
-}) {
-  const session = await requireStaffSession('/inbox');
+export default async function InboxPage({ searchParams }: { searchParams: Promise<RawParams> }) {
+  const session = await requireStaffSession(PATH);
   const numberSystem = await getNumberSystem();
-  const { decided, q } = await searchParams;
-  const query = typeof q === 'string' ? q.trim().slice(0, 120) : '';
-  const search = query.toLowerCase();
+  const sp = await searchParams;
+  const state = readList(sp, INBOX_LIST);
+  const { q } = state;
+  const documentType = state.multi.documentType;
+  const decided = [sp.decided].flat()[0];
+  const filtered = q !== undefined || documentType.length > 0;
+  const filters = { ...(q !== undefined ? { q } : {}), documentType };
 
-  let items: InboxItemDto[] | null = null;
+  let result: InboxPage | null = null;
+  let pageInfo = pageWindow(state.page, state.rows);
   let problem: { message: string; status: number } | null = null;
   try {
-    items = await getInbox(session);
+    result = await getInboxPage(session, {
+      ...filters,
+      limit: pageInfo.limit,
+      offset: pageInfo.offset,
+    });
+    pageInfo = pageWindow(pageInfo.page, pageInfo.limit, result.total);
+    if (result.items.length === 0 && result.total > 0) {
+      // The URL named a page past the end: show the last one instead of an empty table.
+      result = await getInboxPage(session, {
+        ...filters,
+        limit: pageInfo.limit,
+        offset: pageInfo.offset,
+      });
+    }
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.status === 403 ? inboxDenialMessage(err) : f.message, status: f.status };
   }
-
-  const matches = items?.filter(
-    ({ title, documentNumber, reason }) =>
-      title.toLowerCase().includes(search) ||
-      documentNumber.toLowerCase().includes(search) ||
-      reason.toLowerCase().includes(search),
+  const items = result?.items ?? null;
+  const total = result?.total ?? 0;
+  const hiding = activeFilterLabels(
+    { q, multi: { documentType }, single: {} },
+    { documentType: { label: 'Document type', format: documentTypeLabel } },
+    'Search',
   );
 
   return (
@@ -95,32 +114,22 @@ export default async function InboxPage({
             ? 'If you expect documents to approve here, ask an administrator to check your account.'
             : problem.message}
         </Alert>
-      ) : items !== null && items.length === 0 ? (
+      ) : items !== null && items.length === 0 && !filtered ? (
         <EmptyState title="Nothing is waiting for you.">
           New approvals appear here, and the bell above tells you when one arrives.
         </EmptyState>
-      ) : items !== null && matches !== undefined ? (
+      ) : items !== null ? (
         <div className={styles.results}>
-          <form action="/inbox" role="search" aria-label="Inbox" className={styles.toolbar}>
-            <SearchInput
-              aria-label="Search approvals"
-              name="q"
-              placeholder="Search approvals"
-              defaultValue={query}
-              maxLength={120}
-            />
-            <Button type="submit" variant="secondary">
-              Search
-            </Button>
-            {query ? (
-              <LinkButton href="/inbox" variant="tertiary">
-                Clear search
-              </LinkButton>
-            ) : null}
-          </form>
-          {matches.length === 0 ? (
-            <EmptyState title="No matching requests">
-              Search by document title, number or approval reason.
+          <div className={styles.toolbar}>
+            <InboxFilters documentType={documentType} rows={state.rows} decided={decided} />
+            <ResultCount shown={items.length} total={total} noun="request" />
+          </div>
+          {items.length === 0 ? (
+            <EmptyState
+              title="No matching requests"
+              action={<Link href={clearFiltersHref(PATH, sp, INBOX_LIST)}>Clear filters</Link>}
+            >
+              Nothing waiting for you matches {hiding.join(', ')}.
             </EmptyState>
           ) : (
             <div className={styles.tableCard}>
@@ -134,16 +143,23 @@ export default async function InboxPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {matches.map((item) => (
+                  {items.map((item) => (
                     <InboxRow numberSystem={numberSystem} key={item.requestId} item={item} />
                   ))}
                 </tbody>
               </Table>
-              <p className={styles.tableFooter}>
-                {query
-                  ? `Showing ${matches.length} of ${items.length} requests`
-                  : `${items.length} ${items.length === 1 ? 'request' : 'requests'} waiting`}
-              </p>
+              <div className={styles.tableFooter}>
+                <ListFooter
+                  label="Inbox pages"
+                  pathname={PATH}
+                  params={sp}
+                  pageInfo={pageInfo}
+                  total={total}
+                  noun="request"
+                  plural="requests"
+                  rowsOptions={ROWS_OPTIONS}
+                />
+              </div>
             </div>
           )}
         </div>
