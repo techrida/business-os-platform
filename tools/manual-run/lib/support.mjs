@@ -1,5 +1,5 @@
-// Side checks that are not clicks: demo files, PDF text, Mailpit lookups and optional read-only
-// database queries. None of them change application state.
+// Side checks that are not clicks: demo files, PDF text and Mailpit lookups. None of them change
+// application state.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
@@ -101,15 +101,4 @@ export async function findMail(cfg, query, timeoutMs = 60000) {
 
 export async function mailMessage(cfg, id) {
   return getJson(cfg, `${cfg.mailUrl}/api/v1/message/${id}`);
-}
-
-// ---- optional database checks ----------------------------------------------------------------
-/** Runs DB_QUERY_CMD "<sql>" when configured; returns trimmed stdout or null when not configured. */
-export function dbQuery(cfg, sql) {
-  if (!cfg.dbQueryCmd) return null;
-  return execFileSync(cfg.dbQueryCmd, [sql], { encoding: 'utf8', timeout: 30000 }).trim();
-}
-
-export function money(n) {
-  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

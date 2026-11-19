@@ -39,7 +39,6 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
 
   const stateFile = path.join(cfg.outDir, 'state.json');
   const state = readJson(stateFile, {});
-  state.label = cfg.label;
   const log = (line) => console.log(`[${cfg.viewportText} ${workflow.name}] ${line}`);
   const result = {
     name: workflow.name,
@@ -163,7 +162,6 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
       }
     }
   }
-  result.video = result.videos[0] ?? null;
   result.finishedAt = now();
   result.wallMs = Date.now() - t0;
   if (result.steps.every((s) => s.status === 'SKIPPED')) result.status = 'SKIPPED';

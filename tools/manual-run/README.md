@@ -59,26 +59,25 @@ It lists every visible control with the role and accessible name that `getByRole
 
 ## Environment
 
-| Variable                                                 | Default                                  | Meaning                                                                                                                                           |
-| -------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_URL`                                                | `https://app.testrun.localhost:58343`    | staff workspace                                                                                                                                   |
-| `PORTAL_URL`                                             | `https://portal.testrun.localhost:58343` | customer portal (not used in Phase A)                                                                                                             |
-| `MAIL_URL`                                               | `https://mail.testrun.localhost:58343`   | Mailpit UI and API                                                                                                                                |
-| `AUTH_URL`                                               | `APP_URL` with `app.` → `auth.`          | ZITADEL login origin (real sign-in, start-6)                                                                                                      |
-| `PERSONAS_FILE`                                          | required                                 | the stack's `.dev/personas.json`; only read in memory                                                                                             |
-| `CA_FILE` / `NODE_EXTRA_CA_CERTS`                        | `<personas dir>/caddy-root.crt`          | the stack's local CA; TLS is always verified                                                                                                      |
-| `RUN_LABEL` / `--label`                                  | required                                 | makes every name, PAN, email and bank reference unique                                                                                            |
-| `VIEWPORT` / `--viewport`                                | `1440x900`                               | page size and video size                                                                                                                          |
-| `VIDEO_DIR`                                              | `/home/crestia/bos-runtimes/manual-run`  | output root, outside git                                                                                                                          |
-| `PACE`                                                   | `600`                                    | ms pause after each action so viewers can follow                                                                                                  |
-| `SLOWMO`                                                 | `0`                                      | Playwright slowMo                                                                                                                                 |
-| `HEADLESS` / `--headed`                                  | headless                                 |                                                                                                                                                   |
-| `CAPTIONS` / `--no-captions`                             | on                                       | caption banner overlay                                                                                                                            |
-| `DEMO_FILES`                                             | generated tiny PDFs                      | demo kit folder (customer-pan.pdf, payment-proof.pdf, …)                                                                                          |
-| `DB_QUERY_CMD`                                           | unset                                    | optional read-only SQL helper, e.g. `/home/crestia/bos-runtimes/testrun/dbq`. No Phase A step needs it, and `results.md` says whether it was used |
-| `NETNS`                                                  | `auto`                                   | `0` turns off network isolation, `1` forces it on                                                                                                 |
-| `BROWSER_TZ`                                             | host zone                                | browser time zone                                                                                                                                 |
-| `STEP_TIMEOUT_MS`, `ACTION_TIMEOUT_MS`, `NAV_TIMEOUT_MS` | 360000 / 45000 / 120000                  | per-step limits; long steps set their own                                                                                                         |
+| Variable                                                 | Default                                  | Meaning                                                  |
+| -------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------- |
+| `APP_URL`                                                | `https://app.testrun.localhost:58343`    | staff workspace                                          |
+| `PORTAL_URL`                                             | `https://portal.testrun.localhost:58343` | customer portal (not used in Phase A)                    |
+| `MAIL_URL`                                               | `https://mail.testrun.localhost:58343`   | Mailpit UI and API                                       |
+| `AUTH_URL`                                               | `APP_URL` with `app.` → `auth.`          | ZITADEL login origin (real sign-in, start-6)             |
+| `PERSONAS_FILE`                                          | required                                 | the stack's `.dev/personas.json`; only read in memory    |
+| `CA_FILE` / `NODE_EXTRA_CA_CERTS`                        | `<personas dir>/caddy-root.crt`          | the stack's local CA; TLS is always verified             |
+| `RUN_LABEL` / `--label`                                  | required                                 | makes every name, PAN, email and bank reference unique   |
+| `VIEWPORT` / `--viewport`                                | `1440x900`                               | page size and video size                                 |
+| `VIDEO_DIR`                                              | `/home/crestia/bos-runtimes/manual-run`  | output root, outside git                                 |
+| `PACE`                                                   | `600`                                    | ms pause after each action so viewers can follow         |
+| `SLOWMO`                                                 | `0`                                      | Playwright slowMo                                        |
+| `HEADLESS` / `--headed`                                  | headless                                 |                                                          |
+| `CAPTIONS` / `--no-captions`                             | on                                       | caption banner overlay                                   |
+| `DEMO_FILES`                                             | generated tiny PDFs                      | demo kit folder (customer-pan.pdf, payment-proof.pdf, …) |
+| `NETNS`                                                  | `auto`                                   | `0` turns off network isolation, `1` forces it on        |
+| `BROWSER_TZ`                                             | host zone                                | browser time zone                                        |
+| `STEP_TIMEOUT_MS`, `ACTION_TIMEOUT_MS`, `NAV_TIMEOUT_MS` | 360000 / 45000 / 120000                  | per-step limits; long steps set their own                |
 
 ### Another stack or machine
 

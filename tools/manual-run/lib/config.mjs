@@ -68,7 +68,6 @@ export function loadConfig(args = {}) {
     // Pause after each step so a viewer can read the screen; also a short beat after captions.
     pace: Number(args.pace ?? env.PACE ?? 600),
     captions: bool(args.captions ?? env.CAPTIONS, true),
-    dbQueryCmd: env.DB_QUERY_CMD || '',
     demoFilesDir: env.DEMO_FILES || '',
     stepTimeout: Number(env.STEP_TIMEOUT_MS || 360_000),
     actionTimeout: Number(env.ACTION_TIMEOUT_MS || 45_000),

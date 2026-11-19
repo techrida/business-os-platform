@@ -1038,5 +1038,3 @@ export function workflow(cfg) {
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-
-export { hasAmount, escapeRe };

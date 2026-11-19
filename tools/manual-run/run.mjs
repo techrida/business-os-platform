@@ -6,7 +6,7 @@
 //        --viewport 1440x900|390x844|820x1180|all --label SCR1 [--from sales-7] [--only sales-3,sales-4]
 //
 // Environment: see README.md (APP_URL, PORTAL_URL, MAIL_URL, PERSONAS_FILE, VIEWPORT, VIDEO_DIR,
-// RUN_LABEL, SLOWMO, PACE, HEADLESS, CAPTIONS, DB_QUERY_CMD, DEMO_FILES).
+// RUN_LABEL, SLOWMO, PACE, HEADLESS, CAPTIONS, DEMO_FILES).
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
