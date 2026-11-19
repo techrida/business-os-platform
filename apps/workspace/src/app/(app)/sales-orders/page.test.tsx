@@ -66,9 +66,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   // The live grants of the session's role, as GET /v1/me would answer them for an unedited role.
-  mocks.getGrants.mockImplementation(async (session: { roles: RoleKey[] }) => {
+  mocks.getGrants.mockImplementation((session: { roles: RoleKey[] }) => {
     const role = session.roles[0];
-    return new Map(role === undefined ? [] : Object.entries(DEFAULT_ROLE_PERMISSIONS[role]));
+    return Promise.resolve(
+      new Map(role === undefined ? [] : Object.entries(DEFAULT_ROLE_PERMISSIONS[role])),
+    );
   });
   mocks.listSalesOrders.mockResolvedValue([listItem()]);
   mocks.listQuotations.mockResolvedValue([QUOTATION]);

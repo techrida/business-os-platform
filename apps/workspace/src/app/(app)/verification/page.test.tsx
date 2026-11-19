@@ -19,8 +19,8 @@ const { default: VerificationQueuePage } = await import('./page');
 const CUSTOMER_PARTY = '11111111-1111-4111-8111-111111111111';
 const VENDOR_PARTY = '22222222-2222-4222-8222-222222222222';
 
-const kase = (over: Record<string, unknown>) => ({
-  id: '33333333-3333-4333-8333-33333333333' + String(over.n ?? 1),
+const kase = (over: { n?: number } & Record<string, unknown>) => ({
+  id: `33333333-3333-4333-8333-33333333333${over.n ?? 1}`,
   partyId: CUSTOMER_PARTY,
   partyKind: 'customer',
   status: 'submitted',

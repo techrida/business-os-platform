@@ -2,9 +2,7 @@ import {
   type EffectivePermission,
   type MeResponse,
   PERMISSIONS,
-  type Permission,
   SCOPES,
-  type Scope,
 } from '@bos/contracts';
 import { Controller, Get } from '@nestjs/common';
 
@@ -25,7 +23,7 @@ export function effectivePermissions(p: Principal): EffectivePermission[] {
   const out: EffectivePermission[] = [];
   for (const [permission, scope] of p.grants) {
     if (!KNOWN_PERMISSIONS.has(permission) || !KNOWN_SCOPES.has(scope)) continue;
-    out.push({ permission: permission as Permission, scope: scope as Scope });
+    out.push({ permission, scope });
   }
   return out.sort((a, b) => (a.permission < b.permission ? -1 : a.permission > b.permission ? 1 : 0));
 }
