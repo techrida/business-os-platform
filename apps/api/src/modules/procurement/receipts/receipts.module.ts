@@ -10,15 +10,22 @@ import {
   PurchaseOrderProgressController,
   ReceivableOrdersController,
   ReceiptsController,
+  RequestedOrdersController,
 } from './receipts.controller';
 import { ReceivableOrdersService } from './receivable-orders.service';
 import { ReceiptsCaller } from './receipts.caller';
 import { ReceiptsService } from './receipts.service';
+import { RequestedOrdersService } from './requested-orders.service';
 
 @Module({
   imports: [AuditModule, SettingsModule],
-  controllers: [ReceiptsController, PurchaseOrderProgressController, ReceivableOrdersController],
-  providers: [ReceiptsService, ReceiptsCaller, ReceivableOrdersService],
+  controllers: [
+    ReceiptsController,
+    PurchaseOrderProgressController,
+    ReceivableOrdersController,
+    RequestedOrdersController,
+  ],
+  providers: [ReceiptsService, ReceiptsCaller, ReceivableOrdersService, RequestedOrdersService],
   exports: [ReceiptsService],
 })
 export class ReceiptsModule {}

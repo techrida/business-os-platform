@@ -16,12 +16,13 @@ import { SearchInput } from '@/components/ui/search-input';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { listBillSubmissions, type BillSubmission } from '@/lib/api-payables';
+import { listBillableOrders, ORDER_PICKER_LIMIT } from '@/lib/api-payables-orders';
 import { getPoProgress, type PoProgress } from '@/lib/api-purchase-orders';
 import { listVendors } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 
-import { qtyText } from '../../../procurement/orders/_lib/model';
+import { PO_STATUS_LABEL, qtyText } from '../../../procurement/orders/_lib/model';
 import { BillEntryForm, type OrderLine } from '../../_components/bill-entry-form';
 import { amountText, duplicateText } from '../../_lib/duplicates';
 import { billFailure } from '../../_lib/failure';
@@ -85,8 +86,13 @@ export default async function NewBillPage({
     if (params.po !== undefined && !isGuid(poId))
       return (
         <Shell>
-          <Alert tone="warning" role="alert">
-            That is not a valid purchase order. Open the order again and choose Enter bill.
+          <Alert
+            tone="warning"
+            role="alert"
+            actions={<a href="/payables/bills/new">Start a new bill</a>}
+          >
+            That link does not name a valid purchase order. Start a new bill, choose the vendor, and
+            pick the order from the vendor&apos;s purchase orders.
           </Alert>
         </Shell>
       );
@@ -95,6 +101,20 @@ export default async function NewBillPage({
     let vendorCount = 0;
     let standaloneTax: { id: string; label: string }[];
     let standaloneWithholding: { id: string; label: string }[];
+    // The order picker is a help, not a requirement: a failure leaves the bill without an order.
+    let orders: { id: string; vendorId: string; label: string }[] = [];
+    let ordersProblem = false;
+    if (poId === '') {
+      try {
+        orders = (await listBillableOrders(session)).map((o) => ({
+          id: o.id,
+          vendorId: o.vendorId,
+          label: `${o.number} · ${PO_STATUS_LABEL[o.status].text}`,
+        }));
+      } catch {
+        ordersProblem = true;
+      }
+    }
     try {
       if (poId !== '') {
         standaloneOrder = await getPoProgress(session, poId);
@@ -167,6 +187,16 @@ export default async function NewBillPage({
             Showing the first 100 vendors. Search by name to narrow the list.
           </p>
         ) : null}
+        {ordersProblem ? (
+          <p className={styles.note}>
+            The vendors&apos; purchase orders did not load, so this bill can only be entered without
+            one. Reload the page to try again.
+          </p>
+        ) : orders.length >= ORDER_PICKER_LIMIT ? (
+          <p className={styles.note}>
+            Showing the newest {ORDER_PICKER_LIMIT} purchase orders that can be billed.
+          </p>
+        ) : null}
         {poId === '' && vendors.length === 0 ? (
           <Alert tone="info" role="status">
             No vendors match this search. Try another name, or ask Procurement to add the vendor.
@@ -192,6 +222,7 @@ export default async function NewBillPage({
             reloadHref={here}
             entry={{
               vendors,
+              orders,
               // The invoice date starts at today in Kathmandu (the tenant's calendar), and stays editable.
               today: todayInKathmandu(),
               ...(standaloneOrder

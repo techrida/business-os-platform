@@ -26,6 +26,7 @@ vi.mock('./actions', () => ({
 }));
 const api = vi.hoisted(() => ({
   listReceivableOrders: vi.fn(),
+  listRequestedOrders: vi.fn(),
   listReceipts: vi.fn(),
   getReceipt: vi.fn(),
   getPoProgress: vi.fn(),
@@ -129,30 +130,65 @@ beforeEach(() => {
   session.roles = ['warehouse'];
   for (const fn of Object.values(api)) fn.mockReset();
   api.listReceivableOrders.mockResolvedValue([waiting()]);
+  api.listRequestedOrders.mockResolvedValue([]);
   api.getPoProgress.mockResolvedValue(progress());
   api.listReceipts.mockResolvedValue([receipt()]);
   api.getReceipt.mockResolvedValue(receipt());
 });
 
 describe('the receipts of one purchase order', () => {
-  it('asks for a purchase order when none is given, and never calls the API, for a person who cannot receive', async () => {
+  it('says there is no order to open for a person with none, asks for no raw ID and lists no receipts', async () => {
     session.roles = ['operations_officer'];
     const out = await list({});
-    expect(out).toContain('Purchase order ID');
-    expect(out).toContain('action="/procurement/receipts"');
+    expect(out).toContain('No purchase orders to open');
+    expect(out).not.toContain('Purchase order ID');
+    expect(out).not.toContain('name="po"');
     expect(out).not.toContain('/procurement/orders');
     expect(api.listReceipts).not.toHaveBeenCalled();
     expect(api.listReceivableOrders).not.toHaveBeenCalled();
   });
 
-  it('says an ID that is not one is not one, and offers the order list to procurement only', async () => {
+  it('says a link that names no order names none, and offers the order list to procurement only', async () => {
     session.roles = ['operations_officer'];
     const out = await list({ po: '../admin' });
-    expect(out).toContain('That is not a purchase order ID');
+    expect(out).toContain('That link does not name a purchase order');
     expect(api.listReceipts).not.toHaveBeenCalled();
     session.roles = ['procurement'];
-    expect(await list({})).toContain('href="/procurement/orders"');
+    const proc = await list({});
+    expect(proc).toContain('href="/procurement/orders"');
+    expect(proc).not.toContain('No purchase orders to open');
     expect(api.listReceivableOrders).not.toHaveBeenCalled();
+  });
+
+  it('offers the requester the orders of their own purchase requests, each opening its receipts', async () => {
+    session.roles = ['operations_officer'];
+    api.listRequestedOrders.mockResolvedValue([
+      { id: SERVICE, number: 'PO-2082-0002', status: 'issued', vendorName: 'Everest Cleaners' },
+    ]);
+    const out = await list({});
+    expect(api.listRequestedOrders).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Your purchase orders');
+    expect(out).toContain('PO-2082-0002');
+    expect(out).toContain('Everest Cleaners');
+    expect(out).toContain('Issued');
+    expect(out).toContain(`href="/procurement/receipts?po=${SERVICE}"`);
+    expect(out).not.toContain('Purchase order ID');
+    expect(out).not.toContain('No purchase orders to open');
+    expect(api.listReceivableOrders).not.toHaveBeenCalled();
+    expect(api.listReceipts).not.toHaveBeenCalled();
+  });
+
+  it("leaves the requester's list out on a 403 and words any other failure", async () => {
+    session.roles = ['operations_officer'];
+    api.listRequestedOrders.mockRejectedValue(apiError(403, 'forbidden'));
+    let out = await list({});
+    expect(out).not.toContain('Your purchase orders');
+    expect(out).not.toContain('role="alert"');
+    api.listRequestedOrders.mockRejectedValue(apiError(500));
+    out = await list({});
+    expect(out).toContain('Your purchase orders did not load');
+    expect(out).not.toContain('internal wording');
+    expect(out).not.toContain('No purchase orders to open');
   });
 
   it('lists the orders waiting to be received for the warehouse, each row linking to its receipts', async () => {
@@ -186,39 +222,36 @@ describe('the receipts of one purchase order', () => {
     expect(out).toContain(`href="/procurement/receipts/new?po=${PO}"`);
     expect(out).toContain(`href="/procurement/receipts/new?po=${SERVICE}"`);
     expect(out).toContain('aria-label="New receipt for PO-2082-0001"');
-    // The ID form stays below as a fallback.
-    expect(out).toContain('Purchase order ID');
-    expect(out.indexOf('Waiting to be received')).toBeLessThan(out.indexOf('Purchase order ID'));
+    expect(out).not.toContain('Purchase order ID');
   });
 
-  it('says no purchase order is waiting, and keeps the ID form', async () => {
+  it('says no purchase order is waiting', async () => {
     api.listReceivableOrders.mockResolvedValue([]);
     const out = await list({});
     expect(out).toContain('No purchase orders are waiting to be received');
-    expect(out).toContain('Purchase order ID');
+    expect(out).not.toContain('Purchase order ID');
   });
 
-  it('falls back to the ID form alone when the list is forbidden', async () => {
+  it('leaves the waiting list out when it is forbidden', async () => {
     api.listReceivableOrders.mockRejectedValue(apiError(403, 'forbidden'));
     const out = await list({});
-    expect(out).toContain('Purchase order ID');
     expect(out).not.toContain('Waiting to be received');
     expect(out).not.toContain('role="alert"');
+    expect(out).toContain('No purchase orders to open');
   });
 
-  it('shows an error alert on a failed list, and the ID form still works', async () => {
+  it('shows an error alert on a failed list', async () => {
     api.listReceivableOrders.mockRejectedValue(apiError(500));
     const out = await list({});
     expect(out).toContain('role="alert"');
     expect(out).toContain('The waiting orders did not load');
     expect(out).not.toContain('internal wording');
-    expect(out).toContain('Purchase order ID');
-    expect(out).toContain('action="/procurement/receipts"');
+    expect(out).not.toContain('No purchase orders to open');
   });
 
-  it('keeps the invalid-ID alert above the list for the warehouse', async () => {
+  it('keeps the invalid-link alert above the list for the warehouse', async () => {
     const out = await list({ po: '../admin' });
-    expect(out).toContain('That is not a purchase order ID');
+    expect(out).toContain('That link does not name a purchase order');
     expect(out).toContain('Waiting to be received');
     expect(api.listReceipts).not.toHaveBeenCalled();
   });

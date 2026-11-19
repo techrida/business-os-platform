@@ -20,11 +20,13 @@ import { MatchExceptionSubject, VendorBillSubject } from './vendor-bill.subject'
 import { VendorBillsCaller } from './vendor-bills.caller';
 import { VendorBillsController } from './vendor-bills.controller';
 import { VendorBillsService } from './vendor-bills.service';
+import { VendorOrdersController } from './vendor-orders.controller';
+import { VendorOrdersService } from './vendor-orders.service';
 
 @Module({
   imports: [ApprovalsModule, AuditModule, DocumentsModule, LedgerModule, SettingsModule],
-  controllers: [VendorBillsController, BillDocumentsController],
-  providers: [VendorBillsService, VendorBillsCaller, BillDocumentsService],
+  controllers: [VendorBillsController, BillDocumentsController, VendorOrdersController],
+  providers: [VendorBillsService, VendorBillsCaller, BillDocumentsService, VendorOrdersService],
   exports: [VendorBillsService],
 })
 export class VendorBillsModule implements OnModuleInit {
