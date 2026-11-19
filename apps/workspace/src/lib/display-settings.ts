@@ -14,22 +14,40 @@ import { call } from './api-procurement';
 import { getSession, type Session } from './session';
 
 // The tenant's display settings: `format.number_systems` (one per currency: how digits are grouped
-// wherever the workspace shows money) and `format.date` (the pattern dates are written in).
+// wherever the workspace shows money), `format.date` (the pattern dates are written in) and the
+// seller's contact lines (phones, email, signatory) that invoice documents show.
 // `GET /v1/settings/display` is open to any signed-in staff user, so every screen can read it; it
 // is not an admin read.
+
+/** How to reach the selling company, from the saved company profile as it is now (what a printed document shows). */
+const SellerContactSchema = z.object({
+  phones: z.array(z.string()),
+  email: z.string().nullable(),
+  signatoryName: z.string().nullable(),
+  signatoryTitle: z.string().nullable(),
+});
+export type SellerContact = z.infer<typeof SellerContactSchema>;
 
 const DisplaySettingsSchema = z.object({
   numberSystems: NumberSystemsSchema,
   dateFormat: DateFormatSchema,
+  // Missing (an older API) or malformed: null, without throwing away the number and date settings beside it.
+  sellerContact: SellerContactSchema.nullable().catch(null),
 });
 
 export interface DisplaySettings {
   numberSystems: NumberSystems;
   dateFormat: DateFormatSetting;
+  /** Null when the API did not send it or it did not parse. */
+  sellerContact: SellerContact | null;
 }
 
 function defaults(): DisplaySettings {
-  return { numberSystems: DEFAULT_NUMBER_SYSTEMS, dateFormat: DEFAULT_DATE_FORMAT };
+  return {
+    numberSystems: DEFAULT_NUMBER_SYSTEMS,
+    dateFormat: DEFAULT_DATE_FORMAT,
+    sellerContact: null,
+  };
 }
 
 /**
