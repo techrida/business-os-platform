@@ -24,7 +24,12 @@ import { MoneyService } from './money.service';
 import { SettingsService } from './settings.service';
 
 const FxCurrency = z.enum(['INR', 'USD']);
-const SettingBody = z.object({ value: z.unknown() });
+// `expectedVersion` is the optional stale-edit guard: the version the editor loaded (GET `version`), or null when
+// it loaded the built-in default. Left out, the save is unconditional.
+const SettingBody = z.object({
+  value: z.unknown(),
+  expectedVersion: z.number().int().min(1).nullable().optional(),
+});
 const FxRateBody = z.object({
   currency: FxCurrency,
   rateNpr: RateString.refine((v) => new Dec(v).gt(0), 'must be greater than 0'),
@@ -77,10 +82,15 @@ export class SettingsController {
     @Body() body: unknown,
   ): Promise<{ version: number }> {
     const key = settingKey(rawKey);
-    const { value } = parse(SettingBody, body, 'setting');
+    const { value, expectedVersion } = parse(SettingBody, body, 'setting');
     const { scope, actor } = requestTx();
-    // The service validates `value` against SETTINGS[key] and answers 400 when it does not fit.
-    return withTx(this.db, scope, actor, (tx) => this.settings.set(tx, key, value));
+    // The service validates `value` against SETTINGS[key] and answers 400 when it does not fit, and 409
+    // `stale_setting` when `expectedVersion` is given and is no longer the saved version.
+    return withTx(this.db, scope, actor, (tx) =>
+      expectedVersion === undefined
+        ? this.settings.set(tx, key, value)
+        : this.settings.set(tx, key, value, { expectedVersion }),
+    );
   }
 
   @Get('number-series')
