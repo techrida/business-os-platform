@@ -333,17 +333,27 @@ export class PaymentsService {
     idempotencyKey: string,
   ): Promise<PaymentDto> {
     this.assertMaySubmit(scope, body, channel);
-    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). A pool read, so it runs before the
-    // transaction opens. Staff and portal submits both come through here.
-    await this.currencies.assertEnabled(scope, body.currency);
+    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). The check is a pool read, so it runs
+    // before the transaction opens, but the refusal is thrown inside the idempotency callback: a retry of a submit
+    // that already went through replays the stored payment even after the currency was switched off. Staff and
+    // portal submits both come through here.
+    let refusal: unknown;
+    try {
+      await this.currencies.assertEnabled(scope, body.currency);
+    } catch (error) {
+      refusal = error;
+    }
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: `payment.submit.${channel}`, key: idempotencyKey, body },
-        async () => ({
-          status: 201,
-          response: await this.submitInTx(tx, scope, actor, body, channel),
-        }),
+        async () => {
+          if (refusal instanceof Error) throw refusal;
+          return {
+            status: 201,
+            response: await this.submitInTx(tx, scope, actor, body, channel),
+          };
+        },
       );
       return done.response;
     });
