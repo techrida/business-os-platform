@@ -306,6 +306,65 @@ describe('follow-up changes', () => {
   });
 });
 
+describe('follow-up changes on other subjects (migrated tasks)', () => {
+  const OPP = '55555555-5555-4555-8555-555555555555';
+  const subjectForm = (extra: Record<string, string>) => {
+    const f = new FormData();
+    for (const [k, v] of Object.entries({ activityId: ACTIVITY, expectedVersion: '4', ...extra })) {
+      f.set(k, v);
+    }
+    return f;
+  };
+
+  it('completes, reschedules and cancels an opportunity follow-up, refreshing its page and /activities', async () => {
+    api.completeActivity.mockResolvedValue({});
+    api.rescheduleActivity.mockResolvedValue({});
+    api.cancelActivity.mockResolvedValue({});
+    const subject = { subjectKind: 'opportunityId', subjectId: OPP };
+
+    expect(await completeFollowUpAction({}, subjectForm(subject))).toEqual({ ok: true });
+    expect(
+      (await rescheduleFollowUpAction({}, subjectForm({ ...subject, dueAt: '2026-12-01T09:00' })))
+        .ok,
+    ).toBe(true);
+    expect(await cancelFollowUpAction({}, subjectForm(subject))).toEqual({ ok: true });
+
+    expect(api.completeActivity).toHaveBeenCalledExactlyOnceWith(expect.anything(), ACTIVITY, {
+      expectedVersion: 4,
+    });
+    expect(api.cancelActivity).toHaveBeenCalledOnce();
+    expect(api.rescheduleActivity).toHaveBeenCalledOnce();
+    const paths = new Set(cache.revalidatePath.mock.calls.map((c) => c[0] as string));
+    expect(paths).toEqual(new Set([`/opportunities/${OPP}`, '/activities']));
+  });
+
+  it('refreshes a customer page for a customer task, and only /activities with no subject', async () => {
+    api.completeActivity.mockResolvedValue({});
+    await completeFollowUpAction({}, subjectForm({ subjectKind: 'customerId', subjectId: OPP }));
+    expect(cache.revalidatePath.mock.calls.map((c) => c[0] as string)).toEqual([
+      `/customers/${OPP}`,
+      '/activities',
+    ]);
+    cache.revalidatePath.mockClear();
+    expect(await completeFollowUpAction({}, subjectForm({}))).toEqual({ ok: true });
+    expect(cache.revalidatePath.mock.calls.map((c) => c[0] as string)).toEqual(['/activities']);
+  });
+
+  it('builds the refreshed path itself: an unknown kind or a non-id is refused before any call', async () => {
+    for (const bad of [
+      { subjectKind: '/admin', subjectId: OPP },
+      { subjectKind: 'opportunityId', subjectId: '../admin' },
+      { subjectKind: 'opportunityId' },
+      { leadId: 'nope' },
+    ]) {
+      const res = await completeFollowUpAction({}, subjectForm(bad));
+      expect(res).toMatchObject({ reload: true });
+    }
+    expect(api.completeActivity).not.toHaveBeenCalled();
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
 function ownerForm(extra: Record<string, string> = {}): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries({
