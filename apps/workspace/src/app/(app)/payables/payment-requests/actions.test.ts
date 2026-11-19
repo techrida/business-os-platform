@@ -167,8 +167,21 @@ describe('payment request actions', () => {
     );
   });
 
+  // Create reads the live grants too (fails on the old code, which read the role defaults).
+  it('lets a role granted payables.payment.request at own scope create a request', async () => {
+    session.roles = ['accountant'];
+    grants.live = new Map([['payables.payment.request', 'own']]);
+    api.createPaymentRequest.mockResolvedValue({ id });
+    await expect(createPaymentRequestAction(prev, form())).rejects.toThrow(
+      `REDIRECT /payables/payment-requests/${id}`,
+    );
+    expect(api.createPaymentRequest).toHaveBeenCalledOnce();
+  });
+
   it('refuses Finance whose payables.payment.request an admin removed, before any write', async () => {
     grants.live = new Map([['payables.bill.read', 'all']]);
+    expect((await createPaymentRequestAction(prev, form())).error).toMatch(/roles/i);
+    expect(api.createPaymentRequest).not.toHaveBeenCalled();
     expect((await submitPaymentRequestAction(prev, form())).error).toMatch(/roles/i);
     expect((await cancelPaymentRequestAction(prev, form({ reason: 'x y' }))).error).toMatch(
       /roles/i,

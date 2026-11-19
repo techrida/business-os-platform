@@ -9,6 +9,23 @@ const session = vi.hoisted(() => ({ roles: ['procurement'] as string[] }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ roles: session.roles }),
 }));
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: () =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            session.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NOT_FOUND');
@@ -129,6 +146,7 @@ const detail = async (id = ID) => html(await OrderPage({ params: Promise.resolve
 
 beforeEach(() => {
   session.roles = ['procurement'];
+  grants.live = undefined;
   for (const fn of [...Object.values(api), ...Object.values(vendors)]) fn.mockReset();
   api.listPoVersions.mockResolvedValue([version(1)]);
   api.getPoProgress.mockResolvedValue(progress);
@@ -261,6 +279,25 @@ describe('the purchase order page', () => {
       expect(out).not.toContain(label);
     }
     expect(out).not.toContain('Receive goods');
+  });
+
+  // The live grants decide, not the role defaults: both cases fail on the old role-default gate.
+  it('offers the order actions to a role an admin granted procurement.po.issue', async () => {
+    session.roles = ['accountant'];
+    grants.live = new Map([['procurement.po.issue', 'own']]);
+    api.getPurchaseOrder.mockResolvedValue(order());
+    const out = await detail();
+    expect(out).toContain('Amend order');
+    expect(out).toContain('Cancel order');
+  });
+
+  it('hides the order actions from Procurement whose procurement.po.issue an admin removed', async () => {
+    grants.live = new Map([['procurement.pr.read', 'all']]);
+    api.getPurchaseOrder.mockResolvedValue(order());
+    const out = await detail();
+    expect(out).toContain('PO-2082-0001');
+    expect(out).not.toContain('Amend order');
+    expect(out).not.toContain('Cancel order');
   });
 
   it('offers no action to a role without procurement.po.issue', async () => {

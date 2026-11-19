@@ -4,11 +4,17 @@ import { describe, expect, it } from 'vitest';
 import { isReceivable, orderActions, PO_STATUS_LABEL, poGrants, poMoney, qtyText } from './model';
 
 describe('poGrants', () => {
-  it('reads the defaults of the session roles, and denies by default', () => {
-    expect(poGrants(['procurement'])).toEqual({ issue: true, confirm: false });
-    expect(poGrants(['warehouse'])).toEqual({ issue: false, confirm: true });
-    expect(poGrants(['sales'])).toEqual({ issue: false, confirm: false });
-    expect(poGrants([])).toEqual({ issue: false, confirm: false });
+  it('reads the live grants at any scope, and denies by default', () => {
+    expect(poGrants(new Map([['procurement.po.issue', 'all']]))).toEqual({
+      issue: true,
+      confirm: false,
+    });
+    expect(poGrants(new Map([['procurement.receipt.confirm', 'own']]))).toEqual({
+      issue: false,
+      confirm: true,
+    });
+    expect(poGrants(new Map([['crm.lead.read', 'all']]))).toEqual({ issue: false, confirm: false });
+    expect(poGrants(new Map())).toEqual({ issue: false, confirm: false });
   });
 });
 

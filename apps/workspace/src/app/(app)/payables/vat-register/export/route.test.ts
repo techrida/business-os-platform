@@ -8,6 +8,23 @@ vi.mock('server-only', () => ({}));
 const auth = vi.hoisted(() => ({ getSession: vi.fn() }));
 const api = vi.hoisted(() => ({ getVatRegister: vi.fn() }));
 vi.mock('@/lib/session', () => auth);
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: (s: { roles: string[] }) =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            s.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('@/lib/api-payables', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-payables')>()),
   ...api,
@@ -49,6 +66,7 @@ const request = (query = new URLSearchParams(period).toString()) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  grants.live = undefined;
   auth.getSession.mockResolvedValue(session);
   api.getVatRegister.mockResolvedValue(register);
 });
@@ -113,3 +131,19 @@ it.each([401, 403, 404, 422, 429])(
     expect(body).toHaveProperty('error.message');
   },
 );
+
+// The export reads the live grants, not the role defaults (both cases fail on the old role-default gate).
+it('exports for a role an admin granted the register, whatever its defaults', async () => {
+  auth.getSession.mockResolvedValue({ ...session, roles: ['warehouse'] });
+  grants.live = new Map([['payables.vat_register.read', 'own']]);
+  const response = await GET(request());
+  expect(response.status).toBe(200);
+  expect(api.getVatRegister).toHaveBeenCalledOnce();
+});
+
+it('refuses an Accountant whose register grant an admin removed, before reading VAT', async () => {
+  grants.live = new Map([['payables.bill.read', 'all']]);
+  const response = await GET(request());
+  expect(response.status).toBe(403);
+  expect(api.getVatRegister).not.toHaveBeenCalled();
+});
