@@ -478,6 +478,11 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     const lead = await seedLead(); // salesA's
     const p = await plan(lead.id, 'Mine', DUE_1);
 
+    // An unknown id and a colleague's activity answer the same 404, so a guessed id learns nothing.
+    const unknown = await patch(crypto.randomUUID(), 'complete', { expectedVersion: 1 });
+    expect(unknown.status).toBe(404);
+    const unknownError = errorOf(unknown.body);
+    expect(unknownError).toMatchObject({ code: 'not_found', message: 'Activity not found' });
     h.as('salesB', 'sales'); // own scope: a colleague's lead is out of reach
     for (const [action, body] of [
       ['complete', { expectedVersion: 1 }],
@@ -486,7 +491,11 @@ describe('PATCH /v1/activities/:id/complete|reschedule|cancel', () => {
     ] as const) {
       const res = await patch(p.id, action, body);
       expect(res.status, action).toBe(404);
-      expect(errorOf(res.body).code).toBe('not_found');
+      const error = errorOf(res.body);
+      expect({ code: error.code, message: error.message }, action).toEqual({
+        code: unknownError.code,
+        message: unknownError.message,
+      });
     }
     h.as('salesB', 'sales', 'B'); // another entity: the row itself is not found
     expect((await patch(p.id, 'complete', { expectedVersion: 1 })).status).toBe(404);
