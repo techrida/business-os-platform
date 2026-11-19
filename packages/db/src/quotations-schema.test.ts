@@ -1,4 +1,4 @@
-// The Drizzle schema of 0016_quotations plus the 0018 acceptance-evidence columns and the 0046 document_style column (src/schema/quotations.ts) must
+// The Drizzle schema of 0016_quotations plus the 0018 acceptance-evidence columns the 0046 document_style column and the 0047 terms_and_conditions column (src/schema/quotations.ts) must
 // describe the SQL: the same tables and columns, and the same foreign keys (name, columns, parent table and parent columns), unique keys and indexes
 // (name and columns) and checks (name only: CHECK bodies are not compared). It also pins the two rules the
 // database enforces with plain lists, so the lists and the SQL cannot drift apart:
@@ -42,6 +42,12 @@ const ACCEPTANCE_EVIDENCE_SQL = readFileSync(
 /** 0046 adds the write-once document_style column and its own guard trigger. */
 const DOCUMENT_STYLE_SQL = readFileSync(
   new URL('../migrations/0046_quotation_version_document_style.sql', import.meta.url),
+  'utf8',
+);
+
+/** 0047 adds the terms_and_conditions column and replaces the freeze function with the 0016 body plus that column. */
+const TERMS_SQL = readFileSync(
+  new URL('../migrations/0047_quotation_terms_conditions.sql', import.meta.url),
   'utf8',
 );
 
@@ -172,19 +178,23 @@ const DRIZZLE: Record<string, PgTable> = {
 /** The S1 tables 0016 only alters (their Drizzle tables in crm.ts mirror 0015 alone). */
 const S1_TABLES = ['party_accounts', 'opportunities', 'activities'];
 
-/** The body of `CREATE FUNCTION "app"."<name>"() ... $$ ... $$;`. */
-function functionBody(name: string): string {
+/** The body of `CREATE [OR REPLACE] FUNCTION "app"."<name>"() ... $$ ... $$;` in `sql` (0016 unless told otherwise). */
+function functionBody(name: string, sql: string = SQL_TEXT): string {
   const m = new RegExp(
-    `CREATE FUNCTION "app"\\."${name}"\\(\\)[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$;`,
-  ).exec(SQL_TEXT);
-  if (!m) throw new Error(`no function ${name} in 0016`);
+    `CREATE (?:OR REPLACE )?FUNCTION "app"\\."${name}"\\(\\)[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$;`,
+  ).exec(sql);
+  if (!m) throw new Error(`no function ${name}`);
   return m[1] ?? '';
 }
+
+/** The freeze function as it stands now: the last migration that replaced it (0047). */
+const currentGuardBody = (): string => functionBody('quotation_versions_guard', TERMS_SQL);
 
 describe('0016_quotations and src/schema/quotations.ts', () => {
   const parsed = parseSql(`${SQL_TEXT}
 ${ACCEPTANCE_EVIDENCE_SQL}
-${DOCUMENT_STYLE_SQL}`);
+${DOCUMENT_STYLE_SQL}
+${TERMS_SQL}`);
   // 0045 writes its check unquoted (app.quotation_versions), which parseSql does not read. The Drizzle table
   // declares it, so name it here instead of leaving the shape test red.
   parsed
@@ -234,7 +244,7 @@ ${DOCUMENT_STYLE_SQL}`);
   });
 
   it('freezes exactly QUOTATION_VERSION_MATERIAL_COLUMNS once a version leaves draft/returned', () => {
-    const body = functionBody('quotation_versions_guard');
+    const body = currentGuardBody();
     const frozen = body.split('-- frozen:')[1] ?? '';
     const compared = [...frozen.matchAll(/OLD\."(\w+)" IS DISTINCT FROM NEW\."\1"/g)].map(
       (m) => m[1],
@@ -288,6 +298,21 @@ ${DOCUMENT_STYLE_SQL}`);
     expect(ACCEPTANCE_EVIDENCE_SQL).not.toMatch(/TRIGGER|quotation_append_only/);
   });
 
+  it('0047 adds terms_and_conditions as a frozen column and changes nothing else in the freeze function', () => {
+    expect(QUOTATION_VERSION_MATERIAL_COLUMNS).toContain('terms_and_conditions');
+    expect(TERMS_SQL).toContain(
+      `ALTER TABLE "app"."quotation_versions" ADD COLUMN "terms_and_conditions" text;`,
+    );
+    // Nullable, no default: existing versions stay NULL.
+    expect(TERMS_SQL).not.toMatch(/terms_and_conditions" text (NOT NULL|DEFAULT)/);
+    // The new body is the 0016 body plus exactly the one comparison line.
+    const added = '\t\tOR OLD."terms_and_conditions" IS DISTINCT FROM NEW."terms_and_conditions"\n';
+    expect(currentGuardBody().replace(added, '')).toBe(functionBody('quotation_versions_guard'));
+    expect(currentGuardBody()).toContain(added);
+    // The trigger is not recreated and 0046's guard is untouched.
+    expect(TERMS_SQL).not.toMatch(/CREATE TRIGGER|DROP TRIGGER|document_style_guard/);
+  });
+
   it('0046 keeps document_style out of the freeze list and guards it with its own write-once trigger', () => {
     expect(QUOTATION_VERSION_UPDATABLE_COLUMNS).toContain('document_style');
     expect(QUOTATION_VERSION_MATERIAL_COLUMNS).not.toContain('document_style');
@@ -295,7 +320,7 @@ ${DOCUMENT_STYLE_SQL}`);
     expect(DOCUMENT_STYLE_SQL).not.toMatch(
       /CREATE (OR REPLACE )?FUNCTION "app"\."quotation_versions_guard"/,
     );
-    expect(functionBody('quotation_versions_guard')).not.toContain('document_style');
+    expect(currentGuardBody()).not.toContain('document_style');
     expect(DOCUMENT_STYLE_SQL).toContain(
       `CREATE TRIGGER "quotation_versions_document_style_guard" BEFORE INSERT OR UPDATE ON "app"."quotation_versions"`,
     );

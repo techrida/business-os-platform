@@ -64,6 +64,8 @@ import {
   type QuotationFixtureDb,
 } from '../drafting/quotation.fixture';
 import { PricingService } from '../pricing/pricing.service';
+import { toCustomerQuotationView } from '../render/customer-view';
+import { renderQuotationHtml } from '../render/quotation-html';
 import { contentSha256, materialFieldsOf } from './quotation-approval-snapshot';
 import { QuotationSubmitService, QuotationSubmitStore } from './quotation-submit.service';
 import {
@@ -713,6 +715,94 @@ describe('quotation approval: inbox (demo feedback 2026-11-17 guard)', () => {
     expect([403, 404]).toContain(error.getStatus());
     expect((await versionRow(d.versionId)).status).toBe('submitted');
     expect((await requestsOf(d.versionId))[0]?.status).toBe('pending');
+  });
+});
+
+describe('quotation approval: terms and conditions', () => {
+  it('create -> clear with null -> set -> submit stores the text, hashes it, prints it and freezes it', async () => {
+    const d = await draft('50000.00');
+    const base = await drafting.getVersion(d.quotationId, d.versionId);
+    expect(base.termsAndConditions).toBeNull();
+
+    // Set, then clear with null: the column follows the PUT merge rule exactly like exclusions.
+    const set = await drafting.updateDraft(d.quotationId, d.versionId, {
+      expectedVersion: base.version,
+      termsAndConditions: 'Payment within 30 days.',
+    });
+    expect((await drafting.getVersion(d.quotationId, d.versionId)).termsAndConditions).toBe(
+      'Payment within 30 days.',
+    );
+    const cleared = await drafting.updateDraft(d.quotationId, d.versionId, {
+      expectedVersion: set.version,
+      termsAndConditions: null,
+    });
+    expect((await drafting.getVersion(d.quotationId, d.versionId)).termsAndConditions).toBeNull();
+    const final = await drafting.updateDraft(d.quotationId, d.versionId, {
+      expectedVersion: cleared.version,
+      termsAndConditions: 'Goods remain ours until paid.',
+    });
+
+    await submit(d, final.version);
+    const row = await versionRow(d.versionId);
+    expect(row.termsAndConditions).toBe('Goods remain ours until paid.');
+
+    // The stored content hash covers the text: recomputing from the rows read back matches it.
+    const lines = await read((tx) =>
+      tx.select().from(quotationLines).where(eq(quotationLines.versionId, d.versionId)),
+    );
+    const taxSummary = await read((tx) =>
+      tx.select().from(quotationTaxSummary).where(eq(quotationTaxSummary.versionId, d.versionId)),
+    );
+    expect(
+      Buffer.from(row.contentSha256!).equals(
+        contentSha256(materialFieldsOf(row, lines, taxSummary)),
+      ),
+    ).toBe(true);
+    expect(
+      Buffer.from(row.contentSha256!).equals(
+        contentSha256(materialFieldsOf({ ...row, termsAndConditions: null }, lines, taxSummary)),
+      ),
+    ).toBe(false);
+
+    // The customer view built from the stored row prints it.
+    const address = {
+      line1: '1 Durbar Marg',
+      city: 'Kathmandu',
+      district: 'Kathmandu',
+      country: 'NP',
+    };
+    const view = toCustomerQuotationView(
+      {
+        version: row,
+        quotation: { number: 'QT-2082-0001' },
+        customer: { legalName: 'Himal Traders Pvt. Ltd.', panVatNo: null, address },
+        contact: null,
+        paymentTerm: null,
+        lines,
+        taxSummary,
+        issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: null, address },
+      },
+      { purpose: 'render' },
+    );
+    expect(view.termsAndConditions).toBe('Goods remain ours until paid.');
+    expect(renderQuotationHtml(view)).toContain('Goods remain ours until paid.');
+
+    // Frozen once submitted: a write past the service is refused by quotation_versions_guard.
+    const error = await read((tx) =>
+      tx.execute(
+        sql`UPDATE app.quotation_versions SET terms_and_conditions = 'changed' WHERE id = ${d.versionId}`,
+      ),
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(pgErrorOf(error)).toEqual({
+      code: '23514',
+      constraint: 'quotation_versions_frozen_check',
+    });
+    expect((await versionRow(d.versionId)).termsAndConditions).toBe(
+      'Goods remain ours until paid.',
+    );
   });
 });
 

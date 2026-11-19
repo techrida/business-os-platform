@@ -100,6 +100,7 @@ function versionRowOf(priced: PricedVersion, extra: Partial<VersionRow> = {}): V
     scope: 'Supply and install',
     assumptions: null,
     exclusions: null,
+    termsAndConditions: null,
     deliveryTimeline: '6 weeks',
     paymentTermId: null,
     paymentSchedule: [{ label: 'Advance', percent: '50' }],
@@ -270,6 +271,30 @@ describe('materialFieldsOf and the content hash', () => {
     expect(
       contentSha256(materialFieldsOf(versionRowOf(priced), priced.lines, taxSummary)).equals(base),
     ).toBe(false);
+  });
+
+  it('hashes a version without terms and conditions to the bytes it had before the column existed', () => {
+    // Pinned from the code before migration 0047 (no termsAndConditions key at all). Existing approved versions
+    // are re-checked against their stored hash, so this value must never move.
+    const PRE_0047 = '880195ac5b89d8d4612fc3ea3c3c12baf244405bba1b483627b34ea9148e6ce8';
+    expect(contentSha256(material()).toString('hex')).toBe(PRE_0047);
+    expect(
+      contentSha256(material(versionRowOf(priced, { termsAndConditions: null }))).toString('hex'),
+    ).toBe(PRE_0047);
+    expect(material().version).not.toHaveProperty('termsAndConditions');
+  });
+
+  it('changes when terms and conditions are set or edited, and an empty string is not the same as none', () => {
+    const base = contentSha256(material());
+    const hashOf = (termsAndConditions: string) =>
+      contentSha256(material(versionRowOf(priced, { termsAndConditions }))).toString('hex');
+    const a = hashOf('Payment within 30 days.');
+    expect(a).not.toBe(base.toString('hex'));
+    expect(hashOf('Payment within 15 days.')).not.toBe(a);
+    expect(hashOf('')).not.toBe(base.toString('hex'));
+    expect(
+      materialFieldsOf(versionRowOf(priced, { termsAndConditions: 'x' }), [], []).version,
+    ).toHaveProperty('termsAndConditions', 'x');
   });
 
   it('does not change when a non-material field changes', () => {

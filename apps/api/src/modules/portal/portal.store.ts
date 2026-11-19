@@ -165,6 +165,7 @@ export class DrizzlePortalQuotationStore implements PortalQuotationStore {
           scope: quotationVersions.scope,
           assumptions: quotationVersions.assumptions,
           exclusions: quotationVersions.exclusions,
+          termsAndConditions: quotationVersions.termsAndConditions,
           deliveryTimeline: quotationVersions.deliveryTimeline,
           paymentSchedule: quotationVersions.paymentSchedule,
           subtotal: quotationVersions.subtotal,

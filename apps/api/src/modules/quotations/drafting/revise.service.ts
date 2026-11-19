@@ -239,6 +239,7 @@ export class ReviseService {
         scope: old.scope,
         assumptions: old.assumptions,
         exclusions: old.exclusions,
+        termsAndConditions: old.termsAndConditions,
         deliveryTimeline: old.deliveryTimeline,
         paymentTermId: old.paymentTermId,
         paymentSchedule: old.paymentSchedule,

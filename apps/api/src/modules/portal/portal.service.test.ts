@@ -66,6 +66,7 @@ function sourceOf(s: Seed): PortalViewSource {
       scope: 'Supply and install 12 panels',
       assumptions: null,
       exclusions: null,
+      termsAndConditions: null,
       deliveryTimeline: '6 weeks',
       paymentSchedule: [{ label: 'Advance', percent: '60' }],
       subtotal: '540000.00',

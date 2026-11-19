@@ -69,6 +69,7 @@ export const CustomerQuotationViewSchema = z.strictObject({
   scope: z.string().nullable(),
   assumptions: z.string().nullable(),
   exclusions: z.string().nullable(),
+  termsAndConditions: z.string().nullable(),
   deliveryTimeline: z.string().nullable(),
   paymentTermName: z.string().nullable(),
   paymentSchedule: z.array(PaymentMilestoneSchema),
