@@ -594,8 +594,10 @@ describe('QuotationListItemSchema', () => {
 });
 
 describe('ListQuotationsQuerySchema', () => {
-  it('defaults the page, and takes filters, a search and a page', () => {
-    expect(ListQuotationsQuerySchema.parse({})).toEqual({ limit: 50, offset: 0 });
+  it('has no default limit (every match), and takes filters, a search and a page', () => {
+    const none = ListQuotationsQuerySchema.parse({});
+    expect(none).toEqual({ offset: 0 });
+    expect(none.limit).toBeUndefined();
     const opportunityId = id();
     const customerId = id();
     expect(

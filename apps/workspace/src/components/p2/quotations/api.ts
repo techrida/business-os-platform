@@ -58,8 +58,6 @@ const seg = (id: string): string => encodeURIComponent(id);
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The most values one repeated filter carries; the API refuses more. */
 const MAX_FILTER_VALUES = 20;
-/** Rows a caller that needs every row (a picker) asks for; the API's own maximum. */
-const ALL_ROWS = 200;
 
 type Many<T> = T | readonly T[];
 
@@ -127,21 +125,28 @@ function listPairs(filter: QuotationListFilter): [string, string][] {
 
 /**
  * `GET /v1/quotations`: a bare array of list rows. For callers that want every row of a narrow filter
- * (a picker, one opportunity's quotations), so `limit` defaults to the API's maximum; the list screen
- * uses `listQuotationsPage`. The API still limits the rows to what the caller may read.
+ * (a picker, one opportunity's quotations): no `limit` is sent unless the caller gives one, and the API
+ * then returns every match. The list screen uses `listQuotationsPage`. The API still limits the rows to
+ * what the caller may read.
  */
 export function listQuotations(
   session: Session,
   filter: QuotationListFilter = {},
 ): Promise<QuotationListItem[]> {
-  const pairs = listPairs({ limit: ALL_ROWS, ...filter });
-  return get(session, `/v1/quotations${queryOf(pairs)}`, z.array(QuotationListItemSchema));
+  return get(
+    session,
+    `/v1/quotations${queryOf(listPairs(filter))}`,
+    z.array(QuotationListItemSchema),
+  );
 }
+
+/** A page's window is always explicit: the API returns every match when `limit` is absent. */
+export type QuotationPageFilter = QuotationListFilter & { limit: number; offset: number };
 
 /** One page of `GET /v1/quotations` with the number of all matches (the `X-Total-Count` header). */
 export async function listQuotationsPage(
   session: Session,
-  filter: QuotationListFilter = {},
+  filter: QuotationPageFilter,
 ): Promise<{ items: QuotationListItem[]; total: number }> {
   const { data, res } = await read(
     session,

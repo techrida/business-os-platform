@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { PersonNameSchema, RoutePlanSchema } from './approvals.js';
 import { RoleKeySchema } from './authz.js';
 import { DocumentVersionStatusSchema } from './documents.js';
-import { limitOffset, multi, searchParam } from './list-query.js';
+import { multi, searchParam } from './list-query.js';
 import { CurrencySchema, DecimalString, NprSnapshotSchema, RateString } from './money.js';
 
 const isoDateTime = z.iso.datetime({ offset: true });
@@ -569,16 +569,18 @@ export type QuotationListItem = z.infer<typeof QuotationListItemSchema>;
  * `GET /v1/quotations` query (strict: an unknown key is a 400). `status` and `customerId` repeat
  * (`?status=draft&status=sent`) and match any of the values; `status` is the current version's. `q`
  * searches the number, customer name and owner name. `opportunityId` limits the list to one opportunity's
- * quotations. Every filter narrows what the caller may read, never widens it. The body is a bare array and
- * `X-Total-Count` carries the number of all matches.
+ * quotations. Every filter narrows what the caller may read, never widens it. Without `limit` every match
+ * is returned (at most 200 when given). The body is a bare array and `X-Total-Count` carries the number of
+ * all matches.
  */
 export const ListQuotationsQuerySchema = z.strictObject({
   status: multi(QuotationStatusSchema),
   customerId: multi(z.guid()),
   opportunityId: z.guid().optional(),
   q: searchParam,
-  // Same page bounds as the other CRM lists; callers that want every row (pickers) pass a larger limit.
-  ...limitOffset({ max: 200, fallback: 50 }),
+  // No `limit` means every match (the pickers never page); a paged caller sends limit and offset.
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 export type ListQuotationsQuery = z.infer<typeof ListQuotationsQuerySchema>;
 

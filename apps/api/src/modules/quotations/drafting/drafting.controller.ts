@@ -50,7 +50,7 @@ export class DraftingController {
 
   /**
    * 200 with a bare array of QuotationListItem (one page) and `X-Total-Count`, the number of all matches.
-   * Filters: `status` and `customerId` (repeatable), `opportunityId`, `q`, `limit`, `offset`. 400 for an
+   * Filters: `status` and `customerId` (repeatable), `opportunityId`, `q`, `limit` (none: every match), `offset`. 400 for an
    * unknown status, a malformed id or an unknown parameter.
    */
   @Get()
