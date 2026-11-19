@@ -1,10 +1,11 @@
-import type { DocumentFormatSnapshot } from '@bos/contracts';
+import { EMPTY_COMPANY_PROFILE, type DocumentFormatSnapshot } from '@bos/contracts';
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
+import type { DocumentLogoResolver } from '../../quotations/render/issuer';
 import type { RenderSettings, RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import {
   failureKind,
@@ -78,6 +79,10 @@ function fixture(
     numberSystems?: unknown;
     /** The raw `format.date` value; an omitted key reads as the stored default. */
     dateFormat?: unknown;
+    /** The raw `entity.profile` value; omitted, the key is unset (no logo). */
+    profile?: unknown;
+    /** What the logo document resolves to; omitted, nothing (null). */
+    logo?: DocumentLogoResolver;
   } = {},
 ) {
   let now = NOW;
@@ -96,13 +101,25 @@ function fixture(
   const live: Record<string, unknown> = {
     'format.number_systems': 'numberSystems' in over ? over.numberSystems : SOUTH_ASIAN,
     'format.date': 'dateFormat' in over ? over.dateFormat : 'dd MMM yyyy',
+    'entity.profile': over.profile,
   };
   const settings = {
     get: vi.fn((_scope: TxScope, key: string) => Promise.resolve(live[key])),
   } as unknown as RenderSettings;
   const pdf = { htmlToPdf: vi.fn().mockResolvedValue(PDF) };
   const runTx: RunInTx = (_scope, _actor, fn) => fn(TX);
-  const sweeper = new InvoiceRenderSweeper(store, runTx, documents, settings, pdf, () => now);
+  // A watched resolver per scope, standing in for DocumentLogoResolverFactory.
+  const resolveLogo = vi.fn<DocumentLogoResolver>(over.logo ?? (() => Promise.resolve(null)));
+  const logos = { forScope: vi.fn((_scope: TxScope) => resolveLogo) };
+  const sweeper = new InvoiceRenderSweeper(
+    store,
+    runTx,
+    documents,
+    settings,
+    pdf,
+    () => now,
+    logos,
+  );
   return {
     store,
     documents,
@@ -110,6 +127,8 @@ function fixture(
     live,
     pdf,
     runTx,
+    logos,
+    resolveLogo,
     sweeper,
     advance: (ms: number) => (now = new Date(now.getTime() + ms)),
   };
@@ -139,6 +158,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
     expect(f.store.recordPrint).toHaveBeenCalledWith(TX, c, 1, NOW, {
       numberSystems: SOUTH_ASIAN,
       dateFormat: 'dd MMM yyyy',
+      logoDataUrl: null,
       capturedAt: NOW.toISOString(),
     });
   });
@@ -177,6 +197,7 @@ describe('InvoiceRenderSweeper.renderOne', () => {
       expect(f.store.recordPrint).toHaveBeenCalledWith(TX, candidate(1), 1, NOW, {
         numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
         dateFormat: 'dd MMM yyyy',
+        logoDataUrl: null,
         capturedAt: NOW.toISOString(),
       });
     },
@@ -326,5 +347,117 @@ describe('failureKind', () => {
     expect(failureKind(new InvoiceNotRenderableError('x'))).toBe('not_renderable');
     expect(failureKind(new BadRequestException('x'))).toBe('http_400');
     expect(failureKind(new Error('customer data'))).toBe('error');
+  });
+});
+
+describe('InvoiceRenderSweeper: the company logo', () => {
+  const scope = { tenantId: 'tenant-1', organizationId: 'org-1' };
+  const LOGO_A = 'data:image/png;base64,TE9HT0E=';
+  const LOGO_B = 'data:image/png;base64,TE9HT0I=';
+  const DOC_A = '0b6c2a10-0000-4000-8000-00000000000a';
+  const DOC_B = '0b6c2a10-0000-4000-8000-00000000000b';
+  const profile = (over: Record<string, unknown> = {}) => ({ ...EMPTY_COMPANY_PROFILE, ...over });
+  const htmlOf = (f: ReturnType<typeof fixture>, n = 0) =>
+    f.pdf.htmlToPdf.mock.calls[n]?.[0] as string;
+  const storedLogo = (f: ReturnType<typeof fixture>) =>
+    (f.store.recordPrint.mock.calls[0]?.[4] as DocumentFormatSnapshot | null)?.logoDataUrl;
+
+  it('freezes the logo into print 1 and draws it, resolved in the invoice scope', async () => {
+    const f = fixture({
+      profile: profile({ logoDocumentId: DOC_A }),
+      logo: (id) => Promise.resolve(id === DOC_A ? LOGO_A : null),
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.logos.forScope).toHaveBeenCalledWith(scope);
+    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A);
+    expect(htmlOf(f)).toContain(`<img class="logo" src="${LOGO_A}" alt="Techrida Pvt. Ltd.">`);
+    expect(htmlOf(f)).toContain('img-src data:');
+    expect(storedLogo(f)).toBe(LOGO_A);
+  });
+
+  it.each([
+    ['the profile has no logo', profile()],
+    ['the profile is unset', undefined],
+    ['the profile no longer parses', { displayName: 42 }],
+  ])('prints no logo, and never calls the resolver, when %s', async (_name, value) => {
+    const f = fixture({ profile: value });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.logos.forScope).not.toHaveBeenCalled();
+    expect(f.resolveLogo).not.toHaveBeenCalled();
+    expect(htmlOf(f)).not.toContain('<img');
+    expect(storedLogo(f)).toBeNull();
+  });
+
+  it('falls back to the legacy logo when the document resolves to nothing', async () => {
+    const f = fixture({ profile: profile({ logoDocumentId: DOC_A, legacyLogoDataUrl: LOGO_B }) });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(f.resolveLogo).toHaveBeenCalledWith(DOC_A);
+    expect(storedLogo(f)).toBe(LOGO_B);
+    expect(htmlOf(f)).toContain(`src="${LOGO_B}"`);
+  });
+
+  it('fails, without storing a print, when a referenced logo cannot be read', async () => {
+    const f = fixture({
+      profile: profile({ logoDocumentId: DOC_A, legacyLogoDataUrl: LOGO_B }),
+      logo: () => Promise.reject(new Error('disk gone: /srv/files/secret')),
+      candidates: [candidate(1)],
+    });
+    const swept = await f.sweeper.sweep();
+    expect(swept.rendered).toBe(0);
+    expect(swept.failures).toEqual([
+      { invoiceId: candidate(1).invoiceId, kind: 'document_logo_unavailable' },
+    ]);
+    expect(f.pdf.htmlToPdf).not.toHaveBeenCalled();
+    expect(f.documents.createGenerated).not.toHaveBeenCalled();
+    expect(f.store.recordPrint).not.toHaveBeenCalled();
+  });
+
+  it('prints a copy with the logo of print 1, after the logo changed, without resolving again', async () => {
+    // A store that remembers print 1's format and hands it back on the next load, as the print log does.
+    const f = fixture({
+      profile: profile({ logoDocumentId: DOC_A }),
+      logo: (id) => Promise.resolve(id === DOC_A ? LOGO_A : LOGO_B),
+    });
+    const c = candidate(1);
+    let printed = 0;
+    let stored: DocumentFormatSnapshot | null = null;
+    f.store.load.mockImplementation(() => Promise.resolve(source(printed + 1, 'NPR', stored)));
+    f.store.recordPrint.mockImplementation(
+      (_tx, _c, printNo: number, _now, format: DocumentFormatSnapshot | null) => {
+        printed = printNo;
+        if (printNo === 1) stored = format;
+        return Promise.resolve();
+      },
+    );
+
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+    f.live['entity.profile'] = profile({ logoDocumentId: DOC_B });
+    f.advance(24 * 60 * 60_000);
+    await expect(f.sweeper.renderOne(c)).resolves.toBe('rendered');
+
+    const copy = htmlOf(f, 1);
+    expect(copy).toContain('Copy of original (1)');
+    expect(copy).toContain(`src="${LOGO_A}"`);
+    expect(copy).not.toContain(LOGO_B);
+    expect(f.resolveLogo).toHaveBeenCalledTimes(1);
+    expect(stored).toMatchObject({ logoDataUrl: LOGO_A });
+  });
+
+  it.each([
+    [
+      'a print stored before logos were frozen',
+      { numberSystems: SOUTH_ASIAN, dateFormat: 'dd MMM yyyy', capturedAt: NOW.toISOString() },
+    ],
+    ['a print with no stored format', null],
+  ])('prints a copy of %s without a logo, even with one set now', async (_name, original) => {
+    const f = fixture({
+      src: source(2, 'NPR', original),
+      profile: profile({ logoDocumentId: DOC_A }),
+      logo: () => Promise.resolve(LOGO_A),
+    });
+    await expect(f.sweeper.renderOne(candidate(1))).resolves.toBe('rendered');
+    expect(htmlOf(f)).toContain('Copy of original (1)');
+    expect(htmlOf(f)).not.toContain('<img');
+    expect(f.resolveLogo).not.toHaveBeenCalled();
   });
 });
