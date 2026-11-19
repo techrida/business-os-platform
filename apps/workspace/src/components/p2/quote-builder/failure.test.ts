@@ -40,6 +40,31 @@ describe('describeQuoteFailure: approvers', () => {
   });
 });
 
+describe('describeQuoteFailure: currency switched off (D44)', () => {
+  it('names the currency of a 422 CURRENCY_NOT_ENABLED instead of "check the highlighted fields"', () => {
+    const f = describeQuoteFailure(
+      err(422, 'CURRENCY_NOT_ENABLED', 'Currency INR is not enabled for this company', {
+        currency: 'INR',
+      }),
+      'save',
+    );
+    expect(f.kind).toBe('invalid');
+    expect(f.message).toBe(
+      'INR is not enabled for your company. Choose another currency, or ask an administrator to switch it on in Settings. Nothing was saved.',
+    );
+  });
+
+  it('does not echo a details value that is not a currency code', () => {
+    const f = describeQuoteFailure(
+      err(422, 'CURRENCY_NOT_ENABLED', 'm', { currency: '<b>x</b>' }),
+      'submit',
+    );
+    expect(f.message).toBe(
+      'This currency is not enabled for your company. Choose another currency, or ask an administrator to switch it on in Settings. Nothing was submitted.',
+    );
+  });
+});
+
 describe('describeQuoteFailure: exchange rate', () => {
   it('names the currency and the rate date from details', () => {
     const f = describeQuoteFailure(

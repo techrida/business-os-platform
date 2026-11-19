@@ -115,6 +115,8 @@ export const VendorDtoSchema = z.strictObject({
   status: VendorStatusSchema,
   version: z.number().int().min(1),
   approvedAt: isoDateTime.nullable(),
+  /** The vendor's logo (`app.vendors.logo_document_id`); null or absent shows initials. */
+  logoDocumentId: z.guid().nullable().optional(),
 });
 export type VendorDto = z.infer<typeof VendorDtoSchema>;
 

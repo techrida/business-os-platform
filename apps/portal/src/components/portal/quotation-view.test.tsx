@@ -44,6 +44,29 @@ describe('QuotationView markup', () => {
     }
   });
 
+  it('shows the tax rate once when the tax code name already carries it', () => {
+    const view = sampleView({
+      taxSummary: [{ label: 'VAT 13%', percent: '13', tax: '390.00' }],
+    } as never);
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('VAT 13%');
+    expect(html).not.toContain('VAT 13% 13%');
+  });
+
+  it('draws no empty Terms card when the quotation has no terms and no payment schedule', () => {
+    const view = sampleView({
+      scope: null,
+      assumptions: null,
+      exclusions: null,
+      termsAndConditions: null,
+      deliveryTimeline: null,
+      paymentTermName: null,
+      paymentSchedule: [],
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).not.toContain('>Terms<');
+  });
+
   it('shows an NPR quotation with no internal word other than its own currency code', () => {
     const html = renderToStaticMarkup(
       <QuotationView view={sampleView({ currency: 'NPR' })} today={TODAY} />,

@@ -29,12 +29,13 @@ const { resetCompanyCardAction, saveCompanyCardAction } = await import('./action
 const { STALE_SETTING_MESSAGE } = await import('@/components/settings/stale-setting');
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+const DOC_ID = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
 const session = { accessToken: 't' };
 
 const stored: CompanyProfile = {
   ...EMPTY_COMPANY_PROFILE,
   displayName: 'Acme',
-  logoDataUrl: PNG,
+  legacyLogoDataUrl: PNG,
   phones: ['01-4000000'],
   email: 'a@acme.test',
   signatoryName: 'Sita',
@@ -125,24 +126,37 @@ describe('saveCompanyCardAction', () => {
     ]);
   });
 
-  it('Logo saves a PNG and removes it with an empty value; SVG is refused', async () => {
-    values['entity.profile'] = { ...stored, logoDataUrl: null };
-    await saveCompanyCardAction(IDLE, form({ card: 'logo', logo: PNG }));
-    expect(written()).toEqual([['entity.profile', { ...stored, logoDataUrl: PNG }]]);
-
-    putSetting.mockClear();
-    values['entity.profile'] = stored;
-    await saveCompanyCardAction(IDLE, form({ card: 'logo', logo: '' }));
-    expect(written()).toEqual([['entity.profile', { ...stored, logoDataUrl: null }]]);
-
-    putSetting.mockClear();
-    const svg = await saveCompanyCardAction(
-      IDLE,
-      form({ card: 'logo', logo: 'data:image/svg+xml;base64,PHN2Zz4=' }),
-    );
-    expect(svg.status).toBe('error');
-    expect(svg.fieldErrors?.['logo']).toContain('SVG');
+  it('has no logo card: the logo is moved by its upload, so a form cannot set or clear it', async () => {
+    for (const logo of ['', PNG, DOC_ID]) {
+      const result = await saveCompanyCardAction(
+        IDLE,
+        form({ card: 'logo', logo, logoDocumentId: DOC_ID }),
+      );
+      expect(result).toEqual({ status: 'error', message: 'Unknown card.' });
+    }
+    expect(getSetting).not.toHaveBeenCalled();
     expect(putSetting).not.toHaveBeenCalled();
+  });
+
+  it('keeps the uploaded logo and a logo not yet moved when any other card saves', async () => {
+    const withLogo: CompanyProfile = { ...stored, logoDocumentId: DOC_ID, legacyLogoDataUrl: PNG };
+    const saves: Record<string, string | string[]>[] = [
+      { card: 'identity', displayName: 'Acme Pvt', panVatNo: '' },
+      { card: 'contact', phone: ['9800000000'], email: '', website: '' },
+      { card: 'signatory', name: 'Ram', title: 'Director' },
+      // A smuggled logo field is ignored: only the card's own fields are read.
+      { card: 'contact', phone: [], email: '', website: '', logoDocumentId: '', logo: '' },
+    ];
+    for (const entries of saves) {
+      values['entity.profile'] = withLogo;
+      putSetting.mockClear();
+      const result = await saveCompanyCardAction(IDLE, form(entries));
+      expect(result.status).toBe('ok');
+      const profile = putSetting.mock.calls.find(([, key]) => key === 'entity.profile')?.[2] as
+        CompanyProfile | undefined;
+      expect(profile?.logoDocumentId).toBe(DOC_ID);
+      expect(profile?.legacyLogoDataUrl).toBe(PNG);
+    }
   });
 
   it('refuses an unknown card without touching a setting', async () => {
@@ -239,6 +253,7 @@ describe('saveCompanyCardAction: the loaded version', () => {
     expect(result.message).toBe(
       'The display name was saved, but the PAN or VAT number was changed by someone else. Reload to see the latest.',
     );
+    expect(result.stale).toBe(true);
     expect(putSetting).toHaveBeenCalledTimes(2);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -287,7 +302,7 @@ describe('resetCompanyCardAction', () => {
       3,
     );
     const profile = putSetting.mock.calls[0]?.[2] as CompanyProfile;
-    expect(profile.logoDataUrl).toBe(PNG);
+    expect(profile.legacyLogoDataUrl).toBe(PNG);
     expect(profile.displayName).toBe('Acme');
     expect(profile.signatoryName).toBe('Sita');
     expect(revalidatePath).toHaveBeenCalledWith('/settings/company');
@@ -298,6 +313,17 @@ describe('resetCompanyCardAction', () => {
     expect(written()).toEqual([
       ['entity.profile', { ...stored, signatoryName: null, signatoryTitle: null }],
     ]);
+  });
+
+  it('keeps the uploaded logo and a logo not yet moved when Contact or Signatory is reset', async () => {
+    for (const card of ['contact', 'signatory']) {
+      values['entity.profile'] = { ...stored, logoDocumentId: DOC_ID, legacyLogoDataUrl: PNG };
+      putSetting.mockClear();
+      expect((await resetCompanyCardAction(card, 3)).status).toBe('ok');
+      const profile = putSetting.mock.calls[0]?.[2] as CompanyProfile;
+      expect(profile.logoDocumentId).toBe(DOC_ID);
+      expect(profile.legacyLogoDataUrl).toBe(PNG);
+    }
   });
 
   it('merges into the value saved now, so a field someone else added is kept', async () => {

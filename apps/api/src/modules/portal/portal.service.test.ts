@@ -7,7 +7,8 @@
 import {
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   DEFAULT_DOCUMENT_STYLE,
-  EMPTY_COMPANY_PROFILE,
+  EMPTY_SNAPSHOT_COMPANY_PROFILE,
+  PortalDisplaySchema,
   type PortalDisplay,
 } from '@bos/contracts';
 import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
@@ -116,10 +117,13 @@ const LIVE: PortalDisplay = {
   dateFormat: 'yyyy-MM-dd',
 };
 
+/** The saved `currency.enabled` in these tests: INR switched off, so a test can tell it from the default. */
+const LIVE_CURRENCIES = ['NPR', 'USD'];
+
 /** A stored document_style as the render job freezes it, with the given number and date fields. */
 const snapshotWith = (fields: Record<string, unknown>) => ({
   style: DEFAULT_DOCUMENT_STYLE,
-  profile: EMPTY_COMPANY_PROFILE,
+  profile: EMPTY_SNAPSHOT_COMPANY_PROFILE,
   capturedAt: '2026-11-08T10:00:00.000Z',
   ...fields,
 });
@@ -174,7 +178,7 @@ function setup(
     caller?: Principal;
     docStatus?: string;
     address?: unknown;
-    live?: { numberSystems?: unknown; dateFormat?: unknown };
+    live?: { numberSystems?: unknown; dateFormat?: unknown; enabledCurrencies?: unknown };
   } = {},
 ) {
   const store = fakeStore(seeds);
@@ -199,6 +203,13 @@ function setup(
       if (key === 'format.date') {
         return Promise.resolve(
           opts.live && 'dateFormat' in opts.live ? opts.live.dateFormat : LIVE.dateFormat,
+        );
+      }
+      if (key === 'currency.enabled') {
+        return Promise.resolve(
+          opts.live && 'enabledCurrencies' in opts.live
+            ? opts.live.enabledCurrencies
+            : LIVE_CURRENCIES,
         );
       }
       return Promise.resolve('301234567');
@@ -550,26 +561,68 @@ describe('PortalService.get: the display it was sent with', () => {
 describe('PortalService.display', () => {
   const VENDOR_PARTY = '0a000000-0000-4000-8000-00000000000b';
 
-  it('answers a customer with the live settings of its acting entity', async () => {
+  const LIVE_WITH_CURRENCIES = { ...LIVE, enabledCurrencies: LIVE_CURRENCIES };
+
+  it('answers a customer with the live settings of its acting entity, enabled currencies included', async () => {
     const { service, settings } = setup([SENT]);
-    await expect(service.display()).resolves.toEqual(LIVE);
+    const display = await service.display();
+    expect(display).toEqual(LIVE_WITH_CURRENCIES);
+    expect(PortalDisplaySchema.safeParse(display).success).toBe(true);
     expect(settings.get).toHaveBeenCalledWith(
       { tenantId: TENANT, organizationId: ENTITY },
       'format.number_systems',
     );
+    expect(settings.get).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: ENTITY },
+      'currency.enabled',
+    );
   });
 
-  it('answers a vendor with a party too', async () => {
+  it('answers a vendor with a party too, enabled currencies included', async () => {
     const { service } = setup([], {
       caller: principalOf({ orgKind: 'vendor', partyId: VENDOR_PARTY, grants: new Map() }),
     });
-    await expect(service.display()).resolves.toEqual(LIVE);
+    await expect(service.display()).resolves.toEqual(LIVE_WITH_CURRENCIES);
   });
 
   it('never uses a version snapshot: it is the company setting now', async () => {
     const frozen = snapshotWith({ numberSystem: 'international', dateFormat: 'dd/MM/yyyy' });
     const { service } = setup([{ ...SENT, documentStyle: frozen }]);
-    await expect(service.display()).resolves.toEqual(LIVE);
+    await expect(service.display()).resolves.toEqual(LIVE_WITH_CURRENCIES);
+  });
+
+  it('offers what the 422 check accepts: NPR first and always, then the known saved codes', async () => {
+    const cases: [unknown, string[]][] = [
+      [
+        ['NPR', 'INR', 'USD'],
+        ['NPR', 'INR', 'USD'],
+      ],
+      [['USD'], ['NPR', 'USD']],
+      [
+        ['USD', 'NPR', 'USD'],
+        ['NPR', 'USD'],
+      ],
+      [
+        ['NPR', 'EUR', 42, 'INR'],
+        ['NPR', 'INR'],
+      ],
+      ['USD', ['NPR']],
+      [null, ['NPR']],
+    ];
+    for (const [stored, offered] of cases) {
+      const { service } = setup([SENT], { live: { enabledCurrencies: stored } });
+      const display = await service.display();
+      expect(display.enabledCurrencies, JSON.stringify(stored)).toEqual(offered);
+      expect(PortalDisplaySchema.safeParse(display).success).toBe(true);
+    }
+  });
+
+  it('keeps the enabled currencies out of a quotation view: only the display read carries them', async () => {
+    const { service, settings } = setup([SENT]);
+    const view = await service.get(SENT.versionId);
+    expect(view.display).toEqual(LIVE);
+    expect(view.display).not.toHaveProperty('enabledCurrencies');
+    expect(settings.get).not.toHaveBeenCalledWith(expect.anything(), 'currency.enabled');
   });
 
   const refused: [string, Partial<Principal>][] = [

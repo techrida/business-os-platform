@@ -25,7 +25,13 @@ import {
   PortalInvoiceListItemSchema,
   SignedLinkDtoSchema,
 } from '@bos/contracts';
-import { createParty, createPortalUser, createTenantWithEntity, runMigrations } from '@bos/db';
+import {
+  createParty,
+  createPortalUser,
+  createTenantWithEntity,
+  invoicePrintLog,
+  runMigrations,
+} from '@bos/db';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -44,6 +50,7 @@ import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
 import { DocumentsService, type GeneratedFile } from '../../platform/documents/documents.service';
 import { SignedLinks, type LinkStore } from '../../platform/documents/signed-link';
 import { DiskStorageAdapter } from '../../platform/documents/storage.adapter';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import {
   drizzleInvoiceHeadLoader,
@@ -80,6 +87,7 @@ let pool: Pool;
 let db: Db;
 let storageRoot: string;
 let documents: DocumentsService;
+let settings: SettingsService;
 let app: INestApplication;
 let baseUrl: string;
 const ledger = new LedgerService();
@@ -139,7 +147,8 @@ beforeAll(async () => {
   // The real policy: only the invoice render job adds a file, and only to an issued invoice.
   documents.registerOwner(new InvoiceOwnerPolicy(drizzleInvoiceHeadLoader(db)));
 
-  const service = new PortalBillingService(caller, db, documents, () => NOW);
+  settings = new SettingsService(db);
+  const service = new PortalBillingService(caller, db, documents, settings, () => NOW);
   const moduleRef = await Test.createTestingModule({
     controllers: [PortalBillingController],
     providers: [{ provide: PortalBillingService, useValue: service }],
@@ -457,6 +466,32 @@ describe('portal invoice reads over HTTP on a real database', () => {
       invoiceId,
     );
     const { documentId } = await renderPdf(scopeA, invoiceId);
+    // What the render job stores on the original print (print 1), and a saved company profile.
+    const format = {
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'yyyy-MM-dd',
+      capturedAt: '2026-11-01T06:15:00.000Z',
+    };
+    await withTx(db, scopeA, systemActor('invoice-render'), async (tx) => {
+      await tx.insert(invoicePrintLog).values({
+        tenantId: w.tenantId,
+        organizationId: w.entityA,
+        invoiceId,
+        printNo: 1,
+        printedBy: null,
+        renderFormat: format,
+      });
+      await settings.set(tx, 'entity.profile', {
+        displayName: 'Techrida',
+        logoDocumentId: null,
+        phones: ['+977 1 5550100'],
+        email: 'billing@techrida.example',
+        website: 'https://techrida.example',
+        panVatNo: null,
+        signatoryName: 'Asha Shrestha',
+        signatoryTitle: 'Director',
+      });
+    });
     current = customerOf(w, w.partyP);
 
     const list = z
@@ -494,12 +529,33 @@ describe('portal invoice reads over HTTP on a real database', () => {
         subtotal: '1000.00',
         discountAmount: '0.00',
         taxableAmount: '1000.00',
+        exemptAmount: '0.00',
+        zeroRatedAmount: '0.00',
         taxAmount: '130.00',
         total: '1130.00',
       },
       taxSummary: [{ label: 'VAT', percent: '13', base: '1000.00', tax: '130.00' }],
+      format,
+      // Only the four contact keys: no display name, logo or website.
+      sellerContact: {
+        phones: ['+977 1 5550100'],
+        email: 'billing@techrida.example',
+        signatoryName: 'Asha Shrestha',
+        signatoryTitle: 'Director',
+      },
     });
+    expect(Object.keys(view.sellerContact ?? {}).sort()).toEqual([
+      'email',
+      'phones',
+      'signatoryName',
+      'signatoryTitle',
+    ]);
     expect(view.file?.documentId).toBe(documentId);
+    // The credit note was never printed: no stored format.
+    const noteView = CustomerInvoiceViewSchema.parse(
+      (await get(`/v1/portal/invoices/${creditNote}`)).body,
+    );
+    expect(noteView.format).toBeNull();
 
     const settlement = await get(`/v1/portal/invoices/${invoiceId}/settlement`);
     expect(settlement.status, settlement.text).toBe(200);

@@ -34,6 +34,8 @@ import { LeadLostReasonsService } from '../lost-reasons.service';
 import { startHarness, type Harness } from '../test/harness';
 import { LeadConvertController } from './lead-convert.controller';
 import { LeadConvertService } from './lead-convert.service';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
+import { SettingsService } from '../../../platform/settings/settings.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -52,6 +54,7 @@ beforeAll(async () => {
     audit,
     numbering,
     h.caller,
+    new CurrencyEnabledService(new SettingsService(h.db)),
     new LeadLostReasonsService(h.db, audit, h.caller),
   );
   const customersService = new CustomersService(h.db, numbering, authz, h.caller);

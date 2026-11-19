@@ -13,19 +13,22 @@ import {
 import { chooseOption, selectByName } from '../helpers/select';
 
 async function moveStage(page: Page, value: string, label: string) {
-  await chooseOption(selectByName(page, 'stage'), value);
   if (value === 'lost') {
-    await page.getByLabel('Reason', { exact: true }).fill('Customer declined');
-    await page.getByLabel('Note', { exact: true }).fill('No further work planned.');
-  }
-  await page.getByRole('button', { name: 'Move', exact: true }).click();
-  if (value === 'lost') {
+    // Lost is marked from the header dialog, with a reason chosen from the tenant list (D49, D54-3).
+    await page.getByRole('button', { name: 'Mark lost', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Mark this opportunity lost?' });
+    await dialog.getByRole('combobox', { name: 'Reason' }).click();
+    await page.getByRole('option', { name: 'Price', exact: true }).click();
+    await dialog.getByLabel('Note', { exact: true }).fill('No further work planned.');
+    await dialog.getByRole('button', { name: 'Mark lost', exact: true }).click();
     await expect(
       page.getByRole('complementary', { name: 'Stage' }).getByText(label, { exact: true }),
     ).toBeVisible();
-  } else {
-    await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();
+    return;
   }
+  await chooseOption(selectByName(page, 'stage'), value);
+  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(page.getByText(`Moved to ${label}.`, { exact: true })).toBeVisible();
 }
 
 async function createOpportunity(page: Page, name: string) {

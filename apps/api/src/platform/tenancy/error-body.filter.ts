@@ -96,6 +96,7 @@ export type ErrorCode =
   | 'BILL_HAS_ALLOCATIONS'
   | 'BILL_KIND_NOT_SUPPORTED'
   | 'CURRENCY_NOT_SUPPORTED'
+  | 'CURRENCY_NOT_ENABLED'
   | 'BILL_HAS_PAYMENT_REQUEST'
   | 'SUBMISSION_NOT_RECEIVED'
   | 'SUBMISSION_FILE_NOT_CLEAN'
@@ -220,6 +221,7 @@ const GENERIC_MESSAGE: Record<ErrorCode, string> = {
   BILL_HAS_ALLOCATIONS: 'Part of this bill is already paid or settled, so it cannot be voided',
   BILL_KIND_NOT_SUPPORTED: 'Only bills can be keyed in for now',
   CURRENCY_NOT_SUPPORTED: 'Only NPR bills can be keyed in for now',
+  CURRENCY_NOT_ENABLED: 'This currency is not enabled for this company',
   BILL_HAS_PAYMENT_REQUEST:
     'A payment request waiting for approval or already approved is on this bill, so it cannot be voided',
   SUBMISSION_NOT_RECEIVED: 'This portal submission is no longer waiting for review',
@@ -415,6 +417,7 @@ const UNPROCESSABLE_CODES: readonly ErrorCode[] = [
   // PO, line or code it cannot find).
   'BILL_KIND_NOT_SUPPORTED',
   'CURRENCY_NOT_SUPPORTED',
+  'CURRENCY_NOT_ENABLED',
   'SUBMISSION_HAS_NO_VENDOR',
   'SUBMISSION_INCOMPLETE',
   'SUBMISSION_MISMATCH',

@@ -120,6 +120,11 @@ export const customers = appSchema.table(
     address: jsonb('address').notNull(),
     /** Set when this record was merged into another; the target is the live one. */
     mergedIntoId: uuid('merged_into_id'),
+    /**
+     * The logo, an `app.documents.id` (migration 0054). No foreign key: documents are owned per tenant and
+     * entity. NULL shows the initials avatar.
+     */
+    logoDocumentId: uuid('logo_document_id'),
     version: integer('version').notNull().default(1),
     ...timestamps,
   },
@@ -508,6 +513,8 @@ export const opportunities = appSchema.table(
     stage: text('stage', { enum: OPPORTUNITY_STAGES }).notNull().default('qualified'),
     stageReason: text('stage_reason'),
     stageNote: text('stage_note'),
+    /** 0090 (D54-3): the lost reason option; set with stage = 'lost' (opportunities_lost_reason_fk). */
+    lostReasonId: uuid('lost_reason_id'),
     /** The expected deal value. */
     value: numeric('value', { precision: 18, scale: 2 }),
     currency: char('currency', { length: 3 }).notNull().default('NPR'),
@@ -551,6 +558,11 @@ export const opportunities = appSchema.table(
       name: 'opportunities_department_fk',
       columns: [t.tenantId, t.organizationId, t.departmentId],
       foreignColumns: [departments.tenantId, departments.organizationId, departments.id],
+    }),
+    foreignKey({
+      name: 'opportunities_lost_reason_fk',
+      columns: [t.tenantId, t.lostReasonId],
+      foreignColumns: [leadLostReasons.tenantId, leadLostReasons.id],
     }),
     index('opportunities_tenant_org_department_idx').on(
       t.tenantId,

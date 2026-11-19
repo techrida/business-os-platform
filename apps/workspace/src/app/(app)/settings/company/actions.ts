@@ -129,11 +129,13 @@ export async function saveCompanyCardAction(
     // Checked before describeError, which would pass the API's own text through. No revalidation:
     // the page must keep the version the person loaded, and the screen their typed values.
     if (isStaleSettingError(error)) {
-      return fail(
-        wrote
-          ? 'The display name was saved, but the PAN or VAT number was changed by someone else. Reload to see the latest.'
-          : STALE_SETTING_MESSAGE,
-      );
+      if (!wrote) return fail(STALE_SETTING_MESSAGE);
+      return {
+        ...fail(
+          'The display name was saved, but the PAN or VAT number was changed by someone else. Reload to see the latest.',
+        ),
+        stale: true,
+      };
     }
     revalidatePath('/settings/company');
     if (error instanceof ProfileUnreadable) return fail(error.message);

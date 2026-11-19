@@ -144,6 +144,30 @@ describe('submitBillAction', () => {
     expect(file.error).toMatch(/upload it again/);
   });
 
+  it('names a currency the company switched off against the currency field, and rotates the key', async () => {
+    // The body the API's error filter sends for D44 (`currencyNotEnabled` in the API).
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          error: {
+            code: 'CURRENCY_NOT_ENABLED',
+            message: 'Currency USD is not enabled for this company',
+            correlationId: 'req-12345678',
+            details: { currency: 'USD' },
+          },
+        },
+        422,
+      ),
+    );
+    const state = await send({ currency: 'USD' });
+    expect(callOf(fetchMock, 0).body).toMatchObject({ currency: 'USD' });
+    expect(state.fieldErrors?.currency).toBe(
+      'USD is switched off for the company. Choose another currency.',
+    );
+    expect(state.error).toBeUndefined();
+    expect(state.key).not.toBe(IDEM);
+  });
+
   it('shows a 403 as the account, not the form', async () => {
     fetchMock.mockResolvedValueOnce(json({ error: { code: 'forbidden' } }, 403));
     const state = await send();

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { LeadLostReason } from '@bos/contracts';
 import { act } from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
 import { click, fill, mountForm } from '@/test/form-interactions';
@@ -13,11 +13,18 @@ vi.mock('@/lib/bff', () => ({
 }));
 const mocks = vi.hoisted(() => ({
   changeLeadStage: vi.fn(),
+  changeOpportunityStage: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
 }));
-vi.mock('@/components/p2/crm/crm-api', () => ({ changeLeadStage: mocks.changeLeadStage }));
+vi.mock('@/components/p2/crm/crm-api', () => ({
+  changeLeadStage: mocks.changeLeadStage,
+  changeOpportunityStage: mocks.changeOpportunityStage,
+}));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
+
+import { moveLeadStageAction } from '@/app/(app)/leads/actions';
+import { moveOpportunityStageAction } from '@/app/(app)/opportunities/actions';
 
 import { MarkLostDialog } from './mark-lost-dialog';
 
@@ -84,7 +91,14 @@ async function pickReason(typed: string, label: string) {
 
 async function open(reasons: readonly LeadLostReason[] = REASONS) {
   const mounted = await mountForm(
-    <MarkLostDialog id={LEAD} number="LEAD-1" version={4} reasons={reasons} />,
+    <MarkLostDialog
+      noun="lead"
+      action={moveLeadStageAction}
+      id={LEAD}
+      number="LEAD-1"
+      version={4}
+      reasons={reasons}
+    />,
   );
   const trigger = mounted.container.querySelector('button');
   expect(trigger?.textContent).toBe('Mark lost');
@@ -236,6 +250,26 @@ it('keeps the dialog and the chosen reason, and offers a reload, when the lead c
   await mounted.unmount();
 });
 
+it('does not blame a typed new reason when the lead changed meanwhile', async () => {
+  mocks.changeLeadStage.mockRejectedValueOnce(
+    new ApiError(409, 'stale', {
+      error: { code: 'conflict', message: 'The lead was changed', correlationId: 'c' },
+    }),
+  );
+  const mounted = await open();
+  await pickReason('Slow to reply', 'Add "Slow to reply"');
+  await typeNote('Never answered.');
+  await click(footerButton('Mark lost'));
+  await settle();
+
+  const options = mocks.error.mock.calls[0]?.[1] as { action?: { label: string } } | undefined;
+  expect(options?.action?.label).toBe('Reload');
+  expect(dialog()?.textContent).not.toContain('That reason already exists');
+  expect(combo()?.getAttribute('aria-invalid')).not.toBe('true');
+  expect((combo() as HTMLInputElement).value).toBe('Slow to reply');
+  await mounted.unmount();
+});
+
 it('opens clean after a cancelled attempt', async () => {
   const mounted = await open();
   await pickReason('Pri', 'Price');
@@ -248,4 +282,101 @@ it('opens clean after a cancelled attempt', async () => {
   expect(dialog()?.textContent).not.toContain('Add a note');
   expect((combo() as HTMLInputElement).value).toBe('');
   await mounted.unmount();
+});
+
+describe('opportunity noun (D54-3)', () => {
+  const OPP = '22222222-2222-4222-8222-222222222222';
+
+  async function openOpportunity(reasons: readonly LeadLostReason[] = REASONS) {
+    const mounted = await mountForm(
+      <MarkLostDialog
+        noun="opportunity"
+        action={moveOpportunityStageAction}
+        id={OPP}
+        number="DEAL-7"
+        version={6}
+        reasons={reasons}
+      />,
+    );
+    await click(mounted.container.querySelector('button'));
+    return mounted;
+  }
+
+  it('uses opportunity copy and refuses an empty reason and note before any request', async () => {
+    const mounted = await openOpportunity();
+    expect(dialog()?.textContent).toContain('Mark this opportunity lost?');
+    expect(dialog()?.textContent).toContain('DEAL-7 will move to Lost.');
+    expect(dialog()?.textContent).not.toContain('reopen');
+    await click(footerButton('Mark lost'));
+    await settle();
+
+    expect(mocks.changeOpportunityStage).not.toHaveBeenCalled();
+    expect(dialog()?.textContent).toContain('Choose a reason from the list, or add a new one.');
+    expect(dialog()?.textContent).toContain('Add a note for the record, up to 2,000 characters.');
+    await mounted.unmount();
+  });
+
+  it('moves the opportunity to Lost with a chosen option from the shared list', async () => {
+    mocks.changeOpportunityStage.mockResolvedValue({});
+    const mounted = await openOpportunity();
+    await pickReason('bud', 'No budget');
+    await typeNote(' Budget frozen until Q3. ');
+    await click(footerButton('Mark lost'));
+    await settle();
+
+    expect(mocks.changeOpportunityStage).toHaveBeenCalledExactlyOnceWith(expect.anything(), OPP, {
+      expectedVersion: 6,
+      stage: 'lost',
+      lostReasonId: REASONS[2]!.id,
+      note: 'Budget frozen until Q3.',
+    });
+    expect(mocks.success).toHaveBeenCalledWith('Moved to Lost.');
+    expect(dialog()).toBeNull();
+    await mounted.unmount();
+  });
+
+  it('adds a typed new reason trimmed when moving an opportunity to Lost', async () => {
+    mocks.changeOpportunityStage.mockResolvedValue({});
+    const mounted = await openOpportunity();
+    await pickReason('  Scope changed  ', 'Add "Scope changed"');
+    await typeNote('Client pivoted to an in-house tool.');
+    await click(footerButton('Mark lost'));
+    await settle();
+
+    expect(mocks.changeOpportunityStage).toHaveBeenCalledExactlyOnceWith(expect.anything(), OPP, {
+      expectedVersion: 6,
+      stage: 'lost',
+      newLostReason: 'Scope changed',
+      note: 'Client pivoted to an in-house tool.',
+    });
+    expect(dialog()).toBeNull();
+    await mounted.unmount();
+  });
+
+  it('keeps the typed reason and note and offers Reload on a 409 conflict', async () => {
+    mocks.changeOpportunityStage.mockRejectedValueOnce(
+      new ApiError(409, 'stale', {
+        error: { code: 'conflict', message: 'stale', correlationId: 'c' },
+      }),
+    );
+    const mounted = await openOpportunity();
+    await pickReason('Scope changed', 'Add "Scope changed"');
+    await typeNote('Client pivoted.');
+    await click(footerButton('Mark lost'));
+    await settle();
+
+    expect(mocks.success).not.toHaveBeenCalled();
+    expect(mocks.error).toHaveBeenCalledOnce();
+    const options = mocks.error.mock.calls[0]?.[1] as { action?: { label: string } } | undefined;
+    expect(options?.action?.label).toBe('Reload');
+    expect(dialog()).not.toBeNull();
+    // A stale record is not a duplicate reason: the Reason field stays valid.
+    expect(dialog()?.textContent).not.toContain('That reason already exists');
+    expect(combo()?.getAttribute('aria-invalid')).not.toBe('true');
+    expect((combo() as HTMLInputElement).value).toBe('Scope changed');
+    expect((inDialog('textarea[name="note"]') as HTMLTextAreaElement).value).toBe(
+      'Client pivoted.',
+    );
+    await mounted.unmount();
+  });
 });

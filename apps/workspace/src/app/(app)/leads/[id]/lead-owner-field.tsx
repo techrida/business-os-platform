@@ -37,9 +37,16 @@ export function LeadOwnerField({
   ownerName,
   owners,
 }: LeadOwnerFieldProps) {
-  const display = <OwnerCell name={ownerName} />;
+  const owner = owners.find((o) => o.userId === ownerUserId);
+  const display = (
+    <OwnerCell
+      name={ownerName}
+      seedId={ownerUserId}
+      imageDocumentId={owner?.avatarDocumentId ?? null}
+    />
+  );
   if (owners.length <= 1) return display;
-  const listed = owners.some((o) => o.userId === ownerUserId);
+  const listed = owner !== undefined;
   return (
     <Stack gap="small">
       {display}

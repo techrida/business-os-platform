@@ -1,0 +1,381 @@
+/* The invoice as a document (Figma printable invoice, frame 606:8924): a white sheet that reads like the PDF.
+   Sizes respond to the sheet's own width (a container query), so the sheet works in the wide column at desktop
+   and full width on a phone. Colours are tokens. */
+
+.sheet {
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
+  border: var(--border-width-thin) solid var(--card-border);
+  border-radius: var(--radius-xl);
+  background: var(--card-bg);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  display: grid;
+  gap: 32px;
+  padding: clamp(20px, 5cqi, 48px);
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
+
+.figure {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Head: company block and the title ---- */
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px 32px;
+}
+
+.brand {
+  display: grid;
+  gap: 8px;
+  max-width: min(100%, 22rem);
+  padding: 16px 20px;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+}
+
+/* Left empty for a company logo; nothing renders until one is passed in. */
+.logo {
+  display: flex;
+  max-width: 10rem;
+}
+
+.brandName {
+  margin: 0;
+  font-size: var(--font-size-body-large);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body-large);
+}
+
+.brandPending {
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.titleBlock {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  margin-inline-start: auto;
+  text-align: end;
+}
+
+.title {
+  margin: 0;
+  color: var(--action-primary);
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-h1);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+.notice {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-brand);
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ---- Billing: invoice to, and the details column ---- */
+
+.billing {
+  display: grid;
+  gap: 24px 40px;
+}
+
+.label {
+  margin: 0 0 6px;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-caption);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.buyer {
+  margin: 0;
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-h3);
+}
+
+.partyLine {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.meta {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.metaRow {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.metaRow dt {
+  color: var(--text-secondary);
+}
+
+.metaRow dd {
+  margin: 0;
+}
+
+.bs {
+  display: block;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* ---- Items ---- */
+
+.items {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.items th {
+  padding: 12px;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  text-align: start;
+  text-transform: uppercase;
+}
+
+.items td {
+  padding: 14px 12px;
+  vertical-align: top;
+}
+
+.items tbody tr:nth-child(even) {
+  background: var(--surface-subtle);
+}
+
+.items .end {
+  text-align: end;
+}
+
+.lineNo {
+  color: var(--text-secondary);
+}
+
+.description {
+  white-space: pre-wrap;
+}
+
+/* ---- Balance: the amount due and the totals ---- */
+
+.balance {
+  display: grid;
+  gap: 24px 40px;
+  align-items: start;
+}
+
+.dueAmount {
+  display: inline-block;
+  margin: 0;
+  padding-bottom: 10px;
+  border-bottom: var(--border-width-medium) solid var(--text-primary);
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-h2);
+}
+
+.dueLine {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.totals {
+  display: grid;
+  margin: 0;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.totalRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 16px;
+  padding: 10px 0;
+  border-bottom: var(--border-width-thin) solid var(--divider-color);
+}
+
+.totalRow dt {
+  color: var(--text-secondary);
+}
+
+.totalRow dd {
+  margin: 0;
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.grand {
+  margin-top: 8px;
+  padding: 14px 16px;
+  border-bottom: 0;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+}
+
+.grand dt {
+  color: inherit;
+}
+
+.words {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+/* ---- Signatory and footer ---- */
+
+.sign {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  justify-self: end;
+  min-width: min(100%, 14rem);
+  padding-top: 10px;
+  border-top: var(--border-width-thin) solid var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  text-align: center;
+}
+
+.signName {
+  font-weight: var(--font-weight-semibold);
+}
+
+.foot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 16px 24px;
+  margin: 0;
+  padding: 20px clamp(20px, 5cqi, 48px);
+  border-top: var(--border-width-thin) solid var(--divider-color);
+  border-bottom: 12px solid var(--action-primary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.foot dt {
+  color: var(--text-secondary);
+}
+
+.foot dd {
+  margin: 0;
+}
+
+.foot dd + dd {
+  margin-top: 2px;
+}
+
+/* ---- Wide sheet: two columns for billing and balance ---- */
+
+@container (min-width: 640px) {
+  .billing {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .balance {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  }
+}
+
+/* ---- Narrow sheet: each item becomes a stacked card of label and value ---- */
+
+@container (max-width: 559px) {
+  .items thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .items,
+  .items tbody,
+  .items tr,
+  .items td {
+    display: block;
+  }
+
+  .items tr {
+    padding: 12px;
+    border-top: var(--border-width-thin) solid var(--divider-color);
+  }
+
+  .items tbody tr:nth-child(even) {
+    background: none;
+  }
+
+  .items td {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 4px 0;
+  }
+
+  .items td::before {
+    content: attr(data-label);
+    color: var(--text-secondary);
+    font-size: var(--font-size-caption);
+  }
+
+  .items td.description {
+    display: block;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .items td.description::before,
+  .items td.lineNo::before {
+    content: none;
+  }
+
+  .items td.lineNo {
+    display: block;
+    padding: 0;
+    font-size: var(--font-size-caption);
+  }
+}

@@ -55,6 +55,7 @@ export default async function CompanySettingsPage() {
         <SectionError message={loaded.data.settings.message} />
       ) : (
         <CompanyEditor
+          organisationId={session.orgId}
           settings={loaded.data.settings.data}
           versions={loaded.data.versions}
           action={saveCompanyCardAction}

@@ -36,6 +36,7 @@ describe('conversion tax selection', () => {
         submission={{ id: 'submission', vendorName: 'Vendor', vendorRef: null, sentAt: 'Today' }}
         prLines={[{ id: 'line', lineNo: 1, description: 'Chair', uom: 'pcs', quantity: '1' }]}
         taxCodes={[{ id: '22222222-2222-4222-8222-222222222222', label: 'VAT 13%' }]}
+        enabledCurrencies={['NPR', 'INR', 'USD']}
         cancelHref="/procurement/rfqs/rfq"
         reloadHref="/procurement/rfqs/rfq/quotations/new?submission=submission"
       />,
@@ -45,5 +46,31 @@ describe('conversion tax selection', () => {
     expect(out).toContain('Choose an available tax code for this line.');
     expect(out).toContain('VAT 13%');
     expect(out).toMatch(/<button[^>]*type="submit"[^>]*disabled/);
+  });
+});
+
+describe('currency picker (D44)', () => {
+  it('offers only the enabled currencies', () => {
+    const out = renderToStaticMarkup(
+      <QuoteForm
+        action={vi.fn()}
+        idempotencyKey="key"
+        rfqId="rfq"
+        mode="record"
+        vendors={[{ id: 'vendor', name: 'Vendor' }]}
+        prLines={[{ id: 'line', lineNo: 1, description: 'Chair', uom: 'pcs', quantity: '1' }]}
+        taxCodes={[{ id: '22222222-2222-4222-8222-222222222222', label: 'VAT 13%' }]}
+        enabledCurrencies={['NPR', 'USD']}
+        cancelHref="/procurement/rfqs/rfq"
+        reloadHref="/procurement/rfqs/rfq/quotations/new"
+      />,
+    );
+    // The shared Select keeps a hidden native <select> after its named field, listing every option.
+    const select = /name="currency" value="[^"]*"\/><button.*?<select[^>]*>(.*?)<\/select>/s.exec(
+      out,
+    )?.[1];
+    expect(select).toBeDefined();
+    const values = [...select!.matchAll(/<option[^>]*value="([^"]*)"/g)].map((m) => m[1]);
+    expect(values.filter((v) => v !== '')).toEqual(['NPR', 'USD']);
   });
 });

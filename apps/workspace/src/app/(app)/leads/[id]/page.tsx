@@ -9,6 +9,7 @@ import { ConvertDialog } from '@/components/p2/crm/convert-dialog';
 import { getLead, listActivities } from '@/components/p2/crm/crm-api';
 import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
+import { MarkLostDialog } from '@/components/p2/crm/mark-lost-dialog';
 import { MoveForm } from '@/components/p2/crm/move-form';
 import { loadPeople } from '@/components/p2/crm/people';
 import { ActivityList, LoadProblem, StageBadge } from '@/components/p2/crm/server-bits';
@@ -32,7 +33,6 @@ import styles from '../leads.module.css';
 import { QualifyLead } from '../qualify-lead';
 
 import { LeadOwnerField } from './lead-owner-field';
-import { MarkLostDialog } from './mark-lost-dialog';
 
 export const metadata: Metadata = { title: 'Lead · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -213,6 +213,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               ) : null}
               {canMarkLost ? (
                 <MarkLostDialog
+                  noun="lead"
+                  action={moveLeadStageAction}
                   id={lead.id}
                   number={lead.number}
                   version={lead.version}

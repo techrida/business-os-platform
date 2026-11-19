@@ -12,6 +12,7 @@ import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page } from '@/components/ui/page';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 export const metadata: Metadata = { title: 'Edit Organization · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,8 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
   }
 
   let customer: CustomerDto;
+  // Read alongside the customer; it never throws (a failed read gives the default list).
+  const enabledRead = loadEnabledCurrencies(session);
   try {
     customer = await getCustomer(session, id);
   } catch (err) {
@@ -92,6 +95,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
     );
   }
 
+  const enabledCurrencies = await enabledRead;
   return (
     <Page>
       <Breadcrumb items={crumbs} />
@@ -104,6 +108,7 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
         cancelHref={back}
         reloadHref={here}
         description={customer.number}
+        enabledCurrencies={enabledCurrencies}
       />
     </Page>
   );

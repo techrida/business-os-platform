@@ -35,6 +35,7 @@ import { SectionError } from '../ui';
 import { UsersFilters } from './filters';
 import { PasswordReset } from './password-reset';
 import { PageSize } from './page-size';
+import { PictureEditor } from './picture-editor';
 import { roleLabel } from './role-checkboxes';
 import { RolesEditor } from './roles-editor';
 import styles from './users.module.css';
@@ -216,11 +217,18 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                     const label =
                       [user.displayName, user.email].filter(Boolean).join(' · ') ||
                       `unnamed user ${index + 1}`;
+                    const name = user.displayName ?? user.email ?? `unnamed user ${index + 1}`;
+                    const picture = user.avatarDocumentId ?? null;
                     return (
                       <tr key={user.id}>
                         <Th scope="row" className={admin.rowHead}>
                           <div className={styles.person}>
-                            <Avatar name={user.displayName ?? user.email ?? ''} shape="circle" />
+                            <Avatar
+                              name={user.displayName ?? user.email ?? ''}
+                              seedId={user.id}
+                              imageDocumentId={picture}
+                              shape="circle"
+                            />
                             <span className={styles.personText}>
                               <span className={styles.name}>
                                 {user.displayName ?? 'No name yet'}
@@ -275,6 +283,12 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                         </Td>
                         <Td align="end">
                           <div className={styles.rowActions}>
+                            <PictureEditor
+                              userId={user.id}
+                              name={name}
+                              label={label}
+                              imageDocumentId={picture}
+                            />
                             <RolesEditor userId={user.id} label={label} roles={user.roles} />
                             {canCheckAccess && (
                               <LinkButton
