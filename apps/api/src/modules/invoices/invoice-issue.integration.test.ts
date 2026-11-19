@@ -43,6 +43,7 @@ import type { Principal } from '../../platform/authz/principal';
 import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
 import type { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
+import type { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { SettingsService } from '../../platform/settings/settings.service';
 import { ApprovalsAdminService } from '../approvals/admin.service';
 import type { ApprovalsNotify } from '../approvals/ports';
@@ -167,6 +168,8 @@ const settings = {
           : null,
     ),
 } as unknown as SettingsService;
+// Every currency passes here; the refusal of a disabled one is unit-tested in invoice-drafting.currency.test.ts.
+const currencies = { assertEnabled: () => Promise.resolve() } as unknown as CurrencyEnabledService;
 const notify = {
   notifyUser: vi.fn(() => Promise.resolve(undefined)),
   notifyRole: vi.fn(() => Promise.resolve(undefined)),
@@ -387,7 +390,7 @@ beforeAll(async () => {
   approvals = new ApprovalsService(db, audit, notify, directory, caller, () => NOW);
   approvals.registerSubject(new InvoiceApprovalSubject('tax_invoice', () => NOW));
   const ledger = new LedgerService();
-  drafting = new InvoiceDraftingService(db, authz, audit, caller, ledger, () => NOW);
+  drafting = new InvoiceDraftingService(db, authz, audit, caller, ledger, currencies, () => NOW);
   issuing = buildIssuing(ledger);
   submitting = new InvoiceApprovalService(
     db,
