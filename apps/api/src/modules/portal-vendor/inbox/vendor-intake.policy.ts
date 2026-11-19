@@ -3,6 +3,8 @@
 // of P3's `payment_intake`. Serves the NFRs:
 // - "deny by default": only a vendor portal caller whose own party is the owner passes `allowsCounterparty`; staff
 //   keep the usual `documents.upload` check on the vendor's ref, and no job adds files here;
+// - staff read these files with `vendor.read` on the vendor (`readPermission`) or `documents.read`, so whoever may
+//   see the vendor (procurement) opens what it sent without a wider `documents.read`;
 // - "no unscanned file is ever served": the type, size and scan rules of DocumentsService are unchanged.
 // VendorPortalInboxModule registers it when it starts.
 import { scoped, vendorBills, vendorBillSubmissions, vendors } from '@bos/db';
@@ -16,6 +18,7 @@ export const VENDOR_INTAKE_OWNER_TYPE = 'vendor_portal_intake';
 export function vendorIntakeOwnerPolicy(db: Db): DocumentOwnerPolicy {
   return {
     ownerType: VENDOR_INTAKE_OWNER_TYPE,
+    readPermission: 'vendor.read',
     canAttach: async (scope, _vendorId, tx, documentId) => {
       if (documentId === undefined) return true;
       const submissionsQuery = (tx ?? db)
