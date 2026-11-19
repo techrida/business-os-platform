@@ -110,6 +110,13 @@ describe('documentNumberText', () => {
     expect(documentNumberText('Draft goods_receipt abcdef12')).toBe('Draft goods receipt');
   });
 
+  it('leaves words a person typed alone even when they look like a draft reference', () => {
+    expect(documentNumberText('Draft budget 20261120')).toBe('Draft budget 20261120');
+    expect(snapshotEntries({ title: 'Draft budget 20261120' })[0]?.value).toBe(
+      'Draft budget 20261120',
+    );
+  });
+
   it('leaves a real document number alone', () => {
     expect(documentNumberText('INV-2083/84-00001')).toBe('INV-2083/84-00001');
     expect(documentNumberText('Draft budget for review')).toBe('Draft budget for review');
