@@ -244,3 +244,25 @@ it('shows view-only cards with every control disabled and no foot buttons', asyn
   expect(leads.textContent).not.toContain('Discard');
   expect(leads.querySelector('button[aria-label^="Reset "]')).toBeNull();
 });
+
+it('asks before discarding unsaved edits when another card opens', async () => {
+  await render();
+  await click(byLabel('Edit Leads'));
+  await click(checkbox(card('Leads'), 'Department heads also see their whole department'));
+  await click(byLabel('Edit Invoices'));
+  await flush();
+  const dialog = document.querySelector('[role="dialog"]');
+  expect(dialog?.textContent).toContain('Discard your changes to Leads?');
+  await click(textButton('Keep editing'));
+  await flush();
+  expect(checkbox(card('Leads'), 'Department heads also see their whole department').checked).toBe(
+    false,
+  );
+
+  await click(byLabel('Edit Invoices'));
+  await flush();
+  await click(textButton('Discard'));
+  await flush();
+  expect(card('Invoices').textContent).toContain('Who can see invoices');
+  expect(card('Leads').textContent).not.toContain('Who can see leads');
+});
