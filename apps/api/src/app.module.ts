@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ActivitiesModule } from './modules/activities/activities.module';
 import { ApprovalsHttpModule } from './modules/approvals/approvals.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { ImagesModule } from './modules/images/images.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { InvoiceRenderModule } from './modules/invoices/render/invoice-render.module';
 import { LeadsModule } from './modules/leads/leads.module';
@@ -105,6 +106,8 @@ import { UsersModule } from './platform/users/users.module';
     VendorBillsModule,
     BillSubmissionsModule,
     PaymentRequestsModule,
+    // U12: logos and profile pictures as documents.
+    ImagesModule,
   ],
 })
 export class AppModule {}
