@@ -665,6 +665,7 @@ describe('list by derived settlement', () => {
       audit,
       caller,
       new LedgerService(),
+      currencies,
       () => new Date('2027-03-01T06:00:00Z'),
     );
     const overdue = (await later.list({ settlement: ['overdue'] })).rows.map((r) => r.id);

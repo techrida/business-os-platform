@@ -299,15 +299,25 @@ export class InvoiceDraftingService {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
     this.authz.assert('invoice.draft', scope);
-    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). A pool read, so it runs before the
-    // transaction opens. A draft cut from a sales order copies the order's currency and is not checked again.
-    await this.currencies.assertEnabled(scope, typed.currency);
+    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). The check is a pool read, so it runs
+    // before the transaction opens, but the refusal is thrown inside the idempotency callback: a retry of a create
+    // that already succeeded replays its stored answer even after the currency was switched off. A draft cut from a
+    // sales order copies the order's currency and is not checked again.
+    let refusal: unknown;
+    try {
+      await this.currencies.assertEnabled(scope, typed.currency);
+    } catch (error) {
+      refusal = error;
+    }
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
-      const done = await withIdempotency(tx, { command, key: idempotencyKey, body }, async () => ({
-        status: 201,
-        response: await this.createTypedInTx(tx, scope, actor, { ...typed, kind }, now),
-      }));
+      const done = await withIdempotency(tx, { command, key: idempotencyKey, body }, async () => {
+        if (refusal instanceof Error) throw refusal;
+        return {
+          status: 201,
+          response: await this.createTypedInTx(tx, scope, actor, { ...typed, kind }, now),
+        };
+      });
       return done.response;
     });
   }
