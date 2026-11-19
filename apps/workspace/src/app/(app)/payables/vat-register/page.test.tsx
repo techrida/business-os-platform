@@ -129,7 +129,7 @@ it('opens for a role an admin granted the register, whatever its defaults', asyn
   grants.live = new Map([['payables.vat_register.read', 'own']]);
   const html = await render();
   expect(html).not.toContain('Your roles do not include the purchase VAT register.');
-  expect(html).toContain('BILL-2083-0001');
+  expect(html).toContain('INV-1');
   expect(api.getVatRegister).toHaveBeenCalledOnce();
 });
 
