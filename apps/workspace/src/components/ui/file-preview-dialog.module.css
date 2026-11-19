@@ -18,12 +18,23 @@
   overflow: hidden;
 }
 
-/* A page of a PDF: the viewer hints in the URL fit the whole page; the frame takes the full stage. */
-.frame {
+/* The PDF pages scroll inside the stage; the stage keeps the dialog's size whatever the page count. */
+.pdfStage {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.pdfPages {
   width: 100%;
-  height: 100%;
-  border: 0;
-  background: var(--surface-default);
+  min-width: 0;
 }
 
 /* Fit, never crop or stretch: scale down to the stage, keep the ratio, no upscaling past natural size. */
@@ -100,4 +111,48 @@
 
 .overlaySlot > * {
   pointer-events: auto;
+}
+
+/* Opens from a row or a fact list: reads as a link, keeps a 24px hit area. */
+.viewDocument {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.linkTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.linkTrigger:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* On a phone the viewer takes the whole screen; the footer already stacks its buttons. */
+@media (max-width: 479px) {
+  .dialog.dialog {
+    top: 0;
+    left: 0;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    translate: none;
+    border: 0;
+    border-radius: 0;
+  }
 }
