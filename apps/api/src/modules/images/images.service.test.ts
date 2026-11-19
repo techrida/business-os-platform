@@ -7,8 +7,10 @@
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
-import { EMPTY_COMPANY_PROFILE, type CompanyProfile } from '@bos/contracts';
+import { EMPTY_COMPANY_PROFILE, IMAGE_MAX_BYTES, type CompanyProfile } from '@bos/contracts';
 import {
   BadRequestException,
   ConflictException,
@@ -28,6 +30,7 @@ import {
   type ImageCaller,
   type ImageDocumentRow,
   type ImagePointerStore,
+  type ImageUploadRequest,
   type RowImageOwnerType,
 } from './images.service';
 
@@ -82,6 +85,8 @@ const documents = {
   assertCanManage: vi.fn(),
   removeInTransaction: vi.fn(),
   cleanupRemoved: vi.fn(),
+  createAndReceiveUpload: vi.fn(),
+  remove: vi.fn(),
 };
 let profile: { value: CompanyProfile; version: number | null };
 const settings = { getLocked: vi.fn(), set: vi.fn() };
@@ -119,6 +124,15 @@ beforeEach(() => {
   documents.assertCanManage.mockReset().mockResolvedValue(undefined);
   documents.removeInTransaction.mockReset().mockResolvedValue([]);
   documents.cleanupRemoved.mockReset().mockResolvedValue(undefined);
+  documents.createAndReceiveUpload
+    .mockReset()
+    .mockImplementation((owner: { ownerType: string; ownerId: string }) =>
+      Promise.resolve({
+        documentId: addDoc(owner.ownerType, owner.ownerId, { status: 'quarantined' }),
+        versionId: randomUUID(),
+      }),
+    );
+  documents.remove.mockReset().mockResolvedValue(undefined);
   settings.getLocked.mockReset().mockImplementation(() => Promise.resolve(profile));
   settings.set.mockReset().mockResolvedValue({ version: 4 });
   audit.record.mockReset().mockResolvedValue(undefined);
@@ -401,5 +415,203 @@ describe('set: refusals', () => {
       await expect(result).rejects.toBeInstanceOf(BadRequestException);
     }
     expect(audit.record).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------------------------------------------------------------- upload
+
+const PNG_BYTES = Buffer.from('89504e470d0a1a0a', 'hex');
+
+/** A request whose body is `chunks`; the headers default to a valid PNG upload. */
+function request(
+  over: Partial<Omit<ImageUploadRequest, 'stream'>> = {},
+  chunks: Buffer[] = [PNG_BYTES],
+): ImageUploadRequest & { stream: Readable } {
+  return {
+    contentType: 'image/png',
+    contentLength: undefined,
+    fileNameHeader: 'logo.png',
+    ...over,
+    stream: Readable.from(chunks),
+  };
+}
+
+/** The body was never touched: no reader attached, never started flowing. */
+function untouched(stream: Readable): void {
+  expect(stream.listenerCount('data')).toBe(0);
+  expect(stream.readableFlowing).toBeNull();
+}
+
+describe('upload', () => {
+  it('stores the bytes through the scanned upload, moves the pointer and returns the new id', async () => {
+    const ownerId = randomUUID();
+    pointers.set(key('customer_logo', ownerId), null);
+    const req = request(
+      { contentType: 'IMAGE/PNG; charset=binary', fileNameHeader: 'my%20logo.png' },
+      [PNG_BYTES.subarray(0, 3), PNG_BYTES.subarray(3)],
+    );
+
+    const result = await service.upload('customer_logo', ownerId, req, staff);
+
+    expect(documents.assertCanManage).toHaveBeenCalledWith(scope, 'customer_logo', ownerId);
+    expect(documents.createAndReceiveUpload).toHaveBeenCalledWith(
+      { ownerType: 'customer_logo', ownerId },
+      { filename: 'my logo.png', declaredMime: 'image/png', bytes: PNG_BYTES },
+      { scope, actor: staff.actor },
+    );
+    expect(pointers.get(key('customer_logo', ownerId))).toBe(result.documentId);
+    expect(audit.record.mock.calls[0]?.[1]).toMatchObject({
+      action: 'image.set',
+      meta: { oldDocumentId: null, newDocumentId: result.documentId },
+    });
+    expect(documents.remove).not.toHaveBeenCalled();
+  });
+
+  it('takes a chunked body without Content-Length up to exactly the cap', async () => {
+    const ownerId = randomUUID();
+    pointers.set(key('vendor_logo', ownerId), null);
+    const half = IMAGE_MAX_BYTES / 2;
+    const req = request({}, [Buffer.alloc(half, 1), Buffer.alloc(half, 2)]);
+    await service.upload('vendor_logo', ownerId, req, staff);
+    const file = documents.createAndReceiveUpload.mock.calls[0]?.[1] as { bytes: Buffer };
+    expect(file.bytes.length).toBe(IMAGE_MAX_BYTES);
+  });
+
+  it('is 413 from a Content-Length over the cap, before the body is read', async () => {
+    const req = request({ contentLength: String(IMAGE_MAX_BYTES + 1) });
+    expect(await statusOf(service.upload('customer_logo', randomUUID(), req, staff))).toBe(413);
+    untouched(req.stream);
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
+  it('is 413 while counting a body over the cap, without destroying the stream (the 413 must still be sent)', async () => {
+    for (const contentLength of [undefined, '10']) {
+      documents.createAndReceiveUpload.mockClear();
+      const chunk = Buffer.alloc(200_000, 7);
+      const req = request({ contentLength }, [chunk, chunk, chunk, chunk]);
+      expect(await statusOf(service.upload('customer_logo', randomUUID(), req, staff))).toBe(413);
+      expect(req.stream.listenerCount('data')).toBe(0);
+      // The rest is drained to its natural end: a destroy would reject with ERR_STREAM_PREMATURE_CLOSE.
+      await expect(finished(req.stream)).resolves.toBeUndefined();
+      expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+    }
+  });
+
+  it('is 415 for a Content-Type that is not PNG, JPEG or WebP, before the body is read', async () => {
+    for (const contentType of [
+      'image/svg+xml',
+      'application/pdf',
+      'text/plain',
+      'image/gif',
+      '',
+      undefined,
+    ]) {
+      const req = request({ contentType });
+      expect(await statusOf(service.upload('customer_logo', randomUUID(), req, staff))).toBe(415);
+      untouched(req.stream);
+    }
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
+  it('is 400 for a missing, undecodable or unsafe x-file-name, before the body is read', async () => {
+    for (const fileNameHeader of [
+      undefined,
+      '',
+      '%E0%A4%A',
+      'a%2Fb.png',
+      '..%5Cx.png',
+      '%00a.png',
+      'x%0Ay.png',
+      'x'.repeat(256),
+    ]) {
+      const req = request({ fileNameHeader });
+      expect(await statusOf(service.upload('customer_logo', randomUUID(), req, staff))).toBe(400);
+      untouched(req.stream);
+    }
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
+  it('is 400 for a malformed Content-Length and for an empty body', async () => {
+    const bad = request({ contentLength: '12abc' });
+    expect(await statusOf(service.upload('customer_logo', randomUUID(), bad, staff))).toBe(400);
+    untouched(bad.stream);
+    const empty = request({}, []);
+    expect(await statusOf(service.upload('customer_logo', randomUUID(), empty, staff))).toBe(400);
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
+  it('is 400 for a body that was already consumed', async () => {
+    const req = request();
+    req.stream.resume();
+    await finished(req.stream);
+    expect(await statusOf(service.upload('customer_logo', randomUUID(), req, staff))).toBe(400);
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
+  it("passes the owner check's 403 and 404 through before the headers or the body are looked at", async () => {
+    for (const refusal of [
+      new ForbiddenException({ code: 'forbidden', reason: 'no_permission' }),
+      new NotFoundException('Owner record not found'),
+    ]) {
+      documents.assertCanManage.mockRejectedValueOnce(refusal);
+      const req = request({
+        contentType: 'image/svg+xml',
+        fileNameHeader: undefined,
+        contentLength: String(IMAGE_MAX_BYTES * 4),
+      });
+      expect(await statusOf(service.upload('vendor_logo', randomUUID(), req, staff))).toBe(
+        refusal.getStatus(),
+      );
+      untouched(req.stream);
+    }
+    expect(documents.createAndReceiveUpload).not.toHaveBeenCalled();
+  });
+
+  it('is 403 for a portal caller and 404 for an unknown owner type or bad id, before the owner check', async () => {
+    const portalReq = request();
+    expect(await statusOf(service.upload('customer_logo', randomUUID(), portalReq, portal))).toBe(
+      403,
+    );
+    untouched(portalReq.stream);
+    for (const [ownerType, ownerId] of [
+      ['payment_intake', randomUUID()],
+      ['customer_logo', 'not-a-uuid'],
+    ] as const) {
+      const req = request();
+      expect(await statusOf(service.upload(ownerType, ownerId, req, staff))).toBe(404);
+      untouched(req.stream);
+    }
+    expect(documents.assertCanManage).not.toHaveBeenCalled();
+  });
+
+  it('removes the new document and throws the pointer error when the pointer move fails', async () => {
+    // No owner row: set's transaction answers 404 after the document was created.
+    const ownerId = randomUUID();
+    expect(await statusOf(service.upload('customer_logo', ownerId, request(), staff))).toBe(404);
+    const created = (await documents.createAndReceiveUpload.mock.results[0]?.value) as {
+      documentId: string;
+    };
+    expect(documents.remove).toHaveBeenCalledWith(created.documentId, {
+      who: { scope, actor: staff.actor },
+    });
+  });
+
+  it('still throws the pointer error when removing the new document fails too', async () => {
+    documents.remove.mockRejectedValue(new Error('database down'));
+    expect(await statusOf(service.upload('customer_logo', randomUUID(), request(), staff))).toBe(
+      404,
+    );
+    expect(documents.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws the upload error unchanged and moves no pointer when storing fails', async () => {
+    const ownerId = randomUUID();
+    pointers.set(key('customer_logo', ownerId), null);
+    documents.createAndReceiveUpload.mockRejectedValue(
+      new HttpException('The file content does not match its declared type', 415),
+    );
+    expect(await statusOf(service.upload('customer_logo', ownerId, request(), staff))).toBe(415);
+    expect(pointers.get(key('customer_logo', ownerId))).toBeNull();
+    expect(documents.remove).not.toHaveBeenCalled();
   });
 });
