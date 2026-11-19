@@ -1,3 +1,4 @@
+import { avatarColour, imagePath } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
@@ -36,6 +37,16 @@ describe('OwnerCell', () => {
     const html = renderToStaticMarkup(<OwnerCell owned name="Asha Gurung" />);
     expect(html).toContain('>AG<');
     expect(html).toContain('Asha Gurung');
+  });
+
+  it("seeds the colour from the owner's user id and shows their picture", () => {
+    const owner = '33333333-3333-4333-8333-333333333333';
+    const picture = '66666666-6666-4666-8666-666666666666';
+    const html = renderToStaticMarkup(
+      <OwnerCell owned name="Asha Gurung" seedId={owner} imageDocumentId={picture} />,
+    );
+    expect(html).toContain(`--avatar-fill:${avatarColour(owner)}`);
+    expect(html).toContain(`src="${imagePath(picture)}"`);
   });
 
   it('never shows an id when the name is unknown', () => {

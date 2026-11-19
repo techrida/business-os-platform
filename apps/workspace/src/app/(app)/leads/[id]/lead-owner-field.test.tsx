@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { LeadOwnerOption } from '@bos/contracts';
+import { avatarColour, imagePath, type LeadOwnerOption } from '@bos/contracts';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -78,6 +78,14 @@ it('shows only the owner, with no edit control, when the caller may assign to on
   expect(container.textContent).toContain('Sita Rai');
   expect(container.querySelector('form')).toBeNull();
   expect(container.querySelector('button')).toBeNull();
+});
+
+it("shows the owner's picture over the colour seeded from their user id", async () => {
+  const picture = '66666666-6666-4666-8666-666666666666';
+  const { container } = await mount(OWNER, [{ ...owners[0]!, avatarDocumentId: picture }]);
+  const avatar = container.querySelector<HTMLElement>('span[aria-hidden="true"]');
+  expect(avatar?.style.getPropertyValue('--avatar-fill')).toBe(avatarColour(OWNER));
+  expect(avatar?.querySelector('img')?.getAttribute('src')).toBe(imagePath(picture));
 });
 
 it('offers a reload in the toast when the lead changed underneath the page (409)', async () => {
