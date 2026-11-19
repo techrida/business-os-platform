@@ -103,7 +103,7 @@ const roles: Partial<Record<RoleKey, string[]>> = {};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; inB: boolean } = {
+const current: { userId: string; role: RoleKey; inB: boolean; grants?: Map<Permission, Scope> } = {
   userId: '',
   role: 'accountant',
   inB: false,
@@ -123,7 +123,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -262,6 +262,7 @@ afterAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   current.inB = false;
+  current.grants = undefined;
   roles.accountant = [U.acct, U.acct2];
   roles.finance = [U.fin];
   roles.management = [U.mgmt];
@@ -693,6 +694,40 @@ describe('entity wall', () => {
     );
     expect(foreign.getStatus()).toBe(404);
     expect(await service.list()).toEqual([]);
+  });
+});
+
+describe('the vendor on the request page (U18 #15)', () => {
+  it('names the vendor for Finance and lets them open it; without vendor.read only the name, no link', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const d = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+
+    as(U.fin2, 'finance');
+    const finance = await service.get(d.id);
+    expect(finance).toMatchObject({
+      vendorName: `Vendor ${v.slice(0, 6)}`,
+      can: { readVendor: true },
+    });
+
+    // A role an admin gave payables.payment.request but not vendor.read: the vendor page would refuse them.
+    const withoutVendorRead = grantsOf('finance');
+    withoutVendorRead.delete('vendor.read');
+    current.grants = withoutVendorRead;
+    const narrow = await service.get(d.id);
+    expect(narrow).toMatchObject({
+      vendorName: `Vendor ${v.slice(0, 6)}`,
+      can: { readVendor: false },
+    });
+    // The name is the only vendor field the request carries: no PAN, status or contact details.
+    expect(
+      Object.keys(narrow)
+        .filter((key) => /vendor/i.test(key))
+        .sort(),
+    ).toEqual(['vendorBankAccountId', 'vendorName', 'vendorPartyId']);
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${v}`);
+    const { pan } = rows[0] as { pan: string };
+    expect(JSON.stringify(narrow)).not.toContain(pan);
   });
 });
 
