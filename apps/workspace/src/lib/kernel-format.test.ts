@@ -1,7 +1,7 @@
 import { DEFAULT_NUMBER_SYSTEMS, type NumberSystems } from '@bos/locale';
 import { describe, expect, it } from 'vitest';
 
-import { money, snapshotEntries, when } from './kernel-format';
+import { documentNumberText, money, snapshotEntries, when } from './kernel-format';
 
 const INTL: NumberSystems = { NPR: 'international', INR: 'international', USD: 'international' };
 const SA: NumberSystems = { NPR: 'south_asian', INR: 'south_asian', USD: 'south_asian' };
@@ -99,5 +99,70 @@ describe('snapshotEntries reference names', () => {
   it('still says the name is unavailable for an unknown id', () => {
     const rows = snapshotEntries({ ownerUserId: '00000000-0000-4000-8000-000000000000' }, names);
     expect(rows.map((row) => row.value).join('\n')).toContain('Name unavailable');
+  });
+});
+
+describe('documentNumberText', () => {
+  it('names a document that has no number yet by its kind, without its internal id', () => {
+    expect(documentNumberText('Draft debit_note 7d92d5bf')).toBe('Draft debit note');
+    expect(documentNumberText('Draft credit_note 0a1b2c3d')).toBe('Draft credit note');
+    expect(documentNumberText('Draft pr_commitment 0a1b2c3d')).toBe('Draft PR commitment');
+    expect(documentNumberText('Draft goods_receipt abcdef12')).toBe('Draft goods receipt');
+  });
+
+  it('leaves words a person typed alone even when they look like a draft reference', () => {
+    expect(documentNumberText('Draft budget 20261120')).toBe('Draft budget 20261120');
+    expect(snapshotEntries({ title: 'Draft budget 20261120' })[0]?.value).toBe(
+      'Draft budget 20261120',
+    );
+  });
+
+  it('keeps a draft-looking reference a person typed into another field as typed', () => {
+    const rows = snapshotEntries({
+      reference: 'Draft debit_note 7d92d5bf',
+      noteReason: 'Related to Draft debit_note 0a1b2c3d',
+      subject: 'Draft debit_note 0a1b2c3d',
+    });
+    expect(rows.find((row) => row.key === 'reference')?.value).toBe('Draft debit note');
+    expect(rows.find((row) => row.key === 'noteReason')?.value).toBe(
+      'Related to Draft debit_note 0a1b2c3d',
+    );
+    expect(rows.find((row) => row.key === 'subject')?.value).toBe('Draft debit_note 0a1b2c3d');
+  });
+
+  it('leaves a real document number alone', () => {
+    expect(documentNumberText('INV-2083/84-00001')).toBe('INV-2083/84-00001');
+    expect(documentNumberText('Draft budget for review')).toBe('Draft budget for review');
+  });
+});
+
+describe('snapshotEntries invoice approval snapshot', () => {
+  // The frozen shape invoice-approval.service.ts submits for a tax invoice, credit note or debit note.
+  const snapshot = {
+    kind: 'debit_note',
+    reference: 'Draft debit_note 7d92d5bf',
+    customerName: 'Acme Traders',
+    currency: 'NPR',
+    total: '1130.00',
+    noteReason: 'Short billed',
+    contentSha256: 'a'.repeat(64),
+  };
+
+  it('labels the kind and the reference in product words and hides the content hash', () => {
+    const rows = snapshotEntries(snapshot);
+    expect(rows.find((row) => row.key === 'kind')).toMatchObject({
+      label: 'Document type',
+      value: 'Debit note',
+    });
+    expect(rows.find((row) => row.key === 'reference')?.value).toBe('Draft debit note');
+    expect(rows.map((row) => row.key)).not.toContain('contentSha256');
+    expect(rows.map((row) => row.value).join(' ')).not.toMatch(/debit_note|7d92d5bf|a{64}/);
+    expect(rows.find((row) => row.key === 'customerName')?.value).toBe('Acme Traders');
+  });
+
+  it('keeps a kind that is not a document type as it was', () => {
+    expect(snapshotEntries({ kind: 'service' })).toEqual([
+      { key: 'kind', label: 'Kind', value: 'service', block: false },
+    ]);
   });
 });

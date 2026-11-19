@@ -99,6 +99,15 @@ export const PERSONAS: readonly PersonaSpec[] = [
     orgKind: 'staff',
     role: 'management',
   },
+  // The second Finance user: a credit or debit note a Finance user raised needs an independent Finance
+  // approver (separation of duties). Appended last, so earlier orders and logins do not change.
+  {
+    key: 'finance2',
+    givenName: 'Dev',
+    familyName: 'Finance Two',
+    orgKind: 'staff',
+    role: 'finance',
+  },
 ];
 
 /** `.test` is reserved (RFC 2606), so these addresses can never reach a real mailbox. */
