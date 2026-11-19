@@ -246,10 +246,14 @@ describe('DocumentsService.openImage', () => {
   };
 
   function imageSetup(rows: Row[], openClean?: () => Promise<Readable>) {
+    const wheres: SQL[] = [];
     const chain = {
       from: () => chain,
       innerJoin: () => chain,
-      where: () => chain,
+      where: (condition: SQL) => {
+        wheres.push(condition);
+        return chain;
+      },
       orderBy: () => chain,
       limit: () => Promise.resolve(rows),
     };
@@ -258,7 +262,7 @@ describe('DocumentsService.openImage', () => {
       openClean: vi.fn(openClean ?? (() => Promise.resolve(Readable.from(PNG)))),
     };
     const { svc, authz } = service(imagePolicy(), { db, storage });
-    return { svc, authz, db, storage };
+    return { svc, authz, db, storage, wheres };
   }
 
   it('opens a clean image of the scope without asking any permission', async () => {
@@ -332,20 +336,12 @@ describe('DocumentsService.openImage', () => {
   });
 
   it('asks the database for the tenant always, and for the entity unless the image is tenant-wide', async () => {
-    const { svc, db } = imageSetup([good]);
-    const where = vi.fn((_condition: SQL) => chain);
-    const chain = {
-      from: () => chain,
-      innerJoin: () => chain,
-      where,
-      orderBy: () => chain,
-      limit: () => Promise.resolve([good]),
-    };
-    db.select.mockReturnValue(chain);
+    const { svc, wheres } = imageSetup([good]);
 
     await svc.openImage(scope, DOC_ID);
 
-    const params = paramsOf(where.mock.calls[0]![0]);
+    expect(wheres).toHaveLength(1);
+    const params = paramsOf(wheres[0]!);
     expect(params).toEqual(
       expect.arrayContaining([TENANT, ORG, DOC_ID, 'user_avatar', 'customer_logo', 'vendor_logo']),
     );
