@@ -3,6 +3,7 @@
 // design/memos/DELIVERY.md, "P2 removal"). Fields follow app.test_memos in section 4.
 import { z } from 'zod';
 
+import { HexColourSchema, LogoDataUrlSchema } from './document-style.js';
 import { CurrencySchema, DecimalString, RateString } from './money.js';
 
 export const MEMO_STATUSES = ['draft', 'submitted', 'approved', 'returned', 'rejected'] as const;
@@ -31,9 +32,23 @@ export const MemoTemplateInputSchema = z
     if (new Set(ids).size !== ids.length)
       ctx.addIssue({ code: 'custom', message: 'Choose different people for each role' });
   });
+/**
+ * The memo letterhead: the entity's address (as the quotation footer prints it, one part per line), its logo as bytes
+ * and its brand colour. The directory carries the live values for a draft; submit freezes them onto the memo, so a
+ * later logo or address change never alters a memo that was sent for approval. A memo stored before letterheads has
+ * none, and still reads.
+ */
+export const LetterheadSchema = z.object({
+  addressLines: z.array(z.string().max(200)).max(4),
+  logoDataUrl: LogoDataUrlSchema.nullable(),
+  primaryColour: HexColourSchema,
+});
+export type Letterhead = z.infer<typeof LetterheadSchema>;
 export const MemoTemplateSnapshotSchema = z.object({
   organizationId: z.guid(),
   organizationName: z.string(),
+  /** Frozen at submit; absent on a draft and on a memo stored before letterheads. */
+  letterhead: LetterheadSchema.optional(),
   departmentId: z.guid(),
   departmentName: z.string(),
   date: z.iso.date(),
@@ -57,6 +72,8 @@ export type MemoDirectoryPerson = z.infer<typeof MemoDirectoryPersonSchema>;
 export const MemoDirectorySchema = z.object({
   organizationId: z.guid(),
   organizationName: z.string(),
+  /** The live letterhead a draft shows; absent when the entity's settings do not form a valid one. */
+  letterhead: LetterheadSchema.optional(),
   currentUserId: z.guid(),
   departmentId: z.guid().nullable(),
   departments: z.array(z.object({ id: z.guid(), name: z.string() })),
