@@ -15,14 +15,16 @@ RUN git apply --check /tmp/dependencies.patch \
     && pnpm --filter @zitadel/client build
 
 FROM dependencies AS overlay
-COPY infra/login/patches/login.patch infra/login/patches/otp.patch infra/login/patches/design.patch infra/login/patches/footer.patch infra/login/patches/reset.patch /tmp/
+COPY infra/login/patches/login.patch infra/login/patches/otp.patch infra/login/patches/design.patch infra/login/patches/footer.patch infra/login/patches/theme.patch infra/login/patches/reset.patch /tmp/
 RUN git apply --check /tmp/login.patch /tmp/otp.patch \
     && git apply /tmp/login.patch /tmp/otp.patch \
     && git apply --check /tmp/design.patch \
     && git apply /tmp/design.patch \
     && git apply /tmp/footer.patch \
+    && git apply /tmp/theme.patch \
     && git apply /tmp/reset.patch
 COPY infra/login/overlay/ apps/login/
+COPY apps/workspace/src/lib/theme-mode.ts apps/login/src/lib/
 COPY apps/workspace/src/styles/tokens.css apps/workspace/src/styles/token-overrides.css apps/login/src/styles/
 
 FROM overlay AS test
