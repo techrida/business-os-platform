@@ -15,8 +15,8 @@ type View = CustomerInvoiceView;
 
 /** The label of the document number and the big balance, by kind. */
 const WORDING: Record<View['kind'], { number: string; balance: string; to: string }> = {
-  tax_invoice: { number: 'Invoice no.', balance: 'Total due', to: 'Invoice to' },
-  debit_note: { number: 'Debit note no.', balance: 'Total due', to: 'Issued to' },
+  tax_invoice: { number: 'Invoice no.', balance: 'Invoice total', to: 'Invoice to' },
+  debit_note: { number: 'Debit note no.', balance: 'Debit note total', to: 'Issued to' },
   credit_note: { number: 'Credit note no.', balance: 'Total credited', to: 'Issued to' },
 };
 
@@ -230,9 +230,11 @@ export function InvoiceView({
             <div className={styles.due}>
               <p className={styles.dueLabel}>{wording.balance}</p>
               <p className={styles.dueAmount}>{money(view.totals.total)}</p>
-              <p className={styles.dueWhen}>
-                {view.dueDate ? `Due ${formatDay(view.dueDate)}` : 'Due on receipt'}
-              </p>
+              {view.kind === 'credit_note' && !view.dueDate ? null : (
+                <p className={styles.dueWhen}>
+                  {view.dueDate ? `Due ${formatDay(view.dueDate)}` : 'Due on receipt'}
+                </p>
+              )}
             </div>
 
             <dl className={styles.totals}>

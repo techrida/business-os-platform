@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES } from '@bos/contracts';
+import type { Currency } from '@bos/contracts';
 import Link from 'next/link';
 import { useActionState, useEffect, useRef, useState } from 'react';
 
@@ -9,6 +9,7 @@ import { Field, Input } from '@/components/portal/field';
 import quotation from '@/components/portal/quotation.module.css';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
+import { currencyOptions } from '@/lib/enabled-currencies';
 
 import { FileUpload } from '../../../../_upload/file-upload';
 import styles from '../../../../_upload/upload.module.css';
@@ -24,6 +25,7 @@ export function QuoteForm({
   idempotencyKey,
   rfqId,
   today,
+  currencies,
   initialState,
 }: {
   /** A UUID the server generated for this render. */
@@ -32,6 +34,8 @@ export function QuoteForm({
   rfqId: string;
   /** Today in Kathmandu, as `YYYY-MM-DD`: the earliest "valid until" date. */
   today: string;
+  /** The currencies the company has switched on (D44): the only ones the picker offers. */
+  currencies: readonly Currency[];
   /** Overridable for tests: the state `useActionState` starts from. */
   initialState?: QuoteFormState | undefined;
 }) {
@@ -42,7 +46,10 @@ export function QuoteForm({
   const fe = state.fieldErrors ?? {};
 
   // Controlled: React 19 resets uncontrolled fields after every action.
-  const [currency, setCurrency] = useState<string>('NPR');
+  // Starts on the first enabled currency (always NPR, the books currency, which is never off).
+  const [currency, setCurrency] = useState<string>(
+    () => currencyOptions(currencies)[0]?.code ?? 'NPR',
+  );
   const [total, setTotal] = useState('');
   const [vendorRef, setVendorRef] = useState('');
   const [validUntil, setValidUntil] = useState('');
@@ -88,9 +95,9 @@ export function QuoteForm({
               onChange={(e) => setCurrency(e.target.value)}
               {...control}
             >
-              {CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+              {currencyOptions(currencies, currency).map((o) => (
+                <option key={o.code} value={o.code} disabled={o.disabled}>
+                  {o.code}
                 </option>
               ))}
             </Select>

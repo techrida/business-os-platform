@@ -13,6 +13,7 @@ import {
   RejectQuotationBodySchema,
   defaultPortalDisplay,
   isCustomerVisibleStatus,
+  portalEnabledCurrencies,
 } from './index.js';
 
 const id = () => crypto.randomUUID();
@@ -246,6 +247,39 @@ describe('PortalDisplaySchema', () => {
     first.numberSystems.NPR = 'international';
     expect(defaultPortalDisplay().numberSystems.NPR).toBe('south_asian');
     expect(leaks(schemaKeys(PortalDisplaySchema))).toEqual([]);
+  });
+});
+
+describe('PortalDisplaySchema.enabledCurrencies', () => {
+  const base = defaultPortalDisplay();
+
+  it('is optional: a display without it parses, and the helper falls back to the settings default', () => {
+    expect(PortalDisplaySchema.safeParse(base).success).toBe(true);
+    expect(portalEnabledCurrencies(base)).toEqual(['NPR', 'INR', 'USD']);
+  });
+
+  it('takes the company list as given, and the helper returns a copy of it', () => {
+    const display = { ...base, enabledCurrencies: ['NPR', 'USD'] as const };
+    const parsed = PortalDisplaySchema.parse(display);
+    expect(parsed.enabledCurrencies).toEqual(['NPR', 'USD']);
+    const list = portalEnabledCurrencies(parsed);
+    expect(list).toEqual(['NPR', 'USD']);
+    list.push('INR');
+    expect(parsed.enabledCurrencies).toEqual(['NPR', 'USD']);
+  });
+
+  it('refuses a list without NPR, an empty list, a duplicate or an unknown currency', () => {
+    for (const enabledCurrencies of [['USD'], [], ['NPR', 'NPR'], ['NPR', 'EUR']]) {
+      expect(
+        PortalDisplaySchema.safeParse({ ...base, enabledCurrencies }).success,
+        JSON.stringify(enabledCurrencies),
+      ).toBe(false);
+    }
+  });
+
+  it('adds no internal word to the display keys', () => {
+    expect(leaks(schemaKeys(PortalDisplaySchema))).toEqual([]);
+    expect(schemaKeys(PortalDisplaySchema)).toContain('enabledCurrencies');
   });
 });
 

@@ -18,10 +18,10 @@ const TITLES: Record<InvoiceKind, string> = {
 };
 
 const DUE_LABELS: Record<InvoiceKind, string> = {
-  tax_invoice: 'Total due',
+  tax_invoice: 'Invoice total',
   proforma: 'Total',
   credit_note: 'Total credit',
-  debit_note: 'Total due',
+  debit_note: 'Debit note total',
 };
 
 const ZERO = /^-?0+(\.0+)?$/;
