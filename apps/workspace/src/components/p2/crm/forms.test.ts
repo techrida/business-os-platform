@@ -102,7 +102,12 @@ describe('parseStageMove', () => {
 
     const added = parseStageMove(
       'opportunity',
-      form({ stage: 'lost', newLostReason: '  Delayed project  ', note: 'n', expectedVersion: '3' }),
+      form({
+        stage: 'lost',
+        newLostReason: '  Delayed project  ',
+        note: 'n',
+        expectedVersion: '3',
+      }),
     );
     expect(added).toMatchObject({ ok: true, data: { newLostReason: 'Delayed project' } });
   });
@@ -111,7 +116,8 @@ describe('parseStageMove', () => {
     const id = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
     const missing = parseStageMove('opportunity', form({ stage: 'lost', expectedVersion: '2' }));
     expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(Object.keys(missing.fieldErrors).sort()).toEqual(['lostReasonId', 'note']);
+    if (!missing.ok)
+      expect(Object.keys(missing.fieldErrors).sort()).toEqual(['lostReasonId', 'note']);
 
     const oldReason = parseStageMove(
       'opportunity',
