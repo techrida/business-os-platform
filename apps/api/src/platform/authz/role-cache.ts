@@ -13,7 +13,6 @@ import {
   type AccessScope,
   DEFAULT_ROLE_PERMISSION_LEVELS,
   DEFAULT_ROLE_PERMISSIONS,
-  type LevelGrant,
   type Permission,
   ROLE_KEYS,
   type RoleKey,
@@ -138,7 +137,7 @@ function withLevels(
 const DEFAULT_LEVEL_ROWS: readonly LevelRow[] = Object.entries(
   DEFAULT_ROLE_PERMISSION_LEVELS,
 ).flatMap(([roleKey, rows]) =>
-  (rows as readonly LevelGrant[]).map((r) => ({
+  rows.map((r) => ({
     roleKey,
     permission: r.permission,
     minLevel: r.minLevel,
