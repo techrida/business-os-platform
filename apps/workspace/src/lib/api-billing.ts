@@ -26,6 +26,7 @@ import {
   type SalesOrderListItem,
   SalesOrderListItemSchema,
   type SalesOrderStatus,
+  SETTLEMENT_STATUSES,
   type SubmitInvoiceBody,
 } from '@bos/contracts';
 import { z } from 'zod';
@@ -47,11 +48,14 @@ import type { Session } from './session';
  *
  * The routes are not built yet. The paths below are the assumption this file makes, in one place,
  * so the API can be matched to them or this file edited once.
- *   GET  /v1/sales-orders[?status=&customerId=]            bare array of SalesOrderListItem
+ *   GET  /v1/sales-orders[?status=&customerId=&q=&limit=&offset=]  bare array of SalesOrderListItem + X-Total-Count
+ *   GET  /v1/sales-orders/summary[?customerId=&q=]         { total, byStatus }
  *   GET  /v1/sales-orders/:id                              SalesOrderDetail
  *   POST /v1/sales-orders                                  confirm; answers SalesOrderDetail
  *   POST /v1/sales-orders/:id/schedule-lines/:lineId/mark-billable
- *   GET  /v1/invoices[?kind=&status=&customerId=]          bare array of InvoiceListItem
+ *   GET  /v1/invoices[?kind=&status=&settlement=&customerId=&issuedFrom=&issuedTo=&q=&limit=&offset=]
+ *                                                          bare array of InvoiceListItem + X-Total-Count
+ *   GET  /v1/invoices/summary[?kind=&customerId=&issuedFrom=&issuedTo=&q=]  { total, byStatus, customers }
  *   GET  /v1/invoices/:id                                  InvoiceDetail
  *   POST /v1/invoices                                      manual draft; answers InvoiceDetail
  *   POST /v1/invoices/from-schedule                        draft from a billable line; InvoiceDetail
@@ -159,6 +163,94 @@ export function listSalesOrders(
   return get(session, `/v1/sales-orders${query}`, z.array(SalesOrderListItemSchema));
 }
 
+/** The most values one repeated filter carries; the API refuses more (MULTI_MAX). */
+const MAX_FILTER_VALUES = 20;
+
+/** Repeated `name=value` pairs for the values that pass `keep`, once each: a hand-edited URL never becomes a filter. */
+function repeated(
+  name: string,
+  values: readonly string[] | undefined,
+  keep: (value: string) => boolean,
+): [string, string][] {
+  const kept = [...new Set((values ?? []).filter(keep))].slice(0, MAX_FILTER_VALUES);
+  return kept.map((value) => [name, value]);
+}
+
+function queryOfPairs(pairs: [string, string][]): string {
+  const query = new URLSearchParams();
+  for (const [name, value] of pairs) query.append(name, value);
+  const text = query.toString();
+  return text === '' ? '' : `?${text}`;
+}
+
+export interface SalesOrderPageFilter {
+  /** Several statuses at once; values outside the contract are dropped. */
+  status?: readonly string[] | undefined;
+  /** Several customers at once; values that are not ids are dropped. */
+  customerId?: readonly string[] | undefined;
+  /** Order number, customer name or quotation number; the API ignores one character. */
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+const searchPair = (q: string | undefined): [string, string][] =>
+  q !== undefined && q.trim() !== '' ? [['q', q.trim()]] : [];
+
+/**
+ * One page of `GET /v1/sales-orders` with the number of all matches (the `X-Total-Count` header), for the list
+ * screen. `listSalesOrders` stays for callers that want every row of a narrow filter.
+ */
+export async function listSalesOrdersPage(
+  session: Session,
+  filter: SalesOrderPageFilter = {},
+): Promise<{ items: SalesOrderListItem[]; total: number }> {
+  const pairs = [
+    ...repeated('status', filter.status, (v) =>
+      (SALES_ORDER_STATUSES as readonly string[]).includes(v),
+    ),
+    ...repeated('customerId', filter.customerId, (v) => GUID.test(v)),
+    ...searchPair(filter.q),
+  ];
+  if (filter.limit !== undefined)
+    pairs.push(['limit', String(Math.max(1, Math.floor(filter.limit)))]);
+  if (filter.offset !== undefined)
+    pairs.push(['offset', String(Math.max(0, Math.floor(filter.offset)))]);
+  const path = `/v1/sales-orders${queryOfPairs(pairs)}`;
+  const res = await apiFetch(session, path, { method: 'GET' });
+  const items = await parse(res, 'GET /v1/sales-orders', z.array(SalesOrderListItemSchema));
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : Number.NaN;
+  // A missing or malformed count would silently render a wrong pager, so it fails like a contract drift.
+  if (!Number.isSafeInteger(total)) {
+    throw new ApiError(502, 'GET /v1/sales-orders returned no valid X-Total-Count', header);
+  }
+  return { items, total };
+}
+
+const SalesOrdersSummarySchema = z.object({
+  total: z.number().int().min(0),
+  byStatus: z.object({
+    draft: z.number().int().min(0),
+    confirmed: z.number().int().min(0),
+    completed: z.number().int().min(0),
+    cancelled: z.number().int().min(0),
+  }),
+});
+export type SalesOrdersSummary = z.infer<typeof SalesOrdersSummarySchema>;
+
+/** `GET /v1/sales-orders/summary`: counts per status for the same `q` and customers, ignoring the status filter. */
+export function getSalesOrdersSummary(
+  session: Session,
+  filter: Pick<SalesOrderPageFilter, 'q' | 'customerId'> = {},
+): Promise<SalesOrdersSummary> {
+  const pairs = [
+    ...repeated('customerId', filter.customerId, (v) => GUID.test(v)),
+    ...searchPair(filter.q),
+  ];
+  return get(session, `/v1/sales-orders/summary${queryOfPairs(pairs)}`, SalesOrdersSummarySchema);
+}
+
 export function getSalesOrder(session: Session, id: string): Promise<SalesOrderDetail> {
   return get(session, `/v1/sales-orders/${seg(id)}`, SalesOrderDetailSchema);
 }
@@ -179,6 +271,90 @@ export function listInvoices(
     ['customerId', guidOrUndefined(filter.customerId)],
   ]);
   return get(session, `/v1/invoices${query}`, z.array(InvoiceListItemSchema));
+}
+
+export interface InvoicePageFilter {
+  /** Several at once; values outside the contract are dropped. */
+  kind?: readonly string[] | undefined;
+  status?: readonly string[] | undefined;
+  /** The derived paid / overdue state of an issued invoice. */
+  settlement?: readonly string[] | undefined;
+  /** Several customers at once; values that are not ids are dropped. */
+  customerId?: readonly string[] | undefined;
+  /** Issue date range, `YYYY-MM-DD`, both ends included. */
+  issuedFrom?: string | undefined;
+  issuedTo?: string | undefined;
+  /** Invoice number or customer name; the API ignores one character. */
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function invoicePairs(filter: InvoicePageFilter, withStatus: boolean): [string, string][] {
+  const day = (name: string, value: string | undefined): [string, string][] =>
+    value !== undefined && ISO_DAY.test(value) ? [[name, value]] : [];
+  return [
+    ...repeated('kind', filter.kind, (v) => (INVOICE_KINDS as readonly string[]).includes(v)),
+    ...(withStatus
+      ? [
+          ...repeated('status', filter.status, (v) =>
+            (INVOICE_STATUSES as readonly string[]).includes(v),
+          ),
+          ...repeated('settlement', filter.settlement, (v) =>
+            (SETTLEMENT_STATUSES as readonly string[]).includes(v),
+          ),
+        ]
+      : []),
+    ...repeated('customerId', filter.customerId, (v) => GUID.test(v)),
+    ...day('issuedFrom', filter.issuedFrom),
+    ...day('issuedTo', filter.issuedTo),
+    ...searchPair(filter.q),
+  ];
+}
+
+/**
+ * One page of `GET /v1/invoices` with the number of all matches (the `X-Total-Count` header), for the list
+ * screen. `listInvoices` stays for callers that want every row of a narrow filter.
+ */
+export async function listInvoicesPage(
+  session: Session,
+  filter: InvoicePageFilter = {},
+): Promise<{ items: InvoiceListItem[]; total: number }> {
+  const pairs = invoicePairs(filter, true);
+  if (filter.limit !== undefined)
+    pairs.push(['limit', String(Math.max(1, Math.floor(filter.limit)))]);
+  if (filter.offset !== undefined)
+    pairs.push(['offset', String(Math.max(0, Math.floor(filter.offset)))]);
+  const res = await apiFetch(session, `/v1/invoices${queryOfPairs(pairs)}`, { method: 'GET' });
+  const items = await parse(res, 'GET /v1/invoices', z.array(InvoiceListItemSchema));
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : Number.NaN;
+  // A missing or malformed count would silently render a wrong pager, so it fails like a contract drift.
+  if (!Number.isSafeInteger(total)) {
+    throw new ApiError(502, 'GET /v1/invoices returned no valid X-Total-Count', header);
+  }
+  return { items, total };
+}
+
+const InvoicesSummarySchema = z.object({
+  total: z.number().int().min(0),
+  byStatus: z.record(z.enum(INVOICE_STATUSES), z.number().int().min(0)),
+  customers: z.array(z.object({ id: z.guid(), name: z.string() })),
+});
+export type InvoicesSummary = z.infer<typeof InvoicesSummarySchema>;
+
+/** `GET /v1/invoices/summary`: counts per status for the same search, kinds, customers and dates, plus the customer choices. */
+export function getInvoicesSummary(
+  session: Session,
+  filter: Omit<InvoicePageFilter, 'status' | 'settlement' | 'limit' | 'offset'> = {},
+): Promise<InvoicesSummary> {
+  return get(
+    session,
+    `/v1/invoices/summary${queryOfPairs(invoicePairs(filter, false))}`,
+    InvoicesSummarySchema,
+  );
 }
 
 export function getInvoice(session: Session, id: string): Promise<InvoiceDetail> {

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AmendPurchaseOrderBodySchema,
+  ListPurchaseOrdersQuerySchema,
   PO_AMENDMENT_DOCUMENT_TYPE,
   PO_AMENDMENT_WORKFLOW_SPEC,
   amendLines,
@@ -145,5 +146,27 @@ describe('AmendPurchaseOrderBodySchema', () => {
       lines: [{ poLineId: '00000000-0000-4000-8000-000000000001', quantity: '2' }],
     });
     expect(r.success).toBe(false);
+  });
+});
+
+describe('ListPurchaseOrdersQuerySchema', () => {
+  it('takes a repeated status, a search and a page window, and pages 25 by default', () => {
+    expect(ListPurchaseOrdersQuerySchema.parse({})).toEqual({ limit: 25, offset: 0 });
+    expect(
+      ListPurchaseOrdersQuerySchema.parse({
+        status: ['draft', 'issued'],
+        q: 'acme',
+        limit: '100',
+        offset: '200',
+      }),
+    ).toEqual({ status: ['draft', 'issued'], q: 'acme', limit: 100, offset: 200 });
+  });
+
+  it('refuses an unknown status, a limit over 100 and an unknown key', () => {
+    expect(ListPurchaseOrdersQuerySchema.safeParse({ status: ['draft', 'nope'] }).success).toBe(
+      false,
+    );
+    expect(ListPurchaseOrdersQuerySchema.safeParse({ limit: '101' }).success).toBe(false);
+    expect(ListPurchaseOrdersQuerySchema.safeParse({ vendorId: 'x' }).success).toBe(false);
   });
 });

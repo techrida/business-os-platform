@@ -65,6 +65,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { searchPage } from '../../../platform/list';
 import { newestDocumentVersion } from '../../../platform/documents/documents.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
@@ -85,6 +86,7 @@ import {
   lineAmounts,
   matchLine,
   submittable,
+  type ListBillsQuery,
 } from './vendor-bill.rules';
 import type { ConvertBillSubmissionBody } from './bill-submissions.types';
 import { VendorBillsCaller } from './vendor-bills.caller';
@@ -252,27 +254,57 @@ export class VendorBillsService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  async list(status?: BillStatus): Promise<Omit<VendorBillDto, 'lines'>[]> {
+  /**
+   * One page of the entity's bills, newest first, optionally of some statuses and a search over the bill number,
+   * the vendor's invoice number and the vendor name, with the total of all matches. The id closes the order so
+   * bills created in the same instant never swap between pages.
+   */
+  async list(
+    query: ListBillsQuery,
+  ): Promise<{ rows: Omit<VendorBillDto, 'lines'>[]; total: number }> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
-      const rows = await tx
-        .select({ bill: vendorBills, vendorName: vendors.legalName })
-        .from(vendorBills)
-        .innerJoin(
-          vendors,
-          and(eq(vendors.tenantId, vendorBills.tenantId), eq(vendors.id, vendorBills.vendorId)),
-        )
-        .where(
-          scoped(scope).where(
-            vendorBills,
-            status === undefined ? undefined : eq(vendorBills.status, status),
-          ),
-        )
-        .orderBy(desc(vendorBills.createdAt));
-      return rows.map((row) => {
-        const { lines: _lines, ...rest } = toDto(row.bill, row.vendorName, [], []);
-        return rest;
+      const vendorJoin = and(
+        eq(vendors.tenantId, vendorBills.tenantId),
+        eq(vendors.id, vendorBills.vendorId),
+      );
+      const page = await searchPage(tx, {
+        q: query.q,
+        columns: [vendorBills.number, vendorBills.vendorInvoiceNo, vendors.legalName],
+        where: scoped(scope).where(
+          vendorBills,
+          query.status === undefined || query.status.length === 0
+            ? undefined
+            : inArray(vendorBills.status, query.status),
+        ),
+        orderBy: [desc(vendorBills.createdAt), desc(vendorBills.id)],
+        limit: query.limit,
+        offset: query.offset,
+        rows: (reader, p) =>
+          reader
+            .select({ bill: vendorBills, vendorName: vendors.legalName })
+            .from(vendorBills)
+            .innerJoin(vendors, vendorJoin)
+            .where(p.where)
+            .orderBy(...p.orderBy)
+            .limit(p.limit)
+            .offset(p.offset),
+        count: async (reader, where) => {
+          const [row] = await reader
+            .select({ n: sql<number>`count(*)::int` })
+            .from(vendorBills)
+            .innerJoin(vendors, vendorJoin)
+            .where(where);
+          return row?.n ?? 0;
+        },
       });
+      return {
+        rows: page.rows.map((row) => {
+          const { lines: _lines, ...rest } = toDto(row.bill, row.vendorName, [], []);
+          return rest;
+        }),
+        total: page.total,
+      };
     });
   }
 

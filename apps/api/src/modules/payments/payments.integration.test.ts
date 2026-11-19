@@ -515,8 +515,23 @@ describe('one legal entity at a time', () => {
     await expect(
       service.verify(other, w.verifier, p.id, { expectedVersion: 1 }, randomUUID()),
     ).rejects.toMatchObject({ status: 404 });
-    expect(await service.list(other)).toEqual([]);
-    const listed = z.array(PaymentListItemSchema).parse(await service.list(w.scope));
+    expect(await service.list(other)).toEqual({ rows: [], total: 0 });
+    // Filters and a search narrow the entity; they never reach another entity's payment.
+    expect(
+      (await service.list(other, { status: ['submitted'], q: p.number ?? 'RCPT' })).total,
+    ).toBe(0);
+    expect((await service.summary(other)).total).toBe(0);
+    const { rows, total } = await service.list(w.scope);
+    const listed = z.array(PaymentListItemSchema).parse(rows);
     expect(listed.map((r) => r.id)).toEqual([p.id]);
+    expect(total).toBe(1);
+    expect((await service.list(w.scope, { status: ['verified'] })).total).toBe(0);
+    expect((await service.list(w.scope, { method: [p.method], status: ['submitted'] })).total).toBe(
+      1,
+    );
+    expect((await service.list(w.scope, { limit: 1, offset: 1 })).rows).toEqual([]);
+    const summary = await service.summary(w.scope);
+    expect(summary.total).toBe(1);
+    expect(summary.byStatus.submitted).toBe(1);
   });
 });

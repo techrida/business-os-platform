@@ -167,7 +167,10 @@ const seg = (value: string | number): string => encodeURIComponent(String(value)
 export function listUsers(session: Session, q: Partial<AdminUsersQuery> = {}) {
   const params = new URLSearchParams({ limit: '50' });
   for (const [key, value] of Object.entries(q)) {
-    if (value !== undefined) params.set(key, String(value));
+    if (value === undefined) continue;
+    // Repeated params (status, role), not a comma-joined string the API would refuse.
+    if (Array.isArray(value)) for (const item of value) params.append(key, String(item));
+    else params.set(key, String(value));
   }
   return requestParsed(session, 'GET', `/v1/admin/users?${params}`, AdminUsersPageSchema);
 }

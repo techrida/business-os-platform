@@ -269,6 +269,9 @@ async function httpErrorOf(promise: Promise<unknown>): Promise<HttpException> {
 }
 const codeOf = (e: HttpException) => (e.getResponse() as { code?: string }).code;
 
+/** A page wide enough for every row a test makes. */
+const PAGE = { limit: 100, offset: 0 } as const;
+
 let panSeq = 0;
 async function vendor(): Promise<string> {
   const { partyId } = await createParty(appPool, {
@@ -514,7 +517,9 @@ describe('match (check 6, AD6 defaults from settings)', () => {
       vendorName: `Vendor ${po.vendorId.slice(0, 6)}`,
     };
     expect(await service.get(bill.id)).toMatchObject(expected);
-    expect((await service.list()).find((row) => row.id === bill.id)).toMatchObject(expected);
+    expect((await service.list(PAGE)).rows.find((row) => row.id === bill.id)).toMatchObject(
+      expected,
+    );
   });
 
   it('passes +2% on 10,000 and lets the bill through to Accountant -> Finance', async () => {
@@ -943,6 +948,39 @@ describe('duplicates (check 8) and replays', () => {
 });
 
 // ---------------------------------------------------------------------------------------- entity wall
+
+describe('list filters, search and paging', () => {
+  it('takes several statuses, searches by bill, vendor invoice or vendor, pages by offset and stays in the entity', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const invoiceNo = `FIND-${randomUUID().slice(0, 8)}`;
+    const bill = await billFor(po, '1', '1000.00', invoiceNo);
+    const other = await billFor(po, '1', '1000.00');
+    const name = `Vendor ${po.vendorId.slice(0, 6)}`;
+    const ids = (page: { rows: { id: string }[] }) => page.rows.map((r) => r.id);
+
+    expect(ids(await service.list({ ...PAGE, status: [bill.status, 'rejected'] }))).toContain(
+      bill.id,
+    );
+    expect(ids(await service.list({ ...PAGE, status: ['rejected'] }))).not.toContain(bill.id);
+
+    const byInvoice = await service.list({ ...PAGE, q: invoiceNo });
+    expect(ids(byInvoice)).toContain(bill.id);
+    expect(byInvoice.total).toBeGreaterThanOrEqual(1);
+    const byVendor = await service.list({ ...PAGE, q: name });
+    expect(ids(byVendor)).toEqual(expect.arrayContaining([bill.id, other.id]));
+    const byNumber = await service.list({ ...PAGE, q: bill.number ?? invoiceNo });
+    expect(ids(byNumber)).toContain(bill.id);
+
+    const all = await service.list(PAGE);
+    const second = await service.list({ limit: 1, offset: 1 });
+    expect(second.total).toBe(all.total);
+    expect(second.rows[0]?.id).toBe(all.rows[1]?.id);
+
+    current.scope = scopeB;
+    expect(ids(await service.list({ ...PAGE, q: invoiceNo }))).not.toContain(bill.id);
+    expect(ids(await service.list({ ...PAGE, status: [bill.status] }))).not.toContain(bill.id);
+  });
+});
 
 describe('entity wall', () => {
   it('another entity reads a bill as 404 and cannot match or submit it', async () => {

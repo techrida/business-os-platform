@@ -1,0 +1,81 @@
+/* Trigger, panel and list come from select.module.css; this adds the checkbox look and the Clear row. */
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  cursor: pointer;
+}
+
+.item[data-hovered],
+.item[data-focused] {
+  background: var(--dropdown-hover-bg);
+}
+
+.item[data-focus-visible] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.box {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: var(--border-width-thin) solid var(--checkbox-border);
+  border-radius: var(--radius-xs);
+  background: var(--checkbox-bg);
+  color: var(--checkbox-checked-icon);
+}
+
+.item[data-hovered] .box {
+  background: var(--checkbox-hover-bg);
+}
+
+.item[data-selected] .box {
+  border-color: var(--checkbox-focus-border);
+  background: var(--checkbox-checked-bg);
+}
+
+.footer {
+  margin-top: 4px;
+  padding: 8px 4px 0;
+  border-top: var(--border-width-thin) solid var(--dropdown-border);
+}
+
+.clear {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--brand-500);
+  font: inherit;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+  text-align: start;
+  cursor: pointer;
+}
+
+.clear:hover:not(:disabled) {
+  background: var(--dropdown-hover-bg);
+}
+
+.clear:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.clear:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}

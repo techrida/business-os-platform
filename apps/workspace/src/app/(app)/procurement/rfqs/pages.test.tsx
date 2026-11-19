@@ -20,7 +20,9 @@ vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
   },
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/procurement/rfqs',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('./actions', () => ({
   createRfqAction: vi.fn(),
@@ -30,7 +32,7 @@ vi.mock('./actions', () => ({
   commitRfqAction: vi.fn(),
 }));
 const rfqApi = vi.hoisted(() => ({
-  listRfqs: vi.fn(),
+  listRfqsPage: vi.fn(),
   getRfq: vi.fn(),
   getComparison: vi.fn(),
   listSubmissions: vi.fn(),
@@ -160,7 +162,8 @@ function expectDisabledDropdown(out: string, name: string) {
   expect(control!.field).toContain('disabled=""');
   expect(control!.trigger).toMatch(/<button[^>]*disabled=""/);
 }
-const list = async (sp: Record<string, string> = {}) =>
+const page = (items: unknown[], total = items.length) => ({ items, total });
+const list = async (sp: Record<string, string | string[]> = {}) =>
   html(await ListPage({ searchParams: Promise.resolve(sp) }));
 const detail = async (sp: Record<string, string> = {}) =>
   html(
@@ -188,7 +191,7 @@ beforeEach(() => {
 
 describe('the list', () => {
   it('shows the rows with the request number, Kathmandu deadline and counts', async () => {
-    rfqApi.listRfqs.mockResolvedValue([row()]);
+    rfqApi.listRfqsPage.mockResolvedValue(page([row()]));
     const out = await list();
     expect(out).toContain('RFQ-2082/83-00001');
     expect(out).toContain('PR-2082/83-00007');
@@ -198,33 +201,51 @@ describe('the list', () => {
     expect(out).toContain('15:45');
   });
 
-  it('passes only the status and limit', async () => {
-    rfqApi.listRfqs.mockResolvedValue([]);
-    await list({ status: 'recommended' });
-    expect(rfqApi.listRfqs).toHaveBeenCalledWith(expect.anything(), {
-      status: 'recommended',
-      limit: 100,
+  it('passes repeated statuses, the search and the page window, dropping a bogus status', async () => {
+    rfqApi.listRfqsPage.mockResolvedValue(page([]));
+    await list({ status: ['recommended', 'bogus', 'open'], q: 'RFQ-2082', page: '2' });
+    expect(rfqApi.listRfqsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['recommended', 'open'],
+      q: 'RFQ-2082',
+      limit: 25,
+      offset: 25,
     });
-    await list({ status: 'bogus' });
-    expect(rfqApi.listRfqs).toHaveBeenLastCalledWith(expect.anything(), { limit: 100 });
+    await list({});
+    expect(rfqApi.listRfqsPage).toHaveBeenLastCalledWith(expect.anything(), {
+      status: [],
+      limit: 25,
+      offset: 0,
+    });
   });
 
-  it('says so when there are none, and when a filter matches none', async () => {
-    rfqApi.listRfqs.mockResolvedValue([]);
+  it('shows the total and range, a search box and no Apply button', async () => {
+    rfqApi.listRfqsPage.mockResolvedValue(page([row()], 60));
+    const out = await list({ status: 'open' });
+    expect(out).toContain('Showing 1 of 60 RFQs');
+    expect(out).toContain('Showing 1-25 of 60');
+    expect(out).toContain('type="search"');
+    expect(out).not.toContain('>Apply<');
+  });
+
+  it('says so when there are none, and names the filters that match none', async () => {
+    rfqApi.listRfqsPage.mockResolvedValue(page([]));
     expect(await list()).toContain('No RFQs yet.');
-    expect(await list({ status: 'closed' })).toContain('No RFQs are closed.');
+    const out = await list({ status: ['closed', 'open'], q: 'zzz' });
+    expect(out).toContain('No RFQs match.');
+    expect(out).toContain('Status: Closed, Open');
+    expect(out).toContain('Clear filters');
   });
 
   it('a person without the sourcing grant gets no New RFQ button', async () => {
     session.roles = ['sales'];
-    rfqApi.listRfqs.mockResolvedValue([]);
+    rfqApi.listRfqsPage.mockResolvedValue(page([]));
     expect(await list()).not.toContain('New RFQ');
   });
 
   it('403 is an info alert and a failure is an error with a reload link', async () => {
-    rfqApi.listRfqs.mockRejectedValue(apiError(403));
+    rfqApi.listRfqsPage.mockRejectedValue(apiError(403));
     expect(await list()).toContain('Your roles do not include sourcing');
-    rfqApi.listRfqs.mockRejectedValue(new ApiError(502, 'x'));
+    rfqApi.listRfqsPage.mockRejectedValue(new ApiError(502, 'x'));
     const out = await list();
     expect(out).toContain('did not load');
     expect(out).toContain('Reload the list');

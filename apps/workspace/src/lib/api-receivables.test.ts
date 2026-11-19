@@ -17,8 +17,10 @@ import {
   getCustomerAdvance,
   getCustomerStatement,
   getPayment,
+  getPaymentsSummary,
   listPaymentAllocations,
   listPayments,
+  listPaymentsPage,
   rejectPayment,
   reversePayment,
   submitPayment,
@@ -55,6 +57,59 @@ describe('payment reads', () => {
     expect(rows).toHaveLength(1);
     await listPayments(session);
     expect(last()[1]).toBe('/v1/payments');
+  });
+
+  it('sends repeated filters, a search and a page, and reads the total from the header', async () => {
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([listItem()]), {
+          status: 200,
+          headers: { 'X-Total-Count': '12' },
+        }),
+      ),
+    );
+    const page = await listPaymentsPage(session, {
+      status: ['verified', 'rejected', 'verified', 'bogus'],
+      method: ['cash', 'card'],
+      q: ' acme ',
+      limit: 10,
+      offset: 20,
+    });
+    expect(page.total).toBe(12);
+    expect(page.items).toHaveLength(1);
+    const url = new URL(last()[1], 'http://x');
+    expect(url.pathname).toBe('/v1/payments');
+    expect(url.searchParams.getAll('status')).toEqual(['verified', 'rejected']);
+    expect(url.searchParams.getAll('method')).toEqual(['cash']);
+    expect(url.searchParams.get('q')).toBe('acme');
+    expect(url.searchParams.get('limit')).toBe('10');
+    expect(url.searchParams.get('offset')).toBe('20');
+  });
+
+  it('fails like a contract drift when the total header is missing, and keeps a refusal status', async () => {
+    mocks.apiFetch.mockImplementation(() => Promise.resolve(new Response('[]', { status: 200 })));
+    await expect(listPaymentsPage(session)).rejects.toMatchObject({ status: 502 });
+    mocks.apiFetch.mockImplementation(() => answer(403, { error: { code: 'forbidden' } }));
+    await expect(listPaymentsPage(session)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('reads the summary with the method and search but never the status', async () => {
+    const body = {
+      total: 5,
+      byStatus: { submitted: 2, verified: 3, rejected: 0, withdrawn: 0, reversed: 0 },
+    };
+    mocks.apiFetch.mockImplementation(() => answer(200, body));
+    const summary = await getPaymentsSummary(session, {
+      q: 'acme',
+      method: ['qr'],
+      status: ['verified'],
+    } as never);
+    expect(summary.byStatus.verified).toBe(3);
+    const url = new URL(last()[1], 'http://x');
+    expect(url.pathname).toBe('/v1/payments/summary');
+    expect(url.searchParams.get('q')).toBe('acme');
+    expect(url.searchParams.getAll('method')).toEqual(['qr']);
+    expect(url.searchParams.has('status')).toBe(false);
   });
 
   it('fails loudly with 502 when the list drifts from the contract', async () => {

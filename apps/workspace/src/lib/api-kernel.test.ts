@@ -372,7 +372,7 @@ describe('memos', () => {
     expect(lastCall().url).toBe(`http://api:3001/v1/test-memos/${ID_A}`);
   });
 
-  it('lists one page of memos and forwards only limit, cursor and status', async () => {
+  it('lists one page of memos and forwards limit, cursor and status', async () => {
     fetchMock.mockResolvedValue(
       reply({
         items: [
@@ -391,19 +391,34 @@ describe('memos', () => {
           },
         ],
         nextCursor: 'abc_-123',
+        total: 41,
       }),
     );
     const page = await listMemos(session, { limit: 20, cursor: 'prev', status: 'draft' });
     expect(page.items[0]?.ownerName).toBe('Sushil Shrestha');
     expect(page.nextCursor).toBe('abc_-123');
+    expect(page.total).toBe(41);
     expect(lastCall().url).toBe('http://api:3001/v1/test-memos?limit=20&cursor=prev&status=draft');
-    fetchMock.mockResolvedValue(reply({ items: [], nextCursor: null }));
+    fetchMock.mockResolvedValue(reply({ items: [], nextCursor: null, total: 0 }));
     await listMemos(session);
     expect(lastCall().url).toBe('http://api:3001/v1/test-memos');
   });
 
+  it('sends several statuses as repeated params and the search text as q', async () => {
+    fetchMock.mockResolvedValue(reply({ items: [], nextCursor: null, total: 0 }));
+    await listMemos(session, { status: ['draft', 'approved'], q: 'budget & plan' });
+    expect(lastCall().url).toBe(
+      'http://api:3001/v1/test-memos?status=draft&status=approved&q=budget+%26+plan',
+    );
+    fetchMock.mockResolvedValue(reply({ items: [], nextCursor: null, total: 0 }));
+    await listMemos(session, { status: [] });
+    expect(lastCall().url).toBe('http://api:3001/v1/test-memos');
+  });
+
   it('refuses a list body that breaks the contract instead of rendering undefined', async () => {
-    fetchMock.mockResolvedValue(reply({ items: [{ id: 'not-a-guid' }], nextCursor: null }));
+    fetchMock.mockResolvedValue(
+      reply({ items: [{ id: 'not-a-guid' }], nextCursor: null, total: 1 }),
+    );
     await expect(listMemos(session)).rejects.toMatchObject({ status: 502 });
   });
 

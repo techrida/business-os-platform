@@ -16,6 +16,8 @@ vi.mock('next/navigation', () => ({
   },
   redirect: vi.fn(),
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/payables/inbox',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('../actions', () => ({
@@ -85,7 +87,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const inbox = async () => textOf(renderToStaticMarkup(await InboxPage()));
+const inbox = async () =>
+  textOf(renderToStaticMarkup(await InboxPage({ searchParams: Promise.resolve({}) })));
 const convert = async () =>
   textOf(
     renderToStaticMarkup(await NewBillPage({ searchParams: Promise.resolve({ submission: SUB }) })),

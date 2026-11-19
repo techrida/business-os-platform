@@ -2,7 +2,7 @@
 // payables.payment.request (Finance); there is no separate read key, so reading is held to the same people. Every
 // write takes an Idempotency-Key. Approval is through the approvals inbox (route payment_request); nothing here
 // pays out (AD1).
-import { PaymentRequestStatusSchema, RequestPaymentBodySchema } from '@bos/contracts';
+import { RequestPaymentBodySchema } from '@bos/contracts';
 import {
   Body,
   Controller,
@@ -13,32 +13,44 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
-import { z } from 'zod';
+import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
-import { CancelPaymentRequestBodySchema } from './payment-request.rules';
+import {
+  CancelPaymentRequestBodySchema,
+  ListPaymentRequestsQuerySchema,
+} from './payment-request.rules';
 import {
   PaymentRequestsService,
   type PaymentRequestDto,
   type PaymentRequestItemDto,
 } from './payment-requests.service';
 
-const ListPaymentRequestsQuerySchema = z.strictObject({
-  status: PaymentRequestStatusSchema.optional(),
-});
-
 @Controller('v1/payables/payment-requests')
 export class PaymentRequestsController {
   constructor(private readonly requests: PaymentRequestsService) {}
 
-  /** The entity's payment requests, newest first. Query: `status` (optional). */
+  /**
+   * The entity's payment requests, newest first. Query: `status` (repeatable), `q`, `limit` (default 25, at most
+   * 100), `offset`; X-Total-Count is the number of all matches.
+   */
   @Get()
   @Can('payables.payment.request')
-  list(@Query() query: unknown): Promise<Omit<PaymentRequestDto, 'lines'>[]> {
-    return this.requests.list(parseOr400(ListPaymentRequestsQuerySchema, query).status);
+  list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<Omit<PaymentRequestDto, 'lines'>[]> {
+    return this.requests
+      .list(parseOr400(ListPaymentRequestsQuerySchema, query))
+      .then(({ rows, total }) => {
+        setTotalCount(res, total);
+        return rows;
+      });
   }
 
   /** Available approved-bill balances for the payment request entry screen. */

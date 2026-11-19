@@ -196,6 +196,10 @@ describe('GET /v1/admin/users validation', () => {
     { limit: ['10'] },
     { after: ADMIN, sort: 'name' },
     { after: ADMIN, page: '1' },
+    { status: ['active', 'disabled'] },
+    { role: ['sales', 'owner'] },
+    { q: ['a', 'b'] },
+    { unknown: 'x' },
   ])('rejects invalid directory parameters %#', async (query) => {
     await expect(controller.list(query)).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -217,13 +221,28 @@ describe('GET /v1/admin/users validation', () => {
       { tenantId: TENANT, organizationId: STAFF_ORG },
       {
         q: 'aB',
-        status: 'active',
-        role: 'sales',
+        status: ['active'],
+        role: ['sales'],
         departmentId: ADMIN,
         sort: 'lastActive',
         page: 3,
         limit: 10,
       },
+    );
+  });
+
+  it('accepts repeated status and role params, drops empties and duplicates, and ignores a one-letter search', async () => {
+    const list = vi.spyOn(store, 'list');
+    await asAdmin(['admin.users.read'], () =>
+      controller.list({
+        q: 'a',
+        status: ['active', 'invited', 'active', ''],
+        role: ['sales', 'finance'],
+      }),
+    );
+    expect(list).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: STAFF_ORG },
+      { status: ['active', 'invited'], role: ['sales', 'finance'], limit: 50 },
     );
   });
 });
@@ -666,8 +685,8 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     const matches = await sqlStore.list(scope, {
       limit: 1,
       q: '%USER',
-      status: 'active',
-      role: 'sales',
+      status: ['active'],
+      role: ['sales'],
       departmentId,
     });
     expect(matches).toEqual([
@@ -679,15 +698,27 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
       }),
     ]);
     expect(AdminUserSchema.safeParse(matches[0]).success).toBe(true);
-    expect((await sqlStore.list(scope, { limit: 10, q: 'zEnIth' })).map(({ id }) => id)).toEqual([
-      target,
-    ]);
+    // A search with few exact hits may add close matches after them, so only the first is pinned.
+    expect((await sqlStore.list(scope, { limit: 10, q: 'zEnIth' }))[0]?.id).toBe(target);
     expect(await sqlStore.list(scope, { limit: 10, departmentId: second.departmentId })).toEqual(
       [],
     );
-    expect(await sqlStore.list(scope, { limit: 10, status: 'inactive' })).toEqual([
+    expect(await sqlStore.list(scope, { limit: 10, status: ['inactive'] })).toEqual([
       expect.objectContaining({ id: inactive, department: null }),
     ]);
+    // Repeated values are any-of: two statuses, two roles.
+    const byStatus = await sqlStore.list(scope, { limit: 10, status: ['inactive', 'invited'] });
+    expect(byStatus.map(({ id }) => id).sort()).toEqual([duplicate, inactive].sort());
+    const byRole = await sqlStore.list(scope, { limit: 10, role: ['finance', 'founder'] });
+    expect(byRole.map(({ id }) => id)).toEqual([target]);
+    // A typo finds the user, ranked after exact hits; the other tenant's user never appears.
+    const typo = await sqlStore.list(scope, { limit: 10, q: 'Zenithh' });
+    expect(typo[0]?.id).toBe(target);
+    expect(typo.map(({ id }) => id)).not.toContain(second.target);
+    // A filter narrows the fuzzy result too: the target is active, so inactive-only hides it.
+    expect(await sqlStore.list(scope, { limit: 10, q: 'Zenithh', status: ['inactive'] })).toEqual(
+      [],
+    );
   }, 60_000);
 
   it('throttles concurrent activity and excludes it from the audit without loosening scope', async () => {
@@ -713,7 +744,7 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     await sqlStore.recordActivity(first.scope, { ...actor, id: second.target });
     await sqlStore.recordActivity(first.scope, { ...actor, id: first.inactive });
     expect(
-      (await sqlStore.list(first.scope, { limit: 4, status: 'inactive' }))[0]?.lastActiveAt,
+      (await sqlStore.list(first.scope, { limit: 4, status: ['inactive'] }))[0]?.lastActiveAt,
     ).toBeNull();
     expect(
       (await sqlStore.list(second.scope, { limit: 4 })).every(

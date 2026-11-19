@@ -1,52 +1,58 @@
-import { LEAD_SOURCES, LEAD_STAGES, type LeadDto } from '@bos/contracts';
+import { LEAD_SOURCES, LEAD_STAGES, type LeadDto, pageWindow } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
-import { listLeadOwners, listLeads } from '@/components/p2/crm/crm-api';
+import { listLeadOwners } from '@/components/p2/crm/crm-api';
+import {
+  getLeadSummary,
+  type LeadSummary,
+  type LeadsPage,
+  listLeadsPage,
+} from '@/components/p2/crm/leads-api';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
 import { LoadProblem, StageBadge, ViewSwitch } from '@/components/p2/crm/server-bits';
 import { boardColumns, groupByStage, stageLabel, userMoves } from '@/components/p2/crm/stages';
 import type { BoardColumnData } from '@/components/p2/crm/types';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Icon } from '@/components/ui/icon';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { userNames } from '@/lib/business-labels';
 import { getNumberSystems } from '@/lib/display-settings';
+import {
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  readList,
+  type RawParams,
+} from '@/lib/list-params';
 
 import { moveLeadStageAction } from './actions';
 import { NextFollowUpCell, OwnerCell } from './lead-cells';
+import { LeadFilters } from './lead-filters';
 import styles from './leads.module.css';
 import { QualifyLead } from './qualify-lead';
 
 export const metadata: Metadata = { title: 'Leads · Business OS' };
 export const dynamic = 'force-dynamic';
 
-const LIMIT = 200;
-const PAGE_SIZES = [5, 10, 20];
-type Param = 'view' | 'q' | 'stage' | 'source' | 'page' | 'rows';
-type Search = Partial<Record<Param, string | string[]>>;
-type Filters = Partial<Record<Param, string | undefined>>;
+const PATH = '/leads';
+const BOARD_LIMIT = 200;
+const PAGE_SIZES = [5, 10, 20] as const;
+const ROWS = { allowed: PAGE_SIZES, default: 5 };
 
-const one = (value: string | string[] | undefined) =>
-  typeof value === 'string' ? value : undefined;
-
-function href(params: Filters): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
-  return query.size > 0 ? `/leads?${query.toString()}` : '/leads';
-}
+const stageOptions = LEAD_STAGES.map((value) => ({ value, label: stageLabel('lead', value) }));
+const sourceOptions = LEAD_SOURCES.map((value) => ({ value, label: sentence(value) }));
 
 function columnsFor(leads: LeadDto[], numberSystems: NumberSystems): BoardColumnData[] {
   const groups = groupByStage('lead', leads);
@@ -74,35 +80,57 @@ const summaryStages = [
   { stage: 'converted', icon: 'check-circle', tone: 'success' },
 ] as const;
 
-export default async function LeadsPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const session = await requireStaffSession('/leads');
+export default async function LeadsPage({ searchParams }: { searchParams: Promise<RawParams> }) {
+  const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
   const sp = await searchParams;
-  const view = one(sp.view) === 'board' ? 'board' : 'table';
-  const q = one(sp.q)?.trim().slice(0, 100) || undefined;
-  const stageParam = one(sp.stage);
-  const stage =
-    view === 'table' && (LEAD_STAGES as readonly string[]).includes(stageParam ?? '')
-      ? stageParam
-      : undefined;
-  const sourceParam = one(sp.source);
-  const source = (LEAD_SOURCES as readonly string[]).includes(sourceParam ?? '')
-    ? sourceParam
-    : undefined;
-  const rowsParam = Number(one(sp.rows));
-  const rows = PAGE_SIZES.includes(rowsParam) ? rowsParam : 5;
-  const pageParam = Number(one(sp.page));
-  const requestedPage = Number.isSafeInteger(pageParam) ? Math.max(1, pageParam) : 1;
-  const filtered = Boolean(q || stage || source);
-  const filters = { q, stage, source, rows: rows === 5 ? undefined : String(rows) };
+  const names = await userNames(session);
+  const ownerOptions = [...names]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
-  let leads: LeadDto[];
+  const view = readList(sp, { search: false, single: { view: ['table', 'board'] } }).single.view;
+  const board = view === 'board';
+  // Without the user directory there is no owner control, so an owner param is not applied either.
+  const spec = {
+    multi: { stage: LEAD_STAGES, source: LEAD_SOURCES, ownerUserId: [...names.keys()] },
+    rows: ROWS,
+  } as const;
+  const state = readList(sp, spec);
+  // The board's columns are the stages, so it has no stage filter.
+  const stages = board ? [] : state.multi.stage;
+  const sources = state.multi.source;
+  const owners = state.multi.ownerUserId;
+  const { q, rows } = state;
+  const filtered = q !== undefined || stages.length > 0 || sources.length > 0 || owners.length > 0;
+  const shared = { ...(q !== undefined ? { q } : {}), source: sources, ownerUserId: owners };
+
+  let pageInfo = pageWindow(board ? 1 : state.page, board ? BOARD_LIMIT : rows);
+  let result: LeadsPage;
+  let summary: LeadSummary | null;
   try {
-    leads = await listLeads(session, {
-      ...(q ? { q } : {}),
-      ...(stage ? { stage } : {}),
-      limit: LIMIT,
-    });
+    const [first, counts] = await Promise.all([
+      listLeadsPage(session, {
+        ...shared,
+        stage: stages,
+        limit: pageInfo.limit,
+        offset: pageInfo.offset,
+      }),
+      // Cards are a courtesy: if they fail the list still renders. The summary refuses `stage`.
+      getLeadSummary(session, shared).catch(() => null),
+    ]);
+    summary = counts;
+    result = first;
+    pageInfo = pageWindow(pageInfo.page, pageInfo.limit, first.total);
+    if (first.items.length === 0 && first.total > 0) {
+      // The URL named a page past the end: show the last one instead of an empty table.
+      result = await listLeadsPage(session, {
+        ...shared,
+        stage: stages,
+        limit: pageInfo.limit,
+        offset: pageInfo.offset,
+      });
+    }
   } catch (err) {
     const problem = failureOf(err);
     return (
@@ -112,40 +140,39 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           status={problem.status}
           message={problem.message}
           what="leads"
-          reloadHref={href({
-            ...filters,
-            view: view === 'board' ? 'board' : undefined,
-            page: one(sp.page),
-          })}
+          reloadHref={hrefWith(PATH, sp, { page: state.page > 1 ? state.page : null })}
         />
       </Page>
     );
   }
 
+  const matches = result.items;
+  const total = result.total;
+  const pageCount = pageInfo.pageCount;
+  const currentPage = pageInfo.page;
+  const pageHref = (page: number) => hrefWith(PATH, sp, { page: page > 1 ? page : null });
+
   // Owner names: the people the caller may assign to, plus the users directory for administrators.
   // Either failing only blanks names; the list still renders.
-  const [ownerList, directory] = await Promise.allSettled([
-    listLeadOwners(session),
-    userNames(session),
-  ]);
-  const ownerNames = new Map(directory.status === 'fulfilled' ? directory.value : []);
-  if (ownerList.status === 'fulfilled') {
-    for (const o of ownerList.value) ownerNames.set(o.userId, o.displayName || o.email);
+  const ownerNames = new Map(names);
+  try {
+    for (const o of await listLeadOwners(session))
+      ownerNames.set(o.userId, o.displayName || o.email);
+  } catch {
+    // Names stay as the directory gave them.
   }
   const now = new Date();
-
-  // The API supports search and stage filters and returns a capped array. Source and pages
-  // narrow that returned set, so the totals describe these results only.
-  const matches = source ? leads.filter((lead) => lead.source === source) : leads;
-  const hasMore = leads.length === LIMIT;
-  const pageCount = Math.max(1, Math.ceil(matches.length / rows));
-  const currentPage = Math.min(requestedPage, pageCount);
-  const start = (currentPage - 1) * rows;
-  const pageHref = (page: number) =>
-    href({ ...filters, page: page === 1 ? undefined : String(page) });
   const pageLinks = Array.from({ length: pageCount }, (_, index) => index + 1)
     .filter((page) => Math.abs(page - currentPage) <= 2)
     .map((page) => ({ page, href: pageHref(page) }));
+  const hiding = activeFilterLabels(
+    { q, multi: { stage: stages, source: sources, ownerUserId: owners }, single: {} },
+    {
+      stage: { label: 'Status', format: (v) => stageLabel('lead', v) },
+      source: { label: 'Source', format: sentence },
+      ownerUserId: { label: 'Owner', format: (v) => names.get(v) ?? 'Owner name unavailable' },
+    },
+  );
 
   return (
     <Page>
@@ -159,14 +186,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
         }
       />
 
-      {!filtered && !hasMore ? (
+      {summary !== null ? (
         <section className={styles.stats} aria-label="Lead summary">
-          <StatCard label="Total leads" value={leads.length} icon="users" />
+          <StatCard label="Total leads" value={summary.total} icon="users" />
           {summaryStages.map(({ stage, icon, tone }) => (
             <StatCard
               key={stage}
               label={stageLabel('lead', stage)}
-              value={leads.filter((lead) => lead.stage === stage).length}
+              value={summary.byStage[stage]}
               icon={icon}
               tone={tone}
             />
@@ -176,74 +203,33 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
       <div className={styles.results}>
         <div className={styles.toolbar}>
-          <form method="get" action="/leads" className={styles.filters} role="search">
-            {view === 'board' ? <input type="hidden" name="view" value="board" /> : null}
-            {rows !== 5 ? <input type="hidden" name="rows" value={rows} /> : null}
-            <SearchInput
-              key={`q:${q ?? ''}`}
-              aria-label="Search leads"
-              placeholder="Search leads"
-              name="q"
-              defaultValue={q ?? ''}
-              maxLength={100}
-              wrapperClassName={styles.search}
-            />
-            <div className={styles.filterControls}>
-              <Select
-                key={`source:${source ?? ''}`}
-                aria-label="Lead source"
-                name="source"
-                defaultValue={source ?? ''}
-                className={styles.filter}
-              >
-                <option value="">All sources</option>
-                {LEAD_SOURCES.map((value) => (
-                  <option key={value} value={value}>
-                    {sentence(value)}
-                  </option>
-                ))}
-              </Select>
-              {view === 'table' ? (
-                <Select
-                  key={`stage:${stage ?? ''}`}
-                  aria-label="Lead status"
-                  name="stage"
-                  defaultValue={stage ?? ''}
-                  className={styles.filter}
-                >
-                  <option value="">All statuses</option>
-                  {LEAD_STAGES.map((value) => (
-                    <option key={value} value={value}>
-                      {stageLabel('lead', value)}
-                    </option>
-                  ))}
-                </Select>
-              ) : null}
-              <Button type="submit" variant="secondary">
-                Apply
-              </Button>
-            </div>
-          </form>
+          <LeadFilters
+            view={board ? 'board' : 'table'}
+            rows={rows}
+            stages={stages}
+            sources={sources}
+            owners={owners}
+            stageOptions={stageOptions}
+            sourceOptions={sourceOptions}
+            ownerOptions={ownerOptions}
+          />
           <ViewSwitch
-            current={view}
+            current={board ? 'board' : 'table'}
             hrefs={{
-              table: href(filters),
-              board: href({ ...filters, view: 'board', stage: undefined }),
+              table: hrefWith(PATH, sp, { view: null }),
+              board: hrefWith(PATH, sp, { view: 'board', stage: null }),
             }}
           />
+          <ResultCount shown={matches.length} total={total} noun="lead" />
         </div>
 
-        {matches.length === 0 ? (
+        {total === 0 ? (
           filtered ? (
             <EmptyState
               title="No leads match"
-              action={
-                <Link href={href({ view: view === 'board' ? 'board' : undefined })}>
-                  Clear filters
-                </Link>
-              }
+              action={<Link href={clearFiltersHref(PATH, sp, spec)}>Clear filters</Link>}
             >
-              Try a different search or filter.
+              Nothing matches {hiding.join(', ')}.
             </EmptyState>
           ) : (
             <EmptyState
@@ -253,7 +239,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               Website enquiries appear here. Add a lead for a call or a walk-in.
             </EmptyState>
           )
-        ) : view === 'board' ? (
+        ) : board ? (
           <Board
             columns={columnsFor(matches, numberSystems)}
             action={moveLeadStageAction}
@@ -275,7 +261,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 </tr>
               </thead>
               <tbody>
-                {matches.slice(start, start + rows).map((lead) => {
+                {matches.map((lead) => {
                   const leadHref = `/leads/${lead.id}`;
                   const value = moneyOrNull(lead.expectedValue, lead.currency, numberSystems);
                   const canQualify = userMoves('lead', lead.stage).some(
@@ -346,7 +332,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             <div className={styles.listFooter}>
               <Pagination
                 label="Lead pages"
-                summary={`Showing ${start + 1}–${Math.min(start + rows, matches.length)}${hasMore ? '' : ` of ${matches.length}`}`}
+                summary={`Showing ${pageInfo.first}–${pageInfo.last} of ${total}`}
                 currentPage={currentPage}
                 pages={pageLinks}
                 {...(currentPage > 1 ? { previousHref: pageHref(currentPage - 1) } : {})}
@@ -357,7 +343,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 {PAGE_SIZES.map((size) => (
                   <Link
                     key={size}
-                    href={href({ ...filters, rows: size === 5 ? undefined : String(size) })}
+                    href={hrefWith(PATH, sp, { rows: size === 5 ? null : size })}
                     aria-label={`${size} rows per page`}
                     aria-current={rows === size ? 'true' : undefined}
                   >
@@ -369,10 +355,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           </div>
         )}
 
-        {hasMore ? (
+        {board && total > BOARD_LIMIT ? (
           <p className={styles.quiet}>
-            Results use the first {LIMIT} leads returned. Search or filter by stage to narrow the
-            list.
+            Showing the first {BOARD_LIMIT} of {total} leads. Search or filter to narrow the board.
           </p>
         ) : null}
       </div>

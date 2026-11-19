@@ -1,6 +1,12 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs, type Signed } from '../helpers/memo-flow';
+import {
+  expectParam,
+  expectSelected,
+  multiSelectByLabel,
+  toggleOptions,
+} from '../helpers/multi-select';
 import { chooseOption, selectByName } from '../helpers/select';
 
 /**
@@ -36,9 +42,11 @@ test('the purchase request list loads and filters', async ({ browser, baseURL })
     await expect(
       founder.page.getByRole('heading', { level: 1, name: 'Purchase requests' }),
     ).toBeVisible();
-    await chooseOption(selectByName(founder.page, 'status'), 'closed');
-    await founder.page.getByRole('button', { name: 'Apply' }).click();
-    await expect(founder.page).toHaveURL(/status=closed/);
+    // Filters apply as they change: no Apply button, the URL is the state.
+    const status = multiSelectByLabel(founder.page, 'Status');
+    await toggleOptions(status, ['closed']);
+    await expectParam(founder.page, 'status', ['closed']);
+    await expectSelected(status, ['closed']);
   } finally {
     await Promise.all(opened.map((s) => s.context.close()));
   }

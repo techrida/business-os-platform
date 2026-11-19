@@ -4,9 +4,13 @@
 // Every command needs an Idempotency-Key. Allocating is U8's (POST /v1/payments/:id/allocations); this unit only
 // reads allocations. Withdraw has no staff route: the customer withdraws through the portal (U13).
 import {
+  MAX_ROWS,
+  multi,
+  searchParam,
   type AllocationDto,
   type PaymentDto,
   type PaymentListItem,
+  PaymentMethodSchema,
   PaymentStatusSchema,
   RejectPaymentBodySchema,
   ReversePaymentBodySchema,
@@ -23,13 +27,35 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import { z } from 'zod';
 
 import { Can } from '../../platform/authz/decorators';
+import { setTotalCount } from '../../platform/list';
 import { parseOr400 } from '../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../customers/customers.types';
 import { PaymentsCaller } from './payments.caller';
-import { PaymentsService } from './payments.service';
+import { type PaymentsSummary, PaymentsService } from './payments.service';
+
+/**
+ * `GET /v1/payments`. `status` and `method` may repeat; an unknown value or key or a repeated `q` is a 400.
+ * No `limit` means every match.
+ */
+export const ListPaymentsQuerySchema = z.strictObject({
+  status: multi(PaymentStatusSchema),
+  method: multi(PaymentMethodSchema),
+  q: searchParam,
+  limit: z.coerce.number().int().min(1).max(MAX_ROWS).optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** `GET /v1/payments/summary`: the counts ignore `status`, so the cards can show every status. */
+export const PaymentsSummaryQuerySchema = z.strictObject({
+  method: multi(PaymentMethodSchema),
+  q: searchParam,
+});
 
 @Controller('v1/payments')
 export class PaymentsController {
@@ -38,12 +64,29 @@ export class PaymentsController {
     private readonly caller: PaymentsCaller,
   ) {}
 
-  /** 200 with the acting entity's payments, newest first; `?status=` narrows to one status (400 if unknown). */
+  /** 200 with a bare array of the acting entity's payments, newest first; X-Total-Count is all matches. */
   @Get()
   @Can('payment.read')
-  list(@Query('status') status: unknown): Promise<PaymentListItem[]> {
-    const parsed = parseOr400(PaymentStatusSchema.optional(), status);
-    return this.payments.list(this.caller.current().scope, parsed);
+  async list(
+    @Query() query: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PaymentListItem[]> {
+    const { rows, total } = await this.payments.list(
+      this.caller.current().scope,
+      parseOr400(ListPaymentsQuerySchema, query),
+    );
+    setTotalCount(res, total);
+    return rows;
+  }
+
+  /** 200 with `{ total, byStatus }` for the acting entity. Declared before `:id`. */
+  @Get('summary')
+  @Can('payment.read')
+  summary(@Query() query: unknown): Promise<PaymentsSummary> {
+    return this.payments.summary(
+      this.caller.current().scope,
+      parseOr400(PaymentsSummaryQuerySchema, query),
+    );
   }
 
   /** 200 with the PaymentDto; 404 outside the acting entity. */

@@ -36,14 +36,23 @@ export function quotationStatusMeta(status: QuotationStatus): QuotationStatusMet
 export const STATUS_FILTER_OPTIONS: readonly { value: QuotationStatus; label: string }[] =
   QUOTATION_STATUSES.map((value) => ({ value, label: META[value].label }));
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Rows per page offered on the list; the first is the default. */
+export const QUOTATION_ROW_OPTIONS = [5, 10, 20] as const;
+export const QUOTATION_DEFAULT_ROWS = 5;
+
 /**
- * Reads the `status` query parameter. Anything that is not exactly one contract status (absent,
- * empty, wrong case, repeated, or an object key such as `toString`) means "no filter", so a
- * hand-edited URL never reaches the API as a filter it would refuse.
+ * What the quotations URL may carry, for `readList`: repeated `status` and `customerId` are kept
+ * (each valid value once), and `opportunityId` is one id. Anything else is dropped, so a hand-edited
+ * URL never reaches the API as a filter it would refuse. `opportunityId` is a scope, not a filter:
+ * Clear filters leaves it in place.
  */
-export function parseStatusFilter(raw: string | string[] | undefined): QuotationStatus | undefined {
-  if (typeof raw !== 'string') return undefined;
-  return (QUOTATION_STATUSES as readonly string[]).includes(raw)
-    ? (raw as QuotationStatus)
-    : undefined;
-}
+export const QUOTATION_LIST_SPEC = {
+  multi: { status: QUOTATION_STATUSES, customerId: GUID },
+  single: { opportunityId: GUID },
+  rows: { allowed: QUOTATION_ROW_OPTIONS, default: QUOTATION_DEFAULT_ROWS },
+} as const;
+
+/** The same spec without the scope, for the Clear filters link. */
+export const QUOTATION_FILTER_SPEC = { multi: QUOTATION_LIST_SPEC.multi } as const;

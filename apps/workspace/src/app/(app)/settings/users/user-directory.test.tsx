@@ -5,7 +5,11 @@ import UsersPage from './page';
 
 vi.mock('server-only', () => ({}));
 vi.mock('../guard', () => ({ requireSection: () => ({ accessToken: 'test-token' }) }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/settings/users',
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock('@/lib/env', () => ({ getEnv: () => ({ API_INTERNAL_URL: 'http://api.test' }) }));
 
 const IDP = '00000000-0000-4000-8000-000000000001';
@@ -23,11 +27,12 @@ it('passes directory filters to the API, preserves them across pages, and shows 
     createdAt: '2026-11-19T00:00:00.000Z',
     lastActiveAt: index === 0 ? '2026-11-19T11:30:00.000Z' : null,
   }));
+  // The URL repeats status and role; the API gets the same repeated params.
   const filters = {
     q: 'staff+',
-    role: 'finance',
-    limit: '5',
-    status: 'active',
+    role: ['finance', 'sales'],
+    rows: '5',
+    status: ['active', 'invited'],
     departmentId: DEPARTMENT,
     sort: 'lastActive',
   };
@@ -47,9 +52,14 @@ it('passes directory filters to the API, preserves them across pages, and shows 
       );
     }
     expect(url.pathname).toBe('/v1/admin/users');
-    const { page, ...query } = Object.fromEntries(url.searchParams);
-    expect(query).toEqual(filters);
-    const first = page === '1';
+    const { searchParams } = url;
+    expect(searchParams.getAll('role')).toEqual(['finance', 'sales']);
+    expect(searchParams.getAll('status')).toEqual(['active', 'invited']);
+    expect(searchParams.get('limit')).toBe('5');
+    expect(searchParams.get('q')).toBe('staff+');
+    expect(searchParams.get('departmentId')).toBe(DEPARTMENT);
+    expect(searchParams.get('sort')).toBe('lastActive');
+    const first = searchParams.get('page') === '1';
     return Promise.resolve(
       Response.json({
         items: first ? users.slice(0, 5) : users.slice(5),
@@ -69,9 +79,17 @@ it('passes directory filters to the API, preserves them across pages, and shows 
     const link = first.match(/<a[^>]*href="([^"]+)"[^>]*>Next<\/a>/)?.[1];
     expect(link).toBeTruthy();
     const next = new URL(link!.replaceAll('&amp;', '&'), 'https://workspace.test');
-    expect(Object.fromEntries(next.searchParams)).toEqual({ ...filters, page: '2' });
+    expect(next.searchParams.getAll('status')).toEqual(['active', 'invited']);
+    expect(next.searchParams.getAll('role')).toEqual(['finance', 'sales']);
+    expect(next.searchParams.get('rows')).toBe('5');
+    expect(next.searchParams.get('page')).toBe('2');
     const second = renderToStaticMarkup(
-      await UsersPage({ searchParams: Promise.resolve(Object.fromEntries(next.searchParams)) }),
+      await UsersPage({
+        searchParams: Promise.resolve({
+          ...filters,
+          page: next.searchParams.get('page')!,
+        }),
+      }),
     );
     expect(second).toContain('Person 6');
     expect(second).not.toContain('Person 5');
@@ -107,8 +125,79 @@ it('keeps search mounted and shows an empty search result without hiding tenant 
     );
     expect(html).toContain('No matching users');
     expect(html).toContain('Clear filters');
+    expect(html).toContain('Nothing matches Search “missing”.');
     expect(html).toContain('Search users');
+    expect(html).not.toContain('Apply');
     expect(html).toContain('Total users');
+  } finally {
+    request.mockRestore();
+  }
+});
+
+it('names every active filter in the empty state and the clear link keeps rows and sort', async () => {
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    return Promise.resolve(
+      Response.json(
+        url.pathname.endsWith('/summary')
+          ? {
+              total: 8,
+              active: 8,
+              invited: 0,
+              deactivated: 0,
+              departments: [{ id: DEPARTMENT, name: 'Operations' }],
+              canSendPasswordReset: false,
+            }
+          : { items: [], nextPage: null, nextAfter: null },
+      ),
+    );
+  });
+  try {
+    const html = renderToStaticMarkup(
+      await UsersPage({
+        searchParams: Promise.resolve({
+          status: ['active', 'invited'],
+          role: 'finance',
+          departmentId: DEPARTMENT,
+          rows: '10',
+          sort: 'createdAt',
+        }),
+      }),
+    );
+    expect(html).toContain('Status: Active, Invited');
+    expect(html).toContain('Role: Finance');
+    expect(html).toContain('Department: Operations');
+    const clear = html.match(/<a[^>]*href="([^"]+)"[^>]*>Clear filters<\/a>/)?.[1];
+    expect(clear).toBe('/settings/users?rows=10&amp;sort=createdAt');
+  } finally {
+    request.mockRestore();
+  }
+});
+
+it('ignores a stale id cursor from an older link', async () => {
+  const seen: URL[] = [];
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    seen.push(url);
+    return Promise.resolve(
+      Response.json(
+        url.pathname.endsWith('/summary')
+          ? {
+              total: 0,
+              active: 0,
+              invited: 0,
+              deactivated: 0,
+              departments: [],
+              canSendPasswordReset: false,
+            }
+          : { items: [], nextPage: null, nextAfter: null },
+      ),
+    );
+  });
+  try {
+    await UsersPage({ searchParams: Promise.resolve({ after: DEPARTMENT, status: 'active' }) });
+    const list = seen.find((url) => url.pathname === '/v1/admin/users')!;
+    expect(list.searchParams.has('after')).toBe(false);
   } finally {
     request.mockRestore();
   }

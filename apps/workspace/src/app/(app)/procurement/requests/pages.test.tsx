@@ -16,7 +16,9 @@ vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
   },
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/procurement/requests',
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('./actions', () => ({
   createPrAction: vi.fn(),
@@ -25,7 +27,7 @@ vi.mock('./actions', () => ({
   cancelPrAction: vi.fn(),
 }));
 const api = vi.hoisted(() => ({
-  listPurchaseRequests: vi.fn(),
+  listPurchaseRequestsPage: vi.fn(),
   getPurchaseRequest: vi.fn(),
   listDepartments: vi.fn(),
   listCostCenters: vi.fn(),
@@ -107,7 +109,8 @@ function dropdown(out: string, name: string) {
   ).exec(out);
   return match ? { root: match[1]!, field: match[2]!, trigger: match[3]! } : null;
 }
-const list = async (sp: Record<string, string> = {}) =>
+const page = (items: unknown[], total = items.length) => ({ items, total });
+const list = async (sp: Record<string, string | string[]> = {}) =>
   html(await ListPage({ searchParams: Promise.resolve(sp) }));
 const detailHtml = async (sp: Record<string, string> = {}) =>
   html(
@@ -127,9 +130,9 @@ beforeEach(() => {
 
 describe('the list', () => {
   it('shows the rows with server money (lakh grouping) and an Emergency badge', async () => {
-    api.listPurchaseRequests.mockResolvedValue([
-      item({ isEmergency: true, number: 'PR-2082/83-00001', status: 'submitted' }),
-    ]);
+    api.listPurchaseRequestsPage.mockResolvedValue(
+      page([item({ isEmergency: true, number: 'PR-2082/83-00001', status: 'submitted' })]),
+    );
     const out = await list();
     expect(out).toContain('PR-2082/83-00001');
     expect(out).toContain('Chairs for the new office');
@@ -140,28 +143,55 @@ describe('the list', () => {
   });
 
   it('a draft has no number yet and says so', async () => {
-    api.listPurchaseRequests.mockResolvedValue([item()]);
+    api.listPurchaseRequestsPage.mockResolvedValue(page([item()]));
     expect(await list()).toContain('Not numbered yet');
   });
 
-  it('passes the status filter and only the status and limit', async () => {
-    api.listPurchaseRequests.mockResolvedValue([]);
-    await list({ status: 'returned' });
-    expect(api.listPurchaseRequests).toHaveBeenCalledWith(expect.anything(), {
-      status: 'returned',
-      limit: 100,
+  it('passes repeated statuses, the search and the page window, dropping a bogus status', async () => {
+    api.listPurchaseRequestsPage.mockResolvedValue(page([]));
+    await list({ status: ['returned', 'bogus', 'draft'], q: ' chairs ', page: '3', rows: '50' });
+    expect(api.listPurchaseRequestsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['returned', 'draft'],
+      q: 'chairs',
+      limit: 50,
+      offset: 100,
     });
   });
 
-  it('ignores a status that is not one of ours', async () => {
-    api.listPurchaseRequests.mockResolvedValue([]);
-    await list({ status: 'bogus' });
-    expect(api.listPurchaseRequests).toHaveBeenCalledWith(expect.anything(), { limit: 100 });
+  it('asks for the first page of 25 when the URL has no filters', async () => {
+    api.listPurchaseRequestsPage.mockResolvedValue(page([]));
+    await list({});
+    expect(api.listPurchaseRequestsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: [],
+      limit: 25,
+      offset: 0,
+    });
+  });
+
+  it('shows the total, the range and no Apply button', async () => {
+    api.listPurchaseRequestsPage.mockResolvedValue(page([item(), item()], 134));
+    const out = await list({ status: 'draft' });
+    expect(out).toContain('Showing 2 of 134 requests');
+    expect(out).toContain('Showing 1-25 of 134');
+    expect(out).toContain('type="search"');
+    expect(out).not.toContain('>Apply<');
+  });
+
+  it('a page past the end falls back to the last page', async () => {
+    api.listPurchaseRequestsPage
+      .mockResolvedValueOnce(page([], 30))
+      .mockResolvedValueOnce(page([item()], 30));
+    const out = await list({ page: '9' });
+    expect(api.listPurchaseRequestsPage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ offset: 25 }),
+    );
+    expect(out).toContain('Showing 26-30 of 30');
   });
 
   it('says "My purchase requests" for a role that reads only its own, and hides New without the grant', async () => {
     session.roles = ['finance'];
-    api.listPurchaseRequests.mockResolvedValue([]);
+    api.listPurchaseRequestsPage.mockResolvedValue(page([]));
     const out = await list();
     expect(out).toContain('My purchase requests');
     expect(out).not.toContain('New purchase request');
@@ -169,41 +199,41 @@ describe('the list', () => {
 
   it('an operations officer sees their own heading and can still raise a request', async () => {
     session.roles = ['operations_officer'];
-    api.listPurchaseRequests.mockResolvedValue([]);
+    api.listPurchaseRequestsPage.mockResolvedValue(page([]));
     const out = await list();
     expect(out).toContain('My purchase requests');
     expect(out).toContain('New purchase request');
   });
 
   it('empty: invites a first request; filtered empty offers to clear', async () => {
-    api.listPurchaseRequests.mockResolvedValue([]);
+    api.listPurchaseRequestsPage.mockResolvedValue(page([]));
     expect(await list()).toContain('No purchase requests yet.');
-    expect(await list({ status: 'closed' })).toContain('Clear filter');
+    const filtered = await list({ status: ['closed', 'draft'], q: 'chairs' });
+    expect(filtered).toContain('Clear filters');
+    expect(filtered).toContain('Status: Closed, Draft');
+    expect(filtered).toContain('chairs');
+    expect(filtered).toContain('href="/procurement/requests"');
   });
 
   it('403 is an info notice, not an error, with no reload link', async () => {
-    api.listPurchaseRequests.mockRejectedValue(apiError(403, 'forbidden'));
+    api.listPurchaseRequestsPage.mockRejectedValue(apiError(403, 'forbidden'));
     const out = await list();
     expect(out).toContain('Your roles do not include purchase requests');
     expect(out).not.toContain('Reload purchase requests');
   });
 
   it('an API failure is an alert with a reload link and the platform-did-not-respond words', async () => {
-    api.listPurchaseRequests.mockRejectedValue(new ApiError(502, 'x'));
+    api.listPurchaseRequestsPage.mockRejectedValue(new ApiError(502, 'x'));
     const out = await list();
     expect(out).toContain('Purchase requests did not load');
     expect(out).toContain('Reload purchase requests');
   });
 
-  it('a long justification wraps and a full page says it was capped', async () => {
-    const many = Array.from({ length: 100 }, (_, i) =>
-      item({
-        id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
-        justification: 'x'.repeat(2000),
-      }),
+  it('a long justification wraps without breaking the table', async () => {
+    api.listPurchaseRequestsPage.mockResolvedValue(
+      page([item({ justification: 'x'.repeat(2000) })]),
     );
-    api.listPurchaseRequests.mockResolvedValue(many);
-    expect(await list()).toContain('Showing the newest 100 requests');
+    expect(await list()).toContain('x'.repeat(2000));
   });
 });
 

@@ -119,6 +119,16 @@ describe('users', () => {
     expect(call.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
   });
 
+  it('sends status and role filters as repeated params', async () => {
+    fetchMock.mockResolvedValueOnce(json({ items: [], nextAfter: null, nextPage: null }));
+    await listUsers(session, { status: ['active', 'invited'], role: ['sales'], q: 'ab', page: 2 });
+    const { searchParams } = lastCall().url;
+    expect(searchParams.getAll('status')).toEqual(['active', 'invited']);
+    expect(searchParams.getAll('role')).toEqual(['sales']);
+    expect(searchParams.get('q')).toBe('ab');
+    expect(searchParams.get('page')).toBe('2');
+  });
+
   it('turns a 403 into an ApiError that keeps the status and body but not the token', async () => {
     const body = { error: { code: 'forbidden', message: 'no', correlationId: 'req-12345678' } };
     fetchMock.mockResolvedValueOnce(json(body, 403));

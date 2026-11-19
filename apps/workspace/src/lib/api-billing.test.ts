@@ -11,12 +11,16 @@ import {
   draftInvoiceFromSchedule,
   getInvoice,
   getSalesOrder,
+  getSalesOrdersSummary,
   invoiceDocumentPath,
   issueInvoice,
   issueOutcomeMessage,
   keyAfterFailure,
+  getInvoicesSummary,
   listInvoices,
+  listInvoicesPage,
   listSalesOrders,
+  listSalesOrdersPage,
   markScheduleLineBillable,
   submitInvoice,
 } from './api-billing';
@@ -136,12 +140,133 @@ describe('reads', () => {
     expect(lastCall()[1]).toBe('/v1/sales-orders');
   });
 
+  it('pages sales orders: repeated filters, search and paging in the query, the total from the header', async () => {
+    const other = '44444444-4444-4444-8444-444444444444';
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(new Response('[]', { status: 200, headers: { 'X-Total-Count': '134' } })),
+    );
+    const page = await listSalesOrdersPage(session, {
+      status: ['draft', 'confirmed', 'draft', 'bogus'],
+      customerId: [CUSTOMER, other, 'not-a-guid'],
+      q: '  acme ',
+      limit: 25,
+      offset: 50,
+    });
+    expect(page).toEqual({ items: [], total: 134 });
+    expect(lastCall()[1]).toBe(
+      `/v1/sales-orders?status=draft&status=confirmed&customerId=${CUSTOMER}&customerId=${other}&q=acme&limit=25&offset=50`,
+    );
+
+    await listSalesOrdersPage(session, {});
+    expect(lastCall()[1]).toBe('/v1/sales-orders');
+  });
+
+  it('fails with 502 when the total header is missing or not a count', async () => {
+    for (const headers of [{}, { 'X-Total-Count': 'many' }, { 'X-Total-Count': '-1' }]) {
+      mocks.apiFetch.mockImplementation(() =>
+        Promise.resolve(new Response('[]', { status: 200, headers })),
+      );
+      await expect(listSalesOrdersPage(session, {})).rejects.toMatchObject({ status: 502 });
+    }
+  });
+
+  it('reads the sales order summary for the search and customers, and refuses a partial body', async () => {
+    const byStatus = { draft: 1, confirmed: 2, completed: 3, cancelled: 4 };
+    mocks.apiFetch.mockImplementation(() => answer(200, { total: 10, byStatus }));
+    await expect(
+      getSalesOrdersSummary(session, { q: 'acme', customerId: [CUSTOMER] }),
+    ).resolves.toEqual({
+      total: 10,
+      byStatus,
+    });
+    expect(lastCall()[1]).toBe(`/v1/sales-orders/summary?customerId=${CUSTOMER}&q=acme`);
+    mocks.apiFetch.mockImplementation(() => answer(200, { total: 1, byStatus: { draft: 1 } }));
+    await expect(getSalesOrdersSummary(session)).rejects.toMatchObject({ status: 502 });
+  });
+
   it('lists invoices by kind, status and customer', async () => {
     await listInvoices(session, { kind: 'credit_note', status: 'issued' });
     expect(lastCall()[1]).toBe('/v1/invoices?kind=credit_note&status=issued');
 
     await listInvoices(session, { kind: 'receipt' as never });
     expect(lastCall()[1]).toBe('/v1/invoices');
+  });
+
+  it('sends repeated filters, a search and a page, and reads the total from the header', async () => {
+    const row = {
+      id: ID,
+      kind: 'tax_invoice',
+      status: 'issued',
+      number: 'INV-1',
+      customerId: CUSTOMER,
+      customerName: 'Acme',
+      currency: 'NPR',
+      total: '10.00',
+      issueDate: '2026-11-08',
+      dueDate: '2026-12-08',
+    };
+    mocks.apiFetch.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify([row]), { status: 200, headers: { 'X-Total-Count': '41' } }),
+      ),
+    );
+    const page = await listInvoicesPage(session, {
+      status: ['issued', 'draft', 'issued', 'paid'],
+      kind: ['proforma'],
+      settlement: ['overdue', 'nope'],
+      customerId: [CUSTOMER, 'not-an-id'],
+      issuedFrom: '2026-11-01',
+      issuedTo: 'soon',
+      q: ' acme ',
+      limit: 25,
+      offset: 50,
+    });
+    expect(page.total).toBe(41);
+    expect(page.items).toHaveLength(1);
+    const url = new URL(lastCall()[1], 'http://x');
+    expect(url.pathname).toBe('/v1/invoices');
+    expect(url.searchParams.getAll('status')).toEqual(['issued', 'draft']);
+    expect(url.searchParams.getAll('kind')).toEqual(['proforma']);
+    expect(url.searchParams.getAll('settlement')).toEqual(['overdue']);
+    expect(url.searchParams.getAll('customerId')).toEqual([CUSTOMER]);
+    expect(url.searchParams.get('issuedFrom')).toBe('2026-11-01');
+    expect(url.searchParams.has('issuedTo')).toBe(false);
+    expect(url.searchParams.get('q')).toBe('acme');
+    expect(url.searchParams.get('limit')).toBe('25');
+    expect(url.searchParams.get('offset')).toBe('50');
+  });
+
+  it('fails like a contract drift when the total header is missing or malformed', async () => {
+    for (const headers of [{}, { 'X-Total-Count': 'many' }]) {
+      mocks.apiFetch.mockImplementation(() =>
+        Promise.resolve(new Response('[]', { status: 200, headers })),
+      );
+      await expect(listInvoicesPage(session)).rejects.toMatchObject({ status: 502 });
+    }
+  });
+
+  it('reads the summary with the same filters but never the status or the paging', async () => {
+    const body = {
+      total: 3,
+      byStatus: { draft: 1, submitted: 0, returned: 0, approved: 0, issued: 2, discarded: 0 },
+      customers: [{ id: CUSTOMER, name: 'Acme' }],
+    };
+    mocks.apiFetch.mockImplementation(() => answer(200, body));
+    const summary = await getInvoicesSummary(session, {
+      q: 'acme',
+      kind: ['proforma'],
+      status: ['issued'],
+      limit: 5,
+    } as never);
+    expect(summary.byStatus.issued).toBe(2);
+    const url = new URL(lastCall()[1], 'http://x');
+    expect(url.pathname).toBe('/v1/invoices/summary');
+    expect(url.searchParams.get('q')).toBe('acme');
+    expect(url.searchParams.getAll('kind')).toEqual(['proforma']);
+    expect(url.searchParams.has('status')).toBe(false);
+    expect(url.searchParams.has('limit')).toBe(false);
+    mocks.apiFetch.mockImplementation(() => answer(200, { total: 1 }));
+    await expect(getInvoicesSummary(session)).rejects.toMatchObject({ status: 502 });
   });
 
   it('encodes the id so ../ cannot climb out of the route', async () => {
