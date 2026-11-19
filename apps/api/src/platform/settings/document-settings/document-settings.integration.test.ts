@@ -8,7 +8,7 @@
 // settings.integration.test.ts: create the roles, migrate as bos_owner, then work as bos_app.
 import { randomUUID } from 'node:crypto';
 
-import { type TermPreset, TermPresetListSchema } from '@bos/contracts';
+import { DEFAULT_TERM_PRESETS, type TermPreset, TermPresetListSchema } from '@bos/contracts';
 import { createTenantWithEntity, runMigrations } from '@bos/db';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -21,6 +21,8 @@ import { SettingsService } from '../settings.service';
 
 const OWNER_PW = 'owner-test-pw';
 const APP_PW = 'app-test-pw';
+/** A never-written key reads the app's own sets, so every list in these tests starts with them. */
+const DEFAULT_NAMES = DEFAULT_TERM_PRESETS.map((p) => p.name);
 
 let container: StartedPostgreSqlContainer;
 let appPool: Pool;
@@ -86,7 +88,7 @@ function appendPreset(scope: TxScope, name: string): Promise<{ version: number }
 }
 
 describe('term presets read-modify-write', () => {
-  it('keeps every preset of 10 simultaneous writers, in 10 consecutive versions', async () => {
+  it('keeps every preset of 10 simultaneous writers (and the defaults), in 10 consecutive versions', async () => {
     const scope = await newScope();
     const names = Array.from({ length: 10 }, (_, i) => `option ${i}`);
     const results = await Promise.all(names.map((name) => appendPreset(scope, name)));
@@ -95,7 +97,9 @@ describe('term presets read-modify-write', () => {
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
     ]);
     const stored = await settings.get(scope, 'quotation.term_presets');
-    expect(stored.map((p) => p.name).sort()).toEqual([...names].sort());
+    // The 4 app defaults the first writer read, plus the 10 presets: nothing was dropped, nothing doubled.
+    expect(stored).toHaveLength(DEFAULT_NAMES.length + names.length);
+    expect(stored.map((p) => p.name).sort()).toEqual([...DEFAULT_NAMES, ...names].sort());
   });
 
   it('getLocked on a never-written key answers the default with version null', async () => {
@@ -103,7 +107,7 @@ describe('term presets read-modify-write', () => {
     const read = await withTx(db, scope, systemActor('test'), (tx) =>
       settings.getLocked(tx, 'quotation.term_presets'),
     );
-    expect(read).toEqual({ value: [], version: null });
+    expect(read).toEqual({ value: DEFAULT_TERM_PRESETS, version: null });
   });
 
   it('a second writer waits for the first to commit, then reads what the first wrote', async () => {
@@ -141,8 +145,8 @@ describe('term presets read-modify-write', () => {
 
     releaseFirst();
     await Promise.all([first, second]);
-    expect(secondRead?.map((p) => p.name)).toEqual(['first']);
+    expect(secondRead?.map((p) => p.name)).toEqual([...DEFAULT_NAMES, 'first']);
     const stored = await settings.get(scope, 'quotation.term_presets');
-    expect(stored.map((p) => p.name)).toEqual(['first', 'second']);
+    expect(stored.map((p) => p.name)).toEqual([...DEFAULT_NAMES, 'first', 'second']);
   });
 });
