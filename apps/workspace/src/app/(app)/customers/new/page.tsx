@@ -5,17 +5,17 @@ import type { Metadata } from 'next';
 import { createCustomerAction } from '@/components/p2/customers/actions';
 import { CustomerForm } from '@/components/p2/customers/customer-form';
 import { EMPTY_CUSTOMER_VALUES } from '@/components/p2/customers/forms';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 export const metadata: Metadata = { title: 'Create Organization · Business OS' };
 export const dynamic = 'force-dynamic';
 
 export default async function NewCustomerPage() {
   const session = await requireStaffSession('/customers/new');
-  const mayWrite = hasPermission(session.roles, 'customer.write');
+  const mayWrite = hasGrant(await getGrants(session), 'customer.write');
 
   return (
     <Page>
