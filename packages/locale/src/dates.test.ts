@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBs, formatCustomerDate, formatKathmandu } from './dates.js';
+import { CUSTOMER_DATE_FORMATS, formatBs, formatCustomerDate, formatKathmandu } from './dates.js';
 
 describe('formatKathmandu', () => {
   it('shows date and time in UTC+05:45', () => {
@@ -39,5 +39,21 @@ describe('formatCustomerDate', () => {
     ['On order', 'On order'],
   ])('formats %s as %s', (date, expected) => {
     expect(formatCustomerDate(date)).toBe(expected);
+  });
+});
+
+describe('formatCustomerDate formats (D27)', () => {
+  it('prints the chosen pattern, default dd MMM yyyy', () => {
+    expect(formatCustomerDate('2026-11-19')).toBe('19 Nov 2026');
+    expect(formatCustomerDate('2026-11-19', 'dd/MM/yyyy')).toBe('19/11/2026');
+    expect(formatCustomerDate('2026-11-19', 'yyyy-MM-dd')).toBe('2026-11-19');
+    expect(formatCustomerDate('2026-11-19', 'MMM dd, yyyy')).toBe('Nov 19, 2026');
+  });
+
+  it('passes through non-dates and impossible dates in every format', () => {
+    for (const f of CUSTOMER_DATE_FORMATS) {
+      expect(formatCustomerDate('Net 15', f)).toBe('Net 15');
+      expect(formatCustomerDate('2026-02-30', f)).toBe('2026-02-30');
+    }
   });
 });

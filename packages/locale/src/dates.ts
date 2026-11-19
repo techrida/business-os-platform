@@ -82,8 +82,17 @@ export function formatKathmandu(instant: Date, style: 'date' | 'datetime'): stri
   return new Intl.DateTimeFormat('en-GB', opts).format(instant);
 }
 
+/** The date patterns a company may choose for customer-facing documents (D27 default first). */
+export const CUSTOMER_DATE_FORMATS = [
+  'dd MMM yyyy',
+  'dd/MM/yyyy',
+  'yyyy-MM-dd',
+  'MMM dd, yyyy',
+] as const;
+export type CustomerDateFormat = (typeof CUSTOMER_DATE_FORMATS)[number];
+
 /** Default for customer-visible Gregorian calendar dates. */
-export const DEFAULT_CUSTOMER_DATE_FORMAT = 'dd MMM yyyy';
+export const DEFAULT_CUSTOMER_DATE_FORMAT: CustomerDateFormat = 'dd MMM yyyy';
 
 const CUSTOMER_DATE_MONTHS = [
   'Jan',
@@ -101,10 +110,13 @@ const CUSTOMER_DATE_MONTHS = [
 ] as const;
 
 /**
- * Formats a YYYY-MM-DD calendar date without a timezone conversion.
+ * Formats a YYYY-MM-DD calendar date without a timezone conversion, in the company's chosen pattern.
  * Legacy milestone descriptions and notification fallbacks pass through as written.
  */
-export function formatCustomerDate(value: string): string {
+export function formatCustomerDate(
+  value: string,
+  format: CustomerDateFormat = DEFAULT_CUSTOMER_DATE_FORMAT,
+): string {
   const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!date) return value;
   const [, year, month, day] = date;
@@ -117,7 +129,14 @@ export function formatCustomerDate(value: string): string {
   ) {
     return value;
   }
-  return DEFAULT_CUSTOMER_DATE_FORMAT.replace('dd', day!)
-    .replace('MMM', abbreviation)
-    .replace('yyyy', year!);
+  switch (format) {
+    case 'dd/MM/yyyy':
+      return `${day}/${month}/${year}`;
+    case 'yyyy-MM-dd':
+      return `${year}-${month}-${day}`;
+    case 'MMM dd, yyyy':
+      return `${abbreviation} ${day}, ${year}`;
+    case 'dd MMM yyyy':
+      return `${day} ${abbreviation} ${year}`;
+  }
 }
