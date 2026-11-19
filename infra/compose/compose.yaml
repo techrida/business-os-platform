@@ -704,9 +704,6 @@ services:
       # P1: where ZITADEL's Actions v2 user-event webhook goes. Default: a host-run API on :3001
       # (compose.dev gives zitadel-api host.docker.internal). With the app profile use http://api:3001/... .
       ZITADEL_WEBHOOK_URL: ${ZITADEL_WEBHOOK_URL:-http://host.docker.internal:3001/v1/hooks/zitadel}
-      # Customer portal origin: the seed registers the portal's own OIDC app with <origin>/auth/callback and
-      # writes its client id to .dev/zitadel-portal.env (read by the portal service). Unset: no portal app.
-      PORTAL_PUBLIC_URL: https://${PORTAL_HOST:-portal.localhost}
     volumes:
       - ../..:/repo:ro
       - ../../.dev:/repo/.dev:rw
