@@ -19,6 +19,12 @@ export interface PartyOwner {
   ownerUserId: string | null;
 }
 
+/** How a case names its party: the legal name and, for a kind that numbers its parties, the number. */
+export interface PartyLabel {
+  name: string;
+  number: string | null;
+}
+
 export interface PartyOwnerPort {
   readonly kind: VerificationPartyKind;
   /** What the party is called in a "not found" message, for example `Customer`. */
@@ -41,6 +47,15 @@ export interface PartyOwnerPort {
    * verification.read reaches, so a case list is scoped in SQL before its limit, never filtered after it.
    */
   ownedBy(q: PartyQuery, tenantId: string, userId: string): SQLWrapper;
+  /**
+   * The display name and number of each given party of this tenant (number null for a kind without one). One
+   * query for any number of ids. Only these two fields: a case reader learns the party's label, nothing else.
+   */
+  labelsOf(
+    q: PartyQuery,
+    tenantId: string,
+    partyIds: readonly string[],
+  ): Promise<ReadonlyMap<string, PartyLabel>>;
   /** The counterparty field of the authz `ResourceRef` that names this party. */
   counterparty(partyId: string): Pick<ResourceRef, 'customerPartyId' | 'vendorPartyId'>;
 }
