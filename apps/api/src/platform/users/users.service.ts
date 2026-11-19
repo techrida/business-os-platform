@@ -93,12 +93,17 @@ export class UsersService extends UserDirectory {
     if (target.status === 'inactive') {
       throw new ConflictException('This user is deactivated');
     }
+    // ZITADEL refuses a password reset for USER_STATE_INITIAL (Errors.User.NotInitialised): an
+    // invited user has no password yet and finishes the invitation instead.
+    if (target.status === 'invited') {
+      throw new ConflictException('This user has not accepted their invitation yet');
+    }
     // Check the source of truth as well as the mirror. Reconcile can lag behind deactivation.
     const live = await this.passwordResetProviderCall(() =>
       this.zitadel.getUser(target.zitadelUserId),
     );
     if (!live || live.orgId !== org.zitadelOrgId) throw new NotFoundException('User not found');
-    if (!live.status || live.status === 'inactive' || !live.email) {
+    if (live.status !== 'active' || !live.email) {
       throw new ConflictException('This user cannot receive a password reset email');
     }
     // Commit the request audit before calling the provider. The event describes the admin's

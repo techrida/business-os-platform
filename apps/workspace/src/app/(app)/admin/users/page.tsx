@@ -240,7 +240,7 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                             {summary.ok &&
                               summary.data.canSendPasswordReset &&
                               user.email &&
-                              user.status !== 'inactive' && (
+                              user.status === 'active' && (
                                 <PasswordReset userId={user.id} label={label} email={user.email} />
                               )}
                           </div>
