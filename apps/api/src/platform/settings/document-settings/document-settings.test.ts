@@ -383,7 +383,7 @@ describe('POST / PATCH / DELETE term presets', () => {
   });
 
   it.each(['sales', 'accountant', 'management', 'procurement'] as const)(
-    'the service itself refuses a write from %s even when the route guard is bypassed (defence in depth)',
+    'the service itself refuses a write from %s even when the route guard is skipped (defence in depth)',
     async (role) => {
       currentPrincipal = principalOf(role);
       const { documentSettings, service } = build([preset()]);
