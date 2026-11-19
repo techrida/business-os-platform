@@ -1,3 +1,4 @@
+import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 
@@ -65,4 +66,28 @@ it('names the vendor without a link for a caller the vendor page would refuse (U
   expect(text).toContain('Himal Supplies Pvt Ltd');
   expect(html).not.toContain('/vendors/');
   expect(text).not.toContain('View vendor');
+});
+
+// A Management approver an admin granted payables.payment.request opens the request their approval links to; the
+// page reads the live grants, not the Management role's defaults (which hold no payment request grant).
+const management = (extra: [string, string][] = []) =>
+  new Map<string, string>([...Object.entries(DEFAULT_ROLE_PERMISSIONS.management), ...extra]);
+
+it('opens for a Management approver granted payables.payment.request', async () => {
+  vi.mocked(getPaymentRequest).mockClear();
+  grants.live = management([['payables.payment.request', 'all']]);
+  const text = (await render()).replace(/<[^>]*>/g, '');
+  expect(text).not.toContain('Your roles do not include payment requests.');
+  expect(text).toContain('PAY-0042');
+  expect(getPaymentRequest).toHaveBeenCalledOnce();
+});
+
+it('refuses a Management approver without that grant, before reading the request', async () => {
+  vi.mocked(getPaymentRequest).mockClear();
+  grants.live = management();
+  const text = (await render()).replace(/<[^>]*>/g, '');
+  expect(text).toContain('Your roles do not include payment requests.');
+  expect(text).not.toContain('PAY-0042');
+  expect(text).not.toContain('Himal Supplies');
+  expect(getPaymentRequest).not.toHaveBeenCalled();
 });
