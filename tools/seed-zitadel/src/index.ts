@@ -110,6 +110,11 @@ export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
     }
   }
 
+  // Unscoped sign-ins read the instance policy before they discover the user's organization.
+  if (await api.ensureInstancePasswordReset()) {
+    changed('configured the instance login policy for private password reset');
+  }
+
   // Nobody may register themselves on the staff org: staff are invited.
   if (await api.ensureStaffLoginPolicy(staffOrgId)) {
     changed('configured staff login policy for invitations and private password reset');
