@@ -1,10 +1,11 @@
 // Unit tests of QuotationDocumentService with the database and DocumentsService faked: who may ask (staff only),
-// the 404 for a version the store does not return (another entity, another owner, another quotation), the 409
-// quotation_pdf_not_ready when there is no rendered file or it is not clean, and the happy path that issues the
-// link through issueLinkForOwner. The SQL scope and a link that redeems run on Postgres in
+// the 404 for a version the store does not return (another entity, another owner, another quotation), the three
+// answers for a PDF that cannot be served (409 quotation_pdf_not_ready, 424 quotation_pdf_failed, 404
+// quotation_pdf_unavailable), the happy path that issues the link through issueLinkForOwner, and the retry of a
+// failed render (202 only from `failed`, audited, 409 quotation_pdf_retry_not_needed otherwise). The SQL scope and a link that redeems run on Postgres in
 // quotation-document.integration.test.ts.
-import type { Permission, Scope } from '@bos/contracts';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import type { DocumentVersionDto, Permission, Scope } from '@bos/contracts';
+import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Principal } from '../../../platform/authz/principal';
@@ -49,12 +50,37 @@ const head = (over: Partial<QuotationDocumentHead> = {}): QuotationDocumentHead 
   tenantId: TENANT,
   organizationId: ORG,
   renderedDocumentId: DOCUMENT,
+  renderState: 'rendered',
+  ...over,
+});
+
+const upload = (over: Partial<DocumentVersionDto> = {}): DocumentVersionDto => ({
+  id: id(41),
+  documentId: DOCUMENT,
+  version: 1,
+  filename: 'QT-1-R1.pdf',
+  declaredMime: 'application/pdf',
+  detectedMime: 'application/pdf',
+  sizeBytes: 300,
+  sha256: 'cd'.repeat(32),
+  status: 'clean',
+  scanSignature: null,
+  scannedAt: null,
+  uploadedBy: null,
+  createdAt: '2026-11-09T06:00:00.000Z',
   ...over,
 });
 
 function setup(p: Principal = principal()) {
-  const store = { head: vi.fn().mockResolvedValue(head()) };
-  const documents = { issueLinkForOwner: vi.fn().mockResolvedValue(LINK) };
+  const store = {
+    head: vi.fn().mockResolvedValue(head()),
+    requeueFailed: vi.fn().mockResolvedValue(true),
+  };
+  const documents = {
+    issueLinkForOwner: vi.fn().mockResolvedValue(LINK),
+    listForOwner: vi.fn().mockResolvedValue([upload()]),
+  };
+  const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const caller = {
     current: () => ({
       scope: { tenantId: p.tenantId, organizationId: p.organizationId },
@@ -62,8 +88,14 @@ function setup(p: Principal = principal()) {
       principal: p,
     }),
   };
-  const service = new QuotationDocumentService({} as never, documents as never, store, caller);
-  return { service, store, documents };
+  const service = new QuotationDocumentService(
+    {} as never,
+    documents as never,
+    store,
+    caller,
+    audit as never,
+  );
+  return { service, store, documents, audit };
 }
 
 const errorOf = async (promise: Promise<unknown>) => {
@@ -73,6 +105,13 @@ const errorOf = async (promise: Promise<unknown>) => {
     return error;
   }
   throw new Error('expected the call to fail');
+};
+
+const answerOf = async (promise: Promise<unknown>) => {
+  const error = await errorOf(promise);
+  expect(error).toBeInstanceOf(HttpException);
+  const e = error as HttpException;
+  return { status: e.getStatus(), body: e.getResponse() };
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -105,37 +144,113 @@ describe('QuotationDocumentService.link', () => {
     expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
   });
 
-  it('is a 404 when the store finds no such version in the caller scope, and no link is issued', async () => {
+  it('is a 404 not_found when the store finds no such version in the caller scope, and no link is issued', async () => {
     const { service, store, documents } = setup();
     store.head.mockResolvedValue(undefined);
 
-    expect(await errorOf(service.link(QID, VID))).toBeInstanceOf(NotFoundException);
-    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
-  });
-
-  it('is a 409 quotation_pdf_not_ready when the version has no rendered document', async () => {
-    const { service, store, documents } = setup();
-    store.head.mockResolvedValue(head({ renderedDocumentId: null }));
-
     const error = await errorOf(service.link(QID, VID));
 
-    expect(error).toBeInstanceOf(ConflictException);
-    expect((error as ConflictException).getResponse()).toMatchObject({
-      code: 'quotation_pdf_not_ready',
-    });
+    expect(error).toBeInstanceOf(NotFoundException);
+    expect((error as NotFoundException).getResponse()).toMatchObject({ code: 'not_found' });
     expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
   });
 
-  it('is a 409 quotation_pdf_not_ready when the document is not clean (the documents module answers 404)', async () => {
+  it.each([
+    ['not rendered yet (none)', { renderState: 'none', renderedDocumentId: null }],
+    ['being rendered (pending)', { renderState: 'pending', renderedDocumentId: null }],
+    [
+      'no rendered document although rendered',
+      { renderState: 'rendered', renderedDocumentId: null },
+    ],
+  ] as const)('is a 409 quotation_pdf_not_ready when %s', async (_name, over) => {
+    const { service, store, documents } = setup();
+    store.head.mockResolvedValue(head({ ...over }));
+
+    const { status, body } = await answerOf(service.link(QID, VID));
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: 'quotation_pdf_not_ready' });
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it.each(['awaiting_content', 'quarantined'] as const)(
+    'is a 409 quotation_pdf_not_ready while the newest upload is %s',
+    async (status) => {
+      const { service, documents } = setup();
+      documents.listForOwner.mockResolvedValue([upload({ status })]);
+
+      const answer = await answerOf(service.link(QID, VID));
+
+      expect(answer.status).toBe(409);
+      expect(answer.body).toMatchObject({ code: 'quotation_pdf_not_ready' });
+      expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is a 424 quotation_pdf_failed when the render failed, with its message and no link', async () => {
+    const { service, store, documents } = setup();
+    store.head.mockResolvedValue(head({ renderState: 'failed', renderedDocumentId: null }));
+
+    const { status, body } = await answerOf(service.link(QID, VID));
+
+    expect(status).toBe(424);
+    expect(body).toEqual({
+      code: 'quotation_pdf_failed',
+      message: 'The PDF could not be prepared',
+    });
+    expect(documents.listForOwner).not.toHaveBeenCalled();
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it.each(['infected', 'rejected', 'scan_failed'] as const)(
+    'is a 404 quotation_pdf_unavailable when the newest upload is %s',
+    async (status) => {
+      const { service, documents } = setup();
+      documents.listForOwner.mockResolvedValue([upload({ status })]);
+
+      const answer = await answerOf(service.link(QID, VID));
+
+      expect(answer.status).toBe(404);
+      expect(answer.body).toEqual({
+        code: 'quotation_pdf_unavailable',
+        message: 'This PDF is not available',
+      });
+      expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is a 404 quotation_pdf_unavailable when the rendered document was removed (not listed)', async () => {
+    const { service, documents } = setup();
+    documents.listForOwner.mockResolvedValue([upload({ documentId: id(99) })]);
+
+    const answer = await answerOf(service.link(QID, VID));
+
+    expect(answer.status).toBe(404);
+    expect(answer.body).toMatchObject({ code: 'quotation_pdf_unavailable' });
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it('judges the newest upload of the document, not an older clean one', async () => {
+    const { service, documents } = setup();
+    documents.listForOwner.mockResolvedValue([
+      upload({ version: 1, status: 'clean' }),
+      upload({ version: 2, status: 'infected' }),
+    ]);
+
+    const answer = await answerOf(service.link(QID, VID));
+
+    expect(answer.body).toMatchObject({ code: 'quotation_pdf_unavailable' });
+    expect(documents.issueLinkForOwner).not.toHaveBeenCalled();
+  });
+
+  it('is a 404 quotation_pdf_unavailable when a clean file is refused at issue time (removed meanwhile)', async () => {
     const { service, documents } = setup();
     documents.issueLinkForOwner.mockRejectedValue(new NotFoundException('File not found'));
 
-    const error = await errorOf(service.link(QID, VID));
+    const answer = await answerOf(service.link(QID, VID));
 
-    expect(error).toBeInstanceOf(ConflictException);
-    expect((error as ConflictException).getResponse()).toMatchObject({
-      code: 'quotation_pdf_not_ready',
-    });
+    expect(answer.status).toBe(404);
+    expect(answer.body).toMatchObject({ code: 'quotation_pdf_unavailable' });
   });
 
   it('lets any other failure of the documents module through unchanged', async () => {
@@ -144,5 +259,85 @@ describe('QuotationDocumentService.link', () => {
     documents.issueLinkForOwner.mockRejectedValue(boom);
 
     expect(await errorOf(service.link(QID, VID))).toBe(boom);
+  });
+});
+
+describe('QuotationDocumentService.retry', () => {
+  it('requeues a failed render in the caller transaction, audits it and answers queued', async () => {
+    const { service, store, audit } = setup();
+    store.head.mockResolvedValue(head({ renderState: 'failed', renderedDocumentId: null }));
+
+    await expect(service.retry(QID, VID)).resolves.toEqual({ state: 'queued' });
+
+    expect(store.head).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ userId: CALLER }),
+      QID,
+      VID,
+    );
+    expect(store.requeueFailed).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({ tenantId: TENANT, organizationId: ORG }),
+      VID,
+      expect.any(Date),
+    );
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      TX,
+      expect.objectContaining({
+        action: 'quotation.pdf_retry_requested',
+        entityType: 'quotations',
+        entityId: QID,
+        before: { versionId: VID, renderState: 'failed' },
+        after: { versionId: VID, renderState: 'none' },
+      }),
+    );
+  });
+
+  it.each(['none', 'pending', 'rendered'] as const)(
+    'is a 409 quotation_pdf_retry_not_needed when the render state is %s, and changes nothing',
+    async (renderState) => {
+      const { service, store, audit } = setup();
+      store.head.mockResolvedValue(head({ renderState }));
+
+      const { status, body } = await answerOf(service.retry(QID, VID));
+
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
+      expect(store.requeueFailed).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is a 409 and writes no audit row when another click or the sweeper moved the version first', async () => {
+    const { service, store, audit } = setup();
+    store.head.mockResolvedValue(head({ renderState: 'failed' }));
+    store.requeueFailed.mockResolvedValue(false);
+
+    const { status, body } = await answerOf(service.retry(QID, VID));
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: 'quotation_pdf_retry_not_needed' });
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('is a 404 not_found for a version outside the caller scope', async () => {
+    const { service, store, audit } = setup();
+    store.head.mockResolvedValue(undefined);
+
+    const error = await errorOf(service.retry(QID, VID));
+
+    expect(error).toBeInstanceOf(NotFoundException);
+    expect((error as NotFoundException).getResponse()).toMatchObject({ code: 'not_found' });
+    expect(store.requeueFailed).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('is a 403 for a portal caller, before anything is read', async () => {
+    const { service, store } = setup(principal({ orgKind: 'customer' }));
+
+    expect(await errorOf(service.retry(QID, VID))).toBeInstanceOf(ForbiddenException);
+    expect(store.head).not.toHaveBeenCalled();
+    expect(store.requeueFailed).not.toHaveBeenCalled();
   });
 });
