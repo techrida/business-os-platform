@@ -79,10 +79,14 @@ export class DocumentsController {
     const parsed = CreateDocumentBodySchema.safeParse(body);
     if (!parsed.success) throw invalidFields(parsed.error, 'document');
     const { scope, actor } = requestTx();
-    return withTx(this.db, scope, actor, (tx) => this.docs.create(tx, parsed.data));
+    // Not `create`: a picture (an image owner type) is a 409 here, it is uploaded through POST /v1/images.
+    return withTx(this.db, scope, actor, (tx) => this.docs.createFromRequest(tx, parsed.data));
   }
 
-  /** A new version of an existing document. Works on top of an infected or failed one: the way out of it. */
+  /**
+   * A new version of an existing document. Works on top of an infected or failed one: the way out of it.
+   * A picture is a 409: a new picture is a new document, uploaded through POST /v1/images.
+   */
   @Post(':id/versions')
   @Can('documents.upload')
   async createVersion(

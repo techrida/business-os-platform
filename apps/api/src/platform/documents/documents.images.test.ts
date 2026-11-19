@@ -27,7 +27,10 @@ import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
+import type { Principal } from '../authz/principal';
 import type { Db, DbTransaction } from '../db/tx';
+import { bindIdentity, bindPrincipal, runWithRequestStore } from '../tenancy/request-context';
+import { DocumentsController } from './documents.controller';
 import { DOCS_SCAN_JOB, type DocumentOwnerPolicy } from './documents.ports';
 import { DocumentsService } from './documents.service';
 import type { SignedLinks } from './signed-link';
@@ -94,6 +97,38 @@ function service(
   );
   svc.registerOwner(policy);
   return { svc, authz, audit, queue };
+}
+
+/** Runs `fn` as an HTTP request of a staff user of the scope, as the tenancy interceptor binds it. */
+function asRequest<T>(fn: () => Promise<T>): Promise<T> {
+  const p: Principal = {
+    userId: USER,
+    zitadelUserId: `z-${USER}`,
+    tenantId: TENANT,
+    organizationId: ORG,
+    orgKind: 'staff',
+    partyId: null,
+    idpOrgId: randomUUID(),
+    roles: [],
+    departmentId: null,
+    status: 'active',
+    grants: new Map(),
+  };
+  return runWithRequestStore('c-images', () => {
+    bindIdentity({
+      tenantId: p.tenantId,
+      organizationId: p.organizationId,
+      orgKind: p.orgKind,
+      partyId: p.partyId,
+      idpOrgId: p.idpOrgId,
+      userId: p.zitadelUserId,
+      roles: p.roles,
+      departmentId: p.departmentId,
+      tokenExp: Math.floor(Date.now() / 1000) + 300,
+    });
+    bindPrincipal(p);
+    return fn();
+  });
 }
 
 const body = (over: Partial<CreateDocumentBody> = {}): CreateDocumentBody => ({
@@ -186,34 +221,157 @@ describe('DocumentsService.create with an image owner policy', () => {
     expect(inserted).toHaveLength(0);
   });
 
-  it('applies the same rules to a new version: an image document never takes a PDF as version 2', async () => {
-    const { svc } = service(imagePolicy());
+});
+
+const PICTURE_TYPES = ['entity_logo', 'user_avatar', 'customer_logo', 'vendor_logo'];
+const PICTURES_ELSEWHERE = {
+  code: 'conflict',
+  message: 'Pictures are uploaded from their own settings.',
+};
+const denyAll = () => ({
+  assert: vi.fn(() => {
+    throw new ForbiddenException({ code: 'forbidden', reason: 'no_permission' });
+  }),
+});
+
+describe('DocumentsService.createFromRequest (POST /v1/documents)', () => {
+  it.each(PICTURE_TYPES)(
+    'refuses a %s with 409 after the permission check and writes nothing',
+    async (ownerType) => {
+      const { svc, authz } = service(imagePolicy({ ownerType }));
+      const { tx, inserted } = fakeTx();
+
+      const error: unknown = await svc
+        .createFromRequest(tx, body({ ownerType }))
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toEqual(PICTURES_ELSEWHERE);
+      expect(authz.assert).toHaveBeenCalledTimes(1);
+      expect(inserted).toHaveLength(0);
+    },
+  );
+
+  it.each(PICTURE_TYPES)(
+    'answers 403, not 409, for a %s when the caller may not upload',
+    async (ownerType) => {
+      const { svc } = service(imagePolicy({ ownerType }), { authz: denyAll() });
+      const { tx, inserted } = fakeTx();
+      await expect(svc.createFromRequest(tx, body({ ownerType }))).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(inserted).toHaveLength(0);
+    },
+  );
+
+  it('still creates a document of another owner type', async () => {
+    const { svc } = service({ ownerType: 'test_memo', resource: (s) => Promise.resolve({ ...s }) });
     const { tx, inserted } = fakeTx();
-    const doc = [{ id: randomUUID(), ownerType: 'entity_logo', ownerId: OWNER_ID }];
+    await svc.createFromRequest(
+      tx,
+      body({ ownerType: 'test_memo', filename: 'memo.pdf', declaredMime: 'application/pdf' }),
+    );
+    expect(inserted).toHaveLength(2);
+  });
+
+  it('`create` (createAndReceiveUpload, the images module) still takes a picture', async () => {
+    for (const ownerType of PICTURE_TYPES) {
+      const { svc } = service(imagePolicy({ ownerType }));
+      const { tx, inserted } = fakeTx();
+      await svc.create(tx, body({ ownerType }));
+      expect(inserted).toHaveLength(2);
+    }
+  });
+
+  it('the controller route calls createFromRequest, never the permissive create', async () => {
+    const created = { documentId: randomUUID(), versionId: randomUUID(), uploadPath: '/x' };
+    const docs = {
+      create: vi.fn(),
+      createFromRequest: vi.fn().mockResolvedValue(created),
+    };
+    const { tx } = fakeTx();
+    const db = { transaction: (fn: (t: DbTransaction) => Promise<unknown>) => fn(tx) };
+    const controller = new DocumentsController(
+      docs as unknown as DocumentsService,
+      db as unknown as Db,
+    );
+    const p = body({ ownerType: 'user_avatar' });
+
+    await expect(asRequest(() => controller.create(p))).resolves.toBe(created);
+    expect(docs.createFromRequest).toHaveBeenCalledWith(tx, p);
+    expect(docs.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('DocumentsService.createVersion of a picture', () => {
+  /** A transaction whose document lookups (plain and locked) return one live document of `ownerType`. */
+  function versionTx(ownerType: string) {
+    const { tx, inserted } = fakeTx();
+    const doc = [{ id: randomUUID(), ownerType, ownerId: OWNER_ID, organizationId: ORG }];
+    const locks: unknown[] = [];
     const chain = {
       from: () => chain,
       where: () => chain,
       limit: () => chain,
       then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve(doc).then(resolve),
-      for: () => Promise.resolve(doc),
+      for: (mode: unknown) => {
+        locks.push(mode);
+        return Promise.resolve(doc);
+      },
     };
     Object.assign(tx, { select: vi.fn(() => chain) });
+    return { tx, inserted, id: doc[0]!.id, locks };
+  }
 
+  it.each(PICTURE_TYPES)(
+    'refuses a new version of a %s with 409 after the permission check, before the lock and any write',
+    async (ownerType) => {
+      const { svc, authz } = service(imagePolicy({ ownerType }));
+      const v = versionTx(ownerType);
+
+      const error: unknown = await svc
+        .createVersion(v.tx, v.id, { filename: 'logo.png', declaredMime: 'image/png', sizeBytes: 10 })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toEqual(PICTURES_ELSEWHERE);
+      expect(authz.assert).toHaveBeenCalledTimes(1);
+      expect(v.locks).toHaveLength(0);
+      expect(v.inserted).toHaveLength(0);
+    },
+  );
+
+  it('answers 403, not 409, when the caller may not upload to the picture owner', async () => {
+    const { svc } = service(imagePolicy(), { authz: denyAll() });
+    const v = versionTx('entity_logo');
     await expect(
-      svc.createVersion(tx, doc[0]!.id, {
-        filename: 'logo.pdf',
+      svc.createVersion(v.tx, v.id, {
+        filename: 'logo.png',
+        declaredMime: 'image/png',
+        sizeBytes: 10,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(v.inserted).toHaveLength(0);
+  });
+
+  it("still applies another owner's narrower rules to a new version", async () => {
+    const { svc } = service(imagePolicy({ ownerType: 'narrow_memo' }));
+    const v = versionTx('narrow_memo');
+    await expect(
+      svc.createVersion(v.tx, v.id, {
+        filename: 'memo.pdf',
         declaredMime: 'application/pdf',
         sizeBytes: 2048,
       }),
     ).rejects.toBeInstanceOf(UnsupportedMediaTypeException);
     await expect(
-      svc.createVersion(tx, doc[0]!.id, {
-        filename: 'logo.png',
+      svc.createVersion(v.tx, v.id, {
+        filename: 'memo.png',
         declaredMime: 'image/png',
         sizeBytes: IMAGE_MAX_BYTES + 1,
       }),
     ).rejects.toBeInstanceOf(PayloadTooLargeException);
-    expect(inserted).toHaveLength(0);
+    expect(v.inserted).toHaveLength(0);
   });
 });
 

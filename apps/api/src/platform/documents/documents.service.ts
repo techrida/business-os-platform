@@ -97,6 +97,15 @@ const Id = z.guid();
 const OWNER_LINK_NOT_FOUND = 'File not found';
 /** The one refusal of openImage: the same body whether the image is missing, foreign, removed or not clean yet. */
 const IMAGE_NOT_FOUND = 'Image not found';
+
+/** The refusal of a generic create or new version for a picture: only the images API uploads one. */
+function picturesUploadedElsewhere(): ConflictException {
+  return new ConflictException({
+    code: 'conflict',
+    message: 'Pictures are uploaded from their own settings.',
+  });
+}
+
 /** Anything that can run a SELECT: the pool-backed Db or an open transaction. */
 type Reader = Pick<Db, 'select'>;
 
@@ -211,10 +220,35 @@ export class DocumentsService {
 
   // ------------------------------------------------------------------------------------------ create
 
-  /** Creates the document and its version 1 (status awaiting_content). Runs in the caller's transaction. */
+  /**
+   * Creates the document and its version 1 (status awaiting_content). Runs in the caller's transaction. Takes a
+   * picture (an image owner type) too: `createAndReceiveUpload` (the images module) creates one this way. The generic
+   * HTTP route uses `createFromRequest`, which refuses a picture.
+   */
   async create(
     tx: DbTransaction,
     b: CreateDocumentBody,
+  ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
+    return this.createDocument(tx, b, false);
+  }
+
+  /**
+   * `create` for the generic `POST /v1/documents` (the controller only). A picture (an image owner type) is a 409,
+   * after the permission check and before anything is written: a document created here would wait for bytes that
+   * may never come and could still be set as the current picture, so pictures are uploaded only through the images
+   * API (POST /v1/images/:ownerType/:ownerId), which creates, receives and scans in one request.
+   */
+  async createFromRequest(
+    tx: DbTransaction,
+    b: CreateDocumentBody,
+  ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
+    return this.createDocument(tx, b, true);
+  }
+
+  private async createDocument(
+    tx: DbTransaction,
+    b: CreateDocumentBody,
+    refuseImages: boolean,
   ): Promise<{ documentId: string; versionId: string; uploadPath: string }> {
     const who = await readTxContext(tx);
     if (!this.owners.has(b.ownerType)) {
@@ -228,6 +262,7 @@ export class DocumentsService {
       { kind: who.actorKind, id: who.actorId },
       tx,
     );
+    if (refuseImages && isImageOwnerType(b.ownerType)) throw picturesUploadedElsewhere();
     // Before anything is written: a record that stopped taking attachments gets no row and no file.
     await this.assertCanAttach(who.scope, b.ownerType, b.ownerId, tx);
     assertUploadAllowed(b, this.owners.get(b.ownerType));
@@ -454,6 +489,9 @@ export class DocumentsService {
    * Adds version N+1 to an existing document (status awaiting_content). Runs in the caller's transaction.
    * Allowed on top of any earlier version, in particular an infected or scan_failed one: that is the way out
    * of a bad attachment. `allClean` only looks at the newest version that was not rejected.
+   * A picture (an image owner type) is a 409, after the permission check and before the lock and any write: its
+   * newest version is what the images API serves, so an unfinished version 2 would hide a clean picture. No images
+   * path adds versions; a new picture is a new document.
    */
   async createVersion(
     tx: DbTransaction,
@@ -467,8 +505,9 @@ export class DocumentsService {
     const doc = await this.loadDocument(tx, who.scope, documentId);
     await this.assertOwner(who.scope, doc.ownerType, doc.ownerId, 'documents.upload');
     await this.assertCanAttach(who.scope, doc.ownerType, doc.ownerId, tx, documentId);
+    if (isImageOwnerType(doc.ownerType)) throw picturesUploadedElsewhere();
     await this.loadDocument(tx, who.scope, documentId, true);
-    // The owner's narrower rules too: an image document never takes a PDF as its version 2.
+    // The owner's narrower rules too.
     assertUploadAllowed(b, this.owners.get(doc.ownerType));
 
     const [top] = await tx
