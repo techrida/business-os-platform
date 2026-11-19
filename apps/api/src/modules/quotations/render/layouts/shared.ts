@@ -111,7 +111,8 @@ const COUNTRY_NAMES: Record<string, string> = { NP: 'Nepal', IN: 'India', US: 'U
 
 type Address = CustomerQuotationView['issuer']['address'];
 
-function addressParts(a: Address): string[] {
+/** The printed parts of an address, unescaped: the footer joins them inline, the memo letterhead stacks them. */
+export function addressParts(a: Address): string[] {
   return [
     a.line1,
     a.line2,

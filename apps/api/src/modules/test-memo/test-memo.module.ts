@@ -6,6 +6,7 @@
 import { Module } from '@nestjs/common';
 
 import { ApprovalsModule } from '../approvals/approvals.module';
+import { DocumentLogoModule } from '../images/document-logo.resolver';
 import { DocumentsModule } from '../../platform/documents/documents.module';
 import { NotifyModule } from '../../platform/notify/notify.module';
 import { SettingsModule } from '../../platform/settings/settings.module';
@@ -14,7 +15,8 @@ import { TestMemoController } from './test-memo.controller';
 import { TestMemoService } from './test-memo.service';
 
 @Module({
-  imports: [ApprovalsModule, DocumentsModule, SettingsModule, NotifyModule],
+  // DocumentLogoModule: the letterhead's logo bytes (the directory shows them live, submit freezes them).
+  imports: [ApprovalsModule, DocumentsModule, SettingsModule, NotifyModule, DocumentLogoModule],
   controllers: [TestMemoController],
   providers: [TestMemoService, TestMemoCaller],
 })

@@ -18,7 +18,11 @@
 //   audit trail, approval history and attachment files, but every read and write here skips it, so it cannot be
 //   listed, opened, edited, submitted or attached to, and its files stop being served.
 import {
+  DEFAULT_BRAND_COLOUR,
+  LetterheadSchema,
+  SETTINGS,
   type CreateMemoBody,
+  type Letterhead,
   type MemoDirectory,
   type MemoPerson,
   ROLE_KEYS,
@@ -54,6 +58,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
   type OnModuleInit,
 } from '@nestjs/common';
 import {
@@ -71,6 +76,13 @@ import {
 } from 'drizzle-orm';
 
 import { APPROVALS_CLOCK, type Clock } from '../approvals/ports';
+import { DocumentLogoResolverFactory } from '../images/document-logo.resolver';
+import { addressParts } from '../quotations/render/layouts/shared';
+import {
+  DocumentLogoUnavailableError,
+  NO_DOCUMENT_LOGO_RESOLVER,
+  type DocumentLogoResolver,
+} from '../quotations/render/issuer';
 import {
   ApprovalsService,
   type ExplicitRouteStep,
@@ -243,6 +255,99 @@ export function memoRef(row: MemoRow): ResourceRef {
   };
 }
 
+/** The only settings calls the letterhead needs; a unit test passes a fake. */
+export type LetterheadSettings = Pick<SettingsService, 'get'>;
+
+/** The entity's letterhead settings do not form a valid letterhead; submit refuses rather than freeze a wrong one. */
+export class LetterheadInvalidError extends Error {
+  readonly kind = 'letterhead_invalid';
+
+  constructor() {
+    super('The company letterhead settings are not valid');
+    this.name = 'LetterheadInvalidError';
+  }
+}
+
+/** Most lines a letterhead address has (LetterheadSchema); a fifth part joins the fourth line. */
+const LETTERHEAD_ADDRESS_LINES = 4;
+
+/**
+ * The entity address as the quotation footer prints it (the same parts, see addressParts), one part per line. The
+ * footer can print five parts; the fifth (the country, when every part is set) joins the fourth line with ", ", so
+ * the lines read together are still exactly the footer's text. No address set (or a hand-edited bad row): no lines.
+ */
+async function letterheadAddressLines(
+  settings: LetterheadSettings,
+  scope: TxScope,
+): Promise<string[]> {
+  const address = SETTINGS['entity.address'].safeParse(await settings.get(scope, 'entity.address'));
+  if (!address.success || address.data === null) return [];
+  const parts = addressParts(address.data);
+  if (parts.length <= LETTERHEAD_ADDRESS_LINES) return parts;
+  return [
+    ...parts.slice(0, LETTERHEAD_ADDRESS_LINES - 1),
+    parts.slice(LETTERHEAD_ADDRESS_LINES - 1).join(', '),
+  ];
+}
+
+/**
+ * The memo letterhead from the entity's settings now: address lines, logo bytes and brand colour. The logo follows
+ * the quotation snapshot's rules: the referenced document's bytes, else the not-yet-migrated legacy data URL, else
+ * none. The two modes differ only on failure:
+ * - `live` (the directory, so a draft shows the letterhead it will get): a logo that cannot be read, or settings
+ *   that do not form a valid letterhead, are logged with fixed words and the draft shows no logo (or no letterhead,
+ *   undefined). Opening a draft never fails because of the logo.
+ * - `freeze` (submit): a logo the profile references but that cannot be read throws DocumentLogoUnavailableError,
+ *   and invalid settings throw LetterheadInvalidError, so the submit fails visibly instead of freezing a
+ *   letterhead without its logo.
+ */
+export async function buildMemoLetterhead(
+  settings: LetterheadSettings,
+  scope: TxScope,
+  resolveLogo: DocumentLogoResolver,
+  mode: 'live' | 'freeze',
+  log: Pick<Logger, 'warn'>,
+): Promise<Letterhead | undefined> {
+  const [addressLines, rawProfile, rawStyle] = await Promise.all([
+    letterheadAddressLines(settings, scope),
+    settings.get(scope, 'entity.profile'),
+    settings.get(scope, 'document.style'),
+  ]);
+  const style = SETTINGS['document.style'].safeParse(rawStyle);
+  const profile = SETTINGS['entity.profile'].safeParse(rawProfile);
+  let logoDataUrl: string | null = null;
+  if (!profile.success) {
+    if (mode === 'freeze') throw new LetterheadInvalidError();
+    log.warn('memo letterhead: company profile is not valid, kind=profile_invalid');
+  } else {
+    const legacy = profile.data.legacyLogoDataUrl ?? null;
+    const documentId = profile.data.logoDocumentId;
+    if (documentId === null) {
+      logoDataUrl = legacy;
+    } else {
+      try {
+        logoDataUrl = (await resolveLogo(documentId)) ?? legacy;
+      } catch {
+        // No data from the failure is carried: the resolver already logged its kind.
+        if (mode === 'freeze') throw new DocumentLogoUnavailableError();
+        log.warn(
+          `memo letterhead: logo could not be read, document=${documentId} kind=unavailable`,
+        );
+        logoDataUrl = null;
+      }
+    }
+  }
+  const letterhead = LetterheadSchema.safeParse({
+    addressLines,
+    logoDataUrl,
+    primaryColour: style.success ? style.data.primaryColour : DEFAULT_BRAND_COLOUR,
+  });
+  if (letterhead.success) return letterhead.data;
+  if (mode === 'freeze') throw new LetterheadInvalidError();
+  log.warn('memo letterhead: settings do not form a valid letterhead, kind=letterhead_invalid');
+  return undefined;
+}
+
 @Injectable()
 export class TestMemoService implements OnModuleInit {
   private readonly log = new Logger(TestMemoService.name);
@@ -260,7 +365,15 @@ export class TestMemoService implements OnModuleInit {
     private readonly settings: SettingsService,
     // Optional: a missing notify module only slows delivery (the 5 s drain still sends), it never fails a submit.
     @Optional() private readonly notify?: NotifyService,
+    // TestMemoModule imports DocumentLogoModule, so the API always has it. Optional (and last) only so a test that
+    // builds the service by hand need not; without it a referenced logo resolves to nothing (the legacy logo, if any).
+    @Optional() private readonly logos?: DocumentLogoResolverFactory,
   ) {}
+
+  private letterhead(scope: TxScope, mode: 'live' | 'freeze'): Promise<Letterhead | undefined> {
+    const resolveLogo = this.logos?.forScope(scope) ?? NO_DOCUMENT_LOGO_RESOLVER;
+    return buildMemoLetterhead(this.settings, scope, resolveLogo, mode, this.log);
+  }
 
   /**
    * Both registries throw on a duplicate, so this runs once, when the module starts. onDecided is only called from
@@ -292,7 +405,18 @@ export class TestMemoService implements OnModuleInit {
     });
   }
 
+  /** The directory plus the live letterhead a draft shows (see buildMemoLetterhead, `live`: never fails on the logo). */
   async directory(): Promise<MemoDirectory> {
+    const directory = await this.people();
+    const letterhead = await this.letterhead(this.caller.current().scope, 'live');
+    return letterhead === undefined ? directory : { ...directory, letterhead };
+  }
+
+  /**
+   * The company, its departments and its people, without the letterhead: what a save and a submit check signers
+   * against, so neither reads the logo for nothing.
+   */
+  private async people(): Promise<MemoDirectory> {
     const { scope, principal } = this.caller.current();
     this.authz.assert('memo.create');
     if (principal.orgKind !== 'staff' || principal.status !== 'active')
@@ -397,7 +521,8 @@ export class TestMemoService implements OnModuleInit {
   private async templateSnapshot(
     input: NonNullable<CreateMemoBody['template']>,
   ): Promise<MemoTemplateSnapshot> {
-    const directory = await this.directory();
+    // No letterhead here: a draft shows the live one (directory), and submit freezes it (frozenTemplate).
+    const directory = await this.people();
     // Prepared attribution is the actual actor. Delegated authorship needs its own permission.
     if (input.preparedByUserId !== directory.currentUserId)
       throw new ForbiddenException('Prepared by must be the signed-in staff member');
@@ -421,6 +546,32 @@ export class TestMemoService implements OnModuleInit {
       recommenders: input.recommenderUserIds.map(person),
       approvedBy: person(input.approvedByUserId),
     };
+  }
+
+  /**
+   * The stored template with the letterhead resolved now (buildMemoLetterhead, `freeze`), replacing any letterhead
+   * frozen by an earlier submit (a returned memo is submitted again with the settings of that day). A logo that
+   * cannot be read or invalid settings fail the submit with a clear status; nothing is frozen without its logo.
+   */
+  private async frozenTemplate(
+    scope: TxScope,
+    template: MemoTemplateSnapshot,
+  ): Promise<MemoTemplateSnapshot> {
+    try {
+      return { ...template, letterhead: await this.letterhead(scope, 'freeze') };
+    } catch (error) {
+      if (error instanceof DocumentLogoUnavailableError) {
+        throw new ServiceUnavailableException(
+          'The company logo could not be read. Try submitting again in a moment.',
+        );
+      }
+      if (error instanceof LetterheadInvalidError) {
+        throw new ConflictException(
+          'The company letterhead settings are not valid. Check the company profile and address.',
+        );
+      }
+      throw error;
+    }
   }
 
   // ----------------------------------------------------------------------------------------------- create
@@ -717,7 +868,7 @@ export class TestMemoService implements OnModuleInit {
 
       if (row.template) {
         // Internal correspondence: no money, no thresholds. The route is the people the author named.
-        const directory = await this.directory();
+        const directory = await this.people();
         const selected = [...row.template.recommenders, row.template.approvedBy];
         if (selected.some((p) => !directory.people.some((active) => active.userId === p.userId))) {
           throw new ConflictException('A selected approver is no longer active in this company');
@@ -732,12 +883,15 @@ export class TestMemoService implements OnModuleInit {
             `${lacking.name} cannot decide approvals; choose someone with approval rights.`,
           );
         }
+        // The letterhead as it stands now, frozen onto both the approval snapshot and the memo row, so what was
+        // approved and what the memo prints agree, and a later logo or address change alters neither.
+        const template = await this.frozenTemplate(scope, row.template);
         const submitted = await this.approvals.submit(tx, {
           ...base,
           // Plain strings only: the engine hashes this snapshot, so it must not hold Dates or row internals.
           // No amount, currency or FX fields: a template memo has no money to freeze or to show approvers.
           snapshot: {
-            template: row.template,
+            template,
             number: row.number,
             title: row.title,
             body: row.body,
@@ -747,11 +901,11 @@ export class TestMemoService implements OnModuleInit {
             attachments,
           },
           facts: {},
-          explicitSteps: explicitRouteOf(row.template),
+          explicitSteps: explicitRouteOf(template),
         });
         await tx
           .update(testMemos)
-          .set({ status: 'submitted', version: row.version + 1, updatedAt: now })
+          .set({ template, status: 'submitted', version: row.version + 1, updatedAt: now })
           .where(scoped(scope).where(testMemos, eq(testMemos.id, id)));
         return submitted;
       }
