@@ -6,7 +6,8 @@
 --   * Backfill: the user an existing department names as head becomes level head in that department.
 --   * Two row triggers keep app.departments.head_user_id and level = 'head' in step whichever side changes
 --     first: naming a head promotes that membership and demotes the previous head to manager; promoting a
---     membership names it head and demotes the previous head; demoting or moving the head clears the name.
+--     membership names it head and demotes the previous head; demoting, moving or deleting the head clears the
+--     name; a membership created or moved into a department that already names its user head becomes head.
 -- Additive. user_entities and departments are already audited, so the trigger writes are on the trail with the
 -- caller's actor.
 
@@ -36,37 +37,55 @@ CREATE INDEX "user_entities_tenant_org_department_level_idx" ON "app"."user_enti
 --> statement-breakpoint
 CREATE FUNCTION "app"."sync_department_head_from_membership"() RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, app, pg_temp
 AS $$
 BEGIN
-  -- Leaving the head position (demoted, or moved to another department) clears the department's head.
-  IF TG_OP = 'UPDATE' AND OLD."level" = 'head' AND OLD."department_id" IS NOT NULL
-     AND (NEW."level" <> 'head' OR NEW."department_id" IS DISTINCT FROM OLD."department_id") THEN
+  -- Leaving the head position (demoted, moved to another department, or the membership deleted) clears the
+  -- department's head.
+  IF TG_OP IN ('UPDATE', 'DELETE') AND OLD."level" = 'head' AND OLD."department_id" IS NOT NULL
+     AND (TG_OP = 'DELETE' OR NEW."level" <> 'head' OR NEW."department_id" IS DISTINCT FROM OLD."department_id") THEN
     UPDATE "app"."departments"
     SET "head_user_id" = NULL, "updated_at" = now()
     WHERE "tenant_id" = OLD."tenant_id" AND "organization_id" = OLD."organization_id"
       AND "id" = OLD."department_id" AND "head_user_id" = OLD."user_id";
   END IF;
+  IF TG_OP = 'DELETE' OR NEW."department_id" IS NULL THEN
+    RETURN NULL;
+  END IF;
+  -- One writer per department at a time, so two members promoted together cannot both stay head.
+  PERFORM 1 FROM "app"."departments"
+  WHERE "tenant_id" = NEW."tenant_id" AND "organization_id" = NEW."organization_id"
+    AND "id" = NEW."department_id"
+  FOR UPDATE;
   IF NEW."level" = 'head' THEN
-    -- One head per department: the previous head steps down to manager.
-    UPDATE "app"."user_entities"
-    SET "level" = 'manager'
-    WHERE "tenant_id" = NEW."tenant_id" AND "organization_id" = NEW."organization_id"
-      AND "department_id" = NEW."department_id" AND "level" = 'head' AND "id" <> NEW."id";
+    -- Name the head first, then step the previous head down to manager (no interim empty head on the trail).
     UPDATE "app"."departments"
     SET "head_user_id" = NEW."user_id", "updated_at" = now()
     WHERE "tenant_id" = NEW."tenant_id" AND "organization_id" = NEW."organization_id"
       AND "id" = NEW."department_id" AND "head_user_id" IS DISTINCT FROM NEW."user_id";
+    UPDATE "app"."user_entities"
+    SET "level" = 'manager'
+    WHERE "tenant_id" = NEW."tenant_id" AND "organization_id" = NEW."organization_id"
+      AND "department_id" = NEW."department_id" AND "level" = 'head' AND "id" <> NEW."id";
+  ELSIF EXISTS (
+    SELECT 1 FROM "app"."departments"
+    WHERE "tenant_id" = NEW."tenant_id" AND "organization_id" = NEW."organization_id"
+      AND "id" = NEW."department_id" AND "head_user_id" = NEW."user_id"
+  ) THEN
+    -- The department already names this user head (the department was written first): the membership follows.
+    UPDATE "app"."user_entities" SET "level" = 'head' WHERE "id" = NEW."id";
   END IF;
   RETURN NULL;
 END;
 $$;
 --> statement-breakpoint
 CREATE TRIGGER "user_entities_sync_department_head"
-AFTER INSERT OR UPDATE OF "level", "department_id" ON "app"."user_entities"
+AFTER INSERT OR DELETE OR UPDATE OF "level", "department_id" ON "app"."user_entities"
 FOR EACH ROW EXECUTE FUNCTION "app"."sync_department_head_from_membership"();
 --> statement-breakpoint
 CREATE FUNCTION "app"."sync_membership_level_from_department_head"() RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, app, pg_temp
 AS $$
 BEGIN
   IF TG_OP = 'UPDATE' AND OLD."head_user_id" IS NOT NULL
