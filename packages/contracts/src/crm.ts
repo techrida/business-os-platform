@@ -773,6 +773,12 @@ export function isChecklistComplete(
 
 export const VerificationCaseDtoSchema = z.object({
   partyKind: VerificationPartyKindSchema.optional(),
+  /**
+   * The party's display name and number (a customer's CUS number; vendors have none), joined under the case's own
+   * read permission so the queue needs no customer or vendor read to label a case. Null when the party is gone.
+   */
+  partyName: z.string().nullable().optional(),
+  partyNumber: z.string().nullable().optional(),
   reviewerNames: z.array(z.string()).optional(),
   looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
   reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),

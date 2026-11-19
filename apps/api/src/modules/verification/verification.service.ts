@@ -49,7 +49,12 @@ import { withTx, type TxScope } from '../../platform/db/tx';
 import { type DocumentOwnerPolicy } from '../../platform/documents/documents.ports';
 import { DocumentsService } from '../../platform/documents/documents.service';
 import { CustomerPartyOwner } from './customer-party-owner';
-import { PartyOwnerRegistry, type PartyOwnerPort, type PartyQuery } from './party-owner.port';
+import {
+  PartyOwnerRegistry,
+  type PartyLabel,
+  type PartyOwnerPort,
+  type PartyQuery,
+} from './party-owner.port';
 import { VerificationCaller } from './verification.caller';
 import {
   acceptProvided,
@@ -112,6 +117,15 @@ export function toVerificationCaseDto(row: CaseRow): VerificationCaseDto {
     decisionNote: row.reason,
     version: row.version,
   };
+}
+
+/** A case's party name and number from `labels`; both null when the party was not found. */
+function labelOf(
+  labels: ReadonlyMap<string, PartyLabel>,
+  row: Pick<CaseRow, 'partyKind' | 'partyId'>,
+): { partyName: string | null; partyNumber: string | null } {
+  const label = labels.get(`${row.partyKind}:${row.partyId}`);
+  return { partyName: label?.name ?? null, partyNumber: label?.number ?? null };
 }
 
 /** What authz decides on: the acting entity stands in for the organization of a tenant-level record. */
@@ -221,7 +235,30 @@ export class VerificationService implements OnModuleInit {
       .limit(LIST_LIMIT);
     const rows = await this.withOwners(this.db, scope.tenantId, cases);
     // The same decision as GET /:id for each row, so a list never shows what an open would refuse.
-    return rows.filter((l) => this.mayRead(scope, l)).map((l) => toVerificationCaseDto(l.row));
+    const readable = rows.filter((l) => this.mayRead(scope, l));
+    // Each party's name and number, one query per kind, under the case's own read (audit #8).
+    const labels = await this.labelsOf(scope.tenantId, readable);
+    return readable.map((l) => ({ ...toVerificationCaseDto(l.row), ...labelOf(labels, l.row) }));
+  }
+
+  /** The labels of the cases' parties, one query per party kind, keyed by `${kind}:${partyId}`. */
+  private async labelsOf(
+    tenantId: string,
+    cases: readonly Loaded[],
+  ): Promise<ReadonlyMap<string, PartyLabel>> {
+    const out = new Map<string, PartyLabel>();
+    for (const kind of new Set(cases.map((l) => l.row.partyKind))) {
+      const ofKind = cases.filter((l) => l.row.partyKind === kind);
+      const port = ofKind[0]?.port;
+      if (port === undefined) continue;
+      const found = await port.labelsOf(
+        this.db,
+        tenantId,
+        ofKind.map((l) => l.row.partyId),
+      );
+      for (const [id, label] of found) out.set(`${kind}:${id}`, label);
+    }
+    return out;
   }
 
   async get(id: string): Promise<VerificationCaseDto> {
@@ -229,7 +266,8 @@ export class VerificationService implements OnModuleInit {
     const l = await this.load(this.db, scope.tenantId, id);
     if (l === undefined) throw notFound('Verification case');
     this.assertVisible('verification.read', scope, l);
-    if (l.row.partyKind === 'vendor') return toVerificationCaseDto(l.row);
+    const label = labelOf(await this.labelsOf(scope.tenantId, [l]), l.row);
+    if (l.row.partyKind === 'vendor') return { ...toVerificationCaseDto(l.row), ...label };
     const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
     const used = new Set(checklistOf(l.row).map((i) => i.documentId));
     const latest = new Map<string, (typeof versions)[number]>();
@@ -278,6 +316,7 @@ export class VerificationService implements OnModuleInit {
               : null;
     return {
       ...toVerificationCaseDto(l.row),
+      ...label,
       approvalBlockedReason,
       reviewerNames:
         l.row.status === 'submitted'
