@@ -8,7 +8,7 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
 import {
-  getSetting,
+  getApprovalSlaDefaults,
   listApprovalGroups,
   listDelegations,
   listApprovalPeople,
@@ -104,7 +104,8 @@ export default async function WorkflowsPage() {
     section('choose delegation people', () => listApprovalPeople(session, 'delegations')),
     userNames(session),
     loadFields(session, ['approvals.sla_defaults']),
-    section('view the default reminder times', () => getSetting(session, 'approvals.sla_defaults')),
+    // Its own route: workflow editors may read these times without the settings admin permission.
+    section('view the default reminder times', () => getApprovalSlaDefaults(session)),
   ]);
 
   // A new workflow starts from the saved default times. A read that failed, or a stored value this

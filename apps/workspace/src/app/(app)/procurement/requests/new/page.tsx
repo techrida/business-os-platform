@@ -8,6 +8,7 @@ import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { listCostCenters, listDepartments } from '@/lib/api-procurement';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 import layout from '../../procurement.module.css';
 import { createPrAction } from '../actions';
@@ -23,6 +24,7 @@ export default async function NewPurchaseRequestPage() {
   const session = await requireStaffSession('/procurement/requests/new');
   const allowed = prGrants(session.roles).create;
   const departments = allowed ? await listDepartments(session).catch(() => []) : [];
+  const enabledCurrencies = allowed ? await loadEnabledCurrencies(session) : [];
   let costCenters: Awaited<ReturnType<typeof listCostCenters>> = [];
   if (allowed) {
     try {
@@ -55,6 +57,7 @@ export default async function NewPurchaseRequestPage() {
         <PrForm
           departments={departments}
           costCenters={costCenters}
+          enabledCurrencies={enabledCurrencies}
           action={createPrAction}
           initial={EMPTY_PR_VALUES}
           mode="create"

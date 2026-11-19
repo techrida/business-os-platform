@@ -46,6 +46,8 @@ const kernel = vi.hoisted(() => ({ getApprovalRequest: vi.fn() }));
 vi.mock('@/lib/api-kernel', () => kernel);
 const quoteApi = vi.hoisted(() => ({ listTaxCodes: vi.fn() }));
 vi.mock('@/lib/api-tax-codes', () => quoteApi);
+const currencies = vi.hoisted(() => ({ loadEnabledCurrencies: vi.fn() }));
+vi.mock('@/lib/enabled-currencies.server', () => currencies);
 
 const { default: ListPage } = await import('./page');
 const { default: DetailPage } = await import('./[id]/page');
@@ -177,6 +179,7 @@ const quotePage = async (sp: Record<string, string> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   session.roles = ['procurement'];
+  currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'INR', 'USD']);
   rfqApi.getRfq.mockResolvedValue(rfq());
   rfqApi.getComparison.mockResolvedValue([quotation]);
   rfqApi.listSubmissions.mockResolvedValue([]);
@@ -599,5 +602,24 @@ describe('the new RFQ vendor panel wording', () => {
     expect(out).not.toContain('needs three');
     expect(out).toContain('Only approved vendors with an account in this entity can be invited.');
     expect(out).toContain('minimum number of quotations');
+  });
+});
+
+/** Values and labels of the currency picker: the shared Select's hidden native <select> after its named field. */
+function currencyOptions(out: string) {
+  const select = /name="currency" value="[^"]*"\/><button.*?<select[^>]*>(.*?)<\/select>/s.exec(
+    out,
+  )?.[1];
+  return [...(select ?? '').matchAll(/<option[^>]*value="([^"]+)"[^>]*>([^<]*)</g)].map(
+    (m) => `${m[1]}=${m[2]}`,
+  );
+}
+
+describe('the quotation entry currency picker (D44)', () => {
+  it('offers only the enabled currencies', async () => {
+    currencies.loadEnabledCurrencies.mockResolvedValue(['NPR', 'USD']);
+    const out = await quotePage();
+    expect(currencies.loadEnabledCurrencies).toHaveBeenCalledOnce();
+    expect(currencyOptions(out)).toEqual(['NPR=NPR', 'USD=USD']);
   });
 });

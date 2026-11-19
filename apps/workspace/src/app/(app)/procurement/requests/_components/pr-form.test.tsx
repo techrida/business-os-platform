@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { choose, fill, mountForm, submit } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, submit } from '@/test/form-interactions';
 import { EMPTY_PR_VALUES, valuesFromForm } from '../_lib/forms';
 import { PrForm } from './pr-form';
 
@@ -27,6 +27,7 @@ it.each(['create', 'edit'] as const)(
       <PrForm
         action={action}
         departments={[]}
+        enabledCurrencies={['NPR', 'INR', 'USD']}
         costCenters={[
           { id: PROJECT, code: 'OPS', name: 'Operations', active: true },
           { id: NEXT_PROJECT, code: 'ADMIN', name: 'Administration', active: true },
@@ -57,6 +58,7 @@ it('edit clears an assigned project in submitted FormData', async () => {
     <PrForm
       action={action}
       departments={[]}
+      enabledCurrencies={['NPR', 'INR', 'USD']}
       costCenters={[
         { id: PROJECT, code: 'OPS', name: 'Operations', active: true },
         { id: NEXT_PROJECT, code: 'ADMIN', name: 'Administration', active: true },
@@ -83,6 +85,7 @@ it('edit submits a corrected cost centre through the real form', async () => {
     <PrForm
       action={action}
       departments={[]}
+      enabledCurrencies={['NPR', 'INR', 'USD']}
       costCenters={[
         { id: PROJECT, code: 'OPS', name: 'Operations', active: true },
         { id: NEXT_PROJECT, code: 'ADMIN', name: 'Administration', active: true },
@@ -107,4 +110,61 @@ it('edit submits a corrected cost centre through the real form', async () => {
   expect(input.value).toBe(NEXT_PROJECT);
   await submit(mounted.container);
   expect(action).toHaveBeenCalledTimes(1);
+});
+
+describe('currency picker (D44)', () => {
+  /** The values and visible labels the user can pick, read by opening the shared Select. */
+  async function currencyOptions(container: HTMLElement) {
+    const field = container.querySelector('input[type="hidden"][name="currency"]');
+    await click(field?.parentElement?.querySelector('button') ?? null);
+    return Array.from(document.querySelectorAll('[role="option"]')).map((el) =>
+      el.textContent?.trim(),
+    );
+  }
+
+  it('create offers only the enabled currencies', async () => {
+    mounted = await mountForm(
+      <PrForm
+        action={vi.fn()}
+        departments={[]}
+        enabledCurrencies={['NPR', 'USD']}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
+        initial={EMPTY_PR_VALUES}
+        mode="create"
+        idempotencyKey={PROJECT}
+        cancelHref="/"
+        reloadHref="/"
+      />,
+    );
+    expect(await currencyOptions(mounted.container)).toEqual(['NPR', 'USD']);
+  });
+
+  it('edit keeps a request in a switched-off currency and submits it unchanged', async () => {
+    const action = vi.fn((_prev, form: FormData) => {
+      expect(form.get('currency')).toBe('INR');
+      return Promise.resolve({ key: PROJECT, errors: {} });
+    });
+    mounted = await mountForm(
+      <PrForm
+        action={action}
+        departments={[]}
+        enabledCurrencies={['NPR', 'USD']}
+        costCenters={[{ id: PROJECT, code: 'OPS', name: 'Operations', active: true }]}
+        initial={{ ...EMPTY_PR_VALUES, costCenterId: PROJECT, currency: 'INR' }}
+        mode="edit"
+        idempotencyKey={PROJECT}
+        prId={PROJECT}
+        version={3}
+        cancelHref="/"
+        reloadHref="/"
+      />,
+    );
+    const field = mounted.container.querySelector<HTMLInputElement>(
+      'input[type="hidden"][name="currency"]',
+    )!;
+    expect(field.value).toBe('INR');
+    expect(await currencyOptions(mounted.container)).toEqual(['NPR', 'INR (not enabled)', 'USD']);
+    await submit(mounted.container);
+    expect(action).toHaveBeenCalledTimes(1);
+  });
 });

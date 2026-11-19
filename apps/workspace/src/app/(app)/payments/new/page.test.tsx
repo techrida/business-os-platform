@@ -1,11 +1,16 @@
+// @vitest-environment jsdom
+// jsdom for the one test that opens the pickers; the page tests render static markup either way.
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/lib/api';
+import { choose, click, mountForm } from '@/test/form-interactions';
 
 import { CUSTOMER_ID } from '../_lib/fixtures';
 
 import NewPaymentPage from './page';
+import { PaymentForm, startCurrency } from './payment-form';
 
 // `server-only` throws outside the react-server condition, which Vitest does not use.
 vi.mock('server-only', () => ({}));
@@ -14,11 +19,17 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   listCustomers: vi.fn(),
   getCustomer: vi.fn(),
+  apiFetch: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
 vi.mock('@/components/p2/customers/api', () => ({
   listCustomers: mocks.listCustomers,
   getCustomer: mocks.getCustomer,
+}));
+// The enabled-currency list comes through the real `loadEnabledCurrencies` from the display read.
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  apiFetch: mocks.apiFetch,
 }));
 // The form's action is a server action; the page test never submits it.
 vi.mock('./actions', () => ({ recordPaymentAction: vi.fn() }));
@@ -44,6 +55,23 @@ function customer(over: Record<string, unknown> = {}) {
   };
 }
 
+/** The display settings read, answering with these enabled currencies. A fresh body per call. */
+function enabledAre(list: readonly string[]) {
+  mocks.apiFetch.mockImplementation(() =>
+    Promise.resolve(
+      Response.json({ numberSystems: {}, dateFormat: 'dd MMM yyyy', enabledCurrencies: list }),
+    ),
+  );
+}
+
+/**
+ * The currency picker's own markup (its submitted hidden input and the option list React Aria
+ * renders), so the other selects on the page cannot satisfy an assertion.
+ */
+function currencySelect(html: string): string {
+  return />Currency<\/label>.*?<\/select>/s.exec(html)?.[0] ?? '';
+}
+
 async function render(query: { customerId?: string; q?: string } = {}): Promise<string> {
   return renderToStaticMarkup(await NewPaymentPage({ searchParams: Promise.resolve(query) }));
 }
@@ -53,6 +81,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
   mocks.listCustomers.mockResolvedValue({ items: [customer()], total: 1 });
   mocks.getCustomer.mockRejectedValue(new ApiError(404, 'no'));
+  enabledAre(['NPR', 'INR', 'USD']);
 });
 
 describe('record payment page', () => {
@@ -174,5 +203,138 @@ describe('record payment page', () => {
     expect(mocks.requireStaffSession).toHaveBeenCalledWith(
       `/payments/new?customerId=${CUSTOMER_ID}`,
     );
+  });
+
+  it('offers only the currencies enabled in Settings', async () => {
+    enabledAre(['NPR', 'USD']);
+    const picker = currencySelect(await render());
+    expect(picker).toContain('<option value="NPR"');
+    expect(picker).toContain('<option value="USD"');
+    // Old code listed every currency, INR included.
+    expect(picker).not.toContain('value="INR"');
+    expect(mocks.apiFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      '/v1/settings/display',
+      undefined,
+    );
+  });
+
+  it('keeps a customer’s switched-off usual currency visible but disabled, and starts on NPR', async () => {
+    enabledAre(['NPR', 'INR']);
+    mocks.listCustomers.mockResolvedValue({
+      items: [customer({ defaultCurrency: 'USD' })],
+      total: 1,
+    });
+    const html = await render({ customerId: CUSTOMER_ID });
+    const picker = currencySelect(html);
+    // Old code preselected USD, which the API then refused as not enabled.
+    expect(picker).toContain('<input type="hidden" name="currency" value="NPR"/>');
+    expect(picker).toContain('<option value="USD">USD (US dollar)</option>');
+    expect(picker).toContain('<option value="NPR" selected="">');
+    expect(html).toContain(
+      'This customer usually pays in USD (US dollar), which is switched off in Settings.',
+    );
+  });
+
+  it('starts on the customer’s usual currency while it is enabled, with no warning', async () => {
+    mocks.listCustomers.mockResolvedValue({
+      items: [customer({ defaultCurrency: 'USD' })],
+      total: 1,
+    });
+    const html = await render({ customerId: CUSTOMER_ID });
+    expect(currencySelect(html)).toContain('<input type="hidden" name="currency" value="USD"/>');
+    expect(html).not.toContain('switched off in Settings');
+  });
+
+  it('falls back to the default list when the settings read fails', async () => {
+    mocks.apiFetch.mockRejectedValue(new ApiError(503, 'down'));
+    const picker = currencySelect(await render());
+    for (const c of ['NPR', 'INR', 'USD']) expect(picker).toContain(`<option value="${c}"`);
+  });
+
+  it('never starts a payment on a switched-off currency', () => {
+    expect(startCurrency('USD', ['NPR', 'USD'])).toBe('USD');
+    expect(startCurrency('USD', ['NPR', 'INR'])).toBe('NPR');
+    expect(startCurrency(null, ['NPR', 'INR'])).toBe('NPR');
+    expect(startCurrency(undefined, ['NPR'])).toBe('NPR');
+  });
+
+  describe('choosing a customer in the form', () => {
+    let mounted: Awaited<ReturnType<typeof mountForm>> | undefined;
+    beforeEach(() => {
+      Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+      globalThis.ResizeObserver ??= class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      };
+    });
+    afterEach(async () => {
+      await mounted?.unmount();
+      mounted = undefined;
+      document.body.innerHTML = '';
+    });
+
+    const optionStates = () =>
+      Array.from(document.querySelectorAll('[role="option"]')).map(
+        (o) =>
+          `${o.textContent?.trim()}${o.getAttribute('aria-disabled') === 'true' ? ' (off)' : ''}`,
+      );
+
+    it('keeps the payment on an enabled currency and shows the switched-off one as disabled', async () => {
+      mounted = await mountForm(
+        <PaymentForm
+          idempotencyKey="11111111-1111-4111-8111-111111111111"
+          today="2026-11-19"
+          customers={[
+            { id: CUSTOMER_ID, name: 'Rupee Co', number: 'CUS-0001', defaultCurrency: 'INR' },
+            { id: OTHER_ID, name: 'Dollar Co', number: 'CUS-0002', defaultCurrency: 'USD' },
+          ]}
+          enabledCurrencies={['NPR', 'INR']}
+          initialCustomerId=""
+          reloadHref="/payments/new"
+        />,
+      );
+      const box = mounted.container;
+      const currency = () =>
+        box.querySelector<HTMLInputElement>('input[type="hidden"][name="currency"]')?.value;
+      const customerTrigger = box.querySelector<HTMLButtonElement>(
+        `button#${CSS.escape(box.querySelector('label[for]')!.getAttribute('for')!)}`,
+      );
+
+      await click(customerTrigger);
+      await click(
+        Array.from(document.querySelectorAll('[role="option"]')).find(
+          (o) => o.textContent?.trim() === 'Rupee Co (CUS-0001)',
+        ) ?? null,
+      );
+      expect(currency()).toBe('INR');
+
+      await click(customerTrigger);
+      await click(
+        Array.from(document.querySelectorAll('[role="option"]')).find(
+          (o) => o.textContent?.trim() === 'Dollar Co (CUS-0002)',
+        ) ?? null,
+      );
+      // Old code switched the payment to USD, which the API refuses as not enabled.
+      expect(currency()).toBe('NPR');
+      expect(box.textContent).toContain(
+        'This customer usually pays in USD (US dollar), which is switched off in Settings.',
+      );
+
+      await choose(box, 'currency', 'INR (Indian rupee)');
+      expect(currency()).toBe('INR');
+      await click(
+        box.querySelector('input[name="currency"]')!.parentElement!.querySelector('button'),
+      );
+      // Old code listed plain codes, all choosable.
+      expect(optionStates()).toEqual([
+        'NPR (Nepalese rupee)',
+        'INR (Indian rupee)',
+        'USD (US dollar) (off)',
+      ]);
+      await act(() => Promise.resolve());
+      // Opening React Aria pickers in jsdom takes a few seconds; room for a loaded full suite.
+    }, 15_000);
   });
 });

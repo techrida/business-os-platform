@@ -57,6 +57,7 @@ import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { NO_LIMIT, searchPage } from '../../platform/list';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
@@ -129,6 +130,7 @@ export class PaymentsService {
     private readonly numbering: NumberingService,
     private readonly audit: AuditService,
     private readonly ledger: LedgerService,
+    private readonly currencies: CurrencyEnabledService,
     @Optional()
     @Inject(PAYMENTS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
@@ -321,7 +323,7 @@ export class PaymentsService {
    * Records a payment the customer says it sent (status submitted). Staff call it with `channel: 'staff'` and need
    * `payment.record`; the portal (U13) calls it with `channel: 'portal'` and `body.customerId` set to the
    * principal's party, and needs `portal.payment.submit` on that customer. 422 for an unknown customer, withholding
-   * code or proof document.
+   * code or proof document, and 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44).
    */
   async submit(
     scope: TxScope,
@@ -330,20 +332,38 @@ export class PaymentsService {
     channel: PaymentChannel,
     idempotencyKey: string,
   ): Promise<PaymentDto> {
+    this.assertMaySubmit(scope, body, channel);
+    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). The check is a pool read, so it runs
+    // before the transaction opens, but the refusal is thrown inside the idempotency callback: a retry of a submit
+    // that already went through replays the stored payment even after the currency was switched off. Staff and
+    // portal submits both come through here.
+    let refusal: unknown;
+    try {
+      await this.currencies.assertEnabled(scope, body.currency);
+    } catch (error) {
+      refusal = error;
+    }
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: `payment.submit.${channel}`, key: idempotencyKey, body },
-        async () => ({
-          status: 201,
-          response: await this.submitInTx(tx, scope, actor, body, channel),
-        }),
+        async () => {
+          if (refusal instanceof Error) throw refusal;
+          return {
+            status: 201,
+            response: await this.submitInTx(tx, scope, actor, body, channel),
+          };
+        },
       );
       return done.response;
     });
   }
 
-  /** `submit` inside a caller's transaction (opened with withTx), for a caller with its own idempotency. */
+  /**
+   * `submit` inside a caller's transaction (opened with withTx), for a caller with its own idempotency. It does not
+   * check that the currency is enabled (a pool read does not belong inside the transaction): a caller must call
+   * CurrencyEnabledService.assertEnabled first, as `submit` does.
+   */
   async submitInTx(
     tx: DbTransaction,
     scope: TxScope,
@@ -352,12 +372,7 @@ export class PaymentsService {
     channel: PaymentChannel,
   ): Promise<PaymentDto> {
     const userId = this.userOf(actor);
-    this.authz.assert(channel === 'staff' ? 'payment.record' : 'portal.payment.submit', {
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-      customerPartyId: body.customerId,
-      sodUserIds: [],
-    });
+    this.assertMaySubmit(scope, body, channel);
     const [customer] = await tx
       .select({ id: parties.id })
       .from(parties)
@@ -733,6 +748,16 @@ export class PaymentsService {
       meta: { reason, reversedAllocationIds: reversals },
     });
     return this.toDto(tx, scope, updated);
+  }
+
+  /** 403 unless the caller may record (staff) or submit (portal) a payment for `body.customerId`. */
+  private assertMaySubmit(scope: TxScope, body: SubmitPaymentBody, channel: PaymentChannel): void {
+    this.authz.assert(channel === 'staff' ? 'payment.record' : 'portal.payment.submit', {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      customerPartyId: body.customerId,
+      sodUserIds: [],
+    });
   }
 
   /** A system read actor for read-only transactions (withTx needs one; nothing is written). */

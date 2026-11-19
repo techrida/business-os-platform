@@ -275,6 +275,7 @@ describe('QuotationDocumentService.retry', () => {
       expect.objectContaining({ userId: CALLER }),
       QID,
       VID,
+      'quotation.send',
     );
     expect(store.requeueFailed).toHaveBeenCalledWith(
       TX,

@@ -1,6 +1,7 @@
 // Leads module (P2 C2a): leads, their stage machine and their conversion. Imports AuditModule for the domain events,
-// SettingsModule for NumberingService (the LD and DEAL numbers) and CustomersModule for CustomersService (the customer
-// and contact a conversion creates); AuthzModule and the database are global.
+// SettingsModule for NumberingService (the LD and DEAL numbers) and CurrencyEnabledService (a lead's currency must be
+// switched on, D44), and CustomersModule for CustomersService (the customer and contact a conversion creates);
+// AuthzModule and the database are global.
 // Only AppModule imports it: the worker has no lead routes.
 import { Module } from '@nestjs/common';
 

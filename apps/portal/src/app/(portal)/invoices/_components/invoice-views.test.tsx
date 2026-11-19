@@ -1,8 +1,14 @@
-import { CUSTOMER_VIEW_FORBIDDEN_WORDS } from '@bos/contracts';
+import { CUSTOMER_VIEW_FORBIDDEN_WORDS, type PortalDisplay } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import { INVOICE_ID, sampleInvoice, sampleListItem, sampleSettlement } from './invoice-fixtures';
+import {
+  INVOICE_ID,
+  sampleFormat,
+  sampleInvoice,
+  sampleListItem,
+  sampleSettlement,
+} from './invoice-fixtures';
 import { InvoiceList } from './invoice-list';
 import { canPay } from './invoice-status';
 import { InvoiceView } from './invoice-view';
@@ -40,7 +46,7 @@ describe('InvoiceView', () => {
       'Tax invoice',
       'Unpaid',
       '8 Dec 2026',
-      'BS 2083-07-22',
+      '2083-07-22 BS',
       'Techrida Pvt. Ltd.',
       'Big Kahuna Burger Ltd.',
       'PAN/VAT 609876543',
@@ -133,6 +139,174 @@ describe('InvoiceView', () => {
     expect(html).not.toContain('Discount');
     expect(html).toContain('>Tax<');
     expect(html).toContain(long.trim());
+  });
+});
+
+describe('InvoiceView as the printed invoice', () => {
+  /** What the company uses today: lakh grouping and `8 Nov 2026` dates. */
+  const TODAY: PortalDisplay = {
+    numberSystems: { NPR: 'south_asian', INR: 'south_asian', USD: 'international' },
+    dateFormat: 'dd MMM yyyy',
+  };
+  const INTERNATIONAL = {
+    NPR: 'international',
+    INR: 'international',
+    USD: 'international',
+  } as const;
+
+  it("draws numbers, dates and words with the first print's format, not today's setting", () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({
+          format: sampleFormat({ numberSystems: INTERNATIONAL, dateFormat: 'dd/MM/yyyy' }),
+        })}
+        settlement={sampleSettlement()}
+        display={TODAY}
+      />,
+    );
+    for (const text of [
+      '08/11/2026',
+      '08/12/2026',
+      'NPR 1,880,000.00',
+      'NPR 2,018,180.00',
+      'Two Million Eighteen Thousand One Hundred Eighty Rupees Only',
+    ]) {
+      expect(html).toContain(text);
+    }
+    expect(html).not.toContain('20,18,180');
+    expect(html).not.toContain('8 Nov 2026');
+    expect(html).not.toContain('Lakh');
+  });
+
+  it('falls back to the company display when the invoice has no stored format', () => {
+    const company: PortalDisplay = { numberSystems: INTERNATIONAL, dateFormat: 'yyyy-MM-dd' };
+    const { format: _omitted, ...older } = sampleInvoice();
+    for (const view of [sampleInvoice({ format: null }), older]) {
+      const html = renderToStaticMarkup(
+        <InvoiceView view={view} settlement={sampleSettlement()} display={company} />,
+      );
+      expect(html).toContain('NPR 2,018,180.00');
+      expect(html).toContain('2026-11-08');
+      expect(html).toContain('Two Million Eighteen Thousand');
+    }
+    const plain = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice({ format: null })} settlement={sampleSettlement()} />,
+    );
+    expect(plain).toContain('NPR 20,18,180.00');
+    expect(plain).toContain('8 Nov 2026');
+  });
+
+  it('spells the total in words in the currency and grouping of the invoice', () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
+    );
+    expect(html).toContain('Twenty Lakh Eighteen Thousand One Hundred Eighty Rupees Only');
+    const usd = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({
+          currency: 'USD',
+          totals: { ...sampleInvoice().totals, total: '1500.50' },
+        })}
+        settlement={sampleSettlement({ currency: 'USD', openAmount: '1500.50' })}
+      />,
+    );
+    expect(usd).toContain('One Thousand Five Hundred Dollars And Fifty Cents Only');
+  });
+
+  it('shows exempt and zero-rated amounts only when they are not zero', () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({
+          totals: {
+            ...sampleInvoice().totals,
+            exemptAmount: '50000.00',
+            zeroRatedAmount: '25000.00',
+          },
+        })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(html).toContain('Exempt amount');
+    expect(html).toContain('NPR 50,000.00');
+    expect(html).toContain('Zero-rated amount');
+    expect(html).toContain('NPR 25,000.00');
+    const { exemptAmount: _e, zeroRatedAmount: _z, ...olderTotals } = sampleInvoice().totals;
+    for (const totals of [sampleInvoice().totals, olderTotals]) {
+      const none = renderToStaticMarkup(
+        <InvoiceView view={sampleInvoice({ totals })} settlement={sampleSettlement()} />,
+      );
+      expect(none).not.toContain('Exempt');
+      expect(none).not.toContain('Zero-rated');
+    }
+  });
+
+  it("prints the seller's phones, email and signatory, and omits them without a contact", () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
+    );
+    for (const text of [
+      '+977 1 5551234',
+      '+977 9801234567',
+      'href="tel:+97715551234"',
+      'href="mailto:accounts@techrida.example"',
+      'Amanda Vance',
+      'Finance Manager',
+      'Jhamsikhel Road, Lalitpur',
+      'PAN/VAT 601234567',
+    ]) {
+      expect(html).toContain(text);
+    }
+    const { sellerContact: _c, ...older } = sampleInvoice();
+    for (const view of [sampleInvoice({ sellerContact: null }), older]) {
+      const none = renderToStaticMarkup(
+        <InvoiceView view={view} settlement={sampleSettlement()} />,
+      );
+      for (const text of ['5551234', 'mailto:', 'Amanda Vance', 'Finance Manager', 'signatory']) {
+        expect(none).not.toContain(text);
+      }
+      expect(none).toContain('Jhamsikhel Road, Lalitpur');
+      expect(none).toContain('PAN/VAT 601234567');
+    }
+    const bare = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({
+          sellerContact: { phones: [], email: null, signatoryName: null, signatoryTitle: null },
+        })}
+        settlement={sampleSettlement()}
+      />,
+    );
+    expect(bare).not.toContain('mailto:');
+    expect(bare).not.toContain('tel:');
+    expect(bare).not.toContain('signatory');
+  });
+
+  it('gives the due date its Bikram Sambat date, and the Gregorian date alone out of range', () => {
+    const html = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
+    );
+    expect(html).toContain('22 Mangsir 2083 BS');
+    const far = renderToStaticMarkup(
+      <InvoiceView
+        view={sampleInvoice({ dueDate: '2040-01-01' })}
+        settlement={sampleSettlement({ dueDate: '2040-01-01' })}
+      />,
+    );
+    expect(far).toContain('1 Jan 2040');
+    expect(far).not.toMatch(/[A-Za-z]+ \d{4} BS/);
+  });
+
+  it('titles the document by its kind and names the balance to match', () => {
+    const tax = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
+    );
+    expect(tax).toContain('Invoice to');
+    expect(tax).toContain('Total due');
+    const note = renderToStaticMarkup(
+      <InvoiceView view={sampleInvoice({ kind: 'credit_note' })} settlement={sampleSettlement()} />,
+    );
+    expect(note).toContain('Credit note');
+    expect(note).toContain('Total credited');
+    expect(note).not.toContain('Total due');
   });
 });
 

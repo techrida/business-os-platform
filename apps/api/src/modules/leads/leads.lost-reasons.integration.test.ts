@@ -38,6 +38,8 @@ import { LeadsService } from './leads.service';
 import { LeadLostReasonsController } from './lost-reasons.controller';
 import { LeadLostReasonsService } from './lost-reasons.service';
 import { startHarness, type Harness } from './test/harness';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
+import { SettingsService } from '../../platform/settings/settings.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -55,6 +57,7 @@ beforeAll(async () => {
     audit,
     new NumberingService(),
     h.caller,
+    new CurrencyEnabledService(new SettingsService(h.db)),
     reasons,
   );
   const moduleRef = await Test.createTestingModule({
