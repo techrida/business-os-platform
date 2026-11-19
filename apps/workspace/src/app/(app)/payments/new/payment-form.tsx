@@ -57,6 +57,18 @@ interface Proof {
  * A proof is stored against the customer it was uploaded for, so the customer is locked while the
  * form holds proof, and the file picker waits for a customer.
  */
+/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
+  return (
+    <>
+      <span className={styles.eyebrow} aria-hidden="true">
+        {eyebrow}
+      </span>
+      {children}
+    </>
+  );
+}
+
 export function PaymentForm({
   idempotencyKey,
   today,
@@ -217,7 +229,7 @@ export function PaymentForm({
         ) : null}
 
         <Panel
-          title="Payment details"
+          title={<SectionTitle eyebrow="01 · The basics">Payment details</SectionTitle>}
           description="What the customer paid, as it appears on the bank slip."
         >
           <div className={styles.form}>
@@ -385,7 +397,7 @@ export function PaymentForm({
         </Panel>
 
         <Panel
-          title="Proof of payment"
+          title={<SectionTitle eyebrow="02 · The proof">Proof of payment</SectionTitle>}
           description={`A bank slip or receipt, as a PDF or a picture, up to ${MAX_PROOFS} files. Each file is checked for viruses before the payment can use it.`}
         >
           <Field

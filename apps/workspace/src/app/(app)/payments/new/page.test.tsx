@@ -108,6 +108,16 @@ describe('record payment page', () => {
     expect(html).not.toContain('Find a customer');
   });
 
+  it('puts the Figma eyebrow above each card title, hidden from the heading name', async () => {
+    const html = await render();
+    expect(html).toMatch(
+      /<h2[^>]*><span[^>]*aria-hidden="true"[^>]*>01 · The basics<\/span>Payment details<\/h2>/,
+    );
+    expect(html).toMatch(
+      /<h2[^>]*><span[^>]*aria-hidden="true"[^>]*>02 · The proof<\/span>Proof of payment<\/h2>/,
+    );
+  });
+
   it('gives each render its own idempotency key', async () => {
     const key = (h: string) => /name="idempotencyKey" value="([^"]+)"/.exec(h)?.[1];
     expect(key(await render())).not.toBe(key(await render()));
