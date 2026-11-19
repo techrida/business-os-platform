@@ -27,6 +27,8 @@ import {
   readList,
   type RawParams,
 } from '@/lib/list-params';
+import { companyLogo } from '../customers/_lib/company-logo';
+
 import { vendorFailure } from './_lib/failure';
 import { VENDOR_KIND_LABEL, VENDOR_STATUS_LABEL, vendorGrants } from './_lib/model';
 import { VendorFilters } from './vendor-filters';
@@ -56,7 +58,7 @@ function Row({ v }: { v: VendorDto }) {
     <tr>
       <Td>
         <div className={styles.identity}>
-          <Avatar name={v.legalName} shape="circle" />
+          <Avatar {...companyLogo(v)} />
           <CellTitle
             title={
               <Link href={`/vendors/${encodeURIComponent(v.id)}`} className={styles.name}>
