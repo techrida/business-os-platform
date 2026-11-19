@@ -11,6 +11,8 @@ import {
   type NumberSystems,
 } from '@bos/locale';
 
+import { documentTypeLabel } from '@/app/(app)/inbox/inbox-params';
+
 import { humanizeKey } from './kernel-ui';
 
 const CURRENCIES = ['NPR', 'INR', 'USD'] as const;
@@ -89,6 +91,35 @@ export function isEmptyValue(value: unknown): boolean {
   if (typeof value === 'object') return Object.keys(value).length === 0;
   return false;
 }
+
+/**
+ * What the approvals engine stores as the number of a document that has none yet (it is numbered at
+ * issue): `Draft <document type> <first 8 characters of its id>`.
+ */
+export const DRAFT_REFERENCE_SOURCE = String.raw`Draft ([a-z][a-z0-9_]*) [0-9a-f]{8}`;
+const DRAFT_REFERENCE = new RegExp(`^${DRAFT_REFERENCE_SOURCE}$`);
+
+/** The words for a document type key: `Debit note`, or the humanized key for a type with no label. */
+export function documentTypeWords(type: string): string {
+  const known = documentTypeLabel(type);
+  return known === type ? humanizeKey(type) : known;
+}
+
+/**
+ * A request's document number for display: a draft reference reads `Draft debit note`, without the
+ * internal type key or id. A real number is shown as it is; the stored value is not changed.
+ */
+export function documentNumberText(documentNumber: string): string {
+  const match = DRAFT_REFERENCE.exec(documentNumber);
+  if (match === null) return documentNumber;
+  const label = documentTypeWords(match[1]!);
+  // Lower only a capitalised word: `Debit note` -> `debit note`, but `PR commitment` stays.
+  return `Draft ${/^[A-Z][a-z]/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label}`;
+}
+
+/** Snapshot keys that are integrity data for the system, never shown to people (a 64-hex SHA-256). */
+const isHashEntry = (key: string, raw: unknown) =>
+  /sha256$/i.test(key) && typeof raw === 'string' && /^[0-9a-f]{64}$/i.test(raw);
 
 const referenceKeys = new Set([
   'ownerUserId',
@@ -176,7 +207,7 @@ export function snapshotEntries(
   const record = snapshotValue(snapshot, references) as Record<string, unknown>;
   const currency = asCurrency(record['currency']);
   return Object.entries(record)
-    .filter(([, raw]) => !isEmptyValue(raw))
+    .filter(([key, raw]) => !isEmptyValue(raw) && !isHashEntry(key, raw))
     .filter(
       ([key, raw]) =>
         !(richTextKeys.has(key) && typeof raw === 'string' && richTextToPlain(raw).trim() === ''),
@@ -184,6 +215,12 @@ export function snapshotEntries(
     .map(([key, raw]): SnapshotEntry => {
       const label = humanizeKey(key);
       if (typeof raw === 'string') {
+        if (key === 'kind' && documentTypeLabel(raw) !== raw) {
+          return { key, label: 'Document type', value: documentTypeLabel(raw), block: false };
+        }
+        if (DRAFT_REFERENCE.test(raw)) {
+          return { key, label, value: documentNumberText(raw), block: false };
+        }
         if (/Npr$/.test(key) && DECIMAL.test(raw)) {
           return { key, label, value: money(raw, 'NPR', numberSystems), block: false };
         }
