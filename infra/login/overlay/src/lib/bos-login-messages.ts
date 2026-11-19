@@ -30,9 +30,11 @@ export const bosFallbackMessages = {
   },
   password: {
     set: {
-      descriptionCode: 'Enter the one-time code from your email, then choose a new password.',
-      workflow:
-        'Workflow: a single-use code is sent to your verified email. It is valid for a limited time.',
+      resetRequested: 'Check your email',
+      resetTitle: 'Set a new password',
+      emailInstructions:
+        'If the account can be reset, you’ll receive an email with a link to choose a new password.',
+      descriptionCode: 'Choose and confirm your new password.',
     },
   },
   pending: {
@@ -61,7 +63,7 @@ export const bosEnglishMessages = {
   password: {
     verify: {
       title: 'Welcome to Business OS',
-      resetPassword: 'Forgot Password?',
+      resetPassword: 'Forgot password?',
     },
     set: {
       title: 'Create New Password',
