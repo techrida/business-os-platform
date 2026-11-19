@@ -337,29 +337,6 @@ const userTargets = <S extends string>(table: readonly StageTransition<S>[], ski
 export const LEAD_USER_STAGES = userTargets(LEAD_TRANSITIONS, ['converted']);
 export const OPPORTUNITY_USER_STAGES = userTargets(OPPORTUNITY_TRANSITIONS, []);
 
-function stageChangeBody<S extends string>(stages: [S, ...S[]]) {
-  return z
-    .strictObject({
-      stage: z.enum(stages),
-      reason: text(200).optional(),
-      note: text(2000).optional(),
-      /** The row version the client saw; a different current version means 409. */
-      expectedVersion: z.number().int().min(1),
-    })
-    .superRefine((body, ctx) => {
-      if (!NEEDS_REASON.includes(body.stage)) return;
-      for (const field of ['reason', 'note'] as const) {
-        if (body[field] === undefined) {
-          ctx.addIssue({
-            code: 'custom',
-            path: [field],
-            message: `a ${field} is required to move to ${body.stage}`,
-          });
-        }
-      }
-    });
-}
-
 /**
  * Lost reasons (D49): the tenant's list a lead is marked Lost with. A lead stores a reference to the option, never
  * the words, so renaming an option renames it on every lead; a retired option stays on the leads that use it and
@@ -414,8 +391,45 @@ export type UpdateLeadLostReasonBody = z.infer<typeof UpdateLeadLostReasonBodySc
 /** `PUT /v1/admin/lead-lost-reasons/order`: every option id, in the new order. */
 export const ReorderLeadLostReasonsBodySchema = z.strictObject({
   ids: z.array(z.guid()).min(1).max(200),
+  /** The list's token as the client saw it (`lostReasonsToken`); a different current token means 409 (D54-4). */
+  expectedOrder: z.string().min(1).max(32),
 });
 export type ReorderLeadLostReasonsBody = z.infer<typeof ReorderLeadLostReasonsBodySchema>;
+
+/** `POST /v1/admin/lead-lost-reasons/reset`: back to the defaults, only if the list is still as the client saw it. */
+export const ResetLeadLostReasonsBodySchema = z.strictObject({
+  expectedOrder: z.string().min(1).max(32),
+});
+export type ResetLeadLostReasonsBody = z.infer<typeof ResetLeadLostReasonsBodySchema>;
+
+/** The words of the 409 for a stale list; the workspace matches on them to offer a reload. */
+export const LOST_REASONS_STALE_MESSAGE =
+  'The list changed. Reload to see the latest list, then try again.';
+
+/**
+ * A short fingerprint of the list as a person sees it: every option's id, position, version and retired flag, in
+ * list order. Reorder and Reset send the one the screen was built from; the API computes it again from the locked
+ * rows and refuses (409) when they differ, so a stale view never overwrites someone else's change. Computed by the
+ * same code in the browser-facing app and the API (a 53-bit string hash, not a security measure).
+ */
+export function lostReasonsToken(
+  options: readonly { id: string; position: number; version: number; retired: boolean }[],
+): string {
+  const text = [...options]
+    .sort((x, y) => x.position - y.position || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
+    .map((o) => `${o.id}:${o.position}:${o.version}:${o.retired ? 1 : 0}`)
+    .join('|');
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+}
 
 /**
  * A lead's stage change. Lost carries a reference to an option (`lostReasonId`) or a new option to add in the same
@@ -453,7 +467,40 @@ export const LeadStageChangeBodySchema = z
   });
 export type LeadStageChangeBody = z.infer<typeof LeadStageChangeBodySchema>;
 
-export const OpportunityStageChangeBodySchema = stageChangeBody(OPPORTUNITY_USER_STAGES);
+/**
+ * An opportunity's stage change. Lost works as it does for a lead (D49, D54-3): a reference to an option of the same
+ * tenant list (`lostReasonId`) or a new option added in the same step (`newLostReason`), plus the required note.
+ * On Hold keeps its free-text `reason` and note.
+ */
+export const OpportunityStageChangeBodySchema = z
+  .strictObject({
+    stage: z.enum(OPPORTUNITY_USER_STAGES),
+    reason: text(200).optional(),
+    lostReasonId: z.guid().optional(),
+    newLostReason: LostReasonLabelSchema.optional(),
+    note: text(2000).optional(),
+    /** The row version the client saw; a different current version means 409. */
+    expectedVersion: z.number().int().min(1),
+  })
+  .superRefine((body, ctx) => {
+    const issue = (path: string, message: string) =>
+      ctx.addIssue({ code: 'custom', path: [path], message });
+    if (body.stage === 'lost') {
+      if ((body.lostReasonId === undefined) === (body.newLostReason === undefined)) {
+        issue('lostReasonId', 'choose a lost reason, or add a new one');
+      }
+      if (body.reason !== undefined) issue('reason', 'a lost reason is chosen from the list');
+      if (body.note === undefined) issue('note', 'a note is required to move to lost');
+      return;
+    }
+    if (body.lostReasonId !== undefined) issue('lostReasonId', 'only for a move to lost');
+    if (body.newLostReason !== undefined) issue('newLostReason', 'only for a move to lost');
+    if (body.stage === 'on_hold') {
+      for (const field of ['reason', 'note'] as const) {
+        if (body[field] === undefined) issue(field, `a ${field} is required to move to on_hold`);
+      }
+    }
+  });
 export type OpportunityStageChangeBody = z.infer<typeof OpportunityStageChangeBodySchema>;
 
 // ---------------------------------------------------------------------------------------------
@@ -633,6 +680,8 @@ export const OpportunityDtoSchema = z.object({
   ownerName: z.string().nullable(),
   stage: OpportunityStageSchema,
   stageReason: z.string().nullable(),
+  /** The option a lost opportunity was closed with (D54-3), by its current label; null unless lost with an option. */
+  lostReason: LeadLostReasonRefSchema.nullable(),
   stageNote: z.string().nullable(),
   value: DecimalString.nullable(),
   currency: CurrencySchema,
