@@ -49,8 +49,9 @@ function toImageError(err: unknown): unknown {
 }
 
 async function failed(res: Response, label: string): Promise<ApiError> {
-  // Drain the body so the connection is released; it is never put in the error.
-  await res.body?.cancel();
+  // Read the (small, JSON) error body so the connection is released; it is never put in the error. Awaiting
+  // `body.cancel()` here never settles on a keep-alive response in this runtime, which hung every 404.
+  await res.arrayBuffer().catch(() => undefined);
   return new ApiError(res.status, `${label} failed with ${res.status}`);
 }
 
@@ -69,7 +70,7 @@ async function setImage(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw await failed(res, `PUT /v1/images/${seg(ownerType)}`);
-  await res.body?.cancel();
+  void res.body?.cancel().catch(() => undefined);
 }
 
 /**
