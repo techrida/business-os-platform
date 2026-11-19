@@ -31,6 +31,7 @@
 .option {
   --type-bg: var(--activity-call-bg);
   --type-text: var(--activity-call-text);
+  --type-ring: var(--activity-call-ring);
 
   display: inline-flex;
   flex: 1 1 0;
@@ -53,6 +54,7 @@
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
+    box-shadow 120ms ease,
     color 120ms ease,
     transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -60,16 +62,19 @@
 .option[data-kind='meeting'] {
   --type-bg: var(--activity-meeting-bg);
   --type-text: var(--activity-meeting-text);
+  --type-ring: var(--activity-meeting-ring);
 }
 
 .option[data-kind='email'] {
   --type-bg: var(--activity-email-bg);
   --type-text: var(--activity-email-text);
+  --type-ring: var(--activity-email-ring);
 }
 
 .option[data-kind='note'] {
   --type-bg: var(--activity-note-bg);
   --type-text: var(--activity-note-text);
+  --type-ring: var(--activity-note-ring);
 }
 
 .option:hover:not(:disabled) {
@@ -81,11 +86,14 @@
   transform: scale(0.97);
 }
 
+/* Selected: the kind's fill (5:1 or more against the page, so it reads as selected without the
+   hue) inside a 2px ring of a deeper shade, drawn with a shadow so the size does not change. */
 .option[aria-checked='true'],
 .option[aria-checked='true']:hover:not(:disabled),
 .option[aria-checked='true']:active:not(:disabled) {
-  border-color: var(--type-bg);
+  border-color: var(--type-ring);
   background: var(--type-bg);
+  box-shadow: 0 0 0 1px var(--type-ring);
   color: var(--type-text);
 }
 
@@ -98,6 +106,7 @@
 
 .option[aria-checked='true']:disabled {
   border-color: var(--button-disabled-bg);
+  box-shadow: none;
   background: var(--button-disabled-bg);
   color: var(--button-secondary-disabled-text);
 }
@@ -112,6 +121,7 @@
     forced-color-adjust: none;
     border-color: Highlight;
     background: Highlight;
+    box-shadow: none;
     color: HighlightText;
   }
 }
