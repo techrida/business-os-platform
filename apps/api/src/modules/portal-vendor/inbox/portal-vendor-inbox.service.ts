@@ -13,6 +13,9 @@
 //   it), a quotation becomes a `vendor_quotation_submissions` row `received`, a bill a `vendor_bill_submissions` row
 //   `received`. No vendor_quotations or vendor_bills row is written; staff convert the inbox row later. Each
 //   row-creating POST honours the Idempotency-Key;
+// - a quotation or bill in a currency the company has not switched on is refused with 422 CURRENCY_NOT_ENABLED (D44),
+//   as staff could not convert it. The setting is read before the transaction, but the refusal is thrown inside the
+//   idempotency callback, so a retry of a submission that already went through replays its stored answer;
 // - a bank change request is only a proposal: VendorBankService.proposeFromPortal writes a `proposed` account that
 //   staff verify with call-back evidence, and the answer shows the last four digits only. The contract's
 //   `supportingDocumentId` has no column, so a value is refused with 422 `supporting_document_unsupported`.
@@ -49,6 +52,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
@@ -60,6 +64,8 @@ import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module'
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { DocumentsService } from '../../../platform/documents/documents.service';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import {
   assertVendorCaller,
   assertVendorCapability,
@@ -142,6 +148,12 @@ export class VendorPortalInboxService {
     private readonly audit: AuditService,
     private readonly caller: VendorPortalCaller,
     private readonly bank: VendorBankService,
+    // The D44 currency check; SettingsModule provides it. The fallback reads the same settings through `db`, so a
+    // test that builds the service by hand gets the real check.
+    @Optional()
+    private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(
+      new SettingsService(db),
+    ),
   ) {}
 
   // ---------------------------------------------------------------------------------------------- KYC documents
@@ -306,11 +318,13 @@ export class VendorPortalInboxService {
     const parsed = VendorQuotationSubmissionBodySchema.safeParse(body);
     if (!parsed.success) throw invalid('quotation submission', parsed.error);
     const b = parsed.data;
+    const refusal = await this.currencyRefusal(who.scope, b.currency);
     const done = await withTx(this.db, who.scope, who.actor, (tx) =>
       withIdempotency(
         tx,
         { command: 'portal.vendor.quotation_submission', key: idempotencyKey, body: b },
         async () => {
+          if (refusal !== undefined) throw refusal;
           const [invited] = await tx
             .select({ id: rfqVendors.id })
             .from(rfqVendors)
@@ -415,11 +429,13 @@ export class VendorPortalInboxService {
     const parsed = VendorBillSubmissionBodySchema.safeParse(body);
     if (!parsed.success) throw invalid('bill submission', parsed.error);
     const b = parsed.data;
+    const refusal = await this.currencyRefusal(who.scope, b.currency);
     const done = await withTx(this.db, who.scope, who.actor, (tx) =>
       withIdempotency(
         tx,
         { command: 'portal.vendor.bill_submission', key: idempotencyKey, body: b },
         async () => {
+          if (refusal !== undefined) throw refusal;
           if (b.purchaseOrderId !== undefined) {
             const [po] = await tx
               .select({ status: purchaseOrders.status })
@@ -506,6 +522,21 @@ export class VendorPortalInboxService {
   }
 
   // ------------------------------------------------------------------------------------------------- helpers
+
+  /**
+   * What the currency check (D44) threw for `currency`, usually 422 CURRENCY_NOT_ENABLED, or undefined when the company
+   * has it on. A pool read, so it runs before the transaction opens; the caller throws the refusal inside its
+   * idempotency callback, as PaymentsService.submit does, so a retry of a submission that already went through still
+   * replays its stored answer.
+   */
+  private async currencyRefusal(scope: TxScope, currency: string): Promise<Error | undefined> {
+    try {
+      await this.currencies.assertEnabled(scope, currency);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error : new Error('currency check failed', { cause: error });
+    }
+  }
 
   /** The vendor caller and its party, after the live status allows `need` (403 otherwise). */
   private async access(need: VendorPortalNeed): Promise<{ p: Principal; partyId: string }> {

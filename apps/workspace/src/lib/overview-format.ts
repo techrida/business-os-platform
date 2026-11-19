@@ -1,10 +1,9 @@
 // Pure display rules for the Overview page. No server-only import, so tests and the page share them.
 import { type ActivityDto, type LeadStage, OPPORTUNITY_STAGES } from '@bos/contracts';
 
-import { documentTypeLabel } from '@/app/(app)/inbox/inbox-params';
 import type { IconName } from '@/components/ui/icon';
 
-import { humanizeKey } from './kernel-ui';
+import { documentTypeWords, DRAFT_REFERENCE_SOURCE } from './kernel-format';
 
 const KATHMANDU = 'Asia/Kathmandu';
 
@@ -30,7 +29,7 @@ export function greetingFor(now: Date, name: string | undefined | null): string 
   return `Good ${part}, ${first}`;
 }
 
-const DRAFT_REFERENCE = /\bDraft ([a-z][a-z0-9_]*) [0-9a-f]{8}\b/g;
+const DRAFT_REFERENCE = new RegExp(String.raw`\b${DRAFT_REFERENCE_SOURCE}\b`, 'g');
 const UUID = /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi;
 
 /**
@@ -41,9 +40,7 @@ const UUID = /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi;
 export function notificationText(raw: string): string {
   return raw
     .replace(DRAFT_REFERENCE, (_match, type: string, offset: number) => {
-      const known = documentTypeLabel(type);
-      const label = known === type ? humanizeKey(type) : known;
-      const phrase = `${label} draft`;
+      const phrase = `${documentTypeWords(type)} draft`;
       return offset === 0 ? phrase : phrase.charAt(0).toLowerCase() + phrase.slice(1);
     })
     .replace(UUID, '')

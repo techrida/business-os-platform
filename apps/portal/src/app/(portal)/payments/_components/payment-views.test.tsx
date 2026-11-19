@@ -76,6 +76,7 @@ describe('PaymentForm', () => {
         idempotencyKey={KEY}
         today="2026-11-10"
         defaultCurrency="NPR"
+        enabledCurrencies={['NPR', 'USD']}
         suggestedAmount=""
         {...over}
       />,
@@ -106,6 +107,22 @@ describe('PaymentForm', () => {
     expect(html).toContain(`name="invoice" value="${INVOICE.id}"`);
     expect(html).toContain('value="1000000.00"');
     expect(html).toContain('<input type="hidden" name="currency" value="USD"/>');
+    expect(html).not.toContain('switched off');
+  });
+
+  it('from an invoice in a switched-off currency, starts on NPR with a note and no open amount', () => {
+    const html = render({
+      invoice: INVOICE,
+      defaultCurrency: 'INR',
+      enabledCurrencies: ['NPR', 'USD'],
+      suggestedAmount: '1000000.00',
+    });
+    expect(html).toContain('<input type="hidden" name="currency" value="NPR"/>');
+    expect(html).toContain(
+      'This invoice is in INR, which is switched off for the company. Choose another currency.',
+    );
+    // The open amount is in INR, so it is not offered against NPR.
+    expect(html).not.toContain('value="1000000.00"');
   });
 });
 
