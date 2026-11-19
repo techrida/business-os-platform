@@ -9,6 +9,7 @@ import {
   type DocumentVersionStatus,
   type Discount,
   type NprSnapshot,
+  type PersonName,
   type QuotationContact,
   type QuotationDetail,
   type QuotationDto,
@@ -241,6 +242,8 @@ export interface QuotationDetailParts {
   contacts: readonly QuotationContactRow[];
   /** What the caller may do now, decided by the service from the current version and its grants. */
   capabilities: QuotationCapabilities;
+  /** The people the quotation names, by display name (owner, history actors). */
+  people?: readonly PersonName[];
 }
 
 /** `GET /v1/quotations/:id`. Versions run oldest first, history in the order it happened. */
@@ -263,5 +266,6 @@ export function toQuotationDetail(parts: QuotationDetailParts): QuotationDetail 
     customerName: parts.customerName,
     contacts: parts.contacts.map(toContact),
     capabilities: { ...parts.capabilities },
+    ...(parts.people === undefined ? {} : { people: [...parts.people] }),
   };
 }

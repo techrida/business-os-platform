@@ -60,6 +60,7 @@ import { updateVersioned, withIdempotency } from '../../../platform/db/idempoten
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { quotationRef } from '../preview/quotation-preview.service';
+import { personNames } from '../../../platform/users/person-names';
 import { PricingService } from '../pricing/pricing.service';
 import type { PricingInput } from '../pricing/pricing.types';
 import { DraftingCaller } from './drafting.caller';
@@ -490,6 +491,11 @@ export class DraftingService {
         )
         .orderBy(asc(customerContacts.fullName), asc(customerContacts.id));
       const current = versionRows.find((v) => v.id === quotation.currentVersionId);
+      // The owner and every history actor by name, so the page needs no admin directory (403 for most staff).
+      const people = await personNames(tx, quotation.tenantId, [
+        quotation.ownerUserId,
+        ...statusHistory.map((h) => h.actorId),
+      ]);
       return toQuotationDetail({
         quotation,
         versions,
@@ -501,6 +507,7 @@ export class DraftingService {
           current === undefined
             ? { canEdit: false, canRevise: false }
             : capabilitiesOf(principal, quotation, current.status),
+        people,
       });
     });
   }
