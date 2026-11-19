@@ -230,3 +230,17 @@ it('puts no permission key and no role key with an underscore on the page', asyn
     expect(html).not.toContain(role);
   }
 });
+
+it('shows view-only cards with every control disabled and no foot buttons', async () => {
+  await render(false);
+  await click(byLabel('View Leads'));
+  const leads = card('Leads');
+  const controls = [
+    ...leads.querySelectorAll<HTMLButtonElement | HTMLInputElement>('li button, input'),
+  ];
+  expect(controls.length).toBeGreaterThan(0);
+  for (const control of controls) expect(control.disabled).toBe(true);
+  expect(leads.textContent).not.toContain('Review changes');
+  expect(leads.textContent).not.toContain('Discard');
+  expect(leads.querySelector('button[aria-label^="Reset "]')).toBeNull();
+});
