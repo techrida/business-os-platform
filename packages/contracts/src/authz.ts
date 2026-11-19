@@ -122,13 +122,30 @@ const approverGrants: RoleGrants = {
   'documents.read': 'all',
 };
 
-/** Read every CRM, customer, quotation and verification record. Reading is not changing: no write, send or review. */
-const salesReadAllGrants: RoleGrants = {
-  'crm.lead.read': 'all',
-  'crm.opportunity.read': 'all',
+/**
+ * Read every customer, quotation and verification record. Reading is not changing: no write, send or review.
+ * Invoicing, the approval chains and PMO verification depend on these reads, so D50 leaves them alone.
+ */
+const salesRecordsReadAllGrants: RoleGrants = {
   'customer.read': 'all',
   'quotation.read': 'all',
   'verification.read': 'all',
+};
+
+/** Read every lead and opportunity (D50: Management only; the Founder holds it through PERMISSIONS). */
+const crmReadAllGrants: RoleGrants = {
+  'crm.lead.read': 'all',
+  'crm.opportunity.read': 'all',
+};
+
+/**
+ * Finance, Accountant and PMO start leads for a Sales owner (D50) and keep reading what they started. That reach
+ * is stored as `own`: own read on leads also covers the leads the caller created, and on leads and opportunities
+ * the records the caller holds an activity assignment on (read only). Opportunities follow their lead.
+ */
+const crmCreatedReadGrants: RoleGrants = {
+  'crm.lead.read': 'own',
+  'crm.opportunity.read': 'own',
 };
 
 /**
@@ -250,7 +267,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   management: {
     ...ownProfileGrants,
     ...approverGrants,
-    ...salesReadAllGrants,
+    ...crmReadAllGrants,
+    ...salesRecordsReadAllGrants,
     ...salesCostReadGrants,
     ...billingReadAllGrants,
   },
@@ -258,7 +276,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...ownProfileGrants,
     ...approverGrants,
     'audit.read': 'all',
-    ...salesReadAllGrants,
+    ...crmCreatedReadGrants,
+    ...salesRecordsReadAllGrants,
     ...salesCreatorGrants,
     ...salesCostReadGrants,
     ...billingReadAllGrants,
@@ -269,7 +288,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   accountant: {
     ...ownProfileGrants,
     ...approverGrants,
-    ...salesReadAllGrants,
+    ...crmCreatedReadGrants,
+    ...salesRecordsReadAllGrants,
     ...salesCreatorGrants,
     ...salesCostReadGrants,
     ...billingReadAllGrants,
@@ -296,11 +316,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     'verification.read': 'own',
   },
   // Marketing starts and works its own leads (create, read, qualify, hand off) and nothing else in sales: no
-  // opportunity, customer or quotation grant. Migration 0083 inserts exactly these rows.
+  // opportunity or quotation grant. Its customer read reaches only customers it owns (D55-6). Migration 0083
+  // inserted the base rows; 0088 adds the profile picture and customer read rows 0083 missed.
   marketing: {
     ...staffBaseGrants,
     'crm.lead.read': 'own',
     'crm.lead.write': 'own',
+    'customer.read': 'own',
   },
   // Portal users see and answer only quotations naming their own party (`customer_org`). Staff roles
   // get no portal grant; founder holds every permission at `all` by construction.
@@ -313,12 +335,14 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   vendor_user: p4VendorUserGrants,
   pmo: {
     ...staffBaseGrants,
-    ...salesReadAllGrants,
+    ...crmCreatedReadGrants,
+    ...salesRecordsReadAllGrants,
     ...salesCreatorGrants,
     ...salesCostReadGrants,
     'verification.review': 'all',
   },
-  operations_head: { ...staffBaseGrants, ...salesReadAllGrants },
+  // D50: Operations does not work leads, so no lead or opportunity read.
+  operations_head: { ...staffBaseGrants, ...salesRecordsReadAllGrants },
   procurement: { ...staffBaseGrants, ...p4ProcurementGrants },
   warehouse: { ...staffBaseGrants, ...p4WarehouseGrants },
   operations_officer: { ...staffBaseGrants, ...prRequesterGrants },

@@ -2,10 +2,17 @@
 // the Founder will switch, the target default reach of every role on leads, and the vocabulary of the assignment
 // rule. Pure data and types: no I/O, so the API, the pickers and the tests read one definition.
 // The rule itself is `apps/api/src/modules/leads/lead-assignment-rule.ts`; the SQL half is migrations
-// 0079 to 0083.
+// 0079 to 0083 and 0088.
 import { z } from 'zod';
 
-import { type Permission, type RoleKey, SCOPES } from './authz.js';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type Permission,
+  ROLE_KEYS,
+  type RoleKey,
+  RoleKeySchema,
+  SCOPES,
+} from './authz.js';
 
 /** A department membership's rank. A head leads the department, a manager leads staff, staff do the work. */
 export const ACCESS_LEVELS = ['staff', 'manager', 'head'] as const;
@@ -34,11 +41,43 @@ export const AccessScopeSchema = z.enum(ACCESS_SCOPES);
 export type AccessScope = z.infer<typeof AccessScopeSchema>;
 
 /**
+ * Higher reaches further. Two grants of one permission merge to the wider. `assigned` is the narrowest because own
+ * read also covers what the caller is assigned (D55-5), and `customer_org` sits below `all` as it does in the
+ * role cache.
+ */
+export const ACCESS_SCOPE_RANK: Readonly<Record<AccessScope, number>> = {
+  assigned: 0,
+  own: 1,
+  department: 2,
+  customer_org: 3,
+  all: 4,
+};
+
+/**
+ * The read permissions whose `own` scope also reaches, read only, the records the caller holds a non-cancelled
+ * activity assignment on, and for leads the records the caller created (D50, D55-3, D55-5). Writes stay with the
+ * owner.
+ */
+export const RECORD_REACH_READ_PERMISSIONS = [
+  'crm.lead.read',
+  'crm.opportunity.read',
+  'quotation.read',
+] as const satisfies readonly Permission[];
+
+/**
  * The levels a `role_permission_levels` row may name (migration 0082). A member below every row gets the role's
- * base grant; otherwise the most senior row at or below the member's level wins.
+ * base grant. Otherwise they get the wider of the base grant and the most senior row at or below their level: a
+ * level row only ever widens what the role gives, never narrows it.
  */
 export const LEVEL_GRANT_MIN_LEVELS = ['manager', 'head'] as const satisfies readonly AccessLevel[];
 export type LevelGrantMinLevel = (typeof LEVEL_GRANT_MIN_LEVELS)[number];
+
+/** One `role_permission_levels` row of a role: from `minLevel` up, the role reaches `scope` on `permission`. */
+export interface LevelGrant {
+  permission: Permission;
+  minLevel: LevelGrantMinLevel;
+  scope: AccessScope;
+}
 
 /** The Marketing role (D50) and the Sales role, by key: the assignment rule never looks at a department's name. */
 export const MARKETING_ROLE_KEY = 'marketing' as const satisfies RoleKey;
@@ -80,6 +119,79 @@ export interface AccessArea {
 }
 
 export type AccessAreaKey = (typeof ACCESS_AREAS)[number]['key'];
+
+// --- Default level grants (D50, D51). The seed and migration 0088 write exactly these rows. ---
+
+/** What a Sales or Marketing manager works across their department instead of only their own (D50). */
+const MANAGER_DEPARTMENT_PERMISSIONS = [
+  'crm.lead.read',
+  'crm.lead.write',
+  'crm.opportunity.read',
+  'crm.opportunity.write',
+  'quotation.read',
+  'quotation.draft',
+  'quotation.submit',
+  'quotation.send',
+  'quotation.record_acceptance',
+  'quotation.revise',
+] as const satisfies readonly Permission[];
+
+/** Roles whose managers work the whole department; everyone else gains department reach only as a head. */
+const DEPARTMENT_MANAGER_ROLE_KEYS: readonly RoleKey[] = [SALES_ROLE_KEY, MARKETING_ROLE_KEY];
+
+/** Portal users hold no department membership, so no level grant applies to them. */
+const PORTAL_ROLE_KEYS: readonly RoleKey[] = ['customer_user', 'vendor_user'];
+
+const AREA_READ_PERMISSIONS: readonly Permission[] = ACCESS_AREAS.flatMap((area) =>
+  'readPermission' in area ? [area.readPermission] : [],
+);
+
+const CRM_READ_PERMISSIONS: readonly Permission[] = ['crm.lead.read', 'crm.opportunity.read'];
+
+/**
+ * One role's default level rows, derived from its base grants so the two cannot drift:
+ *   * Sales and Marketing managers reach the department on every lead, opportunity and quotation permission the
+ *     role holds at `own` (heads inherit it: the most senior row at or below a level applies).
+ *   * A department head reads the whole department (D51) in every area the role reads at `own`. Finance,
+ *     Accountant and PMO are the exception on leads and opportunities: their `own` there is the `created` reach,
+ *     the same at every level (D50).
+ *   * Every head reads the department's purchase requests (D50, dead-end #11), even when the role has no base
+ *     grant for them; a role that already reads further gets no row.
+ * A row is never narrower than the base grant, and areas without a department on their records simply reach
+ * the head's own records.
+ */
+function defaultLevelGrants(role: RoleKey): LevelGrant[] {
+  if (PORTAL_ROLE_KEYS.includes(role)) return [];
+  const base = DEFAULT_ROLE_PERMISSIONS[role];
+  const rows: LevelGrant[] = [];
+  if (DEPARTMENT_MANAGER_ROLE_KEYS.includes(role)) {
+    for (const permission of MANAGER_DEPARTMENT_PERMISSIONS) {
+      if (base[permission] === 'own') {
+        rows.push({ permission, minLevel: 'manager', scope: 'department' });
+      }
+    }
+  }
+  const intake = (LEAD_INTAKE_ROLE_KEYS as readonly RoleKey[]).includes(role);
+  for (const permission of AREA_READ_PERMISSIONS) {
+    if (intake && CRM_READ_PERMISSIONS.includes(permission)) continue;
+    const scope = base[permission];
+    const unheldRequests = permission === 'procurement.pr.read' && scope === undefined;
+    if (scope === 'own' || unheldRequests) {
+      rows.push({ permission, minLevel: 'head', scope: 'department' });
+    }
+  }
+  return rows;
+}
+
+/**
+ * What each role gives a manager or head on top of its base grant (`DEFAULT_ROLE_PERMISSIONS`). Like that
+ * constant, the table (`app.role_permission_levels`) is the live truth once a tenant has rows.
+ */
+export const DEFAULT_ROLE_PERMISSION_LEVELS: Readonly<Record<RoleKey, readonly LevelGrant[]>> =
+  Object.fromEntries(ROLE_KEYS.map((role) => [role, defaultLevelGrants(role)])) as Record<
+    RoleKey,
+    readonly LevelGrant[]
+  >;
 
 // --- Target default reach on leads (D50). The seed and the services adopt it in phase 2. ---
 
@@ -158,26 +270,79 @@ export interface AssignmentParty {
 /** `create`: choosing the owner of a new record. `reassign`: changing the owner or assignee of an existing one. */
 export type AssignmentContext = 'create' | 'reassign';
 
+/**
+ * Whom staff may hand work to inside their department (ACCESS-SETTINGS-UX-SPEC 6.3): themselves and same-level
+ * colleagues (the default), only themselves, or anyone at or below their level.
+ */
+export const STAFF_ASSIGNMENT_REACHES = ['self_and_peers', 'self', 'at_or_below'] as const;
+export type StaffAssignmentReach = (typeof STAFF_ASSIGNMENT_REACHES)[number];
+
+/**
+ * Whom managers and heads may hand work to inside their department: anyone at or below their level (the default),
+ * or only themselves and the people below their level (never a same-level colleague).
+ */
+export const SENIOR_ASSIGNMENT_REACHES = ['at_or_below', 'self_and_below'] as const;
+export type SeniorAssignmentReach = (typeof SENIOR_ASSIGNMENT_REACHES)[number];
+
+/**
+ * A hand-over lets a holder of `from` give work to a holder of `to` in another department, at or below the
+ * sender's level. Named by role for now (spec A3 fallback); the reverse needs its own pair.
+ */
+export const AssignmentHandOverSchema = z.object({ from: RoleKeySchema, to: RoleKeySchema });
+export type AssignmentHandOver = z.infer<typeof AssignmentHandOverSchema>;
+
+/**
+ * The editable half of the assignment rule. The fixed half (a Founder assigns anyone, nobody assigns upward,
+ * intake roles start leads for Sales) is not configurable. `decideAssignment` takes one; U20b stores it per
+ * tenant, until then every caller uses `DEFAULT_ASSIGNMENT_POLICY`.
+ */
+export const AssignmentPolicySchema = z.object({
+  staff: z.enum(STAFF_ASSIGNMENT_REACHES),
+  managers: z.enum(SENIOR_ASSIGNMENT_REACHES),
+  handOvers: z.array(AssignmentHandOverSchema),
+});
+export type AssignmentPolicy = z.infer<typeof AssignmentPolicySchema>;
+
+/** D50 as decided: staff to same-level colleagues, managers and heads at or below, Marketing hands to Sales. */
+export const DEFAULT_ASSIGNMENT_POLICY: Readonly<AssignmentPolicy> = {
+  staff: 'self_and_peers',
+  managers: 'at_or_below',
+  handOvers: [{ from: MARKETING_ROLE_KEY, to: SALES_ROLE_KEY }],
+};
+
 export const ASSIGNMENT_ALLOW_REASONS = [
   'founder',
   'self',
   'department',
-  'sales_handoff',
+  /** A hand-over of the policy covers the pair (by default Marketing to Sales). */
+  'handover',
   'intake_handoff',
+  /** Old name of `handover`; kept until the rule moves to the new codes, then removed. */
+  'sales_handoff',
 ] as const;
 export type AssignmentAllowReason = (typeof ASSIGNMENT_ALLOW_REASONS)[number];
 
 export const ASSIGNMENT_DENY_REASONS = [
   /** The target outranks the caller in the same department (nobody assigns upward). */
   'upward',
-  /** The target is in another department and no hand-off rule covers it. */
+  /** The target is in another department and no hand-over covers it. */
   'other_department',
   /** The caller or the target has no department. */
   'no_department',
-  /** Sales may not assign to Marketing. */
-  'reverse_handoff',
+  /** The target holds a role the caller's role does not hand over to (by default Sales to Marketing). */
+  'no_handover',
   /** Finance, Accountant and PMO start a lead for a Sales user, not for themselves or a colleague. */
   'sales_owner_required',
+  /** The policy lets staff assign only to themselves. */
+  'self_only',
+  /** The policy lets managers and heads assign only to themselves and people below their level, not a peer. */
+  'same_level',
+  /** The target could not read the record the work is about, so it cannot be given to them (dead-end #21). */
+  'cannot_read_subject',
+  /** The target is not an active staff member of the acting entity (a portal user, disabled, or elsewhere). */
+  'not_active_staff',
+  /** Old name of `no_handover`; kept until the rule moves to the new codes, then removed. */
+  'reverse_handoff',
 ] as const;
 export type AssignmentDenyReason = (typeof ASSIGNMENT_DENY_REASONS)[number];
 
@@ -185,11 +350,29 @@ export type AssignmentDecision =
   | { allowed: true; reason: AssignmentAllowReason }
   | { allowed: false; reason: AssignmentDenyReason };
 
-/** A 400 message for a refused assignment, naming the field the way `assertLeadAssignee` does. */
+/**
+ * A 400 message for a refused assignment, after the field name the way `assertLeadAssignee` writes it ("Owner
+ * cannot be ..."). The API also sends the code itself as `details.assignmentReason`.
+ */
 export const ASSIGNMENT_DENY_MESSAGES: Readonly<Record<AssignmentDenyReason, string>> = {
   upward: 'cannot be someone more senior than you',
   other_department: 'is outside your department',
   no_department: 'needs you and them to belong to a department',
-  reverse_handoff: 'cannot be a Marketing user: leads are handed from Marketing to Sales, not back',
+  no_handover: 'is in a team you do not hand work over to',
   sales_owner_required: 'must be a Sales user',
+  self_only: 'can only be you',
+  same_level: 'must be you or someone below your level',
+  cannot_read_subject: 'cannot see the record this is about',
+  not_active_staff: 'is not an active staff member of this entity',
+  reverse_handoff: 'cannot be a Marketing user: leads are handed from Marketing to Sales, not back',
+};
+
+/** Why an assignment is allowed, in product words: the "Why" column of Check a person (spec 6.2). */
+export const ASSIGNMENT_ALLOW_LABELS: Readonly<Record<AssignmentAllowReason, string>> = {
+  founder: 'Founder',
+  self: 'Themselves',
+  department: 'Same department, at or below their level',
+  handover: 'Hand-over to another department',
+  intake_handoff: 'New lead for Sales',
+  sales_handoff: 'Hand-over to another department',
 };

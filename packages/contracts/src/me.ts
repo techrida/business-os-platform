@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { AccessLevelSchema } from './access-model.js';
 import { PermissionSchema, ScopeSchema } from './authz.js';
 
 /** Same shape the API accepts for `x-request-id` (see the API correlation middleware). */
@@ -40,5 +41,12 @@ export const MeResponseSchema = z.object({
    * always sends it; it is optional only so a client reading an older API treats a missing list as no grants.
    */
   permissions: z.array(EffectivePermissionSchema).optional(),
+  /**
+   * The level of the caller's membership in the acting entity (staff without a department). Optional only so a
+   * client reading an older API keeps working.
+   */
+  level: AccessLevelSchema.optional(),
+  /** The department of that membership; null when the caller belongs to none. */
+  departmentId: z.guid().nullable().optional(),
 });
 export type MeResponse = z.infer<typeof MeResponseSchema>;
