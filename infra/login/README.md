@@ -16,4 +16,4 @@ For production, set `ZITADEL_SMTP_HOST` (host and port) and `ZITADEL_SMTP_FROM` 
 
 Set `LOGIN_HELP_URL` and `LOGIN_PRIVACY_URL` as absolute HTTP(S) URLs in the Login V2 container environment. Each item is hidden when its setting is empty or invalid. The server reads them when rendering the layout, so the same image can run in different deployments. The workspace has no Help menu or product footer on main.
 
-Business OS renders light even when the device prefers dark. The shared `BOS_LIGHT_ONLY` constant in `apps/workspace/src/lib/theme-mode.ts` also controls Login V2. Keep any theme controls in downstream layouts behind this lock.
+Business OS renders light even when the device prefers dark. The shared `BOS_LIGHT_ONLY` constant in `packages/locale/src/theme-mode.ts` controls the workspace, portal, and Login V2. Keep any theme controls in downstream layouts behind this lock.
