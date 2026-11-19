@@ -7,7 +7,11 @@
 //   the partial unique index of 0021 (G4) is the backstop;
 // - "every change is audited": all writes run in withTx(), and each command records an audit event;
 // - "authorization is deny-by-default": staff only, `invoice.read` / `invoice.draft`, and every row is read through
-//   scoped() or scopeWhereFor(), so an invoice, order or line of another entity is a 404.
+//   scoped() or scopeWhereFor(), so an invoice, order or line of another entity is a 404;
+// - "a saved reach is the reach enforced" (U20a phase 2): whoever drafted an invoice (`created_by`) owns it and
+//   invoices carry no department, so `own` and `department` reach the invoices the caller drafted. A new draft is
+//   the caller's own, so `invoice.draft` is checked on that record; discard checks it on the stored drafter after
+//   the read scope (404 outside it, 403 when readable but not the caller's to change).
 // A draft has no number, issue date or NPR value: those are set at issue. Paid is never stored (plan A8).
 import {
   type CreateManualInvoiceBody,
@@ -38,6 +42,7 @@ import { and, asc, count, desc, eq, gte, inArray, lte, ne, or, sql, type SQL } f
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
+import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { NO_LIMIT, searchPage } from '../../platform/list';
@@ -298,7 +303,7 @@ export class InvoiceDraftingService {
   ): Promise<InvoiceDetail> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
-    this.authz.assert('invoice.draft', scope);
+    this.authz.assert('invoice.draft', { ...scope, ownerUserId: principal.userId });
     // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). The check is a pool read, so it runs
     // before the transaction opens, but the refusal is thrown inside the idempotency callback: a retry of a create
     // that already succeeded replays its stored answer even after the currency was switched off. A draft cut from a
@@ -332,7 +337,8 @@ export class InvoiceDraftingService {
   async draftFromSchedule(body: FromScheduleInput, idempotencyKey: string): Promise<InvoiceDetail> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
-    this.authz.assert('invoice.draft', scope);
+    // The new draft is the caller's: they become its drafter.
+    this.authz.assert('invoice.draft', { ...scope, ownerUserId: principal.userId });
     const now = this.clock();
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
@@ -365,13 +371,15 @@ export class InvoiceDraftingService {
   ): Promise<InvoiceDetail> {
     const { scope, actor, principal } = this.caller.current();
     assertStaff(principal);
-    this.authz.assert('invoice.draft', scope);
     const now = this.clock();
     return withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
         { command: 'invoice.discard', key: idempotencyKey, body: { id, ...body } },
-        async () => ({ status: 200, response: await this.discardInTx(tx, scope, id, body, now) }),
+        async () => ({
+          status: 200,
+          response: await this.discardInTx(tx, scope, principal, id, body, now),
+        }),
       );
       return done.response;
     });
@@ -563,16 +571,23 @@ export class InvoiceDraftingService {
   private async discardInTx(
     tx: DbTransaction,
     scope: TxScope,
+    principal: Principal,
     id: string,
     body: { expectedVersion: number; reason: string },
     now: Date,
   ): Promise<InvoiceDetail> {
+    // Read through the list's scope (404 outside it), then `invoice.draft` on the stored drafter (403).
     const [head] = await tx
-      .select({ salesOrderId: invoices.salesOrderId, scheduleLineId: invoices.scheduleLineId })
+      .select({
+        salesOrderId: invoices.salesOrderId,
+        scheduleLineId: invoices.scheduleLineId,
+        createdBy: invoices.createdBy,
+      })
       .from(invoices)
-      .where(scoped(scope).where(invoices, eq(invoices.id, id)))
+      .where(and(scopeWhereFor(principal, invoices, 'invoice.read'), eq(invoices.id, id)))
       .limit(1);
     if (head === undefined) throw invoiceNotFound();
+    this.authz.assert('invoice.draft', { ...scope, ownerUserId: head.createdBy });
     // Lock order: sales order, schedule line, then the invoice.
     await this.ledger.lockForMoneyCommand(tx, scope, [
       ...(head.salesOrderId === null

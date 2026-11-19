@@ -6,7 +6,12 @@
 // - "amounts are exact": totals, lines and tax are copied from the accepted version, the schedule is cut by
 //   money-rules' splitSchedule so it adds up to the total to the paisa (the database re-checks at commit);
 // - "no gaps in a numbered series": the SO number is taken last, in the same transaction;
-// - "deny-by-default": every read goes through scoped(), so an order of another entity is a 404.
+// - "deny-by-default": every read goes through scoped(), so an order of another entity is a 404;
+// - "a saved reach is the reach enforced" (U20a phase 2): an order is the caller's own when they confirmed it
+//   (`created_by`, the column record-reach.ts registers) or own the quotation it was confirmed from, so a
+//   salesperson keeps seeing the orders of their deals (ACCESS-SETTINGS-UX-SPEC 3.2: "Records they created or
+//   own"). Orders carry no department, so `department` reaches what `own` does. The list, the summary, the detail
+//   and mark billable read the same rule (`readWhere` in SQL, `canOnOrder` on a row), so they always agree.
 //
 // Confirm, in one transaction (plan section 2, money command shape): withTx -> withIdempotency -> lock the
 // quotation, then its version (the order QuotationOutcomeService.lockSent uses) -> checks -> insert the order as a
@@ -18,6 +23,7 @@ import {
   type ConfirmSalesOrderBody,
   type EvidenceKind,
   type MarkBillableBody,
+  type Permission,
   type SalesOrderDetail,
   type SalesOrderListItem,
   SALES_ORDER_STATUSES,
@@ -52,12 +58,12 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, exists, inArray, isNull, ne, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, inArray, isNull, ne, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { scopeWhereFor } from '../../platform/authz/authz.service';
 import { can } from '../../platform/authz/can';
-import { type Principal } from '../../platform/authz/principal';
+import { type Decision, type Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
@@ -117,6 +123,24 @@ type EvidenceKindOfOrder = (typeof salesOrderEvidence.$inferInsert)['evidenceKin
 const notFound = () =>
   new NotFoundException({ code: 'not_found', message: 'Sales order not found' });
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
+
+/** An order and the owner of the quotation it was confirmed from: the two people `own` reaches it through. */
+type OrderOwners = Pick<OrderRow, 'tenantId' | 'organizationId' | 'createdBy'> & {
+  quotationOwnerUserId: string | null;
+};
+
+/**
+ * The record twin of `readWhere`: `action` on the order is allowed when it reaches the order as the person who
+ * confirmed it or as the quotation's owner. `all` passes on the first check; the denial reported is the first one.
+ */
+function canOnOrder(p: Principal, action: Permission, o: OrderOwners): Decision {
+  const asOwner = (ownerUserId: string | null) =>
+    can(p, action, { tenantId: o.tenantId, organizationId: o.organizationId, ownerUserId });
+  const byCreator = asOwner(o.createdBy);
+  if (byCreator.allowed) return byCreator;
+  const byQuotation = asOwner(o.quotationOwnerUserId);
+  return byQuotation.allowed ? byQuotation : byCreator;
+}
 const unprocessable = (code: string, message: string, extra: Record<string, unknown> = {}) =>
   new UnprocessableEntityException({ code, message, ...extra });
 const iso = (d: Date): string => d.toISOString();
@@ -267,27 +291,49 @@ export class SalesOrdersService {
     );
   }
 
+  /**
+   * The orders the caller may read. `scopeWhereFor` gives the registered reach (the entity for `all`, the orders
+   * the caller confirmed for `own` and `department`); `own` and `department` also reach the orders of the
+   * quotations the caller owns now, resolved inside the same tenant and entity.
+   */
   private readWhere(tx: DbTransaction, scope: TxScope, principal: Principal): SQL {
+    const registered = scopeWhereFor(principal, salesOrders, 'sales_order.read');
     const decision = can(principal, 'sales_order.read');
-    if (!decision.allowed || decision.scope !== 'own') {
-      return scopeWhereFor(principal, salesOrders, 'sales_order.read');
+    if (!decision.allowed || (decision.scope !== 'own' && decision.scope !== 'department')) {
+      return registered;
     }
-
-    // Orders have no owner. Resolve the current quotation owner inside the same tenant and entity.
-    return exists(
-      tx
-        .select({ id: quotations.id })
-        .from(quotations)
-        .where(
-          scoped(scope).where(
-            quotations,
-            and(
-              eq(quotations.id, salesOrders.quotationId),
-              eq(quotations.ownerUserId, principal.userId),
+    const ofMyQuotation = scoped(scope).where(
+      salesOrders,
+      exists(
+        tx
+          .select({ id: quotations.id })
+          .from(quotations)
+          .where(
+            scoped(scope).where(
+              quotations,
+              and(
+                eq(quotations.id, salesOrders.quotationId),
+                eq(quotations.ownerUserId, principal.userId),
+              ),
             ),
           ),
-        ),
+      ),
     );
+    return or(registered, ofMyQuotation) ?? registered;
+  }
+
+  /** The current owner of the order's quotation, in the acting entity; null when it has none. */
+  private async quotationOwnerOf(
+    tx: DbTransaction,
+    scope: TxScope,
+    quotationId: string,
+  ): Promise<string | null> {
+    const [row] = await tx
+      .select({ ownerUserId: quotations.ownerUserId })
+      .from(quotations)
+      .where(scoped(scope).where(quotations, eq(quotations.id, quotationId)))
+      .limit(1);
+    return row?.ownerUserId ?? null;
   }
 
   // ---------------------------------------------------------------------------------------- confirm
@@ -588,7 +634,7 @@ export class SalesOrdersService {
         },
         async () => ({
           status: 201,
-          response: await this.markLineBillable(tx, scope, actor, orderId, lineId, body),
+          response: await this.markLineBillable(tx, scope, actor, principal, orderId, lineId, body),
         }),
       ),
     );
@@ -599,6 +645,7 @@ export class SalesOrdersService {
     tx: DbTransaction,
     scope: TxScope,
     actor: Actor,
+    principal: Principal,
     orderId: string,
     lineId: string,
     body: MarkBillableBody,
@@ -627,6 +674,20 @@ export class SalesOrdersService {
       .from(billingScheduleLines)
       .where(scoped(scope).where(billingScheduleLines, eq(billingScheduleLines.id, lineId)));
     if (order === undefined || line === undefined) throw notFound();
+    // An order outside the caller's read is a 404, as on GET; one they may read but not mark is a 403.
+    const owners = {
+      ...order,
+      quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
+    };
+    if (!canOnOrder(principal, 'sales_order.read', owners).allowed) throw notFound();
+    const decision = canOnOrder(principal, 'sales_order.mark_billable', owners);
+    if (!decision.allowed) {
+      throw new ForbiddenException({
+        code: 'forbidden',
+        message: 'Forbidden',
+        reason: decision.reason,
+      });
+    }
     if (order.status !== 'confirmed') {
       throw conflict(
         'sales_order_not_open',
@@ -804,6 +865,10 @@ export class SalesOrdersService {
     const { principal } = this.caller.current();
     const held = await this.heldInvoices(tx, scope, principal, schedule);
     const staff = principal.orgKind === 'staff';
+    const owners = {
+      ...order,
+      quotationOwnerUserId: await this.quotationOwnerOf(tx, scope, order.quotationId),
+    };
     return {
       order: {
         id: order.id,
@@ -865,9 +930,12 @@ export class SalesOrdersService {
       evidence: evidence.map((e) => ({ documentId: e.documentId, kind: e.evidenceKind })),
       deliveryReleased: await this.deliveryReleased(tx, scope, schedule),
       can: {
-        markBillable: staff && can(principal, 'sales_order.mark_billable').allowed,
-        // The draft route asserts invoice.draft on the acting entity.
-        draftInvoice: staff && can(principal, 'invoice.draft', scope).allowed,
+        // The same record checks the commands make: mark billable on this order, and a draft invoice that the
+        // caller would own as its drafter.
+        markBillable: staff && canOnOrder(principal, 'sales_order.mark_billable', owners).allowed,
+        draftInvoice:
+          staff &&
+          can(principal, 'invoice.draft', { ...scope, ownerUserId: principal.userId }).allowed,
       },
     };
   }

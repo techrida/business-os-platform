@@ -26,7 +26,7 @@ import { Inject, Injectable, Optional, UnprocessableEntityException } from '@nes
 import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
-import { AuthzService } from '../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
@@ -111,6 +111,15 @@ export class InvoiceIssueService {
     const now = this.clock();
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
+        // The route check carries no owner, so a grant narrowed to own or department is judged here against the
+        // drafter; an invoice outside the caller's read is a 404.
+        const [owned] = await tx
+          .select({ createdBy: invoices.createdBy })
+          .from(invoices)
+          .where(and(scopeWhereFor(principal, invoices, 'invoice.read'), eq(invoices.id, id)))
+          .limit(1);
+        if (owned === undefined) throw invoiceNotFound();
+        this.authz.assert('invoice.issue', { ...scope, ownerUserId: owned.createdBy });
         const done = await withIdempotency(
           tx,
           { command: 'invoice.issue', key: idempotencyKey, body: { id, ...body } },

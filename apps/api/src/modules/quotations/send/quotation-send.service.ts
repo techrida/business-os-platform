@@ -112,6 +112,7 @@ export class QuotationSendStore {
           tenantId: quotations.tenantId,
           organizationId: quotations.organizationId,
           ownerUserId: quotations.ownerUserId,
+          departmentId: quotations.departmentId,
           customerPartyId: quotations.customerPartyId,
           opportunityId: quotations.opportunityId,
         },

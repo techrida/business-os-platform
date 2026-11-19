@@ -237,19 +237,23 @@ export function pricingInputOf(
 }
 
 /**
- * The record updateDraft() checks `quotation.draft` against: the stored owner, so under `own` scope a
- * colleague's quotation is read-only. One function, so the capability and the command cannot drift.
+ * The record updateDraft() checks `quotation.draft` against: the stored owner and the department stamped from the
+ * opportunity (migration 0088), so under `own` scope a colleague's quotation is read-only and under `department`
+ * one of the caller's department is editable. No creator or assignees: writes never reach through a follow-up
+ * (D55-3). One function, so the capability and the command cannot drift.
  */
 export function draftRefOf(q: {
   tenantId: string;
   organizationId: string;
   ownerUserId: string | null;
   customerPartyId: string | null;
+  departmentId?: string | null;
 }): ResourceRef {
   return {
     tenantId: q.tenantId,
     organizationId: q.organizationId,
     ownerUserId: q.ownerUserId,
+    departmentId: q.departmentId ?? null,
     customerPartyId: q.customerPartyId,
   };
 }
