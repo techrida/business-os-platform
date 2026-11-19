@@ -9,13 +9,12 @@ import { Panel } from '@/components/ui/panel';
 import { logActivityAction } from '../../activities/actions';
 import styles from './detail.module.css';
 
+/** The opportunity's History with the shared Log activity form (type buttons, no follow-up). */
 export function OpportunityActivities({
   opportunityId,
-  kinds,
   children,
 }: {
   opportunityId: string;
-  kinds: { value: string; label: string }[];
   children: ReactNode;
 }) {
   const formId = useId();
@@ -40,7 +39,6 @@ export function OpportunityActivities({
       <div id={formId} className={styles.activityForm} hidden={!expanded}>
         <ActivityForm
           action={logActivityAction}
-          kinds={kinds}
           subjectKind="opportunityId"
           subjectId={opportunityId}
         />
