@@ -31,6 +31,7 @@ import {
   runMigrations,
   userEntities,
   users,
+  verificationCases,
 } from '@bos/db';
 import { fiscalYearOf } from '@bos/locale';
 import { ConflictException, ForbiddenException, type INestApplication } from '@nestjs/common';
@@ -864,6 +865,79 @@ describe('detail people (the account owner by name)', () => {
     const own = await request(baseUrl).get(`/v1/customers/${mine.id}`);
     expect(own.status).toBe(200);
     expect(own.body).not.toHaveProperty('people');
+  });
+});
+
+describe('detail can and verification presence (audit #6)', () => {
+  type Detail = {
+    can?: { write: boolean; readVerification: boolean; openVerification: boolean };
+    verification?: { exists: boolean };
+  };
+  const detail = async (id: string) => {
+    const res = await request(baseUrl).get(`/v1/customers/${id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return res.body as Detail & Record<string, unknown>;
+  };
+  const addCase = async (partyId: string, t: Tenant = a) => {
+    const [row] = await withTx(db, t, systemActor('test'), (tx) =>
+      tx
+        .insert(verificationCases)
+        .values({
+          tenantId: t.tenantId,
+          partyId,
+          partyKind: 'customer',
+          status: 'submitted',
+          reviewPolicy: 'document_review_v1',
+          checklist: [],
+          reason: 'internal reviewer note',
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning({ id: verificationCases.id }),
+    );
+    return row!.id;
+  };
+
+  it('offers Sales verification on their own customer with no case yet', async () => {
+    asStaff(a);
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    const body = await detail(mine.id);
+    expect(body.can).toEqual({ write: true, readVerification: true, openVerification: true });
+    expect(body.verification).toEqual({ exists: false });
+  });
+
+  it("tells Sales a colleague's customer has a case, without offering to start one or leaking the case", async () => {
+    const { userId: mate } = await createStaffUser(appPool, { ...a, roleKeys: ['sales'] });
+    asStaff(a);
+    const theirs = await createCustomer({ ownerUserId: mate });
+    const caseId = await addCase(theirs.id);
+
+    const body = await detail(theirs.id);
+    expect(body.can).toEqual({ write: true, readVerification: false, openVerification: false });
+    expect(body.verification).toEqual({ exists: true });
+    // Existence only: nothing of the case itself (id, status, reviewer note) comes with the customer.
+    const text = JSON.stringify(body);
+    expect(text).not.toContain(caseId);
+    expect(text).not.toContain('submitted');
+    expect(text).not.toContain('internal reviewer note');
+  });
+
+  it("does not let a case of another tenant's party count", async () => {
+    asStaff(a);
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    asStaff(b);
+    const theirs = await createCustomer({ ownerUserId: b.userId });
+    await addCase(theirs.id, b);
+    asStaff(a);
+    expect((await detail(mine.id)).verification).toEqual({ exists: false });
+  });
+
+  it('is left out for a portal caller', async () => {
+    const mine = await createCustomer({ ownerUserId: a.userId });
+    asPortal(a, mine.id);
+    const body = await detail(mine.id);
+    expect(body).not.toHaveProperty('can');
+    expect(body).not.toHaveProperty('verification');
   });
 });
 
