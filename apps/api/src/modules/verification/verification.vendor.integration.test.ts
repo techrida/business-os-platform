@@ -165,6 +165,20 @@ const vendorPort: PartyOwnerPort = {
       );
     return new Map(rows.map((r) => [r.id, vendorOwners.get(r.id) ?? null]));
   },
+  ownedBy: (q, tenantId, userId) =>
+    q
+      .select({ id: parties.id })
+      .from(parties)
+      .where(
+        and(
+          eq(parties.tenantId, tenantId),
+          eq(parties.kind, 'vendor'),
+          inArray(
+            parties.id,
+            [...vendorOwners].filter(([, owner]) => owner === userId).map(([id]) => id),
+          ),
+        ),
+      ),
   counterparty: (partyId) => ({ vendorPartyId: partyId }),
 };
 

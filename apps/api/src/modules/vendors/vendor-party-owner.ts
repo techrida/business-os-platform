@@ -47,6 +47,14 @@ export class VendorPartyOwner implements PartyOwnerPort {
     return new Map(rows.map((r) => [r.id, r.ownerUserId]));
   }
 
+  /** Every vendor the user owns, blocked or archived ones included: their old cases stay readable. */
+  ownedBy(q: PartyQuery, tenantId: string, userId: string) {
+    return q
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(and(eq(vendors.tenantId, tenantId), eq(vendors.ownerUserId, userId)));
+  }
+
   counterparty(partyId: string) {
     return { vendorPartyId: partyId };
   }

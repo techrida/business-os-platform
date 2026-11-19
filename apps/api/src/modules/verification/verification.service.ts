@@ -38,11 +38,11 @@ import {
   UnprocessableEntityException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { sql, getTableColumns, and, desc, eq, lt, or } from 'drizzle-orm';
+import { sql, getTableColumns, and, desc, eq, inArray, lt, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
-import { type ResourceRef } from '../../platform/authz/can';
+import { type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
@@ -203,7 +203,7 @@ export class VerificationService implements OnModuleInit {
   // -------------------------------------------------------------------------------------------------- read
 
   async list(query: ListVerificationCasesQuery): Promise<VerificationCaseDto[]> {
-    const { scope } = this.caller.current();
+    const { scope, principal } = this.caller.current();
     const cases = await this.db
       .select()
       .from(verificationCases)
@@ -212,6 +212,9 @@ export class VerificationService implements OnModuleInit {
           eq(verificationCases.tenantId, scope.tenantId),
           query.status === undefined ? undefined : eq(verificationCases.status, query.status),
           query.partyId === undefined ? undefined : eq(verificationCases.partyId, query.partyId),
+          // The caller's scope in SQL, before the limit: an own-scope reader gets their newest cases, not the
+          // tenant's newest 500 filtered down (audit #9). mayRead below stays as the record-level check.
+          this.readableWhere(scope.tenantId, principal),
         ),
       )
       .orderBy(desc(verificationCases.createdAt), desc(verificationCases.id))
@@ -1116,6 +1119,43 @@ export class VerificationService implements OnModuleInit {
       this.authz.assert(action, caseRef(scope, l));
     } catch (error) {
       hideOutOfScope(error, 'Verification case');
+    }
+  }
+
+  /**
+   * The cases `p` may read under verification.read, as SQL: the twin of mayRead (can() on caseRef) for every row.
+   * `all` is the whole tenant for staff; `own` is a case whose party the caller owns (through each kind's port);
+   * a portal caller reaches only the case of its own party, of its own kind. Anything else matches nothing.
+   */
+  private readableWhere(tenantId: string, p: Principal): SQL {
+    const none = sql`false`;
+    if (p.status !== 'active') return none;
+    const myParty = (): SQL => {
+      const kind = p.orgKind === 'customer' || p.orgKind === 'vendor' ? p.orgKind : undefined;
+      if (kind === undefined || p.partyId === null || p.partyId === '') return none;
+      return and(
+        eq(verificationCases.partyKind, kind),
+        eq(verificationCases.partyId, p.partyId),
+      ) as SQL;
+    };
+    switch (p.grants.get('verification.read')) {
+      case 'all':
+        return p.orgKind === 'staff' ? sql`true` : myParty();
+      case 'customer_org':
+        return myParty();
+      case 'own': {
+        const arms = this.partyOwners
+          .all()
+          .map((port) =>
+            and(
+              eq(verificationCases.partyKind, port.kind),
+              inArray(verificationCases.partyId, port.ownedBy(this.db, tenantId, p.userId)),
+            ),
+          );
+        return arms.length === 0 ? none : (or(...arms) as SQL);
+      }
+      default:
+        return none;
     }
   }
 
