@@ -1,7 +1,7 @@
 // Workflow 1 · Sign in and follow one memo (guide steps start-1 … start-6).
 // Exact values come from docs/testrun-2026-11-19/steps/start-*.md and the "Update 19 Nov" boxes:
 // the new-memo button is Next (autosave), draft buttons are "Download preview as PDF" / "Print preview".
-/* global window, document -- referenced inside page.evaluate callbacks, which run in the browser */
+/* global window, document, MutationObserver -- referenced inside page.evaluate callbacks, which run in the browser */
 import { realLogin } from '../lib/session.mjs';
 import { isPdf, pdfText, findMail } from '../lib/support.mjs';
 
@@ -143,6 +143,17 @@ export function workflow(cfg) {
           // Controlled inputs: text typed before hydration is wiped. Wait for the page to settle.
           await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
           await s.choose('Department', 'Operations');
+          // "Leave the date supplied by the form": it should be today in the user's time zone.
+          const supplied = await s.page.locator('input[type="date"]').first().inputValue();
+          const local = await s.page.evaluate(() => new Date().toLocaleDateString('en-CA'));
+          if (supplied !== local)
+            s.finding(
+              `New memo's supplied date is ${supplied} but today in the browser's time zone is ${local}: ` +
+                'the form defaults to the UTC date (memo-form-model.ts todayIso uses toISOString), so in Nepal ' +
+                'every memo started between 00:00 and 05:45 is dated yesterday.',
+              'normal',
+            );
+          else s.checks.push(`supplied date ${supplied} is today`);
           await s.fill('Subject', subject);
           await s.fill('Body', body);
           s.expect(
@@ -219,21 +230,44 @@ export function workflow(cfg) {
             );
           }
 
-          await s.caption('start-3 — Print (headless: window.print is counted, no dialog)');
+          await s.caption('start-3 — Print: only the memo paper goes to the print frame');
+          // Headless Chromium shows no print dialog. The app prints from an off-screen iframe
+          // (data-memo-print-frame); intercept that frame's print() and read what it would print.
           await s.page.evaluate(() => {
-            window.__printCalls = 0;
-            window.print = () => {
-              window.__printCalls++;
-            };
+            window.__printed = { calls: 0, text: '' };
+            new MutationObserver((records) => {
+              for (const r of records)
+                for (const n of r.addedNodes)
+                  if (n.tagName === 'IFRAME' && n.hasAttribute('data-memo-print-frame')) {
+                    n.contentWindow.print = () => {
+                      window.__printed.calls++;
+                      window.__printed.text = n.contentDocument.body.innerText;
+                    };
+                  }
+            }).observe(document.body, { childList: true });
           });
           await s.click(s.button('Print preview').or(s.button('Print memo')), 'Print');
-          await s.page.waitForTimeout(1500);
-          const calls = await s.page.evaluate(() => window.__printCalls);
-          if (calls > 0) s.checks.push(`print requested (${calls} call)`);
-          else
-            s.checks.push(
-              'print dialog not observable headless (window.print not called on this page; check by hand)',
-            );
+          await s.page
+            .waitForFunction(() => window.__printed.calls > 0, null, { timeout: 30000 })
+            .catch(() => {});
+          const printed = await s.page.evaluate(() => window.__printed);
+          s.expect(
+            printed.calls === 1,
+            'Print sends one document to the print frame',
+            String(printed.calls),
+          );
+          s.expect(
+            printed.text.includes('Please approve delivery'),
+            'the print frame holds the memo paper',
+          );
+          s.expect(
+            !/Approval route|Audit timeline|Sign out|Add recommender/.test(printed.text),
+            'the print frame holds only the paper (no form, route or app shell)',
+            printed.text.slice(0, 200),
+          );
+          s.checks.push(
+            'the browser print dialog itself cannot be shown headless: check it by hand once',
+          );
 
           await s.caption('start-3 — read the approval route, then Submit for approval');
           const route = s.page.getByRole('region', { name: 'Approval route' });
@@ -304,10 +338,22 @@ export function workflow(cfg) {
           );
           await openMemo(s);
           await s.see(s.page.getByText('Approved', { exact: true }), 'memo status Approved');
-          const main = await s.text(s.page.getByRole('main'));
-          s.expect(
-            main.includes('Demo memo reviewed by Accountant.') || main.includes('Dev Accountant'),
-            'decision history names the Accountant',
+          await s.see(
+            s.page.getByRole('heading', { name: 'Audit timeline' }),
+            'the audit timeline',
+          );
+          await s.pause();
+          await s.click(
+            s.page.getByRole('link', { name: 'View the approval route and history' }),
+            'View the approval route and history',
+          );
+          await s.see(
+            s.page.getByText('Demo memo reviewed by Accountant.'),
+            "the Accountant's decision comment",
+          );
+          await s.see(
+            s.page.getByText('Demo memo approved by Finance.'),
+            "Finance's decision comment",
           );
           await s.pause();
 
@@ -346,10 +392,7 @@ export function workflow(cfg) {
           s.expect(mail, `a Mailpit message about ${s.state.memoNumber ?? subject}`);
           s.record('memoMailSubject', mail.Subject);
           if (/(^|\s)[a-z]+_[a-z_]+\s/.test(mail.Subject))
-            s.finding(
-              `Approval e-mail subject shows an internal type key: "${mail.Subject}"`,
-              'polish',
-            );
+            s.checks.push(`observation: the e-mail subject uses the type key ("${mail.Subject}")`);
           await s.goto(`${cfg.mailUrl}/view/${mail.ID}`, (p) => p.getByText(mail.Subject).first());
           await s.pause(1500);
         },
@@ -363,18 +406,7 @@ export function workflow(cfg) {
             'start-6 — a private window: real sign-in with password and one-time code',
           );
           // A private window is a separate browser context; it is recorded as its own video.
-          const priv = await s.browser.newContext({
-            viewport: cfg.viewport,
-            recordVideo: { dir: s.dirs.video, size: cfg.viewport },
-            ignoreHTTPSErrors: false,
-          });
-          s.extraContexts = [
-            ...(s.extraContexts ?? []),
-            { name: 'private-window', context: priv, pages: [] },
-          ];
-          const page = await priv.newPage();
-          s.extraContexts.at(-1).pages.push(page);
-          page.setDefaultTimeout(cfg.actionTimeout);
+          const { context: priv, page } = await s.openWindow('private-window');
           await realLogin(s, page, 'sales', `${cfg.appUrl}/`);
           const who = await s.whoami(page);
           s.expect(
