@@ -174,6 +174,21 @@ export function describeQuoteFailure(
           : 'The chosen approver cannot approve this quotation. Choose someone else. Nothing was submitted.',
     };
   }
+  if (status === 422 && f.code === 'CURRENCY_NOT_ENABLED') {
+    // D44: the currency was switched off in Settings after this page loaded. Only a plain code is echoed.
+    const code =
+      typeof f.details.currency === 'string' && CURRENCY.test(f.details.currency)
+        ? f.details.currency
+        : undefined;
+    const nothing: Partial<Record<typeof action, string>> = {
+      save: ' Nothing was saved.',
+      submit: ' Nothing was submitted.',
+    };
+    return {
+      kind: 'invalid',
+      message: `${code ?? 'This currency'} is not enabled for your company. Choose another currency, or ask an administrator to switch it on in Settings.${nothing[action] ?? ''}`,
+    };
+  }
   if (status === 422 && isIdempotency(f)) {
     return { kind: 'error', message: DIFFERENT_CONTENT_MESSAGE };
   }

@@ -12,7 +12,28 @@ import { allocatePaymentSchedule, Dec, roundPaymentShare } from '@bos/locale';
 import { z } from 'zod';
 
 export type Currency = 'NPR' | 'INR' | 'USD';
-export const CURRENCY_OPTIONS: readonly Currency[] = ['NPR', 'INR', 'USD'];
+
+/** "Choose NPR or USD." for the currencies the company has switched on (D44). */
+export function currencyChoiceText(enabled: readonly string[]): string {
+  const list =
+    enabled.length < 2
+      ? (enabled[0] ?? 'NPR')
+      : `${enabled.slice(0, -1).join(', ')} or ${enabled.at(-1)}`;
+  return `Choose ${list}.`;
+}
+
+/**
+ * Why the builder cannot save `currency`, or null when it can: it must be switched on for the company,
+ * or be the saved quotation's own currency (`kept`), which the API still accepts after it is switched off.
+ */
+export function currencyProblem(
+  currency: string,
+  enabled: readonly string[],
+  kept?: string,
+): string | null {
+  if (enabled.includes(currency) || (kept !== undefined && currency === kept)) return null;
+  return `${currency} is not enabled for your company. ${currencyChoiceText(enabled)}`;
+}
 
 export type DiscountMode = 'none' | 'pct' | 'amount';
 

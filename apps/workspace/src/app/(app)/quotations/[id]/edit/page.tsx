@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 
 export const metadata: Metadata = { title: 'Edit quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -124,7 +125,7 @@ export default async function EditQuotationPage({
     );
   }
 
-  const [customer, opportunity, lookups] = await Promise.all([
+  const [customer, opportunity, lookups, enabledCurrencies] = await Promise.all([
     api.getCustomer(session, quotation.customerId).then(
       (c): CustomerDto | null => c,
       (): CustomerDto | null => null,
@@ -134,6 +135,7 @@ export default async function EditQuotationPage({
       (): OpportunityDto | null => null,
     ),
     loadLookups(session, quotation.customerId),
+    loadEnabledCurrencies(session),
   ]);
 
   return (
@@ -157,6 +159,7 @@ export default async function EditQuotationPage({
         paymentTerms={lookups.paymentTerms}
         termPresets={lookups.termPresets}
         canAddTerms={lookups.canAddTerms}
+        enabledCurrencies={enabledCurrencies}
         idempotencyKey={randomUUID()}
         savedNotice={query.saved === '1'}
       />
