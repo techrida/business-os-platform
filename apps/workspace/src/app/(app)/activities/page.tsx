@@ -1,8 +1,10 @@
-import type { ActivityDto, ActivityKind, ActivityStatus } from '@bos/contracts';
+import type { ActivityDto, ActivityKind, ActivityStatus, LeadOwnerOption } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { listActivities } from '@/components/p2/crm/crm-api';
+import { FollowUpActions } from '@/components/p2/crm/follow-ups-card';
+import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
 import {
   ACTIVITY_STATE_TONE,
   activityState,
@@ -44,10 +46,12 @@ function byDue(a: ActivityDto, b: ActivityDto): number {
 function ActivityRow({
   activity,
   status,
+  owners,
   now,
 }: {
   activity: ActivityDto;
   status: ActivityStatus;
+  owners: readonly LeadOwnerOption[];
   now: Date;
 }) {
   const state = activityState(activity, now);
@@ -81,6 +85,12 @@ function ActivityRow({
           <span className={styles.meta}>—</span>
         )}
       </Td>
+      {status === 'planned' ? (
+        <Td>
+          {/* Any subject (a lead, a deal, a migrated task on a customer) can be finished here. */}
+          {activity.planned ? <FollowUpActions item={activity} owners={owners} /> : null}
+        </Td>
+      ) : null}
     </tr>
   );
 }
@@ -88,10 +98,12 @@ function ActivityRow({
 function ActivityTable({
   status,
   items,
+  owners,
   now,
 }: {
   status: ActivityStatus;
   items: ActivityDto[];
+  owners: readonly LeadOwnerOption[];
   now: Date;
 }) {
   const planned = status === 'planned';
@@ -110,11 +122,18 @@ function ActivityTable({
             <Th>Type</Th>
             <Th>{planned ? 'Due' : 'Logged'}</Th>
             <Th>Linked record</Th>
+            {planned ? <Th>Actions</Th> : null}
           </tr>
         </thead>
         <tbody>
           {items.map((activity) => (
-            <ActivityRow key={activity.id} activity={activity} status={status} now={now} />
+            <ActivityRow
+              key={activity.id}
+              activity={activity}
+              status={status}
+              owners={owners}
+              now={now}
+            />
           ))}
         </tbody>
       </Table>
@@ -151,7 +170,14 @@ export default async function ActivitiesPage({
       return { items: [], problem: { message: f.message, status: f.status } };
     }
   };
-  const [planned, logged] = await Promise.all([load('planned'), load('logged')]);
+  // The owners list (Reschedule's choices) needs crm.lead.write; without it Reschedule keeps the
+  // current assignee. Names are not shown in this table, so only the owners half matters here.
+  const [planned, logged, people] = await Promise.all([
+    load('planned'),
+    load('logged'),
+    loadPeople(session, { owners: canAssignFollowUps(session) }).catch(() => null),
+  ]);
+  const owners = people?.owners ?? [];
   planned.items.sort(byDue);
   const now = new Date();
   const nothing =
@@ -219,7 +245,7 @@ export default async function ActivitiesPage({
             ) : planned.items.length === 0 ? (
               <p className={styles.meta}>No follow-ups planned.</p>
             ) : (
-              <ActivityTable status="planned" items={planned.items} now={now} />
+              <ActivityTable status="planned" items={planned.items} owners={owners} now={now} />
             )}
           </section>
 
@@ -237,7 +263,7 @@ export default async function ActivitiesPage({
             ) : logged.items.length === 0 ? (
               <p className={styles.meta}>Nothing logged yet.</p>
             ) : (
-              <ActivityTable status="logged" items={logged.items} now={now} />
+              <ActivityTable status="logged" items={logged.items} owners={owners} now={now} />
             )}
           </section>
         </>

@@ -15,6 +15,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
 import { ActivityTypeButtons } from './activity-type-buttons';
+import { subjectOf, type FollowUpSubjectKind } from './follow-up-subject';
 import { SCHEDULE_ACTIVITY_KINDS, type FieldErrors } from './forms';
 import styles from './follow-ups-card.module.css';
 
@@ -201,8 +202,10 @@ export function ScheduleFollowUpDialog({
 }
 
 export interface RescheduleFollowUpDialogProps {
-  leadId: string;
-  item: Pick<ActivityDto, 'id' | 'subject' | 'dueAt' | 'assigneeUserId' | 'version'>;
+  /** Only for an item that does not carry its own subject ids: treat it as this lead's. */
+  leadId?: string | undefined;
+  item: Pick<ActivityDto, 'id' | 'subject' | 'dueAt' | 'assigneeUserId' | 'version'> &
+    Partial<Pick<ActivityDto, FollowUpSubjectKind>>;
   owners: readonly LeadOwnerOption[];
   trigger: ReactNode;
 }
@@ -226,6 +229,8 @@ export function RescheduleFollowUpDialog({
   const listed = has(owners, item.assigneeUserId);
   const options = assigneeOptions(owners, listed ? undefined : 'Keep current assignee');
   const err = dialog.outcome.fieldErrors ?? {};
+  // The server refreshes this record's page; it builds the path from the kind and id itself.
+  const subject = subjectOf(item) ?? (leadId ? { kind: 'leadId' as const, id: leadId } : null);
 
   return (
     <Dialog
@@ -245,7 +250,12 @@ export function RescheduleFollowUpDialog({
         onSubmit={dialog.onSubmit}
         className={styles.dialogForm}
       >
-        <input type="hidden" name="leadId" value={leadId} />
+        {subject ? (
+          <>
+            <input type="hidden" name="subjectKind" value={subject.kind} />
+            <input type="hidden" name="subjectId" value={subject.id} />
+          </>
+        ) : null}
         <input type="hidden" name="activityId" value={item.id} />
         <input type="hidden" name="expectedVersion" value={item.version} />
         <FormAlert error={dialog.outcome.error} />
