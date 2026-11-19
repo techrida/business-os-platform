@@ -1,7 +1,6 @@
 // Tinted header: a soft brand wash across the top, a tinted totals panel, and a tinted closing section.
 import {
   brandMark,
-  closing,
   customerParty,
   detailRows,
   docRef,
@@ -9,7 +8,7 @@ import {
   itemsTable,
   kvTable,
   statusBadge,
-  summary,
+  tail,
   title,
   type LayoutRenderer,
 } from './shared';
@@ -34,7 +33,7 @@ export const tinted: LayoutRenderer = (ctx) => {
   .summary-main { padding: 4mm 5mm; border-radius: 2.5mm; background: ${p.tint}; }
   table.totals td { border-bottom: 0.5pt solid ${p.tintStrong}; }
   table.totals tr.grand td { padding: 7pt 0 3pt; border-bottom: 0; color: ${p.onTint}; font-size: 13pt; }
-  .closing-band { margin-top: 9mm; padding: 1mm 14mm 8mm; background: ${p.tint}; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .closing-band { margin: 7mm -14mm 0; padding: 1mm 14mm 5mm; background: ${p.tint}; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   .closing-band .block h2 { color: ${p.onTint}; }
   .foot { background: ${p.tint}; border-top-color: ${p.tintStrong}; }
 `;
@@ -50,8 +49,7 @@ export const tinted: LayoutRenderer = (ctx) => {
       <div class="details"><h2>Quotation details</h2>${kvTable(detailRows(ctx))}</div>
     </section>
     ${itemsTable(ctx)}
-    ${summary(ctx)}
-  </div>
-  <div class="closing-band">${closing(ctx)}</div>`;
+    ${tail(ctx, (inner) => `<div class="closing-band">${inner}</div>`)}
+  </div>`;
   return { css, body };
 };

@@ -249,14 +249,17 @@ const textBlock = (heading: string, body: string | null): string =>
     ? `<section class="block"><h2>${heading}</h2><p class="text">${escapeHtml(body)}</p></section>`
     : '';
 
-export const textBlocks = (ctx: RenderContext): string =>
+/** The text sections that have content, in reading order. */
+const textBlockList = (ctx: RenderContext): string[] =>
   [
     textBlock('Scope', ctx.view.scope),
     textBlock('Assumptions', ctx.view.assumptions),
     textBlock('Exclusions', ctx.view.exclusions),
     textBlock('Delivery timeline', ctx.view.deliveryTimeline),
     textBlock('Terms and conditions', ctx.view.termsAndConditions),
-  ].join('');
+  ].filter((block) => block !== '');
+
+export const textBlocks = (ctx: RenderContext): string => textBlockList(ctx).join('');
 
 export function signatory(ctx: RenderContext): string {
   const { signatoryName, signatoryTitle } = ctx.profile;
@@ -268,9 +271,23 @@ export function signatory(ctx: RenderContext): string {
     </section>`;
 }
 
-/** The text sections and the signature, in reading order. */
-export const closing = (ctx: RenderContext): string =>
-  `<div class="closing">${textBlocks(ctx)}${signatory(ctx)}</div>`;
+/** Wraps the closing text sections; a layout may put them on its own band. */
+export type ClosingWrap = (inner: string) => string;
+
+const plainClosing: ClosingWrap = (inner) => `<div class="closing">${inner}</div>`;
+
+/**
+ * Totals, the text sections and the signature, in reading order. The signature never sits alone on a page: it
+ * shares one unbreakable `.sign-keep` box with the last text section, or with the totals when there is none.
+ */
+export function tail(ctx: RenderContext, wrapClosing: ClosingWrap = plainClosing): string {
+  const blocks = textBlockList(ctx);
+  const last = blocks.pop();
+  if (last === undefined) {
+    return `<div class="sign-keep">${summary(ctx)}${signatory(ctx)}</div>`;
+  }
+  return `${summary(ctx)}${wrapClosing(`${blocks.join('')}<div class="sign-keep">${last}${signatory(ctx)}</div>`)}`;
+}
 
 // Footer icons: 24px stroke paths after Lucide (ISC). Inline, so nothing is fetched; no xmlns needed in HTML.
 const icon = (paths: string): string =>
@@ -391,7 +408,8 @@ export const baseCss = (p: BrandPalette): string => `
   table.schedule td:nth-child(2) { font-weight: 600; white-space: nowrap; }
 
   .closing { margin-top: 2mm; }
-  .sign { width: 64mm; margin: 8mm 0 0 auto; text-align: center; break-inside: avoid; }
+  .sign-keep { break-inside: avoid; }
+  .sign { width: 64mm; margin: 6mm 0 0 auto; text-align: center; break-inside: avoid; }
   .sign-for { font-size: 8.5pt; color: ${N.muted}; }
   .sign-line { height: 12mm; border-bottom: 0.75pt solid ${N.lineStrong}; margin-bottom: 4pt; }
   .sign-name { font-weight: 700; }

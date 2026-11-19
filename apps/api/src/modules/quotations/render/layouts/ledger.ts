@@ -4,7 +4,6 @@
 import {
   NEUTRALS as N,
   brandMark,
-  closing,
   customerParty,
   detailRows,
   docRef,
@@ -12,7 +11,7 @@ import {
   itemsTable,
   kvTable,
   statusBadge,
-  summary,
+  tail,
   title,
   type LayoutRenderer,
 } from './shared';
@@ -51,8 +50,7 @@ export const ledger: LayoutRenderer = (ctx) => {
       <div><h2>Details</h2>${kvTable(detailRows(ctx))}</div>
     </section>
     ${itemsTable(ctx)}
-    ${summary(ctx)}
-    ${closing(ctx)}
+    ${tail(ctx)}
   </div>`;
   return { css, body };
 };

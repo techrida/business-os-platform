@@ -1,14 +1,13 @@
 // Two cards: a centred title, logo beside the details, then "Quotation by" and "Quotation to" side by side.
 import {
   brandMark,
-  closing,
   customerParty,
   detailRows,
   issuerParty,
   itemsTable,
   kvTable,
   statusBadge,
-  summary,
+  tail,
   title,
   type LayoutRenderer,
 } from './shared';
@@ -41,8 +40,7 @@ export const duoCards: LayoutRenderer = (ctx) => {
       <div class="card"><h2>Quotation to</h2>${customerParty(ctx)}</div>
     </section>
     ${itemsTable(ctx)}
-    ${summary(ctx)}
-    ${closing(ctx)}
+    ${tail(ctx)}
   </div>`;
   return { css, body };
 };
