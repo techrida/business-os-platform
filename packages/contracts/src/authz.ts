@@ -17,6 +17,8 @@ export const PERMISSIONS = [
   'approvals.requests.reroute',
   'documents.upload',
   'documents.read',
+  // Set a user's profile picture (U12): scope `own` is "my own picture", scope `all` is "anyone's in the tenant".
+  'profile.avatar.write',
   'audit.read',
   'memo.create',
   'memo.read',
@@ -176,8 +178,16 @@ const billingFinanceGrants: RoleGrants = {
   'payment.verify': 'all',
 };
 
+/**
+ * Every staff role sets its own profile picture (U12). Founder holds it at `all` through PERMISSIONS, and so may
+ * set anyone's; no other default role holds `admin.users.invite`. Migration 0053 gives existing staff roles `own`,
+ * and `all` to founder and to any role that holds `admin.users.invite`. Portal roles get none.
+ */
+const ownProfileGrants: RoleGrants = { 'profile.avatar.write': 'own' };
+
 /** What every internal user who is not an approver may do in the kernel: their own memos, documents and requests. */
 const staffBaseGrants: RoleGrants = {
+  ...ownProfileGrants,
   'memo.create': 'own',
   'memo.update': 'own',
   'memo.read': 'own',
@@ -236,12 +246,14 @@ const p4VendorUserGrants: RoleGrants = {
 export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
   founder: founderGrants,
   management: {
+    ...ownProfileGrants,
     ...approverGrants,
     ...salesReadAllGrants,
     ...salesCostReadGrants,
     ...billingReadAllGrants,
   },
   finance: {
+    ...ownProfileGrants,
     ...approverGrants,
     'audit.read': 'all',
     ...salesReadAllGrants,
@@ -253,6 +265,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, RoleGrants> = {
     ...p4FinanceGrants,
   },
   accountant: {
+    ...ownProfileGrants,
     ...approverGrants,
     ...salesReadAllGrants,
     ...salesCreatorGrants,
