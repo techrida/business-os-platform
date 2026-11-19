@@ -66,6 +66,44 @@ describe('payments list', () => {
     expect(html).toContain('2 payments');
   });
 
+  it('ends each row with Status and a View action, named even before numbering', async () => {
+    mocks.listPaymentsPage.mockResolvedValue(
+      page([
+        listItem(),
+        listItem({
+          id: '22222222-2222-4222-8222-222222222222',
+          status: 'verified',
+          number: 'RCPT-2083/84-00001',
+        }),
+      ]),
+    );
+    const html = await render();
+    const headers = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    expect(headers).toEqual([
+      'Receipt',
+      'Customer',
+      'Method',
+      'Amount received',
+      'Not yet allocated',
+      'Received on',
+      'Status',
+      'Action',
+    ]);
+    // The status badge sits after the date, in the shaded trailing band.
+    expect(html).toMatch(
+      /<\/time><\/td><td class="[^"]*statusColumn[^"]*">.*?Awaiting verification/,
+    );
+    const links = html.match(/<a [^>]*>/g) ?? [];
+    const numbered = links.find((a) => a.includes('aria-label="View RCPT-2083/84-00001"'));
+    expect(numbered).toContain('href="/payments/22222222-2222-4222-8222-222222222222"');
+    const unnumbered = links.find(
+      (a) =>
+        a.includes('aria-label="View payment of ') &&
+        a.includes(' from Himalayan Traders Pvt. Ltd. received '),
+    );
+    expect(unnumbered).toContain('href="/payments/11111111-1111-4111-8111-111111111111"');
+  });
+
   it('takes the stat cards from the server counts, not from the rows on the page', async () => {
     const html = await render();
     expect(html).toMatch(/Total payments<\/dt><dd[^>]*>9</);

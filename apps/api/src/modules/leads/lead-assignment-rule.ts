@@ -21,9 +21,28 @@ import {
   type AssignmentDecision,
   type AssignmentParty,
   LEAD_INTAKE_ROLE_KEYS,
+  type ManagerAssignmentRule,
   MARKETING_ROLE_KEY,
   SALES_ROLE_KEY,
+  type StaffAssignmentRule,
 } from '@bos/contracts';
+
+/**
+ * Optional tenant/entity policy for the assignment rule (U20b). When omitted, the built-in D50
+ * defaults apply unchanged. No combination of options ever permits assigning upward.
+ */
+export interface AssignmentRuleConfig {
+  /** Within-department rule for staff (default: `self_and_peers`). */
+  staff?: StaffAssignmentRule;
+  /** Within-department rule for managers (default: `any_at_or_below`). */
+  managers?: ManagerAssignmentRule;
+  /**
+   * Explicit directed cross-department hand-over pairs (`fromDepartmentId` -> `toDepartmentId`).
+   * When omitted, the built-in Marketing -> Sales role hand-off and Sales -> Marketing block apply.
+   * When provided (including an empty array), only these pairs allow cross-department assignment.
+   */
+  handOvers?: readonly { fromDepartmentId: string; toDepartmentId: string }[];
+}
 
 const holds = (party: AssignmentParty, role: string): boolean =>
   (party.roleKeys as readonly string[]).includes(role);
@@ -33,11 +52,27 @@ const rank = (party: AssignmentParty): number => ACCESS_LEVEL_RANK[party.level];
 const isIntake = (party: AssignmentParty): boolean =>
   LEAD_INTAKE_ROLE_KEYS.some((role) => holds(party, role));
 
+function permittedByLevel(
+  actor: AssignmentParty,
+  target: AssignmentParty,
+  staffRule: StaffAssignmentRule,
+  managersRule: ManagerAssignmentRule,
+): boolean {
+  // Unconditional invariant: nobody assigns upward, regardless of configured options.
+  if (rank(target) > rank(actor)) return false;
+  if (actor.level === 'staff' && staffRule === 'self_only') return false;
+  if (actor.level === 'manager' && managersRule === 'self_and_staff' && target.level !== 'staff') {
+    return false;
+  }
+  return true;
+}
+
 /** May `actor` hand work to `target`? */
 export function decideAssignment(
   actor: AssignmentParty,
   target: AssignmentParty,
   context: AssignmentContext = 'reassign',
+  config?: AssignmentRuleConfig,
 ): AssignmentDecision {
   if (holds(actor, 'founder')) return { allowed: true, reason: 'founder' };
 
@@ -55,7 +90,12 @@ export function decideAssignment(
 
   if (actor.userId === target.userId) return { allowed: true, reason: 'self' };
 
+  const staffRule: StaffAssignmentRule = config?.staff ?? 'self_and_peers';
+  const managersRule: ManagerAssignmentRule = config?.managers ?? 'any_at_or_below';
+  const explicitHandOvers = config?.handOvers;
+
   if (
+    explicitHandOvers === undefined &&
     holds(actor, SALES_ROLE_KEY) &&
     !holds(actor, MARKETING_ROLE_KEY) &&
     holds(target, MARKETING_ROLE_KEY) &&
@@ -65,8 +105,22 @@ export function decideAssignment(
   }
 
   if (actor.departmentId !== null && actor.departmentId === target.departmentId) {
-    return rank(target) <= rank(actor)
+    return permittedByLevel(actor, target, staffRule, managersRule)
       ? { allowed: true, reason: 'department' }
+      : { allowed: false, reason: 'upward' };
+  }
+
+  if (explicitHandOvers !== undefined) {
+    if (actor.departmentId === null || target.departmentId === null) {
+      return { allowed: false, reason: 'no_department' };
+    }
+    const matched = explicitHandOvers.some(
+      (pair) =>
+        pair.fromDepartmentId === actor.departmentId && pair.toDepartmentId === target.departmentId,
+    );
+    if (!matched) return { allowed: false, reason: 'other_department' };
+    return permittedByLevel(actor, target, staffRule, managersRule)
+      ? { allowed: true, reason: 'sales_handoff' }
       : { allowed: false, reason: 'upward' };
   }
 
@@ -74,7 +128,7 @@ export function decideAssignment(
     if (actor.departmentId === null || target.departmentId === null) {
       return { allowed: false, reason: 'no_department' };
     }
-    return rank(target) <= rank(actor)
+    return permittedByLevel(actor, target, staffRule, managersRule)
       ? { allowed: true, reason: 'sales_handoff' }
       : { allowed: false, reason: 'upward' };
   }
@@ -93,8 +147,11 @@ export function assignableTargets<T extends AssignmentParty>(
   actor: AssignmentParty,
   candidates: readonly T[],
   context: AssignmentContext = 'reassign',
+  config?: AssignmentRuleConfig,
 ): T[] {
-  return candidates.filter((candidate) => decideAssignment(actor, candidate, context).allowed);
+  return candidates.filter(
+    (candidate) => decideAssignment(actor, candidate, context, config).allowed,
+  );
 }
 
 /**

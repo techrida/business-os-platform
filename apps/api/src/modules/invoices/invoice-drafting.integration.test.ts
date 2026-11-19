@@ -329,6 +329,12 @@ describe('manual invoice (done check 1, golden case)', () => {
     });
   });
 
+  it('refuses a manual invoice whose discount takes the whole amount (a zero total cannot be issued)', async () => {
+    await expect(
+      drafting.draftManual({ ...manualBody(), discount: { mode: 'pct', value: '100' } }, key()),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
   it('refuses a caller without invoice.draft', async () => {
     current.role = 'management';
     await expect(drafting.draftManual(manualBody(), key())).rejects.toBeInstanceOf(

@@ -106,6 +106,16 @@ export class RoleCache {
   }
 
   /**
+   * Changes whenever this instance forgets the tenant or sees a newer `authz_versions` row. The tenancy
+   * interceptor keys its user cache (department and level of each membership) to it, so a membership
+   * change saved with `AuthzService.invalidate` shows on the next request, not after the cache's 60 s.
+   */
+  async epoch(tenantId: string): Promise<string> {
+    const entry = await this.entryFor(tenantId);
+    return `${this.generations.get(tenantId) ?? 0}:${entry.version}`;
+  }
+
+  /**
    * Drops this instance's entry for the tenant, so the next `grantsFor` reloads, for every entity.
    * `AuthzService.invalidate` calls it. `_organizationId` is ignored, as in `grantsFor`.
    */

@@ -126,6 +126,41 @@ describe('createManualInvoiceAction', () => {
     ]);
   });
 
+  it('sends the document discount the form chose, as the contract shape', async () => {
+    // Fails on the old code: the action never read discountMode or discountValue.
+    await expect(
+      createManualInvoiceAction(prev, form({ discountMode: 'amount', discountValue: '1,500.50' })),
+    ).rejects.toThrow('REDIRECT');
+    expect(JSON.parse(call()[2].body as string)).toMatchObject({
+      discount: { mode: 'amount', value: '1500.50' },
+    });
+
+    mocks.apiFetch.mockClear();
+    await expect(
+      createManualInvoiceAction(prev, form({ discountMode: 'pct', discountValue: '12.5' })),
+    ).rejects.toThrow('REDIRECT');
+    expect(JSON.parse(call()[2].body as string)).toMatchObject({
+      discount: { mode: 'pct', value: '12.5' },
+    });
+  });
+
+  it('sends no discount for No discount, even with a value left in the field', async () => {
+    await expect(
+      createManualInvoiceAction(prev, form({ discountMode: 'none', discountValue: '10' })),
+    ).rejects.toThrow('REDIRECT');
+    expect(JSON.parse(call()[2].body as string)).not.toHaveProperty('discount');
+  });
+
+  it('refuses a discount the contract would refuse, before the API', async () => {
+    const state = await createManualInvoiceAction(
+      prev,
+      form({ discountMode: 'pct', discountValue: '120' }),
+    );
+    expect(mocks.apiFetch).not.toHaveBeenCalled();
+    expect(state.key).toBe(KEY);
+    expect(state.errors['discount']).toMatch(/0 to 100/);
+  });
+
   it('refuses an incomplete form in place and never calls the API, so the key stays unused', async () => {
     const state = await createManualInvoiceAction(
       prev,

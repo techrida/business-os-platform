@@ -12,6 +12,7 @@ import {
   check,
   foreignKey,
   index,
+  integer,
   primaryKey,
   text,
   timestamp,
@@ -24,6 +25,9 @@ import { appSchema, idpOrgs, opsSchema, organizations, tenants } from './platfor
 
 /** Lifecycle of a user row. `invited` = created in ZITADEL, never logged in; `inactive` = may not act. */
 export const USER_STATUSES = ['invited', 'active', 'inactive'] as const;
+
+/** Lifecycle of a department row (migration 0086). Retired departments keep historical records. */
+export const DEPARTMENT_STATUSES = ['active', 'retired'] as const;
 
 /**
  * How far a role's permission reaches in code: the user's own records, their department, rows naming the caller's
@@ -47,11 +51,26 @@ export const departments = appSchema.table(
     name: text('name').notNull(),
     /** The department head. NULL until one is named; the composite FK below keeps the head in the same tenant. */
     headUserId: uuid('head_user_id'),
+    /** Active or retired (migration 0086). Retired departments keep past records but take no new members. */
+    status: text('status', { enum: DEPARTMENT_STATUSES }).notNull().default('active'),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    /** Optimistic concurrency guard incremented on rename, retire and restore (migration 0086). */
+    version: integer('version').notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('departments_tenant_org_idx').on(t.tenantId, t.organizationId),
+    index('departments_name_trgm_idx').using('gin', t.name.op('gin_trgm_ops')),
+    uniqueIndex('departments_tenant_org_active_name_unique')
+      .on(t.tenantId, t.organizationId, sql`lower(btrim(${t.name}))`)
+      .where(sql`${t.status} = 'active'`),
+    check('departments_status_check', sql`${t.status} in ('active', 'retired')`),
+    check(
+      'departments_retired_at_check',
+      sql`(${t.status} = 'active' AND ${t.retiredAt} IS NULL) OR (${t.status} = 'retired' AND ${t.retiredAt} IS NOT NULL)`,
+    ),
+    check('departments_version_check', sql`${t.version} >= 1`),
     // Parent keys for composite FKs (user_entities, memos), ADR 0027 section 8.
     unique('departments_tenant_id_unique').on(t.tenantId, t.id),
     unique('departments_tenant_org_id_unique').on(t.tenantId, t.organizationId, t.id),
@@ -240,6 +259,8 @@ export const userEntities = appSchema.table(
     /** The roles this membership allows; NULL = every role in the token. */
     roleKeys: text('role_keys').array(),
     departmentId: uuid('department_id'),
+    /** When the member joined the current department (migration 0086). NULL when unassigned. */
+    departmentSince: timestamp('department_since', { withTimezone: true }),
     /** Rank in the department (migration 0079); departments.head_user_id follows level `head`. */
     level: text('level', { enum: MEMBERSHIP_LEVELS }).notNull().default('staff'),
     jobTitle: text('job_title'),

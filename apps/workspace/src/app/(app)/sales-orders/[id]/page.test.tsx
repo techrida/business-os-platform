@@ -70,6 +70,14 @@ describe('sales order detail', () => {
     expect(html).toContain(`/customers/${IDS.customer}`);
   });
 
+  it('ends the totals with the grand total, the whole block in one box', async () => {
+    const html = await render();
+    const totals = /<aside[^>]*>[\s\S]*?<\/aside>/.exec(html)?.[0] ?? '';
+    expect(totals).toContain('Totals');
+    expect(totals).toMatch(/Grand total<\/dt><dd[^>]*>[^<]*57,01,358.50/);
+    expect(totals).toMatch(/<dl class="[^"]*totalsBox/);
+  });
+
   it('shows the schedule lines with a status in words and what each one offers', async () => {
     const html = await render();
     expect(html).toContain('Advance 60%');
