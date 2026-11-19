@@ -248,6 +248,20 @@ describe('the purchase order page', () => {
     expect(out).toContain('Receive goods');
   });
 
+  it('offers Enter bill only when the order says the caller may enter a bill on it', async () => {
+    session.roles = ['accountant'];
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true } }));
+    const out = await detail();
+    expect(out).toContain('Enter bill');
+    expect(out).toContain(`/payables/bills/new?po=${ID}`);
+    for (const can of [{ enterBill: false }, undefined]) {
+      api.getPurchaseOrder.mockResolvedValue(order({ can }));
+      const without = await detail();
+      expect(without).not.toContain('Enter bill');
+      expect(without).not.toContain('/payables/bills/new');
+    }
+  });
+
   it('still shows the order when the versions and progress panels fail', async () => {
     api.getPurchaseOrder.mockResolvedValue(order());
     api.listPoVersions.mockRejectedValue(apiError(500));
