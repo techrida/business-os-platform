@@ -99,6 +99,8 @@ export function isEmptyValue(value: unknown): boolean {
 export const DRAFT_REFERENCE_SOURCE = String.raw`Draft ([a-z][a-z0-9_]*) [0-9a-f]{8}`;
 const DRAFT_REFERENCE = new RegExp(`^${DRAFT_REFERENCE_SOURCE}$`);
 
+const isInternalType = (type: string) => documentTypeLabel(type) !== type || type.includes('_');
+
 /** The words for a document type key: `Debit note`, or the humanized key for a type with no label. */
 export function documentTypeWords(type: string): string {
   const known = documentTypeLabel(type);
@@ -111,7 +113,9 @@ export function documentTypeWords(type: string): string {
  */
 export function documentNumberText(documentNumber: string): string {
   const match = DRAFT_REFERENCE.exec(documentNumber);
-  if (match === null) return documentNumber;
+  // Only an internal document type key counts (a labelled type, or a key with an underscore): words a person
+  // typed, such as the memo subject `Draft budget 20261120`, are left as they are.
+  if (match === null || !isInternalType(match[1]!)) return documentNumber;
   const label = documentTypeWords(match[1]!);
   // Lower only a capitalised word: `Debit note` -> `debit note`, but `PR commitment` stays.
   return `Draft ${/^[A-Z][a-z]/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label}`;
@@ -218,7 +222,7 @@ export function snapshotEntries(
         if (key === 'kind' && documentTypeLabel(raw) !== raw) {
           return { key, label: 'Document type', value: documentTypeLabel(raw), block: false };
         }
-        if (DRAFT_REFERENCE.test(raw)) {
+        if (documentNumberText(raw) !== raw) {
           return { key, label, value: documentNumberText(raw), block: false };
         }
         if (/Npr$/.test(key) && DECIMAL.test(raw)) {
