@@ -109,8 +109,7 @@ function pipeline(actor: { kind: string; id: string } = user) {
     })),
   };
   const db = {
-    transaction: (fn: (t: DbTransaction) => Promise<unknown>) =>
-      fn(tx as unknown as DbTransaction),
+    transaction: (fn: (t: DbTransaction) => Promise<unknown>) => fn(tx as unknown as DbTransaction),
   };
   const storage = {
     writeQuarantine: vi.fn(async (key: string, src: Readable) => {
@@ -142,7 +141,7 @@ function pipeline(actor: { kind: string; id: string } = user) {
 
 const owner = { ownerType: 'user_avatar', ownerId: OWNER_ID };
 const file = { filename: 'me.png', declaredMime: 'image/png', bytes: PNG };
-const removedAudit = expect.objectContaining({ action: 'document.removed' });
+const removedAudit: unknown = expect.objectContaining({ action: 'document.removed' });
 
 describe('DocumentsService.createAndReceiveUpload', () => {
   it('creates the document under the user and always queues the virus scan', async () => {
