@@ -12,6 +12,7 @@ import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
+import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { getCustomerAdvance, getCustomerStatement } from '@/lib/api-receivables';
@@ -21,6 +22,8 @@ import { money, when } from '@/lib/kernel-format';
 
 import { isZeroAmount } from '../../_lib/aging';
 import { settlementMeta } from '../../_lib/settlement';
+import { daysText, statementFacts } from '../../_lib/statement';
+import layout from '@/components/p3/list.module.css';
 import styles from '../../receivables.module.css';
 
 export const metadata: Metadata = { title: 'Customer statement · Business OS' };
@@ -57,7 +60,29 @@ function Problem({
 }
 
 function overdueText(days: number): string {
-  return `${days} ${days === 1 ? 'day' : 'days'} overdue`;
+  return `${daysText(days)} overdue`;
+}
+
+/** Counts over the open items. Money totals are left to the table: the page never adds amounts. */
+function StatementStats({ items }: { items: InvoiceSettlement[] }) {
+  const facts = statementFacts(items);
+  return (
+    <section aria-label="Statement summary" className={layout.stats}>
+      <StatCard label="Open items" icon="file-text" value={facts.open} />
+      <StatCard
+        label="Overdue items"
+        icon="alert-triangle"
+        tone={facts.overdue > 0 ? 'error' : 'success'}
+        value={facts.overdue}
+      />
+      <StatCard
+        label="Longest overdue"
+        icon="calendar-days"
+        tone={facts.longestOverdueDays > 0 ? 'warning' : 'success'}
+        value={facts.longestOverdueDays > 0 ? daysText(facts.longestOverdueDays) : 'None'}
+      />
+    </section>
+  );
 }
 
 function ItemsTable({
@@ -224,6 +249,8 @@ export default async function CustomerStatementPage({
           </>
         }
       />
+
+      {items.length > 0 ? <StatementStats items={items} /> : null}
 
       <div className={styles.stack}>
         <Panel title="Open items" description="Outstanding balances and due dates.">

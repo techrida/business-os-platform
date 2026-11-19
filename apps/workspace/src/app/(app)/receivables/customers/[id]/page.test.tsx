@@ -69,6 +69,34 @@ describe('customer statement', () => {
     expect(readOnly).not.toContain('/payments/new');
   });
 
+  it('counts open and overdue items and names the longest overdue, summing no money', async () => {
+    mocks.getCustomerStatement.mockResolvedValue([
+      settlementRow({ daysOverdue: 20 }),
+      settlementRow({
+        invoiceId: OTHER_INVOICE(7),
+        number: 'INV-2083/84-00008',
+        daysOverdue: 0,
+        settlement: 'unpaid',
+      }),
+      settlementRow({ invoiceId: OTHER_INVOICE(8), number: 'INV-2083/84-00009', daysOverdue: 1 }),
+    ]);
+    const html = await render();
+    const stats = /aria-label="Statement summary".*?<\/section>/s.exec(html)?.[0] ?? '';
+    expect(stats).toMatch(/Open items<\/dt><dd[^>]*>3</);
+    expect(stats).toMatch(/Overdue items<\/dt><dd[^>]*>2</);
+    expect(stats).toMatch(/Longest overdue<\/dt><dd[^>]*>20 days</);
+    // Three rows of NPR 1,23,456.78 would sum to 3,70,370.34; no money total is drawn.
+    expect(stats).not.toContain('NPR');
+    expect(html).not.toContain('3,70,370.34');
+  });
+
+  it('says no item is overdue, and draws no summary when nothing is open', async () => {
+    mocks.getCustomerStatement.mockResolvedValue([settlementRow({ daysOverdue: 0 })]);
+    expect(await render()).toMatch(/Longest overdue<\/dt><dd[^>]*>None</);
+    mocks.getCustomerStatement.mockResolvedValue([]);
+    expect(await render()).not.toContain('Statement summary');
+  });
+
   it('shows the server open amount even when it is not total minus allocated', async () => {
     // 5,00,000.00 less 1,00,000.00 would be 4,00,000.00; the server says 1,23,456.78.
     const html = await render();
