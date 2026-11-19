@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystems } from '@bos/locale';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import detail from '@/components/p2/quotations/detail.module.css';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +24,7 @@ import { MarkBillableDialog, type EvidenceOption } from '../_components/mark-bil
 import local from '../_components/sales-orders.module.css';
 import {
   evidenceKindLabel,
+  heldInvoiceLabel,
   isGuid,
   lineAction,
   salesOrderStatusMeta,
@@ -290,10 +290,19 @@ function Schedule({
                           idempotencyKey={randomUUID()}
                           reloadHref={reloadHref}
                         />
-                      ) : action === 'open_invoice' && line.invoiceId !== null ? (
-                        <Link href={`/invoices/${encodeURIComponent(line.invoiceId)}`}>
-                          Open invoice
-                        </Link>
+                      ) : action === 'open_invoice' || action === 'show_invoice' ? (
+                        <span className={local.step}>
+                          {action === 'open_invoice' && line.invoiceId !== null ? (
+                            <Link href={`/invoices/${encodeURIComponent(line.invoiceId)}`}>
+                              Open invoice
+                            </Link>
+                          ) : (
+                            <span>Invoice</span>
+                          )}
+                          {heldInvoiceLabel(line.invoice) !== null ? (
+                            <span className={local.meta}>{heldInvoiceLabel(line.invoice)}</span>
+                          ) : null}
+                        </span>
                       ) : null}
                     </div>
                   </Td>
@@ -368,9 +377,10 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
 
   const { order } = data;
   const { label, tone } = salesOrderStatusMeta(order.status);
+  // From the order itself (the caller's live grants), not the session's role defaults.
   const can = {
-    mark: hasPermission(session.roles, 'sales_order.mark_billable'),
-    draft: hasPermission(session.roles, 'invoice.draft'),
+    mark: data.can?.markBillable ?? false,
+    draft: data.can?.draftInvoice ?? false,
   };
   const evidence: EvidenceOption[] = data.evidence.map((item, index) => ({
     documentId: item.documentId,
