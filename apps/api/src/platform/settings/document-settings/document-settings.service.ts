@@ -17,6 +17,7 @@ import {
   TermPresetKindSchema,
   TermPresetListSchema,
   TermPresetSchema,
+  snapshotProfileFrom,
 } from '@bos/contracts';
 import {
   BadRequestException,
@@ -133,7 +134,7 @@ export class DocumentSettingsService {
     const html = renderQuotationHtml(sampleQuotationView(), {
       snapshot: {
         style: { layout: body.layout, primaryColour: body.primaryColour },
-        profile,
+        profile: snapshotProfileFrom(profile, profile.legacyLogoDataUrl ?? null),
         numberSystems,
         dateFormat,
         capturedAt: new Date().toISOString(),
