@@ -73,3 +73,31 @@ describe('lineAction (what a schedule line offers)', () => {
     expect(lineAction('cancelled', { ...planned, status: 'billable' }, can)).toBe('none');
   });
 });
+
+// Audit #7: Sales reads its own orders but may not open invoices. A held invoice is named, not linked.
+describe('a line that holds an invoice the person may not open', () => {
+  const can = { mark: true, draft: true };
+  const drafted = scheduleLine({
+    id: IDS.advance,
+    seq: 1,
+    status: 'drafted',
+    invoiceId: IDS.invoice,
+    invoice: { number: null, status: 'draft' },
+    can: { openInvoice: false },
+  });
+
+  it('names the invoice instead of linking to it, and without flags too', () => {
+    expect(lineAction('confirmed', drafted, can)).toBe('show_invoice');
+    const { can: _omitted, ...withoutFlags } = drafted;
+    expect(lineAction('confirmed', withoutFlags, can)).toBe('show_invoice');
+  });
+
+  it('says the number and the status in one word', () => {
+    expect(heldInvoiceLabel({ number: null, status: 'draft' })).toBe('Not numbered yet · Draft');
+    expect(heldInvoiceLabel({ number: 'INV-2083/84-00007', status: 'submitted' })).toBe(
+      'INV-2083/84-00007 · Submitted',
+    );
+    expect(heldInvoiceLabel(null)).toBeNull();
+    expect(heldInvoiceLabel(undefined)).toBeNull();
+  });
+});
