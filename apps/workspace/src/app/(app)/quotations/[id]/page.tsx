@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { hasPermission } from '@/components/p2/customers/permissions';
 import { getQuotation } from '@/components/p2/quotations/api';
 import styles from '@/components/p2/quotations/detail.module.css';
 import { ClientDecision, DetailActions } from '@/components/p2/quotations/detail-actions';
@@ -14,6 +15,7 @@ import { Alert } from '@/components/ui/alert';
 import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { listSalesOrders } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
@@ -124,6 +126,11 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
 
   const { quotation, versions, customerName, contacts } = detail;
   const current = versions.find((v) => v.id === quotation.currentVersionId) ?? null;
+  const orders =
+    current?.status === 'accepted' && hasPermission(session.roles, 'sales_order.read')
+      ? await listSalesOrders(session, { quotationVersionId: current.id }).catch(() => [])
+      : [];
+  const order = orders.find((item) => item.status !== 'cancelled');
   const contact =
     current?.contactId != null ? contacts.find((c) => c.id === current.contactId) : undefined;
 
@@ -288,6 +295,14 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
                   View opportunity
                 </Link>
               </li>
+              {order ? (
+                <li>
+                  <Icon name="briefcase" size={18} />
+                  <Link href={`/sales-orders/${encodeURIComponent(order.id)}`}>
+                    Sales order {order.number ?? ''}
+                  </Link>
+                </li>
+              ) : null}
             </ul>
           </Panel>
         </div>
