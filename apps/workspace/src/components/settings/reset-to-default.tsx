@@ -92,7 +92,7 @@ export function ResetToDefaultButton({
       // The version is passed through untouched: a missing one must reach the action and fail closed.
       const state = await (action
         ? action()
-        : resetSettingAction(section, settingKey, loadedVersion as number | null));
+        : resetSettingAction(section, settingKey, loadedVersion));
       if (state.status === 'error') {
         toast.error(state.message.split('\n')[0] ?? state.message, { id: `reset:${settingKey}` });
         return false;
