@@ -12,6 +12,9 @@
 // Setup mirrors quotations.test.ts: the roles and default privileges of infra/postgres/init-dbs.sh, migrate as
 // bos_owner, write as bos_app, with the acting entity set per transaction like withTx.
 import { randomUUID } from 'node:crypto';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool, type PoolClient } from 'pg';
@@ -19,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { checkAudit } from './check-audit.js';
 import { checkTenancy, describeViolations } from './check-tenancy.js';
-import { runMigrations } from './migrate.js';
+import { MIGRATIONS_FOLDER, runMigrations } from './migrate.js';
 import { createParty, createTenantWithEntity } from './testing/fixtures.js';
 
 const OWNER_PW = 'owner-test-pw';
@@ -47,6 +50,7 @@ const GOLDEN = {
 let container: StartedPostgreSqlContainer;
 let owner: Pool;
 let app: Pool;
+let migratedSchedule: { scope: Scope; ids: string[] };
 
 function urlFor(user: string, password: string, database: string): string {
   const url = new URL(container.getConnectionUri());
@@ -177,13 +181,13 @@ async function insertSalesOrder(scope: Scope, quote?: Quote): Promise<string> {
 }
 
 const INSERT_LINE = `INSERT INTO app.billing_schedule_lines
-    (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent_bp, amount, amount_npr, status)
+    (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent, amount, amount_npr, status)
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9) RETURNING id`;
 
 interface Slice {
   label: string;
   trigger: string;
-  percentBp: number;
+  percent: string | null;
   amount: string;
   status?: string;
 }
@@ -196,7 +200,7 @@ function lineParams(scope: Scope, salesOrderId: string, seq: number, s: Slice): 
     seq,
     s.label,
     s.trigger,
-    s.percentBp,
+    s.percent,
     s.amount,
     s.status ?? 'planned',
   ];
@@ -218,9 +222,9 @@ async function insertSchedule(scope: Scope, salesOrderId: string, slices: Slice[
 }
 
 const SPLIT_60_20_20: Slice[] = [
-  { label: 'Advance 60%', trigger: 'advance', percentBp: 6000, amount: '3027270.00' },
-  { label: 'Delivery 20%', trigger: 'delivery', percentBp: 2000, amount: '1009090.00' },
-  { label: 'UAT 20%', trigger: 'uat', percentBp: 2000, amount: '1009090.00' },
+  { label: 'Advance 60%', trigger: 'advance', percent: '60', amount: '3027270.00' },
+  { label: 'Delivery 20%', trigger: 'delivery', percent: '20', amount: '1009090.00' },
+  { label: 'UAT 20%', trigger: 'uat', percent: '20', amount: '1009090.00' },
 ];
 
 const SUM = { code: '23514', constraint: 'billing_schedule_lines_sum_check' };
@@ -253,10 +257,43 @@ beforeAll(async () => {
   }
   await bosAdmin.end();
 
-  await runMigrations(urlFor('bos_owner', OWNER_PW, 'bos'));
-
-  owner = new Pool({ connectionString: urlFor('bos_owner', OWNER_PW, 'bos'), max: 2 });
+  const ownerUrl = urlFor('bos_owner', OWNER_PW, 'bos');
+  owner = new Pool({ connectionString: ownerUrl, max: 2 });
   app = new Pool({ connectionString: urlFor('bos_app', APP_PW, 'bos'), max: 4 });
+
+  const legacy = mkdtempSync(join(tmpdir(), 'bos-billing-legacy-'));
+  try {
+    cpSync(MIGRATIONS_FOLDER, legacy, { recursive: true });
+    const journalPath = join(legacy, 'meta', '_journal.json');
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
+      entries: { tag: string }[];
+    };
+    const upgrade = journal.entries.findIndex((entry) => entry.tag.startsWith('0042_'));
+    expect(upgrade).toBeGreaterThan(0);
+    journal.entries = journal.entries.slice(0, upgrade);
+    writeFileSync(journalPath, JSON.stringify(journal));
+    await runMigrations(ownerUrl, legacy);
+
+    const scope = await newScope();
+    const orderId = await insertSalesOrder(scope);
+    const ids = await inTx(scope.organizationId, async (tx) => {
+      const basisPoints = ['6000', '1', null];
+      const ids: string[] = [];
+      for (const [i, slice] of SPLIT_60_20_20.entries()) {
+        const { rows } = await tx.query<{ id: string }>(
+          INSERT_LINE.replace('percent, amount', 'percent_bp, amount'),
+          lineParams(scope, orderId, i + 1, { ...slice, percent: basisPoints[i] ?? null }),
+        );
+        ids.push(rows[0]!.id);
+      }
+      return ids;
+    });
+    migratedSchedule = { scope, ids };
+    await runMigrations(ownerUrl);
+    await runMigrations(ownerUrl); // A retry must not rescale already converted rows.
+  } finally {
+    rmSync(legacy, { recursive: true, force: true });
+  }
 });
 
 afterAll(async () => {
@@ -281,6 +318,45 @@ describe('0020_sales_orders on a fresh database', () => {
 
   it('passes checkAudit()', async () => {
     await expect(checkAudit(owner)).resolves.toEqual([]);
+  });
+});
+
+describe('0042 billing schedule percent precision', () => {
+  it('converts existing basis points exactly and preserves nulls and allocated amounts', async () => {
+    const { scope, ids } = migratedSchedule;
+    const result = await inTx(scope.organizationId, (tx) =>
+      tx.query(
+        'SELECT id, percent, amount, amount_npr FROM app.billing_schedule_lines WHERE id = ANY($1) ORDER BY seq',
+        [ids],
+      ),
+    );
+    expect(result.rows).toEqual(
+      ['60.0000', '0.0100', null].map((percent, i) => ({
+        id: ids[i],
+        percent,
+        amount: SPLIT_60_20_20[i]!.amount,
+        amount_npr: SPLIT_60_20_20[i]!.amount,
+      })),
+    );
+  });
+
+  it('stores all four decimals and enforces the positive percent range', async () => {
+    const { scope, ids } = migratedSchedule;
+    const write = (percent: string) =>
+      inTx(scope.organizationId, (tx) =>
+        tx.query(
+          'UPDATE app.billing_schedule_lines SET percent = $1 WHERE id = $2 RETURNING percent',
+          [percent, ids[0]],
+        ),
+      );
+    await expect(write('33.3334')).resolves.toMatchObject({ rows: [{ percent: '33.3334' }] });
+    await expect(write('0.0001')).resolves.toMatchObject({ rows: [{ percent: '0.0001' }] });
+    for (const value of ['0', '100.0001']) {
+      await expect(write(value)).rejects.toMatchObject({
+        code: '23514',
+        constraint: 'billing_schedule_lines_percent_check',
+      });
+    }
   });
 });
 
@@ -362,8 +438,8 @@ describe('billing schedule', () => {
     const so = await insertSalesOrder(scope);
     await expect(
       insertSchedule(scope, so, [
-        { label: 'Advance 40%', trigger: 'advance', percentBp: 4000, amount: '2018180.00' },
-        { label: 'Delivery 60%', trigger: 'delivery', percentBp: 6000, amount: '3027270.00' },
+        { label: 'Advance 40%', trigger: 'advance', percent: '40', amount: '2018180.00' },
+        { label: 'Delivery 60%', trigger: 'delivery', percent: '60', amount: '3027270.00' },
       ]),
     ).resolves.toHaveLength(2);
   });
@@ -373,8 +449,8 @@ describe('billing schedule', () => {
     const so = await insertSalesOrder(scope);
     await expect(
       insertSchedule(scope, so, [
-        { label: 'Advance 60%', trigger: 'advance', percentBp: 6000, amount: '3027270.00' },
-        { label: 'Delivery 40%', trigger: 'delivery', percentBp: 4000, amount: '2018179.99' },
+        { label: 'Advance 60%', trigger: 'advance', percent: '60', amount: '3027270.00' },
+        { label: 'Delivery 40%', trigger: 'delivery', percent: '40', amount: '2018179.99' },
       ]),
     ).rejects.toMatchObject(SUM);
     const { rows } = await app.query(
