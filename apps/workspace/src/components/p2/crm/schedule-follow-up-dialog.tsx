@@ -53,6 +53,8 @@ function useDialogSubmit(run: (data: FormData) => Promise<Outcome>, success: str
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // Enter in a field still submits while the button is disabled; one request at a time.
+    if (pending) return;
     const data = new FormData(event.currentTarget);
     startTransition(async () => {
       const result = await run(data);
@@ -140,7 +142,13 @@ export function ScheduleFollowUpDialog({
 
   return (
     <Dialog
-      trigger={trigger ?? <Button variant="secondary">Schedule follow-up</Button>}
+      trigger={
+        trigger ?? (
+          <Button variant="secondary" className={styles.trigger}>
+            Schedule follow-up
+          </Button>
+        )
+      }
       open={dialog.open}
       onOpenChange={(next) => {
         if (next) setKind('call');
@@ -167,7 +175,7 @@ export function ScheduleFollowUpDialog({
           onChange={setKind}
           name="kind"
           label="Type"
-          error={shown['kind']}
+          {...(shown['kind'] ? { error: shown['kind'] } : {})}
         />
         <Field
           label="Subject"
