@@ -27,11 +27,14 @@ import {
   DEFAULT_ROLE_PERMISSION_LEVELS,
   LEAD_INTAKE_ROLE_KEYS,
   LEVEL_GRANT_MIN_LEVELS,
+  LEVEL_RULE_AREAS,
   levelAtLeast,
+  type LevelRuleArea,
   MARKETING_ROLE_KEY,
   SALES_ROLE_KEY,
   TARGET_LEAD_ACCESS,
 } from './access-model.js';
+import { ACCESS_SETTING_AREA_KEYS } from './access-settings.js';
 import {
   DEFAULT_ROLE_PERMISSIONS,
   type Permission,
@@ -142,7 +145,7 @@ describe('target lead access (D50)', () => {
     }
   });
 
-  it('gives Sales and Marketing staff their own leads and their managers and heads the department', () => {
+  it('lets Sales and Marketing managers and heads see and edit the department, staff only their own (D50)', () => {
     for (const role of [SALES_ROLE_KEY, MARKETING_ROLE_KEY] as const) {
       expect(TARGET_LEAD_ACCESS[role].staff).toMatchObject({
         read: 'own',
@@ -169,12 +172,17 @@ describe('target lead access (D50)', () => {
     }
   });
 
-  it('lets Finance, Accountant and PMO start leads and read, not edit, what they started', () => {
+  it('lets Finance, Accountant and PMO start leads and read, not edit, what they started; their managers and heads see the department', () => {
     for (const role of LEAD_INTAKE_ROLE_KEYS) {
-      for (const level of ACCESS_LEVELS) {
+      expect(TARGET_LEAD_ACCESS[role].staff).toMatchObject({
+        create: true,
+        read: 'created',
+        write: 'none',
+      });
+      for (const level of ['manager', 'head'] as const) {
         expect(TARGET_LEAD_ACCESS[role][level]).toMatchObject({
           create: true,
-          read: 'created',
+          read: 'department',
           write: 'none',
         });
       }
@@ -261,7 +269,103 @@ describe('the default grants reproduce the target table', () => {
   });
 });
 
-describe('default level grants (K3)', () => {
+describe('level rule areas (U20b)', () => {
+  it('lists the nine areas of Settings > Access in its order, each with a real see permission', () => {
+    expect(LEVEL_RULE_AREAS.map((area) => area.key)).toEqual([...ACCESS_SETTING_AREA_KEYS]);
+    for (const area of LEVEL_RULE_AREAS) {
+      expect(PERMISSIONS as readonly string[], area.key).toContain(area.seePermission);
+    }
+  });
+
+  it('pairs an edit permission with the see permission of leads and opportunities only', () => {
+    const edits = Object.fromEntries(
+      (LEVEL_RULE_AREAS as readonly LevelRuleArea[])
+        .filter((area) => area.editPermission !== undefined)
+        .map((area) => [area.key, area.editPermission]),
+    );
+    expect(edits).toEqual({
+      leads: 'crm.lead.write',
+      opportunities: 'crm.opportunity.write',
+    });
+  });
+
+  it('agrees with the read permission each record area opens its list with', () => {
+    for (const area of ACCESS_AREAS) {
+      if (!('readPermission' in area)) continue;
+      const rule = LEVEL_RULE_AREAS.find((candidate) => candidate.key === area.key);
+      expect(rule?.seePermission, area.key).toBe(area.readPermission);
+    }
+  });
+
+  it('keeps the default switches of Settings > Access (DEFAULT_LEVEL_RULES)', () => {
+    const switches = Object.fromEntries(
+      LEVEL_RULE_AREAS.map((area) => [
+        area.key,
+        [area.supportsDepartment, area.managersSeeDepartment, area.headsSeeDepartment],
+      ]),
+    );
+    expect(switches).toEqual({
+      leads: [true, true, true],
+      opportunities: [true, true, true],
+      quotations: [true, true, true],
+      sales_orders: [false, false, false],
+      invoices: [false, false, false],
+      procurement: [true, false, true],
+      payables: [false, false, false],
+      approvals: [false, false, false],
+      documents: [false, false, false],
+    });
+  });
+
+  it('never switches department reach on for an area whose records carry no department', () => {
+    for (const area of LEVEL_RULE_AREAS) {
+      if (area.supportsDepartment) continue;
+      expect(area.managersSeeDepartment || area.headsSeeDepartment, area.key).toBe(false);
+    }
+  });
+});
+
+describe('default level grants (U20b materialisation)', () => {
+  const allRows = ROLE_KEYS.flatMap((role) =>
+    DEFAULT_ROLE_PERMISSION_LEVELS[role].map((row) => ({ role, ...row })),
+  );
+  const rowKey = (row: (typeof allRows)[number]): string =>
+    `${row.role} ${row.permission} ${row.minLevel} ${row.scope}`;
+
+  it('is exactly the rows Settings > Access materialises from the default switches', () => {
+    expect(allRows.map(rowKey).sort()).toEqual(
+      [
+        'finance crm.lead.read manager department',
+        'finance crm.lead.read head department',
+        'finance crm.opportunity.read manager department',
+        'finance crm.opportunity.read head department',
+        'accountant crm.lead.read manager department',
+        'accountant crm.lead.read head department',
+        'accountant crm.opportunity.read manager department',
+        'accountant crm.opportunity.read head department',
+        'sales crm.lead.read manager department',
+        'sales crm.lead.read head department',
+        'sales crm.opportunity.read manager department',
+        'sales crm.opportunity.read head department',
+        'sales crm.lead.write manager department',
+        'sales crm.lead.write head department',
+        'sales crm.opportunity.write manager department',
+        'sales crm.opportunity.write head department',
+        'sales quotation.read manager department',
+        'sales quotation.read head department',
+        'marketing crm.lead.read manager department',
+        'marketing crm.lead.read head department',
+        'marketing crm.lead.write manager department',
+        'marketing crm.lead.write head department',
+        'pmo crm.lead.read manager department',
+        'pmo crm.lead.read head department',
+        'pmo crm.opportunity.read manager department',
+        'pmo crm.opportunity.read head department',
+        'operations_officer procurement.pr.read head department',
+      ].sort(),
+    );
+  });
+
   it('has an entry for every role, none for the Founder or the portal roles', () => {
     expect(Object.keys(DEFAULT_ROLE_PERMISSION_LEVELS).sort()).toEqual([...ROLE_KEYS].sort());
     for (const role of ['founder', ...PORTAL_ROLES] as const) {
@@ -269,26 +373,80 @@ describe('default level grants (K3)', () => {
     }
   });
 
-  it('only ever widens: every row reaches further than the base grant', () => {
-    for (const role of ROLE_KEYS) {
-      for (const row of DEFAULT_ROLE_PERMISSION_LEVELS[role]) {
-        const base = DEFAULT_ROLE_PERMISSIONS[role][row.permission];
-        const label = `${role} ${row.permission} ${row.minLevel}`;
-        if (base !== undefined) {
-          expect(ACCESS_SCOPE_RANK[row.scope], label).toBeGreaterThan(ACCESS_SCOPE_RANK[base]);
-        }
-      }
+  it('names only the see or edit permission of an area with department reach, at a level its switch turns on', () => {
+    for (const row of allRows) {
+      const area = (LEVEL_RULE_AREAS as readonly LevelRuleArea[]).find(
+        (candidate) =>
+          candidate.seePermission === row.permission || candidate.editPermission === row.permission,
+      );
+      const label = `${row.role} ${row.permission} ${row.minLevel}`;
+      expect(area, label).toBeDefined();
+      expect(area!.supportsDepartment, label).toBe(true);
+      expect(
+        row.minLevel === 'manager' ? area!.managersSeeDepartment : area!.headsSeeDepartment,
+        label,
+      ).toBe(true);
+      expect(row.scope, label).toBe('department');
     }
   });
 
-  it('gives a role a base grant before a level row, except the purchase requests every head reads', () => {
-    for (const role of ROLE_KEYS) {
-      for (const row of DEFAULT_ROLE_PERMISSION_LEVELS[role]) {
-        if (row.permission === 'procurement.pr.read') continue;
-        expect(DEFAULT_ROLE_PERMISSIONS[role][row.permission], `${role} ${row.permission}`).toBe(
-          'own',
-        );
+  it('gives an edit row only with the see row of the same switch and level', () => {
+    for (const row of allRows) {
+      const area = (LEVEL_RULE_AREAS as readonly LevelRuleArea[]).find(
+        (candidate) => candidate.editPermission === row.permission,
+      );
+      if (area === undefined) continue;
+      const label = `${row.role} ${row.permission} ${row.minLevel}`;
+      expect(
+        allRows.some(
+          (see) =>
+            see.role === row.role &&
+            see.permission === area.seePermission &&
+            see.minLevel === row.minLevel,
+        ),
+        label,
+      ).toBe(true);
+    }
+  });
+
+  it('never widens the lead or opportunity write of Finance, Accountant or PMO, which only start leads', () => {
+    for (const role of LEAD_INTAKE_ROLE_KEYS) {
+      for (const permission of ['crm.lead.write', 'crm.opportunity.write'] as const) {
+        expect(
+          DEFAULT_ROLE_PERMISSION_LEVELS[role].filter((row) => row.permission === permission),
+          `${role} ${permission}`,
+        ).toEqual([]);
       }
+      expect(effectiveScope(role, 'crm.lead.write', 'head'), role).toBe('own');
+    }
+  });
+
+  it('gives no row on any other write permission and none in an area without a department', () => {
+    for (const permission of [
+      'quotation.draft',
+      'quotation.submit',
+      'quotation.send',
+      'quotation.record_acceptance',
+      'quotation.revise',
+      'procurement.pr.create',
+      'sales_order.read',
+      'invoice.read',
+      'payables.bill.read',
+      'approvals.requests.read',
+      'documents.read',
+    ] as const) {
+      expect(allRows.filter((row) => row.permission === permission).map(rowKey), permission).toEqual(
+        [],
+      );
+    }
+  });
+
+  it('never creates access and only ever widens: every row needs a base grant narrower than the department', () => {
+    for (const row of allRows) {
+      const base = DEFAULT_ROLE_PERMISSIONS[row.role][row.permission];
+      const label = `${row.role} ${row.permission} ${row.minLevel}`;
+      expect(base, label).toBeDefined();
+      expect(['department', 'all'], label).not.toContain(base);
     }
   });
 
@@ -299,44 +457,31 @@ describe('default level grants (K3)', () => {
     }
   });
 
-  it('lets every staff head read the department purchase requests unless the role already reads further', () => {
+  it('gives purchase requests to heads only, and only to a role that already reads its own', () => {
     for (const role of ROLE_KEYS) {
-      if (role === 'founder' || PORTAL_ROLES.includes(role)) continue;
-      const scope = effectiveScope(role, 'procurement.pr.read', 'head');
-      expect(scope, role).toBeDefined();
-      expect(ACCESS_SCOPE_RANK[scope!], role).toBeGreaterThanOrEqual(ACCESS_SCOPE_RANK.department);
-      expect(effectiveScope(role, 'procurement.pr.read', 'staff'), role).toBe(
-        DEFAULT_ROLE_PERMISSIONS[role]['procurement.pr.read'],
-      );
+      if (DEFAULT_ROLE_PERMISSIONS[role]['procurement.pr.read'] !== undefined) continue;
+      expect(effectiveScope(role, 'procurement.pr.read', 'head'), role).toBeUndefined();
     }
+    expect(effectiveScope('operations_officer', 'procurement.pr.read', 'manager')).toBe('own');
+    expect(effectiveScope('operations_officer', 'procurement.pr.read', 'head')).toBe('department');
   });
 
-  it('lets a head read the whole department in every area the role reads at own (D51)', () => {
-    for (const role of ROLE_KEYS) {
-      for (const area of ACCESS_AREAS) {
-        if (!('readPermission' in area)) continue;
-        const intakeCrm =
-          (LEAD_INTAKE_ROLE_KEYS as readonly RoleKey[]).includes(role) &&
-          (area.readPermission === 'crm.lead.read' ||
-            area.readPermission === 'crm.opportunity.read');
-        if (DEFAULT_ROLE_PERMISSIONS[role][area.readPermission] !== 'own' || intakeCrm) continue;
-        expect(effectiveScope(role, area.readPermission, 'head'), `${role} ${area.key}`).toBe(
-          'department',
-        );
-      }
-    }
-  });
-
-  it('gives Sales managers the department on leads, opportunities and quotations, and Sales staff nothing more', () => {
+  it('gives Sales managers and heads the department to see, and its leads and opportunities to edit', () => {
     for (const permission of [
+      'crm.lead.read',
+      'crm.opportunity.read',
+      'quotation.read',
       'crm.lead.write',
       'crm.opportunity.write',
-      'quotation.draft',
-      'quotation.revise',
     ] as const) {
       expect(effectiveScope('sales', permission, 'staff'), permission).toBe('own');
       expect(effectiveScope('sales', permission, 'manager'), permission).toBe('department');
       expect(effectiveScope('sales', permission, 'head'), permission).toBe('department');
+    }
+    for (const permission of ['quotation.draft', 'quotation.revise'] as const) {
+      for (const level of ACCESS_LEVELS) {
+        expect(effectiveScope('sales', permission, level), `${permission} ${level}`).toBe('own');
+      }
     }
   });
 });
@@ -397,6 +542,14 @@ describe('Marketing defaults', () => {
   it('creates, reads and edits its own leads', () => {
     expect(grants['crm.lead.read']).toBe('own');
     expect(grants['crm.lead.write']).toBe('own');
+  });
+
+  it("lets its managers and heads edit the department's leads and nothing further", () => {
+    for (const level of ['manager', 'head'] as const) {
+      expect(effectiveScope('marketing', 'crm.lead.write', level), level).toBe('department');
+    }
+    expect(effectiveScope('marketing', 'crm.lead.write', 'staff')).toBe('own');
+    expect(effectiveScope('marketing', 'crm.opportunity.write', 'head')).toBeUndefined();
   });
 
   it('reads only the customers it owns, and sets its own profile picture (D55-6)', () => {
