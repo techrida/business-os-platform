@@ -1,0 +1,10 @@
+/* The Saved options select sits above its textarea. Compact on desktop, full width on a phone. */
+.wrap {
+  max-width: 320px;
+}
+
+@media (max-width: 479px) {
+  .wrap {
+    max-width: none;
+  }
+}
