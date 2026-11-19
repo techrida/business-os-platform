@@ -1,4 +1,4 @@
-import type { QuotationListItem } from '@bos/contracts';
+import { avatarColour, imagePath, type QuotationListItem } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -93,6 +93,24 @@ describe('quotations list', () => {
     expect(html).not.toContain('another=1');
     expect(html).not.toContain('name="opportunityId"');
     expect(html).not.toContain('Apply');
+  });
+
+  it("shows the owner's picture over the colour seeded from their user id", async () => {
+    const owner = '77777777-7777-4777-8777-777777777777';
+    const picture = '88888888-8888-4888-8888-888888888888';
+    mocks.listQuotationsPage.mockResolvedValue(
+      page([
+        {
+          ...item,
+          ownerUserId: owner,
+          ownerName: 'Asha Gurung',
+          ownerAvatarDocumentId: picture,
+        },
+      ]),
+    );
+    const html = await render();
+    expect(html).toContain(`src="${imagePath(picture)}"`);
+    expect(html).toContain(`--avatar-fill:${avatarColour(owner)}`);
   });
 
   it('sends repeated statuses, customers and the search, and trims nothing the API would refuse', async () => {
