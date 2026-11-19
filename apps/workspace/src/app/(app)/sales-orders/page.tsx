@@ -241,7 +241,7 @@ export default async function SalesOrdersPage({
           actions={problem.status !== 403 ? <Link href={here}>Reload the sales orders</Link> : null}
         >
           {problem.status === 403
-            ? 'Sales orders are for Accounts, Finance and the people who oversee them. Ask an administrator if you need access.'
+            ? 'Ask an administrator if you need access to sales orders.'
             : problem.message}
         </Alert>
       ) : items !== null && matches.length === 0 ? (

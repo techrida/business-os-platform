@@ -133,6 +133,26 @@ export const WorkflowSpecSchema = z
   });
 export type WorkflowSpec = z.infer<typeof WorkflowSpecSchema>;
 
+export const WORKFLOW_AMOUNT_ERROR = 'Enter an amount with up to two decimal places.';
+
+/** Published versions retain their original rules. Validate new, edited and newly published specs. */
+export const WorkflowWriteSpecSchema = WorkflowSpecSchema.superRefine((spec, ctx) => {
+  function checkAmount(condition: Condition, path: (string | number)[]): void {
+    if ('all' in condition) {
+      condition.all.forEach((child, i) => checkAmount(child, [...path, 'all', i]));
+    } else if ('any' in condition) {
+      condition.any.forEach((child, i) => checkAmount(child, [...path, 'any', i]));
+    } else if (condition.field === 'amountNpr') {
+      const values = Array.isArray(condition.value) ? condition.value : [condition.value];
+      if (!values.every((value) => DecimalString.safeParse(value).success)) {
+        ctx.addIssue({ code: 'custom', path: [...path, 'value'], message: WORKFLOW_AMOUNT_ERROR });
+      }
+    }
+  }
+
+  spec.rules.forEach((rule, i) => checkAmount(rule.when, ['rules', i, 'when']));
+});
+
 export const RoutePlanSchema = z.object({
   steps: z.array(
     z.object({
