@@ -1,0 +1,7 @@
+/* One select, with the undo icon at the end of its label line (the shared `resettable` slot). The
+   control stays a readable width instead of stretching across the card. */
+
+.field {
+  max-width: 420px;
+  min-width: 0;
+}
