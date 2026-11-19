@@ -1155,10 +1155,13 @@ describe('internal memo template', () => {
       [(submitted.body as { requestId: string }).requestId],
     );
     // Submit freezes the letterhead onto the template; the draft carries none (the directory shows it live).
-    expect(rows.rows[0]!.snapshot.template).toEqual({
-      ...MemoDtoSchema.parse(created.body).template,
-      letterhead: expect.objectContaining({ primaryColour: expect.any(String) }),
-    });
+    const frozen = rows.rows[0]!.snapshot.template as { letterhead?: { primaryColour?: string } };
+    expect(typeof frozen.letterhead?.primaryColour).toBe('string');
+    const { letterhead: _frozenLetterhead, ...withoutLetterhead } = frozen as Record<
+      string,
+      unknown
+    >;
+    expect(withoutLetterhead).toEqual(MemoDtoSchema.parse(created.body).template);
     const requestId = (submitted.body as { requestId: string }).requestId;
     // Someone who is not the named person for the active step is refused, whatever role they hold.
     as(U.boss, 'founder');
