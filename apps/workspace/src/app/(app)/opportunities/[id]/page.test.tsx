@@ -328,8 +328,7 @@ describe('opportunity Mark lost and lost reason display (D54-3)', () => {
     mocks.getOpportunity.mockResolvedValue(opportunity('qualified'));
     await render();
     const call = mocks.moveForm.mock.calls.at(-1)?.[0] as
-      | { moves: { stage: string }[]; exclude?: readonly string[] }
-      | undefined;
+      { moves: { stage: string }[]; exclude?: readonly string[] } | undefined;
     expect(call?.exclude).toContain('lost');
     const offered = (call?.moves ?? []).filter((m) => !(call?.exclude ?? []).includes(m.stage));
     expect(offered.map((m) => m.stage)).not.toContain('lost');

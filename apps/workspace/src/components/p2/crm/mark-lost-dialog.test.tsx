@@ -336,7 +336,9 @@ describe('opportunity noun (D54-3)', () => {
 
   it('keeps the typed reason and note and offers Reload on a 409 conflict', async () => {
     mocks.changeOpportunityStage.mockRejectedValueOnce(
-      new ApiError(409, 'stale', { error: { code: 'conflict', message: 'stale', correlationId: 'c' } }),
+      new ApiError(409, 'stale', {
+        error: { code: 'conflict', message: 'stale', correlationId: 'c' },
+      }),
     );
     const mounted = await openOpportunity();
     await pickReason('Scope changed', 'Add "Scope changed"');
@@ -350,7 +352,9 @@ describe('opportunity noun (D54-3)', () => {
     expect(options?.action?.label).toBe('Reload');
     expect(dialog()).not.toBeNull();
     expect((combo() as HTMLInputElement).value).toBe('Scope changed');
-    expect((inDialog('textarea[name="note"]') as HTMLTextAreaElement).value).toBe('Client pivoted.');
+    expect((inDialog('textarea[name="note"]') as HTMLTextAreaElement).value).toBe(
+      'Client pivoted.',
+    );
     await mounted.unmount();
   });
 });
