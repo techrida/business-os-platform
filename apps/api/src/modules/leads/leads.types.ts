@@ -59,7 +59,7 @@ export function changedLeadFields(row: LeadRow, body: LeadEditFields): LeadField
     if (sent === undefined) continue;
     const column = EDITABLE[field];
     const after = field === 'email' ? String(sent).trim().toLowerCase() : sent;
-    const before = row[column as keyof LeadRow];
+    const before = row[column];
     const same =
       field === 'expectedValue' && typeof before === 'string'
         ? decimalKey(before) === decimalKey(String(after))
