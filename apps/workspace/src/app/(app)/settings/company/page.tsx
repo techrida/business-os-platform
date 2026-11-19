@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 
 import { CompanyEditor } from '@/components/settings/company-editor';
-import { parseCompanySettings } from '@/components/settings/company-profile';
+import { parseCompanySettings, type CompanyVersions } from '@/components/settings/company-profile';
+import { loadedVersion } from '@/components/settings/stale-setting';
 import { Page, PageHeader } from '@/components/ui/page';
 import { getSetting } from '@/lib/api-admin';
 
@@ -10,7 +11,7 @@ import admin from '../admin.module.css';
 import { requireSection } from '../guard';
 import { section } from '../section';
 import { SectionError } from '../ui';
-import { saveCompanyCardAction } from './actions';
+import { resetCompanyCardAction, saveCompanyCardAction } from './actions';
 
 export const metadata: Metadata = { title: 'Company profile · Business OS' };
 
@@ -24,11 +25,21 @@ export default async function CompanySettingsPage() {
       getSetting(session, 'entity.address'),
       getSetting(session, 'entity.pan_vat_no'),
     ]);
-    return parseCompanySettings({
-      profile: profile.value,
-      address: address.value,
-      panVatNo: panVatNo.value,
-    });
+    // The version each setting had when this screen loaded travels with every save, so a save
+    // made after someone else's change is refused instead of overwriting it.
+    const versions: CompanyVersions = {
+      'entity.profile': loadedVersion(profile.version),
+      'entity.address': loadedVersion(address.version),
+      'entity.pan_vat_no': loadedVersion(panVatNo.version),
+    };
+    return {
+      versions,
+      settings: parseCompanySettings({
+        profile: profile.value,
+        address: address.value,
+        panVatNo: panVatNo.value,
+      }),
+    };
   });
 
   return (
@@ -40,10 +51,15 @@ export default async function CompanySettingsPage() {
       />
       {!loaded.ok ? (
         <SectionError message={loaded.message} />
-      ) : !loaded.data.ok ? (
-        <SectionError message={loaded.data.message} />
+      ) : !loaded.data.settings.ok ? (
+        <SectionError message={loaded.data.settings.message} />
       ) : (
-        <CompanyEditor settings={loaded.data.data} action={saveCompanyCardAction} />
+        <CompanyEditor
+          settings={loaded.data.settings.data}
+          versions={loaded.data.versions}
+          action={saveCompanyCardAction}
+          resetCard={resetCompanyCardAction}
+        />
       )}
     </Page>
   );
