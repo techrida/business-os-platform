@@ -1,4 +1,4 @@
-import type { ActivityDto, LeadDto } from '@bos/contracts';
+import type { ActivityDto, LeadDto, LeadOwnerOption } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -6,15 +6,11 @@ import type { NumberSystem } from '@bos/locale';
 
 import { ActivityForm } from '@/components/p2/crm/activity-form';
 import { ConvertDialog } from '@/components/p2/crm/convert-dialog';
-import { getLead, listActivities } from '@/components/p2/crm/crm-api';
+import { getLead, listActivities, listLeadOwners } from '@/components/p2/crm/crm-api';
+import { FollowUpsCard } from '@/components/p2/crm/follow-ups-card';
 import { moneyOrNull, sentence } from '@/components/p2/crm/format';
 import { MoveForm } from '@/components/p2/crm/move-form';
-import {
-  ActivityList,
-  LOGGABLE_KINDS,
-  LoadProblem,
-  StageBadge,
-} from '@/components/p2/crm/server-bits';
+import { ActivityList, LoadProblem, StageBadge, peopleById } from '@/components/p2/crm/server-bits';
 import { stageLabel, userMoves } from '@/components/p2/crm/stages';
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
@@ -33,12 +29,15 @@ import { convertLeadAction, moveLeadStageAction } from '../actions';
 import styles from '../leads.module.css';
 import { QualifyLead } from '../qualify-lead';
 
+import { LeadOwnerField } from './lead-owner-field';
+import { MarkLostDialog } from './mark-lost-dialog';
+
 export const metadata: Metadata = { title: 'Lead · Business OS' };
 export const dynamic = 'force-dynamic';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function facts(l: LeadDto, numberSystem: NumberSystem): Fact[] {
+function facts(l: LeadDto, owners: readonly LeadOwnerOption[], numberSystem: NumberSystem): Fact[] {
   const dash = <span className={styles.quiet}>Not set</span>;
   return [
     {
@@ -82,6 +81,20 @@ function facts(l: LeadDto, numberSystem: NumberSystem): Fact[] {
       value: l.expectedClose ? when(l.expectedClose, 'date') : dash,
     },
     { key: 'created', label: 'Created', value: when(l.createdAt) },
+    {
+      key: 'owner',
+      label: 'Lead owner',
+      value: (
+        <LeadOwnerField
+          leadId={l.id}
+          version={l.version}
+          ownerUserId={l.ownerUserId}
+          owners={owners}
+        />
+      ),
+      // The editor (a Select and Save) needs a full row; a read-only owner fits a cell.
+      wide: owners.length > 1,
+    },
     ...(l.requirement
       ? [
           {
@@ -131,9 +144,11 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const session = await requireStaffSession(`/leads/${id}`);
   const numberSystem = await getNumberSystem();
 
-  const [leadResult, activityResult] = await Promise.allSettled([
+  const [leadResult, plannedResult, loggedResult, ownersResult] = await Promise.allSettled([
     getLead(session, id),
-    listActivities(session, { leadId: id, limit: 100 }),
+    listActivities(session, { leadId: id, status: 'planned', limit: 100 }),
+    listActivities(session, { leadId: id, status: 'logged', limit: 100 }),
+    listLeadOwners(session),
   ]);
 
   if (leadResult.status === 'rejected') {
@@ -153,15 +168,21 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   }
   const lead = leadResult.value;
   const moves = userMoves('lead', lead.stage);
-  let activities: ActivityDto[] | null = null;
-  let activityProblem: string | null = null;
-  if (activityResult.status === 'fulfilled') activities = activityResult.value;
-  else activityProblem = failureOf(activityResult.reason).message;
+  const planned = plannedResult.status === 'fulfilled' ? plannedResult.value : null;
+  const plannedProblem =
+    plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
+  const logged = loggedResult.status === 'fulfilled' ? loggedResult.value : null;
+  const loggedProblem =
+    loggedResult.status === 'rejected' ? failureOf(loggedResult.reason).message : null;
+  // Owners only feed the owner editor, assignee names and History actors: without them the page
+  // still works, read-only and without names.
+  const owners = ownersResult.status === 'fulfilled' ? ownersResult.value : [];
+  const people = peopleById(owners);
+  // Overdue is measured against the server's clock for this render.
+  const now = new Date();
 
   const canQualify = moves.some((move) => move.stage === 'qualified');
-  const followUps = (activities ?? []).filter(
-    (item) => item.kind === 'task' && item.dueAt && !item.completedAt,
-  );
+  const canMarkLost = moves.some((move) => move.stage === 'lost');
 
   return (
     <Page className={styles.detail}>
@@ -180,39 +201,58 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             {canQualify ? (
               <QualifyLead id={lead.id} number={lead.number} version={lead.version} />
             ) : null}
-            <LinkButton href="#lead-activity-form" variant="secondary">
-              Log activity
-            </LinkButton>
+            {canMarkLost ? (
+              <MarkLostDialog id={lead.id} number={lead.number} version={lead.version} />
+            ) : null}
           </>
         }
       />
 
       <Card className={styles.timelineCard}>
-        <StatusTimeline label="Lead progression" steps={leadTimeline(lead, activities ?? [])} />
+        <StatusTimeline label="Lead progression" steps={leadTimeline(lead, logged ?? [])} />
       </Card>
 
       <div className={styles.detailColumns}>
         <div className={styles.detailStack}>
-          <Panel title="Lead overview" className={styles.detailPanel}>
-            <FactList facts={facts(lead, numberSystem)} className={styles.overviewFacts ?? ''} />
+          <Panel
+            title={
+              <>
+                {/* Figma's card eyebrow, as on the create form. Decoration only. */}
+                <span className={styles.eyebrow} aria-hidden="true">
+                  01 · The basics
+                </span>
+                Lead overview
+              </>
+            }
+            className={styles.detailPanel}
+          >
+            <FactList
+              facts={facts(lead, owners, numberSystem)}
+              className={styles.overviewFacts ?? ''}
+            />
           </Panel>
 
           <Panel title="History" className={styles.detailPanel}>
-            {activityProblem !== null ? (
+            {loggedProblem !== null ? (
               <Alert
                 tone="error"
                 role="alert"
                 title="Activity did not load"
                 actions={<Link href={`/leads/${id}`}>Reload</Link>}
               >
-                {activityProblem}
+                {loggedProblem}
               </Alert>
             ) : (
               <ActivityList
-                items={activities ?? []}
+                items={logged ?? []}
+                people={people}
                 empty="Calls, meetings and stage changes appear here."
               />
             )}
+          </Panel>
+
+          <Panel title="Log activity" className={styles.detailPanel}>
+            <ActivityForm action={logActivityAction} subjectKind="leadId" subjectId={lead.id} />
           </Panel>
         </div>
 
@@ -259,24 +299,28 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
             )}
           </Panel>
 
-          <Panel title="Follow-ups" className={styles.detailPanel} as="aside">
-            {lead.nextFollowUpAt ? (
-              <p>
-                <strong>Next follow-up</strong>
-                <br />
-                <time className={styles.quiet} dateTime={lead.nextFollowUpAt}>
-                  {when(lead.nextFollowUpAt)}
-                </time>
-              </p>
-            ) : null}
-            {followUps.length ? (
-              <ActivityList items={followUps} empty={null} />
-            ) : !lead.nextFollowUpAt ? (
-              <p className={styles.quiet}>
-                {activityProblem ? 'Follow-up tasks could not be loaded.' : 'No follow-up planned.'}
-              </p>
-            ) : null}
-          </Panel>
+          {plannedProblem !== null ? (
+            // An empty card would claim nothing is planned; say the list did not load instead.
+            <Panel title="Follow-ups" className={styles.detailPanel} as="aside">
+              <Alert
+                tone="error"
+                role="alert"
+                title="Follow-ups did not load"
+                actions={<Link href={`/leads/${id}`}>Reload</Link>}
+              >
+                {plannedProblem}
+              </Alert>
+            </Panel>
+          ) : (
+            <FollowUpsCard
+              leadId={lead.id}
+              items={planned ?? []}
+              ownerUserId={lead.ownerUserId}
+              owners={owners}
+              now={now}
+              className={styles.detailPanel}
+            />
+          )}
 
           <Panel title="Stage" className={styles.detailPanel} as="aside">
             <div>
@@ -292,6 +336,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               recordId={lead.id}
               version={lead.version}
               moves={moves}
+              exclude={['qualified', 'lost', 'converted']}
               emptyText={
                 lead.stage === 'converted'
                   ? 'This lead is converted. Its stage is final.'
@@ -301,15 +346,6 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
           </Panel>
         </div>
       </div>
-
-      <Panel id="lead-activity-form" title="Log activity" className={styles.detailPanel}>
-        <ActivityForm
-          action={logActivityAction}
-          kinds={LOGGABLE_KINDS}
-          subjectKind="leadId"
-          subjectId={lead.id}
-        />
-      </Panel>
     </Page>
   );
 }

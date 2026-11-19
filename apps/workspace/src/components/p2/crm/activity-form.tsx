@@ -28,11 +28,6 @@ export function ActivityForm({
   subjectId,
 }: {
   action: FormAction;
-  /**
-   * Ignored: the kinds are `LOG_ACTIVITY_KINDS`. Kept optional so callers that still pass the old
-   * Select options compile until they drop it.
-   */
-  kinds?: unknown;
   /** `leadId` or `opportunityId`. */
   subjectKind: string;
   subjectId: string;
