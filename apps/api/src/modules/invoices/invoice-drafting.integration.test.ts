@@ -165,16 +165,16 @@ async function seedOrder(): Promise<{ salesOrderId: string; advanceId: string; f
       seq: number,
       label: string,
       trigger: string,
-      bp: number,
+      percent: string,
       amount: string,
       status: string,
     ) =>
       one(
-        sql`INSERT INTO app.billing_schedule_lines (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent_bp, amount, amount_npr, status)
-            VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, ${seq}, ${label}, ${trigger}, ${bp}, ${amount}, ${amount}, ${status}) RETURNING id`,
+        sql`INSERT INTO app.billing_schedule_lines (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent, amount, amount_npr, status)
+            VALUES (${scope.tenantId}, ${scope.organizationId}, ${salesOrderId}, ${seq}, ${label}, ${trigger}, ${percent}, ${amount}, ${amount}, ${status}) RETURNING id`,
       );
-    const advanceId = await line(1, 'Advance 40%', 'advance', 4000, '2018180.00', 'billable');
-    const finalId = await line(2, 'Final 60%', 'delivery', 6000, '3027270.00', 'planned');
+    const advanceId = await line(1, 'Advance 40%', 'advance', '40', '2018180.00', 'billable');
+    const finalId = await line(2, 'Final 60%', 'delivery', '60', '3027270.00', 'planned');
     return { salesOrderId, advanceId, finalId };
   });
 }
