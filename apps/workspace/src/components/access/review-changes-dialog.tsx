@@ -224,8 +224,15 @@ function OpenReview({
       return;
     }
     if (result.warnings && result.warnings.length > 0) {
-      setWarnings(result.warnings);
-      setTicked(carryTicks(result.warnings, acknowledged));
+      // The server lists only the warnings not yet acknowledged: keep the ones already shown (and
+      // ticked) so the two sets cannot alternate forever.
+      const fresh = result.warnings;
+      const merged =
+        result.kind === 'confirmation'
+          ? [...fresh, ...warnings.filter((w) => !fresh.some((n) => n.code === w.code))]
+          : fresh;
+      setWarnings(merged);
+      setTicked(carryTicks(merged, acknowledged));
     }
     setProblem({ message: result.message, fieldErrors: result.fieldErrors });
   }

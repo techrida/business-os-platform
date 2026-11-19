@@ -51,6 +51,8 @@ export interface AreaCardsProps {
   /** People offered by "Check a person with these changes"; empty hides that link. */
   people: readonly ReviewPerson[];
   actions: AreaCardsActions;
+  /** An area to open first, from `?area=` (Check a person's "Change this" link). */
+  initialAreaKey?: string | undefined;
 }
 
 interface ReviewTarget {
@@ -65,10 +67,20 @@ type Pending = { kind: 'open'; key: AccessSettingAreaKey | null } | { kind: 'lea
  * time and holds the staged values; nothing is written until the review dialog's Save changes.
  * Leaving a card, the tab or the page with unsaved edits asks first.
  */
-export function AreaCards({ catalogue, canEdit, departments, people, actions }: AreaCardsProps) {
+export function AreaCards({
+  catalogue,
+  canEdit,
+  departments,
+  people,
+  actions,
+  initialAreaKey,
+}: AreaCardsProps) {
   const router = useRouter();
-  const [openKey, setOpenKey] = useState<AccessSettingAreaKey | null>(null);
-  const [draft, setDraft] = useState<AreaDraft | null>(null);
+  const initialArea = catalogue.areas.find((a) => a.key === initialAreaKey);
+  const [openKey, setOpenKey] = useState<AccessSettingAreaKey | null>(initialArea?.key ?? null);
+  const [draft, setDraft] = useState<AreaDraft | null>(() =>
+    initialArea ? savedDraft(catalogue, initialArea) : null,
+  );
   const [pending, setPending] = useState<Pending | null>(null);
   const [review, setReview] = useState<ReviewTarget | null>(null);
   const [staleKey, setStaleKey] = useState<AccessSettingAreaKey | null>(null);
