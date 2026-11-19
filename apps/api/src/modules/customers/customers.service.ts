@@ -562,8 +562,11 @@ export class CustomersService {
 
   /**
    * The customers `p` may `action`, as SQL: the twin of can() for a record that names no entity. `all` is the
-   * whole tenant for staff and the caller's own company for a portal user; `own` is the owner column. Anything
-   * else (no grant, an unknown scope, an inactive user) matches nothing.
+   * whole tenant for staff and the caller's own company for a portal user; `own` is the owner column. A customer
+   * has no department column, so `department` (cumulative: own records count wherever they sit) reaches the
+   * caller's own customers and nothing more, as can() does with a ref that names no department (review R2).
+   * `assigned` reaches nothing: no assignment hands a customer over. Anything else (no grant, an unknown scope,
+   * an inactive user) matches nothing.
    */
   private visibleWhere(tenantId: string, p: Principal, action: Permission): SQL {
     const none = sql`false`;
@@ -577,6 +580,7 @@ export class CustomersService {
       case 'all':
         return p.orgKind === 'staff' ? inTenant : ownCompany();
       case 'own':
+      case 'department':
         return and(inTenant, eq(customers.ownerUserId, p.userId)) as SQL;
       case 'customer_org':
         return ownCompany();

@@ -9,9 +9,7 @@
 // - "no double effects": the submit runs inside withIdempotency.
 // The request carries no number (the invoice is numbered only at issue), so the engine shows `Draft <type> <id8>`.
 import {
-  DEFAULT_ROLE_PERMISSIONS,
   isInvoiceEditable,
-  ROLE_KEYS,
   type ApprovalContext,
   type InvoiceDetail,
   type SubmitInvoiceBody,
@@ -28,7 +26,7 @@ import {
 import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
-import { AuthzService } from '../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
@@ -58,10 +56,6 @@ export const INVOICE_APPROVAL_DOCUMENT_TYPES: readonly ApprovableKind[] = [
   'debit_note',
 ];
 
-/** Same roles the engine tells about a blocked request: whoever may fix role assignments. */
-const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
-  (r) => DEFAULT_ROLE_PERMISSIONS[r]['admin.roles.write'] !== undefined,
-);
 /** approval.blocked links may only open the inbox or memos (notify/templates.ts). */
 const BLOCKED_NOTICE_LINK = '/inbox/';
 
@@ -285,6 +279,15 @@ export class InvoiceApprovalService {
     const now = this.clock();
     try {
       return await withTx(this.db, scope, actor, async (tx) => {
+        // The route check carries no owner, so a grant narrowed to own or department is judged here against the
+        // drafter; an invoice outside the caller's read is a 404.
+        const [owned] = await tx
+          .select({ createdBy: invoices.createdBy })
+          .from(invoices)
+          .where(and(scopeWhereFor(principal, invoices, 'invoice.read'), eq(invoices.id, id)))
+          .limit(1);
+        if (owned === undefined) throw invoiceNotFound();
+        this.authz.assert('invoice.submit', { ...scope, ownerUserId: owned.createdBy });
         const done = await withIdempotency(
           tx,
           { command: 'invoice.submit', key: idempotencyKey, body: { id, ...body } },
@@ -298,7 +301,9 @@ export class InvoiceApprovalService {
     } catch (error) {
       if (!(error instanceof NoEligibleApprover)) throw error;
       // The submit rolled back; the notice gets a transaction of its own so it is kept.
-      await withTx(this.db, scope, actor, (tx) => this.notifyBlocked(tx, error.notice));
+      await withTx(this.db, scope, actor, (tx) =>
+        this.notifyBlocked(tx, scope.tenantId, error.notice),
+      );
       throw new UnprocessableEntityException({
         code: 'NO_ELIGIBLE_APPROVER',
         message: `This invoice cannot be submitted: ${error.notice.reason}. An administrator has been told.`,
@@ -463,9 +468,13 @@ export class InvoiceApprovalService {
   }
 
   /** P1-PLAN 6.2 "Blocked", without a request row: whoever may fix role assignments is told. */
-  private async notifyBlocked(tx: DbTransaction, n: BlockedNotice): Promise<void> {
+  private async notifyBlocked(
+    tx: DbTransaction,
+    tenantId: string,
+    n: BlockedNotice,
+  ): Promise<void> {
     const reference = draftReference(n.kind, n.invoiceId);
-    for (const role of BLOCKED_NOTICE_ROLES) {
+    for (const role of await this.approvals.blockedNoticeRoles(tenantId)) {
       await this.notify.notifyRole(tx, role, {
         title: `Approval blocked: ${reference}`,
         body: `${KIND_LABEL[n.kind]} ${reference} cannot be submitted: ${n.reason}`,

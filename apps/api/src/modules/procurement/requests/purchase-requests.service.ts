@@ -13,12 +13,7 @@
 //   FX snapshot are written by the same UPDATE that moves the status to submitted (purchase_requests_snapshot_check);
 // - "authorization is deny-by-default" and "one legal entity at a time": a request of another entity, or of
 //   another requester under `own` scope, is a 404 on every route (never a 403 that would confirm the id).
-import {
-  DEFAULT_ROLE_PERMISSIONS,
-  ROLE_KEYS,
-  type CreatePurchaseRequestBody,
-  type Permission,
-} from '@bos/contracts';
+import { type CreatePurchaseRequestBody, type Permission } from '@bos/contracts';
 import {
   costCenters,
   departments,
@@ -46,7 +41,7 @@ import Decimal from 'decimal.js';
 import { and, asc, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
-import { AuthzService } from '../../../platform/authz/authz.service';
+import { AuthzService, scopeWhereFor } from '../../../platform/authz/authz.service';
 import { can } from '../../../platform/authz/can';
 import type { Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
@@ -87,10 +82,6 @@ export const PURCHASE_REQUESTS_CLOCK = Symbol('PURCHASE_REQUESTS_CLOCK');
 
 const CREATE_ACTION: Permission = 'procurement.pr.create';
 const READ_ACTION: Permission = 'procurement.pr.read';
-/** Same roles the approvals engine tells about a blocked request: whoever may fix role assignments. */
-const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
-  (r) => DEFAULT_ROLE_PERMISSIONS[r]['admin.roles.write'] !== undefined,
-);
 /** approval.blocked links may only open the inbox or memos (notify/templates.ts), so the notice opens the inbox. */
 const BLOCKED_NOTICE_LINK = '/inbox/';
 const EDITOR_LOOKUP_LIMIT = 1000;
@@ -133,24 +124,15 @@ export function purchaseRequestRef(row: {
 }
 
 /**
- * The SQL twin of can(p, action, ref) for the rows of purchase_requests: scopeWhereFor needs an `ownerUserId`
- * column and this table's owner column is `requester_user_id`, so a list under `own` scope would match nothing.
- * Staff only; an inactive user, a missing grant or an unknown scope matches no row (deny by default).
+ * The SQL twin of can(p, action, purchaseRequestRef(row)) for the rows of purchase_requests. record-reach.ts names
+ * the requester as the owner and `department_id` as the department, so this is the shared scopeWhereFor and the
+ * list and the record check cannot drift: `department` is cumulative (audit #11, D51), a head reaches every request
+ * of their department and their own requests filed in any other. Staff only (a portal user raises no request); an
+ * inactive user, a missing grant or an unknown scope matches no row (deny by default).
  */
 export function purchaseRequestScopeWhere(p: Principal, action: Permission): SQL {
-  if (p.status !== 'active' || p.orgKind !== 'staff') return NOTHING;
-  const s = scoped({ tenantId: p.tenantId, organizationId: p.organizationId });
-  switch (p.grants.get(action)) {
-    case 'all':
-      return s.where(purchaseRequests);
-    case 'own':
-      return s.where(purchaseRequests, eq(purchaseRequests.requesterUserId, p.userId));
-    case 'department':
-      if (p.departmentId === null) return NOTHING;
-      return s.where(purchaseRequests, eq(purchaseRequests.departmentId, p.departmentId));
-    default:
-      return NOTHING;
-  }
+  if (p.orgKind !== 'staff') return NOTHING;
+  return scopeWhereFor(p, purchaseRequests, action);
 }
 
 @Injectable()
@@ -617,7 +599,9 @@ export class PurchaseRequestsService {
     } catch (error) {
       if (!(error instanceof NoEligibleApprover)) throw error;
       // The submit transaction rolled back; the notice gets a transaction of its own so it is kept.
-      await withTx(this.db, scope, actor, (tx) => this.notifyBlocked(tx, error.notice));
+      await withTx(this.db, scope, actor, (tx) =>
+        this.notifyBlocked(tx, scope.tenantId, error.notice),
+      );
       throw new UnprocessableEntityException({
         code: 'NO_ELIGIBLE_APPROVER',
         message: `This purchase request cannot be submitted: ${error.notice.reason}. An administrator has been told.`,
@@ -864,8 +848,12 @@ export class PurchaseRequestsService {
   }
 
   /** P1-PLAN 6.2 "Blocked", without a request row: whoever may fix role assignments (admin.roles.write) is told. */
-  private async notifyBlocked(tx: DbTransaction, n: BlockedNotice): Promise<void> {
-    for (const role of BLOCKED_NOTICE_ROLES) {
+  private async notifyBlocked(
+    tx: DbTransaction,
+    tenantId: string,
+    n: BlockedNotice,
+  ): Promise<void> {
+    for (const role of await this.approvals.blockedNoticeRoles(tenantId)) {
       await this.notify.notifyRole(tx, role, {
         title: `Approval blocked: ${n.reference}`,
         body: `${n.reference} cannot be submitted: ${n.reason}`,

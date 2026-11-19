@@ -214,25 +214,27 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                 </thead>
                 <tbody>
                   {items.map((user, index) => {
-                    const label =
-                      [user.displayName, user.email].filter(Boolean).join(' · ') ||
-                      `unnamed user ${index + 1}`;
-                    const name = user.displayName ?? user.email ?? `unnamed user ${index + 1}`;
+                    // D54-2: no display name reads "Unnamed user", never the address, which keeps its own
+                    // line. Action labels must still tell rows apart, so the address follows the name, or
+                    // the row number when an unnamed user has no address either.
+                    const displayName = user.displayName?.trim() || null;
+                    const name = displayName ?? 'Unnamed user';
+                    const label = user.email
+                      ? `${name} · ${user.email}`
+                      : (displayName ?? `${name} ${index + 1}`);
                     const picture = user.avatarDocumentId ?? null;
                     return (
                       <tr key={user.id}>
                         <Th scope="row" className={admin.rowHead}>
                           <div className={styles.person}>
                             <Avatar
-                              name={user.displayName ?? user.email ?? ''}
+                              name={displayName ?? ''}
                               seedId={user.id}
                               imageDocumentId={picture}
                               shape="circle"
                             />
                             <span className={styles.personText}>
-                              <span className={styles.name}>
-                                {user.displayName ?? 'No name yet'}
-                              </span>
+                              <span className={styles.name}>{name}</span>
                               {user.email && <span className={styles.email}>{user.email}</span>}
                             </span>
                           </div>
