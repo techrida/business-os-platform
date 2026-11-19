@@ -17,7 +17,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('next/navigation', () => ({ notFound: mocks.notFound, redirect: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  notFound: mocks.notFound,
+  redirect: vi.fn(),
+  // The inbox list's filter bar reads the URL on render.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => '/inbox',
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
 const RID = '11111111-1111-4111-8111-111111111111';
@@ -238,6 +245,35 @@ describe('inbox detail page', () => {
       /Submitted <time[^>]*>[^<]*<\/time> by <span>Dev Founder<\/span> for <span>Dev Finance Two<\/span>/,
     );
   });
+});
+
+it('lists an unnumbered credit note by its kind, without its internal id', async () => {
+  fetchMock.mockImplementation((input) => {
+    const path = new URL(input as URL | string).pathname;
+    if (path === '/v1/approvals/inbox') {
+      const listed = json(200, [
+        {
+          requestId: RID,
+          documentType: 'credit_note',
+          documentId: DOC,
+          documentNumber: 'Draft credit_note 7d92d5bf',
+          title: 'Credit note for Acme Traders (NPR 1130.00)',
+          amountNpr: '1130.00',
+          reason: 'Accountant checks it',
+          activeStep: request.steps[0],
+          submittedAt: WHEN,
+          version: 1,
+        },
+      ]);
+      listed.headers.set('x-total-count', '1');
+      return Promise.resolve(listed);
+    }
+    return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+  });
+  const html = renderToStaticMarkup(await InboxPage({ searchParams: Promise.resolve({}) }));
+  expect(html).toContain('Credit note for Acme Traders');
+  expect(html).toContain('Draft credit note');
+  expect(html).not.toMatch(/credit_note 7d92d5bf/);
 });
 
 it('renders the denial returned by the inbox endpoint', async () => {
