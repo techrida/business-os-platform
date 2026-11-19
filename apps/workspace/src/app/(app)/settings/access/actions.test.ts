@@ -74,7 +74,7 @@ it('previews with a dry run only: one POST to the preview path and nothing saved
   expect(result).toEqual({ ok: true, preview: body });
   expect(fetch).toHaveBeenCalledTimes(1);
   const [url, init] = fetch.mock.calls[0] ?? [];
-  expect(String(url)).toBe('http://api.test/v1/admin/access/preview');
+  expect(typeof url === 'string' ? url : '').toBe('http://api.test/v1/admin/access/preview');
   expect(init?.method).toBe('POST');
   expect(revalidatePath).not.toHaveBeenCalled();
 });

@@ -68,7 +68,7 @@ export interface ReviewPerson {
 
 export interface ReviewChangesDialogProps {
   open: boolean;
-  onOpenChange(open: boolean): void;
+  onOpenChange: (open: boolean) => void;
   /** "Review changes to Leads", "Review changes to the Sales role". */
   title: string;
   changes: AccessChange[];
@@ -76,8 +76,8 @@ export interface ReviewChangesDialogProps {
   expectedRevision: string;
   runPreview: ReviewRunPreview;
   runSave: ReviewRunSave;
-  onSaved(): void;
-  onStale(): void;
+  onSaved: () => void;
+  onStale: () => void;
   /** With `runCheck`, offers "Check a person with these changes" inside the dialog. */
   people?: readonly ReviewPerson[] | undefined;
   runCheck?: ReviewRunCheck | undefined;
