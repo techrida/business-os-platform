@@ -55,8 +55,8 @@ vi.mock('@radix-ui/react-dialog', async (importOriginal) => {
   };
 });
 
-// Record the version each component is handed: the page must strip internal figures before the data reaches
-// any of them (a client component's props are serialized into the page), not only hide them when rendering.
+// Record the version each component is handed: the page passes the API's answer on as it is (D29: the API, not
+// the page, leaves out what the viewer may not see), so no component can be handed a figure the API withheld.
 vi.mock('@/components/p2/quotations/contents', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/components/p2/quotations/contents')>();
   return {
@@ -88,12 +88,14 @@ vi.mock('@/components/ui/file-preview-dialog', () => ({
     trigger,
     previewUrl,
     downloadUrl,
+    retryUrl,
   }: {
     trigger: ReactNode;
     previewUrl: string;
     downloadUrl: string;
+    retryUrl?: string | undefined;
   }) => (
-    <span data-preview-url={previewUrl} data-download-url={downloadUrl}>
+    <span data-preview-url={previewUrl} data-download-url={downloadUrl} data-retry-url={retryUrl}>
       {trigger}
     </span>
   ),
@@ -286,6 +288,8 @@ describe('quotation detail page', () => {
       expect(html).toContain(
         `data-preview-url="/quotations/${ID}/versions/${V2}/document/preview" data-download-url="/quotations/${ID}/versions/${V2}/document"`,
       );
+      // Staff can ask for a PDF that failed to prepare to be made again.
+      expect(html).toContain(`data-retry-url="/quotations/${ID}/versions/${V2}/document/retry"`);
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
@@ -585,13 +589,27 @@ describe('quotation detail page: a selected revision', () => {
   });
 });
 
-describe('quotation detail page: internal figures', () => {
-  beforeEach(() => {
+function withoutCost(v: QuotationVersionDto): QuotationVersionDto {
+  const { internalCostTotal: _total, marginPct: _margin, ...rest } = v;
+  return { ...rest, lines: v.lines.map(({ unitCost: _cost, ...line }) => line) };
+}
+
+describe('quotation detail page: internal figures (D29)', () => {
+  it('shows what the API sent, whatever the roles of the session', async () => {
+    // No role decision on the page any more: the API already applied the viewer's live grants.
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['warehouse'] });
     mocks.getQuotation.mockResolvedValue(withContents());
+    const html = await render();
+    expect(html).toContain('Unit cost');
+    expect(html).toContain('NPR 800.25');
+    expect(html).toContain('NPR 2,231.40');
+    expect(html).toContain('35.32%');
   });
 
-  it('leaves cost and margin out of the page for a role that may not see them', async () => {
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['warehouse'] });
+  it('leaves cost and margin out of the page when the API left them out, for any revision', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
+    const d = withContents();
+    mocks.getQuotation.mockResolvedValue({ ...d, versions: d.versions.map(withoutCost) });
     for (const rev of [undefined, V1]) {
       const html = await render(ID, rev);
       expect(html).toContain('Site survey');
@@ -599,36 +617,51 @@ describe('quotation detail page: internal figures', () => {
       expect(html).not.toContain('800.25');
       expect(html).not.toContain('2,231.40');
       expect(html).not.toContain('35.32%');
+      expect(html).not.toContain('Margin');
     }
   });
 
-  it('strips them from the data before any component is handed it', async () => {
-    mocks.requireStaffSession.mockResolvedValue({ accessToken: 'tok', roles: ['warehouse'] });
-    await render(ID, V1);
-    await render();
-    expect(new Set(mocks.seen.map((s) => s.component))).toEqual(
-      new Set(['QuotationContents', 'DetailActions', 'ClientDecision']),
-    );
-    for (const { version } of mocks.seen) {
-      expect(version.internalCostTotal).toBeNull();
-      expect(version.marginPct).toBeNull();
-      expect(version.lines.length).toBeGreaterThan(0);
-      expect(version.lines.every((l) => l.unitCost === null)).toBe(true);
-    }
-  });
-
-  it('hands them over unchanged to the people who draft quotations', async () => {
+  it('hands every component the version exactly as the API served it', async () => {
+    const d = withContents();
+    mocks.getQuotation.mockResolvedValue(d);
     await render();
     const contents = mocks.seen.find((s) => s.component === 'QuotationContents');
+    expect(contents?.version).toBe(d.versions[1]);
     expect(contents?.version.internalCostTotal).toBe('2231.40');
     expect(contents?.version.lines[0]?.unitCost).toBe('800.25');
   });
+});
 
-  it('shows them to the people who draft quotations', async () => {
+describe('quotation detail page: linked records', () => {
+  const LEAD = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+  /** The hrefs of the Linked records card, in order. */
+  function linked(html: string): string[] {
+    const card = /Linked records(.*?)<\/ul>/s.exec(html)?.[1] ?? '';
+    return [...card.matchAll(/href="([^"]+)"/g)].map((m) => m[1]!);
+  }
+
+  it('shows the lead first, as a link to its CRM page, then the opportunity', async () => {
+    mocks.getQuotation.mockResolvedValue({
+      ...detail(),
+      lead: { id: LEAD, name: 'Kathmandu <expo> lead' },
+    });
     const html = await render();
-    expect(html).toContain('Unit cost');
-    expect(html).toContain('NPR 800.25');
-    expect(html).toContain('NPR 2,231.40');
-    expect(html).toContain('35.32%');
+    expect(linked(html)).toEqual([
+      `/customers/${CUSTOMER}`,
+      `/leads/${LEAD}`,
+      `/opportunities/${CUSTOMER}`,
+    ]);
+    expect(html).toContain('Kathmandu &lt;expo&gt; lead');
+  });
+
+  it.each([
+    ['no lead (null)', { lead: null }],
+    ['a lead the viewer may not read (absent)', {}],
+  ])('shows no lead row for %s', async (_name, over) => {
+    mocks.getQuotation.mockResolvedValue(detail(over));
+    const html = await render();
+    expect(linked(html)).toEqual([`/customers/${CUSTOMER}`, `/opportunities/${CUSTOMER}`]);
+    expect(html).not.toContain('/leads/');
   });
 });
