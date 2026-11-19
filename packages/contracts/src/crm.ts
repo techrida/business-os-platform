@@ -771,8 +771,26 @@ export function isChecklistComplete(
   return required.length > 0 && required.every((i) => i.status === 'accepted');
 }
 
+/**
+ * What the caller may do with one case, decided by the API on that case (the party's owner and the caller's scope),
+ * so the case page never offers a control the API would refuse. The status rules (draft, submitted) stay the page's.
+ */
+export const VerificationCaseCanSchema = z.object({
+  /** Review items and decide (verification.review on this case). */
+  review: z.boolean(),
+  /** Edit the checklist and submit (the party kind's write permission on this case). */
+  edit: z.boolean(),
+  /** Upload a file to this case (edit, plus documents.upload on it). */
+  attach: z.boolean(),
+  /** Take a file off the checklist (edit, plus verification.read on it). */
+  remove: z.boolean(),
+});
+export type VerificationCaseCan = z.infer<typeof VerificationCaseCanSchema>;
+
 export const VerificationCaseDtoSchema = z.object({
   partyKind: VerificationPartyKindSchema.optional(),
+  /** Sent with a single case (GET /:id); absent in lists. */
+  can: VerificationCaseCanSchema.optional(),
   /**
    * The party's display name and number (a customer's CUS number; vendors have none), joined under the case's own
    * read permission so the queue needs no customer or vendor read to label a case. Null when the party is gone.

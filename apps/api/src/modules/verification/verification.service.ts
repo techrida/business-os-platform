@@ -24,6 +24,7 @@ import {
   type ChecklistItem,
   type Permission,
   type RemoveVerificationDocumentBody,
+  type VerificationCaseCan,
   type VerificationCaseDto,
   type VerificationPartyKind,
 } from '@bos/contracts';
@@ -42,7 +43,7 @@ import { sql, getTableColumns, and, desc, eq, inArray, lt, or, type SQL } from '
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService } from '../../platform/authz/authz.service';
-import { type Principal, type ResourceRef } from '../../platform/authz/can';
+import { can as decide, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../platform/db/tx';
@@ -78,7 +79,7 @@ type CaseRow = typeof verificationCases.$inferSelect;
 type Q = PartyQuery;
 
 /** A case with the owner of its party (what the `own` scope of verification.read means) and the party's port. */
-interface Loaded {
+export interface Loaded {
   row: CaseRow;
   partyOwnerUserId: string | null;
   port: PartyOwnerPort;
@@ -126,6 +127,28 @@ function labelOf(
 ): { partyName: string | null; partyNumber: string | null } {
   const label = labels.get(`${row.partyKind}:${row.partyId}`);
   return { partyName: label?.name ?? null, partyNumber: label?.number ?? null };
+}
+
+/**
+ * What `p` may do with this case, by the same record checks the write and review routes make: review needs
+ * verification.review; edit needs the kind's write permission (and verification read, as every write here does);
+ * attach adds documents.upload and remove adds verification.read, each on the case's ref.
+ */
+export function caseCapabilities(
+  p: Principal,
+  scope: TxScope,
+  l: Loaded,
+): VerificationCaseCan {
+  const ref = caseRef(scope, l);
+  const allowed = (action: Permission) => decide(p, action, ref).allowed;
+  const staff = p.orgKind === 'staff';
+  const edit = staff && allowed(l.port.writePermission) && allowed('verification.read');
+  return {
+    review: staff && allowed('verification.review'),
+    edit,
+    attach: edit && allowed('documents.upload'),
+    remove: edit,
+  };
 }
 
 /** What authz decides on: the acting entity stands in for the organization of a tenant-level record. */
@@ -267,7 +290,10 @@ export class VerificationService implements OnModuleInit {
     if (l === undefined) throw notFound('Verification case');
     this.assertVisible('verification.read', scope, l);
     const label = labelOf(await this.labelsOf(scope.tenantId, [l]), l.row);
-    if (l.row.partyKind === 'vendor') return { ...toVerificationCaseDto(l.row), ...label };
+    const can = caseCapabilities(this.caller.current().principal, scope, l);
+    if (l.row.partyKind === 'vendor') {
+      return { ...toVerificationCaseDto(l.row), ...label, can };
+    }
     const versions = await this.documents.listForOwner(scope, VERIFICATION_OWNER_TYPE, id);
     const used = new Set(checklistOf(l.row).map((i) => i.documentId));
     const latest = new Map<string, (typeof versions)[number]>();
@@ -317,6 +343,7 @@ export class VerificationService implements OnModuleInit {
     return {
       ...toVerificationCaseDto(l.row),
       ...label,
+      can,
       approvalBlockedReason,
       reviewerNames:
         l.row.status === 'submitted'
