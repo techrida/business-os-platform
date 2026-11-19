@@ -305,6 +305,8 @@ services:
       ZITADEL_API_URL: http://zitadel-api:8080
       NEXT_PUBLIC_BASE_PATH: /ui/v2/login
       LOGIN_PUBLIC_ORIGIN: https://${AUTH_HOST:-auth.localhost}
+      LOGIN_HELP_URL: ${LOGIN_HELP_URL:-}
+      LOGIN_PRIVACY_URL: ${LOGIN_PRIVACY_URL:-}
       ZITADEL_SERVICE_USER_TOKEN_FILE: /zitadel/bootstrap/login-client.pat
       # Signs the Login UI session cookie; at least 32 characters.
       ZITADEL_SESSION_COOKIE_SECRET: ${ZITADEL_LOGIN_COOKIE_SECRET:?set ZITADEL_LOGIN_COOKIE_SECRET in .env (32+ characters)}

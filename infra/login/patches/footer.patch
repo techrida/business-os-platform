@@ -1,0 +1,38 @@
+diff --git i/apps/login/src/app/(login)/layout.tsx w/apps/login/src/app/(login)/layout.tsx
+index 7edb6fe..4c697b1 100644
+--- i/apps/login/src/app/(login)/layout.tsx
++++ w/apps/login/src/app/(login)/layout.tsx
+@@ -7,6 +7,7 @@ import { LanguageSwitcher } from "@/components/language-switcher";
+ import { LoginShell } from "@/components/bos-login-shell";
+ import { Skeleton } from "@/components/skeleton";
+ import { ThemeProvider } from "@/components/theme-provider";
++import { loginFooterLinks } from "@/lib/login-footer-links";
+ import { LANGS, getLanguage } from "@/lib/i18n";
+ import { getServiceConfig } from "@/lib/service-url";
+ import { getAllowedLanguages } from "@/lib/zitadel";
+@@ -35,6 +36,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
+   }
+ 
+   const locale = await getLocale();
++  const footerLinks = loginFooterLinks();
+ 
+   return (
+     <html lang={locale} suppressHydrationWarning>
+@@ -44,7 +46,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
+           <Tooltip.Provider>
+             <Suspense
+               fallback={
+-                <LoginShell>
++                <LoginShell {...footerLinks}>
+                   <Skeleton>
+                     <div className="h-40" />
+                   </Skeleton>
+@@ -52,7 +54,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
+               }
+             >
+               <LanguageProvider>
+-                <LoginShell footer={languages.length > 1 ? <LanguageSwitcher languages={languages} /> : undefined}>
++                <LoginShell {...footerLinks} footer={languages.length > 1 ? <LanguageSwitcher languages={languages} /> : undefined}>
+                   {children}
+                 </LoginShell>
+               </LanguageProvider>
