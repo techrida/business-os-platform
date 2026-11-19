@@ -91,8 +91,8 @@ export default async function NewBillPage({
             role="alert"
             actions={<a href="/payables/bills/new">Start a new bill</a>}
           >
-            That link does not name a valid purchase order. Start a new bill, choose the vendor,
-            and pick the order from the vendor&apos;s purchase orders.
+            That link does not name a valid purchase order. Start a new bill, choose the vendor, and
+            pick the order from the vendor&apos;s purchase orders.
           </Alert>
         </Shell>
       );
@@ -189,8 +189,8 @@ export default async function NewBillPage({
         ) : null}
         {ordersProblem ? (
           <p className={styles.note}>
-            The vendors&apos; purchase orders did not load, so this bill can only be entered
-            without one. Reload the page to try again.
+            The vendors&apos; purchase orders did not load, so this bill can only be entered without
+            one. Reload the page to try again.
           </p>
         ) : orders.length >= ORDER_PICKER_LIMIT ? (
           <p className={styles.note}>
