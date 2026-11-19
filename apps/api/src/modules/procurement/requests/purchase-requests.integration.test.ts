@@ -959,6 +959,8 @@ describe('department and cost-centre names on a request (I-27)', () => {
     as(U.head, 'operations_officer');
     const approval = await approvals.get(request.id);
     expect(approval.context).toMatchObject({ href: null, documents: [] });
+    // The page the link would open refuses the head too, so hiding it removes a dead end rather than a way in.
+    expect((await httpErrorOf(service.get(id))).getStatus()).toBe(404);
     expect(approval.context!.fields).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ key: 'department', value: expected.departmentName }),
@@ -969,6 +971,7 @@ describe('department and cost-centre names on a request (I-27)', () => {
     // The requester reads their own request, so the same approval links it for them.
     as(U.req, 'operations_officer');
     expect((await approvals.get(request.id)).context?.href).toBe(`/procurement/requests/${id}`);
+    expect((await service.get(id)).id).toBe(id);
   });
 
   it("names another requester's department and cost centre for Procurement, in the detail and the list", async () => {
