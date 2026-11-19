@@ -5,9 +5,22 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 
 vi.mock('server-only', () => ({}));
-const mocks = vi.hoisted(() => ({ listActivities: vi.fn(), requireStaffSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  listActivities: vi.fn(),
+  listLeadOwners: vi.fn(),
+  requireStaffSession: vi.fn(),
+}));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
-vi.mock('@/components/p2/crm/crm-api', () => ({ listActivities: mocks.listActivities }));
+vi.mock('@/components/p2/crm/crm-api', () => ({
+  listActivities: mocks.listActivities,
+  listLeadOwners: mocks.listLeadOwners,
+}));
+vi.mock('@/app/(app)/leads/actions', () => ({
+  completeFollowUpAction: vi.fn(),
+  rescheduleFollowUpAction: vi.fn(),
+  cancelFollowUpAction: vi.fn(),
+  scheduleFollowUpAction: vi.fn(),
+}));
 
 import ActivitiesPage from './page';
 
@@ -68,6 +81,7 @@ async function render(kind?: string) {
 beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 't', roles: ['sales'] });
   mocks.listActivities.mockReset();
+  mocks.listLeadOwners.mockReset().mockResolvedValue([]);
   byStatus([], []);
 });
 
@@ -109,6 +123,33 @@ it('keeps the logged list when the planned one fails to load', async () => {
   const html = await render();
   expect(html).toContain('Planned follow-ups did not load');
   expect(html).toContain('Site visit');
+});
+
+it('gives every planned row Complete, Reschedule and Cancel, whatever its subject', async () => {
+  const onDeal = activity('55555555-5555-4555-8555-555555555555', {
+    subject: 'Migrated task on the deal',
+    leadId: null,
+    opportunityId: '66666666-6666-4666-8666-666666666666',
+    dueAt: '2099-02-01T04:00:00.000Z',
+    planned: true,
+  });
+  byStatus([LATER, onDeal], [DONE]);
+  const html = await render();
+  for (const subject of ['Call back next month', 'Migrated task on the deal']) {
+    for (const action of ['Complete', 'Reschedule', 'Cancel']) {
+      expect(html).toContain(`aria-label="${action} ${subject}"`);
+    }
+  }
+  // Logged rows stay read-only.
+  expect(html).not.toContain('aria-label="Complete Site visit"');
+});
+
+it('asks for the owners list only with crm.lead.write, so a reader gets no 403', async () => {
+  byStatus([LATER], []);
+  mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['no-such-role'] });
+  const html = await render();
+  expect(mocks.listLeadOwners).not.toHaveBeenCalled();
+  expect(html).toContain('aria-label="Reschedule Call back next month"');
 });
 
 it('shows one empty state when there is nothing at all', async () => {
