@@ -98,10 +98,10 @@ describe('visibleSettingsGroups', () => {
 
 describe('sections and paths', () => {
   it('finds the first allowed section, or none', () => {
-    expect(firstAllowedSection(founder)?.href).toBe('/settings/users');
+    expect(firstAllowedSection(founder)?.href).toBe('/settings/company');
     expect(firstAllowedSection(sales)).toBeUndefined();
     expect(firstAllowedSection((p) => p === 'admin.settings.write')?.href).toBe(
-      '/settings/currencies',
+      '/settings/company',
     );
   });
 

@@ -61,7 +61,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         icon: 'building',
         description: 'Name, address, contact details and logo printed on documents.',
         permission: COMPANY_PERMISSION,
-        ready: false,
+        ready: true,
       },
       {
         id: 'documents',
@@ -70,7 +70,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         icon: 'layout-template',
         description: 'Layout and colour of the quotations you send.',
         permission: COMPANY_PERMISSION,
-        ready: false,
+        ready: true,
       },
       {
         id: 'formats',
@@ -79,7 +79,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         icon: 'calendar-days',
         description: 'How amounts are grouped and how dates are written.',
         permission: COMPANY_PERMISSION,
-        ready: false,
+        ready: true,
       },
       {
         id: 'terms',
@@ -88,7 +88,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
         icon: 'bookmark',
         description: 'Ready-made wording for scope, delivery and payment terms.',
         permission: COMPANY_PERMISSION,
-        ready: false,
+        ready: true,
       },
     ],
   },
