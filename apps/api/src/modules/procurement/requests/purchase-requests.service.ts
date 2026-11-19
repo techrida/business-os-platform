@@ -45,8 +45,10 @@ import type { Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { SettingsService } from '../../../platform/settings/settings.service';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import {
@@ -155,6 +157,10 @@ export class PurchaseRequestsService {
     @Optional()
     @Inject(PURCHASE_REQUESTS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    // Last and defaulted like the clock, so a hand-built service still checks currencies (D44); Nest injects it.
+    private readonly currencies: CurrencyEnabledService = new CurrencyEnabledService(
+      new SettingsService(db),
+    ),
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -236,7 +242,10 @@ export class PurchaseRequestsService {
 
   // ------------------------------------------------------------------------------------------------- create
 
-  /** A draft request raised by the caller. 400 for a department outside the acting entity. */
+  /**
+   * A draft request raised by the caller. 400 for a department outside the acting entity, 422
+   * CURRENCY_NOT_ENABLED for a currency the company has not switched on (D44).
+   */
   async create(
     body: CreatePurchaseRequestBody,
     idempotencyKey: string,
@@ -265,6 +274,7 @@ export class PurchaseRequestsService {
     body: CreatePurchaseRequestBody,
     now: Date,
   ): Promise<PurchaseRequestDto> {
+    await this.currencies.assertEnabled(scope, body.currency);
     await this.assertDepartment(tx, scope, body.departmentId);
     await this.assertCostCenter(tx, scope, body.costCenterId);
     const lineRows = lineRowsOf(body.lines, body.requestType);
@@ -299,7 +309,8 @@ export class PurchaseRequestsService {
 
   /**
    * Replaces the content of a draft or returned request (a full replace: the body is the create body, so the
-   * lines are the lines now). 404 outside the caller's scope, 409 once submitted or when expectedVersion is stale.
+   * lines are the lines now). 404 outside the caller's scope, 409 once submitted or when expectedVersion is stale,
+   * 422 CURRENCY_NOT_ENABLED when the body moves it to a currency the company has not switched on (D44).
    */
   async update(
     id: string,
@@ -336,6 +347,10 @@ export class PurchaseRequestsService {
     now: Date,
   ): Promise<PurchaseRequestDto> {
     const pr = await this.lockEditable(tx, scope, id, expectedVersion, 'edited');
+    // Only a change is checked: a request may keep a currency the company switched off after it was raised.
+    if (body.currency !== pr.currency) {
+      await this.currencies.assertEnabled(scope, body.currency);
+    }
     if (body.costCenterId !== pr.costCenterId) {
       await this.assertCostCenter(tx, scope, body.costCenterId);
     }

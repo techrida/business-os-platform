@@ -38,6 +38,8 @@ import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
 import { startHarness, type Harness } from './test/harness';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
+import { SettingsService } from '../../platform/settings/settings.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -63,6 +65,7 @@ beforeAll(async () => {
     new AuditService(h.db),
     new NumberingService(),
     h.caller,
+    new CurrencyEnabledService(new SettingsService(h.db)),
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
