@@ -122,15 +122,16 @@ export default async function WorkflowsPage() {
 
   const options = (people: typeof users): UserOption[] | null =>
     people.ok
-      ? people.data.map((u) => ({
-          id: u.id,
-          label:
-            u.displayName && u.email
-              ? `${u.displayName} (${u.email})`
-              : (u.displayName ?? u.email ?? 'Name unavailable'),
-          name: u.displayName ?? u.email ?? 'Name unavailable',
-          email: u.displayName ? u.email : null,
-        }))
+      ? people.data.map((u) => {
+          // D54-2: no display name reads "Unnamed user"; the address is shown beside it, never as the name.
+          const name = u.displayName?.trim() || 'Unnamed user';
+          return {
+            id: u.id,
+            label: u.email ? `${name} (${u.email})` : name,
+            name,
+            email: u.email ?? null,
+          };
+        })
       : null;
   const userOptions = options(users);
   const groupOptions = options(groupPeople);

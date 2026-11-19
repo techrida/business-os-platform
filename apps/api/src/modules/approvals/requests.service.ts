@@ -9,10 +9,8 @@
 import {
   ApprovalActionBodySchema,
   DEFAULT_DEPARTMENT_HEAD_FALLBACK_ROLE,
-  DEFAULT_ROLE_PERMISSIONS,
   DecimalString,
   MemoTemplateSnapshotSchema,
-  ROLE_KEYS,
   WorkflowSpecSchema,
   type ApprovalActionBody,
   type ApprovalContext,
@@ -46,6 +44,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
@@ -53,12 +52,13 @@ import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
+import { RoleCache } from '../../platform/authz/role-cache';
 import { UserDirectory } from '../../platform/authz/user-directory';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
 import { exactMatch } from '../../platform/list';
-import { personNames } from '../../platform/users/person-names';
+import { nameIn, personNameMap, personNames } from '../../platform/users/person-names';
 import {
   ASSIGNABLE_SEQ,
   assigneeOf,
@@ -206,10 +206,8 @@ type StepRow = typeof approvalSteps.$inferSelect;
 
 const HOUR_MS = 3_600_000;
 const addHours = (d: Date, h: number) => new Date(d.getTime() + h * HOUR_MS);
-/** Roles told about a blocked request: whoever may change role assignments (admin.roles.write). */
-const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
-  (r) => DEFAULT_ROLE_PERMISSIONS[r]['admin.roles.write'] !== undefined,
-);
+/** Whoever holds this is told about a blocked request: they may fix role assignments. */
+const BLOCKED_NOTICE_PERMISSION = 'admin.roles.write' as const;
 
 /** What the inbox list accepts. No default limit: the dashboard count and inbox/[id] read every item. */
 export interface InboxQuery {
@@ -250,7 +248,19 @@ export class ApprovalsService {
     private readonly users: UserDirectory,
     private readonly caller: ApprovalsCaller,
     @Inject(APPROVALS_CLOCK) private readonly clock: Clock,
+    // Optional and last: the worker process (SLA tick) has no AuthzModule, and a hand-built service keeps working.
+    // Either way the fallback reads the same live rows, only without the shared cache.
+    @Optional() private readonly roleCache: RoleCache = new RoleCache(db),
   ) {}
+
+  /**
+   * The roles told when a request has nobody who may decide it: those whose live grants in this tenant hold
+   * admin.roles.write, so a role the Founder gave it hears too, and one it was taken from does not. The document
+   * services that refuse a blocked submit before any request exists use the same list.
+   */
+  async blockedNoticeRoles(tenantId: string): Promise<RoleKey[]> {
+    return this.roleCache.rolesGranting(tenantId, BLOCKED_NOTICE_PERMISSION);
+  }
 
   registerSubject(s: ApprovalSubject): void {
     if (this.subjects.has(s.documentType)) {
@@ -463,7 +473,7 @@ export class ApprovalsService {
     });
 
     if (plan.blocked) {
-      await this.notifyBlocked(tx, requestId, documentNumber, plan.blockReason, 1);
+      await this.notifyBlocked(tx, scope.tenantId, requestId, documentNumber, plan.blockReason, 1);
     } else {
       await this.notifyApprovers(
         tx,
@@ -771,7 +781,7 @@ export class ApprovalsService {
               // The template reads `decision`; a key it does not list is ignored, so "outcome" made every
               // subject say "updated".
               decision: outcome,
-              deciderName: await this.displayName(userId),
+              deciderName: await this.displayName(scope.tenantId, userId),
               linkPath: requesterLink,
             }),
           },
@@ -780,7 +790,14 @@ export class ApprovalsService {
         // 7. Tell the document. Same transaction: if it fails, the decision rolls back too.
         await this.subjectOf(request.documentType).onDecided(tx, request.documentId, outcome);
       } else if (blocked) {
-        await this.notifyBlocked(tx, requestId, request.documentNumber, blockReason, newVersion);
+        await this.notifyBlocked(
+          tx,
+          scope.tenantId,
+          requestId,
+          request.documentNumber,
+          blockReason,
+          newVersion,
+        );
       } else if (next !== undefined) {
         // From the plan, so under distinctApprovers whoever decided an earlier step is not asked.
         await this.notifyApprovers(
@@ -1546,7 +1563,14 @@ export class ApprovalsService {
         );
       }
       if (blocked && request.status === 'pending') {
-        await this.notifyBlocked(tx, requestId, request.documentNumber, blockReason, newVersion);
+        await this.notifyBlocked(
+          tx,
+          scope.tenantId,
+          requestId,
+          request.documentNumber,
+          blockReason,
+          newVersion,
+        );
       }
       return this.loadDto(tx, scope, requestId);
     });
@@ -1556,13 +1580,14 @@ export class ApprovalsService {
   /** P1-PLAN 6.2 "Blocked": whoever may fix role assignments (admin.roles.write) is told. */
   private async notifyBlocked(
     tx: DbTransaction,
+    tenantId: string,
     requestId: string,
     documentNumber: string,
     reason: string | null | undefined,
     version: number,
   ): Promise<void> {
     const { documentType } = await this.emailContext(tx, requestId);
-    for (const role of BLOCKED_NOTICE_ROLES) {
+    for (const role of await this.blockedNoticeRoles(tenantId)) {
       await this.notify.notifyRole(tx, role, {
         title: `Approval blocked: ${documentNumber}`,
         body: reason ?? 'No eligible approver',
@@ -1760,13 +1785,14 @@ export class ApprovalsService {
     }
   }
 
-  /** What the approval emails say about a request: its type and who asked. Name falls back to the email's local part. */
+  /** What the approval emails say about a request: its type and who asked. */
   private async emailContext(
     tx: DbTransaction,
     requestId: string,
   ): Promise<{ documentType: string | undefined; requesterName: string | undefined }> {
     const [row] = await tx
       .select({
+        tenantId: approvalRequests.tenantId,
         documentType: approvalRequests.documentType,
         requesterUserId: approvalRequests.requesterUserId,
       })
@@ -1774,20 +1800,19 @@ export class ApprovalsService {
       .where(eq(approvalRequests.id, requestId));
     return {
       documentType: row?.documentType,
-      requesterName: row === undefined ? undefined : await this.displayName(row.requesterUserId),
+      requesterName:
+        row === undefined ? undefined : await this.displayName(row.tenantId, row.requesterUserId),
     };
   }
 
   /**
-   * A person's name for an email. UserDirectory has no display name yet, so this is the local part of the
-   * address ("sita.sharma" from sita.sharma@..). Never throws: a lookup problem must not roll back a decision,
-   * and the template has a neutral default for a missing name.
+   * A person's name for an email: their display name, or "Unnamed user" (D54-2), never a piece of their address.
+   * Read on its own connection and never throws: a failed statement inside the decision's transaction would abort
+   * it, and a lookup problem must not roll back a decision. The template has a neutral default for a missing name.
    */
-  private async displayName(userId: string): Promise<string | undefined> {
+  private async displayName(tenantId: string, userId: string): Promise<string | undefined> {
     try {
-      const email = await this.users.emailOf(userId);
-      const local = email?.split('@')[0]?.trim();
-      return local === undefined || local === '' ? undefined : local;
+      return nameIn(await personNameMap(this.db, tenantId, [userId]), userId) ?? undefined;
     } catch {
       return undefined;
     }

@@ -11,9 +11,7 @@
 //   request row), admins are told in a transaction of their own, and the caller gets 422 NO_ELIGIBLE_APPROVER.
 import {
   CurrencySchema,
-  DEFAULT_ROLE_PERMISSIONS,
   isQuotationEditable,
-  ROLE_KEYS,
   type Discount,
   type Permission,
   type QuotationVersionDto,
@@ -73,10 +71,6 @@ export const QUOTATION_SUBMIT_CLOCK = Symbol('QUOTATION_SUBMIT_CLOCK');
 
 const SUBMIT_ACTION: Permission = 'quotation.submit';
 const AUDIT_ENTITY = 'quotations';
-/** Same roles the approvals engine tells about a blocked request: whoever may fix role assignments. */
-const BLOCKED_NOTICE_ROLES = ROLE_KEYS.filter(
-  (r) => DEFAULT_ROLE_PERMISSIONS[r]['admin.roles.write'] !== undefined,
-);
 /** approval.blocked links may only open the inbox or memos (notify/templates.ts), so the notice opens the inbox. */
 const BLOCKED_NOTICE_LINK = '/inbox/';
 
@@ -167,6 +161,7 @@ export class QuotationSubmitStore {
           tenantId: quotations.tenantId,
           organizationId: quotations.organizationId,
           ownerUserId: quotations.ownerUserId,
+          departmentId: quotations.departmentId,
           customerPartyId: quotations.customerPartyId,
         },
       })
@@ -320,7 +315,9 @@ export class QuotationSubmitService {
     } catch (error) {
       if (!(error instanceof NoEligibleApprover)) throw error;
       // The submit transaction rolled back; the notice gets a transaction of its own so it is kept.
-      await withTx(this.db, scope, actor, (tx) => this.notifyBlocked(tx, error.notice));
+      await withTx(this.db, scope, actor, (tx) =>
+        this.notifyBlocked(tx, scope.tenantId, error.notice),
+      );
       throw new UnprocessableEntityException({
         code: 'NO_ELIGIBLE_APPROVER',
         message: `This quotation cannot be submitted: ${error.notice.reason}. An administrator has been told.`,
@@ -511,8 +508,12 @@ export class QuotationSubmitService {
   }
 
   /** P1-PLAN 6.2 "Blocked", without a request row: whoever may fix role assignments (admin.roles.write) is told. */
-  private async notifyBlocked(tx: DbTransaction, n: BlockedNotice): Promise<void> {
-    for (const role of BLOCKED_NOTICE_ROLES) {
+  private async notifyBlocked(
+    tx: DbTransaction,
+    tenantId: string,
+    n: BlockedNotice,
+  ): Promise<void> {
+    for (const role of await this.approvals.blockedNoticeRoles(tenantId)) {
       await this.notify.notifyRole(tx, role, {
         title: `Approval blocked: ${n.quotationNumber}`,
         body: `Quotation ${n.quotationNumber} revision ${n.revisionNo} cannot be submitted: ${n.reason}`,
