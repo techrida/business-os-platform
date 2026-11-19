@@ -15,6 +15,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { type SQL, and, eq, sql } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
+import { searchPage } from '../list';
 import { type Actor, type TxScope, withTx } from '../db/tx';
 import type { MirroredStatus } from './zitadel-admin.client';
 
@@ -375,35 +376,76 @@ export class SqlUsersStore extends UsersStore {
   }
 
   async list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
-    // Search punctuation literally. ILIKE supplies case folding and uses the trigram indexes.
-    const pattern = q.q ? `%${q.q.replace(/[!%_]/g, '!$&')}%` : null;
-    return rows<ListedUser & Record<string, unknown>>(
-      this.db,
-      sql`SELECT ${USER_COLUMNS},
-            to_char(u.last_active_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lastActiveAt",
-            to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",
-            CASE WHEN d.id IS NOT NULL THEN jsonb_build_object('id', d.id, 'name', d.name) END AS department,
-            ARRAY(SELECT ur.role_key FROM app.user_roles ur
-              WHERE ur.tenant_id = u.tenant_id AND ur.user_id = u.id ORDER BY ur.role_key) AS roles
-          ${STAFF_USERS}
+    const from = sql`${STAFF_USERS}
           LEFT JOIN app.user_entities ue ON ue.tenant_id = u.tenant_id AND ue.user_id = u.id
             AND ue.organization_id = ${scope.organizationId}
           LEFT JOIN app.departments d ON d.tenant_id = ue.tenant_id
-            AND d.organization_id = ue.organization_id AND d.id = ue.department_id
-          WHERE u.tenant_id = ${scope.tenantId}
+            AND d.organization_id = ue.organization_id AND d.id = ue.department_id`;
+    const any = (values: readonly string[]) =>
+      sql.join(
+        values.map((v) => sql`${v}`),
+        sql`, `,
+      );
+    // Scope and filters only; the search and the cursor are added below.
+    const filters = sql`u.tenant_id = ${scope.tenantId}
+      ${q.status?.length ? sql`AND u.status IN (${any(q.status)})` : sql``}
+      ${q.departmentId ? sql`AND d.id = ${q.departmentId}` : sql``}
+      ${
+        q.role?.length
+          ? sql`AND EXISTS (SELECT 1 FROM app.user_roles ur WHERE ur.tenant_id = u.tenant_id
+              AND ur.user_id = u.id AND ur.role_key IN (${any(q.role)}))`
+          : sql``
+      }`;
+    const order = q.sort ? DIRECTORY_ORDER[q.sort] : sql`u.id`;
+    const select = (where: SQL | undefined, orderBy: SQL[], tail: SQL) => sql`
+      SELECT ${USER_COLUMNS},
+        to_char(u.last_active_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lastActiveAt",
+        to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",
+        CASE WHEN d.id IS NOT NULL THEN jsonb_build_object('id', d.id, 'name', d.name) END AS department,
+        ARRAY(SELECT ur.role_key FROM app.user_roles ur
+          WHERE ur.tenant_id = u.tenant_id AND ur.user_id = u.id ORDER BY ur.role_key) AS roles
+      ${from}
+      WHERE ${where}
+      ORDER BY ${sql.join(orderBy, sql`, `)}
+      ${tail}`;
+
+    // The id cursor (`u.id > after`) assumes id order, which similarity ranking breaks: with a cursor the
+    // search stays an exact substring match.
+    if (!q.q || q.after) {
+      // Search punctuation literally. ILIKE supplies case folding and uses the trigram indexes.
+      const pattern = q.q ? `%${q.q.replace(/[!%_]/g, '!$&')}%` : null;
+      return rows<ListedUser & Record<string, unknown>>(
+        this.db,
+        select(
+          sql`${filters}
             ${pattern ? sql`AND (u.display_name ILIKE ${pattern} ESCAPE '!' OR u.email ILIKE ${pattern} ESCAPE '!')` : sql``}
-            ${q.status ? sql`AND u.status = ${q.status}` : sql``}
-            ${q.departmentId ? sql`AND d.id = ${q.departmentId}` : sql``}
-            ${
-              q.role
-                ? sql`AND EXISTS (SELECT 1 FROM app.user_roles ur WHERE ur.tenant_id = u.tenant_id
-                AND ur.user_id = u.id AND ur.role_key = ${q.role})`
-                : sql``
-            }
-            ${q.after ? sql`AND u.id > ${q.after}` : sql``}
-          ORDER BY ${q.sort ? DIRECTORY_ORDER[q.sort] : sql`u.id`}
-          LIMIT ${q.limit + 1} OFFSET ${((q.page ?? 1) - 1) * q.limit}`,
-    );
+            ${q.after ? sql`AND u.id > ${q.after}` : sql``}`,
+          [order],
+          sql`LIMIT ${q.limit + 1} OFFSET ${((q.page ?? 1) - 1) * q.limit}`,
+        ),
+      );
+    }
+
+    // One extra row tells the controller whether another page exists.
+    const result = await searchPage<ListedUser & Record<string, unknown>>(this.db, {
+      q: q.q,
+      columns: [sql`u.display_name`, sql`u.email`],
+      where: filters,
+      orderBy: [order],
+      limit: q.limit + 1,
+      offset: ((q.page ?? 1) - 1) * q.limit,
+      // Run on `tx`, not this.db: fuzzy mode sets its similarity threshold for that transaction only.
+      rows: (tx, p) =>
+        rows(tx, select(p.where, p.orderBy, sql`LIMIT ${p.limit} OFFSET ${p.offset}`)),
+      count: async (tx, where) => {
+        const [row] = await rows<{ n: number }>(
+          tx,
+          sql`SELECT count(*)::int AS n ${from} WHERE ${where}`,
+        );
+        return row?.n ?? 0;
+      },
+    });
+    return result.rows;
   }
 
   async summary(scope: TxScope): Promise<StaffSummary> {
