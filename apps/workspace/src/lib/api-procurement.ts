@@ -3,6 +3,7 @@ import 'server-only';
 import {
   CostCenterSchema,
   CurrencySchema,
+  PoStatusSchema,
   PrRequestTypeSchema,
   PrStatusSchema,
   type CreatePurchaseRequestBody,
@@ -76,8 +77,23 @@ export const PurchaseRequestListItemSchema = z.object({
 });
 export type PurchaseRequestListItem = z.infer<typeof PurchaseRequestListItemSchema>;
 
+/**
+ * A purchase order raised from the request, sent with the request's detail under the request's own read: number,
+ * status and the vendor's legal name, and whether the caller may record a service receipt on it now.
+ */
+export const LinkedPurchaseOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: z.string(),
+  status: PoStatusSchema,
+  vendorName: z.string(),
+  can: z.strictObject({ receiveService: z.boolean() }),
+});
+export type LinkedPurchaseOrder = z.infer<typeof LinkedPurchaseOrderSchema>;
+
 export const PurchaseRequestDtoSchema = PurchaseRequestListItemSchema.extend({
   lines: z.array(PurchaseRequestLineSchema),
+  /** Sent by the detail read only; the writes answer without it. */
+  purchaseOrders: z.array(LinkedPurchaseOrderSchema).optional(),
 });
 export type PurchaseRequestDto = z.infer<typeof PurchaseRequestDtoSchema>;
 
