@@ -1,5 +1,14 @@
 import Link from 'next/link';
 
+import { listActivitiesPage } from '@/components/p2/crm/activities-api';
+import { getLeadSummary } from '@/components/p2/crm/leads-api';
+import { listOpportunitiesPage } from '@/components/p2/crm/opportunities-api';
+import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
+import { listCustomers } from '@/components/p2/customers/api';
+import { permissionChecker } from '@/components/p2/customers/permissions';
+import { getQuotationsSummary, listQuotationsPage } from '@/components/p2/quotations/api';
+import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
+import { Avatar } from '@/components/ui/avatar';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -8,25 +17,68 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
+import { getMe } from '@/lib/api';
 import { getInbox, getUnreadCount, listNotifications } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { canSeeAdmin, when } from '@/lib/kernel-format';
+import { getNumberSystems } from '@/lib/display-settings';
+import { money, when } from '@/lib/kernel-format';
+import {
+  ACTIVE_OPPORTUNITY_STAGES,
+  activityHeadline,
+  activityHref,
+  greetingFor,
+  notificationText,
+  openLeadCount,
+  quickActions,
+} from '@/lib/overview-format';
 
 import styles from './overview.module.css';
 
 export default async function OverviewPage() {
   const session = await requireStaffSession('/');
-  const [inbox, unread, notifications] = await Promise.allSettled([
+  const numberSystems = await getNumberSystems();
+  // Every read stands alone: one that fails or is refused leaves out its own card, never shows a zero.
+  const [
+    inbox,
+    unread,
+    notifications,
+    me,
+    people,
+    customers,
+    leads,
+    opportunities,
+    quotationSummary,
+    quotations,
+    activities,
+  ] = await Promise.allSettled([
     getInbox(session),
     getUnreadCount(session),
     listNotifications(session, { limit: 5 }),
+    getMe(session),
+    loadPeople(session, { owners: canAssignFollowUps(session) }),
+    listCustomers(session, { limit: 1 }),
+    getLeadSummary(session),
+    listOpportunitiesPage(session, { stage: ACTIVE_OPPORTUNITY_STAGES, limit: 1 }),
+    getQuotationsSummary(session),
+    listQuotationsPage(session, { limit: 5, offset: 0 }),
+    listActivitiesPage(session, { status: 'logged', limit: 5 }),
   ]);
 
   const approvals = inbox.status === 'fulfilled' ? inbox.value : null;
+  const names = people.status === 'fulfilled' ? people.value.names : new Map<string, string>();
+  const myName = me.status === 'fulfilled' ? names.get(me.value.userId) : undefined;
+  const tiles = quickActions(permissionChecker(session.roles));
+  const customerCount =
+    customers.status === 'fulfilled' && customers.value.total !== null
+      ? customers.value.total
+      : null;
 
   return (
     <Page>
-      <PageHeader title="Welcome back" description="Here’s what needs your attention today." />
+      <PageHeader
+        title={greetingFor(new Date(), myName)}
+        description="Here’s what needs your attention today."
+      />
 
       <div className={styles.hero}>
         {approvals !== null && (
@@ -45,36 +97,112 @@ export default async function OverviewPage() {
             </LinkButton>
           </Card>
         )}
-        <Panel className={styles.quickActions} title="Quick actions">
-          <div className={styles.shortcuts}>
-            <LinkButton className={styles.shortcut} variant="tertiary" href="/memos">
-              <Icon name="file-text" size={20} />
-              Memos
-            </LinkButton>
-            {canSeeAdmin(session.roles) && (
-              <LinkButton className={styles.shortcut} variant="tertiary" href="/settings/users/new">
-                <Icon name="users" size={20} />
-                Add user
-              </LinkButton>
-            )}
-          </div>
-        </Panel>
+        {tiles.length > 0 && (
+          <Panel className={styles.quickActions} title="Quick actions">
+            <div className={styles.shortcuts}>
+              {tiles.map((tile) => (
+                <LinkButton
+                  key={tile.key}
+                  className={styles.shortcut}
+                  variant="tertiary"
+                  href={tile.href}
+                >
+                  <Icon name={tile.icon} size={20} />
+                  {tile.label}
+                </LinkButton>
+              ))}
+            </div>
+          </Panel>
+        )}
       </div>
 
-      {(approvals !== null || unread.status === 'fulfilled') && (
-        <div className={styles.stats}>
-          {approvals !== null && (
-            <StatCard
-              label="Pending approvals"
-              value={approvals.length}
-              icon="inbox"
-              tone={approvals.length > 0 ? 'warning' : 'neutral'}
-            />
+      <div className={styles.stats}>
+        {customerCount !== null && (
+          <StatCard label="Customers" value={customerCount} icon="building" />
+        )}
+        {leads.status === 'fulfilled' && (
+          <StatCard label="Open leads" value={openLeadCount(leads.value.byStage)} icon="target" />
+        )}
+        {opportunities.status === 'fulfilled' && (
+          <StatCard label="Open opportunities" value={opportunities.value.total} icon="briefcase" />
+        )}
+        {quotationSummary.status === 'fulfilled' && (
+          <StatCard
+            label="Pending quotations"
+            value={quotationSummary.value.byStatus.submitted}
+            icon="shield-check"
+            tone={quotationSummary.value.byStatus.submitted > 0 ? 'warning' : 'neutral'}
+          />
+        )}
+        {approvals !== null && (
+          <StatCard
+            label="Pending approvals"
+            value={approvals.length}
+            icon="inbox"
+            tone={approvals.length > 0 ? 'warning' : 'neutral'}
+          />
+        )}
+        {unread.status === 'fulfilled' && (
+          <StatCard label="Unread notifications" value={unread.value.count} icon="bell" />
+        )}
+      </div>
+
+      {quotations.status === 'fulfilled' && (
+        <Panel
+          title="Recent quotations"
+          actions={
+            <LinkButton variant="tertiary" size="small" href="/quotations">
+              Explore all
+              <Icon name="chevron-right" size={16} />
+            </LinkButton>
+          }
+        >
+          {quotations.value.items.length > 0 ? (
+            <Table caption="Recent quotations" minWidth={720}>
+              <thead>
+                <tr>
+                  <Th>Quotation</Th>
+                  <Th>Organization</Th>
+                  <Th align="end">Amount</Th>
+                  <Th>Status</Th>
+                  <Th>Owner</Th>
+                  <Th>Created</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotations.value.items.map((item) => (
+                  <tr key={item.id}>
+                    <Td nowrap>
+                      <Link href={`/quotations/${encodeURIComponent(item.id)}`}>{item.number}</Link>
+                    </Td>
+                    <Td>{item.customerName}</Td>
+                    <Td align="end" nowrap>
+                      {money(item.total, item.currency, numberSystems)}
+                    </Td>
+                    <Td nowrap>
+                      <QuotationStatusBadge status={item.status} />
+                    </Td>
+                    <Td>
+                      {item.ownerName !== null ? (
+                        <span className={styles.owner}>
+                          <Avatar name={item.ownerName} shape="circle" size="small" />
+                          {item.ownerName}
+                        </span>
+                      ) : (
+                        <span className={styles.quiet}>Unassigned</span>
+                      )}
+                    </Td>
+                    <Td nowrap>
+                      <time dateTime={item.createdAt}>{when(item.createdAt, 'date')}</time>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          ) : (
+            <EmptyState icon="file-text" title="No quotations yet" />
           )}
-          {unread.status === 'fulfilled' && (
-            <StatCard label="Unread notifications" value={unread.value.count} icon="bell" />
-          )}
-        </div>
+        </Panel>
       )}
 
       <div className={styles.widgets}>
@@ -94,10 +222,10 @@ export default async function OverviewPage() {
                       <CellTitle
                         title={
                           <Link href={`/inbox/${encodeURIComponent(item.requestId)}`}>
-                            {item.title}
+                            {notificationText(item.title)}
                           </Link>
                         }
-                        meta={item.documentNumber}
+                        meta={notificationText(item.documentNumber)}
                       />
                     </Td>
                     <Td nowrap>
@@ -109,6 +237,33 @@ export default async function OverviewPage() {
             </Table>
           </Panel>
         )}
+        {activities.status === 'fulfilled' && (
+          <Panel title="Recent activities">
+            {activities.value.items.length > 0 ? (
+              <ul className={styles.activity}>
+                {activities.value.items.map((item) => {
+                  const href = activityHref(item);
+                  const actor =
+                    item.createdByUserId !== null ? names.get(item.createdByUserId) : undefined;
+                  return (
+                    <li key={item.id}>
+                      <span className={styles.activityDot} aria-hidden="true" />
+                      <div>
+                        <strong>{activityHeadline(item.kind, actor)}</strong>
+                        <p>
+                          {href !== null ? <Link href={href}>{item.subject}</Link> : item.subject}
+                        </p>
+                        <time dateTime={item.occurredAt}>{when(item.occurredAt)}</time>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <EmptyState title="No activity yet" />
+            )}
+          </Panel>
+        )}
         {notifications.status === 'fulfilled' && (
           <Panel title="Recent notifications">
             {notifications.value.length > 0 ? (
@@ -117,8 +272,8 @@ export default async function OverviewPage() {
                   <li key={item.id}>
                     <span className={styles.activityDot} aria-hidden="true" />
                     <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.body}</p>
+                      <strong>{notificationText(item.title)}</strong>
+                      <p>{notificationText(item.body)}</p>
                       <time dateTime={item.createdAt}>{when(item.createdAt)}</time>
                     </div>
                   </li>
