@@ -33,7 +33,8 @@ const UPDATE_BODY = { ...CONTENT, expectedVersion: 2 };
 async function setup() {
   const service = {
     create: vi.fn().mockResolvedValue({}),
-    list: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
+    summary: vi.fn().mockResolvedValue({ total: 0, byStatus: {} }),
     detail: vi.fn().mockResolvedValue({}),
     getVersion: vi.fn().mockResolvedValue({}),
     updateDraft: vi.fn().mockResolvedValue({ version: 3 }),
@@ -68,6 +69,7 @@ describe('DraftingController', () => {
     const can = (name: keyof DraftingController) =>
       Reflect.getMetadata(CAN_KEY, DraftingController.prototype[name]) as string;
     expect(can('list')).toBe('quotation.read');
+    expect(can('summary')).toBe('quotation.read');
     expect(can('detail')).toBe('quotation.read');
     expect(can('getVersion')).toBe('quotation.read');
     expect(can('create')).toBe('quotation.draft');
@@ -105,25 +107,91 @@ describe('DraftingController', () => {
     expect(() => controller.create(undefined, null)).toThrow(/Idempotency-Key/);
   });
 
-  it('lists with no filter, or with a valid status and/or opportunity', async () => {
+  it('lists with the defaults, or with the parsed filters, and reports the total in X-Total-Count', async () => {
     const { service, controller } = await setup();
-    await controller.list(undefined, undefined);
-    expect(service.list).toHaveBeenLastCalledWith({});
-    await controller.list('draft', undefined);
-    expect(service.list).toHaveBeenLastCalledWith({ status: 'draft' });
-    await controller.list(undefined, ID);
-    expect(service.list).toHaveBeenLastCalledWith({ opportunityId: ID });
-    await controller.list('returned', ID);
-    expect(service.list).toHaveBeenLastCalledWith({ status: 'returned', opportunityId: ID });
+    const res = { setHeader: vi.fn() };
+    service.list.mockResolvedValue({ rows: [{ id: ID }], total: 41 });
+    await expect(controller.list({}, res as never)).resolves.toEqual([{ id: ID }]);
+    expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    expect(res.setHeader).toHaveBeenLastCalledWith('X-Total-Count', '41');
+
+    await controller.list(
+      {
+        status: ['draft', 'sent', 'draft'],
+        customerId: ID,
+        opportunityId: OPP,
+        q: ' acme ',
+        limit: '10',
+        offset: '20',
+      },
+      res as never,
+    );
+    expect(service.list).toHaveBeenLastCalledWith({
+      status: ['draft', 'sent'],
+      customerId: [ID],
+      opportunityId: OPP,
+      q: 'acme',
+      limit: 10,
+      offset: 20,
+    });
+    await controller.list({ status: 'returned', q: 'a' }, res as never);
+    expect(service.list).toHaveBeenLastCalledWith({
+      status: ['returned'],
+      q: undefined,
+      limit: 50,
+      offset: 0,
+    });
   });
 
-  it('answers 400 to a bad status or opportunityId, or either sent twice', async () => {
+  it('answers 400 to an unknown status, a bad id, a repeated opportunityId, an unknown key or a bad page', async () => {
     const { service, controller } = await setup();
-    expect(() => controller.list('nonsense', undefined)).toThrow(BadRequestException);
-    expect(() => controller.list(['draft', 'sent'], undefined)).toThrow(BadRequestException);
-    expect(() => controller.list(undefined, 'not-a-uuid')).toThrow(BadRequestException);
-    expect(() => controller.list(undefined, [ID, ID])).toThrow(BadRequestException);
+    const res = { setHeader: vi.fn() };
+    for (const query of [
+      { status: 'nonsense' },
+      { status: ['draft', 'nonsense'] },
+      { customerId: 'not-a-uuid' },
+      { opportunityId: 'not-a-uuid' },
+      { opportunityId: [ID, ID] },
+      { sort: 'total' },
+      { limit: '0' },
+      { limit: '201' },
+      { offset: '-1' },
+    ]) {
+      await expect(controller.list(query, res as never), JSON.stringify(query)).rejects.toThrow(
+        BadRequestException,
+      );
+    }
     expect(service.list).not.toHaveBeenCalled();
+    expect(res.setHeader).not.toHaveBeenCalled();
+  });
+
+  it('summarises with q, customerId and opportunityId, and refuses status, paging and unknown keys', async () => {
+    const { service, controller } = await setup();
+    await controller.summary({});
+    expect(service.summary).toHaveBeenLastCalledWith({});
+    await controller.summary({ q: 'acme', customerId: [ID, ID], opportunityId: OPP });
+    expect(service.summary).toHaveBeenLastCalledWith({
+      q: 'acme',
+      customerId: [ID],
+      opportunityId: OPP,
+    });
+    service.summary.mockClear();
+    for (const query of [
+      { status: 'draft' },
+      { limit: '5' },
+      { customerId: 'x' },
+      { opportunityId: [ID, ID] },
+      { nope: '1' },
+    ]) {
+      expect(() => controller.summary(query), JSON.stringify(query)).toThrow(BadRequestException);
+    }
+    expect(service.summary).not.toHaveBeenCalled();
+  });
+
+  it('declares summary before the :id route, so "summary" is never read as an id', () => {
+    const routes = Object.getOwnPropertyNames(DraftingController.prototype);
+    expect(routes.indexOf('summary')).toBeGreaterThan(-1);
+    expect(routes.indexOf('summary')).toBeLessThan(routes.indexOf('detail'));
   });
 
   it('reads the detail and a version by their ids', async () => {
