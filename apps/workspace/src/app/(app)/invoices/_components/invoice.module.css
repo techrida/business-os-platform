@@ -66,6 +66,14 @@
   color: var(--icon-secondary);
 }
 
+/* Record payment (issued rows, for the people who record payments) next to the row's view link. */
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .rowAction:hover {
   background: var(--action-primary-subtle);
   color: var(--action-primary);
@@ -226,4 +234,12 @@
   font-size: var(--font-size-body-small);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-body-small);
+}
+
+/* A long money amount in a stat card shrinks to fit and wraps only at the space after the currency code. */
+.moneyValue {
+  display: block;
+  font-size: 18px;
+  line-height: 26px;
+  overflow-wrap: normal;
 }

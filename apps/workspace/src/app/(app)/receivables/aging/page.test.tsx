@@ -61,6 +61,48 @@ describe('receivables aging', () => {
     expect(html).toContain('NPR 6,54,321.00');
   });
 
+  it('shows a total card and a card per bucket, as server strings, per currency', async () => {
+    mocks.getAging.mockResolvedValue(
+      agingReport({
+        totals: [
+          {
+            currency: 'NPR',
+            buckets: { ...ZERO, current: '123456.00', d1_30: '654321.00', d91_plus: '1.00' },
+            totalOpen: '888888.88',
+          },
+          {
+            currency: 'USD',
+            buckets: { ...ZERO, d31_60: '40.00', d61_90: '2.50' },
+            totalOpen: '99.99',
+          },
+        ],
+      }),
+    );
+    const html = await render();
+    const card = (label: string, value: string) =>
+      new RegExp(`${label}</dt><dd[^>]*><span[^>]*>${value.replace(/[.]/g, '\\.')}<`);
+    const npr = /aria-label="Open balances in NPR".*?<\/section>/s.exec(html)?.[0] ?? '';
+    const usd = /aria-label="Open balances in USD".*?<\/section>/s.exec(html)?.[0] ?? '';
+    expect(npr).toMatch(card('Total open', 'NPR 8,88,888.88'));
+    expect(npr).toMatch(card('Not yet due', 'NPR 1,23,456.00'));
+    expect(npr).toMatch(card('1 to 30 days', 'NPR 6,54,321.00'));
+    expect(npr).toMatch(card('31 to 60 days', 'NPR 0.00'));
+    expect(npr).toMatch(card('61 to 90 days', 'NPR 0.00'));
+    expect(npr).toMatch(card('Over 90 days', 'NPR 1.00'));
+    // The other currency keeps its own cards; nothing is merged or added across currencies.
+    expect(usd).toMatch(card('Total open', 'USD 99.99'));
+    expect(usd).toMatch(card('31 to 60 days', 'USD 40.00'));
+    expect(usd).toMatch(card('61 to 90 days', 'USD 2.50'));
+    expect(html.match(/<dt[^>]*>Total open<\/dt>/g)).toHaveLength(2);
+    // NPR 8,88,888.88 + USD 99.99 must never appear as one figure.
+    expect(html).not.toContain('8,88,988.87');
+  });
+
+  it('shows no cards when no currency has a total', async () => {
+    mocks.getAging.mockResolvedValue(agingReport({ totals: [] }));
+    expect(await render()).not.toContain('Open balances in');
+  });
+
   it('does not add the rows of two customers into a total of its own', async () => {
     mocks.getAging.mockResolvedValue(
       agingReport({

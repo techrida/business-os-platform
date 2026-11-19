@@ -53,11 +53,11 @@ function Totals({ order, numberSystems }: { order: Order; numberSystems: NumberS
     { key: 'discount', label: 'Discount', value: totals.discountAmount },
     { key: 'taxable', label: 'Taxable amount', value: totals.taxableAmount },
     { key: 'tax', label: 'Tax', value: totals.taxAmount },
-    { key: 'total', label: 'Total', value: totals.total, grand: true },
+    { key: 'total', label: 'Grand total', value: totals.total, grand: true },
   ];
   return (
     <Panel as="aside" title="Totals" description={`Order amounts in ${currency}.`}>
-      <dl className={detail.totals}>
+      <dl className={`${detail.totals} ${local.totalsBox}`}>
         {rows.map((row) => (
           <div
             key={row.key}
