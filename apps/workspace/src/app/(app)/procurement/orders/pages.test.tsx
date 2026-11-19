@@ -156,8 +156,8 @@ describe('the purchase order list', () => {
     expect(api.listPurchaseOrdersPage).toHaveBeenLastCalledWith(expect.anything(), {
       status: ['issued', 'draft'],
       q: 'Himal',
-      limit: 25,
-      offset: 50,
+      limit: 10,
+      offset: 20,
     });
   });
 
@@ -165,7 +165,8 @@ describe('the purchase order list', () => {
     api.listPurchaseOrdersPage.mockResolvedValue(page([order()], 640));
     const out = await list({ status: 'issued' });
     expect(out).toContain('Showing 1 of 640 purchase orders');
-    expect(out).toContain('Showing 1-25 of 640');
+    expect(out).toContain('Showing 1–25 of 640');
+    expect(out).toContain('aria-label="Rows per page"');
     expect(out).toContain('type="search"');
     expect(out).not.toContain('>Apply<');
   });
@@ -182,10 +183,7 @@ describe('the purchase order list', () => {
   it('names each vendor from the list response, with no vendor read per row', async () => {
     vendors.getVendor.mockRejectedValue(apiError(403));
     api.listPurchaseOrdersPage.mockResolvedValue(
-      page([
-        order(),
-        order({ id: LINE, number: 'PO-2082-0002', vendorName: 'Everest Supplies' }),
-      ]),
+      page([order(), order({ id: LINE, number: 'PO-2082-0002', vendorName: 'Everest Supplies' })]),
     );
     const out = await list();
     expect(out).toContain('Himal Traders Pvt. Ltd.');
@@ -195,6 +193,46 @@ describe('the purchase order list', () => {
     api.getPurchaseOrder.mockResolvedValue(order());
     expect(await detail()).toContain('Himal Traders Pvt. Ltd.');
     expect(vendors.getVendor).not.toHaveBeenCalled();
+  });
+
+  it('counts the orders per card with one-row reads over the same scoped list', async () => {
+    api.listPurchaseOrdersPage.mockImplementation(
+      (_s: unknown, query: { status?: string[]; limit: number }) =>
+        Promise.resolve(
+          query.limit === 1
+            ? page([], (query.status ?? []).length === 0 ? 12 : (query.status ?? []).length * 3)
+            : page([order()], 12),
+        ),
+    );
+    const out = await list();
+    expect(out).toContain('aria-label="Purchase order summary"');
+    expect(out).toMatch(/Total purchase orders<\/dt><dd[^>]*>12</);
+    expect(out).toMatch(/Waiting for delivery<\/dt><dd[^>]*>6</);
+    expect(api.listPurchaseOrdersPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['issued', 'partially_received'],
+      limit: 1,
+      offset: 0,
+    });
+  });
+
+  it('leaves the cards out when a count fails, and keeps the table', async () => {
+    api.listPurchaseOrdersPage.mockImplementation((_s: unknown, query: { limit: number }) =>
+      query.limit === 1 ? Promise.reject(apiError(500)) : Promise.resolve(page([order()])),
+    );
+    const out = await list();
+    expect(out).not.toContain('Purchase order summary');
+    expect(out).toContain('PO-2082-0001');
+  });
+
+  it('ends each row with the status and a View link named after the order', async () => {
+    api.listPurchaseOrdersPage.mockResolvedValue(
+      page([order(), order({ id: LINE, number: 'PO-2082-0002' })]),
+    );
+    const out = await list();
+    expect(out).toContain('>Action</th>');
+    expect(out).toContain('aria-label="View PO-2082-0001"');
+    expect(out).toContain('aria-label="View PO-2082-0002"');
+    expect(out).toContain(`href="/procurement/orders/${LINE}"`);
   });
 
   it('shows the no-access pattern for a 403 and a retry for any other failure', async () => {
@@ -270,6 +308,34 @@ describe('the purchase order page', () => {
     expect(out).not.toContain('Amend order');
     expect(out).not.toContain('Cancel order');
     expect(out).toContain('Receive goods');
+  });
+
+  it('makes the next step the one primary button, and Receipts a secondary button', async () => {
+    const classOf = (out: string, label: string) =>
+      new RegExp(`<a[^>]*class="([^"]*)"[^>]*>${label}</a>`).exec(out)?.[1] ?? '';
+    session.roles = ['warehouse'];
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true } }));
+    let out = await detail();
+    expect(classOf(out, 'Receive goods')).toMatch(/primary/);
+    expect(classOf(out, 'Enter bill')).toMatch(/secondary/);
+    expect(classOf(out, 'Receipts')).toMatch(/secondary/);
+    session.roles = ['accountant'];
+    out = await detail();
+    expect(out).not.toContain('Receive goods');
+    expect(classOf(out, 'Enter bill')).toMatch(/primary/);
+    session.roles = ['procurement'];
+    api.getPurchaseOrder.mockResolvedValue(order());
+    out = await detail();
+    expect(out).toContain('Amend order');
+    expect(out).not.toMatch(/class="[^"]*primary[^"]*"[^>]*>(Amend order|Cancel order|Receipts)</);
+  });
+
+  it('names the approval band in words, never the raw value', async () => {
+    api.getPurchaseOrder.mockResolvedValue(order({ approvedBand: 'management' }));
+    const out = await detail();
+    expect(out).toContain('>Management<');
+    expect(out).toContain('>Base<');
+    expect(out).not.toMatch(/>(management|base)</);
   });
 
   it('offers Enter bill only when the order says the caller may enter a bill on it', async () => {

@@ -227,7 +227,8 @@ describe('the list', () => {
     rfqApi.listRfqsPage.mockResolvedValue(page([row()], 60));
     const out = await list({ status: 'open' });
     expect(out).toContain('Showing 1 of 60 RFQs');
-    expect(out).toContain('Showing 1-25 of 60');
+    expect(out).toContain('Showing 1–25 of 60');
+    expect(out).toContain('aria-label="Rows per page"');
     expect(out).toContain('type="search"');
     expect(out).not.toContain('>Apply<');
   });
@@ -239,6 +240,37 @@ describe('the list', () => {
     expect(out).toContain('No RFQs match.');
     expect(out).toContain('Status: Closed, Open');
     expect(out).toContain('Clear filters');
+  });
+
+  it('counts the RFQs per card with one-row reads, and ends each row with a View link', async () => {
+    rfqApi.listRfqsPage.mockImplementation(
+      (_s: unknown, query: { status?: string[]; limit: number }) =>
+        Promise.resolve(
+          query.limit === 1
+            ? page([], (query.status ?? [])[0] === 'closed' ? 2 : 7)
+            : page([row()], 7),
+        ),
+    );
+    const out = await list();
+    expect(out).toContain('aria-label="RFQ summary"');
+    expect(out).toMatch(/Waiting for a recommendation<\/dt><dd[^>]*>2</);
+    expect(out).toMatch(/Total RFQs<\/dt><dd[^>]*>7</);
+    expect(rfqApi.listRfqsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: ['recommended'],
+      limit: 1,
+      offset: 0,
+    });
+    expect(out).toContain('>Action</th>');
+    expect(out).toContain('aria-label="View RFQ-2082/83-00001"');
+  });
+
+  it('leaves the cards out when a count fails', async () => {
+    rfqApi.listRfqsPage.mockImplementation((_s: unknown, query: { limit: number }) =>
+      query.limit === 1 ? Promise.reject(apiError(500)) : Promise.resolve(page([row()])),
+    );
+    const out = await list();
+    expect(out).not.toContain('RFQ summary');
+    expect(out).toContain('RFQ-2082/83-00001');
   });
 
   it('a person without the sourcing grant gets no New RFQ button', async () => {

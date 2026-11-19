@@ -9,6 +9,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
 import styles from '../../requests/requests.module.css';
+import groups from './line-rows.module.css';
 import { MAX_SCORE_ROWS, type ScoreRowValues } from '../_lib/forms';
 import {
   commandStart,
@@ -73,7 +74,7 @@ export function ScoreForm({
       <input type="hidden" name="idempotencyKey" value={state.key} />
       <input type="hidden" name="rfqId" value={rfqId} />
       <input type="hidden" name="quotationId" value={quotationId} />
-      <fieldset className={styles.line}>
+      <fieldset className={groups.group}>
         <legend>{`Score ${vendorName}`}</legend>
         <div className={styles.panelForm}>
           {held.length > 0 ? (
@@ -102,7 +103,7 @@ export function ScoreForm({
             </p>
           ) : null}
           {rows.map((row, i) => (
-            <div key={i} className={styles.lineGrid}>
+            <div key={i} className={groups.groupGrid}>
               <Field label={`Criterion ${i + 1}`} error={err[`scores.${i}.criterion`]}>
                 {(control) => (
                   <Input

@@ -59,7 +59,7 @@ function Lines({
       <Table className={layout.panelTable ?? ''} caption="Receipt lines" minWidth={720}>
         <thead>
           <tr>
-            <Th align="end">#</Th>
+            <Th>#</Th>
             <Th>Item</Th>
             <Th align="end">Quantity</Th>
             <Th>Checks</Th>
@@ -70,9 +70,7 @@ function Lines({
             const item = byLine.get(l.poLineId);
             return (
               <tr key={l.id}>
-                <Td align="end" nowrap>
-                  {l.lineNo}
-                </Td>
+                <Td nowrap>{l.lineNo}</Td>
                 <Td>
                   <span className={styles.long}>{item?.description ?? 'Purchase order line'}</span>
                   {l.serials.length > 0 ? (
