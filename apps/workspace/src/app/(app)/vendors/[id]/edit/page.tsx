@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
-import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { Breadcrumb, Page } from '@/components/ui/page';
 import { getVendor } from '@/lib/api-vendors';
 import { requireStaffSession } from '@/lib/bff';
 
@@ -82,8 +82,9 @@ export default async function EditVendorPage({ params }: { params: Promise<{ id:
   return (
     <Page>
       <Breadcrumb items={crumbs} />
-      <PageHeader title="Edit vendor" description={vendor.legalName} />
       <VendorForm
+        title="Edit vendor"
+        description={vendor.legalName}
         action={updateVendorAction}
         mode="edit"
         initial={{

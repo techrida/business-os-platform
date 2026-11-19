@@ -1,11 +1,12 @@
 'use client';
 
 import { VENDOR_KINDS, type VendorKind } from '@bos/contracts';
-import { useActionState, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useActionState, useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button, LinkButton } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page';
 import { Panel } from '@/components/ui/panel';
 
 import type { VendorField, VendorValues } from '../_lib/forms';
@@ -22,6 +23,18 @@ const KIND_LABEL: Record<VendorKind, string> = {
 /** CSS modules type every class as possibly missing; `Field` wants a string. */
 const WIDE = styles.wide ?? '';
 
+/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
+  return (
+    <>
+      <span className={styles.eyebrow} aria-hidden="true">
+        {eyebrow}
+      </span>
+      {children}
+    </>
+  );
+}
+
 /**
  * The vendor create and edit form. One component for both, because they share fields and rules;
  * the server action passed in decides what happens on submit. Inputs are controlled so a refusal
@@ -30,6 +43,9 @@ const WIDE = styles.wide ?? '';
  * Create asks for the kind and country, which are fixed afterwards. Edit locks the legal name and
  * PAN of an approved or suspended vendor (`lockIdentity`): those change through a new KYB review.
  * A foreign vendor has no Nepali PAN, so the field goes away when that kind is chosen.
+ *
+ * The page header is part of the form, so Cancel and the submit button sit at its top right (Figma
+ * "Add Organization" 449:15784); a narrow screen gets them under the form instead.
  */
 export function VendorForm({
   action,
@@ -41,6 +57,8 @@ export function VendorForm({
   lockIdentity = false,
   cancelHref,
   reloadHref,
+  title,
+  description,
 }: {
   action: (prev: VendorFormState, form: FormData) => Promise<VendorFormState>;
   initial: VendorValues;
@@ -53,6 +71,8 @@ export function VendorForm({
   lockIdentity?: boolean;
   cancelHref: string;
   reloadHref: string;
+  title: string;
+  description?: ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<VendorFormState, FormData>(action, {
     key: idempotencyKey ?? '',
@@ -77,8 +97,93 @@ export function VendorForm({
   const foreign = values.kind === 'foreign';
   const submitLabel = pending ? 'Saving' : mode === 'edit' ? 'Save changes' : 'Add vendor';
 
+  const actions = (
+    <div className={styles.actions}>
+      <LinkButton href={cancelHref} variant="secondary">
+        Cancel
+      </LinkButton>
+      <Button type="submit" disabled={pending}>
+        {submitLabel}
+      </Button>
+    </div>
+  );
+
+  const legalName = (
+    <Field
+      label="Legal name"
+      hint={
+        lockIdentity
+          ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
+          : undefined
+      }
+      error={err.legalName}
+      // Alone on its row (an edit of a foreign vendor), it takes the whole row.
+      {...(mode === 'edit' && foreign ? { className: WIDE } : {})}
+    >
+      {(control) => (
+        <Input
+          name="legalName"
+          value={values.legalName}
+          onChange={set('legalName')}
+          maxLength={200}
+          autoComplete="organization"
+          readOnly={lockIdentity}
+          required
+          {...control}
+        />
+      )}
+    </Field>
+  );
+
+  const pan = foreign ? null : (
+    <Field
+      label="PAN"
+      hint={
+        lockIdentity
+          ? 'Locked while the vendor is approved.'
+          : 'Nine digits. Every vendor except a foreign one needs it.'
+      }
+      error={err.pan}
+    >
+      {(control) => (
+        <Input
+          name="pan"
+          value={values.pan}
+          onChange={set('pan')}
+          inputMode="numeric"
+          maxLength={9}
+          autoComplete="off"
+          className={styles.numeric}
+          readOnly={lockIdentity}
+          required
+          {...control}
+        />
+      )}
+    </Field>
+  );
+
+  const vat = (
+    <label className={styles.check}>
+      <input
+        type="checkbox"
+        name="vatRegistered"
+        checked={values.vatRegistered}
+        onChange={(e) => setValues((v) => ({ ...v, vatRegistered: e.target.checked }))}
+      />
+      Registered for VAT
+    </label>
+  );
+
   return (
     <form ref={formRef} action={formAction} noValidate className={styles.form}>
+      <PageHeader
+        title={title}
+        description={description}
+        actions={<div className={styles.topActions}>{actions}</div>}
+      />
+      <span className="sr-only" role="status">
+        {pending ? (mode === 'edit' ? 'Saving your changes' : 'Saving the vendor') : ''}
+      </span>
       {mode === 'create' ? (
         <input type="hidden" name="idempotencyKey" value={state.key} />
       ) : (
@@ -101,144 +206,89 @@ export function VendorForm({
         </Alert>
       ) : null}
 
-      <Panel title="Vendor details">
-        <div className={styles.grid}>
-          <Field
-            label="Legal name"
-            hint={
-              lockIdentity
-                ? 'Locked while the vendor is approved. A change goes through a new KYB review.'
-                : undefined
-            }
-            error={err.legalName}
+      {mode === 'edit' ? (
+        // Edit keeps only the fields that can still change, so they share one card and fill its rows.
+        <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
+          <div className={styles.grid}>
+            {legalName}
+            {pan}
+          </div>
+          {vat}
+        </Panel>
+      ) : (
+        <>
+          <Panel title={<SectionTitle eyebrow="01 · The basics">Vendor details</SectionTitle>}>
+            <div className={styles.grid}>
+              {legalName}
+              <Field
+                label="Trade name"
+                hint="Optional. The name the vendor is known by."
+                error={err.tradeName}
+              >
+                {(control) => (
+                  <Input
+                    name="tradeName"
+                    value={values.tradeName}
+                    onChange={set('tradeName')}
+                    maxLength={200}
+                    {...control}
+                  />
+                )}
+              </Field>
+              <Field
+                label="Kind"
+                hint="Fixed once the vendor is added."
+                error={err.kind}
+                className={WIDE}
+              >
+                {(control) => (
+                  <Select name="kind" value={values.kind} onChange={set('kind')} {...control}>
+                    {VENDOR_KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {KIND_LABEL[k]}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            </div>
+          </Panel>
+          <Panel
+            title={<SectionTitle eyebrow="02 · Tax registration">Tax registration</SectionTitle>}
           >
-            {(control) => (
-              <Input
-                name="legalName"
-                value={values.legalName}
-                onChange={set('legalName')}
-                maxLength={200}
-                autoComplete="organization"
-                readOnly={lockIdentity}
-                required
-                {...control}
-              />
-            )}
-          </Field>
-          {mode === 'create' ? (
-            <Field
-              label="Trade name"
-              hint="Optional. The name the vendor is known by."
-              error={err.tradeName}
-            >
-              {(control) => (
-                <Input
-                  name="tradeName"
-                  value={values.tradeName}
-                  onChange={set('tradeName')}
-                  maxLength={200}
-                  {...control}
-                />
-              )}
-            </Field>
-          ) : null}
-          {mode === 'create' ? (
-            <Field
-              label="Kind"
-              hint="Fixed once the vendor is added."
-              error={err.kind}
-              className={WIDE}
-            >
-              {(control) => (
-                <Select name="kind" value={values.kind} onChange={set('kind')} {...control}>
-                  {VENDOR_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {KIND_LABEL[k]}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          ) : null}
-        </div>
-      </Panel>
-      <Panel title="Tax registration">
-        <div className={styles.grid}>
-          {foreign ? null : (
-            <Field
-              label="PAN"
-              hint={
-                lockIdentity
-                  ? 'Locked while the vendor is approved.'
-                  : 'Nine digits. Every vendor except a foreign one needs it.'
-              }
-              error={err.pan}
-            >
-              {(control) => (
-                <Input
-                  name="pan"
-                  value={values.pan}
-                  onChange={set('pan')}
-                  inputMode="numeric"
-                  maxLength={9}
-                  autoComplete="off"
-                  className={styles.numeric}
-                  readOnly={lockIdentity}
-                  required
-                  {...control}
-                />
-              )}
-            </Field>
-          )}
-          {mode === 'create' ? (
-            <Field
-              label="Country code"
-              hint={
-                foreign
-                  ? 'Two letters, the vendor’s own country, for example IN or US.'
-                  : 'Two letters. Vendors in Nepal use NP.'
-              }
-              error={err.country}
-            >
-              {(control) => (
-                <Input
-                  name="country"
-                  value={values.country}
-                  onChange={set('country')}
-                  maxLength={2}
-                  autoComplete="country"
-                  autoCapitalize="characters"
-                  spellCheck={false}
-                  className={styles.code}
-                  required
-                  {...control}
-                />
-              )}
-            </Field>
-          ) : null}
-        </div>
-        <label className={styles.check}>
-          <input
-            type="checkbox"
-            name="vatRegistered"
-            checked={values.vatRegistered}
-            onChange={(e) => setValues((v) => ({ ...v, vatRegistered: e.target.checked }))}
-          />
-          Registered for VAT
-        </label>
-      </Panel>
+            <div className={styles.grid}>
+              {pan}
+              <Field
+                label="Country code"
+                hint={
+                  foreign
+                    ? 'Two letters, the vendor’s own country, for example IN or US.'
+                    : 'Two letters. Vendors in Nepal use NP.'
+                }
+                error={err.country}
+              >
+                {(control) => (
+                  <Input
+                    name="country"
+                    value={values.country}
+                    onChange={set('country')}
+                    maxLength={2}
+                    autoComplete="country"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    className={styles.code}
+                    required
+                    {...control}
+                  />
+                )}
+              </Field>
+            </div>
+            {vat}
+          </Panel>
+        </>
+      )}
 
-      <div className={styles.actions}>
-        <Button type="submit" disabled={pending}>
-          {submitLabel}
-        </Button>
-        <LinkButton href={cancelHref} variant="secondary">
-          Cancel
-        </LinkButton>
-        <span className={styles.status} role="status">
-          {pending ? (mode === 'edit' ? 'Saving your changes' : 'Saving the vendor') : ''}
-        </span>
-      </div>
+      <div className={styles.bottomActions}>{actions}</div>
     </form>
   );
 }

@@ -20,8 +20,9 @@ import { Alert } from '@/components/ui/alert';
 import { SuccessNotice } from '@/components/p4/success-notice';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
+import { Breadcrumb, Page } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import {
@@ -451,18 +452,6 @@ export default async function VendorPage({
   return (
     <Page>
       <Breadcrumb items={[{ label: 'Vendors', href: '/vendors' }, { label: vendor.legalName }]} />
-      <PageHeader
-        title={<span className={styles.long}>{vendor.legalName}</span>}
-        status={<Badge tone={status.tone}>{status.text}</Badge>}
-        description={vendor.tradeName ?? undefined}
-        actions={
-          grants.write && editable ? (
-            <LinkButton href={`${here}/edit`} variant="secondary">
-              Edit vendor
-            </LinkButton>
-          ) : null
-        }
-      />
 
       {flags.created !== undefined ? (
         <SuccessNotice message="Vendor added. Add a contact and a bank account before starting review." />
@@ -471,6 +460,41 @@ export default async function VendorPage({
       ) : null}
 
       <div className={styles.columns}>
+        {/* The identity card comes first in the reading order, so the page's h1 precedes every panel
+            heading; on a wide screen the grid places it at the top of the side column (Figma 648:10415). */}
+        <Card className={styles.profile} as="aside" aria-labelledby="vendor-name">
+          <div className={styles.profileIdentity}>
+            <div className={styles.profileLogo}>
+              <CompanyLogoUpload
+                ownerType="vendor_logo"
+                companyId={vendor.id}
+                legalName={vendor.legalName}
+                logoDocumentId={vendor.logoDocumentId ?? null}
+                label="Vendor logo"
+                readOnly={!(grants.write && editable)}
+              />
+            </div>
+            <h1 id="vendor-name" className={styles.profileName}>
+              {vendor.legalName}
+            </h1>
+            <Badge tone={status.tone}>{status.text}</Badge>
+            {vendor.tradeName !== null ? (
+              <p className={styles.tradeName}>
+                <span className="sr-only">Trade name: </span>
+                {vendor.tradeName}
+              </p>
+            ) : null}
+            {grants.write && editable ? (
+              <LinkButton href={`${here}/edit`} className={styles.editLink ?? ''}>
+                Edit Details
+              </LinkButton>
+            ) : null}
+          </div>
+          <Panel title="Profile" className={styles.info}>
+            <FactList facts={facts} />
+          </Panel>
+        </Card>
+
         <div className={styles.main}>
           <Contacts
             result={contacts}
@@ -483,19 +507,6 @@ export default async function VendorPage({
         </div>
 
         <div className={styles.sideStack}>
-          <Panel title="Profile" className={styles.profile}>
-            <div className={styles.profileLogo}>
-              <CompanyLogoUpload
-                ownerType="vendor_logo"
-                companyId={vendor.id}
-                legalName={vendor.legalName}
-                logoDocumentId={vendor.logoDocumentId ?? null}
-                label="Vendor logo"
-                readOnly={!(grants.write && editable)}
-              />
-            </div>
-            <FactList facts={facts} />
-          </Panel>
           <Panel
             title="Status"
             as="aside"
