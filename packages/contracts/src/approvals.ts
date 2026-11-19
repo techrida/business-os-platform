@@ -177,6 +177,10 @@ export const ApprovalActionKindSchema = z.enum([
   'reroute',
 ]);
 
+/**
+ * A person a record refers to, by display name. Records return the names of the people they name, so a reader
+ * who may see the record needs no admin directory to label them.
+ */
 export const PersonNameSchema = z.object({ userId: z.string(), name: z.string().min(1) });
 export type PersonName = z.infer<typeof PersonNameSchema>;
 
