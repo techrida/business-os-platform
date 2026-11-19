@@ -6,9 +6,10 @@
 //
 // Two databases, both seeded with role_permissions rows like a tenant that has been running:
 //   * in order: migrated up to the migration before 0053, then the real runner applies 0053 and everything after
-//     it (0081 adds `seeded` later and backfills it; 0083 adds the Marketing rows later).
-//   * ahead: migrated with every migration except U12's 0053, 0054 and 0058 (so 0081 and 0083 have run), then the
-//     real runner applies those three late, the way a database already on the later phase receives them.
+//     it (0081 adds `seeded` later and backfills it; 0083 adds the Marketing rows later, without the picture grant,
+//     and 0088 adds that grant).
+//   * ahead: migrated with every migration except U12's 0053, 0054 and 0058 (so 0081, 0083 and 0088 have run),
+//     then the real runner applies those three late, the way a database already on the later phase receives them.
 // Writes set the bos.* audit settings the triggers demand.
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -227,25 +228,27 @@ describe('0053 profile.avatar.write, applied in journal order (before 0081 and 0
       founder: { scope: 'all', seeded: true },
       user_admin: { scope: 'all', seeded: true },
       finance: { scope: 'own', seeded: true },
+      marketing: { scope: 'own', seeded: true },
       sales: { scope: 'own', seeded: true },
     });
   });
 
-  it('leaves the Marketing role without it: 0083 adds Marketing after 0053 ran and does not grant it', async () => {
-    // Pins the known gap reported to 0083's owner: once a tenant has rows the grant loader reads only the rows,
-    // so a marketing user in such a tenant cannot set their own picture until a reseed adds the default.
-    const { rows } = await inOrder.query<{ permission: string }>(
-      `SELECT permission FROM app.role_permissions
-        WHERE tenant_id = $1 AND role_key = 'marketing' ORDER BY permission`,
-      [inOrderTenant.tenantId],
+  it('gives the Marketing role its own picture: 0083 adds Marketing after 0053 ran, and 0088 fills the gap', async () => {
+    // 0053 ran before the role had rows, and 0083 left the grant out. Once a tenant has rows the grant loader reads
+    // only the rows, so without 0088 a marketing user could not set their own picture until a reseed.
+    const { rows } = await inOrder.query<{ actor_id: string }>(
+      `SELECT actor_id FROM audit.audit_events
+        WHERE tenant_id = $1 AND entity_type = 'role_permissions' AND action = 'role_permissions.insert'
+          AND after ->> 'role_key' = 'marketing' AND after ->> 'permission' = $2`,
+      [inOrderTenant.tenantId, PERMISSION],
     );
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.map((row) => row.permission)).not.toContain(PERMISSION);
+    expect(rows).toEqual([{ actor_id: 'system:migration-0088' }]);
   });
 });
 
 describe('0053 profile.avatar.write, applied late on a database that already ran 0081 and 0083', () => {
   it('gives own to marketing and the other staff roles, and all to founder and the user manager', async () => {
+    // On this path 0088 has already given marketing its own picture, so 0053's NOT EXISTS skips that role.
     const grants = await avatarGrants(ahead, aheadTenant);
     expect(Object.fromEntries(Object.entries(grants).map(([role, g]) => [role, g.scope]))).toEqual({
       founder: 'all',

@@ -51,6 +51,12 @@ const TERMS_SQL = readFileSync(
   'utf8',
 );
 
+/** 0088 adds quotations.department_id (the opportunity's department) with its foreign key and index. */
+const DEPARTMENT_SQL = readFileSync(
+  new URL('../migrations/0088_access_phase2_grants.sql', import.meta.url),
+  'utf8',
+);
+
 type Kind = 'foreignKey' | 'unique' | 'check' | 'index';
 
 interface Shape {
@@ -194,7 +200,8 @@ describe('0016_quotations and src/schema/quotations.ts', () => {
   const parsed = parseSql(`${SQL_TEXT}
 ${ACCEPTANCE_EVIDENCE_SQL}
 ${DOCUMENT_STYLE_SQL}
-${TERMS_SQL}`);
+${TERMS_SQL}
+${DEPARTMENT_SQL}`);
   // 0045 writes its check unquoted (app.quotation_versions), which parseSql does not read. The Drizzle table
   // declares it, so name it here instead of leaving the shape test red.
   parsed
