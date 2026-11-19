@@ -1,9 +1,10 @@
-import type { QuotationVersionDto } from '@bos/contracts';
-import { Dec, allocatePaymentSchedule, formatCustomerDate, type NumberSystem } from '@bos/locale';
+import { richTextToPlain, type QuotationVersionDto } from '@bos/contracts';
+import { Dec, allocatePaymentSchedule, formatCustomerDate, type NumberSystems } from '@bos/locale';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { RichText } from '@/components/ui/rich-text';
 import { Table, Td, Th } from '@/components/ui/table';
 import { money } from '@/lib/kernel-format';
 
@@ -51,11 +52,11 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function LineItems({
   version,
   showCost,
-  numberSystem,
+  numberSystems,
 }: {
   version: QuotationVersionDto;
   showCost: boolean;
-  numberSystem?: NumberSystem | undefined;
+  numberSystems?: NumberSystems | undefined;
 }) {
   const { currency, lines, taxSummary } = version;
   const taxLabels = new Map(
@@ -86,18 +87,18 @@ function LineItems({
               {line.quantity} <span className={styles.uom}>{line.uom}</span>
             </Td>
             <Td align="end" nowrap>
-              {money(line.unitPrice, currency, numberSystem)}
+              {money(line.unitPrice, currency, numberSystems)}
             </Td>
             <Td align="end" nowrap>
-              {money(line.discountAlloc, currency, numberSystem)}
+              {money(line.discountAlloc, currency, numberSystems)}
             </Td>
             <Td nowrap>{taxLabels.get(line.taxCodeId) ?? 'None'}</Td>
             <Td align="end" nowrap>
-              {money(line.taxable, currency, numberSystem)}
+              {money(line.taxable, currency, numberSystems)}
             </Td>
             {showCost ? (
               <Td align="end" nowrap>
-                {line.unitCost === null ? '–' : money(line.unitCost, currency, numberSystem)}
+                {line.unitCost === null ? '–' : money(line.unitCost, currency, numberSystems)}
               </Td>
             ) : null}
           </tr>
@@ -109,10 +110,10 @@ function LineItems({
 
 function PaymentSchedule({
   version,
-  numberSystem,
+  numberSystems,
 }: {
   version: QuotationVersionDto;
-  numberSystem?: NumberSystem | undefined;
+  numberSystems?: NumberSystems | undefined;
 }) {
   const { currency, paymentSchedule, totals } = version;
   const amounts = allocatePaymentSchedule(
@@ -137,7 +138,7 @@ function PaymentSchedule({
               {percentText(milestone.percent)}
             </Td>
             <Td align="end" nowrap>
-              {money(amounts[index]!.toFixed(2), currency, numberSystem)}
+              {money(amounts[index]!.toFixed(2), currency, numberSystems)}
             </Td>
             <Td>{milestone.dueDescription ? dateText(milestone.dueDescription) : '–'}</Td>
           </tr>
@@ -149,7 +150,7 @@ function PaymentSchedule({
 
 /**
  * The "Contents" card of a quotation revision: what is being sold and on what terms. A server
- * component: only `LongText` is a client component. It shows what the DTO carries and computes
+ * component: only `LongText` (the Show more toggle) is a client component. It shows what the DTO carries and computes
  * nothing but the payment amounts, which D22 derives from the total (2 decimals half-up, the
  * remainder on the last row).
  *
@@ -162,7 +163,7 @@ export function QuotationContents({
   internalVisible,
   paymentTermsName,
   today,
-  numberSystem,
+  numberSystems,
 }: {
   version: QuotationVersionDto;
   internalVisible: boolean;
@@ -171,7 +172,7 @@ export function QuotationContents({
   /** Today as YYYY-MM-DD in Kathmandu; defaults to the current day. */
   today?: string | undefined;
   /** How amounts are grouped (the tenant setting); omitted keeps the per-currency default. */
-  numberSystem?: NumberSystem | undefined;
+  numberSystems?: NumberSystems | undefined;
 }) {
   const showCost = internalVisible && version.lines.some((l) => l.unitCost !== null);
   const showInternalTotals =
@@ -196,8 +197,10 @@ export function QuotationContents({
   }
 
   const texts = TEXT_SECTIONS.flatMap(([key, title]) => {
-    const text = version[key];
-    return text !== null && text.trim() !== '' ? [{ key, title, text }] : [];
+    const value = version[key];
+    // The wording is rich text (D31); judge "empty" and "long" on its words, not its markup.
+    const text = richTextToPlain(value);
+    return value !== null && text.trim() !== '' ? [{ key, title, value, text }] : [];
   });
   const hasPayment = termsName || version.paymentSchedule.length > 0;
 
@@ -205,13 +208,13 @@ export function QuotationContents({
     <Panel title="Contents">
       <div className={styles.contents}>
         <Section title="Line items">
-          <LineItems version={version} showCost={showCost} numberSystem={numberSystem} />
+          <LineItems version={version} showCost={showCost} numberSystems={numberSystems} />
           {showInternalTotals ? (
             <dl className={styles.internal}>
               {version.internalCostTotal !== null ? (
                 <div>
                   <dt>Internal cost:</dt>
-                  <dd>{money(version.internalCostTotal, version.currency, numberSystem)}</dd>
+                  <dd>{money(version.internalCostTotal, version.currency, numberSystems)}</dd>
                 </div>
               ) : null}
               {version.marginPct !== null ? (
@@ -234,14 +237,16 @@ export function QuotationContents({
               <FactList facts={[{ key: 'terms', label: 'Payment terms', value: termsName }]} />
             ) : null}
             {version.paymentSchedule.length > 0 ? (
-              <PaymentSchedule version={version} numberSystem={numberSystem} />
+              <PaymentSchedule version={version} numberSystems={numberSystems} />
             ) : null}
           </Section>
         ) : null}
 
-        {texts.map(({ key, title, text }) => (
+        {texts.map(({ key, title, value, text }) => (
           <Section key={key} title={title}>
-            <LongText text={text} />
+            <LongText text={text}>
+              <RichText value={value} />
+            </LongText>
           </Section>
         ))}
       </div>
