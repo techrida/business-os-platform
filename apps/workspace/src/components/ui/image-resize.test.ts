@@ -76,7 +76,11 @@ describe('outputFileName', () => {
 });
 
 describe('shrinkImage', () => {
-  type Ops = { fills: number; draws: Array<[number, number]>; encodes: Array<{ type?: string; quality?: number }> };
+  type Ops = {
+    fills: number;
+    draws: Array<[number, number]>;
+    encodes: Array<{ type?: string; quality?: number }>;
+  };
 
   function stubBrowser(source: { width: number; height: number }, blobSizes: number[]) {
     const ops: Ops = { fills: 0, draws: [], encodes: [] };
@@ -84,7 +88,7 @@ describe('shrinkImage', () => {
     const close = vi.fn();
     vi.stubGlobal(
       'createImageBitmap',
-      vi.fn(async () => ({ ...source, close })),
+      vi.fn(() => Promise.resolve({ ...source, close })),
     );
     vi.stubGlobal(
       'OffscreenCanvas',
@@ -106,10 +110,10 @@ describe('shrinkImage', () => {
             },
           };
         }
-        async convertToBlob(options: { type?: string; quality?: number }) {
+        convertToBlob(options: { type?: string; quality?: number }) {
           ops.encodes.push(options);
           const size = blobSizes[ops.encodes.length - 1] ?? 10;
-          return new Blob([new Uint8Array(size)], { type: options.type ?? '' });
+          return Promise.resolve(new Blob([new Uint8Array(size)], { type: options.type ?? '' }));
         }
       },
     );
@@ -157,7 +161,10 @@ describe('shrinkImage', () => {
   });
 
   it('refuses a picture that is still too big after the retry and closes the bitmap', async () => {
-    const { ops, close } = stubBrowser({ width: 1024, height: 1024 }, [IMAGE_MAX_BYTES + 1, IMAGE_MAX_BYTES + 1]);
+    const { ops, close } = stubBrowser({ width: 1024, height: 1024 }, [
+      IMAGE_MAX_BYTES + 1,
+      IMAGE_MAX_BYTES + 1,
+    ]);
     await expect(shrinkImage(fileOf(PNG_HEAD, 'big.png', 'image/png'))).rejects.toThrow(
       new ImageRefusal('This picture is too large even after shrinking'),
     );
@@ -167,21 +174,27 @@ describe('shrinkImage', () => {
 
   it('refuses SVG by its type before decoding', async () => {
     const { ops } = stubBrowser({ width: 10, height: 10 }, []);
-    const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'logo.svg', { type: 'image/svg+xml' });
+    const svg = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'logo.svg', {
+      type: 'image/svg+xml',
+    });
     await expect(shrinkImage(svg)).rejects.toBeInstanceOf(ImageRefusal);
     expect(ops.encodes).toHaveLength(0);
   });
 
   it('refuses SVG bytes that claim to be a PNG', async () => {
     stubBrowser({ width: 10, height: 10 }, []);
-    const disguised = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'logo.png', { type: 'image/png' });
+    const disguised = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], 'logo.png', {
+      type: 'image/png',
+    });
     await expect(shrinkImage(disguised)).rejects.toThrow(/PNG, JPEG or WebP/);
     expect(createImageBitmap).not.toHaveBeenCalled();
   });
 
   it('refuses real PNG bytes with an unknown or empty type', async () => {
     stubBrowser({ width: 10, height: 10 }, []);
-    await expect(shrinkImage(fileOf(PNG_HEAD, 'x.gif', 'image/gif'))).rejects.toBeInstanceOf(ImageRefusal);
+    await expect(shrinkImage(fileOf(PNG_HEAD, 'x.gif', 'image/gif'))).rejects.toBeInstanceOf(
+      ImageRefusal,
+    );
     await expect(shrinkImage(fileOf(PNG_HEAD, 'x', ''))).rejects.toBeInstanceOf(ImageRefusal);
   });
 
@@ -196,10 +209,10 @@ describe('shrinkImage', () => {
     stubBrowser({ width: 10, height: 10 }, []);
     vi.stubGlobal(
       'createImageBitmap',
-      vi.fn(async () => {
-        throw new Error('InvalidStateError');
-      }),
+      vi.fn(() => Promise.reject(new Error('InvalidStateError'))),
     );
-    await expect(shrinkImage(fileOf(PNG_HEAD, 'broken.png', 'image/png'))).rejects.toThrow(/could not be read/);
+    await expect(shrinkImage(fileOf(PNG_HEAD, 'broken.png', 'image/png'))).rejects.toThrow(
+      /could not be read/,
+    );
   });
 });

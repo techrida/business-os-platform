@@ -57,9 +57,12 @@ function AvatarImage({ src, fit }: { src: string; fit: 'cover' | 'contain' }) {
 
   if (failedSrc === src) return null;
   return (
+    // eslint-disable-next-line @next/next/no-img-element -- a same-origin, authenticated picture route: drawn through <img> only
     <img
       ref={ref}
-      className={[styles.image, fit === 'contain' ? styles.contain : null].filter(Boolean).join(' ')}
+      className={[styles.image, fit === 'contain' ? styles.contain : null]
+        .filter(Boolean)
+        .join(' ')}
       src={src}
       alt=""
       loading="lazy"
