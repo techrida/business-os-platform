@@ -436,9 +436,7 @@ export default async function CustomerPage({
       label: 'Account owner',
       value:
         customer.ownerUserId !== null ? (
-          <span>
-            {ownerName(customer, people)}
-          </span>
+          <span>{ownerName(customer, people)}</span>
         ) : (
           <span className={styles.quiet}>Not assigned</span>
         ),
