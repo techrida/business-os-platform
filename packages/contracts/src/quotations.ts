@@ -634,10 +634,11 @@ export const QuotationDetailSchema = z.object({
   /** Names of the people the quotation names: its owner and the actors of its status history. */
   people: z.array(PersonNameSchema).optional(),
   /**
-   * The lead behind the quotation's opportunity (D35). null: the opportunity has no lead. Absent: the viewer may
-   * not read that lead (`crm.lead.read` with its scope on the lead's record), so its existence is not disclosed.
+   * The lead behind the quotation's opportunity (D35). Present only when the viewer may read an existing lead
+   * (`crm.lead.read` with its scope on the lead's record). Absent: no lead, or not one the viewer may read, so
+   * "none" and "hidden" look the same and a hidden lead's existence is not disclosed.
    */
-  lead: QuotationLeadSchema.nullable().optional(),
+  lead: QuotationLeadSchema.optional(),
 });
 export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
 

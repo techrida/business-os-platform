@@ -252,8 +252,8 @@ export interface QuotationDetailParts {
   capabilities: QuotationCapabilities;
   /** The people the quotation names, by display name (owner, history actors). */
   people?: readonly PersonName[];
-  /** The lead behind the opportunity (D35): null = none; undefined = the caller may not read it (key omitted). */
-  lead?: QuotationLead | null;
+  /** The lead behind the opportunity (D35), only when the caller may read it; undefined = none or hidden (key omitted). */
+  lead?: QuotationLead;
 }
 
 /** `GET /v1/quotations/:id`. Versions run oldest first, history in the order it happened. */
