@@ -1,15 +1,21 @@
 // Unit test of ImagesController (U12, D33): the route policy (any signed-in principal at the route; staff is checked
 // in the service), the image headers (inline, nosniff, immutable private cache, quoted ETag) and body, a 304 with no
 // body and no content headers, a refusal that sets no header, and the caller (scope, actor, principal) handed to the
-// service from the request context. Fake ImagesService and response; the real request store.
+// service from the request context; the one-request POST upload (declared 200, the three headers and the request
+// stream handed through, refusals propagated). Fake ImagesService and response; the real request store.
 // Run: apps/api/node_modules/.bin/vitest run src/modules/images/images.controller.test.ts (from apps/api)
 import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Readable } from 'node:stream';
 
-import { NotFoundException, RequestMethod } from '@nestjs/common';
-import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import {
+  ForbiddenException,
+  NotFoundException,
+  PayloadTooLargeException,
+  RequestMethod,
+} from '@nestjs/common';
+import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import type { Request, Response } from 'express';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,7 +27,7 @@ import {
   runWithRequestStore,
 } from '../../platform/tenancy/request-context';
 import { IMAGE_CACHE_CONTROL, ImagesController } from './images.controller';
-import type { ImagesService } from './images.service';
+import type { ImageUploadRequest, ImagesService } from './images.service';
 
 const TENANT = randomUUID();
 const ORG = randomUUID();
@@ -86,12 +92,13 @@ const request = (ifNoneMatch?: string) =>
     headers: ifNoneMatch === undefined ? {} : { 'if-none-match': ifNoneMatch },
   }) as unknown as Request;
 
-const images = { open: vi.fn(), set: vi.fn() };
+const images = { open: vi.fn(), set: vi.fn(), upload: vi.fn() };
 const controller = new ImagesController(images as unknown as ImagesService);
 
 beforeEach(() => {
   images.open.mockReset();
   images.set.mockReset();
+  images.upload.mockReset();
 });
 
 describe('route policy', () => {
@@ -190,5 +197,78 @@ describe('PUT /v1/images/:ownerType/:ownerId', () => {
     const [who, ownerType, ownerId, passed] = (images.set.mock.calls[0] ?? []) as unknown[];
     expect(who).toMatchObject({ scope: { tenantId: TENANT, organizationId: ORG }, principal: me });
     expect([ownerType, ownerId, passed]).toEqual(['customer_logo', 'not-even-a-uuid', body]);
+  });
+});
+
+describe('POST /v1/images/:ownerType/:ownerId', () => {
+  const handler = () =>
+    Object.getOwnPropertyDescriptor(ImagesController.prototype, 'upload')?.value as object;
+
+  /** A request that is a real readable stream (the body) carrying `headers`, as Express hands it over. */
+  const uploadRequest = (headers: Record<string, string | string[]>) =>
+    Object.assign(Readable.from([PNG]), { headers }) as unknown as Request;
+
+  it('is declared POST :ownerType/:ownerId with status 200 and no @Can', () => {
+    expect(Reflect.getMetadata(METHOD_METADATA, handler())).toBe(RequestMethod.POST);
+    expect(Reflect.getMetadata(PATH_METADATA, handler())).toBe(':ownerType/:ownerId');
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler())).toBe(200);
+    expect(Reflect.getMetadata(CAN_KEY, handler())).toBeUndefined();
+  });
+
+  it('hands the raw params, the three headers and the request stream itself to the service, with the caller', async () => {
+    const documentId = randomUUID();
+    images.upload.mockResolvedValue({ documentId });
+    const req = uploadRequest({
+      'content-type': 'image/png; charset=binary',
+      'content-length': String(PNG.length),
+      'x-file-name': 'my%20face.png',
+    });
+    await expect(
+      asMe(() => controller.upload('user_avatar', 'not-even-a-uuid', req)),
+    ).resolves.toEqual({ documentId });
+
+    const [ownerType, ownerId, passed, who] = (images.upload.mock.calls[0] ?? []) as [
+      string,
+      string,
+      ImageUploadRequest,
+      unknown,
+    ];
+    expect([ownerType, ownerId]).toEqual(['user_avatar', 'not-even-a-uuid']);
+    expect(passed).toEqual({
+      contentType: 'image/png; charset=binary',
+      contentLength: String(PNG.length),
+      fileNameHeader: 'my%20face.png',
+      stream: req,
+    });
+    // The stream is the request, unread: nothing in the controller buffered the body.
+    expect(passed.stream).toBe(req);
+    expect(passed.stream.readableEnded).toBe(false);
+    expect(who).toMatchObject({
+      scope: { tenantId: TENANT, organizationId: ORG },
+      actor: { kind: 'user', id: USER, correlationId: 'ctl-corr' },
+      principal: me,
+    });
+  });
+
+  it('passes absent headers as undefined, and a (typed, never seen at runtime) header array as absent', async () => {
+    images.upload.mockResolvedValue({ documentId: randomUUID() });
+    await asMe(() =>
+      controller.upload('entity_logo', ORG, uploadRequest({ 'x-file-name': ['a.png', 'b.png'] })),
+    );
+    const passed = images.upload.mock.calls[0]?.[2] as ImageUploadRequest;
+    expect(passed.contentType).toBeUndefined();
+    expect(passed.contentLength).toBeUndefined();
+    expect(passed.fileNameHeader).toBeUndefined();
+  });
+
+  it('lets the service refusals through untouched', async () => {
+    images.upload.mockRejectedValueOnce(new ForbiddenException());
+    await expect(
+      asMe(() => controller.upload('user_avatar', randomUUID(), uploadRequest({}))),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    images.upload.mockRejectedValueOnce(new PayloadTooLargeException());
+    await expect(
+      asMe(() => controller.upload('user_avatar', randomUUID(), uploadRequest({}))),
+    ).rejects.toBeInstanceOf(PayloadTooLargeException);
   });
 });
