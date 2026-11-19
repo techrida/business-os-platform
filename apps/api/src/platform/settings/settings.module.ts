@@ -1,9 +1,11 @@
 // Settings kernel: versioned settings, gap-free numbering and NPR money conversion.
 //
 // Two modules on purpose. SettingsModule holds the services only, so the worker can import it without
-// registering HTTP routes. SettingsHttpModule adds the admin controller, and only AppModule imports it.
+// registering HTTP routes. SettingsHttpModule adds the admin and document-settings controllers, and only AppModule imports it.
 import { Module } from '@nestjs/common';
 
+import { DocumentSettingsController } from './document-settings/document-settings.controller';
+import { DocumentSettingsService } from './document-settings/document-settings.service';
 import { MoneyService } from './money.service';
 import { NumberingService } from './numbering.service';
 import { SettingsController } from './settings.controller';
@@ -17,6 +19,7 @@ export class SettingsModule {}
 
 @Module({
   imports: [SettingsModule],
-  controllers: [SettingsController],
+  controllers: [SettingsController, DocumentSettingsController],
+  providers: [DocumentSettingsService],
 })
 export class SettingsHttpModule {}
