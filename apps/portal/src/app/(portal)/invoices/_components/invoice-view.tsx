@@ -7,6 +7,7 @@ import styles from '@/components/portal/quotation.module.css';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ViewDocument } from '@/components/ui/document-viewer';
 import type { PortalSettlement } from '@/lib/api.billing';
 
 import { canPay, KIND_LABEL, SETTLEMENT_LOOK } from './invoice-status';
@@ -77,9 +78,14 @@ export function InvoiceView({
         ) : null}
         <div className={styles.download}>
           {view.file ? (
-            <LinkButton variant="secondary" size="small" href={`/invoices/${view.id}/document`}>
-              Download PDF
-            </LinkButton>
+            <ViewDocument
+              name={view.file.filename}
+              previewUrl={`/invoices/${view.id}/document/preview`}
+              downloadUrl={`/invoices/${view.id}/document`}
+              variant="secondary"
+              size="small"
+              withDownload
+            />
           ) : (
             <p className={styles.muted}>The PDF copy is being prepared.</p>
           )}
