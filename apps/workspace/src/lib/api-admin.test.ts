@@ -98,9 +98,13 @@ describe('users', () => {
             status: 'invited',
             idpOrgId: UUID_B,
             roles: [],
+            department: null,
+            lastActiveAt: null,
+            createdAt: '2026-11-19T00:00:00.000Z',
           },
         ],
         nextAfter: UUID_A,
+        nextPage: null,
       }),
     );
     const page = await listUsers(session, { limit: 10, after: UUID_B });

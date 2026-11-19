@@ -53,6 +53,7 @@ export const ENDPOINTS = {
   // (proto/zitadel/management.proto): GET = GetLoginPolicy (effective policy; `isDefault` true means
   // inherited from the instance), POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy.
   orgLoginPolicy: '/management/v1/policies/login',
+  instanceLoginPolicy: '/admin/v1/policies/login',
 
   // admin v1 (REST) instance members (K8). UNVERIFIED: ListIAMMembers / AddIAMMember as named in
   // proto/zitadel/admin.proto (`POST /admin/v1/members/_search`, `POST /admin/v1/members` { userId, roles });
@@ -257,7 +258,8 @@ export interface ZitadelApi {
    * custom org policy when the org inherits the instance default. Returns true when it changed
    * something, false when self-registration was already off (nothing is written then).
    */
-  ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean>;
+  ensureInstancePasswordReset(): Promise<boolean>;
+  ensureStaffLoginPolicy(orgId: string): Promise<boolean>;
 
   /**
    * Pins the org's login policy to `patch`. An inherited policy always becomes a custom one (so a later
@@ -480,7 +482,9 @@ const MemberList = z.object({
   result: z.array(z.object({ userId: Str, roles: z.array(Str).default([]) })).default([]),
 });
 const ProviderList = z.object({
-  result: z.array(z.object({ id: Str.min(1), description: Str.default('') })).default([]),
+  result: z
+    .array(z.object({ id: Str.min(1), description: Str.default(''), state: Str.optional() }))
+    .default([]),
 });
 // Protobuf JSON: false booleans and empty lists are omitted. Everything else in `policy` is carried
 // over verbatim when the policy is rewritten (see CARRY_OVER).
@@ -488,6 +492,8 @@ const LoginPolicyResponse = z.object({
   policy: z.looseObject({
     isDefault: z.boolean().default(false),
     allowRegister: z.boolean().default(false),
+    hidePasswordReset: z.boolean().default(false),
+    ignoreUnknownUsernames: z.boolean().default(false),
     secondFactors: z.array(Str).default([]),
     multiFactors: z.array(Str).default([]),
     idps: z.array(z.unknown()).default([]),
@@ -502,8 +508,6 @@ const CARRY_OVER = [
   'allowExternalIdp',
   'forceMfa',
   'passwordlessType',
-  'hidePasswordReset',
-  'ignoreUnknownUsernames',
   'defaultRedirectUri',
   'passwordCheckLifetime',
   'externalLoginCheckLifetime',
@@ -515,6 +519,19 @@ const CARRY_OVER = [
   'disableLoginWithPhone',
   'forceMfaLocalOnly',
 ] as const;
+function loginPolicyWithPrivateReset(
+  policy: z.infer<typeof LoginPolicyResponse>['policy'],
+  allowRegister: boolean,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    allowRegister,
+    hidePasswordReset: false,
+    ignoreUnknownUsernames: true,
+  };
+  for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+  return body;
+}
+
 const TokenResponse = z.object({ access_token: Str.min(1) });
 const TotpRegistrationResponse = z.object({ uri: Str.min(1), secret: Str.min(1) });
 const AuthMethodList = z.object({ authMethodTypes: z.array(Str).default([]) });
@@ -933,7 +950,22 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
     await this.transport.post(ENDPOINTS.addIamMember, { userId, roles });
   }
 
-  async ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
+  async ensureInstancePasswordReset(): Promise<boolean> {
+    const { policy } = parse(
+      LoginPolicyResponse,
+      await this.transport.get(ENDPOINTS.instanceLoginPolicy),
+      'Get instance login policy',
+    );
+    if (!policy.hidePasswordReset && policy.ignoreUnknownUsernames) return false;
+
+    await this.transport.put(
+      ENDPOINTS.instanceLoginPolicy,
+      loginPolicyWithPrivateReset(policy, policy.allowRegister),
+    );
+    return true;
+  }
+
+  async ensureStaffLoginPolicy(orgId: string): Promise<boolean> {
     const asOrg = { 'x-zitadel-orgid': orgId };
     const current = parse(
       LoginPolicyResponse,
@@ -941,10 +973,11 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
       'GetLoginPolicy',
     );
     const { policy } = current;
-    if (!policy.allowRegister) return false;
+    if (!policy.allowRegister && !policy.hidePasswordReset && policy.ignoreUnknownUsernames) {
+      return false;
+    }
 
-    const body: Record<string, unknown> = { allowRegister: false };
-    for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+    const body = loginPolicyWithPrivateReset(policy, false);
 
     if (policy.isDefault || current.isDefault) {
       // Inherited from the instance: create the org's own policy, starting from the same settings.
@@ -987,7 +1020,7 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
     Object.assign(body, patch);
 
     if (inherited) {
-      // Same refusal as ensureOrgLoginPolicyNoRegister: IDP links cannot be copied faithfully.
+      // Same refusal as ensureStaffLoginPolicy: IDP links cannot be copied faithfully.
       if (policy.idps.length > 0) {
         throw new Error(
           'The inherited login policy has identity provider links; copy them by hand into a custom org policy.',
@@ -1016,20 +1049,23 @@ export class ZitadelClient implements ZitadelApi, ZitadelP1Api, ZitadelInstanceA
       await this.transport.post(ENDPOINTS.listEmailProviders, {}),
       'ListEmailProviders',
     );
-    if (list.result.some((p) => p.description === spec.description)) return false;
-    const added = parse(
-      IdOnly,
-      await this.transport.post(ENDPOINTS.addEmailProviderSmtp, {
-        senderAddress: spec.senderAddress,
-        senderName: spec.senderName,
-        tls: false,
-        host: spec.host,
-        description: spec.description,
-        none: {},
-      }),
-      'AddEmailProviderSMTP',
-    );
-    await this.transport.post(ENDPOINTS.activateEmailProvider(added.id), {});
+    const existing = list.result.find((provider) => provider.description === spec.description);
+    if (list.result.some((provider) => provider.state === 'EMAIL_PROVIDER_ACTIVE')) return false;
+    const provider =
+      existing ??
+      parse(
+        IdOnly,
+        await this.transport.post(ENDPOINTS.addEmailProviderSmtp, {
+          senderAddress: spec.senderAddress,
+          senderName: spec.senderName,
+          tls: false,
+          host: spec.host,
+          description: spec.description,
+          none: {},
+        }),
+        'AddEmailProviderSMTP',
+      );
+    await this.transport.post(ENDPOINTS.activateEmailProvider(provider.id), {});
     return true;
   }
 

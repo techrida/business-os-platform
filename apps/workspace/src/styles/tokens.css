@@ -456,7 +456,8 @@
 }
 
 /* ===== Dark theme: only the aliases that differ from light ===== */
-[data-theme='dark'] {
+:root[data-theme='dark'],
+:root:not([data-theme='light']) [data-theme='dark'] {
   color-scheme: dark;
 
   /* Semantic */

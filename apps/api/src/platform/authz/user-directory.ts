@@ -3,7 +3,7 @@
 // An abstract class, not an interface, so Nest can use it as the injection token.
 import type { RoleKey } from '@bos/contracts';
 
-import type { TxScope } from '../db/tx';
+import type { Actor, TxScope } from '../db/tx';
 
 /**
  * One `app.user_entities` row: a legal entity the user may act for (ADR 0027 §3). Portal users have
@@ -45,6 +45,9 @@ export abstract class UserDirectory {
     tenantId: string;
     idpOrgId: string;
   }): Promise<ResolvedUser>;
+
+  /** Best-effort staff activity tracking after route authorization. */
+  recordActivity?(scope: TxScope, actor: Actor): void;
 
   /** Active users holding `role` in this scope: the approver lookup for routing and notifications. */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
