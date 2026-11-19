@@ -197,6 +197,7 @@ export function buildApprovalSnapshot(i: {
     PurchaseRequestRow,
     | 'requestType'
     | 'departmentId'
+    | 'costCenterId'
     | 'requesterUserId'
     | 'justification'
     | 'requiredBy'
@@ -214,6 +215,7 @@ export function buildApprovalSnapshot(i: {
       number: i.number,
       requestType: i.pr.requestType,
       departmentId: i.pr.departmentId,
+      costCenterId: i.pr.costCenterId,
       requesterUserId: i.pr.requesterUserId,
       justification: i.pr.justification,
       requiredBy: i.pr.requiredBy,

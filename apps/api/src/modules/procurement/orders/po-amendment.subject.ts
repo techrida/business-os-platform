@@ -11,9 +11,11 @@ import { Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
-import type { DbTransaction } from '../../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { idAt, procurementReferenceNames } from '../reference-names';
 import { PO_AMENDMENT_DOCUMENT_TYPE, PO_AUDIT_ENTITY } from './purchase-order.rules';
 import {
   amendmentRequestOf,
@@ -35,6 +37,16 @@ export class PoAmendmentSubject implements ApprovalSubject {
     private readonly audit: AuditService,
     private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  /** The order by number, its vendor by legal name and each amended line as "Line N: description". */
+  referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
+    const lines = (snapshot as { amendment?: { lines?: unknown } } | null)?.amendment?.lines;
+    return procurementReferenceNames(q, scope, {
+      purchaseOrderIds: [idAt(snapshot, 'amendment', 'purchaseOrderId')],
+      vendorIds: [idAt(snapshot, 'vendorPartyId')],
+      purchaseOrderLineIds: Array.isArray(lines) ? lines.map((line) => idAt(line, 'id')) : [],
+    });
+  }
 
   async onDecided(tx: DbTransaction, amendmentId: string, outcome: Outcome): Promise<void> {
     const ctx = await readTxContext(tx);
