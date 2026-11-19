@@ -70,8 +70,12 @@ export function workflow(cfg) {
   const h1 = (p, name) => p.getByRole('heading', { level: 1, name });
   const status = (s, text) => s.page.getByText(text, { exact: true }).first();
 
-  /** Inbox → this run's row (matched by a unique number or name) → Approve with a comment. */
-  const approve = async (s, persona, match, comment) => {
+  /**
+   * Inbox → this run's row (matched by a unique number or name) → Approve with a comment.
+   * Without a waiting row, `isDone(s)` decides: true means the record is already past this
+   * approval (an earlier attempt approved it), so nothing is repeated; otherwise the step fails.
+   */
+  const approve = async (s, persona, match, comment, isDone) => {
     await as(s, persona);
     await s.caption(`${s.captionText.split(' — ')[0]} — ${persona}: Inbox → approve`);
     await s.goto('/inbox', (p) => p.getByRole('heading', { name: 'Inbox', exact: true }));
@@ -91,6 +95,24 @@ export function workflow(cfg) {
       await s.page.waitForTimeout(5000);
       await s.page.reload({ waitUntil: 'domcontentloaded' });
     }
+    if (
+      !(await row
+        .first()
+        .isVisible()
+        .catch(() => false)) &&
+      isDone
+    ) {
+      if (await isDone(s)) {
+        s.checks.push(
+          `note: no waiting row for ${persona}; ${match} is already past this approval`,
+        );
+        return;
+      }
+      throw new StepFailure(
+        `${persona} has no waiting approval for ${match}, and it is not approved yet. An earlier ` +
+          'attempt may have approved it without recording that; resume from the next step.',
+      );
+    }
     await s.see(row, `${persona}'s inbox row for ${match}`);
     await s.click(row.first().getByRole('link').first(), 'the inbox row');
     await s.page.waitForURL(/\/inbox\/[0-9a-f-]{36}/);
@@ -108,7 +130,49 @@ export function workflow(cfg) {
     );
   };
 
+  /** One approval per approver per record: approvers already done are kept in state[progressKey]. */
+  const approveOnce = async (s, progressKey, persona, match, comment, isDone) => {
+    const done = s.state[progressKey] ?? [];
+    if (done.includes(persona)) {
+      s.checks.push(`note: ${persona} approved ${match} in an earlier attempt of this run`);
+      return;
+    }
+    await approve(s, persona, match, comment, isDone);
+    s.record(progressKey, [...done, persona]);
+  };
+
   const openUrl = (s, key, ready) => s.goto(s.need(key), ready);
+
+  const visible = (locator) =>
+    locator
+      .first()
+      .isVisible()
+      .catch(() => false);
+
+  /** The quotation left Approval pending (Approved, Sent or Accepted). */
+  const quotePastApproval = async (s) => {
+    await openUrl(s, 'quotationUrl', (p) => p.getByText('Status history', { exact: true }));
+    for (const st of ['Approved', 'Sent', 'Accepted'])
+      if (await visible(status(s, st))) return true;
+    return false;
+  };
+
+  /** The invoice is no longer Awaiting approval (approved or issued). */
+  const invoicePastApproval = async (s) => {
+    await openUrl(s, 'invoiceUrl', (p) => p.getByText('Invoice details', { exact: true }));
+    return !(await visible(status(s, 'Awaiting approval')));
+  };
+
+  /** sales-4's last check: optional evidence is left empty. */
+  const optionalStaysMissing = async (s) => {
+    const optional = s.page.getByRole('row').filter({
+      has: s.page.getByRole('rowheader', { name: 'Proof of address', exact: true }),
+    });
+    await s.see(
+      optional.getByText('Missing', { exact: true }),
+      'optional evidence stays empty (Missing)',
+    );
+  };
 
   /** Invoice action dialogs: confirm, then the success state offers Done, which reloads the page. */
   const invoiceAction = async (s, trigger, dialogName, confirm) => {
@@ -336,6 +400,12 @@ export function workflow(cfg) {
         id: 'sales-1',
         title: 'Create and qualify the lead',
         async run(s) {
+          // Not repeatable: a second lead would carry the same unique name.
+          if (s.state.leadUrl)
+            throw new StepFailure(
+              "sales-1 already created this run's lead in an earlier attempt; it is not created twice. " +
+                'Resume from sales-2 if the lead reached Qualified, otherwise use a new label.',
+            );
           await as(s, 'Dev Sales');
           await s.goto('/leads/new', (p) =>
             p.getByRole('textbox', { name: 'Lead title', exact: true }),
@@ -475,6 +545,11 @@ export function workflow(cfg) {
         id: 'sales-3',
         title: 'Open business verification',
         async run(s) {
+          // Not repeatable: the case exists, and its "Submit refused" check holds only before uploads.
+          if (s.state.verificationUrl)
+            throw new StepFailure(
+              "sales-3 already started this run's verification case in an earlier attempt. Resume from sales-4.",
+            );
           await as(s, 'Dev Sales');
           await s.goto('/customers', (p) => p.getByLabel('Search organizations'));
           await s.fill('Search organizations', v.company);
@@ -525,6 +600,14 @@ export function workflow(cfg) {
           await openUrl(s, 'verificationUrl', (p) =>
             p.getByRole('table', { name: 'Verification documents' }),
           );
+          // Retry-safe: a submitted case reads Awaiting review (or Verified once decided).
+          if (
+            (await visible(status(s, 'Awaiting review'))) ||
+            (await visible(status(s, 'Verified')))
+          ) {
+            s.checks.push('note: the case was submitted by an earlier attempt of this run');
+            return optionalStaysMissing(s);
+          }
           for (const [label, file] of DOCS) {
             await s.caption(`sales-4 — Upload ${label}: ${file}, then Save`);
             const row = s.page
@@ -562,13 +645,7 @@ export function workflow(cfg) {
             .getByRole('button', { name: 'Submit for review', exact: true })
             .click();
           await s.see(status(s, 'Awaiting review'), 'the case is Awaiting review', 60000);
-          const optional = s.page.getByRole('row').filter({
-            has: s.page.getByRole('rowheader', { name: 'Proof of address', exact: true }),
-          });
-          await s.see(
-            optional.getByText('Missing', { exact: true }),
-            'optional evidence stays empty (Missing)',
-          );
+          await optionalStaysMissing(s);
         },
       },
       {
@@ -587,31 +664,44 @@ export function workflow(cfg) {
               p.getByRole('table', { name: 'Verification documents' }),
             );
           await s.see(s.page.getByRole('table', { name: 'Verification documents' }), 'the case');
-          const final = s.button('Approve customer');
-          s.expect(
-            (await final.first().getAttribute('aria-disabled')) === 'true',
-            'Approve customer waits for the per-document approvals',
-          );
-          for (const [label] of DOCS) {
-            await s.caption(`sales-5 — approve ${label}`);
-            const row = s.page
-              .getByRole('row')
-              .filter({ has: s.page.getByRole('rowheader', { name: label, exact: true }) });
-            await s.click(
-              row.getByRole('button', { name: `Approve ${label}` }),
-              `Approve ${label}`,
-            );
-            await s.see(row.getByText('Accepted', { exact: true }), `${label} Accepted`);
+          // Retry-safe: skip what an earlier attempt already decided.
+          if (await visible(s.page.getByText('This customer is verified.'))) {
+            s.checks.push('note: the customer was approved by an earlier attempt of this run');
+          } else {
+            const final = s.button('Approve customer');
+            const docRow = (label) =>
+              s.page
+                .getByRole('row')
+                .filter({ has: s.page.getByRole('rowheader', { name: label, exact: true }) });
+            let accepted = 0;
+            for (const [label] of DOCS)
+              if (await visible(docRow(label).getByText('Accepted', { exact: true }))) accepted++;
+            if (accepted === 0)
+              s.expect(
+                (await final.first().getAttribute('aria-disabled')) === 'true',
+                'Approve customer waits for the per-document approvals',
+              );
+            else s.checks.push(`note: ${accepted} document(s) accepted by an earlier attempt`);
+            for (const [label] of DOCS) {
+              const row = docRow(label);
+              if (await visible(row.getByText('Accepted', { exact: true }))) continue;
+              await s.caption(`sales-5 — approve ${label}`);
+              await s.click(
+                row.getByRole('button', { name: `Approve ${label}` }),
+                `Approve ${label}`,
+              );
+              await s.see(row.getByText('Accepted', { exact: true }), `${label} Accepted`);
+            }
+            await s.caption('sales-5 — Approve customer with the reason');
+            await s.click(final, 'Approve customer');
+            const dialog = s.page.getByRole('dialog', { name: 'Approve this customer?' });
+            await dialog
+              .getByLabel('Reason', { exact: true })
+              .fill('Demo registration, tax and signatory documents independently checked.');
+            await s.pause(400);
+            await dialog.getByRole('button', { name: 'Approve customer', exact: true }).click();
+            await s.seeText('This customer is verified.');
           }
-          await s.caption('sales-5 — Approve customer with the reason');
-          await s.click(final, 'Approve customer');
-          const dialog = s.page.getByRole('dialog', { name: 'Approve this customer?' });
-          await dialog
-            .getByLabel('Reason', { exact: true })
-            .fill('Demo registration, tax and signatory documents independently checked.');
-          await s.pause(400);
-          await dialog.getByRole('button', { name: 'Approve customer', exact: true }).click();
-          await s.seeText('This customer is verified.');
           await s.caption('sales-5 — the customer shows the approved verification');
           await openUrl(s, 'customerUrl', (p) => h1(p, C));
           const text = await main(s);
@@ -626,6 +716,12 @@ export function workflow(cfg) {
         id: 'sales-6',
         title: 'Build and price the quotation',
         async run(s) {
+          // Not repeatable: a second quotation would be built on the same opportunity.
+          if (s.state.quotationEditUrl)
+            throw new StepFailure(
+              "sales-6 already built this run's quotation in an earlier attempt; it is not built twice. " +
+                'Resume from sales-7, or use a new label.',
+            );
           await as(s, 'Dev Sales');
           await openUrl(s, 'opportunityUrl', (p) => h1(p, L));
           const start = s.page
@@ -688,51 +784,75 @@ export function workflow(cfg) {
         timeoutMs: 480000,
         async run(s) {
           await as(s, 'Dev Sales');
+          const frozen = (p) => p.getByText('This version can no longer be edited');
           await openUrl(s, 'quotationEditUrl', (p) =>
-            p.getByRole('button', { name: 'Submit for approval', exact: true }),
+            p.getByRole('button', { name: 'Submit for approval', exact: true }).or(frozen(p)),
           );
-          await s.caption(
-            'sales-7 — read the route: Accountant → Finance → Management (over NPR 1,00,000)',
-          );
-          const reqHeading = s.page.getByRole('heading', { name: 'Approval requirements' });
-          await s.see(reqHeading, 'Approval requirements');
-          const route = await s.text(
-            s.page
-              .locator('section, aside, div')
-              .filter({ has: reqHeading, hasText: /Approver for step 1/ })
-              .last(),
-          );
-          s.checks.push(`approval requirements: ${route.slice(0, 200)}`);
-          const r = route.slice(0, route.search(/Approver for step 1|$/));
-          const a = r.search(/accountant/i);
-          const f = r.search(/finance/i);
-          const m = r.search(/manager|management/i);
-          s.expect(
-            a >= 0 && f > a && m > f,
-            'route Accountant → Finance → Management',
-            r.slice(0, 300),
-          );
-          s.expect(!/founder/i.test(r), 'no Founder step at this amount', r.slice(0, 300));
-          await s.pause();
-          await s.click(s.button('Submit for approval'), 'Submit for approval');
-          const confirm = s.page.getByRole('dialog', {
-            name: 'Submit this quotation for approval?',
-          });
-          await s.pause();
-          await confirm.getByRole('button', { name: 'Submit quotation' }).click();
-          await s.page.waitForURL(/[?&]submitted=1/, { timeout: cfg.navTimeout });
-          await s.see(status(s, 'Approval pending'), 'Approval pending');
-          const number = QT.exec(await main(s))?.[0];
-          s.expect(number, 'the quotation has a number');
-          s.record('quotationNumber', number);
-          await s.notVisible(s.button('Approve'), 'an Approve button for the author');
+          let number = s.state.quotationNumber;
+          if (await visible(frozen(s.page))) {
+            // Retry-safe: an earlier attempt submitted it; only the approvals may remain.
+            number ??= QT.exec(await main(s))?.[0];
+            s.expect(number, 'the submitted quotation has a number');
+            if (!s.state.quotationNumber) s.record('quotationNumber', number);
+            s.checks.push('note: the quotation was submitted by an earlier attempt of this run');
+          } else {
+            await s.caption(
+              'sales-7 — read the route: Accountant → Finance → Management (over NPR 1,00,000)',
+            );
+            const reqHeading = s.page.getByRole('heading', { name: 'Approval requirements' });
+            await s.see(reqHeading, 'Approval requirements');
+            const route = await s.text(
+              s.page
+                .locator('section, aside, div')
+                .filter({ has: reqHeading, hasText: /Approver for step 1/ })
+                .last(),
+            );
+            s.checks.push(`approval requirements: ${route.slice(0, 200)}`);
+            const r = route.slice(0, route.search(/Approver for step 1|$/));
+            const a = r.search(/accountant/i);
+            const f = r.search(/finance/i);
+            const m = r.search(/manager|management/i);
+            s.expect(
+              a >= 0 && f > a && m > f,
+              'route Accountant → Finance → Management',
+              r.slice(0, 300),
+            );
+            s.expect(!/founder/i.test(r), 'no Founder step at this amount', r.slice(0, 300));
+            await s.pause();
+            await s.click(s.button('Submit for approval'), 'Submit for approval');
+            const confirm = s.page.getByRole('dialog', {
+              name: 'Submit this quotation for approval?',
+            });
+            await s.pause();
+            await confirm.getByRole('button', { name: 'Submit quotation' }).click();
+            await s.page.waitForURL(/[?&]submitted=1/, { timeout: cfg.navTimeout });
+            await s.see(status(s, 'Approval pending'), 'Approval pending');
+            number = QT.exec(await main(s))?.[0];
+            s.expect(number, 'the quotation has a number');
+            s.record('quotationNumber', number);
+            await s.notVisible(s.button('Approve'), 'an Approve button for the author');
+          }
 
-          await approve(s, 'Dev Accountant', number, 'Demo quote pricing checked.');
-          await approve(s, 'Dev Finance', number, 'Demo quote budget approved.');
-          await approve(s, 'Dev Management', number, 'Demo threshold approval complete.');
+          // Each approver once; an approval an earlier attempt gave is not given again.
+          const k = 'quotationApprovals';
+          const done = quotePastApproval;
+          await approveOnce(s, k, 'Dev Accountant', number, 'Demo quote pricing checked.', done);
+          await approveOnce(s, k, 'Dev Finance', number, 'Demo quote budget approved.', done);
+          await approveOnce(
+            s,
+            k,
+            'Dev Management',
+            number,
+            'Demo threshold approval complete.',
+            done,
+          );
           await s.caption('sales-7 — the quotation is Approved');
           await openUrl(s, 'quotationUrl', (p) => p.getByRole('heading', { level: 1 }));
-          await s.see(status(s, 'Approved'), 'quotation status Approved');
+          // A re-run after sales-8/9 finds it Sent or Accepted: later steps' effects.
+          const later =
+            (await visible(status(s, 'Sent'))) || (await visible(status(s, 'Accepted')));
+          if (later) s.checks.push('note: the quotation already moved past Approved (later steps)');
+          else await s.see(status(s, 'Approved'), 'quotation status Approved');
         },
       },
       {
@@ -748,12 +868,9 @@ export function workflow(cfg) {
           else await openUrl(s, 'quotationUrl', (p) => p.getByRole('heading', { level: 1 }));
           await s.see(s.page.getByRole('heading', { level: 1 }), 'the quotation');
           await s.page.waitForTimeout(1500);
-          // Retry-safe: an earlier attempt may already have sent it; then only the checks remain.
-          if (
-            await status(s, 'Sent')
-              .isVisible()
-              .catch(() => false)
-          )
+          // Retry-safe: an earlier attempt may already have sent it (Sent, or Accepted after sales-9);
+          // then only the checks remain.
+          if ((await visible(status(s, 'Sent'))) || (await visible(status(s, 'Accepted'))))
             s.checks.push('note: the quotation was sent by an earlier attempt of this run');
           else await downloadAndSend(s);
 
@@ -784,25 +901,32 @@ export function workflow(cfg) {
         async run(s) {
           await as(s, 'Dev Sales');
           await openUrl(s, 'quotationUrl', (p) =>
-            p.getByRole('button', { name: 'Record outcome' }),
+            p
+              .getByRole('button', { name: 'Record outcome' })
+              .or(p.getByText('Accepted', { exact: true })),
           );
-          await s.click(s.button('Record outcome'), 'Record outcome');
-          const d = s.page.getByRole('dialog', { name: /^Record the outcome of / });
-          await d.getByLabel('Accepted').check();
-          await d.getByLabel('Signed quotation').check();
-          await d
-            .getByLabel('Comment')
-            .fill(
-              'Anu accepted the demo quotation; signed-quotation.pdf is the demonstration evidence.',
+          // Retry-safe: an outcome an earlier attempt recorded is not recorded again.
+          if (await visible(status(s, 'Accepted'))) {
+            s.checks.push('note: acceptance was recorded by an earlier attempt of this run');
+          } else {
+            await s.click(s.button('Record outcome'), 'Record outcome');
+            const d = s.page.getByRole('dialog', { name: /^Record the outcome of / });
+            await d.getByLabel('Accepted').check();
+            await d.getByLabel('Signed quotation').check();
+            await d
+              .getByLabel('Comment')
+              .fill(
+                'Anu accepted the demo quotation; signed-quotation.pdf is the demonstration evidence.',
+              );
+            await s.pause(400);
+            await d.getByRole('button', { name: 'Record outcome' }).click();
+            await s.see(
+              d.getByRole('status').filter({ hasText: /Recorded as accepted/i }),
+              'Recorded as accepted',
+              60000,
             );
-          await s.pause(400);
-          await d.getByRole('button', { name: 'Record outcome' }).click();
-          await s.see(
-            d.getByRole('status').filter({ hasText: /Recorded as accepted/i }),
-            'Recorded as accepted',
-            60000,
-          );
-          await d.getByRole('button', { name: 'Done' }).click();
+            await d.getByRole('button', { name: 'Done' }).click();
+          }
           await s.see(status(s, 'Accepted'), 'quotation Accepted');
           await openUrl(s, 'opportunityUrl', (p) => h1(p, L));
           await s.see(status(s, 'Won'), 'opportunity Won');
@@ -883,19 +1007,45 @@ export function workflow(cfg) {
             await as(s, 'Dev Founder');
             const submit = (p) =>
               p.getByRole('button', { name: 'Submit for approval', exact: true });
+            const issued = (p) => p.getByRole('heading', { level: 1, name: INV });
             await openUrl(s, 'invoiceUrl', (p) =>
-              submit(p).or(p.getByText('Awaiting approval', { exact: true })),
+              submit(p)
+                .or(p.getByText('Awaiting approval', { exact: true }))
+                .or(p.getByRole('button', { name: 'Issue tax invoice' }))
+                .or(issued(p)),
             );
+            if (await visible(issued(s.page))) {
+              // Issued by an earlier attempt that stopped before it recorded the number.
+              s.record('invoiceNumber', INV.exec(await issued(s.page).first().innerText())[0]);
+              s.checks.push('note: the invoice was issued by an earlier attempt of this run');
+              await as(s, 'Dev Finance');
+              await openUrl(s, 'invoiceUrl', (p) => p.getByText(s.state.invoiceNumber).first());
+            }
+          }
+          if (!s.state.invoiceNumber) {
             s.expect(!INV.test(await main(s)), 'no invoice number before it is issued');
-            // Retry-safe: a re-run after the submit went through finds it Awaiting approval.
-            if (await submit(s.page).isVisible())
+            // Retry-safe: a re-run after the submit went through finds it past the draft.
+            if (await visible(s.button('Submit for approval'))) {
               await invoiceAction(s, 'Submit for approval', /^Submit /, 'Submit for approval');
-            await s.see(status(s, 'Awaiting approval'), 'invoice Awaiting approval', 60000);
+              await s.see(status(s, 'Awaiting approval'), 'invoice Awaiting approval', 60000);
+            } else
+              s.checks.push('note: the invoice was submitted by an earlier attempt of this run');
 
-            await approve(s, 'Dev Accountant', v.company, 'Demo invoice lines and tax checked.');
-            await approve(s, 'Dev Finance', v.company, 'Demo invoice ready to issue.');
+            // Each approver once; an approval an earlier attempt gave is not given again.
+            const k = 'invoiceApprovals';
+            const done = invoicePastApproval;
+            await approveOnce(
+              s,
+              k,
+              'Dev Accountant',
+              v.company,
+              'Demo invoice lines and tax checked.',
+              done,
+            );
+            await approveOnce(s, k, 'Dev Finance', v.company, 'Demo invoice ready to issue.', done);
 
             await s.caption('sales-11 — Finance issues the tax invoice');
+            await as(s, 'Dev Finance');
             await openUrl(s, 'invoiceUrl', (p) =>
               p.getByRole('button', { name: 'Issue tax invoice' }),
             );
@@ -1017,25 +1167,28 @@ export function workflow(cfg) {
           );
           const inv = s.need('invoiceNumber');
           const allocations = s.page.getByRole('region', { name: 'Allocations', exact: true });
-          await s.click(
-            allocations.getByRole('button', { name: `Deallocate ${inv}`, exact: true }),
-            `Deallocate ${inv}`,
-          );
-          const d = s.page.getByRole('dialog', { name: `Deallocate ${inv}`, exact: true });
-          await d
-            .getByLabel('Reason for deallocating', { exact: true })
-            .fill('Demo reversal check; immediately reallocate.');
-          await s.pause(400);
-          await d.getByRole('button', { name: 'Deallocate', exact: true }).click();
-          await s.see(
-            allocations.getByText('Reversed: Demo reversal check; immediately reallocate.'),
-            'the reversal row',
-          );
+          const reason = 'Demo reversal check; immediately reallocate.';
+          const reversal = allocations.getByText(`Reversed: ${reason}`);
+          // Retry-safe: each half (deallocate, re-allocate) runs only if its effect is missing.
+          if (await visible(reversal)) {
+            s.checks.push('note: the deallocation was done by an earlier attempt of this run');
+          } else {
+            await s.click(
+              allocations.getByRole('button', { name: `Deallocate ${inv}`, exact: true }),
+              `Deallocate ${inv}`,
+            );
+            const d = s.page.getByRole('dialog', { name: `Deallocate ${inv}`, exact: true });
+            await d.getByLabel('Reason for deallocating', { exact: true }).fill(reason);
+            await s.pause(400);
+            await d.getByRole('button', { name: 'Deallocate', exact: true }).click();
+            await s.see(reversal, 'the reversal row');
+          }
           s.expect(
             hasAmount(await s.text(allocations), 67800),
             'the original allocation row is kept',
           );
-          await allocate(s);
+          if ((await leftOnPayment(s)) > 0) await allocate(s);
+          else s.checks.push('note: the re-allocation was done by an earlier attempt of this run');
           await s.goto(s.need('statementUrl'), (p) => p.getByRole('heading', { level: 1 }));
           await statementOpen(s, 67800);
         },

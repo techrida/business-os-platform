@@ -157,46 +157,52 @@ export function workflow(cfg) {
         title: 'Create the internal memo',
         async run(s) {
           await asPersona(s, 'Dev Sales');
-          await s.goto('/memos/new', (p) =>
-            p.getByRole('combobox', { name: 'Approved by', exact: true }),
-          );
-          // Controlled inputs: text typed before hydration is wiped. Wait for the page to settle.
-          await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-          await s.choose('Department', 'Operations');
-          // "Leave the date supplied by the form": it should be today in the user's time zone.
-          const supplied = await s.page.locator('input[type="date"]').first().inputValue();
-          const local = await s.page.evaluate(() => new Date().toLocaleDateString('en-CA'));
-          if (supplied !== local)
-            s.finding(
-              `New memo's supplied date is ${supplied} but today in the browser's time zone is ${local}: ` +
-                'the form defaults to the UTC date (memo-form-model.ts todayIso uses toISOString), so in Nepal ' +
-                'every memo started between 00:00 and 05:45 is dated yesterday.',
-              'normal',
+          // Retry-safe: a memo an earlier attempt saved is not created again; the checks still run.
+          if (s.state.memoUrl) {
+            s.checks.push('note: the memo was saved by an earlier attempt of this run');
+          } else {
+            await s.goto('/memos/new', (p) =>
+              p.getByRole('combobox', { name: 'Approved by', exact: true }),
             );
-          else s.checks.push(`supplied date ${supplied} is today`);
-          await s.fill('Subject', subject);
-          await s.fill('Body', body);
-          s.expect(
-            (await s.field('Subject').inputValue()) === subject,
-            'the subject kept its value',
-          );
-          await s.typeahead('Recommended by 1', 'Dev Accountant');
-          await s.typeahead('Approved by', 'Dev Finance');
-          await s.pause();
-          await s.click(s.button('Next'), 'Next (saves the memo)');
-          await s.page.waitForURL(/\/memos\/[0-9a-f-]{36}(\?.*)?$/, { timeout: cfg.navTimeout });
-          await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the saved memo');
-          const url = s.page.url().split('?')[0];
-          s.record('memoUrl', url.replace(cfg.appUrl, ''));
-          const number = /MEMO-[\w/-]*\d{5}/.exec(await s.text())?.[0];
-          if (number) s.record('memoNumber', number);
+            // Controlled inputs: text typed before hydration is wiped. Wait for the page to settle.
+            await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+            await s.choose('Department', 'Operations');
+            // "Leave the date supplied by the form": it should be today in the user's time zone.
+            const supplied = await s.page.locator('input[type="date"]').first().inputValue();
+            const local = await s.page.evaluate(() => new Date().toLocaleDateString('en-CA'));
+            if (supplied !== local)
+              s.finding(
+                `New memo's supplied date is ${supplied} but today in the browser's time zone is ${local}: ` +
+                  'the form defaults to the UTC date (memo-form-model.ts todayIso uses toISOString), so in Nepal ' +
+                  'every memo started between 00:00 and 05:45 is dated yesterday.',
+                'normal',
+              );
+            else s.checks.push(`supplied date ${supplied} is today`);
+            await s.fill('Subject', subject);
+            await s.fill('Body', body);
+            s.expect(
+              (await s.field('Subject').inputValue()) === subject,
+              'the subject kept its value',
+            );
+            await s.typeahead('Recommended by 1', 'Dev Accountant');
+            await s.typeahead('Approved by', 'Dev Finance');
+            await s.pause();
+            await s.click(s.button('Next'), 'Next (saves the memo)');
+            await s.page.waitForURL(/\/memos\/[0-9a-f-]{36}(\?.*)?$/, { timeout: cfg.navTimeout });
+            await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the saved memo');
+            const url = s.page.url().split('?')[0];
+            s.record('memoUrl', url.replace(cfg.appUrl, ''));
+            const number = /MEMO-[\w/-]*\d{5}/.exec(await s.text())?.[0];
+            if (number) s.record('memoNumber', number);
+          }
+          const memoPath = s.need('memoUrl');
 
           await s.caption('start-2 — Memos list → open the row');
           await s.goto('/memos', (p) => p.getByRole('heading', { level: 1, name: 'Memos' }));
           const link = s.page.getByRole('link', { name: mine }).first();
           await s.see(link, `Memos row "${subject}"`);
           await s.click(link, 'the memo row');
-          await s.page.waitForURL(new RegExp(url.replace(cfg.appUrl, '').replace(/[/]/g, '\\/')));
+          await s.page.waitForURL(new RegExp(memoPath.replace(/[/]/g, '\\/')));
           await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the memo reopened');
           const main = await s.text(s.page.getByRole('main'));
           for (const [what, needle] of [
@@ -286,32 +292,37 @@ export function workflow(cfg) {
             'the browser print dialog itself cannot be shown headless: check it by hand once',
           );
 
-          await s.caption('start-3 — read the approval route, then Submit for approval');
-          const route = s.page.getByRole('region', { name: 'Approval route' });
-          await s.see(route, 'the approval route panel');
-          const routeText = await s.text(route);
-          const ia = routeText.indexOf('Dev Accountant');
-          const ifn = routeText.indexOf('Dev Finance');
-          s.expect(
-            ia >= 0 && ifn > ia,
-            'route is Dev Accountant then Dev Finance',
-            routeText.slice(0, 200),
-          );
-          const submit = s.button('Submit for approval');
-          await s.see(submit, 'Submit for approval');
-          await s.click(submit, 'Submit for approval');
-          await s.page
-            .getByRole('dialog', { name: 'Submit for approval?' })
-            .getByRole('button', { name: 'Submit for approval', exact: true })
-            .click();
-          await s.page.waitForURL(/[?&]submitted=pending\b/, { timeout: cfg.navTimeout });
-          await s.seeText('Submitted for approval.', 'the submitted confirmation');
-          const href = await s.page
-            .getByRole('link', { name: 'View the approval route and history' })
-            .getAttribute('href');
-          const requestId = /\/inbox\/([0-9a-f-]{36})/.exec(href ?? '')?.[1];
-          s.expect(requestId, 'an approval request link', href);
-          s.record('memoRequestId', requestId);
+          // Retry-safe: an earlier attempt's submit is not repeated; the frozen-memo checks still run.
+          if (s.state.memoRequestId) {
+            s.checks.push('note: the memo was submitted by an earlier attempt of this run');
+          } else {
+            await s.caption('start-3 — read the approval route, then Submit for approval');
+            const route = s.page.getByRole('region', { name: 'Approval route' });
+            await s.see(route, 'the approval route panel');
+            const routeText = await s.text(route);
+            const ia = routeText.indexOf('Dev Accountant');
+            const ifn = routeText.indexOf('Dev Finance');
+            s.expect(
+              ia >= 0 && ifn > ia,
+              'route is Dev Accountant then Dev Finance',
+              routeText.slice(0, 200),
+            );
+            const submit = s.button('Submit for approval');
+            await s.see(submit, 'Submit for approval');
+            await s.click(submit, 'Submit for approval');
+            await s.page
+              .getByRole('dialog', { name: 'Submit for approval?' })
+              .getByRole('button', { name: 'Submit for approval', exact: true })
+              .click();
+            await s.page.waitForURL(/[?&]submitted=pending\b/, { timeout: cfg.navTimeout });
+            await s.seeText('Submitted for approval.', 'the submitted confirmation');
+            const href = await s.page
+              .getByRole('link', { name: 'View the approval route and history' })
+              .getAttribute('href');
+            const requestId = /\/inbox\/([0-9a-f-]{36})/.exec(href ?? '')?.[1];
+            s.expect(requestId, 'an approval request link', href);
+            s.record('memoRequestId', requestId);
+          }
           // Frozen: the editable form is gone after submit.
           await s.notVisible(s.button('Next'), 'the editable form (Next) after submit');
           await s.see(
@@ -325,10 +336,19 @@ export function workflow(cfg) {
         title: 'First named approval',
         async run(s) {
           await asPersona(s, 'Dev Accountant');
-          await approveFromInbox(s, 'Demo memo reviewed by Accountant.');
+          // Retry-safe like start-5: an approval an earlier attempt gave is not given again.
           await s.goto(`/inbox/${s.need('memoRequestId')}`, (p) =>
             p.getByRole('list', { name: 'Approval route steps' }),
           );
+          const first = await routeSteps(s);
+          if (/Approved/i.test(first[0] ?? ''))
+            s.checks.push('note: Accountant approved in an earlier attempt of this run');
+          else {
+            await approveFromInbox(s, 'Demo memo reviewed by Accountant.');
+            await s.goto(`/inbox/${s.need('memoRequestId')}`, (p) =>
+              p.getByRole('list', { name: 'Approval route steps' }),
+            );
+          }
           const steps = await routeSteps(s);
           s.expect(steps.length >= 2, 'two route steps', JSON.stringify(steps));
           s.expect(
@@ -336,11 +356,15 @@ export function workflow(cfg) {
             'step 1 Dev Accountant is Approved',
             steps[0],
           );
-          s.expect(
-            /Dev Finance/.test(steps[1]) && !/Approved/i.test(steps[1]),
-            'step 2 waits for Dev Finance',
-            steps[1],
-          );
+          // A re-run after start-5 finds Finance's approval too: that is a later step's effect.
+          if (/Dev Finance/.test(steps[1] ?? '') && /Approved/i.test(steps[1]))
+            s.checks.push('note: Finance already approved (start-5 ran in an earlier attempt)');
+          else
+            s.expect(
+              /Dev Finance/.test(steps[1] ?? '') && !/Approved/i.test(steps[1]),
+              'step 2 waits for Dev Finance',
+              steps[1],
+            );
         },
       },
       {
