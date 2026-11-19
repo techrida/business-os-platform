@@ -89,12 +89,54 @@ describe('parseStageMove', () => {
     if (!long.ok) expect(long.fieldErrors['newLostReason']).toMatch(/60 characters/);
   });
 
-  it('keeps an opportunity lost on its free-text reason', () => {
-    const r = parseStageMove(
+  it('accepts an opportunity lost with a chosen reason or a new trimmed reason (D54-3)', () => {
+    const id = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
+    const picked = parseStageMove(
+      'opportunity',
+      form({ stage: 'lost', lostReasonId: id, note: 'Went elsewhere', expectedVersion: '3' }),
+    );
+    expect(picked).toEqual({
+      ok: true,
+      data: { stage: 'lost', lostReasonId: id, note: 'Went elsewhere', expectedVersion: 3 },
+    });
+
+    const added = parseStageMove(
+      'opportunity',
+      form({ stage: 'lost', newLostReason: '  Delayed project  ', note: 'n', expectedVersion: '3' }),
+    );
+    expect(added).toMatchObject({ ok: true, data: { newLostReason: 'Delayed project' } });
+  });
+
+  it('refuses an opportunity lost with free-text reason, both choices, missing note, or over 60 characters', () => {
+    const id = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
+    const missing = parseStageMove('opportunity', form({ stage: 'lost', expectedVersion: '2' }));
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(Object.keys(missing.fieldErrors).sort()).toEqual(['lostReasonId', 'note']);
+
+    const oldReason = parseStageMove(
       'opportunity',
       form({ stage: 'lost', reason: 'No budget', note: 'Called twice', expectedVersion: '2' }),
     );
-    expect(r.ok).toBe(true);
+    expect(oldReason.ok).toBe(false);
+
+    const both = parseStageMove(
+      'opportunity',
+      form({
+        stage: 'lost',
+        lostReasonId: id,
+        newLostReason: 'Other',
+        note: 'n',
+        expectedVersion: '2',
+      }),
+    );
+    expect(both.ok).toBe(false);
+
+    const long = parseStageMove(
+      'opportunity',
+      form({ stage: 'lost', newLostReason: 'x'.repeat(61), note: 'n', expectedVersion: '2' }),
+    );
+    expect(long.ok).toBe(false);
+    if (!long.ok) expect(long.fieldErrors['newLostReason']).toMatch(/60 characters/);
   });
 
   it('refuses a system-only stage even if the browser sends it', () => {
