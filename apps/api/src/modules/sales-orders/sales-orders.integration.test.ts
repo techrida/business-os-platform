@@ -444,6 +444,23 @@ describe('SalesOrdersService.confirmFromQuotation', () => {
     ]);
   });
 
+  it('preserves four-decimal quotation shares on the stored order and detail response', async () => {
+    const q = await acceptedQuotation({
+      paymentSchedule: [
+        { label: 'Advance', percent: '33.3333' },
+        { label: 'Delivery', percent: '33.3333' },
+        { label: 'Balance', percent: '33.3334' },
+      ],
+    });
+    const confirmed = parsed(await confirm(q));
+    const reopened = parsed(await service.detail(confirmed.order.id));
+    expect(reopened.schedule.map(({ percent, amount }) => [percent, amount])).toEqual([
+      ['33.3333', '1681814.98'],
+      ['33.3333', '1681814.98'],
+      ['33.3334', '1681820.04'],
+    ]);
+  });
+
   it('answers the same order to a retry with the same key', async () => {
     const q = await acceptedQuotation();
     const body = { quotationVersionId: q.currentVersionId, evidenceDocumentIds: [] };
