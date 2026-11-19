@@ -14,7 +14,7 @@ export function InvoicePreview({ documentUrl, number }: { documentUrl: string; n
       downloadUrl={documentUrl}
       trigger={
         <Button variant="secondary">
-          <Icon name="file-text" size={18} /> Preview invoice
+          <Icon name="file-text" size={18} /> View PDF
         </Button>
       }
       onDownload={() => toast.info('Download started')}

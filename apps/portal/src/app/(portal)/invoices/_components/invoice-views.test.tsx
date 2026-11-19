@@ -60,15 +60,19 @@ describe('InvoiceView', () => {
     for (const word of STAFF_ONLY) expect(html).not.toContain(word);
   });
 
-  it('links the PDF to the BFF route, and says so when it is not ready', () => {
+  it('offers View PDF and a plain Download link to the BFF route, and says so when it is not ready', () => {
     const html = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice()} settlement={sampleSettlement()} />,
     );
+    expect(html).toContain('View PDF');
+    expect(html).not.toContain('Download PDF');
     expect(html).toContain(`href="/invoices/${INVOICE_ID}/document"`);
+    expect(html).not.toContain('/document/preview');
     const none = renderToStaticMarkup(
       <InvoiceView view={sampleInvoice({ file: null })} settlement={sampleSettlement()} />,
     );
     expect(none).not.toContain('/document"');
+    expect(none).not.toContain('View PDF');
     expect(none).toContain('being prepared');
   });
 
