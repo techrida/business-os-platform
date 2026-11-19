@@ -7,6 +7,7 @@ import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
+import { getInboxPage } from '@/lib/api-kernel';
 import { getNumberSystems } from '@/lib/display-settings';
 import { getSession } from '@/lib/session';
 
@@ -27,14 +28,23 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const roles = accountLabel(session.roles);
   // Never throws: a failed read falls back to the default grouping.
   const numberSystems = await getNumberSystems();
+  // A failed or refused read leaves the badge out; it never shows a zero in its place.
+  const approvalsWaiting = await getInboxPage(session, { limit: 1 }).then(
+    (page) => page.total,
+    () => undefined,
+  );
 
   return (
     <ShellFrame>
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
-      <Sidebar user={{ name: roles, detail: session.orgKind }} roles={session.roles} />
+      <Sidebar
+        user={{ name: roles, detail: session.orgKind }}
+        roles={session.roles}
+        counts={approvalsWaiting === undefined ? {} : { '/inbox': approvalsWaiting }}
+      />
       <ShellMain>
-        <Header orgKind={session.orgKind} roles={session.roles} />
+        <Header roles={session.roles} />
         <NumberSystemProvider value={numberSystems}>{children}</NumberSystemProvider>
       </ShellMain>
     </ShellFrame>
