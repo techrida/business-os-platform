@@ -160,6 +160,37 @@ describe('the receipts of one purchase order', () => {
     expect(api.listReceivableOrders).not.toHaveBeenCalled();
   });
 
+  it('offers the requester the orders of their own purchase requests, each opening its receipts', async () => {
+    session.roles = ['operations_officer'];
+    api.listRequestedOrders.mockResolvedValue([
+      { id: SERVICE, number: 'PO-2082-0002', status: 'issued', vendorName: 'Everest Cleaners' },
+    ]);
+    const out = await list({});
+    expect(api.listRequestedOrders).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Your purchase orders');
+    expect(out).toContain('PO-2082-0002');
+    expect(out).toContain('Everest Cleaners');
+    expect(out).toContain('Issued');
+    expect(out).toContain(`href="/procurement/receipts?po=${SERVICE}"`);
+    expect(out).not.toContain('Purchase order ID');
+    expect(out).not.toContain('No purchase orders to open');
+    expect(api.listReceivableOrders).not.toHaveBeenCalled();
+    expect(api.listReceipts).not.toHaveBeenCalled();
+  });
+
+  it("leaves the requester's list out on a 403 and words any other failure", async () => {
+    session.roles = ['operations_officer'];
+    api.listRequestedOrders.mockRejectedValue(apiError(403, 'forbidden'));
+    let out = await list({});
+    expect(out).not.toContain('Your purchase orders');
+    expect(out).not.toContain('role="alert"');
+    api.listRequestedOrders.mockRejectedValue(apiError(500));
+    out = await list({});
+    expect(out).toContain('Your purchase orders did not load');
+    expect(out).not.toContain('internal wording');
+    expect(out).not.toContain('No purchase orders to open');
+  });
+
   it('lists the orders waiting to be received for the warehouse, each row linking to its receipts', async () => {
     api.listReceivableOrders.mockResolvedValue([
       waiting(),
