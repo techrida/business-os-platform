@@ -158,6 +158,8 @@ export function uniqueValues(label) {
     // `mr-`, not the `scr-` of runs before 20 Nov 2026: their upper-case labels lower-cased to the
     // same local part (anu.scr-scr1-1440), so a new scr1 run would find SCR1's mail.
     emailLocal: `anu.mr-${slug}`,
+    // The local part a customer created before that change has; read only when resuming such a folder.
+    legacyEmailLocal: `anu.scr-${slug}`,
     bankRef: (n) => `BOS-DEMO-PAY-0${n}-${label}`,
   };
 }

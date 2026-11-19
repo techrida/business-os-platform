@@ -42,6 +42,14 @@ export function paymentDecision({ recordedUrl, rowUrls, knownUrls }) {
   return { action: 'record' };
 }
 
+/**
+ * The address this run's customer was created with. sales-2 records it; a folder from before it did
+ * (customer created, nothing recorded) used the earlier `anu.scr-` form.
+ */
+export function contactEmailFor(state, { email, legacyEmail }) {
+  return state.contactEmail ?? (state.opportunityUrl ? legacyEmail : email);
+}
+
 export function workflow(cfg) {
   const u = uniqueValues(cfg.runKey);
   const v = {
@@ -49,6 +57,7 @@ export function workflow(cfg) {
     company: `BOS Demo Himalayan Labs${u.suffix}`,
     contact: 'Anu Shrestha',
     email: `${u.emailLocal}@bos-demo.example.com`,
+    legacyEmail: `${u.legacyEmailLocal}@bos-demo.example.com`,
     pan: u.pan,
     pay1: u.bankRef(1),
     pay2: u.bankRef(2),
@@ -483,6 +492,7 @@ export function workflow(cfg) {
             if (await newContact.count()) await newContact.check();
             await fill('Contact name', v.contact);
             await fill('Email', v.email);
+            s.record('contactEmail', v.email);
             await fill('Opportunity name', v.leadTitle);
             await s.pause();
             await d.getByRole('button', { name: 'Convert', exact: true }).click();
@@ -875,8 +885,9 @@ export function workflow(cfg) {
           else await downloadAndSend(s);
 
           await s.caption('sales-8 — Test mail: portal link, no attachment');
-          const mail = await findMail(cfg, `to:"${v.email}"`, 90000);
-          s.expect(mail, `a Mailpit message to ${v.email}`);
+          const to = contactEmailFor(s.state, v);
+          const mail = await findMail(cfg, `to:"${to}"`, 90000);
+          s.expect(mail, `a Mailpit message to ${to}`);
           const full = await mailMessage(cfg, mail.ID);
           s.expect(
             (full.Attachments ?? []).length === 0,
