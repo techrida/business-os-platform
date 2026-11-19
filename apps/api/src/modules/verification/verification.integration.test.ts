@@ -1402,3 +1402,44 @@ it('removes only loose files belonging to an editable case the caller owns', asy
   expect((await remove(loose.documentId)).status).toBe(204);
   expect(await documents.allClean(scope, 'verification_case', mine.id)).toBe(true);
 });
+
+describe('Can review names the pmo reviewer (audit #19)', () => {
+  it('names a pmo user, who reads case files through verification.review, and not a read-only role', async () => {
+    const pmo = await createStaffUser(appPool, {
+      ...scope,
+      idpOrgId: staffIdpOrgId,
+      roleKeys: ['pmo'],
+    });
+    const reader = await createStaffUser(appPool, {
+      ...scope,
+      idpOrgId: staffIdpOrgId,
+      roleKeys: ['operations_head'],
+    });
+    // The live role rows, as the seed writes them: pmo holds documents.read only at scope own.
+    await withTx(db, scope, systemActor('test'), async (tx) => {
+      for (const role of ['pmo', 'operations_head'] as const) {
+        for (const [permission, s] of Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) {
+          await tx.execute(
+            sql`INSERT INTO app.role_permissions (tenant_id, role_key, permission, scope)
+                VALUES (${scope.tenantId}, ${role}, ${permission}, ${s})`,
+          );
+        }
+      }
+    });
+    const nameOf = async (userId: string) => {
+      const { rows } = await appPool.query<{ display_name: string }>(
+        'SELECT display_name FROM app.users WHERE id = $1',
+        [userId],
+      );
+      expect(rows[0]?.display_name).toBeTruthy();
+      return rows[0]!.display_name;
+    };
+
+    const c = await submittedCase();
+    const res = await api().get(`/v1/verification-cases/${c.id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const names = (res.body as { reviewerNames: string[] }).reviewerNames;
+    expect(names).toContain(await nameOf(pmo.userId));
+    expect(names).not.toContain(await nameOf(reader.userId));
+  });
+});
