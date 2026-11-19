@@ -2,6 +2,8 @@
 // Real: migrations as bos_owner, queries as bos_app, ReceivableOrdersService, and ReceiptsService (drafts, confirms and
 // reversals are made through it, so the quantities are the ones the receipt routes leave). Faked: the request context
 // and authz.assert (the real pure can() on a fake principal). POs are inserted directly as bos_owner.
+// Also covers the requester's side of U18 #4: RequestedOrdersService (the receipts picker of a requester) and the
+// purchase orders PurchaseRequestsService.get returns with a request.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/receipts/receivable-orders.integration.test.ts
 import 'reflect-metadata';
 
@@ -21,7 +23,7 @@ import {
   createTenantWithEntity,
   runMigrations,
 } from '@bos/db';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -37,6 +39,8 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ReceivableOrdersService } from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
+import { RequestedOrdersService } from './requested-orders.service';
+import { PurchaseRequestsService } from '../requests/purchase-requests.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -53,16 +57,25 @@ let scopeA: TxScope;
 let scopeB: TxScope;
 let receipts: ReceiptsService;
 let orders: ReceivableOrdersService;
+let requested: RequestedOrdersService;
+let requests: PurchaseRequestsService;
 let taxCodeId = '';
 let vendorId = '';
 let departmentA = '';
 let departmentB = '';
 
-const U = { warehouse: '', requester: '', procurement: '' };
+const U = { warehouse: '', requester: '', otherRequester: '', procurement: '' };
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; scope: TxScope | null } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  scope: TxScope | null;
+  /** Live grants an admin edited, instead of the role default; reset before each test. */
+  grants?: Map<Permission, Scope> | undefined;
+  departmentId?: string | null | undefined;
+} = {
   userId: '',
   role: 'warehouse',
   scope: null,
@@ -76,9 +89,9 @@ const principalNow = (): Principal => ({
   partyId: null,
   idpOrgId: 'unused',
   roles: [current.role],
-  departmentId: null,
+  departmentId: current.departmentId ?? null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -170,6 +183,7 @@ beforeAll(async () => {
       .userId;
   U.warehouse = await staff('warehouse');
   U.requester = await staff('operations_officer');
+  U.otherRequester = await staff('operations_officer');
   U.procurement = await staff('procurement');
 
   departmentA = (await createDepartment(appPool, scopeA)).departmentId;
@@ -210,6 +224,18 @@ beforeAll(async () => {
     () => now,
   );
   orders = new ReceivableOrdersService(db, caller);
+  requested = new RequestedOrdersService(db, caller);
+  // get() reads only the database and the caller; the write collaborators are never reached.
+  requests = new PurchaseRequestsService(
+    db,
+    authz as unknown as AuthzService,
+    {} as never,
+    {} as never,
+    new AuditService(db),
+    new NumberingService(),
+    {} as never,
+    caller,
+  );
 });
 
 afterAll(async () => {
@@ -222,6 +248,8 @@ beforeEach(() => {
   current.scope = null;
   current.userId = U.warehouse;
   current.role = 'warehouse';
+  current.grants = undefined;
+  current.departmentId = undefined;
 });
 
 // ---------------------------------------------------------------------------------------- fixtures
@@ -242,11 +270,18 @@ interface Po {
   id: string;
   number: string;
   lineIds: string[];
+  prId: string;
 }
 
 /** A request and a PO in `scope` (issued unless told otherwise) with one line per spec; issued at `issuedAt`. */
 async function newPo(
-  options: { scope?: TxScope; status?: string; lines?: LineSpec[]; issuedAt?: string } = {},
+  options: {
+    scope?: TxScope;
+    status?: string;
+    lines?: LineSpec[];
+    issuedAt?: string;
+    requester?: string;
+  } = {},
 ): Promise<Po> {
   const scope = options.scope ?? scopeA;
   const status = options.status ?? 'issued';
@@ -264,7 +299,7 @@ async function newPo(
       scope.organizationId,
       `PR-${randomUUID()}`,
       scope === scopeA ? departmentA : departmentB,
-      U.requester,
+      options.requester ?? U.requester,
       (await createCostCenter(appPool, scope)).costCenterId,
     ],
   );
@@ -315,7 +350,7 @@ async function newPo(
     );
     lineIds.push(line!.id);
   }
-  return { id: po!.id, number: po!.number, lineIds };
+  return { id: po!.id, number: po!.number, lineIds, prId: pr!.id };
 }
 
 /** A receipt of `quantity` on one PO line through the receipt service; confirmed unless `draft`. */
@@ -434,5 +469,196 @@ describe('receivable orders', () => {
     expect(idsB).not.toContain(inA.id);
     current.scope = null;
     expect((await listed()).map((r) => r.id)).not.toContain(inB.id);
+  });
+});
+
+// The purchase orders of the caller's own requests (U18 #4): the receipts page's picker for a requester, who holds
+// no purchase order read. Always the caller's own requests, whatever their read scope, and only the acting entity.
+describe("the requester's own purchase orders", () => {
+  const asRequester = (userId = U.requester) => {
+    current.userId = userId;
+    current.role = 'operations_officer';
+  };
+  const mine = async () => requested.list({ limit: 200 });
+
+  it("lists the caller's own orders with number, status and vendor, without drafts or cancelled ones", async () => {
+    const service = await newPo({ lines: [SERVICE1] });
+    const done = await newPo({ status: 'fully_received' });
+    const draft = await newPo({ status: 'draft' });
+    const cancelled = await newPo();
+    await ownerRun(
+      scopeA.organizationId,
+      `UPDATE app.purchase_orders SET status = 'cancelled', closed_reason = 'Vendor withdrew' WHERE id = $1`,
+      [cancelled.id],
+    );
+    asRequester();
+    const rows = await mine();
+    expect(rows.find((r) => r.id === service.id)).toEqual({
+      id: service.id,
+      number: service.number,
+      status: 'issued',
+      vendorName: VENDOR_NAME,
+    });
+    expect(rows.find((r) => r.id === done.id)?.status).toBe('fully_received');
+    const ids = rows.map((r) => r.id);
+    expect(ids).not.toContain(draft.id);
+    expect(ids).not.toContain(cancelled.id);
+  });
+
+  it('returns only the picker fields: no amount, vendor id, request or creator rides along', async () => {
+    await newPo({ lines: [SERVICE1] });
+    asRequester();
+    const rows = await mine();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(['id', 'number', 'status', 'vendorName']);
+    }
+  });
+
+  it("never lists another requester's orders, even to a caller who reads every request", async () => {
+    const theirs = await newPo({ requester: U.otherRequester });
+    asRequester();
+    expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
+    current.userId = U.procurement;
+    current.role = 'procurement';
+    expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
+    asRequester(U.otherRequester);
+    expect((await mine()).map((r) => r.id)).toContain(theirs.id);
+  });
+
+  it('drops an order whose request the requester may no longer read after moving out of a department-scoped read', async () => {
+    const po = await newPo({ lines: [SERVICE1] });
+    asRequester();
+    current.grants = new Map([
+      ...grantsOf('operations_officer'),
+      ['procurement.pr.read', 'department'],
+    ]);
+    current.departmentId = departmentA;
+    expect((await mine()).find((r) => r.id === po.id)).toEqual({
+      id: po.id,
+      number: po.number,
+      status: 'issued',
+      vendorName: VENDOR_NAME,
+    });
+    // The same requester, now in another department: the request's detail is a 404 for them, so the picker drops
+    // the order and nothing of it (number, status or vendor) reaches them.
+    current.departmentId = (await createDepartment(appPool, scopeA)).departmentId;
+    await expect(requests.get(po.prId)).rejects.toBeInstanceOf(NotFoundException);
+    const rows = await mine();
+    expect(rows.map((r) => r.id)).not.toContain(po.id);
+    const text = JSON.stringify(rows);
+    expect(text).not.toContain(po.number);
+    expect(text).not.toContain(VENDOR_NAME);
+  });
+
+  it("never lists another entity's orders", async () => {
+    const inA = await newPo();
+    const inB = await newPo({ scope: scopeB });
+    asRequester();
+    const idsA = (await mine()).map((r) => r.id);
+    expect(idsA).toContain(inA.id);
+    expect(idsA).not.toContain(inB.id);
+    // The file shares one database: entity B may hold this requester's orders from earlier tests too.
+    current.scope = scopeB;
+    const idsB = (await mine()).map((r) => r.id);
+    expect(idsB).toContain(inB.id);
+    expect(idsB).not.toContain(inA.id);
+  });
+});
+
+// A purchase request's detail names its orders (U18 #4) under the request's own read, with can.receiveService
+// mirroring ReceiptsService.assertMayReceive for a service receipt.
+describe('the purchase orders on a purchase request', () => {
+  it('shows the requester each order with Receive service only on an open order with a service line', async () => {
+    const service = await newPo({ lines: [SERVICE1] });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const pr = await requests.get(service.prId);
+    expect(pr.purchaseOrders).toEqual([
+      {
+        id: service.id,
+        number: service.number,
+        status: 'issued',
+        vendorName: VENDOR_NAME,
+        can: { receiveService: true },
+      },
+    ]);
+    // The flag holds: the requester can record the service receipt it promises.
+    await expect(
+      receipts.create(
+        {
+          purchaseOrderId: service.id,
+          kind: 'service',
+          receivedAt: '2026-11-09',
+          lines: [{ poLineId: service.lineIds[0]!, quantity: '1' }],
+        },
+        randomUUID(),
+      ),
+    ).resolves.toMatchObject({ purchaseOrderId: service.id });
+  });
+
+  it('offers no Receive service on a goods order, a received order, or to procurement', async () => {
+    const goods = await newPo({ lines: [GOODS5] });
+    const done = await newPo({ lines: [SERVICE1], status: 'fully_received' });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    expect((await requests.get(goods.prId)).purchaseOrders?.[0]?.can.receiveService).toBe(false);
+    expect((await requests.get(done.prId)).purchaseOrders?.[0]?.can.receiveService).toBe(false);
+    const service = await newPo({ lines: [SERVICE1] });
+    current.userId = U.procurement;
+    current.role = 'procurement';
+    const seen = (await requests.get(service.prId)).purchaseOrders ?? [];
+    expect(seen.map((o) => o.id)).toEqual([service.id]);
+    expect(seen[0]?.can.receiveService).toBe(false);
+  });
+
+  it('offers Receive service only while a service line has room left, as the new receipt page counts it', async () => {
+    const SERVICE2: LineSpec = { kind: 'service', quantity: '2' };
+    // Mixed order: the service is fully received, goods remain (so the order stays partially received).
+    const served = await newPo({ lines: [GOODS5, SERVICE1] });
+    await receive(served, '1', { line: 1, kind: 'service' });
+    // The whole service is held by a draft receipt, which reserves its quantity.
+    const held = await newPo({ lines: [SERVICE1] });
+    await receive(held, '1', { kind: 'service', draft: true });
+    // Half the service is confirmed: the other half is still to receive.
+    const half = await newPo({ lines: [SERVICE2] });
+    await receive(half, '1', { kind: 'service' });
+
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const flag = async (po: Po) => {
+      const [order] = (await requests.get(po.prId)).purchaseOrders ?? [];
+      return order?.can.receiveService;
+    };
+    expect((await requests.get(served.prId)).purchaseOrders?.[0]?.status).toBe(
+      'partially_received',
+    );
+    expect(await flag(served)).toBe(false);
+    expect(await flag(held)).toBe(false);
+    expect(await flag(half)).toBe(true);
+  });
+
+  it('adds only number, status, vendor name and the flag: no amount or vendor id rides along', async () => {
+    const po = await newPo({ lines: [SERVICE1, GOODS3] });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const [order] = (await requests.get(po.prId)).purchaseOrders ?? [];
+    expect(Object.keys(order ?? {}).sort()).toEqual([
+      'can',
+      'id',
+      'number',
+      'status',
+      'vendorName',
+    ]);
+    expect(Object.keys(order?.can ?? {})).toEqual(['receiveService']);
+  });
+
+  it('leaves out a draft order, and another requester cannot read the request at all', async () => {
+    const draft = await newPo({ status: 'draft' });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    expect((await requests.get(draft.prId)).purchaseOrders).toEqual([]);
+    current.userId = U.otherRequester;
+    await expect(requests.get(draft.prId)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

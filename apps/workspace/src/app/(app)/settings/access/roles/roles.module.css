@@ -1,0 +1,353 @@
+/* Access > By role: the role list beside one role's permissions. Tokens only. From 1024px the list
+   is a 240px column; below 768px the list is replaced on a role page by the "Role" select at the top.
+   Nothing here may make the page scroll sideways at 390px. */
+
+.frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-content-gap, 16px);
+  align-items: start;
+}
+
+@media (min-width: 1024px) {
+  .frame {
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+
+.main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ---- role list -------------------------------------------------------------------------------- */
+
+.list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* On a role page the list gives way to the select under 1024px. */
+.listOnRolePage {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .listOnRolePage {
+    display: grid;
+  }
+}
+
+.listHeading {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-caption);
+}
+
+.roles {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.roleLink {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.roleLink:hover {
+  background: var(--interactive-hover);
+}
+
+.roleLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.roleLink[aria-current='page'] {
+  background: var(--interactive-selected);
+  box-shadow: inset 2px 0 0 var(--interactive-selected-border);
+}
+
+.roleName {
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.roleCount {
+  grid-column: 1;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.roleEdited {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+/* The "pick a role" note beside the list; under 1024px the list alone is enough. */
+.pick {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .pick {
+    display: block;
+  }
+}
+
+/* ---- role page -------------------------------------------------------------------------------- */
+
+.picker {
+  display: block;
+}
+
+@media (min-width: 1024px) {
+  .picker {
+    display: none;
+  }
+}
+
+.roleHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.roleHeadText {
+  display: grid;
+  flex: 1 1 240px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.roleTitle {
+  margin: 0;
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-h3);
+  overflow-wrap: anywhere;
+}
+
+.roleDescription {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.peopleLink {
+  justify-self: start;
+  color: var(--text-link);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 24px;
+}
+
+.find {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.checkbox {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--action-primary);
+  cursor: pointer;
+}
+
+.checkbox:disabled {
+  cursor: not-allowed;
+}
+
+/* ---- permission rows -------------------------------------------------------------------------- */
+
+.rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  align-items: start;
+  padding-block: 12px;
+  border-top: var(--border-width-thin) solid var(--border-subtle);
+}
+
+.row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+@media (min-width: 768px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 280px) 44px;
+  }
+}
+
+.rowText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowLabel {
+  font-size: var(--font-size-body-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body-small);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+/* Under 768px the control takes the full width under the label; the undo icon stays on the
+   label line. */
+.rowControl {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  gap: 4px;
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .rowControl {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+.rowToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
+.undoSlot {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  width: 44px;
+}
+
+@media (min-width: 768px) {
+  .undoSlot {
+    grid-column: 3;
+  }
+}
+
+.undo {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.undo:hover {
+  background: var(--interactive-hover);
+  color: var(--text-primary);
+}
+
+.undo:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- foot bar --------------------------------------------------------------------------------- */
+
+.foot {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: var(--border-width-thin) solid var(--border-default);
+}
+
+.footButtons {
+  display: grid;
+  gap: 8px;
+}
+
+@media (min-width: 768px) {
+  .foot {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .footButtons {
+    display: flex;
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+}
+
+/* Primary first when the buttons stack (spec 4, 390px). */
+.footButtons > :last-child {
+  order: -1;
+}
+
+@media (min-width: 768px) {
+  .footButtons > :last-child {
+    order: 0;
+  }
+}

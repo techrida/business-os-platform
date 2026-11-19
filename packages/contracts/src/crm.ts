@@ -124,6 +124,8 @@ export type CustomerDto = z.infer<typeof CustomerDtoSchema>;
 export const PartyAccountDtoSchema = z.object({
   partyId: z.guid(),
   organizationId: z.guid(),
+  /** The legal entity's display name; the caller acts for that entity, so it is theirs to see. */
+  organizationName: z.string().nullable().optional(),
   paymentTermId: z.guid().nullable(),
   creditLimit: NonNegativeDecimal.nullable(),
   version: z.number().int().min(1),
@@ -926,8 +928,32 @@ export function isChecklistComplete(
   return required.length > 0 && required.every((i) => i.status === 'accepted');
 }
 
+/**
+ * What the caller may do with one case, decided by the API on that case (the party's owner and the caller's scope),
+ * so the case page never offers a control the API would refuse. The status rules (draft, submitted) stay the page's.
+ */
+export const VerificationCaseCanSchema = z.object({
+  /** Review items and decide (verification.review on this case). */
+  review: z.boolean(),
+  /** Edit the checklist and submit (the party kind's write permission on this case). */
+  edit: z.boolean(),
+  /** Upload a file to this case (edit, plus documents.upload on it). */
+  attach: z.boolean(),
+  /** Take a file off the checklist (edit, plus verification.read on it). */
+  remove: z.boolean(),
+});
+export type VerificationCaseCan = z.infer<typeof VerificationCaseCanSchema>;
+
 export const VerificationCaseDtoSchema = z.object({
   partyKind: VerificationPartyKindSchema.optional(),
+  /** Sent with a single case (GET /:id); absent in lists. */
+  can: VerificationCaseCanSchema.optional(),
+  /**
+   * The party's display name and number (a customer's CUS number; vendors have none), joined under the case's own
+   * read permission so the queue needs no customer or vendor read to label a case. Null when the party is gone.
+   */
+  partyName: z.string().nullable().optional(),
+  partyNumber: z.string().nullable().optional(),
   reviewerNames: z.array(z.string()).optional(),
   looseEvidence: z.array(DocumentVersionDtoSchema).optional(),
   reviewPolicy: z.enum(['case_review_v0', 'document_review_v1']).optional(),

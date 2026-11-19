@@ -15,8 +15,7 @@ import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
-import { BUCKET_LABEL, isZeroAmount } from '../_lib/aging';
-import layout from '@/components/p3/list.module.css';
+import { BUCKET_CARD, BUCKET_LABEL, isZeroAmount } from '../_lib/aging';
 import styles from '../receivables.module.css';
 
 export const metadata: Metadata = { title: 'Receivables aging · Business OS' };
@@ -64,6 +63,53 @@ function Notice({
         {children}
       </Alert>
     </Page>
+  );
+}
+
+/**
+ * Cards per currency: the total open and each bucket, every value the server's own string.
+ * Currencies are never added together and no bucket is merged into another: nothing here sums.
+ */
+function BalanceCards({
+  totals,
+  numberSystems,
+}: {
+  totals: ArAgingReport['totals'];
+  numberSystems: NumberSystems;
+}) {
+  return (
+    <>
+      {totals.map((total) => (
+        <section
+          key={total.currency}
+          aria-label={`Open balances in ${total.currency}`}
+          className={styles.bucketCards}
+        >
+          <StatCard
+            label="Total open"
+            icon="banknote"
+            value={
+              <span className={styles.moneyValue}>
+                {money(total.totalOpen, total.currency, numberSystems)}
+              </span>
+            }
+          />
+          {AGING_BUCKETS.map((bucket) => (
+            <StatCard
+              key={bucket}
+              label={BUCKET_LABEL[bucket]}
+              icon={BUCKET_CARD[bucket].icon}
+              tone={BUCKET_CARD[bucket].tone}
+              value={
+                <span className={styles.moneyValue}>
+                  {money(total.buckets[bucket], total.currency, numberSystems)}
+                </span>
+              }
+            />
+          ))}
+        </section>
+      ))}
+    </>
   );
 }
 
@@ -207,18 +253,7 @@ export default async function ReceivablesAgingPage() {
           </>
         }
       />
-      {report.totals.length > 0 && (
-        <section aria-label="Outstanding balances by currency" className={layout.stats}>
-          {report.totals.map((total) => (
-            <StatCard
-              key={total.currency}
-              label={`Open balance · ${total.currency}`}
-              icon="banknote"
-              value={money(total.totalOpen, total.currency, numberSystems)}
-            />
-          ))}
-        </section>
-      )}
+      <BalanceCards numberSystems={numberSystems} totals={report.totals} />
       {empty ? (
         <EmptyState icon="banknote" title="No open receivables.">
           Nothing was owed as of <AsOf date={report.asOf} />. An invoice appears here once it is

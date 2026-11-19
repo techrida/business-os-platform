@@ -181,6 +181,31 @@ describe('invoice detail page', () => {
     expect(text).not.toContain('Open amount');
   });
 
+  it('offers Record payment for the customer while the invoice is still owed', async () => {
+    const RECORD = `href="/payments/new?customerId=${CUSTOMER}"`;
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['accountant'] });
+    mocks.getCustomerStatement.mockResolvedValue([
+      statementRow({ allocatedAmount: '0.00', openAmount: '2018180.00', settlement: 'overdue' }),
+    ]);
+    expect(await render()).toContain(RECORD);
+
+    // Paid: nothing left to record against it.
+    mocks.getCustomerStatement.mockResolvedValue([statementRow()]);
+    expect(await render()).not.toContain('Record payment');
+
+    // Owed, but the role does not record payments.
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['management'] });
+    mocks.getCustomerStatement.mockResolvedValue([statementRow({ settlement: 'unpaid' })]);
+    expect(await render()).not.toContain('Record payment');
+  });
+
+  it('offers no Record payment when the settlement is unknown', async () => {
+    mocks.getCustomerStatement.mockRejectedValue(new ApiError(500, 'down'));
+    expect(await render()).not.toContain('Record payment');
+    mocks.getCustomerStatement.mockResolvedValue([]);
+    expect(await render()).not.toContain('Record payment');
+  });
+
   it('still renders the invoice when the statement fails to load', async () => {
     mocks.getCustomerStatement.mockRejectedValue(new ApiError(500, 'down'));
     const text = (await render()).replace(/<[^>]*>/g, ' ');

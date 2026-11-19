@@ -355,3 +355,128 @@ describe('defaultSalesOwner', () => {
     expect(defaultSalesOwner([])).toBeNull();
   });
 });
+
+describe('decideAssignment with AssignmentRuleConfig', () => {
+  const salesManager2 = party('sales-manager-2', ['sales'], SALES_DEPT, 'manager');
+  const opsStaff = party('ops-staff', ['operations_officer'], 'dept-ops', 'staff');
+  const opsManager = party('ops-manager', ['operations_officer'], 'dept-ops', 'manager');
+
+  it('restricts staff to themselves when staff is self_only', () => {
+    const config = { staff: 'self_only' as const };
+    expect(decideAssignment(salesStaff, salesStaff, 'reassign', config).allowed).toBe(true);
+    expect(decideAssignment(salesStaff, salesPeer, 'reassign', config).allowed).toBe(false);
+    expect(decideAssignment(salesStaff, salesManager, 'reassign', config).allowed).toBe(false);
+    expect(decideAssignment(marketingStaff, salesStaff, 'reassign', config).allowed).toBe(false);
+    // Managers are unaffected by staff: self_only.
+    expect(decideAssignment(salesManager, salesStaff, 'reassign', config).allowed).toBe(true);
+    expect(decideAssignment(salesManager, salesManager2, 'reassign', config).allowed).toBe(true);
+  });
+
+  it('restricts managers to themselves and staff when managers is self_and_staff', () => {
+    const config = { managers: 'self_and_staff' as const };
+    expect(decideAssignment(salesManager, salesManager, 'reassign', config).allowed).toBe(true);
+    expect(decideAssignment(salesManager, salesStaff, 'reassign', config).allowed).toBe(true);
+    expect(decideAssignment(salesManager, salesManager2, 'reassign', config).allowed).toBe(false);
+    expect(decideAssignment(salesManager, salesHead, 'reassign', config).allowed).toBe(false);
+    // Heads still assign to managers and staff.
+    expect(decideAssignment(salesHead, salesManager, 'reassign', config).allowed).toBe(true);
+  });
+
+  it('allows explicit department hand-over pairs and blocks pairs removed from the list', () => {
+    // Explicit empty hand-over list removes the default Marketing -> Sales hand-off.
+    expect(decideAssignment(marketingStaff, salesStaff, 'reassign', { handOvers: [] })).toEqual({
+      allowed: false,
+      reason: 'other_department',
+    });
+
+    // Explicit pair Sales -> Marketing allows Sales to hand off to Marketing at or below level.
+    const reversePair = {
+      handOvers: [{ fromDepartmentId: SALES_DEPT, toDepartmentId: MARKETING_DEPT }],
+    };
+    expect(decideAssignment(salesStaff, marketingStaff, 'reassign', reversePair).allowed).toBe(
+      true,
+    );
+    expect(decideAssignment(salesHead, marketingHead, 'reassign', reversePair).allowed).toBe(true);
+    // Still never allows assigning upward across a configured hand-over pair.
+    expect(decideAssignment(salesStaff, marketingManager, 'reassign', reversePair)).toEqual({
+      allowed: false,
+      reason: 'upward',
+    });
+    expect(decideAssignment(salesManager, marketingHead, 'reassign', reversePair)).toEqual({
+      allowed: false,
+      reason: 'upward',
+    });
+
+    // Explicit pair for arbitrary departments (e.g. Ops -> Sales) works without relying on role names.
+    const opsToSales = {
+      handOvers: [{ fromDepartmentId: 'dept-ops', toDepartmentId: SALES_DEPT }],
+    };
+    expect(decideAssignment(opsStaff, salesStaff, 'reassign', opsToSales).allowed).toBe(true);
+    expect(decideAssignment(opsStaff, salesManager, 'reassign', opsToSales)).toEqual({
+      allowed: false,
+      reason: 'upward',
+    });
+    expect(decideAssignment(opsManager, salesManager, 'reassign', opsToSales).allowed).toBe(true);
+  });
+
+  it('passes config through assignableTargets', () => {
+    const candidates = [salesStaff, salesPeer, salesManager, salesHead, marketingStaff];
+    expect(
+      assignableTargets(salesStaff, candidates, 'reassign', { staff: 'self_only' }).map(
+        (p) => p.userId,
+      ),
+    ).toEqual(['sales-staff']);
+    expect(
+      assignableTargets(salesStaff, candidates, 'reassign', {
+        handOvers: [{ fromDepartmentId: SALES_DEPT, toDepartmentId: MARKETING_DEPT }],
+      }).map((p) => p.userId),
+    ).toEqual(['sales-staff', 'sales-peer', 'mkt-staff']);
+  });
+
+  it('never permits assigning upward under any combination of config options', () => {
+    const everyone = [
+      salesStaff,
+      salesPeer,
+      salesManager,
+      salesManager2,
+      salesHead,
+      marketingStaff,
+      marketingManager,
+      marketingHead,
+      opsStaff,
+      opsManager,
+    ];
+    const staffOptions = ['self_and_peers', 'self_only', 'any_at_or_below'] as const;
+    const managerOptions = ['any_at_or_below', 'self_and_staff'] as const;
+    const handOverOptions = [
+      undefined,
+      [],
+      [
+        { fromDepartmentId: MARKETING_DEPT, toDepartmentId: SALES_DEPT },
+        { fromDepartmentId: SALES_DEPT, toDepartmentId: MARKETING_DEPT },
+        { fromDepartmentId: 'dept-ops', toDepartmentId: SALES_DEPT },
+      ],
+    ] as const;
+    const levels = ['staff', 'manager', 'head'];
+
+    for (const staff of staffOptions) {
+      for (const managers of managerOptions) {
+        for (const handOvers of handOverOptions) {
+          const config =
+            handOvers === undefined ? { staff, managers } : { staff, managers, handOvers };
+          for (const actor of everyone) {
+            for (const target of everyone) {
+              const upward = levels.indexOf(target.level) > levels.indexOf(actor.level);
+              if (!upward) continue;
+              const decision = decideAssignment(actor, target, 'reassign', config);
+              expect(
+                decision.allowed,
+                `${actor.userId} -> ${target.userId} (${staff}/${managers})`,
+              ).toBe(false);
+            }
+          }
+        }
+      }
+    }
+  });
+});

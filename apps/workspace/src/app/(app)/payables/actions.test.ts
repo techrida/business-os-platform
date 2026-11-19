@@ -8,6 +8,23 @@ const session = vi.hoisted(() => ({ roles: ['accountant'] as string[] }));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: () => Promise.resolve({ roles: session.roles }),
 }));
+// GET /v1/me for an unedited role answers the role's default grants; a test sets `live` for an edited one.
+const grants = vi.hoisted(() => ({ live: undefined as Map<string, string> | undefined }));
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: () =>
+      Promise.resolve(
+        grants.live ??
+          new Map(
+            session.roles.flatMap((r) =>
+              Object.entries(DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS]),
+            ),
+          ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('next/navigation', () => ({
   redirect: (to: string) => {
@@ -166,6 +183,23 @@ describe('create a standalone bill', () => {
     expect((await createBillAction(prev, form(fields))).error).toMatch(/roles/i);
     expect(api.createBill).not.toHaveBeenCalled();
   });
+
+  // The new-bill page opens on the live grants; its create action agrees (U18 #12).
+  it('lets Procurement create the bill once an admin granted payables.bill.enter', async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([['payables.bill.enter', 'all']]);
+    api.createBill.mockResolvedValue({ id: BILL });
+    await expect(createBillAction(prev, form(fields))).rejects.toThrow(
+      `REDIRECT /payables/bills/${BILL}?created=1`,
+    );
+    expect(api.createBill).toHaveBeenCalledOnce();
+  });
+
+  it('refuses an accountant whose payables.bill.enter was removed, before any write', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    expect((await createBillAction(prev, form(fields))).error).toMatch(/roles/i);
+    expect(api.createBill).not.toHaveBeenCalled();
+  });
 });
 
 const apiError = (status: number, code: string) =>
@@ -181,6 +215,7 @@ function form(fields: Record<string, string>): FormData {
 
 beforeEach(() => {
   session.roles = ['accountant'];
+  grants.live = undefined;
   for (const fn of Object.values(api)) fn.mockReset();
 });
 
@@ -317,6 +352,20 @@ describe('convert a submission', () => {
     const out = await convertSubmissionAction(prev, form(lineFields()));
     expect(out.error).toMatch(/already has a bill/i);
     expect(out.key).not.toBe(KEY);
+  });
+
+  it('follows the live grants: Procurement granted bill entry converts, an accountant without it cannot', async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([['payables.bill.enter', 'all']]);
+    api.convertBillSubmission.mockResolvedValue({ id: BILL });
+    await expect(convertSubmissionAction(prev, form(lineFields()))).rejects.toThrow(
+      `REDIRECT /payables/bills/${BILL}?created=1`,
+    );
+    api.convertBillSubmission.mockClear();
+    session.roles = ['accountant'];
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    expect((await convertSubmissionAction(prev, form(lineFields()))).error).toMatch(/roles/i);
+    expect(api.convertBillSubmission).not.toHaveBeenCalled();
   });
 });
 

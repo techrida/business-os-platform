@@ -60,3 +60,52 @@ it('shows the history for a customer case and reports a customer history failure
   mocks.getReviewHistory.mockRejectedValueOnce(new Error('Unavailable'));
   expect(await render('customer')).toContain('Review history could not be loaded.');
 });
+
+// The review controls follow the case's own `can` flags, not the session's role names: the session here is a
+// founder, so a page still gating on role defaults would offer review on both cases.
+async function renderSubmitted(can: VerificationCaseDto['can'], reviewBlockedReason?: string) {
+  mocks.getVerificationCase.mockResolvedValue({
+    ...(reviewBlockedReason === undefined ? {} : { reviewBlockedReason }),
+    id,
+    partyKind: 'customer',
+    partyId: id,
+    status: 'submitted',
+    checklist: [],
+    reviewedBy: null,
+    decidedAt: null,
+    decisionNote: null,
+    version: 1,
+    can,
+  } satisfies VerificationCaseDto);
+  return renderToStaticMarkup(
+    await VerificationCasePage({
+      params: Promise.resolve({ id }),
+      searchParams: Promise.resolve({}),
+    }),
+  );
+}
+
+it('offers review only when the case says this person may review it', async () => {
+  const none = { review: false, edit: false, attach: false, remove: false };
+  const locked = await renderSubmitted(none);
+  expect(locked).toContain('The documents are locked while this case is under review.');
+  expect(locked).not.toContain('Review the documents before recording a decision.');
+
+  expect(await renderSubmitted(undefined)).toContain(
+    'The documents are locked while this case is under review.',
+  );
+
+  expect(await renderSubmitted({ ...none, review: true })).toContain(
+    'Review the documents before recording a decision.',
+  );
+});
+
+it('tells the submitter why they cannot review their own case', async () => {
+  const none = { review: false, edit: false, attach: false, remove: false };
+  const out = await renderSubmitted(
+    none,
+    'You submitted this case, so someone else must review it.',
+  );
+  expect(out).toContain('You submitted this case, so someone else must review it.');
+  expect(out).not.toContain('The documents are locked while this case is under review.');
+});

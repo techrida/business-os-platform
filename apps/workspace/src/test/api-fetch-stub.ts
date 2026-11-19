@@ -1,5 +1,12 @@
 // Page tests that let the real API client (env check, fetch, zod parse) run against a stubbed `fetch`, so a field
 // the API sends but the client schema drops fails the test instead of passing through a mocked client.
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  type MeResponse,
+  type Permission,
+  type RoleKey,
+  type Scope,
+} from '@bos/contracts';
 import { vi } from 'vitest';
 
 import { __resetEnvForTests } from '@/lib/env';
@@ -40,6 +47,22 @@ export function stubApi(routes: () => Record<string, unknown>) {
   stubApiEnv();
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
+}
+
+/** The `GET /v1/me` body of a staff user holding `role` as seeded (its default grants), for a `/v1/me` route. */
+export function meAs(role: RoleKey): MeResponse {
+  return {
+    userId: 'user-1',
+    tenantId: '00000000-0000-4000-8000-000000000001',
+    organizationId: '00000000-0000-4000-8000-000000000001',
+    orgKind: 'staff',
+    partyId: null,
+    roles: [role],
+    correlationId: 'corr-12345678',
+    permissions: (Object.entries(DEFAULT_ROLE_PERMISSIONS[role]) as [Permission, Scope][]).map(
+      ([permission, scope]) => ({ permission, scope }),
+    ),
+  };
 }
 
 /** Page text without tags, for `toContain` checks. */

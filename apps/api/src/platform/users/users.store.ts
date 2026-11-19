@@ -124,6 +124,8 @@ export abstract class UsersStore {
 
   /** Active holders of `role` with a membership in the entity whose role_keys is NULL or has the role. */
   abstract userIdsWithRole(scope: TxScope, role: RoleKey): Promise<string[]>;
+  /** Active holders of `role` across the tenant, used by the last-Founder guard. */
+  abstract activeRoleHolderIds(q: Queryable, tenantId: string, role: RoleKey): Promise<string[]>;
   /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
   abstract emailOf(userId: string): Promise<string | null>;
   /**
@@ -367,6 +369,17 @@ export class SqlUsersStore extends UsersStore {
             AND ue.organization_id = ${scope.organizationId}
           WHERE ur.tenant_id = ${scope.tenantId} AND ur.role_key = ${role} AND u.status = 'active'
             AND (ue.role_keys IS NULL OR ${role}::text = ANY (ue.role_keys))
+          ORDER BY u.id`,
+    );
+    return found.map((r) => r.id);
+  }
+
+  async activeRoleHolderIds(q: Queryable, tenantId: string, role: RoleKey): Promise<string[]> {
+    const found = await rows<{ id: string }>(
+      q,
+      sql`SELECT u.id FROM app.user_roles ur
+          JOIN app.users u ON u.tenant_id = ur.tenant_id AND u.id = ur.user_id
+          WHERE ur.tenant_id = ${tenantId} AND ur.role_key = ${role} AND u.status = 'active'
           ORDER BY u.id`,
     );
     return found.map((r) => r.id);

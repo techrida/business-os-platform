@@ -8,6 +8,7 @@ import {
 } from '@bos/contracts';
 import type { Metadata } from 'next';
 
+import { permissionChecker } from '@/components/p2/customers/permissions';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
@@ -84,6 +85,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
   if (departmentId) query.departmentId = departmentId;
 
   const session = await requireSection('users', href(page));
+  // "Check access" opens Settings > Access, which needs the access read permission.
+  const canCheckAccess = permissionChecker(session.roles)('admin.roles.read');
   const [users, summary] = await Promise.all([
     section('view users', () => listUsers(session, query)),
     section('view user totals', () => summarizeUsers(session)),
@@ -287,6 +290,16 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
                               imageDocumentId={picture}
                             />
                             <RolesEditor userId={user.id} label={label} roles={user.roles} />
+                            {canCheckAccess && (
+                              <LinkButton
+                                href={`/settings/access/check?person=${encodeURIComponent(user.id)}`}
+                                variant="ghost"
+                                size="small"
+                                aria-label={`Check access for ${label}`}
+                              >
+                                Check access
+                              </LinkButton>
+                            )}
                             {summary.ok &&
                               summary.data.canSendPasswordReset &&
                               user.email &&
