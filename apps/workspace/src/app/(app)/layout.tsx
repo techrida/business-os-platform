@@ -7,8 +7,22 @@ import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
 import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
+import { getMe } from '@/lib/api';
 import { getNumberSystems } from '@/lib/display-settings';
-import { getSession } from '@/lib/session';
+import { getSession, type Session } from '@/lib/session';
+
+/**
+ * The signed-in person's picture from `/v1/me`. Never throws: a failed read shows initials, it never breaks the shell.
+ * The person's `app.users.id` is not in `/v1/me` yet (its `userId` is the identity provider's subject), so the
+ * sidebar cannot offer the profile picture upload until it is.
+ */
+async function ownAvatar(session: Session): Promise<string | null> {
+  try {
+    return (await getMe(session)).avatarDocumentId ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await getSession();
@@ -25,14 +39,20 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (session.roles.length === 0) redirect('/no-access');
 
   const roles = accountLabel(session.roles);
-  // Never throws: a failed read falls back to the default grouping.
-  const numberSystems = await getNumberSystems();
+  // Neither throws: a failed read falls back to the default grouping and to initials.
+  const [numberSystems, avatarDocumentId] = await Promise.all([
+    getNumberSystems(),
+    ownAvatar(session),
+  ]);
 
   return (
     <ShellFrame>
       {/* Only signed-in staff report vitals: /telemetry/vitals needs a session. */}
       <WebVitals />
-      <Sidebar user={{ name: roles, detail: session.orgKind }} roles={session.roles} />
+      <Sidebar
+        user={{ name: roles, detail: session.orgKind, imageDocumentId: avatarDocumentId }}
+        roles={session.roles}
+      />
       <ShellMain>
         <Header orgKind={session.orgKind} roles={session.roles} />
         <NumberSystemProvider value={numberSystems}>{children}</NumberSystemProvider>
