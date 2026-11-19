@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/status-timeline';
 import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { snapshotEntries, when } from '@/lib/kernel-format';
 
 import { DecisionForm } from './decision-form';
@@ -114,7 +114,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const { id } = await params;
   const path = `/inbox/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   // The inbox tells us whether this request is waiting on this person; the detail call alone
   // cannot (a requester can read their own request but not decide it).
@@ -186,7 +186,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const person = (id: string) => (
     <span>{names.get(id.toLowerCase()) ?? 'Person name unavailable'}</span>
   );
-  const rows = snapshotEntries(snapshot, names, numberSystem).filter(
+  const rows = snapshotEntries(snapshot, names, numberSystems).filter(
     (row) =>
       (!memoTemplate.success || (row.key !== 'template' && row.key !== 'body')) &&
       (!isMemo || row.key !== 'attachments'),
@@ -272,7 +272,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
             description="Snapshot taken when the request was submitted."
           >
             {request.documentType === 'quotation_version' ? (
-              <QuotationApprovalSummary request={request} numberSystem={numberSystem} />
+              <QuotationApprovalSummary request={request} numberSystems={numberSystems} />
             ) : facts.length === 0 && !memoTemplate.success ? (
               <p className={styles.note}>The snapshot is empty.</p>
             ) : (

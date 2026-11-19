@@ -1,7 +1,7 @@
 import { AGING_BUCKETS, type ArAgingReport, type Currency } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
@@ -12,7 +12,7 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { getAging } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 import { BUCKET_LABEL, isZeroAmount } from '../_lib/aging';
@@ -28,15 +28,15 @@ const HERE = '/receivables/aging';
 function Amount({
   value,
   currency,
-  numberSystem,
+  numberSystems,
 }: {
   value: string;
   currency: Currency;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   return (
     <span className={isZeroAmount(value) ? styles.zero : styles.amount}>
-      {money(value, currency, numberSystem)}
+      {money(value, currency, numberSystems)}
     </span>
   );
 }
@@ -73,10 +73,10 @@ function AsOf({ date }: { date: string }) {
 
 function AgingTable({
   report,
-  numberSystem,
+  numberSystems,
 }: {
   report: ArAgingReport;
-  numberSystem: NumberSystem;
+  numberSystems: NumberSystems;
 }) {
   return (
     <Table
@@ -113,7 +113,7 @@ function AgingTable({
             {AGING_BUCKETS.map((bucket) => (
               <Td key={bucket} align="end" nowrap>
                 <Amount
-                  numberSystem={numberSystem}
+                  numberSystems={numberSystems}
                   value={row.buckets[bucket]}
                   currency={row.currency}
                 />
@@ -121,7 +121,11 @@ function AgingTable({
             ))}
             <Td align="end" nowrap>
               <span className={styles.total}>
-                <Amount numberSystem={numberSystem} value={row.totalOpen} currency={row.currency} />
+                <Amount
+                  numberSystems={numberSystems}
+                  value={row.totalOpen}
+                  currency={row.currency}
+                />
               </span>
             </Td>
           </tr>
@@ -135,7 +139,7 @@ function AgingTable({
               {AGING_BUCKETS.map((bucket) => (
                 <Td key={bucket} align="end" nowrap>
                   <Amount
-                    numberSystem={numberSystem}
+                    numberSystems={numberSystems}
                     value={total.buckets[bucket]}
                     currency={total.currency}
                   />
@@ -144,7 +148,7 @@ function AgingTable({
               <Td align="end" nowrap>
                 <span className={styles.total}>
                   <Amount
-                    numberSystem={numberSystem}
+                    numberSystems={numberSystems}
                     value={total.totalOpen}
                     currency={total.currency}
                   />
@@ -160,7 +164,7 @@ function AgingTable({
 
 export default async function ReceivablesAgingPage() {
   const session = await requireStaffSession(HERE);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   // A person without ar.read is told so without the page fetching anything for them.
   if (!hasPermission(session.roles, 'ar.read')) {
@@ -210,7 +214,7 @@ export default async function ReceivablesAgingPage() {
               key={total.currency}
               label={`Open balance · ${total.currency}`}
               icon="banknote"
-              value={money(total.totalOpen, total.currency, numberSystem)}
+              value={money(total.totalOpen, total.currency, numberSystems)}
             />
           ))}
         </section>
@@ -221,7 +225,7 @@ export default async function ReceivablesAgingPage() {
           issued and not yet fully paid.
         </EmptyState>
       ) : (
-        <AgingTable numberSystem={numberSystem} report={report} />
+        <AgingTable numberSystems={numberSystems} report={report} />
       )}
     </Page>
   );

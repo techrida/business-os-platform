@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { NumberSystem } from '@bos/locale';
+import type { NumberSystems } from '@bos/locale';
 
 import { isGuid } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
@@ -15,7 +15,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { getBill, type VendorBill } from '@/lib/api-payables';
 import { getPoProgress } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystem } from '@/lib/display-settings';
+import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 
 import { poGrants, poMoney, qtyText } from '../../../procurement/orders/_lib/model';
@@ -41,7 +41,7 @@ import styles from '../../payables.module.css';
 export const metadata: Metadata = { title: 'Bill · Business OS' };
 export const dynamic = 'force-dynamic';
 
-function Lines({ bill, numberSystem }: { bill: VendorBill; numberSystem: NumberSystem }) {
+function Lines({ bill, numberSystems }: { bill: VendorBill; numberSystems: NumberSystems }) {
   return (
     <Panel
       title="Lines"
@@ -73,22 +73,22 @@ function Lines({ bill, numberSystem }: { bill: VendorBill; numberSystem: NumberS
               </Td>
               <Td align="end" nowrap>
                 <span className={styles.numeric}>
-                  {poMoney(l.unitPrice, bill.currency, numberSystem)}
+                  {poMoney(l.unitPrice, bill.currency, numberSystems)}
                 </span>
               </Td>
               <Td align="end" nowrap>
                 <span className={styles.numeric}>
-                  {poMoney(l.netAmount, bill.currency, numberSystem)}
+                  {poMoney(l.netAmount, bill.currency, numberSystems)}
                 </span>
               </Td>
               <Td align="end" nowrap>
                 <span className={styles.numeric}>
-                  {poMoney(l.vatAmount, bill.currency, numberSystem)}
+                  {poMoney(l.vatAmount, bill.currency, numberSystems)}
                 </span>
               </Td>
               <Td align="end" nowrap>
                 <span className={styles.numeric}>
-                  {poMoney(l.tdsAmount, bill.currency, numberSystem)}
+                  {poMoney(l.tdsAmount, bill.currency, numberSystems)}
                 </span>
               </Td>
             </tr>
@@ -99,7 +99,7 @@ function Lines({ bill, numberSystem }: { bill: VendorBill; numberSystem: NumberS
   );
 }
 
-function MatchPanel({ bill, numberSystem }: { bill: VendorBill; numberSystem: NumberSystem }) {
+function MatchPanel({ bill, numberSystems }: { bill: VendorBill; numberSystems: NumberSystems }) {
   if (bill.purchaseOrderId === null) {
     return (
       <Panel title="Match">
@@ -162,12 +162,12 @@ function MatchPanel({ bill, numberSystem }: { bill: VendorBill; numberSystem: Nu
                   </Td>
                   <Td align="end" nowrap>
                     <span className={styles.numeric}>
-                      {poMoney(m.priceVariance, bill.currency, numberSystem)}
+                      {poMoney(m.priceVariance, bill.currency, numberSystems)}
                     </span>
                   </Td>
                   <Td align="end" nowrap>
                     <span className={styles.numeric}>
-                      {poMoney(m.taxVariance, bill.currency, numberSystem)}
+                      {poMoney(m.taxVariance, bill.currency, numberSystems)}
                     </span>
                   </Td>
                   <Td nowrap>
@@ -196,7 +196,7 @@ export default async function BillPage({
   const justCreated = searchParams !== undefined && (await searchParams).created === '1';
   const here = `/payables/bills/${id}`;
   const session = await requireStaffSession(here);
-  const numberSystem = await getNumberSystem();
+  const numberSystems = await getNumberSystems();
 
   let bill: VendorBill;
   try {
@@ -288,17 +288,17 @@ export default async function BillPage({
     },
   ];
   const totals: Fact[] = [
-    { key: 'net', label: 'Net', value: poMoney(bill.netTotal, bill.currency, numberSystem) },
-    { key: 'vat', label: 'VAT', value: poMoney(bill.vatTotal, bill.currency, numberSystem) },
+    { key: 'net', label: 'Net', value: poMoney(bill.netTotal, bill.currency, numberSystems) },
+    { key: 'vat', label: 'VAT', value: poMoney(bill.vatTotal, bill.currency, numberSystems) },
     {
       key: 'tds',
       label: 'Withholding',
-      value: poMoney(bill.tdsTotal, bill.currency, numberSystem),
+      value: poMoney(bill.tdsTotal, bill.currency, numberSystems),
     },
     {
       key: 'payable',
       label: 'Payable',
-      value: <strong>{poMoney(bill.payableTotal, bill.currency, numberSystem)}</strong>,
+      value: <strong>{poMoney(bill.payableTotal, bill.currency, numberSystems)}</strong>,
     },
   ];
 
@@ -359,8 +359,8 @@ export default async function BillPage({
             <Panel title="Bill">
               <FactList facts={facts} />
             </Panel>
-            <Lines numberSystem={numberSystem} bill={bill} />
-            <MatchPanel numberSystem={numberSystem} bill={bill} />
+            <Lines numberSystems={numberSystems} bill={bill} />
+            <MatchPanel numberSystems={numberSystems} bill={bill} />
           </div>
           <aside className={styles.stack}>
             <Panel title="Totals" description="Worked out by the platform from the lines.">
