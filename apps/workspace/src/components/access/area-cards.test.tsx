@@ -146,3 +146,14 @@ it('opens Leads with a locked Founder row, staff roles, levels and the assign bl
   expect(leads.textContent).not.toContain('Customer portal user');
   expect(leads.textContent).not.toContain('Vendor portal user');
 });
+
+it('shows no Who can assign block on Invoices and only a fixed line on Quotations', async () => {
+  await render();
+  await click(byLabel('Edit Invoices'));
+  expect(card('Invoices').textContent).not.toContain('Who can assign');
+
+  await click(byLabel('Edit Quotations'));
+  const quotations = card('Quotations');
+  expect(quotations.textContent).toContain('Quotations follow their opportunity.');
+  expect(quotations.textContent).not.toContain('Staff can assign to');
+});
