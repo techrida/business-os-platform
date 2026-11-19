@@ -76,25 +76,23 @@ export function buildAreaSummaries(
       sentences.push(`${joinList(deptRoles)} see their department's ${noun}.`);
     }
 
+    // A head with no head row keeps the manager row at run time (the role cache), so the manager
+    // switch alone gives heads the department too.
     if (ownRoles.length > 0) {
       const levelPhrase =
         area.supportsDepartment && level
-          ? level.managersSeeDepartment && level.headsSeeDepartment
+          ? level.managersSeeDepartment
             ? ' Their managers and heads see their department.'
             : level.headsSeeDepartment
               ? ' Their heads see their department.'
-              : level.managersSeeDepartment
-                ? ' Their managers see their department.'
-                : ''
+              : ''
           : '';
       sentences.push(`${joinList(ownRoles)} see their own ${noun}.${levelPhrase}`);
     } else if (area.supportsDepartment && level) {
-      if (level.managersSeeDepartment && level.headsSeeDepartment) {
+      if (level.managersSeeDepartment) {
         sentences.push(`Department managers and heads see their department's ${noun}.`);
       } else if (level.headsSeeDepartment) {
         sentences.push(`Department heads see their department's ${noun}.`);
-      } else if (level.managersSeeDepartment) {
-        sentences.push(`Department managers see their department's ${noun}.`);
       }
     }
 

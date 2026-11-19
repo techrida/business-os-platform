@@ -24,14 +24,16 @@ import {
   ACCESS_PERMISSION_CATALOGUE,
   ADMIN_CONFIRM_PERMISSIONS,
   AREA_BY_KEY,
-  AREA_BY_SEE_PERMISSION,
   AREA_PLURAL_NOUN,
   AREA_SINGULAR_NOUN,
+  LEVEL_AREA_BY_PERMISSION,
   MAKER_CHECKER_CONFLICTS,
   PERMISSION_BY_KEY,
   ROLE_BY_KEY,
   defaultScopeFor,
   isScopeAllowedForRole,
+  levelReachesDepartment,
+  levelSwitchWidens,
   managerAssignmentRuleLabel,
   permissionLabel,
   reachLabel,
@@ -110,9 +112,13 @@ function levelLabel(level: AccessLevel): string {
 }
 
 /**
- * Effective reach for a single user on a permission given grants and level rules (D50, D51, R1).
- * A manager or head only gets department reach from a level switch if one of their roles already
- * has a non-null grant on that area's `seePermission` (review addendum recommendation).
+ * Effective reach for a single user on a permission given grants and level rules (D50, D51, R1),
+ * the way the role cache computes it at run time: per role, the wider of its grant and the area's
+ * department row when the member's level gets one, then the widest across roles. A switch widens
+ * the area's see permission and its paired edit permission (leads, opportunities), only for a staff
+ * role that already holds the permission below the department, and never the lead intake roles'
+ * write. A head gets the department when either switch is on, as a head with no head row keeps the
+ * manager row. Without a department there is nothing to widen to.
  */
 export function effectiveScopeForUser(
   user: Pick<SnapshotUser, 'roles' | 'departmentId' | 'level'>,
@@ -120,41 +126,35 @@ export function effectiveScopeForUser(
   grantMap: ReadonlyMap<string, AccessScope | null>,
   levelMap: ReadonlyMap<AccessSettingAreaKey, AccessLevelRule>,
 ): { scope: AccessScope | null; viaRole: RoleKey | null; boostedByLevel: boolean } {
+  const levelArea = LEVEL_AREA_BY_PERMISSION.get(permission);
+  const levelReaches =
+    levelArea !== undefined &&
+    user.departmentId !== null &&
+    levelReachesDepartment(user.level, levelMap.get(levelArea.area));
+
   let best: AccessScope | null = null;
   let viaRole: RoleKey | null = null;
+  let boostedByLevel = false;
 
   for (const role of user.roles) {
-    const scope = grantMap.get(grantKey(role, permission)) ?? null;
+    const base = grantMap.get(grantKey(role, permission)) ?? null;
+    const widened = levelReaches && levelSwitchWidens(role, permission, base);
+    const scope: AccessScope | null = widened ? 'department' : base;
     if (reachRank(scope) > reachRank(best)) {
       best = scope;
       viaRole = role;
-    }
-  }
-
-  let boostedByLevel = false;
-  const area = AREA_BY_SEE_PERMISSION.get(permission);
-  if (
-    area &&
-    area.supportsDepartment &&
-    best !== null &&
-    user.departmentId !== null &&
-    reachRank(best) < reachRank('department')
-  ) {
-    const rule = levelMap.get(area.key);
-    if (
-      rule &&
-      ((user.level === 'head' && rule.headsSeeDepartment) ||
-        (user.level === 'manager' && rule.managersSeeDepartment))
-    ) {
-      best = 'department';
-      boostedByLevel = true;
+      boostedByLevel = widened;
     }
   }
 
   return { scope: best, viaRole, boostedByLevel };
 }
 
-/** Plain-language "Why" lines for Check a person (spec 6.2 AC 3: names at least one role or level). */
+/**
+ * Plain-language "Why" lines for Check a person (spec 6.2 AC 3: names at least one role or level).
+ * Read reach only: the level line names the switch that gives a manager or head the department, the
+ * head switch when it is on and otherwise the manager switch a head falls back to.
+ */
 export function explainAreaAccess(
   user: Pick<SnapshotUser, 'roles' | 'departmentId' | 'level'>,
   areaKey: AccessSettingAreaKey,
@@ -172,6 +172,7 @@ export function explainAreaAccess(
 
   const lines: string[] = [];
   let bestBase: AccessScope | null = null;
+  let widenable = false;
 
   for (const role of user.roles) {
     const scope = grantMap.get(grantKey(role, area.seePermission)) ?? null;
@@ -179,6 +180,7 @@ export function explainAreaAccess(
       lines.push(`${roleLabel(role)} role gives ${reachLabel(scope, 'record')}.`);
       if (reachRank(scope) > reachRank(bestBase)) bestBase = scope;
     }
+    if (levelSwitchWidens(role, area.seePermission, scope)) widenable = true;
   }
 
   if (lines.length === 0) {
@@ -189,23 +191,17 @@ export function explainAreaAccess(
 
   const rule = levelMap.get(areaKey);
   if (
-    area.supportsDepartment &&
-    rule &&
-    bestBase !== null &&
-    reachRank(bestBase) < reachRank('department')
+    rule !== undefined &&
+    widenable &&
+    reachRank(bestBase) < reachRank('department') &&
+    levelReachesDepartment(user.level, rule)
   ) {
-    if (user.level === 'head' && rule.headsSeeDepartment) {
-      if (user.departmentId !== null) {
-        lines.push('Department head level adds Their department.');
-      } else {
-        lines.push('Department head level requires a department to add Their department.');
-      }
-    } else if (user.level === 'manager' && rule.managersSeeDepartment) {
-      if (user.departmentId !== null) {
-        lines.push('Manager level adds Their department.');
-      } else {
-        lines.push('Manager level requires a department to add Their department.');
-      }
+    const levelName =
+      user.level === 'head' && rule.headsSeeDepartment ? 'Department head level' : 'Manager level';
+    if (user.departmentId !== null) {
+      lines.push(`${levelName} adds Their department.`);
+    } else {
+      lines.push(`${levelName} requires a department to add Their department.`);
     }
   }
 
