@@ -175,7 +175,8 @@ export class PurchaseRequestsService {
       scope,
       rows.map((r) => r.id),
     );
-    return rows.map((r) => toListItem(r, rfqIds.get(r.id) ?? null));
+    const names = await this.namesOf(scope, rows);
+    return rows.map((r) => ({ ...toListItem(r, rfqIds.get(r.id) ?? null), ...names(r) }));
   }
 
   /** One request with its lines; 404 outside the caller's entity or scope. */
@@ -188,7 +189,49 @@ export class PurchaseRequestsService {
       .limit(1);
     if (row === undefined) throw notFound();
     const rfqId = (await this.liveRfqIds(this.db, scope, [row.id])).get(row.id) ?? null;
-    return toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId);
+    const names = await this.namesOf(scope, [row]);
+    return {
+      ...toDto(row, await this.linesOf(this.db, row.tenantId, row.id), rfqId),
+      ...names(row),
+    };
+  }
+
+  /**
+   * The names of the departments and cost centres the given requests (already read under the caller's scope)
+   * name, from the acting tenant and entity only. A request's department and cost centre are labelled with the
+   * request itself, so Procurement or a requester needs no department or cost-centre directory read.
+   */
+  private async namesOf(
+    scope: TxScope,
+    rows: readonly Pick<PurchaseRequestRow, 'departmentId' | 'costCenterId'>[],
+  ): Promise<
+    (r: Pick<PurchaseRequestRow, 'departmentId' | 'costCenterId'>) => {
+      departmentName: string | null;
+      costCenterName: string | null;
+    }
+  > {
+    const deptIds = [...new Set(rows.map((r) => r.departmentId))];
+    const ccIds = [...new Set(rows.map((r) => r.costCenterId))];
+    const [depts, ccs] = await Promise.all([
+      deptIds.length === 0
+        ? []
+        : this.db
+            .select({ id: departments.id, name: departments.name })
+            .from(departments)
+            .where(scoped(scope).where(departments, inArray(departments.id, deptIds))),
+      ccIds.length === 0
+        ? []
+        : this.db
+            .select({ id: costCenters.id, name: costCenters.name })
+            .from(costCenters)
+            .where(scoped(scope).where(costCenters, inArray(costCenters.id, ccIds))),
+    ]);
+    const dept = new Map(depts.map((d) => [d.id, d.name]));
+    const cc = new Map(ccs.map((c) => [c.id, c.name]));
+    return (r) => ({
+      departmentName: dept.get(r.departmentId) ?? null,
+      costCenterName: cc.get(r.costCenterId) ?? null,
+    });
   }
 
   // ------------------------------------------------------------------------------------------------- create

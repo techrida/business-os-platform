@@ -70,6 +70,9 @@ export const PurchaseRequestListItemSchema = z.object({
   version: z.number().int().min(1),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** The department's and cost centre's names, sent with the request; an older API leaves them out. */
+  departmentName: z.string().nullable().optional(),
+  costCenterName: z.string().nullable().optional(),
 });
 export type PurchaseRequestListItem = z.infer<typeof PurchaseRequestListItemSchema>;
 

@@ -283,6 +283,13 @@ export interface PurchaseRequestListItem {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The department's and cost centre's names, read with the request (same tenant and entity) so a reader who may
+   * see the request needs no department or cost-centre directory. Sent by the list and the detail; null when the
+   * name cannot be found.
+   */
+  departmentName?: string | null;
+  costCenterName?: string | null;
 }
 
 export interface PurchaseRequestDto extends PurchaseRequestListItem {

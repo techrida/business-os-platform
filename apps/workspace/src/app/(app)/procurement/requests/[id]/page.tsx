@@ -98,12 +98,16 @@ function factsOf(pr: PurchaseRequestDto): Fact[] {
     {
       key: 'dept',
       label: 'Department',
-      value: <span className={styles.numeric}>Department name unavailable</span>,
+      value: pr.departmentName ?? (
+        <span className={styles.numeric}>Department name unavailable</span>
+      ),
     },
     {
       key: 'cost',
       label: 'Cost centre',
-      value: <span className={styles.numeric}>Cost centre name unavailable</span>,
+      value: pr.costCenterName ?? (
+        <span className={styles.numeric}>Cost centre name unavailable</span>
+      ),
     },
     { key: 'budget', label: 'Budget code', value: pr.budgetCode },
     { key: 'currency', label: 'Currency', value: pr.currency },
