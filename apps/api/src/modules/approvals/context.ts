@@ -53,7 +53,7 @@ export async function hrefIfVisible(
   return row === undefined ? null : href;
 }
 
-type Owner = Pick<DocumentOwnerPolicy, 'ownerType' | 'resource'>;
+type Owner = Pick<DocumentOwnerPolicy, 'ownerType' | 'resource' | 'readPermission'>;
 
 /**
  * The given documents that `viewer` may read, newest version each, in the order asked. A document of an owner type
@@ -80,7 +80,12 @@ export async function readableDocuments(
     const owner = owners.find((o) => o.ownerType === doc?.ownerType);
     if (doc === undefined || owner === undefined) continue;
     const ref = await owner.resource(scope, doc.ownerId);
-    if (ref === null || !can(viewer, 'documents.read', ref).allowed) continue;
+    if (ref === null) continue;
+    // The same test DocumentsService makes: documents.read, or the owner policy's own extra read permission.
+    const mayOpen = ['documents.read' as Permission, owner.readPermission].some(
+      (p) => p !== undefined && can(viewer, p, ref).allowed,
+    );
+    if (!mayOpen) continue;
     const [newest] = await q
       .select({
         id: documentVersions.id,
