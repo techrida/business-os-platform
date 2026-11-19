@@ -1,9 +1,16 @@
 import 'server-only';
 
-import { EVIDENCE_POLICIES, type EvidencePolicy, type SettingKey } from '@bos/contracts';
+import {
+  EVIDENCE_POLICIES,
+  SETTING_DEFAULTS,
+  type EvidencePolicy,
+  type SettingKey,
+} from '@bos/contracts';
 
 import { getSetting, type SettingCurrent } from '@/lib/api-admin';
 import type { Session } from '@/lib/session';
+
+import { defaultText, isDefaultValue } from '@/components/settings/default-value';
 
 import { section, type Section } from '../section';
 import type { FieldKind, FieldSpec } from './setting-fields';
@@ -100,6 +107,17 @@ const COPY: Partial<Record<SettingKey, Copy>> = {
 const compact = (value: unknown, kind: FieldKind): string =>
   kind === 'sla' || kind === 'schedule' ? JSON.stringify(value) : settingValueText(value);
 
+/** The default in the screen's own words: a select shows its option's label, not the stored value. */
+function defaultLabel(key: SettingKey, kind: FieldKind): string {
+  if (kind === 'select') {
+    const stored = SETTING_DEFAULTS[key];
+    if (typeof stored === 'string' && Object.hasOwn(EVIDENCE_LABEL, stored)) {
+      return EVIDENCE_LABEL[stored as EvidencePolicy];
+    }
+  }
+  return defaultText(key);
+}
+
 function toSpec(key: SettingKey, current: SettingCurrent): FieldSpec {
   const copy = COPY[key];
   if (copy === undefined) throw new Error(`No settings copy for ${key}`);
@@ -109,6 +127,8 @@ function toSpec(key: SettingKey, current: SettingCurrent): FieldSpec {
     ...(copy.help ? { help: copy.help } : {}),
     kind: copy.kind,
     current: compact(current.value, copy.kind),
+    defaultText: defaultLabel(key, copy.kind),
+    isDefault: isDefaultValue(key, current.value),
     ...(copy.kind === 'select'
       ? {
           options: EVIDENCE_POLICIES.map((value) => ({ value, label: EVIDENCE_LABEL[value] })),
