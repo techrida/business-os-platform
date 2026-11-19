@@ -9,13 +9,13 @@
 //
 // ADR 0027: users and user_roles are tenant-scoped (no organization_id). A ZITADEL org maps to an
 // app.idp_orgs row; which legal entities a staff user may act for lives in app.user_entities.
-import type { RoleKey } from '@bos/contracts';
+import type { AdminUser, AdminUsersQuery, AdminUsersSummary, RoleKey } from '@bos/contracts';
 import { idpOrgs, organizations } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
 import { type SQL, and, eq, sql } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../db/db.module';
-import type { TxScope } from '../db/tx';
+import { type Actor, type TxScope, withTx } from '../db/tx';
 import type { MirroredStatus } from './zitadel-admin.client';
 
 /** Either the pool-backed db or an open transaction: both can run a statement. */
@@ -57,9 +57,8 @@ export interface UserFields {
   status: MirroredStatus;
 }
 
-export interface ListedUser extends UserRow {
-  roles: RoleKey[];
-}
+export type ListedUser = AdminUser & UserRow;
+export type StaffSummary = Omit<AdminUsersSummary, 'canSendPasswordReset'>;
 
 /** One ZITADEL event id as the webhook delivered it; the triple is the dedupe key (§3). */
 export interface ZitadelEventKey {
@@ -125,10 +124,9 @@ export abstract class UsersStore {
   /** The address of an `active` user only: notifications must not mail a deactivated or invited person. */
   abstract emailOf(userId: string): Promise<string | null>;
   /** The tenant's staff users (the staff IdP org's), with their mirrored roles. */
-  abstract list(
-    scope: TxScope,
-    q: { limit: number; after?: string | undefined },
-  ): Promise<ListedUser[]>;
+  abstract list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]>;
+  abstract summary(scope: TxScope): Promise<StaffSummary>;
+  abstract recordActivity(scope: TxScope, actor: Actor): Promise<void>;
 
   /** True when the event is new; false when this (instance, aggregate, sequence) was seen before. */
   abstract recordEvent(e: ZitadelEventKey): Promise<boolean>;
@@ -144,6 +142,15 @@ async function rows<T extends Record<string, unknown>>(q: Queryable, query: SQL)
 
 const USER_COLUMNS = sql`u.id, u.tenant_id AS "tenantId", u.idp_org_id AS "idpOrgId",
   u.zitadel_user_id AS "zitadelUserId", u.email, u.display_name AS "displayName", u.status`;
+
+const STAFF_USERS = sql`FROM app.users u
+  JOIN app.idp_orgs io ON io.id = u.idp_org_id AND io.tenant_id = u.tenant_id AND io.kind = 'staff'`;
+
+const DIRECTORY_ORDER = {
+  name: sql`lower(coalesce(u.display_name, u.email)) ASC NULLS LAST, u.id`,
+  lastActive: sql`u.last_active_at DESC NULLS LAST, u.id`,
+  createdAt: sql`u.created_at DESC, u.id`,
+};
 
 const IDP_ORG_COLUMNS = {
   idpOrgId: idpOrgs.id,
@@ -367,24 +374,64 @@ export class SqlUsersStore extends UsersStore {
     return row?.email ?? null;
   }
 
-  async list(
-    scope: TxScope,
-    q: { limit: number; after?: string | undefined },
-  ): Promise<ListedUser[]> {
-    const found = await rows<UserRecord & { roles: RoleKey[] | null }>(
+  async list(scope: TxScope, q: AdminUsersQuery): Promise<ListedUser[]> {
+    // Search punctuation literally. ILIKE supplies case folding and uses the trigram indexes.
+    const pattern = q.q ? `%${q.q.replace(/[!%_]/g, '!$&')}%` : null;
+    return rows<ListedUser & Record<string, unknown>>(
       this.db,
       sql`SELECT ${USER_COLUMNS},
-            coalesce(array_agg(ur.role_key ORDER BY ur.role_key) FILTER (WHERE ur.role_key IS NOT NULL), '{}') AS roles
-          FROM app.users u
-          JOIN app.idp_orgs io ON io.id = u.idp_org_id AND io.tenant_id = u.tenant_id AND io.kind = 'staff'
-          LEFT JOIN app.user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+            to_char(u.last_active_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "lastActiveAt",
+            to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",
+            CASE WHEN d.id IS NOT NULL THEN jsonb_build_object('id', d.id, 'name', d.name) END AS department,
+            ARRAY(SELECT ur.role_key FROM app.user_roles ur
+              WHERE ur.tenant_id = u.tenant_id AND ur.user_id = u.id ORDER BY ur.role_key) AS roles
+          ${STAFF_USERS}
+          LEFT JOIN app.user_entities ue ON ue.tenant_id = u.tenant_id AND ue.user_id = u.id
+            AND ue.organization_id = ${scope.organizationId}
+          LEFT JOIN app.departments d ON d.tenant_id = ue.tenant_id
+            AND d.organization_id = ue.organization_id AND d.id = ue.department_id
           WHERE u.tenant_id = ${scope.tenantId}
+            ${pattern ? sql`AND (u.display_name ILIKE ${pattern} ESCAPE '!' OR u.email ILIKE ${pattern} ESCAPE '!')` : sql``}
+            ${q.status ? sql`AND u.status = ${q.status}` : sql``}
+            ${q.departmentId ? sql`AND d.id = ${q.departmentId}` : sql``}
+            ${
+              q.role
+                ? sql`AND EXISTS (SELECT 1 FROM app.user_roles ur WHERE ur.tenant_id = u.tenant_id
+                AND ur.user_id = u.id AND ur.role_key = ${q.role})`
+                : sql``
+            }
             ${q.after ? sql`AND u.id > ${q.after}` : sql``}
-          GROUP BY u.id
-          ORDER BY u.id
-          LIMIT ${q.limit}`,
+          ORDER BY ${q.sort ? DIRECTORY_ORDER[q.sort] : sql`u.id`}
+          LIMIT ${q.limit + 1} OFFSET ${((q.page ?? 1) - 1) * q.limit}`,
     );
-    return found.map((r) => ({ ...r, roles: r.roles ?? [] }));
+  }
+
+  async summary(scope: TxScope): Promise<StaffSummary> {
+    const [summary] = await rows<StaffSummary>(
+      this.db,
+      sql`SELECT count(*)::int AS total,
+            (count(*) FILTER (WHERE u.status = 'active'))::int AS active,
+            (count(*) FILTER (WHERE u.status = 'invited'))::int AS invited,
+            (count(*) FILTER (WHERE u.status = 'inactive'))::int AS deactivated,
+            coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id, 'name', d.name)
+                        ORDER BY lower(d.name), d.id)
+              FROM app.departments d WHERE d.tenant_id = ${scope.tenantId}
+                AND d.organization_id = ${scope.organizationId}), '[]'::jsonb) AS departments
+          ${STAFF_USERS}
+          WHERE u.tenant_id = ${scope.tenantId}`,
+    );
+    return summary!;
+  }
+
+  recordActivity(scope: TxScope, actor: Actor): Promise<void> {
+    return withTx(this.db, scope, actor, async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout = '500ms'`);
+      // The WHERE clause is rechecked by Postgres after a concurrent update, so this is also
+      // the throttle across API instances. The timestamp is independent of profile updated_at.
+      await tx.execute(sql`UPDATE app.users SET last_active_at = now()
+        WHERE tenant_id = ${scope.tenantId} AND id = ${actor.id} AND status = 'active'
+          AND (last_active_at IS NULL OR last_active_at < now() - interval '5 minutes')`);
+    });
   }
 
   async recordEvent(e: ZitadelEventKey): Promise<boolean> {

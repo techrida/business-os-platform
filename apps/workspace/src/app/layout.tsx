@@ -1,3 +1,4 @@
+import { BOS_LIGHT_ONLY } from '@/lib/theme-mode';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
 // session, so on the login and notice pages every beacon was a 401.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme={BOS_LIGHT_ONLY ? 'light' : undefined}>
       <body>
         {children}
         <WorkspaceToaster />

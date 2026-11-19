@@ -5,10 +5,16 @@ import 'server-only';
 // Component or Server Action with the user's session, and every response is parsed with Zod so a
 // drifting API shape fails loudly here (502) instead of rendering garbage.
 //
-// Response schemas are local because @bos/contracts has no admin DTOs yet. Nullable columns are
-// declared nullable on purpose: a test with every field filled in would pass while real rows break.
+// Nullable columns are declared nullable so responses from incomplete records still parse.
 
-import { RoleKeySchema, SettingKeySchema, type RoleKey, type SettingKey } from '@bos/contracts';
+import {
+  type AdminUsersQuery,
+  AdminUsersPageSchema,
+  AdminUsersSummarySchema,
+  SettingKeySchema,
+  type RoleKey,
+  type SettingKey,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 import { ApiError, apiFetch } from './api';
@@ -17,20 +23,6 @@ import type { Session } from './session';
 // ---------------------------------------------------------------------------------------------
 // Response shapes (what the controllers actually return)
 // ---------------------------------------------------------------------------------------------
-
-const UserSchema = z.object({
-  id: z.string(),
-  email: z.string().nullable(),
-  displayName: z.string().nullable(),
-  status: z.string(),
-  /** The idp_orgs row the user signs in through; a user has no entity or department column (ADR 0027). */
-  idpOrgId: z.string(),
-  roles: z.array(RoleKeySchema),
-});
-const UsersPageSchema = z.object({
-  items: z.array(UserSchema),
-  nextAfter: z.string().nullable(),
-});
 
 const ApprovalPeoplePageSchema = z.object({
   items: z.array(
@@ -107,8 +99,7 @@ const FxRatesSchema = z.object({
 const IdSchema = z.object({ id: z.string() });
 const VersionNumberSchema = z.object({ version: z.number().int() });
 
-export type AdminUser = z.infer<typeof UserSchema>;
-export type AdminUsersPage = z.infer<typeof UsersPageSchema>;
+export type { AdminUser } from '@bos/contracts';
 export type WorkflowVersion = z.infer<typeof WorkflowVersionSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type ApprovalGroup = z.infer<typeof ApprovalGroupSchema>;
@@ -173,13 +164,20 @@ const seg = (value: string | number): string => encodeURIComponent(String(value)
 // Users
 // ---------------------------------------------------------------------------------------------
 
-export function listUsers(
-  session: Session,
-  q: { limit?: number; after?: string } = {},
-): Promise<AdminUsersPage> {
-  const params = new URLSearchParams({ limit: String(q.limit ?? 50) });
-  if (q.after) params.set('after', q.after);
-  return requestParsed(session, 'GET', `/v1/admin/users?${params.toString()}`, UsersPageSchema);
+export function listUsers(session: Session, q: Partial<AdminUsersQuery> = {}) {
+  const params = new URLSearchParams({ limit: '50' });
+  for (const [key, value] of Object.entries(q)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  return requestParsed(session, 'GET', `/v1/admin/users?${params}`, AdminUsersPageSchema);
+}
+
+export function summarizeUsers(session: Session) {
+  return requestParsed(session, 'GET', '/v1/admin/users/summary', AdminUsersSummarySchema);
+}
+
+export async function sendPasswordReset(session: Session, userId: string): Promise<void> {
+  await request(session, 'POST', `/v1/admin/users/${seg(userId)}/password-reset`);
 }
 
 /** Complete, caller-scoped picker data. These routes expose no directory administration fields. */

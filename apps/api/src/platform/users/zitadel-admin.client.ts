@@ -8,7 +8,7 @@
 // or a guess; P1-PLAN §3 marks it [unverified]).
 //
 // Fails closed: without ZITADEL_PROVISIONER_TOKEN every call throws ZitadelNotConfiguredError.
-import { ROLE_KEYS, type RoleKey } from '@bos/contracts';
+import { ROLE_KEYS, type RoleKey, type UserStatusSchema } from '@bos/contracts';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
@@ -20,6 +20,7 @@ export const ZITADEL_ENDPOINTS = {
   listProjects: '/zitadel.project.v2.ProjectService/ListProjects',
   // UNVERIFIED: user v2 GetUserByID; body { userId }, response { user }.
   getUser: '/zitadel.user.v2.UserService/GetUserByID',
+  passwordReset: '/zitadel.user.v2.UserService/PasswordReset',
   // VERIFIED path and organizationIdQuery (seed findUser). UNVERIFIED: the `query` paging object, the
   // `sortingColumn` value and the `details.totalResult` answer. reconcile does not trust any of them:
   // it aborts when the walk shows paging is not working (see UserMirror.reconcile).
@@ -71,7 +72,7 @@ export class ZitadelHttpError extends Error {
 }
 
 /** Our status vocabulary (app.users.status) derived from ZITADEL's user state. */
-export type MirroredStatus = 'invited' | 'active' | 'inactive';
+export type MirroredStatus = z.infer<typeof UserStatusSchema>;
 
 /** What k-users needs to know about one ZITADEL user. */
 export interface ZitadelUser {
@@ -496,6 +497,13 @@ export class ZitadelAdminClient {
   /** Asks ZITADEL to mail the invite link (the user then sets a password and enrols TOTP). */
   async sendInviteCode(zitadelUserId: string): Promise<void> {
     await this.post(ZITADEL_ENDPOINTS.createInviteCode, { userId: zitadelUserId, sendCode: {} });
+  }
+
+  async sendPasswordReset(zitadelUserId: string): Promise<void> {
+    await this.post(ZITADEL_ENDPOINTS.passwordReset, {
+      userId: zitadelUserId,
+      sendLink: { notificationType: 'NOTIFICATION_TYPE_Email' },
+    });
   }
 
   private async authorizations(zitadelUserId: string) {

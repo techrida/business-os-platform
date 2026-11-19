@@ -81,12 +81,15 @@ export const users = appSchema.table(
     email: text('email'),
     displayName: text('display_name'),
     status: text('status', { enum: USER_STATUSES }).notNull(),
+    lastActiveAt: timestamp('last_active_at', { withTimezone: true }),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check('users_status_check', sql`${t.status} in ('invited', 'active', 'inactive')`),
+    index('users_display_name_trgm_idx').using('gin', t.displayName.op('gin_trgm_ops')),
+    index('users_email_trgm_idx').using('gin', t.email.op('gin_trgm_ops')),
     index('users_tenant_status_idx').on(t.tenantId, t.status),
     index('users_tenant_idp_org_idx').on(t.tenantId, t.idpOrgId),
     // Parent key for composite FKs (tenant_id, user_id), ADR 0027 section 8.
