@@ -9,7 +9,9 @@ import { useEffect, useRef, type RefObject } from 'react';
 export function useFormReset(root: RefObject<Element | null>, onReset: () => void) {
   const resetting = useRef(false);
   const latest = useRef(onReset);
-  latest.current = onReset;
+  useEffect(() => {
+    latest.current = onReset;
+  });
   useEffect(() => {
     const form = root.current?.closest('form');
     if (!form) return;

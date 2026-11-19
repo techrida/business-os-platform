@@ -186,15 +186,15 @@ export function Select({
   // A `<label htmlFor={id}>` outside the component names the trigger: React Aria labels it with
   // aria-labelledby, which would otherwise hide that label. The label gets a stable id on mount.
   const forLabelId = !ariaLabel && !ariaLabelledBy && id ? `${id}__label` : undefined;
-  const [adoptedLabel, setAdoptedLabel] = useState<string | undefined>(undefined);
   useEffect(() => {
     if (!forLabelId || !id) return;
     const label = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(id)}"]`);
     if (!label) return;
     if (!label.id) label.id = forLabelId;
-    setAdoptedLabel(label.id);
+    // A label that already has its own id keeps it; point the trigger at that one.
+    else if (label.id !== forLabelId) trigger.current?.setAttribute('aria-labelledby', label.id);
   }, [forLabelId, id]);
-  const labelledBy = ariaLabelledBy ?? adoptedLabel ?? forLabelId;
+  const labelledBy = ariaLabelledBy ?? forLabelId;
 
   const pick = useCallback(
     (key: string | number | null) => {
