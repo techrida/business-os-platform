@@ -70,20 +70,38 @@ export class Session {
   }
 
   static async open({ context, cfg, state, log }) {
-    if (cfg.captions) {
-      const s = { text: '' };
-      await context.exposeFunction('__manualRunCaption', () => s.text);
-      await context.addInitScript(CAPTION_SCRIPT);
-      const page = await context.newPage();
-      const session = new Session({ context, page, cfg, state, log });
-      session._captionStore = s;
-      session.watch(page);
-      return session;
-    }
+    const store = { text: '' };
+    await Session.prepareContext(context, cfg, store);
     const page = await context.newPage();
     const session = new Session({ context, page, cfg, state, log });
+    session._captionStore = store;
     session.watch(page);
     return session;
+  }
+
+  static async prepareContext(context, cfg, store) {
+    if (!cfg.captions) return;
+    await context.exposeFunction('__manualRunCaption', () => store.text);
+    await context.addInitScript(CAPTION_SCRIPT);
+  }
+
+  /**
+   * A second, separately signed-in browser window (e.g. a private window). It is recorded as its own
+   * video next to the workflow's main video and shows the same captions.
+   */
+  async openWindow(name) {
+    const context = await this.browser.newContext({
+      viewport: this.cfg.viewport,
+      recordVideo: { dir: this.dirs.video, size: this.cfg.viewport },
+      ignoreHTTPSErrors: false,
+    });
+    context.setDefaultTimeout(this.cfg.actionTimeout);
+    context.setDefaultNavigationTimeout(this.cfg.navTimeout);
+    await Session.prepareContext(context, this.cfg, this._captionStore);
+    const page = this.watch(await context.newPage());
+    this.extraContexts = [...(this.extraContexts ?? []), { name, context, pages: [page] }];
+    this.windows = [...(this.windows ?? []), context];
+    return { context, page };
   }
 
   // ---- captions -------------------------------------------------------------------------------
@@ -92,7 +110,7 @@ export class Session {
     if (this._captionStore) this._captionStore.text = text;
     this.log(`  · ${text}`);
     if (!this.cfg.captions) return;
-    for (const p of this.context.pages()) {
+    for (const p of [this.context, ...(this.windows ?? [])].flatMap((c) => c.pages())) {
       await p
         .evaluate((t) => window.__manualRunDraw && window.__manualRunDraw(t), text)
         .catch(() => {});
@@ -266,6 +284,7 @@ export class Session {
       const state = await el
         .evaluate((node) => {
           if (node.getRootNode() !== document) return 'outside';
+          if (!document.querySelector('script[src*="/_next/"]')) return 'outside';
           return Object.keys(node).some((k) => k.startsWith('__reactProps')) ? 'ready' : 'waiting';
         })
         .catch(() => 'waiting');
@@ -313,7 +332,8 @@ export class Session {
     await this.hydrated(t);
     await t.click();
     const id = await t.getAttribute('aria-controls');
-    const list = id ? this.page.locator(`[id="${id}"]`) : this.page.getByRole('listbox');
+    const page = t.page();
+    const list = id ? page.locator(`[id="${id}"]`) : page.getByRole('listbox');
     const opt =
       typeof option === 'object'
         ? list.locator(`[role="option"][data-key="${option.key}"]`)
@@ -338,9 +358,10 @@ export class Session {
     await this.hydrated(el);
     await el.click();
     await el.fill(name);
-    const option = this.page
+    const page = el.page();
+    const option = page
       .getByRole('option')
-      .filter({ has: this.page.getByText(new RegExp(`^${esc(name)}(?: \\(.+\\))?$`)) });
+      .filter({ has: page.getByText(new RegExp(`^${esc(name)}(?: \\(.+\\))?$`)) });
     await option.first().waitFor({ state: 'visible', timeout: 30000 });
     await option.first().click();
   }
@@ -349,7 +370,7 @@ export class Session {
   async chooseFile(buttonLocator, file) {
     await this.hydrated(buttonLocator);
     const [chooser] = await Promise.all([
-      this.page.waitForEvent('filechooser', { timeout: 20000 }),
+      buttonLocator.page().waitForEvent('filechooser', { timeout: 20000 }),
       buttonLocator.first().click(),
     ]);
     await chooser.setFiles(file);
@@ -359,7 +380,7 @@ export class Session {
   async download(locator, saveDir) {
     await this.hydrated(locator);
     const [d] = await Promise.all([
-      this.page.waitForEvent('download', { timeout: 90000 }),
+      locator.page().waitForEvent('download', { timeout: 90000 }),
       locator.first().click(),
     ]);
     const path = `${saveDir}/${d.suggestedFilename()}`;

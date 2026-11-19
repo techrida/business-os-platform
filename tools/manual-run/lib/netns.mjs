@@ -17,9 +17,17 @@ function has(cmd) {
   }
 }
 
-export function netnsWanted() {
+const loopback = (host) =>
+  host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1';
+
+/** Only for stacks whose every origin is on this machine's loopback (e.g. *.testrun.localhost). */
+export function netnsWanted(origins) {
   const v = process.env.NETNS ?? 'auto';
   if (/^(0|false|no|off)$/i.test(v)) return false;
+  if (!origins.every((o) => loopback(new URL(o).hostname))) {
+    if (v !== 'auto') throw new Error('NETNS=1 supports only loopback (*.localhost) origins');
+    return false;
+  }
   const ok = process.platform === 'linux' && has('unshare') && has('socat') && has('ip');
   if (!ok && v !== 'auto') throw new Error('NETNS=1 needs Linux with unshare, socat and ip');
   return ok;
@@ -35,7 +43,7 @@ export function prepareNetns(dir, origins, realExecutable) {
     ...new Set(
       origins
         .map((o) => new URL(o))
-        .filter((u) => /localhost$/.test(u.hostname))
+        .filter((u) => loopback(u.hostname))
         .map((u) => Number(u.port || (u.protocol === 'https:' ? 443 : 80))),
     ),
   ];

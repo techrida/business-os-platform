@@ -89,10 +89,11 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     log(`${step.id} — ${step.title}`);
     try {
       await session.caption(`${step.id} — ${step.title}`);
+      const limit = step.timeoutMs ?? cfg.stepTimeout;
       await withTimeout(
         step.run(session),
-        cfg.stepTimeout,
-        `${step.id} did not finish within ${cfg.stepTimeout / 1000} s`,
+        limit,
+        `${step.id} did not finish within ${limit / 1000} s`,
       );
       await session.pause();
     } catch (error) {
