@@ -25,7 +25,7 @@ import {
 import { failureOf, getApprovalRequest, getInbox } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
-import { snapshotEntries, when } from '@/lib/kernel-format';
+import { documentNumberText, snapshotEntries, when } from '@/lib/kernel-format';
 
 import { DecisionForm } from './decision-form';
 import { MemoPaper } from '../../memos/memo-paper';
@@ -158,6 +158,10 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           : 'unknown';
 
   const title = titleOf(request.snapshot);
+  const documentNumber = documentNumberText(request.documentNumber);
+  // History's "Submitted" names whoever pressed submit; the requester (the document's owner) may differ.
+  const submitterUserId =
+    request.actions.find((a) => a.action === 'submit')?.actorUserId ?? request.requesterUserId;
   const snapshot = request.snapshot;
   const isMemo = request.documentType === 'test_memo';
   const attachments = isMemo ? memoAttachments(snapshot) : [];
@@ -224,16 +228,19 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
 
   return (
     <Page className={styles.detail}>
-      <Breadcrumb items={[{ label: 'Inbox', href: '/inbox' }, { label: request.documentNumber }]} />
+      <Breadcrumb items={[{ label: 'Inbox', href: '/inbox' }, { label: documentNumber }]} />
       <PageHeader
-        title={title ?? request.documentNumber}
+        title={title ?? documentNumber}
         status={<Badge tone={requestTone}>{requestLabel}</Badge>}
         description={
           <>
-            {title !== null ? `${request.documentNumber} · ` : ''}
+            {title !== null ? `${documentNumber} · ` : ''}
             Submitted <time dateTime={request.submittedAt}>
               {when(request.submittedAt)}
-            </time> by {person(request.requesterUserId)}
+            </time> by {person(submitterUserId)}
+            {submitterUserId !== request.requesterUserId ? (
+              <> for {person(request.requesterUserId)}</>
+            ) : null}
           </>
         }
       />
@@ -259,7 +266,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
           ) : (
             <DecisionForm
               requestId={request.requestId}
-              documentNumber={request.documentNumber}
+              documentNumber={documentNumber}
               version={request.version}
               // One key per render of this page: a double click or a retry after a network
               // error sends the same key, so the decision is applied once.
@@ -283,7 +290,7 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
                 {memoTemplate.success ? (
                   <MemoPaper
                     template={memoTemplate.data}
-                    title={title ?? request.documentNumber}
+                    title={title ?? documentNumber}
                     body={memoBody}
                   />
                 ) : null}
