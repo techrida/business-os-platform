@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { LinkButton } from '@/components/ui/button';
 import { ViewDocument } from '@/components/ui/document-viewer';
 import type { PortalSettlement } from '@/lib/api.billing';
-import { DEFAULT_PORTAL_DISPLAY, displayFormat } from '@/lib/display';
+import { DEFAULT_PORTAL_DISPLAY, displayFormat, taxLineLabel } from '@/lib/display';
 
 import { canPay, KIND_LABEL, SETTLEMENT_LOOK } from './invoice-status';
 import styles from './invoice-view.module.css';
@@ -265,7 +265,7 @@ export function InvoiceView({
               {view.taxSummary.map((t) => (
                 <div key={`${t.label}-${t.percent}`}>
                   <dt>
-                    {t.label} {t.percent}% on {money(t.base)}
+                    {taxLineLabel(t.label, t.percent)} on {money(t.base)}
                   </dt>
                   <dd>{money(t.tax)}</dd>
                 </div>
