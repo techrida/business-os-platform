@@ -21,6 +21,7 @@ import { getNumberSystems } from '@/lib/display-settings';
 import { getGrants, hasGrant } from '@/lib/grants';
 
 import { poMoney } from '../../../procurement/orders/_lib/model';
+import { ApprovalHistory, loadApproval } from '../../_components/approval-history';
 import styles from '../../payables.module.css';
 import { paymentRequestFailure } from '../failure';
 import { PaymentRequestCommand } from '../forms';
@@ -63,7 +64,10 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
     );
   }
   // The same scoped lookup used by request entry. Fully claimed or paid items may be absent.
-  const items = await listPaymentRequestItems(session).catch(() => []);
+  const [items, approval] = await Promise.all([
+    listPaymentRequestItems(session).catch(() => []),
+    loadApproval(session, request.approvalRequestId),
+  ]);
   const byOpenItem = new Map(items.map((item) => [item.openItemId, item]));
   const canReadBill = hasPermission(session.roles, 'payables.bill.read');
   const status = PAYMENT_STATUS[request.status];
@@ -172,6 +176,7 @@ export default async function PaymentRequestPage({ params }: { params: Promise<{
           />
         </Panel>
       </div>
+      {approval !== null ? <ApprovalHistory approval={approval} /> : null}
     </Page>
   );
 }

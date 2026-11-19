@@ -12,6 +12,13 @@ import { toScaled, type Errors } from '../../procurement/orders/_lib/forms';
 
 export const MAX_LINES = 200;
 
+/** The new bill page's heading: drawn by the page, or by the entry form when it holds the actions. */
+export const NEW_BILL_HEADING = {
+  title: 'New bill',
+  description:
+    "Key in a vendor's invoice, or start from an invoice in the inbox. The platform calculates VAT, withholding and totals from the lines.",
+};
+
 export interface LineRow {
   /** Set when the row was started from a purchase order line; the person cannot change it. */
   poLineId: string;

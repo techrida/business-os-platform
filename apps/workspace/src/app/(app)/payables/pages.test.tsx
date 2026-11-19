@@ -59,6 +59,9 @@ const api = vi.hoisted(() => ({
   listWithholdingCodes: vi.fn(),
   listVendors: vi.fn(),
   listBillableOrders: vi.fn(),
+  getApprovalRequest: vi.fn(),
+  listPaymentRequestItems: vi.fn(),
+  loadEnabledCurrencies: vi.fn(),
 }));
 vi.mock('@/lib/api-payables-orders', () => ({
   listBillableOrders: api.listBillableOrders,
@@ -69,8 +72,16 @@ vi.mock('@/lib/api-payables', () => ({
   getBill: api.getBill,
   listBillSubmissions: api.listBillSubmissions,
   listBillSubmissionsPage: api.listBillSubmissionsPage,
+  listPaymentRequestItems: api.listPaymentRequestItems,
+}));
+vi.mock('@/lib/enabled-currencies.server', () => ({
+  loadEnabledCurrencies: api.loadEnabledCurrencies,
 }));
 vi.mock('@/lib/api-purchase-orders', () => ({ getPoProgress: api.getPoProgress }));
+vi.mock('@/lib/api-kernel', async (original) => ({
+  ...(await original<typeof import('@/lib/api-kernel')>()),
+  getApprovalRequest: api.getApprovalRequest,
+}));
 vi.mock('@/lib/api-vendors', () => ({ getVendor: api.getVendor, listVendors: api.listVendors }));
 vi.mock('@/lib/api-tax-codes', () => ({ listTaxCodes: api.listTaxCodes }));
 vi.mock('@/lib/api-withholding-codes', () => ({ listWithholdingCodes: api.listWithholdingCodes }));
@@ -203,6 +214,9 @@ beforeEach(() => {
     total: 1,
   });
   api.listBillableOrders.mockResolvedValue([]);
+  api.getApprovalRequest.mockRejectedValue(apiError(403, 'forbidden'));
+  api.listPaymentRequestItems.mockResolvedValue([]);
+  api.loadEnabledCurrencies.mockResolvedValue(['NPR']);
 });
 
 const page = (items: unknown[], total = items.length) => ({ items, total });
@@ -234,7 +248,7 @@ describe('bills list', () => {
       offset: 0,
     });
     expect(out).toContain('Showing 1 of 240 bills');
-    expect(out).toContain('Showing 1-25 of 240');
+    expect(out).toContain('Showing 1–25 of 240');
     expect(out).toContain('type="search"');
     expect(out).not.toContain('Show bills');
   });
@@ -254,6 +268,118 @@ describe('bills list', () => {
     expect(out).toContain('zzz');
     expect(out).toContain('Clear filters');
     expect(out).toContain('rows=50');
+  });
+
+  it('counts each card with one limit-1 read through the scoped list, ignoring the filters', async () => {
+    api.listBillsPage.mockImplementation((_s: unknown, q: { status: string[]; limit: number }) =>
+      Promise.resolve(
+        q.limit === 1 ? page([header], q.status.length === 0 ? 40 : 7) : page([header]),
+      ),
+    );
+    const out = await bills({ status: 'draft', q: 'INV' });
+    const countReads = api.listBillsPage.mock.calls
+      .map((call) => call[1] as { limit: number })
+      .filter((q) => q.limit === 1);
+    expect(countReads).toEqual([
+      { status: [], limit: 1, offset: 0 },
+      { status: ['variance', 'exception_pending'], limit: 1, offset: 0 },
+      { status: ['pending_approval'], limit: 1, offset: 0 },
+      { status: ['approved', 'partially_paid'], limit: 1, offset: 0 },
+      { status: ['paid'], limit: 1, offset: 0 },
+    ]);
+    expect(out).toContain('aria-label="Bill summary"');
+    expect(out).toMatch(/All bills<\/dt><dd[^>]*>40</);
+    expect(out).toMatch(/Approved to pay<\/dt><dd[^>]*>7</);
+  });
+
+  it('leaves the cards out, and still shows the table, when a count read fails', async () => {
+    api.listBillsPage.mockImplementation((_s: unknown, q: { limit: number }) =>
+      q.limit === 1 ? Promise.reject(apiError(500)) : Promise.resolve(page([header])),
+    );
+    const out = await bills();
+    expect(out).not.toContain('Bill summary');
+    expect(out).toContain('BILL-2083-0001');
+  });
+
+  it('pins Status and a View action to the end of each row, named per row, with rows per page', async () => {
+    api.listBillsPage.mockResolvedValue(
+      page([
+        { ...header, number: null, id: SUB },
+        { ...header, number: null, id: DOC, vendorInvoiceNo: 'INV-002' },
+      ]),
+    );
+    const out = await bills();
+    const heads = [...out.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1]);
+    expect(heads.slice(-2)).toEqual(['Status', 'Action']);
+    expect(out).toContain(`href="/payables/bills/${SUB}"`);
+    const names = [...out.matchAll(/aria-label="(View [^"]*)"/g)].map((m) => m[1]);
+    expect(names).toEqual([
+      'View draft bill for invoice INV-001 from Himal Traders',
+      'View draft bill for invoice INV-002 from Himal Traders',
+    ]);
+    expect(out).toContain('aria-label="Rows per page"');
+  });
+
+  it('offers Request payment only to the payment request role, on a bill with a free balance', async () => {
+    const item = (billId: string, availableAmount: string, currency = 'NPR') => ({
+      openItemId: billId,
+      vendorPartyId: VENDOR,
+      vendorName: 'Himal Traders',
+      vendorBillId: billId,
+      billNumber: null,
+      vendorInvoiceNo: 'INV-001',
+      currency,
+      openAmount: '100.00',
+      claimedAmount: '0.00',
+      availableAmount,
+    });
+    api.listBillsPage.mockResolvedValue(
+      page([
+        { ...header, id: SUB, status: 'approved' },
+        { ...header, id: DOC, status: 'approved', vendorInvoiceNo: 'INV-002' },
+        { ...header, id: PO, status: 'approved', vendorInvoiceNo: 'INV-003' },
+        { ...header, id: BILL, status: 'draft', vendorInvoiceNo: 'INV-004' },
+      ]),
+    );
+    api.listPaymentRequestItems.mockResolvedValue([
+      item(SUB, '90.00'),
+      item(DOC, '0.00'),
+      item(PO, '50.00', 'USD'),
+    ]);
+    session.roles = ['finance'];
+    const out = await bills();
+    const links = [...out.matchAll(/href="(\/payables\/payment-requests\/new[^"]*)"/g)].map(
+      (m) => m[1],
+    );
+    expect(links).toEqual([`/payables/payment-requests/new?bill=${SUB}`]);
+    expect(out).toContain(
+      'aria-label="Request payment of BILL-2083-0001 for invoice INV-001 from Himal Traders"',
+    );
+
+    // An accountant cannot open the payment request form, so is offered no link and makes no read for it.
+    session.roles = ['accountant'];
+    api.listPaymentRequestItems.mockClear();
+    expect(await bills()).not.toContain('Request payment');
+    expect(api.listPaymentRequestItems).not.toHaveBeenCalled();
+
+    // A failed lookup leaves the rows without the action, never without the list.
+    session.roles = ['finance'];
+    api.listPaymentRequestItems.mockRejectedValue(apiError(500));
+    const failed = await bills();
+    expect(failed).not.toContain('Request payment');
+    expect(failed).toContain('INV-001');
+  });
+
+  it('reads the rows-per-page choice from the URL into the page window', async () => {
+    api.listBillsPage.mockResolvedValue(page([header], 240));
+    const out = await bills({ rows: '50', page: '2' });
+    expect(api.listBillsPage).toHaveBeenCalledWith(expect.anything(), {
+      status: [],
+      limit: 50,
+      offset: 50,
+    });
+    expect(out).toContain('Showing 51–100 of 240');
+    expect(out).toMatch(/<a[^>]*aria-current="true"[^>]*>50<\/a>/);
   });
 
   it('shows the no-access pattern for a 403 and a retry for a 500', async () => {
@@ -347,6 +473,35 @@ describe('bill detail', () => {
     expect(finance).not.toContain('Void bill');
   });
 
+  it('shows the approval steps when the approval read answers, and leaves them out when it is refused', async () => {
+    api.getBill.mockResolvedValue({
+      ...header,
+      status: 'approved',
+      approvalRequestId: SUB,
+      lines: [line],
+    });
+    api.getApprovalRequest.mockResolvedValue({
+      status: 'approved',
+      decidedAt: '2026-11-10T05:00:00.000Z',
+      steps: [{ seq: 1, reason: 'Finance approves vendor bills', status: 'approved' }],
+    });
+    const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(api.getApprovalRequest).toHaveBeenCalledWith(expect.anything(), SUB);
+    expect(out).toContain('Approval history');
+    expect(out).toContain('Finance approves vendor bills');
+    api.getApprovalRequest.mockRejectedValue(apiError(403, 'forbidden'));
+    const refused = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(refused).not.toContain('Approval history');
+    expect(refused).toContain(`/inbox/${SUB}`);
+  });
+
+  it('puts the line tables after the totals, at full width', async () => {
+    api.getBill.mockResolvedValue({ ...header, lines: [line] });
+    const out = await html(BillPage({ params: Promise.resolve({ id: BILL }) }));
+    expect(out.indexOf('Totals')).toBeLessThan(out.indexOf('Bill lines'));
+    expect(out.indexOf('</aside>')).toBeLessThan(out.indexOf('Bill lines'));
+  });
+
   it('shows Finance the order number sent with the bill, with no purchase order read of its own', async () => {
     session.roles = ['finance'];
     api.getBill.mockResolvedValue({ ...header, status: 'pending_approval', lines: [line] });
@@ -389,6 +544,52 @@ describe('bill entry', () => {
     expect(out).toContain('type="file"');
     expect(out).toContain('Upload invoice');
     expect(api.listBillSubmissions).not.toHaveBeenCalled();
+  });
+
+  it('puts Cancel and Create bill in the heading, submitting the bill form from outside it', async () => {
+    const out = await html(NewBillPage({ searchParams: search() }));
+    const heading = out.slice(0, out.indexOf('</h1>') + 400);
+    const formId = /<form id="([^"]+)"/.exec(out)?.[1];
+    expect(formId).toBeTruthy();
+    expect(out).toMatch(new RegExp(`<button type="submit"[^>]*form="${formId}"[^>]*>Create bill<`));
+    expect(out.indexOf('Create bill')).toBeLessThan(out.indexOf(`<form id="${formId}"`));
+    expect(heading).toContain('New bill');
+    expect(out.match(/<h1/g)).toHaveLength(1);
+    // The vendor search stays its own GET form, beside the bill form and not inside it.
+    expect(out.indexOf('action="/payables/bills/new"')).toBeLessThan(
+      out.indexOf(`<form id="${formId}"`),
+    );
+  });
+
+  it('names Bills in the trail, and the inbox too for a bill keyed from a submission', async () => {
+    const trail = (out: string) =>
+      [
+        ...(/<nav aria-label="Breadcrumb"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? '').matchAll(
+          />([^<>]+)</g,
+        ),
+      ]
+        .map((m) => m[1]?.trim())
+        .filter(Boolean);
+    expect(trail(await html(NewBillPage({ searchParams: search() })))).toEqual([
+      'Bills',
+      'New bill',
+    ]);
+    api.listBillSubmissions.mockResolvedValue([submission]);
+    expect(trail(await html(NewBillPage({ searchParams: search(SUB) })))).toEqual([
+      'Bills',
+      'Inbox',
+      'New bill',
+    ]);
+  });
+
+  it('draws the invoice file as a drop zone over the real file picker', async () => {
+    const out = await html(NewBillPage({ searchParams: search() }));
+    expect(out).toContain('Drop the invoice here or choose a file');
+    expect(out).toMatch(/<label[^>]*for="([^"]+)"[^>]*>Invoice file<\/label>/);
+    const id = /<label[^>]*for="([^"]+)"[^>]*>Invoice file<\/label>/.exec(out)?.[1];
+    expect(out).toMatch(
+      new RegExp(`<input[^>]*type="file"[^>]*id="${id}"|<input[^>]*id="${id}"[^>]*type="file"`),
+    );
   });
 
   it('prefills the PO vendor and fixed lines using the progress read', async () => {
@@ -514,6 +715,8 @@ describe('inbox', () => {
     expect(out).not.toContain(`/payables/bills/new?submission=${BILL}`);
     expect(out).toContain('Waiting for the file scan to pass');
     expect(out).toContain('Reject');
+    // The table sits under the filters as on the other inboxes, with no card level of its own.
+    expect(out).not.toContain('Waiting for a bill');
   });
 
   it('searches and pages by the server total, with no status filter', async () => {
@@ -525,8 +728,17 @@ describe('inbox', () => {
       offset: 25,
     });
     expect(out).toContain('Showing 1 of 61 submissions');
-    expect(out).toContain('Showing 26-50 of 61');
+    expect(out).toContain('Showing 26–50 of 61');
     expect(out).not.toContain('name="status"');
+  });
+
+  it('reads the rows-per-page choice from the URL', async () => {
+    api.listBillSubmissionsPage.mockResolvedValue(page([submission], 61));
+    await inbox({ rows: '10' });
+    expect(api.listBillSubmissionsPage).toHaveBeenCalledWith(expect.anything(), {
+      limit: 10,
+      offset: 0,
+    });
   });
 
   it('says when the inbox is empty or a search matches none, and shows a 403 as no access', async () => {

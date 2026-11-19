@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { pageWindow } from '@bos/contracts';
+import { DEFAULT_ROWS, ROWS_OPTIONS, pageWindow } from '@bos/contracts';
 import type { Metadata } from 'next';
 
 import { Alert } from '@/components/ui/alert';
@@ -9,14 +9,14 @@ import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
-import { Pagination } from '@/components/ui/pagination';
-import { Panel } from '@/components/ui/panel';
 import { Table, Td, Th } from '@/components/ui/table';
+import layout from '@/components/p3/list.module.css';
 import { listBillSubmissionsPage, type BillSubmission } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
 
+import { ListPager } from '../../invoices/_components/list-pager';
 import { RejectDialog } from '../_components/bill-actions';
 import { billFailure } from '../_lib/failure';
 import { amountText } from '../_lib/duplicates';
@@ -40,7 +40,8 @@ function blocker(s: BillSubmission): string | undefined {
 }
 
 const PATH = '/payables/inbox';
-const LIST = { multi: {} } as const;
+/** ListPager offers every ROWS_OPTIONS choice, so the list accepts each one. */
+const LIST = { multi: {}, rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS } } as const;
 
 export default async function BillInboxPage({
   searchParams,
@@ -103,41 +104,34 @@ export default async function BillInboxPage({
   }
 
   const filtered = activeFilterLabels({ q: list.q, multi: {}, single: {} }, {});
-  const pageHref = (page: number) => hrefWith(PATH, params, { page: page > 1 ? page : null });
-  const nearby = Array.from({ length: window.pageCount }, (_, i) => i + 1).filter(
-    (n) => Math.abs(n - window.page) <= 2,
-  );
 
   return (
     <Page>
       {header}
       <InboxFilters rows={typeof params.rows === 'string' ? params.rows : undefined} />
-      <Panel
-        title="Waiting for a bill"
-        actions={<Badge tone="neutral">{filtered.length > 0 ? `${total} found` : total}</Badge>}
-      >
-        {rows.length === 0 ? (
-          filtered.length > 0 ? (
-            <EmptyState
-              title="No submissions match."
-              icon="search"
-              headingLevel={3}
-              action={
-                <LinkButton href={clearFiltersHref(PATH, params, LIST)} variant="secondary">
-                  Clear filters
-                </LinkButton>
-              }
-            >
-              Nothing matches {filtered.join(' · ')}.
-            </EmptyState>
-          ) : (
-            <EmptyState title="The inbox is empty." icon="check-circle" headingLevel={3}>
-              When a vendor sends an invoice through the portal, it appears here.
-            </EmptyState>
-          )
+      {rows.length === 0 ? (
+        filtered.length > 0 ? (
+          <EmptyState
+            title="No submissions match."
+            icon="search"
+            headingLevel={2}
+            action={
+              <LinkButton href={clearFiltersHref(PATH, params, LIST)} variant="secondary">
+                Clear filters
+              </LinkButton>
+            }
+          >
+            Nothing matches {filtered.join(' · ')}.
+          </EmptyState>
         ) : (
-          <>
-            <ResultCount shown={rows.length} total={total} noun="submission" />
+          <EmptyState title="The inbox is empty." icon="check-circle" headingLevel={2}>
+            When a vendor sends an invoice through the portal, it appears here.
+          </EmptyState>
+        )
+      ) : (
+        <>
+          <ResultCount shown={rows.length} total={total} noun="submission" />
+          <div className={layout.results}>
             <Table caption="Vendor invoice submissions, oldest first" minWidth={980}>
               <thead>
                 <tr>
@@ -233,17 +227,16 @@ export default async function BillInboxPage({
                 })}
               </tbody>
             </Table>
-            <Pagination
-              label="Pages"
-              summary={`Showing ${window.first}-${window.last} of ${total}`}
-              {...(window.page > 1 ? { previousHref: pageHref(window.page - 1) } : {})}
-              {...(window.page < window.pageCount ? { nextHref: pageHref(window.page + 1) } : {})}
-              pages={nearby.map((n) => ({ page: n, href: pageHref(n) }))}
-              currentPage={window.page}
+            <ListPager
+              pathname={PATH}
+              current={params}
+              window={window}
+              total={total}
+              label="Inbox pages"
             />
-          </>
-        )}
-      </Panel>
+          </div>
+        </>
+      )}
     </Page>
   );
 }

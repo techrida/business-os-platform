@@ -88,6 +88,8 @@
 .lineFields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  /* A field with a hint must not stretch the inputs beside it: every control keeps its own height. */
+  align-items: start;
   gap: 12px;
 }
 
@@ -116,13 +118,6 @@
   min-width: 0;
 }
 
-.entryActions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .rowNote {
   display: block;
   color: var(--text-secondary);
@@ -145,4 +140,89 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
   gap: var(--spacing-content-gap);
+}
+
+/* ---- Lists: count cards, and the trailing Status and Action columns ---- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--spacing-content-gap);
+}
+
+/* The trailing Status and Action columns sit on a shaded band behind a divider, as on the other lists
+   (Figma's pinned columns). Declared on the table wrapper so it out-ranks the shared cell background; a
+   hovered row still highlights end to end. */
+.list th.statusColumn,
+.list td.statusColumn,
+.list th.actionColumn,
+.list td.actionColumn {
+  background: var(--surface-subtle);
+}
+
+.list th.statusColumn,
+.list td.statusColumn {
+  border-inline-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.list tbody tr:hover > td,
+.list tbody tr:focus-within > td {
+  background: var(--table-row-hover-bg);
+}
+
+.rowAction {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  color: var(--icon-secondary);
+}
+
+.rowAction:hover {
+  background: var(--action-primary-subtle);
+  color: var(--action-primary);
+}
+
+/* ---- Invoice file: a drop zone over the native picker, which stays the real (keyboard) control ---- */
+
+.drop {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+  color: var(--action-primary);
+  font-size: var(--font-size-body-small);
+  text-align: center;
+}
+
+.drop:has(:disabled) {
+  color: var(--text-secondary);
+}
+
+.drop:focus-within {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.drop input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.drop input:disabled {
+  cursor: not-allowed;
+}
+
+.fileName {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
