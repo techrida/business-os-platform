@@ -661,8 +661,22 @@ export class CustomersService {
     id: string,
   ): Promise<PartyAccountDto[]> {
     const rows = await this.db
-      .select()
+      .select({
+        partyId: partyAccounts.partyId,
+        organizationId: partyAccounts.organizationId,
+        organizationName: organizations.name,
+        paymentTermId: partyAccounts.paymentTermId,
+        creditLimit: partyAccounts.creditLimit,
+        version: partyAccounts.version,
+      })
       .from(partyAccounts)
+      .leftJoin(
+        organizations,
+        and(
+          eq(organizations.tenantId, partyAccounts.tenantId),
+          eq(organizations.id, partyAccounts.organizationId),
+        ),
+      )
       .where(
         and(
           eq(partyAccounts.tenantId, tenantId),
@@ -680,6 +694,7 @@ export class CustomersService {
     return rows.map((r) => ({
       partyId: r.partyId,
       organizationId: r.organizationId,
+      organizationName: r.organizationName,
       paymentTermId: r.paymentTermId,
       creditLimit: r.creditLimit,
       version: r.version,

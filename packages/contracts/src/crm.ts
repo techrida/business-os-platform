@@ -122,6 +122,8 @@ export type CustomerDto = z.infer<typeof CustomerDtoSchema>;
 export const PartyAccountDtoSchema = z.object({
   partyId: z.guid(),
   organizationId: z.guid(),
+  /** The legal entity's display name; the caller acts for that entity, so it is theirs to see. */
+  organizationName: z.string().nullable().optional(),
   paymentTermId: z.guid().nullable(),
   creditLimit: NonNegativeDecimal.nullable(),
   version: z.number().int().min(1),
