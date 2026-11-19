@@ -54,6 +54,20 @@ describe('QuotationView markup', () => {
     expect(html).toContain('NPR 3,390.00');
   });
 
+  it('shows precise milestone shares and customer-readable due dates', () => {
+    const view = sampleView({
+      paymentSchedule: [
+        { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
+        { label: 'Delivery', percent: '66.6667', dueDescription: '2026-11-19' },
+      ],
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('33.3333%');
+    expect(html).toContain('66.6667%');
+    expect(html).toContain('On order');
+    expect(html).toContain('19 Nov 2026');
+  });
+
   it('renders the download as a plain link to the BFF route, and none without a file', () => {
     const html = renderToStaticMarkup(<QuotationView view={sampleView()} today={TODAY} />);
     expect(html).toContain(`href="/quotations/${sampleView().id}/document"`);

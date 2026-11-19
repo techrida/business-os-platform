@@ -21,6 +21,7 @@ import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../authz/decorators';
 import type { DenyReason, Principal } from '../authz/principal';
 import { RoleCache } from '../authz/role-cache';
 import { type EntityMembership, type ResolvedUser, UserDirectory } from '../authz/user-directory';
+import { requestTx } from '../db/tx';
 import { CLOCK, type Clock, IdpOrgResolver, type ResolvedIdpOrg } from './idp-org-resolver';
 import { bindIdentity, bindPrincipal } from './request-context';
 
@@ -245,6 +246,10 @@ export class TenancyInterceptor implements NestInterceptor {
     bindPrincipal(principal);
 
     this.enforce(context, principal);
+    if (idp.kind === 'staff' && this.directory.recordActivity) {
+      const { scope, actor } = requestTx();
+      this.directory.recordActivity(scope, actor);
+    }
     return next.handle();
   }
 

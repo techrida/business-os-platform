@@ -179,13 +179,13 @@ async function insertSalesOrder(scope: Scope, quote?: Quote): Promise<string> {
 }
 
 const INSERT_LINE = `INSERT INTO app.billing_schedule_lines
-    (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent_bp, amount, amount_npr, status)
+    (tenant_id, organization_id, sales_order_id, seq, label, "trigger", percent, amount, amount_npr, status)
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9) RETURNING id`;
 
 interface Slice {
   label: string;
   trigger: string;
-  percentBp: number;
+  percent: string;
   amount: string;
   status?: string;
 }
@@ -198,7 +198,7 @@ function lineParams(scope: Scope, salesOrderId: string, seq: number, s: Slice): 
     seq,
     s.label,
     s.trigger,
-    s.percentBp,
+    s.percent,
     s.amount,
     s.status ?? 'planned',
   ];
@@ -220,9 +220,9 @@ async function insertSchedule(scope: Scope, salesOrderId: string, slices: Slice[
 }
 
 const SPLIT_60_20_20: Slice[] = [
-  { label: 'Advance 60%', trigger: 'advance', percentBp: 6000, amount: '3027270.00' },
-  { label: 'Delivery 20%', trigger: 'delivery', percentBp: 2000, amount: '1009090.00' },
-  { label: 'UAT 20%', trigger: 'uat', percentBp: 2000, amount: '1009090.00' },
+  { label: 'Advance 60%', trigger: 'advance', percent: '60', amount: '3027270.00' },
+  { label: 'Delivery 20%', trigger: 'delivery', percent: '20', amount: '1009090.00' },
+  { label: 'UAT 20%', trigger: 'uat', percent: '20', amount: '1009090.00' },
 ];
 
 beforeAll(async () => {

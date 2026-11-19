@@ -7,15 +7,30 @@ import 'reflect-metadata';
 
 import { randomUUID } from 'node:crypto';
 
-import type { Permission, RoleKey } from '@bos/contracts';
-import { idpOrgs, organizations, runMigrations, tenants, userEntities } from '@bos/db';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { AdminUserSchema, type Permission, type RoleKey } from '@bos/contracts';
+import {
+  departments,
+  idpOrgs,
+  organizations,
+  parties,
+  runMigrations,
+  tenants,
+  userEntities,
+} from '@bos/db';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { Queue } from 'bullmq';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AuditService } from '../audit/audit.service';
 import { AuthzService } from '../authz/authz.service';
 import type { RoleCache } from '../authz/role-cache';
 import type { Db } from '../db/db.module';
@@ -47,6 +62,7 @@ class RepairableZitadel {
   users = new Map<string, ZitadelUser>();
   grants = new Map<string, RoleKey[]>();
   inviteCodes: string[] = [];
+  resetEmails: string[] = [];
   createCalls = 0;
   failSetGrantsOnce = false;
   pageSize = 1; // one user per page, so finding the user has to walk the pages
@@ -81,6 +97,13 @@ class RepairableZitadel {
   }
   sendInviteCode(userId: string) {
     this.inviteCodes.push(userId);
+    return Promise.resolve();
+  }
+  getUser(userId: string) {
+    return Promise.resolve(this.users.get(userId) ?? null);
+  }
+  sendPasswordReset(userId: string) {
+    this.resetEmails.push(userId);
     return Promise.resolve();
   }
   listUsers(orgId: string, cursor?: string | null): Promise<ZitadelUserPage> {
@@ -142,6 +165,7 @@ let store: FakeUsersStore;
 let zitadel: RepairableZitadel;
 let authz: TestAuthz;
 let controller: AdminUsersController;
+let audit: AuditService;
 
 beforeEach(() => {
   store = new FakeUsersStore();
@@ -150,7 +174,132 @@ beforeEach(() => {
   const client = zitadel as never;
   const mirror = new UserMirror(db, store, client, fakeQueue() as unknown as Queue<UsersSyncData>);
   authz = new TestAuthz(db, {} as RoleCache);
-  controller = new AdminUsersController(db, new UsersService(mirror, store, client), authz);
+  audit = new AuditService(db);
+  controller = new AdminUsersController(
+    db,
+    new UsersService(mirror, store, client, db, audit),
+    authz,
+  );
+});
+
+describe('GET /v1/admin/users validation', () => {
+  it.each([
+    { q: 'z'.repeat(201) },
+    { q: ['a', 'b'] },
+    { status: 'disabled' },
+    { role: 'owner' },
+    { departmentId: 'invalid' },
+    { sort: 'email' },
+    { page: '0' },
+    { page: '10001' },
+    { limit: '201' },
+    { limit: ['10'] },
+    { after: ADMIN, sort: 'name' },
+    { after: ADMIN, page: '1' },
+  ])('rejects invalid directory parameters %#', async (query) => {
+    await expect(controller.list(query)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('trims search and passes validated filters and pagination to the store', async () => {
+    const list = vi.spyOn(store, 'list');
+    await asAdmin(['admin.users.read'], () =>
+      controller.list({
+        q: '  aB  ',
+        status: 'active',
+        role: 'sales',
+        departmentId: ADMIN,
+        sort: 'lastActive',
+        page: '3',
+        limit: '10',
+      }),
+    );
+    expect(list).toHaveBeenCalledWith(
+      { tenantId: TENANT, organizationId: STAFF_ORG },
+      {
+        q: 'aB',
+        status: 'active',
+        role: 'sales',
+        departmentId: ADMIN,
+        sort: 'lastActive',
+        page: 3,
+        limit: 10,
+      },
+    );
+  });
+});
+
+describe('POST /v1/admin/users/:id/password-reset', () => {
+  const adminGrant = ['admin.roles.write'] as const;
+
+  // ZITADEL refuses a reset for an open invite, so these targets have accepted theirs.
+  async function inviteForReset() {
+    const invited = await asAdmin(['admin.users.invite'], () =>
+      controller.invite({ ...NEW_USER, roles: [] }),
+    );
+    const target = store.users.find(({ id }) => id === invited.userId)!;
+    target.status = 'active';
+    zitadel.users.get(target.zitadelUserId)!.status = 'active';
+    return invited;
+  }
+
+  it('requires the administrative grant and audits the target before requesting email', async () => {
+    const { userId } = await inviteForReset();
+    const record = vi.spyOn(audit, 'record').mockResolvedValue(undefined);
+    await expect(
+      asAdmin(['admin.users.read'], () => controller.sendPasswordReset(userId)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(zitadel.resetEmails).toEqual([]);
+    const send = vi.spyOn(zitadel, 'sendPasswordReset');
+    await asAdmin([...adminGrant], () => controller.sendPasswordReset(userId));
+    expect(record).toHaveBeenCalledWith(expect.anything(), {
+      action: 'users.password_reset_requested',
+      entityType: 'users',
+      entityId: userId,
+    });
+    expect(record.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+    expect(zitadel.resetEmails).toEqual([store.users[0]!.zitadelUserId]);
+  });
+
+  it('rejects a different tenant and a target deactivated in either the mirror or ZITADEL', async () => {
+    const { userId } = await inviteForReset();
+    const target = store.users[0]!;
+    const live = zitadel.users.get(target.zitadelUserId)!;
+    const reset = () => asAdmin([...adminGrant], () => controller.sendPasswordReset(userId));
+    target.tenantId = randomUUID();
+    await expect(reset()).rejects.toBeInstanceOf(NotFoundException);
+    target.tenantId = TENANT;
+    target.status = 'inactive';
+    await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    target.status = 'active';
+    live.status = 'inactive';
+    await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    expect(zitadel.resetEmails).toEqual([]);
+  });
+
+  it('rejects an invited user in either the mirror or ZITADEL without auditing', async () => {
+    const { userId } = await inviteForReset();
+    const target = store.users[0]!;
+    const live = zitadel.users.get(target.zitadelUserId)!;
+    const record = vi.spyOn(audit, 'record').mockResolvedValue(undefined);
+    const reset = () => asAdmin([...adminGrant], () => controller.sendPasswordReset(userId));
+    target.status = 'invited';
+    await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    target.status = 'active';
+    live.status = 'invited';
+    await expect(reset()).rejects.toBeInstanceOf(ConflictException);
+    expect(record).not.toHaveBeenCalled();
+    expect(zitadel.resetEmails).toEqual([]);
+  });
+
+  it('keeps the audit when the provider fails and exposes only a fixed error', async () => {
+    const { userId } = await inviteForReset();
+    const record = vi.spyOn(audit, 'record').mockResolvedValue(undefined);
+    vi.spyOn(zitadel, 'sendPasswordReset').mockRejectedValue(new Error('provider failure detail'));
+    await expect(
+      asAdmin([...adminGrant], () => controller.sendPasswordReset(userId)),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(record).toHaveBeenCalledOnce();
+  });
 });
 
 describe('POST /v1/admin/users/invite permissions', () => {
@@ -431,5 +580,146 @@ describe('SqlUsersStore against migration 0013 (ADR 0027: tenant-scoped users)',
     expect(listed).toHaveLength(3);
     expect(listed[0]).not.toHaveProperty('organizationId');
     expect(listed[0]).not.toHaveProperty('departmentId');
+  }, 60_000);
+  async function directoryFixture(label: string) {
+    const tenantId = randomUUID();
+    const organizationId = randomUUID();
+    const staff = randomUUID();
+    const portal = randomUUID();
+    const departmentId = randomUUID();
+    const scope = { tenantId, organizationId };
+    const ids = await withTx(db, scope, systemActor('directory-fixture'), async (tx) => {
+      await tx.insert(tenants).values({ id: tenantId });
+      await tx.insert(organizations).values({
+        id: organizationId,
+        tenantId,
+        organizationId,
+        code: label,
+        name: label,
+        legalName: label,
+        isDefault: true,
+      });
+      await tx
+        .insert(parties)
+        .values({ id: portal, tenantId, code: label, kind: 'customer', name: label });
+      await tx.insert(idpOrgs).values([
+        { id: staff, tenantId, kind: 'staff', zitadelOrgId: staff, name: label },
+        {
+          id: portal,
+          tenantId,
+          kind: 'customer',
+          partyId: portal,
+          zitadelOrgId: portal,
+          name: label,
+        },
+      ]);
+      await tx
+        .insert(departments)
+        .values({ id: departmentId, tenantId, organizationId, name: 'Sales' });
+
+      const add = (
+        suffix: string,
+        displayName: string | null,
+        status: 'active' | 'invited' | 'inactive',
+        idpOrgId = staff,
+      ) =>
+        sqlStore.insertUser(tx, scope, {
+          zitadelUserId: `${tenantId}-${suffix}`,
+          idpOrgId,
+          displayName,
+          email: `${suffix}@example.test`,
+          status,
+        });
+
+      const alpha = await add('alpha', 'Alpha', 'active');
+      const duplicate = await add('alpha-2', 'Alpha', 'invited');
+      const target = await add('late%user', 'Zenith User', 'active');
+      const inactive = await add('inactive', null, 'inactive');
+      const outsider = await add('portal%user', 'Zenith User', 'active', portal);
+      await tx
+        .insert(userEntities)
+        .values({ tenantId, organizationId, userId: target, departmentId });
+      await sqlStore.replaceRoles(tx, scope, target, ['sales', 'finance']);
+      return { alpha, duplicate, target, inactive, outsider };
+    });
+    return { scope, departmentId, ...ids };
+  }
+
+  it('searches and filters the whole staff directory with stable sort and isolated totals', async () => {
+    const first = await directoryFixture('A');
+    const second = await directoryFixture('B');
+    const { scope, departmentId, alpha, duplicate, target, inactive } = first;
+    expect(await sqlStore.summary(scope)).toEqual({
+      total: 4,
+      active: 2,
+      invited: 1,
+      deactivated: 1,
+      departments: [{ id: departmentId, name: 'Sales' }],
+    });
+    expect(await sqlStore.summary(second.scope)).toMatchObject({ total: 4 });
+    const sorted = [alpha, duplicate].sort();
+    const pageOne = await sqlStore.list(scope, { limit: 1, sort: 'name', page: 1 });
+    const pageTwo = await sqlStore.list(scope, { limit: 1, sort: 'name', page: 2 });
+    expect(pageOne[0]?.id).toBe(sorted[0]);
+    expect(pageTwo[0]?.id).toBe(sorted[1]);
+
+    const matches = await sqlStore.list(scope, {
+      limit: 1,
+      q: '%USER',
+      status: 'active',
+      role: 'sales',
+      departmentId,
+    });
+    expect(matches).toEqual([
+      expect.objectContaining({
+        id: target,
+        roles: ['finance', 'sales'],
+        department: { id: departmentId, name: 'Sales' },
+        lastActiveAt: null,
+      }),
+    ]);
+    expect(AdminUserSchema.safeParse(matches[0]).success).toBe(true);
+    expect((await sqlStore.list(scope, { limit: 10, q: 'zEnIth' })).map(({ id }) => id)).toEqual([
+      target,
+    ]);
+    expect(await sqlStore.list(scope, { limit: 10, departmentId: second.departmentId })).toEqual(
+      [],
+    );
+    expect(await sqlStore.list(scope, { limit: 10, status: 'inactive' })).toEqual([
+      expect.objectContaining({ id: inactive, department: null }),
+    ]);
+  }, 60_000);
+
+  it('throttles concurrent activity and excludes it from the audit without loosening scope', async () => {
+    const first = await directoryFixture('C');
+    const second = await directoryFixture('D');
+    const audit = new AuditService(db);
+    const countBefore = (await audit.list(first.scope, { limit: 100 })).length;
+    const actor = { kind: 'user' as const, id: first.target, correlationId: 'corr-activity' };
+
+    await Promise.all([
+      sqlStore.recordActivity(first.scope, actor),
+      sqlStore.recordActivity(first.scope, actor),
+    ]);
+    const [seen] = await sqlStore.list(first.scope, { limit: 1, sort: 'lastActive' });
+    expect(seen?.id).toBe(first.target);
+    expect(seen?.lastActiveAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await sqlStore.recordActivity(first.scope, actor);
+    expect(
+      (await sqlStore.list(first.scope, { limit: 1, sort: 'lastActive' }))[0]?.lastActiveAt,
+    ).toBe(seen?.lastActiveAt);
+
+    await sqlStore.recordActivity(first.scope, { ...actor, id: second.target });
+    await sqlStore.recordActivity(first.scope, { ...actor, id: first.inactive });
+    expect(
+      (await sqlStore.list(first.scope, { limit: 4, status: 'inactive' }))[0]?.lastActiveAt,
+    ).toBeNull();
+    expect(
+      (await sqlStore.list(second.scope, { limit: 4 })).every(
+        ({ lastActiveAt }) => lastActiveAt === null,
+      ),
+    ).toBe(true);
+    expect(await audit.list(first.scope, { limit: 100 })).toHaveLength(countBefore);
   }, 60_000);
 });

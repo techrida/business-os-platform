@@ -1,0 +1,185 @@
+diff --git i/apps/login/src/app/(login)/password/set/page.tsx w/apps/login/src/app/(login)/password/set/page.tsx
+index 76106ae..70bb055 100644
+--- i/apps/login/src/app/(login)/password/set/page.tsx
++++ w/apps/login/src/app/(login)/password/set/page.tsx
+@@ -1,6 +1,6 @@
+ import { Alert } from "@/components/alert";
+ import { AuthHeading } from "@/components/auth/auth-heading";
+-import { InfoNote } from "@/components/auth/info-note";
++import { BackButton } from "@/components/back-button";
+ import { DynamicTheme } from "@/components/dynamic-theme";
+ import { SetPasswordForm } from "@/components/set-password-form";
+ import { Translated } from "@/components/translated";
+@@ -33,6 +33,20 @@ export default async function Page(props: { searchParams: Promise<Record<string
+ 
+   let { userId, loginName, organization, requestId, code, initial } = searchParams;
+ 
++  // The reset request must look the same for known and unknown login names.
++  // Do not look up the user or serialize a user ID into this response.
++  if (!initial && loginName && !userId) {
++    return (
++      <div className="bos-form-stack">
++        <AuthHeading
++          title={<Translated i18nKey="set.resetRequested" namespace="password" />}
++          lead={<Translated i18nKey="set.emailInstructions" namespace="password" />}
++        />
++        <BackButton />
++      </div>
++    );
++  }
++
+   const _headers = await headers();
+   const { serviceConfig } = getServiceConfig(_headers);
+ 
+@@ -114,7 +128,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+   return (
+     <DynamicTheme branding={branding}>
+       <AuthHeading
+-        title={<Translated i18nKey="set.title" namespace="password" />}
++        title={
++          <Translated i18nKey={initial ? "set.title" : "set.resetTitle"} namespace="password" />
++        }
+         lead={
+           initial ? (
+             <Translated i18nKey="set.description" namespace="password" />
+@@ -133,15 +149,9 @@ export default async function Page(props: { searchParams: Promise<Record<string
+         </Alert>
+       )}
+ 
+-      {identity && <div className="bos-identity">{identity}</div>}
++      {initial && identity && <div className="bos-identity">{identity}</div>}
+ 
+       <div className="bos-form-stack">
+-        {!initial && (
+-          <InfoNote>
+-            <Translated i18nKey="set.workflow" namespace="password" />
+-          </InfoNote>
+-        )}
+-
+         {passwordComplexity &&
+         (loginName ?? user?.preferredLoginName) &&
+         (userId ?? session?.factors?.user?.id ?? (loginSettings?.ignoreUnknownUsernames ? UNKNOWN_USER_ID : undefined)) ? (
+diff --git i/apps/login/src/components/password-form.tsx w/apps/login/src/components/password-form.tsx
+index 84baf6d..40eaf00 100644
+--- i/apps/login/src/components/password-form.tsx
++++ w/apps/login/src/components/password-form.tsx
+@@ -9,7 +9,7 @@ import { useTranslations } from "next-intl";
+ import { useRouter } from "next/navigation";
+ import { useState } from "react";
+ import { useForm } from "react-hook-form";
+-import { Alert, AlertType } from "./alert";
++import { Alert } from "./alert";
+ import { FieldAside, FormStack } from "./auth/form-layout";
+ import { PasswordField } from "./auth/password-field";
+ import { AutoSubmitForm } from "./auto-submit-form";
+@@ -37,7 +37,6 @@ export function PasswordForm({ loginSettings, loginName, organization, defaultOr
+ 
+   const t = useTranslations("password");
+ 
+-  const [info, setInfo] = useState<string>("");
+   const [error, setError] = useState<string>("");
+   const [samlData, setSamlData] = useState<{ url: string; fields: Record<string, string> } | null>(null);
+ 
+@@ -70,7 +69,6 @@ export function PasswordForm({ loginSettings, loginName, organization, defaultOr
+ 
+   async function resetPasswordAndContinue() {
+     setError("");
+-    setInfo("");
+     setLoading(true);
+ 
+     const response = await resetPassword({
+@@ -80,8 +78,7 @@ export function PasswordForm({ loginSettings, loginName, organization, defaultOr
+       requestId,
+     })
+       .catch(() => {
+-        setError(t("errors.couldNotSendResetLink"));
+-        return;
++        return { error: t("errors.couldNotSendResetLink") };
+       })
+       .finally(() => {
+         setLoading(false);
+@@ -92,8 +89,6 @@ export function PasswordForm({ loginSettings, loginName, organization, defaultOr
+       return;
+     }
+ 
+-    setInfo(t("verify.info.passwordResetSent"));
+-
+     const params = new URLSearchParams({
+       loginName: loginName,
+     });
+@@ -138,8 +133,6 @@ export function PasswordForm({ loginSettings, loginName, organization, defaultOr
+             {loginName && <input type="hidden" name="loginName" autoComplete="username" value={loginName} />}
+           </div>
+ 
+-          {info && <Alert type={AlertType.INFO}>{info}</Alert>}
+-
+           {error && (
+             <div data-testid="error">
+               <Alert>{error}</Alert>
+diff --git i/apps/login/src/components/set-password-form.tsx w/apps/login/src/components/set-password-form.tsx
+index 08365a5..0ccaa58 100644
+--- i/apps/login/src/components/set-password-form.tsx
++++ w/apps/login/src/components/set-password-form.tsx
+@@ -185,7 +185,8 @@ export function SetPasswordForm({
+             aria-hidden="true"
+             className="sr-only"
+           />
+-          {codeRequired && (
++          {codeRequired && code && <input type="hidden" {...register("code")} />}
++          {codeRequired && !code && (
+             <div>
+               <TextInput
+                 type="text"
+@@ -220,7 +221,7 @@ export function SetPasswordForm({
+           )}
+           <PasswordField
+             autoComplete="new-password"
+-            autoFocus={!codeRequired}
++            autoFocus={!codeRequired || Boolean(code)}
+             required
+             {...register("password", {
+               required: t("set.required.newPassword"),
+diff --git i/apps/login/src/lib/server/password.ts w/apps/login/src/lib/server/password.ts
+index d0ac8a6..4b44feb 100644
+--- i/apps/login/src/lib/server/password.ts
++++ w/apps/login/src/lib/server/password.ts
+@@ -50,8 +50,10 @@ export async function resetPassword(command: ResetPasswordCommand) {
+ 
+   const t = await getTranslations("password");
+ 
+-  // Get the original host that the user sees with protocol
+-  const hostWithProtocol = await getPublicHostWithProtocol(_headers);
++  // Use the configured public origin for email links. The proxy terminates HTTPS
++  // even on localhost, where upstream otherwise guesses HTTP from the hostname.
++  const publicOrigin = process.env.LOGIN_PUBLIC_ORIGIN;
++  const hostWithProtocol = publicOrigin ? new URL(publicOrigin).origin : getPublicHostWithProtocol(_headers);
+ 
+   const loginSettings = await getLoginSettings({
+     serviceConfig,
+@@ -126,13 +128,25 @@ export async function resetPassword(command: ResetPasswordCommand) {
+   const userId = user.userId;
+   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+ 
+-  return passwordReset({
++  const delivery = passwordReset({
+     serviceConfig,
+     userId,
+     urlTemplate:
+       `${hostWithProtocol}${basePath}/password/set?code={{.Code}}&userId={{.UserID}}&organization={{.OrgID}}` +
+       (command.requestId ? `&requestId=${command.requestId}` : ""),
+   });
++
++  if (loginSettings.ignoreUnknownUsernames) {
++    // Match the unknown-user response. The provider's event details and per-user
++    // delivery errors are not part of a public confirmation.
++    await Promise.all([
++      delivery.catch(() => logger.warn("Password reset notification could not be requested")),
++      new Promise((resolve) => setTimeout(resolve, 2000)),
++    ]);
++  } else {
++    await delivery;
++  }
++  return {};
+ }
+ 
+ export type UpdateSessionCommand = {

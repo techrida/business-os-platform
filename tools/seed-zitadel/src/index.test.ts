@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   ACCESS_TOKEN_LIFETIME,
@@ -120,6 +120,7 @@ class FakeZitadel implements SeedApi {
   readonly members = new Map<string, string[]>(); // `${org}:${user}` -> roles
   readonly iamMembers = new Map<string, string[]>(); // user -> instance roles
   private smtp = false;
+  private instancePasswordReset = false;
   /** Every call, changing or not, so a test can see what the seed asked for. */
   readonly authRequiredCalls: string[] = [];
   readonly noRegisterCalls: string[] = [];
@@ -186,7 +187,13 @@ class FakeZitadel implements SeedApi {
     for (const p of this.projects.values()) if (p.id === projectId) p.authRequired = true;
     return Promise.resolve();
   }
-  ensureOrgLoginPolicyNoRegister(orgId: string): Promise<boolean> {
+  ensureInstancePasswordReset(): Promise<boolean> {
+    if (this.instancePasswordReset) return Promise.resolve(false);
+    this.mutate();
+    this.instancePasswordReset = true;
+    return Promise.resolve(true);
+  }
+  ensureStaffLoginPolicy(orgId: string): Promise<boolean> {
     this.noRegisterCalls.push(orgId);
     if (this.noRegisterOrgs.has(orgId)) return Promise.resolve(false);
     this.mutate();
@@ -491,6 +498,7 @@ function setup(): {
     issuer: 'https://auth.localhost',
     workspaceUrl: 'https://app.localhost',
     now: () => NOW,
+    configureDevMailpit: true,
   };
   return { api, files, store, deps, logs };
 }
@@ -595,6 +603,16 @@ describe('@bos/seed-zitadel', () => {
     expect(after.get('finance')).toBeDefined();
   });
 
+  it('configures Mailpit only for an opted-in development seed', async () => {
+    const { api, deps } = setup();
+    const configureMail = vi.spyOn(api, 'ensureSmtp');
+    await runSeed({ ...deps, configureDevMailpit: false });
+    expect(configureMail).not.toHaveBeenCalled();
+
+    await runSeed(deps);
+    expect(configureMail).toHaveBeenCalledWith(expect.objectContaining({ host: 'mailpit:1025' }));
+  });
+
   it('second run makes no mutating call and reports no changes', async () => {
     const { api, files, deps } = setup();
     await runSeed(deps);
@@ -634,7 +652,9 @@ describe('@bos/seed-zitadel', () => {
     const result = await runSeed(deps);
 
     expect(api.noRegisterCalls).toEqual([api.staffOrgId]);
-    expect(result.changes).toContain('disabled self-registration on the staff org');
+    expect(result.changes).toContain(
+      'configured staff login policy for invitations and private password reset',
+    );
   });
 
   it('is idempotent for authorization and self-registration (CR-02)', async () => {

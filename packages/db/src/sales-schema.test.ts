@@ -3,7 +3,7 @@
 // and checks (name only), and the same allow-lists as the exported catalogues. It also pins the one-live-SO index,
 // the deferred schedule-sum triggers and the audit attach. The FK billing_schedule_lines_invoice_fk lives in 0021
 // (SQL only, like 0016's FKs onto S1 tables) and is asserted by sales.test.ts on Postgres.
-// No database needed: this reads the migration file.
+// No database needed: this reads 0020 and the billing-percent changes in 0042.
 // Run with: pnpm --filter @bos/db exec vitest run src/sales-schema.test.ts
 import { readFileSync } from 'node:fs';
 
@@ -26,6 +26,11 @@ import {
 
 const SQL_TEXT = readFileSync(
   new URL('../migrations/0020_sales_orders.sql', import.meta.url),
+  'utf8',
+);
+
+const PRECISION_SQL = readFileSync(
+  new URL('../migrations/0042_billing_schedule_percent_precision.sql', import.meta.url),
   'utf8',
 );
 
@@ -85,7 +90,15 @@ function parseSql(text: string): Map<string, Shape> {
       if (column) shape.columns.push(column[1] ?? '');
     }
   }
-  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)" ADD CONSTRAINT "(\w+)" (.*);/g)) {
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)"\s+DROP CONSTRAINT "(\w+)"/g)) {
+    const shape = shapeOf(m[1] ?? '');
+    shape.names.check = shape.names.check.filter((name) => name !== m[2]);
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)"\s+RENAME COLUMN "(\w+)" TO "(\w+)"/g)) {
+    const shape = shapeOf(m[1] ?? '');
+    shape.columns = shape.columns.map((column) => (column === m[2] ? m[3]! : column));
+  }
+  for (const m of text.matchAll(/ALTER TABLE "app"\."(\w+)"\s+ADD CONSTRAINT "(\w+)" (.*);/g)) {
     const kind = kindOf(m[3] ?? '');
     shapeOf(m[1] ?? '').names[kind].push(sqlEntry(kind, m[2] ?? '', m[3] ?? ''));
   }
@@ -150,8 +163,8 @@ function checkList(constraint: string, column: string): string[] {
   return [...(list[1] ?? '').matchAll(/'(\w+)'/g)].map((m) => m[1] ?? '');
 }
 
-describe('0020_sales_orders and src/schema/sales.ts', () => {
-  const parsed = parseSql(SQL_TEXT);
+describe('sales migrations and src/schema/sales.ts', () => {
+  const parsed = parseSql(`${SQL_TEXT}\n${PRECISION_SQL}`);
 
   it('create the same five tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());

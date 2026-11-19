@@ -81,3 +81,43 @@ export function formatKathmandu(instant: Date, style: 'date' | 'datetime'): stri
     style === 'date' ? base : { ...base, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
   return new Intl.DateTimeFormat('en-GB', opts).format(instant);
 }
+
+/** Default for customer-visible Gregorian calendar dates. */
+export const DEFAULT_CUSTOMER_DATE_FORMAT = 'dd MMM yyyy';
+
+const CUSTOMER_DATE_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+/**
+ * Formats a YYYY-MM-DD calendar date without a timezone conversion.
+ * Legacy milestone descriptions and notification fallbacks pass through as written.
+ */
+export function formatCustomerDate(value: string): string {
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!date) return value;
+  const [, year, month, day] = date;
+  const abbreviation = CUSTOMER_DATE_MONTHS[Number(month) - 1];
+  const calendarDay = new Date(value);
+  if (
+    !abbreviation ||
+    Number.isNaN(calendarDay.getTime()) ||
+    calendarDay.toISOString().slice(0, 10) !== value
+  ) {
+    return value;
+  }
+  return DEFAULT_CUSTOMER_DATE_FORMAT.replace('dd', day!)
+    .replace('MMM', abbreviation)
+    .replace('yyyy', year!);
+}

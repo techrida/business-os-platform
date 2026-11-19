@@ -14,6 +14,7 @@
 // confirmed. Mark billable: withTx -> withIdempotency -> sales order, then schedule line locks
 // (LedgerService.lockForMoneyCommand) -> conditional updates.
 import {
+  trimPercent,
   type ConfirmSalesOrderBody,
   type EvidenceKind,
   type MarkBillableBody,
@@ -367,7 +368,7 @@ export class SalesOrdersService {
         seq: l.seq,
         label: l.label,
         trigger: l.trigger,
-        percentBp: l.percentBp,
+        percent: l.percent,
         amount: l.amount,
         amountNpr: l.amountNpr,
         status: l.status,
@@ -703,7 +704,7 @@ export class SalesOrdersService {
         seq: l.seq,
         label: l.label,
         trigger: l.trigger,
-        percent: l.percentBp === null ? null : new Dec(l.percentBp).div(100).toFixed(),
+        percent: l.percent === null ? null : trimPercent(l.percent),
         amount: l.amount,
         status: l.status,
         billableEvidenceDocumentId: l.billableEvidenceDocumentId,

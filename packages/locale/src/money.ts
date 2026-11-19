@@ -45,3 +45,20 @@ export function formatMoney(
   // Symbol form hugs the sign ("-₹1.00"); code form reads "NPR -1.00".
   return opts?.symbol ? `${sign}${SYMBOLS[currency]}${body}` : `${currency} ${sign}${body}`;
 }
+
+/** Round a milestone's share half up to the currency's two minor-unit digits. */
+export function roundPaymentShare(total: Dec, percent: Decimal.Value): Dec {
+  return total.times(percent).div(100).toDecimalPlaces(2);
+}
+
+/** Split a two-decimal total across a complete schedule, assigning the remainder to its last row. */
+export function allocatePaymentSchedule(total: Dec, percents: readonly Decimal.Value[]): Dec[] {
+  let remaining = total;
+  return percents.map((percent, index) => {
+    if (index === percents.length - 1) return remaining;
+    // On tiny totals, several half-up shares can exhaust the balance before the final row.
+    const amount = Dec.min(roundPaymentShare(total, percent), remaining);
+    remaining = remaining.minus(amount);
+    return amount;
+  });
+}
