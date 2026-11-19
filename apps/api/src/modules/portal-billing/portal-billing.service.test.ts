@@ -125,10 +125,12 @@ describe('PortalBillingService caller check', () => {
     const staff = { orgKind: 'staff', partyId: null } as unknown as Principal;
     const db = { select: vi.fn() };
     const documents = { listForOwner: vi.fn(), issueLinkForOwner: vi.fn() };
+    const settings = { get: vi.fn() };
     const service = new PortalBillingService(
       { current: () => staff },
       db as never,
       documents as never,
+      settings as never,
     );
     for (const call of [
       () => service.list(),
@@ -140,5 +142,6 @@ describe('PortalBillingService caller check', () => {
     }
     expect(db.select).not.toHaveBeenCalled();
     expect(documents.listForOwner).not.toHaveBeenCalled();
+    expect(settings.get).not.toHaveBeenCalled();
   });
 });

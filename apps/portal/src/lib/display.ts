@@ -26,3 +26,12 @@ export function displayFormat(display: PortalDisplay = DEFAULT_PORTAL_DISPLAY) {
     day: (value: string): string => formatCustomerDate(value, display.dateFormat),
   };
 }
+
+/**
+ * A tax line's label with its rate. The label is the tax code's own name and usually already carries the rate
+ * ("VAT 13%"), so the rate is added only when the label does not show it.
+ */
+export function taxLineLabel(label: string, percent: string): string {
+  const rate = percent.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return label.includes(`${rate}%`) ? label : `${label} ${rate}%`;
+}

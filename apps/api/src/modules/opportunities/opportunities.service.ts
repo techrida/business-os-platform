@@ -111,7 +111,10 @@ export class OpportunitiesService {
     );
     const { rows, total } = await searchPage(this.db, {
       q: q.q,
-      columns: [opportunities.name, opportunities.number, customers.legalName],
+      // The customer's name is only searchable by a caller who may read customers.
+      columns: principal.grants.has('customer.read')
+        ? [opportunities.name, opportunities.number, customers.legalName]
+        : [opportunities.name, opportunities.number],
       where: scoped(scope).where(opportunities, and(...filters)),
       orderBy: [desc(opportunities.createdAt), desc(opportunities.id)],
       limit: q.limit,
