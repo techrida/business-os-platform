@@ -269,14 +269,16 @@ beforeAll(async () => {
   await runMigrations(ownerUrl, beforeFolder);
 
   // Tenant A has been running on the old seed: Finance, Accountant, PMO and Operations Head read every lead and
-  // opportunity, Marketing holds 0083's rows. A Founder widened PMO's lead read and Operations Head's opportunity
-  // read by hand, and gave Sales managers every lead.
+  // opportunity, Marketing holds 0083's rows, Sales reads its own quotations and Operations Officers their own
+  // purchase requests. A Founder widened PMO's lead read and Operations Head's opportunity read by hand, let Sales
+  // edit every lead, and gave Sales managers every lead. Finance holds the lead write it starts leads with.
   tenantA = await createTenantWithEntity(owner);
   await insertGrants(tenantA, [
     ['founder', 'memo.read', 'all', true],
     ['finance', 'crm.lead.read', 'all', true],
     ['finance', 'crm.opportunity.read', 'all', true],
     ['finance', 'quotation.read', 'all', true],
+    ['finance', 'crm.lead.write', 'own', true],
     ['accountant', 'crm.lead.read', 'all', true],
     ['accountant', 'crm.opportunity.read', 'all', true],
     ['pmo', 'crm.lead.read', 'all', false],
@@ -285,8 +287,11 @@ beforeAll(async () => {
     ['operations_head', 'crm.opportunity.read', 'all', false],
     ['operations_head', 'quotation.read', 'all', true],
     ['sales', 'crm.lead.read', 'own', true],
+    ['sales', 'quotation.read', 'own', true],
+    ['sales', 'crm.lead.write', 'all', false],
     ['marketing', 'crm.lead.read', 'own', true],
     ['marketing', 'crm.lead.write', 'own', true],
+    ['operations_officer', 'procurement.pr.read', 'own', true],
   ]);
   await writeAs(tenantA, async (c) => {
     await c.query(
@@ -388,57 +393,84 @@ describe('0088 D50 lead access on seeded rows', () => {
 });
 
 describe('0088 level rows', () => {
-  it('embeds the default rows: 40, unique per role, permission and level, all reaching the department', () => {
-    expect(embeddedLevels).toHaveLength(40);
-    const keys = embeddedLevels.map((row) => `${row.role} ${row.permission} ${row.min_level}`);
-    expect(new Set(keys).size).toBe(keys.length);
-    expect(new Set(embeddedLevels.map((row) => row.scope))).toEqual(new Set(['department']));
-    expect(embeddedLevels.map(levelKey)).toEqual(
-      expect.arrayContaining([
+  // What Settings > Access materialises from its default switches: managers and heads see the department's leads,
+  // opportunities and quotations, heads the department's purchase requests, and Sales and Marketing managers and
+  // heads also edit the department's leads (Sales its opportunities too) so they can hand work over (D50).
+  it('embeds the 27 default rows: department reach to see leads, opportunities, quotations and purchase requests, and to edit leads and opportunities', () => {
+    expect(embeddedLevels.map(levelKey).sort()).toEqual(
+      [
+        'finance crm.lead.read manager department',
+        'finance crm.lead.read head department',
+        'finance crm.opportunity.read manager department',
+        'finance crm.opportunity.read head department',
+        'accountant crm.lead.read manager department',
+        'accountant crm.lead.read head department',
+        'accountant crm.opportunity.read manager department',
+        'accountant crm.opportunity.read head department',
+        'sales crm.lead.read manager department',
+        'sales crm.lead.read head department',
+        'sales crm.opportunity.read manager department',
+        'sales crm.opportunity.read head department',
         'sales crm.lead.write manager department',
-        'sales quotation.revise manager department',
+        'sales crm.lead.write head department',
+        'sales crm.opportunity.write manager department',
+        'sales crm.opportunity.write head department',
+        'sales quotation.read manager department',
+        'sales quotation.read head department',
         'marketing crm.lead.read manager department',
-        'finance procurement.pr.read head department',
+        'marketing crm.lead.read head department',
+        'marketing crm.lead.write manager department',
+        'marketing crm.lead.write head department',
+        'pmo crm.lead.read manager department',
+        'pmo crm.lead.read head department',
+        'pmo crm.opportunity.read manager department',
+        'pmo crm.opportunity.read head department',
         'operations_officer procurement.pr.read head department',
-      ]),
+      ].sort(),
     );
-    expect(embeddedLevels.filter((row) => row.role === 'finance').map(levelKey)).toEqual([
-      'finance procurement.pr.read head department',
-    ]);
-    expect(embeddedLevels.some((row) => row.role === 'founder')).toBe(false);
   });
 
-  it('writes exactly those rows, seeded, and keeps the level row a Founder made', async () => {
+  it('writes a row only where the tenant role reads below the department, seeded, and keeps the level row a Founder made', async () => {
+    // Left out: PMO lead rows (a Founder widened its lead read to every lead), Operations Head rows (its lead read
+    // is gone and a Founder gave it every opportunity), Sales opportunity rows (no opportunity grant here), Sales
+    // lead edit rows (a Founder let Sales edit every lead) and any Finance edit row (it only starts leads).
+    const seeded = [
+      'finance crm.lead.read manager department',
+      'finance crm.lead.read head department',
+      'finance crm.opportunity.read manager department',
+      'finance crm.opportunity.read head department',
+      'accountant crm.lead.read manager department',
+      'accountant crm.lead.read head department',
+      'accountant crm.opportunity.read manager department',
+      'accountant crm.opportunity.read head department',
+      'sales crm.lead.read head department',
+      'sales quotation.read manager department',
+      'sales quotation.read head department',
+      'marketing crm.lead.read manager department',
+      'marketing crm.lead.read head department',
+      'marketing crm.lead.write manager department',
+      'marketing crm.lead.write head department',
+      'pmo crm.opportunity.read manager department',
+      'pmo crm.opportunity.read head department',
+      'operations_officer procurement.pr.read head department',
+    ];
     const rows = await levelRowsOf(tenantA.tenantId);
-    const founderMade = 'sales crm.lead.read manager';
-    const expected = embeddedLevels
-      .filter((row) => `${row.role} ${row.permission} ${row.min_level}` !== founderMade)
-      .map((row) => ({ ...row, seeded: true }));
-    expected.push({
-      role: 'sales',
-      permission: 'crm.lead.read',
-      min_level: 'manager',
-      scope: 'all',
-      seeded: false,
-    });
-    const sort = (list: (LevelRow & { seeded: boolean })[]) =>
-      [...list].sort((a, b) => levelKey(a).localeCompare(levelKey(b)));
-    expect(sort(rows)).toEqual(sort(expected));
+    expect(rows.map((row) => `${levelKey(row)} ${row.seeded}`).sort()).toEqual(
+      [...seeded.map((key) => `${key} true`), 'sales crm.lead.read manager all false'].sort(),
+    );
   });
 
-  it('gives every tenant that has role rows the same level rows', async () => {
-    const rows = await levelRowsOf(tenantB.tenantId);
-    expect(rows.map(levelKey).sort()).toEqual(embeddedLevels.map(levelKey).sort());
-    expect(rows.every((row) => row.seeded)).toBe(true);
+  it('writes no level row for a tenant whose roles hold none of those reads', async () => {
+    expect(await levelRowsOf(tenantB.tenantId)).toEqual([]);
   });
 
   it('audits the level rows as the migration', async () => {
     const { rows } = await owner.query<{ n: string }>(
       `SELECT count(*) AS n FROM audit.audit_events
         WHERE tenant_id = $1 AND entity_type = 'role_permission_levels' AND actor_id = 'system:migration-0088'`,
-      [tenantB.tenantId],
+      [tenantA.tenantId],
     );
-    expect(Number(rows[0]!.n)).toBe(embeddedLevels.length);
+    expect(Number(rows[0]!.n)).toBe(18);
   });
 });
 
