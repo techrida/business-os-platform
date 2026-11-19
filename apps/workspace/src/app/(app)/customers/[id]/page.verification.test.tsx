@@ -14,6 +14,9 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock('server-only', () => ({}));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
+}));
 vi.mock('@/lib/bff', () => ({
   requireStaffSession: vi.fn().mockResolvedValue({ roles: ['sales'], accessToken: 't' }),
 }));
