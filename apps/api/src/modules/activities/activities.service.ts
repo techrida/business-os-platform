@@ -48,6 +48,7 @@ import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  activityNames,
   isPlannedRow,
   isPlannedSql,
   SUBJECT_PERMISSION,
@@ -107,7 +108,8 @@ export class ActivitiesService {
       .where(scoped(scope).where(activities, and(...filters)))
       .orderBy(...order)
       .limit(q.limit);
-    return rows.map(toActivityDto);
+    const names = await activityNames(this.db, scope.tenantId, rows);
+    return rows.map((r) => toActivityDto(r, names));
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -167,7 +169,7 @@ export class ActivitiesService {
             ...(planned ? { dueAt: body.dueAt, assigneeUserId } : {}),
           },
         });
-        return toActivityDto(row!);
+        return toActivityDto(row!, await activityNames(tx, scope.tenantId, [row!]));
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -306,7 +308,8 @@ export class ActivitiesService {
           message: 'Only a planned activity can be changed; this one is already done or cancelled',
         });
       }
-      return toActivityDto(await change(tx, row, scope));
+      const changed = await change(tx, row, scope);
+      return toActivityDto(changed, await activityNames(tx, scope.tenantId, [changed]));
     });
   }
 

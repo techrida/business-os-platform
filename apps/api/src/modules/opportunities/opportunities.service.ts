@@ -30,6 +30,7 @@ import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
 import { readTxContext } from '../../platform/documents/tx-context';
+import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { OpportunitiesCaller } from './opportunities.caller';
 import type { OpportunityLostHandler } from './opportunities.ports';
 import {
@@ -109,7 +110,12 @@ export class OpportunitiesService {
       .where(scoped(scope).where(opportunities, and(...filters)))
       .orderBy(desc(opportunities.createdAt), desc(opportunities.id))
       .limit(q.limit);
-    return rows.map(toOpportunityDto);
+    const names = await personNameMap(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.ownerUserId),
+    );
+    return rows.map((r) => toOpportunityDto(r, nameIn(names, r.ownerUserId)));
   }
 
   async get(id: string): Promise<OpportunityDto> {
@@ -120,7 +126,7 @@ export class OpportunitiesService {
       .where(scoped(scope).where(opportunities, eq(opportunities.id, id)));
     if (row === undefined) throw notFound();
     this.assertVisible('crm.opportunity.read', row);
-    return toOpportunityDto(row);
+    return toOpportunityDto(row, await this.ownerNameOf(this.db, row));
   }
 
   // ------------------------------------------------------------------------------------------ stage change
@@ -170,7 +176,7 @@ export class OpportunitiesService {
           });
         }
       }
-      return toOpportunityDto(updated);
+      return toOpportunityDto(updated, await this.ownerNameOf(tx, updated));
     });
   }
 
@@ -185,7 +191,9 @@ export class OpportunitiesService {
   async markQuotationSent(tx: DbTransaction, opportunityId: string): Promise<OpportunityDto> {
     const { scope } = await readTxContext(tx);
     const row = await this.lock(tx, scope, opportunityId);
-    if (row.stage === 'quotation_sent' || row.stage === 'negotiation') return toOpportunityDto(row);
+    if (row.stage === 'quotation_sent' || row.stage === 'negotiation') {
+      return toOpportunityDto(row, await this.ownerNameOf(tx, row));
+    }
     return this.systemMove(tx, row, 'quotation_sent', {});
   }
 
@@ -202,7 +210,7 @@ export class OpportunitiesService {
     const { scope } = await readTxContext(tx);
     const row = await this.lock(tx, scope, opportunityId);
     if (row.stage === 'won' && row.wonQuotationVersionId === quotationVersionId) {
-      return toOpportunityDto(row);
+      return toOpportunityDto(row, await this.ownerNameOf(tx, row));
     }
     return this.systemMove(tx, row, 'won', { wonQuotationVersionId: quotationVersionId });
   }
@@ -235,7 +243,16 @@ export class OpportunitiesService {
         ? { wonQuotationVersionId: extra.wonQuotationVersionId }
         : {},
     });
-    return toOpportunityDto(updated);
+    return toOpportunityDto(updated, await this.ownerNameOf(tx, updated));
+  }
+
+  /** The owner's display name (D46), read in the opportunity's tenant. */
+  private async ownerNameOf(
+    q: Db | DbTransaction,
+    row: Pick<OpportunityRow, 'tenantId' | 'ownerUserId'>,
+  ): Promise<string | null> {
+    const names = await personNameMap(q, row.tenantId, [row.ownerUserId]);
+    return nameIn(names, row.ownerUserId);
   }
 
   // ----------------------------------------------------------------------------------------------- helpers
