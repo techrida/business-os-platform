@@ -922,6 +922,9 @@ describe('detail can and verification presence (audit #6)', () => {
           reviewPolicy: 'document_review_v1',
           checklist: [],
           reason: 'internal reviewer note',
+          // verification_cases_submission_check: a submitted case names who submitted it and when.
+          submittedByUserId: t.userId,
+          submittedAt: now,
           createdAt: now,
           updatedAt: now,
         })
