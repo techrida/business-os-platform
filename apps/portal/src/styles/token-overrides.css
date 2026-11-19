@@ -21,7 +21,8 @@
   --date-picker-border: var(--neutral-500);
 }
 
-[data-theme='dark'] {
+:root[data-theme='dark'],
+:root:not([data-theme='light']) [data-theme='dark'] {
   --input-border: var(--neutral-400);
   --input-hover-border: var(--neutral-200);
   --search-border: var(--neutral-400);

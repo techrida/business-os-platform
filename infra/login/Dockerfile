@@ -24,7 +24,7 @@ RUN git apply --check /tmp/login.patch /tmp/otp.patch \
     && git apply /tmp/theme.patch \
     && git apply /tmp/reset.patch
 COPY infra/login/overlay/ apps/login/
-COPY apps/workspace/src/lib/theme-mode.ts apps/login/src/lib/
+COPY packages/locale/src/theme-mode.ts apps/login/src/lib/
 COPY apps/workspace/src/styles/tokens.css apps/workspace/src/styles/token-overrides.css apps/login/src/styles/
 
 FROM overlay AS test
