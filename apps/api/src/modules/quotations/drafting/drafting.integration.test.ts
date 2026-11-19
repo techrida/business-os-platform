@@ -1032,7 +1032,7 @@ describe('DraftingService.summary', () => {
       const got = new Map((summary.amounts?.[status] ?? []).map((a) => [a.currency, a.total]));
       expect([...got.keys()].sort()).toEqual([...expected.keys()].sort());
       for (const [currency, sum] of expected)
-        expect(new Decimal(got.get(currency)!).eq(sum)).toBe(true);
+        expect(new Decimal(got.get(currency as never)!).eq(sum)).toBe(true);
     }
     expect(summary.amounts?.sent).toEqual([]);
     expect((await service.list({ customerId: [c1.customerId, c2.customerId] })).total).toBe(
