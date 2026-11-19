@@ -3,6 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
+import {
+  clearSelection,
+  expectSelected,
+  multiSelectByLabel,
+  searchBox,
+  toggleOptions,
+} from '../helpers/multi-select';
 import { chooseOption, selectByName } from '../helpers/select';
 
 async function moveStage(page: Page, value: string, label: string) {
@@ -72,79 +79,77 @@ test('the opportunity table combines multiple stages with search and restores fi
     const qualified = table.getByRole('link', { name: qualifiedName });
     const requirement = table.getByRole('link', { name: requirementName });
     const lost = table.getByRole('link', { name: lostName });
-    const search = page.getByRole('searchbox', { name: 'Search opportunities' });
-    const trigger = page.getByRole('button', { name: /^Stage(?:,|$)/ });
-    const filter = page.getByRole('dialog', { name: 'Filter by stage' });
-    const first = filter.getByRole('checkbox', { name: 'Qualified', exact: true });
-    const second = filter.getByRole('checkbox', { name: 'Requirement Received' });
+    const search = searchBox(page, 'Search opportunities');
+    const stage = multiSelectByLabel(page, 'Stage');
+    // The URL is the state: `q` plus one repeated `stage` param per selected stage.
+    const expectUrl = (q: string, values: readonly string[]) =>
+      expect(page).toHaveURL(
+        (url) =>
+          url.searchParams.get('q') === q &&
+          url.searchParams.getAll('stage').sort().join() === [...values].sort().join(),
+      );
 
     await page.goto('/opportunities');
     await search.fill(query);
-    await page.getByRole('search').getByRole('button', { name: 'Search', exact: true }).click();
+    await expectUrl(query, []);
+    await expect(qualified).toBeVisible();
+    await expect(requirement).toBeVisible();
     await expect(lost).toBeVisible();
-    await expect(table.locator('tbody tr')).toHaveCount(3);
 
-    await trigger.press('Enter');
-    await expect(first).toBeFocused();
-    await first.press('Space');
-    await page.keyboard.press('Tab');
-    await page.keyboard.press('Space');
-    await expect(page).toHaveURL(
-      (url) =>
-        url.searchParams.get('q') === query &&
-        url.searchParams.getAll('stage').join() === stages.join(),
-    );
-    await expect(first).toBeChecked();
-    await expect(second).toBeChecked();
-    await expect(second).toBeFocused();
-    await expect(trigger).toHaveAccessibleName('Stage, 2 selected');
+    await toggleOptions(stage, stages);
+    await expectUrl(query, stages);
+    await expectSelected(stage, stages);
+    await expect(stage).toContainText('2 stages');
     await expect(qualified).toBeVisible();
     await expect(requirement).toBeVisible();
     await expect(lost).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(trigger).toBeFocused();
 
+    // A search replaces its history entry; each stage change is its own entry.
     await search.fill(qualifiedName);
-    await search.press('Enter');
-    await expect(page).toHaveURL(
-      (url) =>
-        url.searchParams.get('q') === qualifiedName &&
-        url.searchParams.getAll('stage').join() === stages.join(),
-    );
+    await expectUrl(qualifiedName, stages);
+    await expect(qualified).toBeVisible();
+    // Exact hits come first; close matches may follow, so the other rows are not asserted absent.
+    await expect(table.locator('tbody tr').first()).toContainText(qualifiedName);
+    await expect(lost).toHaveCount(0);
+    await page.goBack();
+    await expectUrl(query, ['qualified']);
+    await expect(search).toHaveValue(query);
+    await expectSelected(stage, ['qualified']);
+    await expect(stage).toContainText('Qualified');
     await expect(qualified).toBeVisible();
     await expect(requirement).toHaveCount(0);
-    await page.goBack();
-    await expect(search).toHaveValue(query);
+    await page.goForward();
+    await expectUrl(qualifiedName, stages);
+    await expect(search).toHaveValue(qualifiedName);
+    await search.fill(query);
+    await expectUrl(query, stages);
     await expect(requirement).toBeVisible();
 
     await page.getByRole('link', { name: 'Board', exact: true }).click();
-    await expect(trigger).toHaveCount(0);
+    await expect(stage).toHaveCount(0);
     await expect(search).toHaveValue(query);
     await expect(
       page.getByRole('region', { name: 'Lost' }).getByRole('link', { name: lostName }),
     ).toBeVisible();
     await page.getByRole('link', { name: 'Table', exact: true }).click();
     await expect(lost).toHaveCount(0);
-    await trigger.click();
-    await expect(first).toBeChecked();
-    await expect(second).toBeChecked();
+    await expectSelected(stage, stages);
 
-    await filter.getByRole('button', { name: 'Clear stages' }).click();
-    await expect(page).toHaveURL(
-      (url) => url.searchParams.get('q') === query && !url.searchParams.has('stage'),
-    );
+    await clearSelection(stage);
+    await expectUrl(query, []);
     await expect(lost).toBeVisible();
-    await expect(first).not.toBeChecked();
-    await expect(second).not.toBeChecked();
+    await expectSelected(stage, []);
     await page.goBack();
-    await expect(first).toBeChecked();
-    await expect(second).toBeChecked();
+    await expectUrl(query, stages);
+    await expectSelected(stage, stages);
     await expect(lost).toHaveCount(0);
 
+    // Hand-edited params: unknown values are dropped and repeats collapse.
     const params = new URLSearchParams({ q: query });
-    for (const stage of [...stages, 'invalid', 'qualified']) params.append('stage', stage);
+    for (const value of [...stages, 'invalid', 'qualified']) params.append('stage', value);
     await page.goto(`/opportunities?${params.toString()}`);
-    await expect(trigger).toHaveAccessibleName('Stage, 2 selected');
+    await expectSelected(stage, stages);
+    await expect(stage).toContainText('2 stages');
     await expect(qualified).toBeVisible();
     await expect(requirement).toBeVisible();
     await expect(lost).toHaveCount(0);
