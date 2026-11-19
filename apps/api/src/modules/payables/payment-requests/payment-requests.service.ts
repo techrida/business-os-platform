@@ -47,6 +47,7 @@ import {
 import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { can } from '../../../platform/authz/can';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
@@ -54,6 +55,7 @@ import { ApprovalsService } from '../../approvals/requests.service';
 import { LedgerError, LedgerService } from '../../ledger/ledger.service';
 import { VENDOR_BILL_DOCUMENT_TYPE } from '../bills/vendor-bill.rules';
 import { VendorBankService } from '../../vendors/bank/bank.service';
+import { vendorRef } from '../../vendors/vendors.service';
 import {
   CLAIMING_REQUEST_STATUSES,
   PAYABLE_BILL_STATUSES,
@@ -102,6 +104,14 @@ export interface PaymentRequestDto {
   cancelReason: string | null;
   version: number;
   lines: PaymentRequestLineDto[];
+}
+
+/** One request as its page reads it: the vendor named under the request's own read, and what the caller may open. */
+export interface PaymentRequestDetailDto extends PaymentRequestDto {
+  /** The vendor's legal name, and nothing else of the vendor record. */
+  vendorName: string | null;
+  /** From the caller's live grants: `readVendor` is false when the vendor page would refuse them. */
+  can: { readVendor: boolean };
 }
 
 export interface PaymentRequestItemDto {
@@ -282,9 +292,25 @@ export class PaymentRequestsService {
   }
 
   /** 404 outside the acting entity. */
-  async get(id: string): Promise<PaymentRequestDto> {
-    const { scope, actor } = this.caller.current();
-    return withTx(this.db, scope, actor, (tx) => this.dto(tx, scope, id));
+  async get(id: string): Promise<PaymentRequestDetailDto> {
+    const { scope, actor, principal } = this.caller.current();
+    return withTx(this.db, scope, actor, async (tx) => {
+      const dto = await this.dto(tx, scope, id);
+      const [vendor] = await tx
+        .select()
+        .from(vendors)
+        .where(and(eq(vendors.tenantId, scope.tenantId), eq(vendors.id, dto.vendorPartyId)));
+      return {
+        ...dto,
+        vendorName: vendor?.legalName ?? null,
+        can: {
+          readVendor:
+            vendor !== undefined &&
+            principal.orgKind === 'staff' &&
+            can(principal, 'vendor.read', vendorRef(vendor, principal)).allowed,
+        },
+      };
+    });
   }
 
   // ------------------------------------------------------------------------------------------------- create
