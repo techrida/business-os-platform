@@ -47,7 +47,7 @@ describe('mayEnterBill', () => {
   });
 
   it('is false for an inactive user and for a portal caller', () => {
-    expect(mayEnterBill(principalOf(['founder'], { status: 'disabled' }), 'issued')).toBe(false);
+    expect(mayEnterBill(principalOf(['founder'], { status: 'inactive' }), 'issued')).toBe(false);
     expect(mayEnterBill(principalOf(['founder'], { orgKind: 'vendor' }), 'issued')).toBe(false);
     expect(mayEnterBill(principalOf(['founder']), 'issued')).toBe(true);
   });
