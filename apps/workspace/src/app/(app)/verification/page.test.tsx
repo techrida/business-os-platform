@@ -42,7 +42,7 @@ it('lists the cases awaiting review when the URL names no status', async () => {
 
 it('lists every case for status=all, distinct from no param', async () => {
   const html = await render({ status: 'all' });
-  const [, query] = mocks.listVerificationCasePage.mock.calls[0]!;
+  const query: unknown = mocks.listVerificationCasePage.mock.calls[0]?.[1];
   expect(query).not.toHaveProperty('status');
   expect(html).toContain('No verification cases yet.');
 });
