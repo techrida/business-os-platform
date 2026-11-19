@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, expect, it, vi } from 'vitest';
 
+import DepartmentNotFound from './not-found';
 import DepartmentPage from './page';
 
 vi.mock('server-only', () => ({}));
@@ -115,4 +116,10 @@ it('shows a retired department as read only with Restore', async () => {
   expect(html).not.toContain('Review changes');
   expect(html).not.toContain('Add people');
   expect(html).not.toContain('Rename Sales');
+});
+
+it('says the department could not be found and links back to the list', () => {
+  const html = renderToStaticMarkup(<DepartmentNotFound />);
+  expect(html).toContain('This department could not be found.');
+  expect(html).toMatch(/<a[^>]*href="\/settings\/departments"[^>]*>Back to departments<\/a>/);
 });
