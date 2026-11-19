@@ -350,7 +350,8 @@ describe('GET /v1/opportunities', () => {
     const percent = z
       .array(OpportunityDtoSchema)
       .parse((await request(baseUrl).get('/v1/opportunities?q=50%25')).body);
-    expect(percent.map((o) => o.id)).toEqual([hold]);
+    // Fewer than five exact hits, so close matches may follow; the exact one is first.
+    expect(percent[0]?.id).toBe(hold);
     const word = z
       .array(OpportunityDtoSchema)
       .parse((await request(baseUrl).get('/v1/opportunities?q=zeta&limit=200')).body);
