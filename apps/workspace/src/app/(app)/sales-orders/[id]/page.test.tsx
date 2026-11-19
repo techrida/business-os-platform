@@ -204,3 +204,37 @@ describe('sales order detail', () => {
     expect(html).toContain(`href="/sales-orders/${IDS.order}"`);
   });
 });
+
+// Audit #7 as Sales: the order shows the held invoice's number and status, with no link the invoice route would
+// refuse, even when the session's role names would allow it (the line's flag decides).
+describe('a held invoice the person may not open', () => {
+  const held = () =>
+    salesOrderDetail({
+      schedule: [
+        scheduleLine({
+          id: IDS.advance,
+          seq: 1,
+          status: 'drafted',
+          invoiceId: IDS.invoice,
+          invoice: { number: 'INV-2083/84-00007', status: 'submitted' },
+          can: { openInvoice: false },
+        }),
+      ],
+      can: { markBillable: false, draftInvoice: false },
+    });
+
+  it('names the invoice as Sales without linking to it', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['sales'] });
+    mocks.getSalesOrder.mockResolvedValue(held());
+    const html = await render();
+    expect(html).not.toContain('/invoices/');
+    expect(html).not.toContain('Open invoice');
+    expect(html).toContain('INV-2083/84-00007 · Submitted');
+  });
+
+  it('follows the line flag, not the role names', async () => {
+    mocks.requireStaffSession.mockResolvedValue({ accessToken: 't', roles: ['founder'] });
+    mocks.getSalesOrder.mockResolvedValue(held());
+    expect(await render()).not.toContain('/invoices/');
+  });
+});
