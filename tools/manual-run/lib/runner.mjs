@@ -51,6 +51,10 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
     resumedFrom: opts.from ?? null,
   };
   const t0 = Date.now();
+  // The earlier run's result, read once: a resumed run is merged with it on every save.
+  const earlier = opts.from
+    ? (readJson(path.join(cfg.outDir, 'results.json'), {}).workflows?.[workflow.name] ?? null)
+    : null;
   // A resumed run records its own video segment, so the earlier segment is kept.
   const base = opts.from ? `${workflow.name}-from-${opts.from}` : workflow.name;
 
@@ -64,6 +68,8 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   const fromIndex = opts.from ? workflow.steps.findIndex((s) => s.id === opts.from) : 0;
   if (fromIndex < 0) throw new Error(`--from ${opts.from}: no such step in ${workflow.name}`);
   for (const [index, step] of workflow.steps.entries()) {
+    // Saved before every step, so a run that is killed keeps the results of the steps it finished.
+    saveResults(cfg, { ...result, status: 'RUNNING', wallMs: Date.now() - t0 }, earlier);
     const skipping = index < fromIndex || (cfg.only && !cfg.only.includes(step.id));
     const entry = {
       id: step.id,
@@ -161,7 +167,7 @@ export async function runWorkflow(cfg, workflow, opts = {}) {
   result.finishedAt = now();
   result.wallMs = Date.now() - t0;
   if (result.steps.every((s) => s.status === 'SKIPPED')) result.status = 'SKIPPED';
-  return saveResults(cfg, result);
+  return saveResults(cfg, result, earlier);
 }
 
 function withTimeout(promise, ms, message) {
@@ -197,7 +203,7 @@ function mergeResumed(prev, next) {
   return { ...next, steps, status, videos, wallMs: (prev.wallMs ?? 0) + next.wallMs };
 }
 
-export function saveResults(cfg, workflowResult) {
+export function saveResults(cfg, workflowResult, earlier = null) {
   const file = path.join(cfg.outDir, 'results.json');
   const all = readJson(file, {
     label: cfg.label,
@@ -205,9 +211,10 @@ export function saveResults(cfg, workflowResult) {
     appUrl: cfg.appUrl,
     workflows: {},
   });
-  const prev = all.workflows[workflowResult.name];
-  all.workflows[workflowResult.name] =
-    workflowResult.resumedFrom && prev ? mergeResumed(prev, workflowResult) : workflowResult;
+  const merged = earlier ? mergeResumed(earlier, workflowResult) : workflowResult;
+  // An unfinished run stays RUNNING; if no later save replaces it, the run was interrupted.
+  if (workflowResult.status === 'RUNNING') merged.status = 'RUNNING';
+  all.workflows[workflowResult.name] = merged;
   all.updatedAt = now();
   writeJson(file, all);
   writeFileSync(path.join(cfg.outDir, 'results.md'), renderMarkdown(all));

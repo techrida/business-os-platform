@@ -320,7 +320,7 @@ export class Session {
    * before hydration does nothing. React attaches `__reactProps$…` to a DOM node when it hydrates
    * it, so wait for that key (elements outside React, e.g. the shadow-DOM Dev menu, are skipped).
    */
-  async hydrated(locator, timeout = 20000) {
+  async hydrated(locator, timeout = 30000) {
     const el = locator.first();
     for (let attempt = 0; attempt < 3; attempt++) {
       await el.waitFor({ state: 'visible', timeout: this.cfg.actionTimeout });
@@ -342,28 +342,32 @@ export class Session {
                   ? f.checked !== f.defaultChecked
                   : f.value !== f.defaultValue) && f.type !== 'hidden',
             );
-            if (unstyled && !dirty) return 'cold';
+            if (unstyled && !dirty) return 'unstyled';
             if (Object.keys(node).some((k) => k.startsWith('__reactProps'))) return 'ready';
             // The page root hydrated but this element not yet (a Suspense boundary still
             // streaming); versus nothing hydrated at all.
             return Object.keys(document.body).some((k) => k.startsWith('__reactFiber'))
               ? 'partial'
-              : 'cold';
+              : 'unhydrated';
           })
           // Detached or mid-navigation: the page moved on, so there is nothing to wait for.
           .catch(() => 'unknown');
         if (state === 'ready' || state === 'outside') return;
+        // A route still streaming shows its loading skeleton; give it the full wait.
         await sleep(250);
       }
       // Reload only a page that never hydrated at all (a script chunk answered 502 under load), or
       // an unstyled page with no typed input: neither can lose work. A hydrated page may hold form input, and a page
       // that is navigating may be mid-submit, so neither is ever reloaded.
-      if (state !== 'cold') {
+      if (state !== 'unhydrated' && state !== 'unstyled') {
         this.log(`    (element not hydrated after ${timeout / 1000} s [${state}]; continuing)`);
         return;
       }
-      this.log(`    (page not hydrated or unstyled, reloading: ${locator})`);
-      await el.page().reload({ waitUntil: 'domcontentloaded' });
+      this.log(`    (page ${state} after ${timeout / 1000} s, reloading: ${locator})`);
+      await el
+        .page()
+        .reload({ waitUntil: 'load', timeout: this.cfg.navTimeout })
+        .catch(() => {});
     }
     throw new StepFailure(
       `The page never became interactive (React did not hydrate ${locator}) after two reloads`,
