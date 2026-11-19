@@ -128,7 +128,7 @@ beforeAll(async () => {
   settings = new SettingsService(db);
   const audit = new AuditService(db);
   // markWon reads neither authz nor the caller: it is a system move inside the outcome's transaction.
-  const opportunities = new OpportunitiesService(db, {} as never, audit, {} as never);
+  const opportunities = new OpportunitiesService(db, {} as never, audit, {} as never, {} as never);
   outcomes = new QuotationOutcomeService(
     settings,
     opportunities,

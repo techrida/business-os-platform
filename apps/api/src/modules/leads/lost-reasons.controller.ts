@@ -36,6 +36,16 @@ export class LeadLostReasonsController {
     return this.reasons.choices();
   }
 
+  /**
+   * 200 with the same active lost-reason choices for opportunity writers (D54-3): a role may hold
+   * `crm.opportunity.write` without `crm.lead.write`.
+   */
+  @Get('opportunity-lost-reasons')
+  @Can('crm.opportunity.write')
+  opportunityChoices(): Promise<LeadLostReason[]> {
+    return this.reasons.choices();
+  }
+
   /** 200 with every option, retired ones included. */
   @Get('admin/lead-lost-reasons')
   @Can('admin.settings.write')
