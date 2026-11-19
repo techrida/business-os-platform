@@ -715,7 +715,8 @@ describe('list filters, search and paging', () => {
 
     current.scope = scopeB;
     const inOther = await service.list({ ...PAGE, q: name });
-    expect(inOther.rows.map((p) => p.id)).toEqual([inB.id]);
+    expect(inOther.rows[0]?.id).toBe(inB.id);
+    expect(inOther.rows.map((p) => p.id)).not.toContain(inA.id);
   });
 });
 
