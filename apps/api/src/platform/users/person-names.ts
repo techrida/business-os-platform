@@ -29,3 +29,28 @@ export async function personNames(
     return name ? [{ userId: r.id, name }] : [];
   });
 }
+
+/**
+ * The same names by user id, for services that join a name onto every row of a list or detail (D46: `ownerName`,
+ * `assigneeName`, `createdByName`). A person with no usable name is absent; callers map that to `null`.
+ */
+export async function personNameMap(
+  q: Db | DbTransaction,
+  tenantId: string,
+  ids: Iterable<string | null | undefined>,
+): Promise<ReadonlyMap<string, string>> {
+  const people = await personNames(q, tenantId, ids);
+  return new Map(people.map((p) => [p.userId, p.name]));
+}
+
+/**
+ * The name to put on a record for `id`: null when the record names no one; "Unnamed user" when it names a user who
+ * has neither a display name nor an address, so a screen never needs a placeholder of its own.
+ */
+export function nameIn(
+  names: ReadonlyMap<string, string>,
+  id: string | null | undefined,
+): string | null {
+  if (id === null || id === undefined) return null;
+  return names.get(id) ?? 'Unnamed user';
+}

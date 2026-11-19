@@ -33,17 +33,13 @@ describe('NextFollowUpCell', () => {
 
 describe('OwnerCell', () => {
   it('shows initials and the owner name', () => {
-    const html = renderToStaticMarkup(<OwnerCell owned name="Asha Gurung" />);
+    const html = renderToStaticMarkup(<OwnerCell name="Asha Gurung" />);
     expect(html).toContain('>AG<');
     expect(html).toContain('Asha Gurung');
   });
 
-  it('never shows an id when the name is unknown', () => {
-    expect(renderToStaticMarkup(<OwnerCell owned name={undefined} />)).toContain(
-      'Name unavailable',
-    );
-    expect(renderToStaticMarkup(<OwnerCell owned={false} name={undefined} />)).toContain(
-      'No owner',
-    );
+  it('says no owner only when the lead has none, and has no unavailable state', () => {
+    expect(renderToStaticMarkup(<OwnerCell name={null} />)).toContain('No owner');
+    expect(renderToStaticMarkup(<OwnerCell name="Unnamed user" />)).not.toContain('unavailable');
   });
 });

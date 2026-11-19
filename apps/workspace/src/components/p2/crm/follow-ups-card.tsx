@@ -29,10 +29,8 @@ export interface FollowUpsCardProps {
   /** The record's planned activities (`GET /v1/activities?leadId=&status=planned`). */
   items: readonly ActivityDto[];
   ownerUserId?: string | null | undefined;
-  /** People the caller may assign to (`GET /v1/leads/owners`); also resolves assignee names. */
+  /** People the caller may assign to (`GET /v1/leads/owners`): the Reschedule and Schedule choices. */
   owners: readonly LeadOwnerOption[];
-  /** More names by user id (the users directory), for assignees outside `owners`. */
-  names?: ReadonlyMap<string, string> | undefined;
   /** Offer Schedule follow-up in the header. Default: yes, when there is a lead. */
   schedule?: boolean | undefined;
   /** The time overdue is measured against. Default: now. */
@@ -82,16 +80,13 @@ function report(result: FollowUpState, success: string, failure: string): boolea
   return false;
 }
 
-/** The name shown for a follow-up's assignee. Never an internal id. */
-export function assigneeName(
-  item: Pick<ActivityDto, 'assigneeUserId'>,
-  owners: readonly LeadOwnerOption[],
-  names?: ReadonlyMap<string, string>,
-): string {
+/**
+ * The name shown for a follow-up's assignee: the display name the API joins onto the activity (D46), so it needs no
+ * directory or owners list. Never an internal id.
+ */
+export function assigneeName(item: Pick<ActivityDto, 'assigneeUserId' | 'assigneeName'>): string {
   if (!item.assigneeUserId) return 'Unassigned';
-  const owner = owners.find((o) => o.userId === item.assigneeUserId);
-  if (owner) return owner.displayName || owner.email;
-  return names?.get(item.assigneeUserId) || 'Another teammate';
+  return item.assigneeName ?? 'Unnamed user';
 }
 
 /**
@@ -173,16 +168,14 @@ export function FollowUpActions({
 function FollowUpRow({
   item,
   owners,
-  names,
   now,
 }: {
   item: ActivityDto;
   owners: readonly LeadOwnerOption[];
-  names: ReadonlyMap<string, string> | undefined;
   now: Date;
 }) {
   const overdue = isOverdue(item, now);
-  const assignee = assigneeName(item, owners, names);
+  const assignee = assigneeName(item);
 
   return (
     <li className={styles.item} data-overdue={overdue}>
@@ -217,7 +210,6 @@ export function FollowUpsCard({
   items,
   ownerUserId,
   owners,
-  names,
   schedule,
   now,
   className,
@@ -249,7 +241,7 @@ export function FollowUpsCard({
       ) : (
         <ol className={styles.list}>
           {planned.map((item) => (
-            <FollowUpRow key={item.id} item={item} owners={owners} names={names} now={at} />
+            <FollowUpRow key={item.id} item={item} owners={owners} now={at} />
           ))}
         </ol>
       )}
