@@ -204,7 +204,7 @@ export default async function VerificationCasePage({
               ? 'Reject the case so Sales can replace the rejected documents.'
               : 'You can replace rejected documents once the case is returned.'}
           </Alert>
-        ) : c.status === 'submitted' && mayReview && c.reviewBlockedReason ? (
+        ) : c.status === 'submitted' && c.reviewBlockedReason ? (
           <Alert tone="info">{c.reviewBlockedReason}</Alert>
         ) : c.status === 'submitted' ? (
           <Alert tone="info">
