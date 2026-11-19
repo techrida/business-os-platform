@@ -144,6 +144,7 @@ describe('tenant-scoped tables (ADR 0027 §6)', () => {
         'app.verification_review_events',
         'app.tax_codes',
         'app.payment_terms',
+        'app.lead_lost_reasons',
         'app.withholding_codes',
         'app.vendors',
         'app.vendor_contacts',

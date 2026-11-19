@@ -50,7 +50,10 @@ const EMPTY: Record<string, string> = {
   followUpAssigneeUserId: '',
 };
 
-/** Card heading with its Figma eyebrow ("01 · The basics"). The eyebrow is decoration. */
+/**
+ * Card heading with the eyebrow Figma shows above it (D47): only the cards Figma gives one carry one ("01 · The
+ * basics", "02 · The story"). The eyebrow is decoration.
+ */
 function SectionTitle({ eyebrow, children }: { eyebrow: string; children: ReactNode }) {
   return (
     <>
@@ -266,9 +269,7 @@ export function LeadForm({
           </div>
         </Panel>
 
-        <Panel
-          title={<SectionTitle eyebrow="02 · The prospect">Prospect and company</SectionTitle>}
-        >
+        <Panel title="Prospect and company">
           <div className={styles.formGrid}>
             <Field label="Company or organization" error={err['companyName']}>
               {(c) => (
@@ -342,7 +343,7 @@ export function LeadForm({
           </Field>
         </Panel>
 
-        <Panel title={<SectionTitle eyebrow="03 · The deal">Commercial details</SectionTitle>}>
+        <Panel title={<SectionTitle eyebrow="02 · The story">Commercial details</SectionTitle>}>
           <div className={styles.formGrid}>
             <Field
               label="Expected value"
@@ -418,7 +419,7 @@ export function LeadForm({
         </Panel>
 
         <Panel
-          title={<SectionTitle eyebrow="04 · Next step">Schedule a follow-up</SectionTitle>}
+          title="Schedule a follow-up"
           description="Optional. Leave the time empty to skip it; you can plan one from the lead later."
         >
           <ActivityTypeButtons

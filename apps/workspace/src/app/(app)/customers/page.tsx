@@ -2,7 +2,12 @@ import { CUSTOMER_RELATIONSHIPS, pageWindow, type CustomerDto } from '@bos/contr
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { listCustomerIndustries, listCustomers } from '@/components/p2/customers/api';
+import {
+  countCustomersByRelationship,
+  listCustomerIndustries,
+  listCustomers,
+  type RelationshipCounts,
+} from '@/components/p2/customers/api';
 import { findDuplicates, type DuplicateReason } from '@/components/p2/customers/duplicates';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Avatar } from '@/components/ui/avatar';
@@ -13,6 +18,7 @@ import { ResultCount } from '@/components/ui/filter-bar';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
+import { RowMenu } from '@/components/ui/row-menu';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
@@ -110,14 +116,10 @@ function Row({
       {mayWrite ? (
         <Td align="end">
           {c.mergedIntoId === null ? (
-            <LinkButton
-              href={`${details}/edit`}
-              variant="tertiary"
-              size="small"
-              aria-label={`Edit ${c.legalName}`}
-            >
-              Edit
-            </LinkButton>
+            <RowMenu
+              label={`Actions for ${c.legalName}`}
+              items={[{ label: 'Edit', href: `${details}/edit` }]}
+            />
           ) : null}
         </Td>
       ) : null}
@@ -141,10 +143,11 @@ export default async function CustomersPage({
   let customers: CustomerDto[] | null = null;
   let total: number | null = null;
   let industries: string[] = [];
+  let counts: RelationshipCounts | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
     const window = pageWindow(page, pageSize);
-    const [result, known] = await Promise.all([
+    const [result, known, byRelationship] = await Promise.all([
       listCustomers(session, {
         ...(q !== undefined ? { q } : {}),
         ...(relationship.length > 0 ? { relationship } : {}),
@@ -154,10 +157,13 @@ export default async function CustomersPage({
       }),
       // The Industry options are a convenience; the list still works without them.
       listCustomerIndustries(session).catch(() => [] as string[]),
+      // The cards are a convenience too: without the counts they are left out, not shown as zero.
+      countCustomersByRelationship(session),
     ]);
     customers = result.items;
     total = result.total;
     industries = known;
+    counts = byRelationship;
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
@@ -192,14 +198,17 @@ export default async function CustomersPage({
         actions={addButton}
       />
 
-      {total !== null ? (
-        <div className={styles.stats}>
+      {counts !== null ? (
+        <section className={styles.stats} aria-label="Organizations by relationship">
           <StatCard
-            label={filtersOn.length > 0 ? 'Matching organizations' : 'Organizations'}
-            value={total}
+            label="Organizations"
+            value={counts.prospect + counts.active + counts.inactive}
             icon="building"
           />
-        </div>
+          <StatCard label="Active" value={counts.active} icon="check-circle" tone="success" />
+          <StatCard label="Prospects" value={counts.prospect} icon="target" />
+          <StatCard label="Inactive" value={counts.inactive} icon="x-circle" tone="neutral" />
+        </section>
       ) : null}
 
       <CustomerFilters

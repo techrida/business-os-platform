@@ -2,6 +2,7 @@
 // query, the row-to-DTO mapping and the edit's field diff live here.
 import {
   type LeadDto,
+  type LeadLostReasonRef,
   limitOffset,
   LeadSourceSchema,
   type LeadStage,
@@ -102,11 +103,13 @@ export function changedLeadFields(row: LeadRow, body: LeadEditFields): LeadField
  * `nextFollowUpSql()` in activities.types.ts). The `leads.next_follow_up_at` column stays for rollback only and is
  * neither written nor read. Required, so a caller that forgets the derived value does not compile.
  * `ownerName` is the owner's display name (D46), looked up by the caller under the lead's own read permission.
+ * `lostReason` is the lost reason option's current label (D49); null unless the lead was lost with an option.
  */
 export function toLeadDto(
   row: LeadRow,
   nextFollowUp: Date | null,
   ownerName: string | null,
+  lostReason: LeadLostReasonRef | null,
 ): LeadDto {
   return {
     id: row.id,
@@ -130,6 +133,7 @@ export function toLeadDto(
     nextFollowUpAt: nextFollowUp === null ? null : nextFollowUp.toISOString(),
     stage: row.stage,
     stageReason: row.stageReason,
+    lostReason,
     stageNote: row.stageNote,
     convertedOpportunityId: row.convertedOpportunityId,
     version: row.version,

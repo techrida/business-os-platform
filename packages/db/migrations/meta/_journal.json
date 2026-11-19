@@ -369,33 +369,47 @@
     {
       "idx": 52,
       "version": "7",
+      "when": 1783000000071,
+      "tag": "0071_lead_lost_reasons",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1783000000072,
+      "tag": "0072_lead_lost_reasons_data",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
       "when": 1783000000079,
       "tag": "0079_access_levels",
       "breakpoints": true
     },
     {
-      "idx": 53,
+      "idx": 55,
       "version": "7",
       "when": 1783000000080,
       "tag": "0080_lead_department_stamp",
       "breakpoints": true
     },
     {
-      "idx": 54,
+      "idx": 56,
       "version": "7",
       "when": 1783000000081,
       "tag": "0081_role_permissions_seeded",
       "breakpoints": true
     },
     {
-      "idx": 55,
+      "idx": 57,
       "version": "7",
       "when": 1783000000082,
       "tag": "0082_assigned_scope_and_level_grants",
       "breakpoints": true
     },
     {
-      "idx": 56,
+      "idx": 58,
       "version": "7",
       "when": 1783000000083,
       "tag": "0083_marketing_role",

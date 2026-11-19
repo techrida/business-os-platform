@@ -12,6 +12,8 @@ import {
 } from 'react';
 
 import {
+  ADD_OPTION_ID,
+  addOptionFor,
   DEFAULT_GROUP_THRESHOLD,
   layoutOptions,
   moveActive,
@@ -60,6 +62,13 @@ export interface ComboboxProps {
   noMatchText?: string;
   required?: boolean;
   invalid?: boolean;
+  /** Keep the options in the order given instead of sorting them by name. */
+  keepOrder?: boolean;
+  /**
+   * Offers `Add "<typed text>"` as the last row when the text matches no option. Choosing it calls `onAdd` with the
+   * trimmed text; the caller decides what adding means (here, a new lost reason saved with the form).
+   */
+  addOption?: { onAdd: (text: string) => void; label?: (text: string) => string };
   /** Called when the box loses focus with no value, e.g. to put a fixed choice back. */
   onBlurEmpty?: () => void;
   inputRef?: Ref<HTMLInputElement>;
@@ -89,6 +98,8 @@ export function Combobox({
   noMatchText = 'No matches.',
   required,
   invalid,
+  keepOrder = false,
+  addOption,
   onBlurEmpty,
   inputRef,
   className,
@@ -103,9 +114,26 @@ export function Combobox({
   const [query, setQuery] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  // The "Add ..." row is appended to what is searched, so the keyboard and the screen reader treat it like any option.
+  const withAdd = (list: readonly ComboboxOption[], text: string): readonly ComboboxOption[] => {
+    const add =
+      addOption === undefined
+        ? null
+        : addOptionFor(list, text, addOption.label ?? ((t) => `Add "${t}"`));
+    return add === null ? list : [...list, add];
+  };
   const layout = useMemo(
-    () => layoutOptions(options, query ?? '', groupThreshold, ungroupedLabel),
-    [options, query, groupThreshold, ungroupedLabel],
+    () =>
+      layoutOptions(
+        withAdd(options, query ?? ''),
+        query ?? '',
+        groupThreshold,
+        ungroupedLabel,
+        keepOrder,
+      ),
+    // withAdd closes over addOption only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [options, query, groupThreshold, ungroupedLabel, keepOrder, addOption],
   );
   const ids = useMemo(() => selectableIds(layout.flat), [layout.flat]);
   const live = ids.includes(activeId ?? '') ? activeId : null;
@@ -126,6 +154,12 @@ export function Combobox({
     setActiveId(null);
   };
   const choose = (id: string) => {
+    if (id === ADD_OPTION_ID) {
+      const typed = (query ?? '').trim();
+      close();
+      if (typed !== '') addOption?.onAdd(typed);
+      return;
+    }
     onChange(id);
     close();
   };
@@ -140,7 +174,9 @@ export function Combobox({
     setQuery(text);
     // Typing is searching: the first match is highlighted so Enter takes it.
     const first =
-      selectableIds(layoutOptions(options, text, groupThreshold, ungroupedLabel).flat)[0] ?? null;
+      selectableIds(
+        layoutOptions(withAdd(options, text), text, groupThreshold, ungroupedLabel, keepOrder).flat,
+      )[0] ?? null;
     setActiveId(text.trim() === '' ? null : first);
     onOpenChange(true);
     // An emptied box means "nobody", not "keep the old name hidden behind a blank".

@@ -2,7 +2,7 @@ import type { QuotationStatusHistoryDto } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { historyRows, StatusHistory } from './status-history';
+import { historyRows, historyTitle, StatusHistory } from './status-history';
 
 const V1 = '11111111-1111-4111-8111-111111111111';
 const V2 = '22222222-2222-4222-8222-222222222222';
@@ -51,17 +51,14 @@ describe('historyRows', () => {
       ],
       revisions,
     );
-    expect(rows.map((r) => r.title)).toEqual([
-      'Changed from Draft to Awaiting approval',
-      'Created as Draft',
-    ]);
+    expect(rows.map((r) => r.title)).toEqual(['Submitted for approval', 'Draft created']);
   });
 
   it('words the first entry as a creation and the rest as a change, in plain labels', () => {
     const [created] = historyRows([entry({ fromStatus: null, toStatus: 'draft' })], revisions);
-    expect(created?.title).toBe('Created as Draft');
+    expect(created?.title).toBe('Draft created');
     const [changed] = historyRows([entry({ fromStatus: 'sent', toStatus: 'accepted' })], revisions);
-    expect(changed?.title).toBe('Changed from Sent to Accepted');
+    expect(changed?.title).toBe('Accepted by the customer');
   });
 
   it('names the revision, and leaves it out for a version it does not know', () => {
@@ -83,6 +80,36 @@ describe('historyRows', () => {
   });
 });
 
+describe('historyTitle', () => {
+  it('has a plain sentence for every status a change can end in', () => {
+    expect(historyTitle('submitted', 'approved')).toBe('Approved');
+    expect(historyTitle('approved', 'sent')).toBe('Sent to the customer');
+    expect(historyTitle('submitted', 'returned')).toBe('Returned for changes');
+    expect(historyTitle('returned', 'submitted')).toBe('Resubmitted for approval');
+    expect(historyTitle('sent', 'expired')).toBe('Expired');
+    expect(historyTitle('draft', 'cancelled')).toBe('Cancelled');
+    expect(historyTitle('sent', 'superseded')).toBe('Replaced by a newer revision');
+  });
+
+  it('says who rejected only when the version knows', () => {
+    expect(historyTitle('sent', 'rejected', 'customer')).toBe('Rejected by the customer');
+    expect(historyTitle('submitted', 'rejected', 'internal')).toBe('Rejected internally');
+    expect(historyTitle('sent', 'rejected')).toBe('Rejected');
+  });
+
+  it('names a creation in any other status in the badge label', () => {
+    expect(historyTitle(null, 'submitted')).toBe('Created as Awaiting approval');
+  });
+
+  it('feeds the rejection source of each version into its rows', () => {
+    const [row] = historyRows(
+      [entry({ fromStatus: 'sent', toStatus: 'rejected' })],
+      [{ id: V1, revisionNo: 1, rejectionSource: 'customer' }],
+    );
+    expect(row?.title).toBe('Rejected by the customer');
+  });
+});
+
 describe('StatusHistory', () => {
   it('says so when nothing has changed yet', () => {
     const html = renderToStaticMarkup(<StatusHistory history={[]} versions={revisions} />);
@@ -98,7 +125,7 @@ describe('StatusHistory', () => {
       />,
     );
     expect(html).toContain('Status history');
-    expect(html).toContain('Changed from Draft to Awaiting approval');
+    expect(html).toContain('Submitted for approval');
     expect(html).toContain('Customer asked for a lower price');
     expect(html).toContain('dateTime="2026-11-08T05:45:00.000Z"');
   });

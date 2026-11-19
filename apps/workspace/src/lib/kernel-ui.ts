@@ -238,3 +238,40 @@ export function decodeFileName(header: string | null): string | null {
 export function baseMime(contentType: string | null): string {
   return (contentType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
 }
+
+const AUDIT_EVENT_LABELS: Record<string, string> = {
+  'test_memos.insert': 'Memo created',
+  'test_memos.update': 'Memo updated',
+  'test_memos.delete': 'Memo deleted',
+  'memo.submitted': 'Memo submitted',
+  'approvals.submit': 'Submitted for approval',
+  'approval_requests.insert': 'Approval requested',
+  'approval_requests.update': 'Approval request updated',
+  'approval_steps.insert': 'Approval step added',
+  'approval_steps.update': 'Approval step updated',
+  'approval_actions.insert': 'Approval decision recorded',
+  'approvals.approve': 'Approved',
+  'approvals.return': 'Returned for changes',
+  'approvals.reject': 'Rejected',
+  'approvals.cancel': 'Approval cancelled',
+  'approvals.escalate': 'Escalated after the deadline',
+  'approvals.remind': 'Reminder sent',
+  'approvals.reroute': 'Route recalculated',
+  'approvals.block': 'Approval blocked',
+  'documents.insert': 'Attachment added',
+  'document_versions.insert': 'Attachment version added',
+  'document.scanned': 'Attachment scanned',
+  'document.removed': 'Attachment removed',
+};
+
+/**
+ * An audit event name in plain language: `test_memos.update` becomes `Memo updated`. A name this table does
+ * not know falls back to its humanised form (`approval_steps.skip` becomes `Approval steps skip`), so a new
+ * event is still readable and is never hidden.
+ */
+export function auditEventLabel(action: string): string {
+  const known = AUDIT_EVENT_LABELS[action.trim().toLowerCase()];
+  if (known !== undefined) return known;
+  const humanised = humanizeKey(action.replace(/^test_memos?[.]/, 'memo.'));
+  return humanised === '' ? 'Event' : humanised;
+}

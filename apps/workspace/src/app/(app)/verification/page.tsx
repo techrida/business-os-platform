@@ -11,7 +11,6 @@ import { getCustomer, listVerificationCasePage } from '@/components/p2/customers
 import {
   checklistProgress,
   customerLabel,
-  parseStatusFilters,
   VERIFICATION_STATUS_LABEL,
 } from '@/components/p2/customers/format';
 import { Alert } from '@/components/ui/alert';
@@ -28,15 +27,10 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { when } from '@/lib/kernel-format';
-import {
-  activeFilterLabels,
-  clearFiltersHref,
-  hrefWith,
-  readList,
-  type RawParams,
-} from '@/lib/list-params';
+import { activeFilterLabels, hrefWith, readList, type RawParams } from '@/lib/list-params';
 import type { Session } from '@/lib/session';
 
+import { ALL_STATUSES, clearVerificationFiltersHref, readStatusFilter } from './status-filter';
 import styles from './verification.module.css';
 import { VerificationFilters } from './verification-filters';
 
@@ -133,8 +127,8 @@ export default async function VerificationQueuePage({
 }) {
   const session = await requireStaffSession('/verification');
   const params = await searchParams;
-  // No default status: with none chosen the queue lists every case.
-  const status = parseStatusFilters(params.status);
+  // No `status` param: the cases awaiting review. `status=all` lists every case.
+  const { status, all, isDefault } = readStatusFilter(params.status);
   const { q, page, rows: pageSize } = readList(params, { ...LIST, multi: {} });
   const at = (patch: Parameters<typeof hrefWith>[2]) => hrefWith('/verification', params, patch);
 
@@ -165,7 +159,7 @@ export default async function VerificationQueuePage({
     FILTER_LABELS,
     'Search',
   );
-  const clearHref = clearFiltersHref('/verification', params, { ...LIST, multi: { status: [] } });
+  const clearHref = clearVerificationFiltersHref(params);
 
   return (
     <Page>
@@ -177,6 +171,7 @@ export default async function VerificationQueuePage({
       <div className={styles.queue}>
         <VerificationFilters
           status={status}
+          all={all}
           rows={pageSize !== DEFAULT_PAGE_SIZE ? pageSize : undefined}
         />
         {total !== null && cases !== null ? (
@@ -203,7 +198,19 @@ export default async function VerificationQueuePage({
               : problem.message}
           </Alert>
         ) : cases !== null && cases.length === 0 ? (
-          filtersOn.length > 0 ? (
+          isDefault && q === undefined && page === 1 ? (
+            <EmptyState
+              title="Nothing is waiting for review."
+              icon="shield-check"
+              action={
+                <LinkButton href={at({ status: ALL_STATUSES })} variant="secondary">
+                  Show all cases
+                </LinkButton>
+              }
+            >
+              A customer appears here when their documents are submitted for verification.
+            </EmptyState>
+          ) : filtersOn.length > 0 && !(isDefault && q === undefined && page > 1) ? (
             <EmptyState
               title="No cases match."
               icon="shield-check"
