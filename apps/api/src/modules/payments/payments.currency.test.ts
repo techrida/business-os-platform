@@ -1,10 +1,10 @@
 // Unit tests: a payment in a currency the company switched off is refused before anything is written (D44), on the
-// staff and the portal channel alike, and only after the permission check. No Docker: the database is a fake whose
-// transaction only records that it was opened.
+// staff and the portal channel alike, only after the permission check, and a retry of a payment that already went
+// through still replays its stored answer. No Docker: withTx and withIdempotency are stand-ins.
 // Run with: pnpm --filter @bos/api exec vitest run src/modules/payments/payments.currency.test.ts
 import type { SubmitPaymentBody } from '@bos/contracts';
 import { ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
@@ -31,8 +31,31 @@ const actor: Actor = {
 };
 const allow = { assert: () => undefined } as unknown as AuthzService;
 
-/** Reached only when the service gets past the currency check and opens its transaction. */
-const OPENED = new Error('transaction opened');
+// withTx and withIdempotency are stand-ins that run the callback, or replay a stored answer.
+const state = vi.hoisted(() => ({ replay: undefined as { id: string } | undefined }));
+vi.mock('../../platform/db/tx', () => ({
+  withTx: (_db: unknown, _scope: unknown, _actor: unknown, fn: (tx: unknown) => unknown) => fn({}),
+}));
+vi.mock('../../platform/db/idempotency', () => ({
+  withIdempotency: async (
+    _tx: unknown,
+    _input: unknown,
+    fn: () => Promise<{ response: unknown }>,
+  ) =>
+    state.replay === undefined ? fn() : { status: 201, response: state.replay, replayed: true },
+}));
+
+/** What the stubbed insert returns: reached only when the service gets past the currency check. */
+const CREATED = { id: 'created' };
+const created = vi.spyOn(
+  PaymentsService.prototype as unknown as { submitInTx: () => Promise<unknown> },
+  'submitInTx',
+);
+beforeEach(() => {
+  state.replay = undefined;
+  created.mockReset();
+  created.mockResolvedValue(CREATED);
+});
 
 const body = (currency: 'NPR' | 'INR' | 'USD'): SubmitPaymentBody => ({
   customerId: '40000000-0000-4000-8000-000000000001',
@@ -45,8 +68,7 @@ const body = (currency: 'NPR' | 'INR' | 'USD'): SubmitPaymentBody => ({
 });
 
 function build(currencies: CurrencyEnabledService, authz: AuthzService = allow) {
-  const transaction = vi.fn(() => Promise.reject(OPENED));
-  const db = { transaction } as unknown as Db;
+  const db = {} as unknown as Db;
   const service = new PaymentsService(
     db,
     authz,
@@ -57,7 +79,7 @@ function build(currencies: CurrencyEnabledService, authz: AuthzService = allow) 
     currencies,
     () => new Date('2026-11-19T06:00:00Z'),
   );
-  return { service, transaction };
+  return { service };
 }
 
 /** Runs `fn` and returns what it threw. */
@@ -71,9 +93,9 @@ async function caught(fn: () => Promise<unknown>): Promise<unknown> {
 }
 
 describe('PaymentsService refuses a disabled currency', () => {
-  it('a staff payment in a switched-off currency: 422 CURRENCY_NOT_ENABLED and no transaction', async () => {
+  it('a staff payment in a switched-off currency: 422 CURRENCY_NOT_ENABLED and nothing is written', async () => {
     const assertEnabled = vi.fn(() => Promise.reject(currencyNotEnabled('INR')));
-    const { service, transaction } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
 
     const error = await caught(() => service.submit(scope, actor, body('INR'), 'staff', 'key-1'));
 
@@ -84,12 +106,12 @@ describe('PaymentsService refuses a disabled currency', () => {
       details: { currency: 'INR' },
     });
     expect(assertEnabled).toHaveBeenCalledWith(scope, 'INR');
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 
   it('a portal payment in a switched-off currency is refused the same way', async () => {
     const assertEnabled = vi.fn(() => Promise.reject(currencyNotEnabled('USD')));
-    const { service, transaction } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
 
     const error = await caught(() => service.submit(scope, actor, body('USD'), 'portal', 'key-2'));
 
@@ -97,7 +119,7 @@ describe('PaymentsService refuses a disabled currency', () => {
       code: 'CURRENCY_NOT_ENABLED',
     });
     expect(assertEnabled).toHaveBeenCalledWith(scope, 'USD');
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 
   it('a caller without permission gets 403 before the currency is looked at', async () => {
@@ -107,35 +129,45 @@ describe('PaymentsService refuses a disabled currency', () => {
         throw new ForbiddenException({ code: 'forbidden', message: 'Forbidden' });
       },
     } as unknown as AuthzService;
-    const { service, transaction } = build(
-      { assertEnabled } as unknown as CurrencyEnabledService,
-      deny,
-    );
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService, deny);
 
     const error = await caught(() => service.submit(scope, actor, body('INR'), 'staff', 'key-3'));
 
     expect(error).toBeInstanceOf(ForbiddenException);
     expect(assertEnabled).not.toHaveBeenCalled();
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 
   it('an enabled currency passes the check and the payment goes on to its transaction', async () => {
     const assertEnabled = vi.fn(() => Promise.resolve());
-    const { service, transaction } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
 
-    await expect(service.submit(scope, actor, body('USD'), 'staff', 'key-4')).rejects.toBe(OPENED);
+    await expect(service.submit(scope, actor, body('USD'), 'staff', 'key-4')).resolves.toBe(
+      CREATED,
+    );
     expect(assertEnabled).toHaveBeenCalledWith(scope, 'USD');
-    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(created).toHaveBeenCalledTimes(1);
   });
 
-  it('the real check against a saved list without INR refuses INR before the transaction', async () => {
+  it('a retry of a submit that already went through replays the stored payment after the currency was switched off', async () => {
+    state.replay = { id: 'stored-payment' };
+    const assertEnabled = vi.fn(() => Promise.reject(currencyNotEnabled('USD')));
+    const { service } = build({ assertEnabled } as unknown as CurrencyEnabledService);
+
+    await expect(service.submit(scope, actor, body('USD'), 'portal', 'key-6')).resolves.toEqual({
+      id: 'stored-payment',
+    });
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('the real check against a saved list without INR refuses INR', async () => {
     const settings = {
       get: (_scope: unknown, key: string) =>
         key === 'currency.enabled'
           ? Promise.resolve(['NPR', 'USD'])
           : Promise.reject(new Error(`unexpected setting ${key}`)),
     } as unknown as SettingsService;
-    const { service, transaction } = build(new CurrencyEnabledService(settings));
+    const { service } = build(new CurrencyEnabledService(settings));
 
     const error = await caught(() => service.submit(scope, actor, body('INR'), 'staff', 'key-5'));
 
@@ -144,6 +176,6 @@ describe('PaymentsService refuses a disabled currency', () => {
       message: 'Currency INR is not enabled for this company',
       details: { currency: 'INR' },
     });
-    expect(transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
   });
 });
