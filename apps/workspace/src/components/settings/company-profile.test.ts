@@ -9,7 +9,11 @@ import {
   addressLines,
   canAddPhone,
   draftsFromSettings,
+  emptyProfilePatch,
+  isCardEmpty,
   isLogoDataUrl,
+  isResettableCard,
+  logoFormData,
   mergeProfile,
   parseAddress,
   parseCompanySettings,
@@ -18,10 +22,13 @@ import {
   parseLogo,
   parseSignatory,
   planCard,
+  readExpectedVersion,
   removePhone,
   sameDraft,
   setPhone,
   validateLogoFile,
+  versionFieldName,
+  versionFieldValue,
   type AddressDraft,
 } from './company-profile';
 
@@ -264,5 +271,92 @@ describe('drafts', () => {
     expect(
       parseCompanySettings({ profile: EMPTY_COMPANY_PROFILE, address: null, panVatNo: null }).ok,
     ).toBe(true);
+  });
+});
+
+describe('loaded versions', () => {
+  const formWith = (name: string, value: string) => {
+    const data = new FormData();
+    data.set(name, value);
+    return data;
+  };
+
+  it('names the field after the setting and writes null as an empty value', () => {
+    expect(versionFieldName('entity.profile')).toBe('expectedVersion:entity.profile');
+    expect(versionFieldValue(null)).toBe('');
+    expect(versionFieldValue(7)).toBe('7');
+  });
+
+  it('reads a number, null for the default, and undefined for anything unreadable', () => {
+    const key = versionFieldName('entity.address');
+    expect(readExpectedVersion(formWith(key, '12'), 'entity.address')).toBe(12);
+    expect(readExpectedVersion(formWith(key, ''), 'entity.address')).toBeNull();
+    for (const bad of ['x', '-1', '1.5', ' 1', '1e3']) {
+      expect(readExpectedVersion(formWith(key, bad), 'entity.address')).toBeUndefined();
+    }
+    expect(readExpectedVersion(new FormData(), 'entity.address')).toBeUndefined();
+  });
+
+  it('puts the loaded profile version into the logo card form, for a new logo and for a removal', () => {
+    const save = logoFormData(PNG, 4);
+    expect(save.get('card')).toBe('logo');
+    expect(save.get('logo')).toBe(PNG);
+    expect(save.get('expectedVersion:entity.profile')).toBe('4');
+    const remove = logoFormData(null, null);
+    expect(remove.get('logo')).toBe('');
+    expect(remove.get('expectedVersion:entity.profile')).toBe('');
+  });
+
+  it('reads the logo card form back as the version the page loaded', () => {
+    const data = logoFormData(PNG, 4);
+    expect(readExpectedVersion(data, 'entity.profile')).toBe(4);
+    expect(planCard('logo', data)).toEqual({ ok: true, value: { profile: { logoDataUrl: PNG } } });
+  });
+});
+
+describe('undo icons (D32)', () => {
+  const settings = {
+    profile: {
+      ...EMPTY_COMPANY_PROFILE,
+      displayName: 'Acme',
+      logoDataUrl: PNG,
+      phones: ['01-4000000'],
+      signatoryTitle: 'Director',
+    },
+    address: { line1: 'Durbar Marg', city: 'Kathmandu', country: 'NP' },
+    panVatNo: '123456789',
+  };
+
+  it('names the cards that can be undone', () => {
+    expect(['address', 'contact', 'signatory'].every(isResettableCard)).toBe(true);
+    for (const other of ['identity', 'logo', 'entity.profile', '']) {
+      expect(isResettableCard(other)).toBe(false);
+    }
+  });
+
+  it('empties only the fields of the card, so the logo and display name stay', () => {
+    expect(emptyProfilePatch('contact')).toEqual({ phones: [], email: null, website: null });
+    expect(emptyProfilePatch('signatory')).toEqual({ signatoryName: null, signatoryTitle: null });
+    const merged = mergeProfile(settings.profile, emptyProfilePatch('contact'));
+    expect(merged.logoDataUrl).toBe(PNG);
+    expect(merged.displayName).toBe('Acme');
+    expect(merged.signatoryTitle).toBe('Director');
+  });
+
+  it('shows the icon only while the saved card differs from empty', () => {
+    expect(isCardEmpty('address', settings)).toBe(false);
+    expect(isCardEmpty('contact', settings)).toBe(false);
+    expect(isCardEmpty('signatory', settings)).toBe(false);
+    const empty = { profile: EMPTY_COMPANY_PROFILE, address: null, panVatNo: null };
+    for (const card of ['address', 'contact', 'signatory'] as const) {
+      expect(isCardEmpty(card, empty)).toBe(true);
+    }
+    // A logo or display name alone does not make Contact or Signatory look changed.
+    const onlyLogo = {
+      ...empty,
+      profile: { ...EMPTY_COMPANY_PROFILE, logoDataUrl: PNG, displayName: 'Acme' },
+    };
+    expect(isCardEmpty('contact', onlyLogo)).toBe(true);
+    expect(isCardEmpty('signatory', onlyLogo)).toBe(true);
   });
 });
