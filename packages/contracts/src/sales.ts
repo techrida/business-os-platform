@@ -169,6 +169,7 @@ export const SalesOrderListItemSchema = z.object({
   number: z.string().nullable(),
   customerId: z.guid(),
   customerName: z.string().min(1),
+  quotationNumber: z.string().min(1),
   status: SalesOrderStatusSchema,
   currency: CurrencySchema,
   total: DecimalString,

@@ -90,3 +90,44 @@
   border-radius: var(--radius-xl);
   background: var(--surface-default);
 }
+
+/* ---- List table ----
+   The order number is the row header: it reads as a cell, not as a column heading. */
+.orders tbody th {
+  border-bottom: 0;
+  color: var(--table-text);
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: normal;
+}
+
+/* Status and Action sit pinned at the end on a subtle background, as in the invoice and quotation
+   lists. Row hover still paints the whole row. */
+.orders .pinned {
+  background: var(--surface-subtle);
+}
+
+.orders .pinnedStart {
+  border-inline-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.rowAction {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  color: var(--icon-secondary);
+}
+
+.rowAction:hover {
+  background: var(--action-primary-subtle);
+  color: var(--action-primary);
+}
+
+/* ---- Detail totals: the whole block sits in one muted box (Figma 580:19025). ---- */
+.totalsBox {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-muted);
+}

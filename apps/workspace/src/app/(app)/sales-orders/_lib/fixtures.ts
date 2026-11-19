@@ -166,6 +166,7 @@ export function listItem(over: Partial<SalesOrderListItem> = {}): SalesOrderList
     number: 'SO-2083/84-00001',
     customerId: IDS.customer,
     customerName: 'Himal Traders Pvt. Ltd.',
+    quotationNumber: 'QT-2082-0042',
     status: 'confirmed',
     currency: 'NPR',
     total: '5701358.50',
