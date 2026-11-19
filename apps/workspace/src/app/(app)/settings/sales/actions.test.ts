@@ -68,13 +68,13 @@ describe('reorderLostReasonsAction', () => {
     expect(revalidatePath).toHaveBeenCalledExactlyOnceWith('/settings/sales', undefined);
   });
 
-  it('revalidates and returns the exact stale message on a stale 409', async () => {
+  it('keeps the page and returns the exact stale message on a stale 409', async () => {
     apiMocks.reorderLeadLostReasons.mockRejectedValue(staleError());
     await expect(reorderLostReasonsAction([ID_B, ID_A], '00000000000000')).resolves.toEqual({
       status: 'error',
       message: LOST_REASONS_STALE_MESSAGE,
     });
-    expect(revalidatePath).toHaveBeenCalledExactlyOnceWith('/settings/sales', undefined);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it('fails closed on an empty token or invalid ids without calling the API', async () => {
@@ -112,13 +112,13 @@ describe('resetLostReasonsAction', () => {
     expect(revalidatePath).toHaveBeenCalledExactlyOnceWith('/settings/sales', undefined);
   });
 
-  it('revalidates and returns the exact stale message on a stale 409', async () => {
+  it('keeps the page and returns the exact stale message on a stale 409', async () => {
     apiMocks.resetLeadLostReasons.mockRejectedValue(staleError());
     await expect(resetLostReasonsAction('00000000000000')).resolves.toEqual({
       status: 'error',
       message: LOST_REASONS_STALE_MESSAGE,
     });
-    expect(revalidatePath).toHaveBeenCalledExactlyOnceWith('/settings/sales', undefined);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it('fails closed on an empty token without calling the API', async () => {
