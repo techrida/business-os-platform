@@ -81,10 +81,15 @@ it('shows only the owner, with no edit control, when the caller may assign to on
 });
 
 it("shows the owner's picture over the colour seeded from their user id", async () => {
+  const pictured = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
   const picture = '66666666-6666-4666-8666-666666666666';
-  const { container } = await mount(OWNER, [{ ...owners[0]!, avatarDocumentId: picture }]);
+  // The id must not land on the unseeded colour, or this check would pass without a seed.
+  expect(avatarColour(pictured)).not.toBe(avatarColour(null));
+  const { container } = await mount(pictured, [
+    { ...owners[0]!, userId: pictured, avatarDocumentId: picture },
+  ]);
   const avatar = container.querySelector<HTMLElement>('span[aria-hidden="true"]');
-  expect(avatar?.style.getPropertyValue('--avatar-fill')).toBe(avatarColour(OWNER));
+  expect(avatar?.style.getPropertyValue('--avatar-fill')).toBe(avatarColour(pictured));
   expect(avatar?.querySelector('img')?.getAttribute('src')).toBe(imagePath(picture));
 });
 

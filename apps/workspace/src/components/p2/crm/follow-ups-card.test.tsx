@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { avatarColour, type ActivityDto, type LeadOwnerOption } from '@bos/contracts';
+import { avatarColour, imagePath, type ActivityDto, type LeadOwnerOption } from '@bos/contracts';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -132,11 +132,33 @@ it('shows the assignee with initials, and a plain fallback for someone outside t
   expect(first?.textContent).toContain('Another teammate');
   expect(second?.textContent).toContain('Sita Rai');
   expect(second?.querySelector('[aria-hidden="true"]')?.textContent).toBe('SR');
-  expect(
-    second
-      ?.querySelector<HTMLElement>('[aria-hidden="true"]')
-      ?.style.getPropertyValue('--avatar-fill'),
-  ).toBe(avatarColour(OWNER));
+  await mounted.unmount();
+});
+
+it("shows the assignee's picture over the colour seeded from their user id", async () => {
+  const assignee = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
+  const picture = '66666666-6666-4666-8666-666666666666';
+  // The id must not land on the unseeded colour, or this check would pass without a seed.
+  expect(avatarColour(assignee)).not.toBe(avatarColour(null));
+  const mounted = await mountForm(
+    <FollowUpsCard
+      leadId={LEAD}
+      items={[activity(5, { assigneeUserId: assignee })]}
+      ownerUserId={OWNER}
+      owners={[
+        {
+          userId: assignee,
+          displayName: 'Asha Gurung',
+          email: 'asha@example.com',
+          avatarDocumentId: picture,
+        },
+      ]}
+      now={NOW}
+    />,
+  );
+  const avatar = rows(mounted.container)[0]?.querySelector<HTMLElement>('[aria-hidden="true"]');
+  expect(avatar?.style.getPropertyValue('--avatar-fill')).toBe(avatarColour(assignee));
+  expect(avatar?.querySelector('img')?.getAttribute('src')).toBe(imagePath(picture));
   await mounted.unmount();
 });
 

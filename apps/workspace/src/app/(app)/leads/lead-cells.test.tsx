@@ -40,11 +40,13 @@ describe('OwnerCell', () => {
   });
 
   it("seeds the colour from the owner's user id and shows their picture", () => {
-    const owner = '33333333-3333-4333-8333-333333333333';
+    const owner = '9f1c2e4a-6b7d-4e8f-a1b2-c3d4e5f60718';
     const picture = '66666666-6666-4666-8666-666666666666';
     const html = renderToStaticMarkup(
       <OwnerCell owned name="Asha Gurung" seedId={owner} imageDocumentId={picture} />,
     );
+    // The id must not land on the unseeded colour, or this check would pass without a seed.
+    expect(avatarColour(owner)).not.toBe(avatarColour(null));
     expect(html).toContain(`--avatar-fill:${avatarColour(owner)}`);
     expect(html).toContain(`src="${imagePath(picture)}"`);
   });
