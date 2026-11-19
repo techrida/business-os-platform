@@ -32,6 +32,7 @@ const { default: NumberingPage } = await import('./numbering/page');
 const { default: UsersPage } = await import('./users/page');
 const { default: RolesPage } = await import('./roles/page');
 const { default: WorkflowsPage } = await import('./workflows/page');
+const { default: AccessPage } = await import('./access/page');
 const { saveCardAction } = await import('./_components/actions');
 const { IDLE } = await import('./action-state');
 
@@ -48,6 +49,7 @@ describe('settings pages deny by default', () => {
     ['numbering', () => NumberingPage()],
     ['roles', () => RolesPage()],
     ['workflows', () => WorkflowsPage()],
+    ['access', () => AccessPage()],
     ['users', () => UsersPage({ searchParams: Promise.resolve({}) })],
     ['the index', () => SettingsIndex()],
   ] as const)('redirects a sales user away from %s', async (_name, render) => {
