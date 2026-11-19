@@ -130,3 +130,20 @@ describe('customer detail account owner', () => {
     expect(text).not.toContain('Owner name unavailable');
   });
 });
+
+describe('customer detail dates', () => {
+  it('renders the same text, in Kathmandu time, whatever the server process time zone', async () => {
+    detail = customer({ people: [{ userId: SALES, name: 'Dev Sales' }] });
+    const before = process.env.TZ;
+    try {
+      process.env.TZ = 'America/Los_Angeles';
+      const west = await render();
+      process.env.TZ = 'Asia/Tokyo';
+      const east = await render();
+      expect(west).toContain('19 Nov 2026, 11:31');
+      expect(east).toBe(west);
+    } finally {
+      process.env.TZ = before;
+    }
+  });
+});
