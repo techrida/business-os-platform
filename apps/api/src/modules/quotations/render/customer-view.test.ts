@@ -31,7 +31,10 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
     exclusions: 'Civil works',
     termsAndConditions: null,
     deliveryTimeline: '6 weeks',
-    paymentSchedule: [{ label: 'Advance', percent: '60', dueDescription: 'On order' }],
+    paymentSchedule: [
+      { label: 'Advance', percent: '60', dueDescription: 'On order' },
+      { label: 'Delivery', percent: '40' },
+    ],
     subtotal: '540000.00',
     discountAmount: '0.00',
     taxableAmount: '540000.00',
@@ -99,8 +102,10 @@ describe('toCustomerQuotationView', () => {
     expect(view.contact).toEqual({ fullName: 'Sita Rai', email: 'sita@himal.example' });
     expect(view.termsAndConditions).toBeNull();
     expect(view.paymentTermName).toBe('Net 30');
+    // The amounts are the server's split of 610,200.00 (D36), not stored.
     expect(view.paymentSchedule).toEqual([
-      { label: 'Advance', percent: '60', dueDescription: 'On order' },
+      { label: 'Advance', percent: '60', amount: '366120.00', dueDescription: 'On order' },
+      { label: 'Delivery', percent: '40', amount: '244080.00' },
     ]);
     expect(view.totals).toEqual({
       subtotal: '540000.00',

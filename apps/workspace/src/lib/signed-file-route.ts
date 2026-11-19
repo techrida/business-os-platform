@@ -26,7 +26,7 @@ export async function readBody(res: Response): Promise<unknown> {
 
 /**
  * `GET <path>` answers a 60-second, single-use signed link. The API answers 409 while a file is not
- * clean and 404 when there is none. Every call issues a new link, so call this once per click and
+ * ready, 424 when it could not be prepared and 404 or 410 when there is none. Every call issues a new link, so call this once per click and
  * never to "check" a file.
  */
 export async function fetchSignedLink(session: Session, path: string): Promise<SignedLinkDto> {
@@ -40,6 +40,14 @@ export async function fetchSignedLink(session: Session, path: string): Promise<S
   return parsed.data;
 }
 
+/** Plain words for the statuses that mean "no file to hand out", so a person never reads the scan or job state. */
+const UNAVAILABLE_MESSAGES: Record<number, string> = {
+  409: 'This PDF is still being prepared.',
+  424: 'The PDF could not be prepared.',
+  404: 'This PDF is not available.',
+  410: 'This PDF is not available.',
+};
+
 export interface SignedFileOptions {
   mode: 'download' | 'preview';
   /** A message for input that is not valid. Checked before the session; answers 400 in plain text. */
@@ -48,8 +56,6 @@ export interface SignedFileOptions {
   signInVerb?: string;
   /** Issues exactly one signed link, called once per request and only for a valid, signed-in call. */
   issueLink: (session: Session) => Promise<SignedLinkDto>;
-  /** Overrides the "<mode>" word in the "not available" message. Defaults to `mode`. */
-  notAvailable?: string;
 }
 
 /**
@@ -109,9 +115,7 @@ export async function signedFileResponse(options: SignedFileOptions): Promise<Re
   } catch (err) {
     const f = failureOf(err);
     return plain(
-      f.status === 409 || f.status === 404
-        ? `This PDF is not available to ${options.notAvailable ?? mode}. It may still be preparing or scanning, or it did not pass the scan.`
-        : f.message,
+      UNAVAILABLE_MESSAGES[f.status] ?? f.message,
       f.status >= 400 && f.status < 500 ? f.status : 502,
     );
   }

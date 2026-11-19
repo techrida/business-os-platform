@@ -178,6 +178,11 @@ describe('0015_crm and src/schema/crm.ts', () => {
     if (!shape) throw new Error('Review migration alters an unknown CRM table');
     shape.columns.push(column[2]!);
   }
+  // 0062 adds activities.cancelled_at, created_by_user_id (with its FK) and the planned-per-lead index.
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0062_activity_follow_ups.sql', import.meta.url), 'utf8'),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());

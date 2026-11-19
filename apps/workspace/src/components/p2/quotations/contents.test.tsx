@@ -10,16 +10,18 @@ const TODAY = '2026-11-19';
 
 function render(
   v: QuotationVersionDto,
-  props: { internalVisible?: boolean; paymentTermsName?: string; today?: string } = {},
+  props: { paymentTermsName?: string; today?: string } = {},
 ): string {
-  return renderToStaticMarkup(
-    <QuotationContents
-      version={v}
-      internalVisible={props.internalVisible ?? false}
-      today={TODAY}
-      {...props}
-    />,
-  );
+  return renderToStaticMarkup(<QuotationContents version={v} today={TODAY} {...props} />);
+}
+
+/** The version as the API serves it to a viewer without `quotation.cost.read` (D29): the keys are absent. */
+function withoutCost(v: QuotationVersionDto): QuotationVersionDto {
+  const { internalCostTotal: _total, marginPct: _margin, ...rest } = v;
+  return {
+    ...rest,
+    lines: v.lines.map(({ unitCost: _cost, ...line }) => line),
+  };
 }
 
 /** The text of every cell in the table named `caption`, row by row. */
@@ -38,7 +40,7 @@ function rows(html: string, caption: string): string[][] {
 
 describe('line items', () => {
   it('renders each line from the DTO figures, with the tax label from the summary', () => {
-    const html = render(version());
+    const html = render(withoutCost(version()));
     expect(rows(html, 'Line items')).toEqual([
       ['Description', 'Qty', 'Unit price', 'Discount', 'Tax', 'Line total'],
       ['1. Site survey', '2 lot', 'NPR 1,250.50', 'NPR 101.00', 'VAT 13%', 'NPR 2,400.00'],
@@ -62,17 +64,25 @@ describe('line items', () => {
   });
 });
 
-describe('internal figures', () => {
-  it('shows unit cost, cost total and margin when visible', () => {
-    const html = render(version(), { internalVisible: true });
+describe('internal figures (D29: shown only when the API sent them)', () => {
+  it('shows unit cost, cost total and margin when the fields are present', () => {
+    const html = render(version());
     expect(rows(html, 'Line items')[0]).toContain('Unit cost');
     expect(html).toContain('NPR 800.25');
     expect(html).toContain('NPR 2,231.40');
     expect(html).toContain('35.32%');
   });
 
-  it('puts none of them in the HTML when not visible, even if the data carries them', () => {
-    const html = render(version(), { internalVisible: false });
+  it('puts none of them in the HTML when the fields are absent', () => {
+    const html = render(withoutCost(version()));
+    expect(rows(html, 'Line items')[0]).toEqual([
+      'Description',
+      'Qty',
+      'Unit price',
+      'Discount',
+      'Tax',
+      'Line total',
+    ]);
     expect(html).not.toContain('Unit cost');
     expect(html).not.toContain('Margin');
     expect(html).not.toContain('Internal cost');
@@ -81,65 +91,80 @@ describe('internal figures', () => {
     expect(html).not.toContain('35.32');
   });
 
-  it('omits the columns when visible but the data has no figures', () => {
-    const stripped = version({
+  it('shows an en dash for a line with no recorded cost beside lines that have one', () => {
+    const v = version();
+    const html = render({ ...v, lines: [v.lines[0]!, { ...v.lines[1]!, unitCost: null }] });
+    expect(rows(html, 'Line items').slice(1)).toEqual([
+      expect.arrayContaining(['NPR 800.25']),
+      expect.arrayContaining(['–']),
+    ]);
+  });
+
+  it('omits the column and the rows when the figures are present but null (nothing recorded)', () => {
+    const none = version({
       lines: version().lines.map((l) => ({ ...l, unitCost: null })),
       internalCostTotal: null,
       marginPct: null,
     });
-    const html = render(stripped, { internalVisible: true });
+    const html = render(none);
     expect(html).not.toContain('Unit cost');
     expect(html).not.toContain('Margin');
+    expect(html).not.toContain('Internal cost');
+  });
+
+  it('shows the margin without the cost total, and the reverse, when only one is present', () => {
+    const { internalCostTotal: _total, ...onlyMargin } = version();
+    const marginHtml = render(onlyMargin);
+    expect(marginHtml).toContain('Margin:');
+    expect(marginHtml).not.toContain('Internal cost');
+    const { marginPct: _margin, ...onlyCost } = version();
+    const costHtml = render(onlyCost);
+    expect(costHtml).toContain('Internal cost:');
+    expect(costHtml).not.toContain('Margin');
   });
 });
 
 describe('payment schedule', () => {
-  it('splits the total half-up with the remainder on the last row, summing exactly', () => {
+  it('shows the amounts the server computed, without recomputing them', () => {
     const v = version({
-      totals: { ...version().totals, total: '100.01' },
+      totals: { ...version().totals, total: '1000.00' },
       paymentSchedule: [
-        { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
-        { label: 'Delivery', percent: '33.3333' },
-        { label: 'Handover', percent: '33.3334', dueDescription: '2026-12-31' },
+        { label: 'Advance', percent: '33.3333', dueDescription: 'On order', amount: '333.33' },
+        { label: 'Delivery', percent: '33.3333', amount: '333.33' },
+        { label: 'Handover', percent: '33.3334', dueDescription: '2026-12-31', amount: '333.34' },
       ],
     });
     const table = rows(render(v), 'Payment schedule');
     expect(table[0]).toEqual(['Milestone', 'Share', 'Amount', 'Due']);
-    // 100.01 * 33.3333% = 33.3366... -> 33.34 (half-up); last row takes the rest.
     expect(table.slice(1)).toEqual([
-      ['Advance', '33.3333%', 'NPR 33.34', 'On order'],
-      ['Delivery', '33.3333%', 'NPR 33.34', '–'],
-      ['Handover', '33.3334%', 'NPR 33.33', '31 Dec 2026'],
+      ['Advance', '33.3333%', 'NPR 333.33', 'On order'],
+      ['Delivery', '33.3333%', 'NPR 333.33', '–'],
+      ['Handover', '33.3334%', 'NPR 333.34', '31 Dec 2026'],
     ]);
-    const sum = table
-      .slice(1)
-      .map((r) => Number(r[2]!.replace(/[^\d.]/g, '')))
-      .reduce((a, b) => a + Math.round(b * 100), 0);
-    expect(sum).toBe(10001);
   });
 
-  it('rounds .005 up, not to even', () => {
+  it('renders the given amount even where a local split would differ', () => {
+    // 50% of 0.05 splits as 0.03 + 0.02 under D22; the screen must show what the server sent.
     const v = version({
       totals: { ...version().totals, total: '0.05' },
       paymentSchedule: [
-        { label: 'A', percent: '50' },
-        { label: 'B', percent: '50' },
+        { label: 'A', percent: '50', amount: '0.04' },
+        { label: 'B', percent: '50', amount: '0.01' },
       ],
     });
-    // 0.05 * 50% = 0.025 -> 0.03; remainder 0.02.
     expect(
       rows(render(v), 'Payment schedule')
         .slice(1)
         .map((r) => r[2]),
-    ).toEqual(['NPR 0.03', 'NPR 0.02']);
+    ).toEqual(['NPR 0.04', 'NPR 0.01']);
   });
 
   it('keeps up to four decimals and drops padding zeros', () => {
     const v = version({
       paymentSchedule: [
-        { label: 'A', percent: '12.5000' },
-        { label: 'B', percent: '87.5' },
-        { label: 'C', percent: '0.0001' },
+        { label: 'A', percent: '12.5000', amount: '1.00' },
+        { label: 'B', percent: '87.5', amount: '2.00' },
+        { label: 'C', percent: '0.0001', amount: '0.00' },
       ],
     });
     expect(

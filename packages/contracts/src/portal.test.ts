@@ -35,7 +35,7 @@ const view = () => ({
   termsAndConditions: null,
   deliveryTimeline: '6 weeks',
   paymentTermName: 'Net 30',
-  paymentSchedule: [{ label: 'Advance', percent: '60' }],
+  paymentSchedule: [{ label: 'Advance', percent: '60', amount: '366120.00' }],
   lines: [
     {
       lineNo: 1,
@@ -90,8 +90,12 @@ function schemaKeys(schema: z.ZodType): string[] {
   return keys;
 }
 
+// The display block is keyed by currency code (NPR, INR, USD); a code is not an NPR equivalent or a rate.
+const CURRENCY_CODE_KEYS = new Set(['NPR', 'INR', 'USD']);
 const leaks = (keys: string[]) =>
-  keys.filter((k) => words(k).some((w) => CUSTOMER_VIEW_FORBIDDEN_WORDS.includes(w)));
+  keys
+    .filter((k) => !CURRENCY_CODE_KEYS.has(k))
+    .filter((k) => words(k).some((w) => CUSTOMER_VIEW_FORBIDDEN_WORDS.includes(w)));
 
 describe('CustomerQuotationView carries no cost, margin or rate', () => {
   it('has no such key anywhere in its schema, at any depth', () => {

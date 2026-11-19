@@ -49,6 +49,7 @@ import { updateVersioned, withIdempotency } from '../../../platform/db/idempoten
 import { withTx, type Actor, type TxScope } from '../../../platform/db/tx';
 import { NotifyService } from '../../../platform/notify/notify.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
+import { versionVisibleTo } from '../drafting/cost-visibility';
 import {
   toQuotationVersionDto,
   type QuotationLineRow,
@@ -252,8 +253,9 @@ export class QuotationSendService {
     body: SendQuotationBody,
     idempotencyKey: string,
   ): Promise<QuotationVersionDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     const now = this.clock();
+    // The stored answer (replayed on a retry) is the full DTO; the cost figures are dropped for this caller per reply.
     const dto = await withTx(this.db, scope, actor, async (tx) => {
       const done = await withIdempotency(
         tx,
@@ -272,7 +274,7 @@ export class QuotationSendService {
     });
     // After the commit, never inside it (notify.service.ts header). Never throws.
     await this.notify.nudge();
-    return dto;
+    return versionVisibleTo(principal, dto);
   }
 
   private async sendInTx(

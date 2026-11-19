@@ -94,17 +94,17 @@ describe('GET /procurement/orders/:id/versions/:version/document/preview', () =>
     expect(mocks.issuePoDocumentLink).not.toHaveBeenCalled();
   });
 
-  it.each([404, 409])(
-    'turns a %i (not rendered or not clean) into a plain "not available"',
-    async (status) => {
-      mocks.issuePoDocumentLink.mockRejectedValue(new ApiError(status, 'x'));
-      const res = await call();
-      expect(res.status).toBe(status);
-      expect(await res.text()).toMatch(/not available/i);
-      expect(mocks.issuePoDocumentLink).toHaveBeenCalledTimes(1);
-      expect(mocks.openSignedFile).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    [404, /not available/i],
+    [409, /still being prepared/i],
+  ])('turns a %i (not rendered or not clean) into a plain message', async (status, message) => {
+    mocks.issuePoDocumentLink.mockRejectedValue(new ApiError(status, 'x'));
+    const res = await call();
+    expect(res.status).toBe(status);
+    expect(await res.text()).toMatch(message);
+    expect(mocks.issuePoDocumentLink).toHaveBeenCalledTimes(1);
+    expect(mocks.openSignedFile).not.toHaveBeenCalled();
+  });
 
   it("passes another tenant's 403 through and opens nothing", async () => {
     mocks.issuePoDocumentLink.mockRejectedValue(

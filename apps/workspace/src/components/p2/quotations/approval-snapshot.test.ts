@@ -38,6 +38,14 @@ describe('parseApprovalSnapshot', () => {
     expect(snap?.currency).toBe('NPR');
   });
 
+  it('reads a snapshot without a margin: the API omits it without quotation.cost.read', () => {
+    const { marginPct, ...noMargin } = valid();
+    expect(marginPct).toBe('22.5000');
+    const snap = parseApprovalSnapshot(noMargin);
+    expect(snap).not.toBeNull();
+    expect(snap?.marginPct).toBeUndefined();
+  });
+
   it('gives null when a key is missing, and for every non-object', () => {
     const { nprTotal, ...rest } = valid();
     expect(nprTotal).toBe('2690999.99');
@@ -45,9 +53,6 @@ describe('parseApprovalSnapshot', () => {
     const { discountApprovalRequired, ...noFlag } = valid();
     expect(discountApprovalRequired).toBe(true);
     expect(parseApprovalSnapshot(noFlag)).toBeNull();
-    const { marginPct, ...noMargin } = valid();
-    expect(marginPct).toBe('22.5000');
-    expect(parseApprovalSnapshot(noMargin)).toBeNull();
     for (const bad of [null, undefined, 'text', 42, [], {}]) {
       expect(parseApprovalSnapshot(bad)).toBeNull();
     }

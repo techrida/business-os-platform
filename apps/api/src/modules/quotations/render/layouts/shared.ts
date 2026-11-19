@@ -251,7 +251,7 @@ export function scheduleBlock(ctx: RenderContext): string {
   return `<section class="block"><h2>Payment schedule</h2><table class="schedule">${s
     .map(
       (m) =>
-        `<tr><td>${esc(m.label)}</td><td>${esc(trimPercent(m.percent))}%</td><td class="muted">${esc(m.dueDescription && formatCustomerDate(m.dueDescription, ctx.dateFormat))}</td></tr>`,
+        `<tr><td>${esc(m.label)}</td><td>${esc(trimPercent(m.percent))}%</td><td class="num">${money(ctx, m.amount)}</td><td class="muted">${esc(m.dueDescription && formatCustomerDate(m.dueDescription, ctx.dateFormat))}</td></tr>`,
     )
     .join('')}</table></section>`;
 }

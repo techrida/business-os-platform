@@ -1,9 +1,17 @@
-import { ACTIVITY_KINDS, type ActivityDto, type ActivityKind } from '@bos/contracts';
+import type { ActivityDto, ActivityKind, ActivityStatus, LeadOwnerOption } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { listActivities } from '@/components/p2/crm/crm-api';
-import { ALL_KINDS, LoadProblem } from '@/components/p2/crm/server-bits';
+import { FollowUpActions } from '@/components/p2/crm/follow-ups-card';
+import { canAssignFollowUps, loadPeople } from '@/components/p2/crm/people';
+import {
+  ACTIVITY_STATE_TONE,
+  activityState,
+  ALL_KINDS,
+  FILTER_KINDS,
+  LoadProblem,
+} from '@/components/p2/crm/server-bits';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -22,8 +30,33 @@ export const dynamic = 'force-dynamic';
 
 const LIMIT = 100;
 const KIND_LABELS = new Map(ALL_KINDS.map(({ value, label }) => [value, label]));
+/** `task` is not offered (D39); an old `?kind=task` link falls back to every type. */
+const FILTERABLE = new Set<string>(FILTER_KINDS.map((k) => k.value));
 
-function ActivityRow({ activity }: { activity: ActivityDto }) {
+interface Loaded {
+  items: ActivityDto[];
+  problem: { message: string; status: number } | null;
+}
+
+/** Earliest due first; the API already sends them so, this keeps the order if it ever does not. */
+function byDue(a: ActivityDto, b: ActivityDto): number {
+  return (a.dueAt ?? '').localeCompare(b.dueAt ?? '');
+}
+
+function ActivityRow({
+  activity,
+  status,
+  owners,
+  now,
+}: {
+  activity: ActivityDto;
+  status: ActivityStatus;
+  owners: readonly LeadOwnerOption[];
+  now: Date;
+}) {
+  const state = activityState(activity, now);
+  // Planned rows are timed by when they are due; logged ones by when they were done or happened.
+  const at = status === 'planned' ? activity.dueAt : (activity.completedAt ?? activity.occurredAt);
   return (
     <tr>
       <Td className={styles.activity}>
@@ -35,17 +68,10 @@ function ActivityRow({ activity }: { activity: ActivityDto }) {
       <Td>
         <div className={styles.tags}>
           <Badge tone="neutral">{KIND_LABELS.get(activity.kind) ?? activity.kind}</Badge>
-          {activity.completedAt ? <Badge tone="success">Done</Badge> : null}
+          {state ? <Badge tone={ACTIVITY_STATE_TONE[state]}>{state}</Badge> : null}
         </div>
       </Td>
-      <Td>
-        <time dateTime={activity.occurredAt}>{when(activity.occurredAt)}</time>
-        {activity.dueAt && !activity.completedAt ? (
-          <div className={styles.meta}>
-            Due <time dateTime={activity.dueAt}>{when(activity.dueAt)}</time>
-          </div>
-        ) : null}
-      </Td>
+      <Td>{at ? <time dateTime={at}>{when(at)}</time> : null}</Td>
       <Td nowrap>
         {activity.leadId ? (
           <Link className={styles.recordLink} href={`/leads/${activity.leadId}`}>
@@ -59,7 +85,64 @@ function ActivityRow({ activity }: { activity: ActivityDto }) {
           <span className={styles.meta}>—</span>
         )}
       </Td>
+      {status === 'planned' ? (
+        <Td>
+          {/* Any subject (a lead, a deal, a migrated task on a customer) can be finished here. */}
+          {activity.planned ? <FollowUpActions item={activity} owners={owners} /> : null}
+        </Td>
+      ) : null}
     </tr>
+  );
+}
+
+function ActivityTable({
+  status,
+  items,
+  owners,
+  now,
+}: {
+  status: ActivityStatus;
+  items: ActivityDto[];
+  owners: readonly LeadOwnerOption[];
+  now: Date;
+}) {
+  const planned = status === 'planned';
+  const noun = planned ? 'follow-up' : 'activity';
+  const nouns = planned ? 'follow-ups' : 'activities';
+  return (
+    <Card className={styles.results}>
+      <Table
+        caption={planned ? 'Planned follow-ups' : 'Logged activities'}
+        minWidth={560}
+        className={styles.table ?? ''}
+      >
+        <thead>
+          <tr>
+            <Th>Activity</Th>
+            <Th>Type</Th>
+            <Th>{planned ? 'Due' : 'Logged'}</Th>
+            <Th>Linked record</Th>
+            {planned ? <Th>Actions</Th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((activity) => (
+            <ActivityRow
+              key={activity.id}
+              activity={activity}
+              status={status}
+              owners={owners}
+              now={now}
+            />
+          ))}
+        </tbody>
+      </Table>
+      <p className={styles.footer}>
+        {items.length >= LIMIT
+          ? `Showing the ${planned ? 'first' : 'latest'} ${LIMIT} ${nouns}. Filter by type to narrow the list.`
+          : `Showing ${items.length} ${items.length === 1 ? noun : nouns}`}
+      </p>
+    </Card>
   );
 }
 
@@ -71,95 +154,120 @@ export default async function ActivitiesPage({
   const session = await requireStaffSession('/activities');
   const { kind: kindParam } = await searchParams;
   const kindValue = typeof kindParam === 'string' ? kindParam : undefined;
-  const kind = (ACTIVITY_KINDS as readonly string[]).includes(kindValue ?? '')
-    ? (kindValue as ActivityKind)
-    : undefined;
+  const kind = FILTERABLE.has(kindValue ?? '') ? (kindValue as ActivityKind) : undefined;
+  const reloadHref = kind ? `/activities?kind=${kind}` : '/activities';
 
-  let items: ActivityDto[] = [];
-  let problem: { message: string; status: number } | null = null;
-  try {
-    items = await listActivities(session, { ...(kind ? { kind } : {}), limit: LIMIT });
-  } catch (err) {
-    const f = failureOf(err);
-    problem = { message: f.message, status: f.status };
-  }
+  const load = async (status: ActivityStatus): Promise<Loaded> => {
+    try {
+      const items = await listActivities(session, {
+        ...(kind ? { kind } : {}),
+        status,
+        limit: LIMIT,
+      });
+      return { items, problem: null };
+    } catch (err) {
+      const f = failureOf(err);
+      return { items: [], problem: { message: f.message, status: f.status } };
+    }
+  };
+  // The owners list (Reschedule's choices) needs crm.lead.write; without it Reschedule keeps the
+  // current assignee. Names are not shown in this table, so only the owners half matters here.
+  const [planned, logged, people] = await Promise.all([
+    load('planned'),
+    load('logged'),
+    loadPeople(session, { owners: canAssignFollowUps(session) }).catch(() => null),
+  ]);
+  const owners = people?.owners ?? [];
+  planned.items.sort(byDue);
+  const now = new Date();
+  const nothing =
+    planned.problem === null &&
+    logged.problem === null &&
+    planned.items.length === 0 &&
+    logged.items.length === 0;
 
   return (
     <Page>
       <PageHeader
         title="Activities"
-        description="Track calls, meetings, notes and tasks logged against your records."
+        description="Track the calls, meetings, emails and notes on your records, planned and logged."
       />
 
-      <section aria-labelledby="activity-list" className={styles.list}>
-        <div className={styles.toolbar}>
-          <h2 id="activity-list">Recent activity</h2>
-          <form
-            method="get"
-            action="/activities"
-            className={styles.filters}
-            role="search"
-            aria-label="Filter activities"
-          >
-            <Field label="Type" className={styles.typeField ?? ''}>
-              {(c) => (
-                <Select name="kind" defaultValue={kind ?? ''} {...c}>
-                  <option value="">All types</option>
-                  {ALL_KINDS.map((k) => (
-                    <option key={k.value} value={k.value}>
-                      {k.label}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <Button type="submit" variant="secondary">
-              Apply
-            </Button>
-          </form>
-        </div>
-        {problem !== null ? (
-          <LoadProblem
-            status={problem.status}
-            message={problem.message}
-            what="activities"
-            reloadHref={kind ? `/activities?kind=${kind}` : '/activities'}
-          />
-        ) : items.length === 0 ? (
-          <EmptyState title="No activity yet" headingLevel={3} icon="inbox">
-            {kind ? (
-              <>
-                Nothing of this type yet. <Link href="/activities">Show all types</Link>.
-              </>
-            ) : (
-              'Log an activity from a lead or an opportunity to see it here.'
-            )}
-          </EmptyState>
-        ) : (
-          <Card className={styles.results}>
-            <Table caption="Recent activities" minWidth={560} className={styles.table ?? ''}>
-              <thead>
-                <tr>
-                  <Th>Activity</Th>
-                  <Th>Type</Th>
-                  <Th>Logged</Th>
-                  <Th>Linked record</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((activity) => (
-                  <ActivityRow key={activity.id} activity={activity} />
+      <div className={styles.toolbar}>
+        <form
+          method="get"
+          action="/activities"
+          className={styles.filters}
+          role="search"
+          aria-label="Filter activities"
+        >
+          <Field label="Type" className={styles.typeField ?? ''}>
+            {(c) => (
+              <Select name="kind" defaultValue={kind ?? ''} {...c}>
+                <option value="">All types</option>
+                {FILTER_KINDS.map((k) => (
+                  <option key={k.value} value={k.value}>
+                    {k.label}
+                  </option>
                 ))}
-              </tbody>
-            </Table>
-            <p className={styles.footer}>
-              {items.length >= LIMIT
-                ? `Showing the latest ${LIMIT} activities. Filter by type to narrow the list.`
-                : `Showing ${items.length} ${items.length === 1 ? 'activity' : 'activities'}`}
-            </p>
-          </Card>
-        )}
-      </section>
+              </Select>
+            )}
+          </Field>
+          <Button type="submit" variant="secondary">
+            Apply
+          </Button>
+        </form>
+      </div>
+
+      {nothing ? (
+        <EmptyState title="No activity yet" headingLevel={2} icon="inbox">
+          {kind ? (
+            <>
+              Nothing of this type yet. <Link href="/activities">Show all types</Link>.
+            </>
+          ) : (
+            'Log an activity from a lead or an opportunity to see it here.'
+          )}
+        </EmptyState>
+      ) : (
+        <>
+          <section aria-labelledby="activity-planned" className={styles.list}>
+            <h2 id="activity-planned" className={styles.sectionTitle}>
+              Planned
+            </h2>
+            {planned.problem !== null ? (
+              <LoadProblem
+                status={planned.problem.status}
+                message={planned.problem.message}
+                what="planned follow-ups"
+                reloadHref={reloadHref}
+              />
+            ) : planned.items.length === 0 ? (
+              <p className={styles.meta}>No follow-ups planned.</p>
+            ) : (
+              <ActivityTable status="planned" items={planned.items} owners={owners} now={now} />
+            )}
+          </section>
+
+          <section aria-labelledby="activity-logged" className={styles.list}>
+            <h2 id="activity-logged" className={styles.sectionTitle}>
+              Logged
+            </h2>
+            {logged.problem !== null ? (
+              <LoadProblem
+                status={logged.problem.status}
+                message={logged.problem.message}
+                what="logged activities"
+                reloadHref={reloadHref}
+              />
+            ) : logged.items.length === 0 ? (
+              <p className={styles.meta}>Nothing logged yet.</p>
+            ) : (
+              <ActivityTable status="logged" items={logged.items} owners={owners} now={now} />
+            )}
+          </section>
+        </>
+      )}
     </Page>
   );
 }

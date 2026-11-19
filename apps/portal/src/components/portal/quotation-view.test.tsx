@@ -57,8 +57,8 @@ describe('QuotationView markup', () => {
   it('shows precise milestone shares and customer-readable due dates', () => {
     const view = sampleView({
       paymentSchedule: [
-        { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
-        { label: 'Delivery', percent: '66.6667', dueDescription: '2026-11-19' },
+        { label: 'Advance', percent: '33.3333', amount: '1129.99', dueDescription: 'On order' },
+        { label: 'Delivery', percent: '66.6667', amount: '2260.01', dueDescription: '2026-11-19' },
       ],
     });
     const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
@@ -66,6 +66,22 @@ describe('QuotationView markup', () => {
     expect(html).toContain('66.6667%');
     expect(html).toContain('On order');
     expect(html).toContain('19 Nov 2026');
+  });
+
+  it("shows each milestone's amount exactly as the API sent it, never recomputed (D36)", () => {
+    // 3,390.00 at 40/60 would be 1,356.00 and 2,034.00; these amounts differ on purpose, so a screen that
+    // recomputed from the percents would show the wrong figures.
+    const view = sampleView({
+      paymentSchedule: [
+        { label: 'Advance', percent: '40', amount: '1000.00' },
+        { label: 'Balance', percent: '60', amount: '2390.00' },
+      ],
+    });
+    const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
+    expect(html).toContain('USD 1,000.00');
+    expect(html).toContain('USD 2,390.00');
+    expect(html).not.toContain('1,356.00');
+    expect(html).not.toContain('2,034.00');
   });
 
   it('renders View PDF and a plain Download link to the BFF route, and neither without a file', () => {
