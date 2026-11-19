@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/panel';
 import { when } from '@/lib/kernel-format';
 
 import styles from './crm.module.css';
+import { isOverdue, LOG_ACTIVITY_KINDS } from './forms';
 import { stageLabel, stageTone } from './stages';
 
 /** The stage as a badge: colour only where it means done, lost or held. */
@@ -62,12 +63,62 @@ const KIND_LABEL: Record<string, string> = {
   system: 'System',
 };
 
-/** Only the five kinds a person logs; the server writes the other two. */
-export const LOGGABLE_KINDS = ACTIVITY_KINDS.filter(
-  (k) => k !== 'stage_change' && k !== 'system',
-).map((k) => ({ value: k, label: KIND_LABEL[k] ?? k }));
+/** The four kinds a person logs (D39: `task` is gone; a follow-up is a planned call, meeting or email). */
+export const LOGGABLE_KINDS = LOG_ACTIVITY_KINDS.map((k) => ({
+  value: k,
+  label: KIND_LABEL[k] ?? k,
+}));
 
 export const ALL_KINDS = ACTIVITY_KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] ?? k }));
+
+/** The kinds a list can be filtered by: every kind but `task`, which nothing creates any more. */
+export const FILTER_KINDS = ALL_KINDS.filter((k) => k.value !== 'task');
+
+/** A user id to display name lookup, built from `GET /v1/leads/owners` (the users directory). */
+export function peopleById(
+  people: readonly { userId: string; displayName: string }[],
+): ReadonlyMap<string, string> {
+  return new Map(people.map((p) => [p.userId, p.displayName]));
+}
+
+/** History keeps logged and completed activities only: planned and cancelled ones never show. */
+export function historyItems<A extends Pick<ActivityDto, 'planned' | 'cancelledAt'>>(
+  items: readonly A[],
+): A[] {
+  return items.filter((a) => !a.planned && a.cancelledAt === null);
+}
+
+/** One word for where an activity stands: Planned, Overdue (planned and past due) or Done. */
+export type ActivityState = 'Planned' | 'Overdue' | 'Done';
+export function activityState(
+  a: Pick<ActivityDto, 'planned' | 'dueAt' | 'completedAt'>,
+  now: Date = new Date(),
+): ActivityState | null {
+  if (a.planned) return isOverdue(a, now) ? 'Overdue' : 'Planned';
+  return a.completedAt ? 'Done' : null;
+}
+
+export const ACTIVITY_STATE_TONE = {
+  Planned: 'info',
+  Overdue: 'warning',
+  Done: 'success',
+} as const satisfies Record<ActivityState, 'info' | 'warning' | 'success'>;
+
+/**
+ * The time and the person on a History row. A completed follow-up shows when it was completed,
+ * everything else when it happened. The actor is whoever logged it, or scheduled it when it was
+ * planned first; unknown for older rows or for someone outside the directory, and then left out.
+ */
+export function historyMeta(
+  a: Pick<ActivityDto, 'occurredAt' | 'completedAt' | 'dueAt' | 'createdByUserId'>,
+  people: ReadonlyMap<string, string> = new Map(),
+): { at: string; actor: string | null } {
+  const name = a.createdByUserId ? people.get(a.createdByUserId) : undefined;
+  return {
+    at: a.completedAt ?? a.occurredAt,
+    actor: name ? `${a.dueAt ? 'Scheduled' : 'Logged'} by ${name}` : null,
+  };
+}
 
 /** Where an activity's record lives, when this app has a page for it. */
 function subjectLink(a: ActivityDto): { href: string; label: string } | null {
@@ -77,17 +128,25 @@ function subjectLink(a: ActivityDto): { href: string; label: string } | null {
   return null;
 }
 
-/** A list of activities, newest first as the API sends them. Long text wraps; nothing is cut. */
+/**
+ * History: logged and completed activities, newest first as the API sends them (`status=logged`).
+ * Planned and cancelled rows are dropped here too, so History never shows a follow-up before it is
+ * done. Long text wraps; nothing is cut.
+ */
 export function ActivityList({
   items,
   showSubjectLink = false,
+  people,
   empty,
 }: {
   items: readonly ActivityDto[];
   showSubjectLink?: boolean;
+  /** Names for `createdByUserId`, from `peopleById`. Without it no actor is shown. */
+  people?: ReadonlyMap<string, string>;
   empty: ReactNode;
 }) {
-  if (items.length === 0) {
+  const rows = historyItems(items);
+  if (rows.length === 0) {
     return (
       <EmptyState title="No activity yet" headingLevel={3} icon="inbox">
         {empty}
@@ -96,8 +155,9 @@ export function ActivityList({
   }
   return (
     <ol className={styles.timeline}>
-      {items.map((a) => {
+      {rows.map((a) => {
         const link = showSubjectLink ? subjectLink(a) : null;
+        const { at, actor } = historyMeta(a, people);
         return (
           <li key={a.id} className={styles.entry}>
             <div className={styles.entryHead}>
@@ -107,13 +167,8 @@ export function ActivityList({
             </div>
             {a.body ? <p className={styles.entryBody}>{a.body}</p> : null}
             <p className={styles.entryWhen}>
-              <time dateTime={a.occurredAt}>{when(a.occurredAt)}</time>
-              {a.dueAt && !a.completedAt ? (
-                <>
-                  {' · Due '}
-                  <time dateTime={a.dueAt}>{when(a.dueAt)}</time>
-                </>
-              ) : null}
+              <time dateTime={at}>{when(at)}</time>
+              {actor ? ` · ${actor}` : null}
               {link ? (
                 <>
                   {' · '}
