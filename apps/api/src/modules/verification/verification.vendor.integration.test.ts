@@ -560,6 +560,29 @@ describe('a vendor case, once the vendor adapter is registered', () => {
       reviewedBy: U.pmo,
     });
   });
+
+  it('tells the Founder who submitted it that they cannot review it, and offers pmo the review', async () => {
+    const filled = await fillRequired(await openCase(await newVendor()));
+    const submitted = await api().post(`/v1/verification-cases/${filled.id}/submit`);
+    expect(submitted.status, JSON.stringify(submitted.body)).toBe(200);
+
+    const mine = await api().get(`/v1/verification-cases/${filled.id}`);
+    expect(mine.status).toBe(200);
+    const asSubmitter = VerificationCaseDtoSchema.parse(mine.body);
+    expect(asSubmitter.can?.review).toBe(false);
+    expect(asSubmitter.reviewBlockedReason).toBe('The submitter cannot review this case.');
+    // The vendor case gains only the blocked reason: none of the customer review fields ride along.
+    for (const key of ['reviewerNames', 'looseEvidence', 'approvalBlockedReason']) {
+      expect(mine.body).not.toHaveProperty(key);
+    }
+
+    as(U.pmo, 'pmo');
+    const theirs = VerificationCaseDtoSchema.parse(
+      (await api().get(`/v1/verification-cases/${filled.id}`)).body,
+    );
+    expect(theirs.can?.review).toBe(true);
+    expect(theirs.reviewBlockedReason).toBeNull();
+  });
   // K3b: the write routes carry no single route-level permission; the service asks for the write permission of
   // the case's party kind (customer.write or vendor.write), and refuses a caller with neither before any read.
   describe('who may write a KYB case', () => {
