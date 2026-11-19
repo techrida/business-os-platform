@@ -333,6 +333,7 @@ export function PeopleCard({
                     <td className={styles.cellLevel}>
                       <Select
                         aria-label={`Level for ${person.name}`}
+                        name={`level-${person.userId}`}
                         value={person.level}
                         disabled={!rowControls}
                         options={LEVEL_OPTIONS}
