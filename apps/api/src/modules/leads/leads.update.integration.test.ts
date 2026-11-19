@@ -1,7 +1,8 @@
 // Integration tests of the lead edit (PATCH /v1/leads/:id) and the owner options (GET /v1/leads/owners) on a real
 // Postgres (Testcontainers, needs Docker in WSL). Real: migrations, LeadsService, AuditService, the users directory
 // rows (users, user_entities, user_roles) and the controller behind the production body parser and error filter.
-// Faked: the request context and authz.assert (see test/harness.ts).
+// Faked: the request context and authz.assert (see test/harness.ts). The D50 block acts as members with a department
+// and level, whose grants come from the real RoleCache, and checks the rule's code from the service's 400.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/leads/leads.update.integration.test.ts
 import 'reflect-metadata';
 
@@ -9,7 +10,13 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { ErrorBodySchema, LeadDtoSchema, LeadOwnerOptionSchema } from '@bos/contracts';
+import {
+  ASSIGNMENT_DENY_MESSAGES,
+  CreateLeadBodySchema,
+  ErrorBodySchema,
+  LeadDtoSchema,
+  LeadOwnerOptionSchema,
+} from '@bos/contracts';
 import {
   activities,
   createParty,
@@ -19,12 +26,11 @@ import {
   leads,
   opportunities,
   userEntities,
-  userRoles,
   users,
 } from '@bos/db';
-import { type INestApplication } from '@nestjs/common';
+import { BadRequestException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import request from 'supertest';
@@ -39,7 +45,7 @@ import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
 import { LeadLostReasonsService } from './lost-reasons.service';
-import { startHarness, type Harness } from './test/harness';
+import { startHarness, type Harness, WORKSPACE_URL } from './test/harness';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { SettingsService } from '../../platform/settings/settings.service';
 
@@ -50,6 +56,7 @@ type AppPool = Parameters<typeof createParty>[0];
 let h: Harness;
 let app: INestApplication;
 let baseUrl: string;
+let service: LeadsService;
 /** Active, holds `sales` in entity A, but switched off. */
 let inactiveSales: string;
 /** A user of another tenant. */
@@ -61,7 +68,7 @@ const sys = () => systemActor('test');
 
 beforeAll(async () => {
   h = await startHarness({ Pool, drizzle });
-  const service = new LeadsService(
+  service = new LeadsService(
     h.db,
     h.authz as unknown as AuthzService,
     new AuditService(h.db),
@@ -69,6 +76,8 @@ beforeAll(async () => {
     h.caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
     new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
+    h.roleCache,
+    h.notify,
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -80,15 +89,8 @@ beforeAll(async () => {
   await app.listen(0, '127.0.0.1');
   baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
 
-  // The directory rows the owners list reads: both salespeople hold `sales`; boss and viewer hold no role rows.
+  // The harness gives the base users their role rows (salespeople `sales`, boss `founder`, viewer `management`).
   const pool = h.appPool as unknown as AppPool;
-  await withTx(h.db, h.scopeA, sys(), (tx) =>
-    tx.insert(userRoles).values([
-      { tenantId: h.tenantId, userId: h.users.salesA, roleKey: 'sales' },
-      { tenantId: h.tenantId, userId: h.users.salesB, roleKey: 'sales' },
-      { tenantId: h.tenantId, userId: h.users.viewer, roleKey: 'management' },
-    ]),
-  );
   const [salesRow] = await withTx(h.db, h.scopeA, sys(), (tx) =>
     tx.select({ idpOrgId: users.idpOrgId }).from(users).where(eq(users.id, h.users.salesA)),
   );
@@ -190,10 +192,13 @@ describe('PATCH /v1/leads/:id', () => {
     ]);
   });
 
-  it('an own-scope user cannot hand a lead to someone else: 403 and the lead is unchanged', async () => {
+  it('a salesperson with no department cannot hand a lead to a colleague: 400 and the lead is unchanged', async () => {
     const lead = await seed();
     const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toBe(
+      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.no_department}`,
+    );
     expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.salesA, version: 1 });
     expect(await actionsOf(lead.id)).not.toContain('lead.updated');
   });
@@ -283,30 +288,33 @@ describe('PATCH /v1/leads/:id', () => {
 });
 
 describe('GET /v1/leads/owners', () => {
-  it('offers an own-scope caller only themselves', async () => {
+  it('offers a salesperson with no department only themselves', async () => {
     const list = await owners();
     expect(list.map((o) => o.userId)).toEqual([h.users.salesA]);
     // No picture set: the option still names the pointer, as null.
     expect(list[0]).toHaveProperty('avatarDocumentId', null);
   });
 
-  it('offers a wide-scope caller every active user whose roles may own a lead, and nobody else', async () => {
+  it('offers the Founder every active staff member whose live grants read leads, and nobody else', async () => {
     h.as('boss', 'founder');
     const ids = (await owners()).map((o) => o.userId);
-    expect(ids).toEqual(expect.arrayContaining([h.users.boss, h.users.salesA, h.users.salesB]));
-    // management has no crm.lead.write; an inactive user and another tenant's user are never offered.
-    expect(ids).not.toContain(h.users.viewer);
+    // Management reads every lead, so the rule lets the Founder hand it one (the owner must read, D50 #21).
+    expect(new Set(ids)).toEqual(
+      new Set([h.users.boss, h.users.salesA, h.users.salesB, h.users.viewer]),
+    );
+    // An inactive user, a portal user and another tenant's user are never offered.
     expect(ids).not.toContain(inactiveSales);
+    expect(ids).not.toContain(portalUser);
     expect(ids).not.toContain(foreignUser);
-    expect(ids).toHaveLength(3);
   });
 
   it('follows the membership: roles narrowed away in this entity do not count', async () => {
     h.as('boss', 'founder');
+    // The membership narrows salesB's `sales` role away and adds none (it only intersects), so nothing reads leads.
     await withTx(h.db, h.scopeA, sys(), (tx) =>
       tx
         .update(userEntities)
-        .set({ roleKeys: ['management'] })
+        .set({ roleKeys: ['operations_head'] })
         .where(
           and(
             eq(userEntities.userId, h.users.salesB),
@@ -399,11 +407,11 @@ describe('D45: follow-ups follow the owner (PATCH /v1/leads/:id)', () => {
     }
   });
 
-  it('an own-scope old owner cannot hand the lead on, so nothing moves', async () => {
+  it('an old owner the rule stops from handing the lead on moves nothing', async () => {
     const lead = await seed();
     const mine = await plan(lead.id, h.users.salesA);
     const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
     expect(await activityRow(mine.id)).toMatchObject({
       assigneeUserId: h.users.salesA,
       version: 1,
@@ -493,5 +501,323 @@ describe("D46: the lead carries its owner's display name and nothing more of the
     );
     const got = await request(baseUrl).get(`/v1/leads/${lead.id}`);
     expect(dto(got.body)).toMatchObject({ ownerUserId: null, ownerName: null });
+  });
+});
+
+describe('D50: who a lead may be handed to, under the entity rule and live grants', () => {
+  let salesDept: string;
+  let marketingDept: string;
+  /** Sales department: two staff, a manager and the head. */
+  let salesStaff: string;
+  let salesPeer: string;
+  let salesManager: string;
+  let salesHead: string;
+  /** Marketing department: one staff member. */
+  let marketingStaff: string;
+  /** Starts leads for Sales (D50 intake), no department. */
+  let finance: string;
+  /** Active staff whose roles read no lead. */
+  let warehouse: string;
+
+  beforeAll(async () => {
+    // Named Sales and Marketing: the entity's default hand-over pair (Marketing to Sales) is found by these names.
+    salesDept = await h.department('Sales');
+    marketingDept = await h.department('Marketing');
+    const sales = { roles: ['sales'] as const, departmentId: salesDept };
+    salesHead = await h.member({ ...sales, level: 'head', displayName: 'Hari Head' });
+    salesManager = await h.member({ ...sales, level: 'manager', displayName: 'Mina Manager' });
+    salesPeer = await h.member({ ...sales, displayName: 'Pia Peer' });
+    salesStaff = await h.member({ ...sales, displayName: 'Sam Staff' });
+    marketingStaff = await h.member({
+      roles: ['marketing'],
+      departmentId: marketingDept,
+      displayName: 'Maya Marketing',
+    });
+    finance = await h.member({ roles: ['finance'], displayName: 'Fina Finance' });
+    warehouse = await h.member({ roles: ['warehouse'], displayName: 'Wes Warehouse' });
+  });
+
+  /** The rule's code on a refused hand-over, read from the service's 400 (`details.assignmentReason`). */
+  async function refusal(run: () => Promise<unknown>): Promise<string | undefined> {
+    try {
+      await run();
+    } catch (error) {
+      if (!(error instanceof BadRequestException)) throw error;
+      return (error.getResponse() as { details?: { assignmentReason?: string } }).details
+        ?.assignmentReason;
+    }
+    throw new Error('expected a 400');
+  }
+  const reassign = (leadId: string, ownerUserId: string, expectedVersion = 1) =>
+    refusal(() => service.update(leadId, { ownerUserId, expectedVersion }));
+  const ownerIds = async (query = '') => {
+    const res = await request(baseUrl).get(`/v1/leads/owners${query}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return LeadOwnerOptionSchema.array()
+      .parse(res.body)
+      .map((o) => o.userId);
+  };
+  const assignedNotices = async (leadId: string) => {
+    const { rows } = await h.ownerPool.query(
+      `SELECT to_user_id, body_text FROM app.outbox
+        WHERE tenant_id = $1 AND template = 'crm.assigned' AND dedupe_key LIKE $2`,
+      [h.tenantId, `crm.assigned:lead:${leadId}:%`],
+    );
+    return rows as { to_user_id: string; body_text: string }[];
+  };
+
+  it('Sales staff hands a lead to a same-level peer, never upward and never to Marketing', async () => {
+    await h.actAs(salesStaff);
+    const lead = await seed();
+    expect((await rowOf(lead.id)).departmentId).toBe(salesDept);
+
+    const upward = await patch(lead.id, { ownerUserId: salesManager, expectedVersion: 1 });
+    expect(upward.status, JSON.stringify(upward.body)).toBe(400);
+    expect(errorOf(upward.body).message).toBe(
+      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.upward}`,
+    );
+    expect(await reassign(lead.id, salesManager)).toBe('upward');
+    expect(await reassign(lead.id, salesHead)).toBe('upward');
+
+    const toMarketing = await patch(lead.id, { ownerUserId: marketingStaff, expectedVersion: 1 });
+    expect(toMarketing.status, JSON.stringify(toMarketing.body)).toBe(400);
+    expect(errorOf(toMarketing.body).message).toBe(
+      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.reverse_handoff}`,
+    );
+    expect(await reassign(lead.id, marketingStaff)).toBe('reverse_handoff');
+    expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: salesStaff, version: 1 });
+
+    const res = await patch(lead.id, { ownerUserId: salesPeer, expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(dto(res.body).ownerUserId).toBe(salesPeer);
+  });
+
+  it('Marketing staff hands a lead to Sales staff: the lead joins the Sales department, the creator keeps reading it', async () => {
+    await h.actAs(marketingStaff);
+    const lead = await seed();
+    expect((await rowOf(lead.id)).departmentId).toBe(marketingDept);
+    // The hand-over never goes up a level either.
+    expect(await reassign(lead.id, salesManager)).toBe('upward');
+
+    const res = await patch(lead.id, { ownerUserId: salesStaff, expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    // D55-4: the database stamps the department from the new owner when, and only when, the owner changes.
+    expect(await rowOf(lead.id)).toMatchObject({
+      ownerUserId: salesStaff,
+      departmentId: salesDept,
+      createdByUserId: marketingStaff,
+    });
+    // Marketing entered it, so it still reads it (D50 `created`), but the edit is the new owner's.
+    expect((await request(baseUrl).get(`/v1/leads/${lead.id}`)).status).toBe(200);
+    expect((await patch(lead.id, { title: 'Still mine?', expectedVersion: 2 })).status).toBe(404);
+  });
+
+  it('Finance starts a lead for Sales: never for itself, the Sales head by default, then reads it but cannot edit it', async () => {
+    await h.actAs(finance);
+    const own = await request(baseUrl)
+      .post('/v1/leads')
+      .send({ ...BODY, ownerUserId: finance });
+    expect(own.status, JSON.stringify(own.body)).toBe(400);
+    expect(errorOf(own.body).message).toBe(
+      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.sales_owner_required}`,
+    );
+    expect(
+      await refusal(() =>
+        service.create(CreateLeadBodySchema.parse({ ...BODY, ownerUserId: finance })),
+      ),
+    ).toBe('sales_owner_required');
+
+    const lead = await seed();
+    expect(lead.ownerUserId).toBe(salesHead);
+    expect(await rowOf(lead.id)).toMatchObject({
+      createdByUserId: finance,
+      departmentId: salesDept,
+    });
+    // The head was told the lead is theirs; nobody else was.
+    expect((await assignedNotices(lead.id)).map((n) => n.to_user_id)).toEqual([salesHead]);
+
+    expect((await request(baseUrl).get(`/v1/leads/${lead.id}`)).status).toBe(200);
+    const listed = LeadDtoSchema.array().parse((await request(baseUrl).get('/v1/leads')).body);
+    expect(listed.map((l) => l.id)).toContain(lead.id);
+    expect((await patch(lead.id, { title: 'Edited by Finance', expectedVersion: 1 })).status).toBe(
+      404,
+    );
+
+    // The new-lead form's owner select offers Finance the Sales people with a department, not Finance itself.
+    expect(new Set(await ownerIds('?context=create'))).toEqual(
+      new Set([salesStaff, salesPeer, salesManager, salesHead]),
+    );
+    // The intake hand-off is for a new lead only: on an existing one the rule offers Finance no one but itself.
+    expect(await ownerIds()).toEqual([finance]);
+  });
+
+  it('offers in the owner select exactly the people PATCH accepts', async () => {
+    const everyone = [
+      salesStaff,
+      salesPeer,
+      salesManager,
+      salesHead,
+      marketingStaff,
+      finance,
+      warehouse,
+      h.users.salesA,
+      h.users.boss,
+      h.users.viewer,
+    ];
+    const cases: [string, string[]][] = [
+      // Same-level peers.
+      [salesStaff, [salesStaff, salesPeer]],
+      // Staff and managers of the department, not the head.
+      [salesManager, [salesManager, salesStaff, salesPeer]],
+      // Their own department at or below their level, and Sales at or below (the Marketing to Sales hand-over).
+      [marketingStaff, [marketingStaff, salesStaff, salesPeer]],
+    ];
+    for (const [actor, expected] of cases) {
+      await h.actAs(actor);
+      expect(new Set(await ownerIds()), actor).toEqual(new Set(expected));
+      for (const target of everyone) {
+        await h.actAs(actor);
+        const lead = await seed();
+        const res = await patch(lead.id, { ownerUserId: target, expectedVersion: 1 });
+        if (target === actor) {
+          // Naming the current owner changes nothing.
+          expect(res.status, `${actor} -> self`).toBe(400);
+          continue;
+        }
+        expect(res.status, `${actor} -> ${target}: ${JSON.stringify(res.body)}`).toBe(
+          expected.includes(target) ? 200 : 400,
+        );
+      }
+    }
+  });
+
+  it('a manager edits and reassigns a staff lead of their department (department reach), not another department', async () => {
+    await h.actAs(salesStaff);
+    const staffLead = await seed();
+    await h.actAs(marketingStaff);
+    const marketingLead = await seed();
+
+    await h.actAs(salesManager);
+    // The premise: the manager level row widens the Sales lead grants to the department (the level defaults).
+    const me = h.caller.current().principal;
+    expect(me.grants.get('crm.lead.write')).toBe('department');
+    expect(me.grants.get('crm.lead.read')).toBe('department');
+
+    expect((await request(baseUrl).get(`/v1/leads/${staffLead.id}`)).status).toBe(200);
+    const edited = await patch(staffLead.id, { title: 'Checked by the manager', expectedVersion: 1 });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    const moved = await patch(staffLead.id, { ownerUserId: salesPeer, expectedVersion: 2 });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    expect(dto(moved.body).ownerUserId).toBe(salesPeer);
+
+    expect((await request(baseUrl).get(`/v1/leads/${marketingLead.id}`)).status).toBe(404);
+    expect((await patch(marketingLead.id, { title: 'Not mine', expectedVersion: 1 })).status).toBe(
+      404,
+    );
+  });
+
+  it('the assignee of a follow-up reads the lead, read only, for as long as the follow-up is open', async () => {
+    await h.actAs(salesStaff);
+    const lead = await seed();
+    const followUp = await plan(lead.id, salesPeer);
+
+    await h.actAs(salesPeer);
+    expect((await request(baseUrl).get(`/v1/leads/${lead.id}`)).status).toBe(200);
+    const listed = LeadDtoSchema.array().parse((await request(baseUrl).get('/v1/leads')).body);
+    expect(listed.map((l) => l.id)).toContain(lead.id);
+    expect((await patch(lead.id, { title: 'Assignee edit', expectedVersion: 1 })).status).toBe(404);
+
+    await withTx(h.db, h.scopeA, sys(), (tx) =>
+      tx.update(activities).set({ cancelledAt: new Date() }).where(eq(activities.id, followUp.id)),
+    );
+    expect((await request(baseUrl).get(`/v1/leads/${lead.id}`)).status).toBe(404);
+  });
+
+  it('tells the new owner once per change (crm.assigned), and nobody when the owner is the caller', async () => {
+    await h.actAs(salesStaff);
+    const lead = await seed();
+    expect(await assignedNotices(lead.id)).toEqual([]);
+
+    expect((await patch(lead.id, { ownerUserId: salesPeer, expectedVersion: 1 })).status).toBe(200);
+    const first = await assignedNotices(lead.id);
+    expect(first.map((n) => n.to_user_id)).toEqual([salesPeer]);
+    // The email links the lead's own page; the workspace has no /crm route.
+    expect(first[0]!.body_text).toContain(`${WORKSPACE_URL}/leads/${lead.id}`);
+    expect(first[0]!.body_text).toContain('Sam Staff');
+    const { rows: bell } = await h.ownerPool.query(
+      `SELECT user_id, link FROM app.notifications WHERE tenant_id = $1 AND dedupe_key LIKE $2`,
+      [h.tenantId, `crm.assigned:lead:${lead.id}:%`],
+    );
+    expect(bell).toEqual([{ user_id: salesPeer, link: `/leads/${lead.id}` }]);
+
+    // Handed back: one more notice, to the new owner only.
+    await h.actAs(salesPeer);
+    expect((await patch(lead.id, { ownerUserId: salesStaff, expectedVersion: 2 })).status).toBe(200);
+    expect((await assignedNotices(lead.id)).map((n) => n.to_user_id).sort()).toEqual(
+      [salesPeer, salesStaff].sort(),
+    );
+
+    // Taking a lead yourself, or creating one you own, tells nobody.
+    h.as('boss', 'founder');
+    expect((await patch(lead.id, { ownerUserId: h.users.boss, expectedVersion: 3 })).status).toBe(
+      200,
+    );
+    const own = await seed();
+    expect(await assignedNotices(lead.id)).toHaveLength(2);
+    expect(await assignedNotices(own.id)).toEqual([]);
+  });
+
+  it('refuses an owner who cannot read leads (cannot_read_subject), and never offers them', async () => {
+    h.as('boss', 'founder');
+    const lead = await seed();
+    const res = await patch(lead.id, { ownerUserId: warehouse, expectedVersion: 1 });
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(errorOf(res.body).message).toBe(
+      `ownerUserId ${ASSIGNMENT_DENY_MESSAGES.cannot_read_subject}`,
+    );
+    expect(await reassign(lead.id, warehouse)).toBe('cannot_read_subject');
+    expect(await ownerIds()).not.toContain(warehouse);
+    expect(await rowOf(lead.id)).toMatchObject({ ownerUserId: h.users.boss, version: 1 });
+  });
+
+  it('the Owner filter lists the owners of the leads the caller reads, plus whom they may hand a lead to', async () => {
+    const filter = async () => {
+      const res = await request(baseUrl).get('/v1/leads/owner-filter');
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      return LeadOwnerOptionSchema.array().parse(res.body);
+    };
+    await h.actAs(salesStaff);
+    await seed();
+
+    // Management reads every lead of the entity and hands none on (no lead write).
+    h.as('viewer', 'management');
+    const rows = await h.db
+      .selectDistinct({ ownerUserId: leads.ownerUserId })
+      .from(leads)
+      .where(
+        and(
+          eq(leads.tenantId, h.tenantId),
+          eq(leads.organizationId, h.scopeA.organizationId),
+          isNotNull(leads.ownerUserId),
+        ),
+      );
+    const everyOwner = rows.map((r) => r.ownerUserId);
+    const forManagement = await filter();
+    expect(new Set(forManagement.map((o) => o.userId))).toEqual(new Set(everyOwner));
+    // Names only: the filter needs no address, and an unnamed person reads as such.
+    expect(forManagement.every((o) => o.email === '' && o.displayName.length > 0)).toBe(true);
+    expect(forManagement.find((o) => o.userId === salesStaff)?.displayName).toBe('Sam Staff');
+
+    // A salesperson: the owners of what they read (their own leads, the ones they entered or follow up) and their
+    // peers, never the owners of leads beyond their reach.
+    await h.actAs(salesStaff);
+    const visible = LeadDtoSchema.array()
+      .parse((await request(baseUrl).get('/v1/leads?limit=200')).body)
+      .map((l) => l.ownerUserId)
+      .filter((id): id is string => id !== null);
+    expect(new Set((await filter()).map((o) => o.userId))).toEqual(
+      new Set([...visible, salesStaff, salesPeer]),
+    );
+    expect((await filter()).map((o) => o.userId)).not.toContain(h.users.salesB);
   });
 });

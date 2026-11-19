@@ -43,8 +43,8 @@ const LINK_PATH_OF: Record<EmailTemplate, string> = {
   'document.infected': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
   'outbox.dead_letter': '/inbox/6f1c2a9e-1b7d-4c55-9a53-0d6f3e2b7a10',
   'quotation.accepted': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
-  'crm.assigned': '/crm/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
-  'crm.follow_up_digest': '/crm/follow-ups',
+  'crm.assigned': '/leads/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
+  'crm.follow_up_digest': '/activities/',
   'quotation.sent': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
   'quotation.expiring': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
   'quotation.expired': '/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4',
@@ -169,8 +169,8 @@ describe('renderEmail', () => {
   const DEFAULT_LINKS: [EmailTemplate, string][] = [
     ...STAFF_TEMPLATES.map((t): [EmailTemplate, string] => [t, `${WORKSPACE}/inbox/`]),
     ['quotation.accepted', `${WORKSPACE}/quotations/`],
-    ['crm.assigned', `${WORKSPACE}/crm/`],
-    ['crm.follow_up_digest', `${WORKSPACE}/crm/`],
+    ['crm.assigned', `${WORKSPACE}/activities/`],
+    ['crm.follow_up_digest', `${WORKSPACE}/activities/`],
     ['quotation.sent', `${PORTAL}/quotations/`],
     ['quotation.expiring', `${PORTAL}/quotations/`],
     ['quotation.expired', `${PORTAL}/quotations/`],
@@ -249,9 +249,13 @@ describe('renderEmail', () => {
 
   it.each([
     ['crm.assigned', '/inbox/1'],
-    ['crm.assigned', '/quotations/1'],
+    // The workspace has no /crm page, so a link there would be a dead end.
+    ['crm.assigned', '/crm/1'],
+    ['crm.assigned', '/leads'],
     ['crm.follow_up_digest', '/memos/1'],
+    ['crm.follow_up_digest', '/leads/1'],
     ['quotation.accepted', '/crm/1'],
+    ['quotation.accepted', '/leads/1'],
     ['quotation.sent', '/inbox/1'],
     ['quotation.sent', '/crm/1'],
     ['quotation.sent', '/quotations/1?x=1'],
@@ -293,6 +297,21 @@ describe('renderEmail', () => {
       renderEmail('approval.pending', sample, { workspaceUrl: 'javascript:alert(1)' }),
     ).toThrow(EmailTemplateError);
   });
+});
+
+it.each([
+  ['/leads/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4'],
+  ['/opportunities/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4'],
+  ['/quotations/0b9c1d2e-3f4a-4b5c-8d6e-7f8091a2b3c4'],
+  ['/activities/'],
+])('crm.assigned links to the record it hands over (%s), a page the workspace has', (linkPath) => {
+  const { text, html } = renderEmail(
+    'crm.assigned',
+    { entityType: 'lead', entityName: 'LD-2083/84-00001', assignerName: 'Sita', linkPath },
+    opts,
+  );
+  expect(text).toContain(`${WORKSPACE}${linkPath}`);
+  expect(html).toContain(`${WORKSPACE}${linkPath}`);
 });
 
 describe('portal links', () => {

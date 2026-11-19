@@ -50,6 +50,8 @@ beforeAll(async () => {
     h.caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
     new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
+    h.roleCache,
+    h.notify,
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -126,10 +128,14 @@ describe('POST /v1/leads', () => {
     expect((await post({ ...BODY, title: 'Different' }, key)).status).toBe(422);
   });
 
-  it('refuses a body the contract rejects with 400, and an owner the caller cannot reach with 403', async () => {
+  it('refuses a body the contract rejects with 400, and an owner the assignment rule refuses with 400', async () => {
     expect((await post({ ...BODY, source: 'telepathy' })).status).toBe(400);
+    // Neither salesperson belongs to a department, so the rule has no department to hand within (D50).
     const other = await post({ ...BODY, ownerUserId: h.users.salesB });
-    expect(other.status).toBe(403);
+    expect(other.status, JSON.stringify(other.body)).toBe(400);
+    expect(errorOf(other.body).message).toBe(
+      'ownerUserId needs you and them to belong to a department',
+    );
     // A role with a wider grant may name another owner.
     h.as('boss', 'founder');
     const ok = await post({ ...BODY, ownerUserId: h.users.salesB });
@@ -193,7 +199,7 @@ describe('POST /v1/leads with a follow-up (D39)', () => {
     });
   });
 
-  it('refuses a follow-up an own-scope caller hands to a colleague with 400, and creates nothing', async () => {
+  it('refuses a follow-up the assignment rule does not let the caller hand to a colleague with 400, and creates nothing', async () => {
     const title = `Handed ${randomUUID()}`;
     const res = await post({
       ...BODY,
@@ -203,8 +209,7 @@ describe('POST /v1/leads with a follow-up (D39)', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(400);
     expect(errorOf(res.body)).toMatchObject({
       code: 'bad_request',
-      message:
-        'followUp.assigneeUserId cannot be someone else: your access covers only your own leads',
+      message: 'followUp.assigneeUserId needs you and them to belong to a department',
     });
     expect(await h.db.select().from(leads).where(eq(leads.title, title))).toHaveLength(0);
   });

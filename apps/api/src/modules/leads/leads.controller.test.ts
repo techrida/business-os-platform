@@ -30,6 +30,7 @@ async function setup() {
     changeStage: vi.fn().mockResolvedValue({}),
     update: vi.fn().mockResolvedValue({}),
     owners: vi.fn().mockResolvedValue([]),
+    ownerFilter: vi.fn().mockResolvedValue([]),
   };
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -55,13 +56,20 @@ describe('LeadsController', () => {
     expect(can('changeStage')).toBe('crm.lead.write');
     expect(can('update')).toBe('crm.lead.write');
     expect(can('owners')).toBe('crm.lead.write');
+    // The list's Owner filter needs only read: every role that sees the list gets it.
+    expect(can('ownerFilter')).toBe('crm.lead.read');
   });
 
-  it('declares GET owners before GET :id, so "owners" is never parsed as a lead id', () => {
+  it('declares GET owners and owner-filter before GET :id, so neither is parsed as a lead id', () => {
     const names = Object.getOwnPropertyNames(LeadsController.prototype);
-    expect(names.indexOf('owners')).toBeGreaterThan(-1);
-    expect(names.indexOf('owners')).toBeLessThan(names.indexOf('get'));
-    expect(Reflect.getMetadata('path', LeadsController.prototype.owners)).toBe('owners');
+    for (const [name, path] of [
+      ['owners', 'owners'],
+      ['ownerFilter', 'owner-filter'],
+    ] as const) {
+      expect(names.indexOf(name)).toBeGreaterThan(-1);
+      expect(names.indexOf(name)).toBeLessThan(names.indexOf('get'));
+      expect(Reflect.getMetadata('path', LeadsController.prototype[name])).toBe(path);
+    }
   });
 
   it('edits with only the fields sent: no currency default, and a bad body never reaches the service', async () => {
@@ -85,10 +93,24 @@ describe('LeadsController', () => {
     expect(service.update).not.toHaveBeenCalled();
   });
 
-  it('lists owners through the service', async () => {
+  it('lists owners for a lead that exists unless the new-lead form asks, and refuses another context', async () => {
     const { service, controller } = await setup();
-    await controller.owners();
-    expect(service.owners).toHaveBeenCalledWith();
+    await controller.owners({});
+    expect(service.owners).toHaveBeenLastCalledWith('reassign');
+    await controller.owners({ context: 'create' });
+    expect(service.owners).toHaveBeenLastCalledWith('create');
+
+    service.owners.mockClear();
+    for (const query of [{ context: 'approve' }, { context: ['create', 'reassign'] }, { scope: 'all' }]) {
+      expect(() => controller.owners(query), JSON.stringify(query)).toThrow(BadRequestException);
+    }
+    expect(service.owners).not.toHaveBeenCalled();
+  });
+
+  it('lists the Owner filter through the service', async () => {
+    const { service, controller } = await setup();
+    await controller.ownerFilter();
+    expect(service.ownerFilter).toHaveBeenCalledWith();
   });
 
   it('parses the list query: repeats become arrays, limit and offset numbers with defaults', async () => {

@@ -16,7 +16,9 @@ import { describe, expect, it } from 'vitest';
 import type { AuditService } from '../../platform/audit/audit.service';
 import type { AuthzService } from '../../platform/authz/authz.service';
 import type { Principal } from '../../platform/authz/principal';
+import type { RoleCache } from '../../platform/authz/role-cache';
 import type { Db } from '../../platform/db/db.module';
+import type { NotifyService } from '../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -127,7 +129,12 @@ function serviceWith(saved: readonly string[] | null, stored: LeadRow = leadRow(
       return Promise.resolve({ rows: saved ? [{ version: 2, value: saved }] : [] });
     },
   } as unknown as Db;
-  const principal = { userId: USER } as Principal;
+  const principal = {
+    userId: USER,
+    roles: ['sales'],
+    departmentId: null,
+    grants: new Map([['crm.lead.read', 'own']]),
+  } as unknown as Principal;
   const caller = {
     current: () => ({
       scope,
@@ -151,6 +158,8 @@ function serviceWith(saved: readonly string[] | null, stored: LeadRow = leadRow(
     caller,
     new CurrencyEnabledService(new SettingsService(db)),
     {} as LeadLostReasonsService,
+    {} as RoleCache,
+    {} as NotifyService,
   );
   return { service, seen };
 }

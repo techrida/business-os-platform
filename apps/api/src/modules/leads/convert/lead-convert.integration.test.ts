@@ -56,6 +56,8 @@ beforeAll(async () => {
     h.caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
     new LeadLostReasonsService(h.db, audit, h.caller),
+    h.roleCache,
+    h.notify,
   );
   const customersService = new CustomersService(h.db, numbering, authz, h.caller);
   const convertService = new LeadConvertService(

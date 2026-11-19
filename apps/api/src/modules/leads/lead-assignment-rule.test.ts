@@ -382,6 +382,56 @@ describe('decideAssignment with AssignmentRuleConfig', () => {
     expect(decideAssignment(salesHead, salesManager, 'reassign', config).allowed).toBe(true);
   });
 
+  it('names the stored rule that refused, so the 400 says why (self_only, same_level)', () => {
+    const salesHead2 = party('sales-head-2', ['sales'], SALES_DEPT, 'head');
+    const staffOnly = { staff: 'self_only' as const };
+    expect(decideAssignment(salesStaff, salesPeer, 'reassign', staffOnly)).toEqual({
+      allowed: false,
+      reason: 'self_only',
+    });
+    // Across the default hand-over too: the stored rule narrows every hand-off a staff member makes.
+    expect(decideAssignment(marketingStaff, salesStaff, 'reassign', staffOnly)).toEqual({
+      allowed: false,
+      reason: 'self_only',
+    });
+
+    const belowOnly = { managers: 'self_and_staff' as const };
+    expect(decideAssignment(salesManager, salesManager2, 'reassign', belowOnly)).toEqual({
+      allowed: false,
+      reason: 'same_level',
+    });
+    // Heads are bound by the managers option as well: another head is at their level.
+    expect(decideAssignment(salesHead, salesHead2, 'reassign', belowOnly)).toEqual({
+      allowed: false,
+      reason: 'same_level',
+    });
+    expect(decideAssignment(salesHead, salesStaff, 'reassign', belowOnly).allowed).toBe(true);
+    // Upward reads as upward first, whatever the stored rule.
+    expect(decideAssignment(salesManager, salesHead, 'reassign', belowOnly)).toEqual({
+      allowed: false,
+      reason: 'upward',
+    });
+  });
+
+  it('refuses Sales to Marketing as reverse_handoff under a stored list without that pair', () => {
+    const marketingToSales = {
+      handOvers: [{ fromDepartmentId: MARKETING_DEPT, toDepartmentId: SALES_DEPT }],
+    };
+    expect(decideAssignment(salesStaff, marketingStaff, 'reassign', marketingToSales)).toEqual({
+      allowed: false,
+      reason: 'reverse_handoff',
+    });
+    expect(decideAssignment(salesStaff, marketingStaff, 'reassign', { handOvers: [] })).toEqual({
+      allowed: false,
+      reason: 'reverse_handoff',
+    });
+    // Any other pair the list lacks is plain other_department.
+    expect(decideAssignment(opsStaff, salesStaff, 'reassign', marketingToSales)).toEqual({
+      allowed: false,
+      reason: 'other_department',
+    });
+  });
+
   it('allows explicit department hand-over pairs and blocks pairs removed from the list', () => {
     // Explicit empty hand-over list removes the default Marketing -> Sales hand-off.
     expect(decideAssignment(marketingStaff, salesStaff, 'reassign', { handOvers: [] })).toEqual({

@@ -59,6 +59,8 @@ beforeAll(async () => {
     h.caller,
     new CurrencyEnabledService(new SettingsService(h.db)),
     reasons,
+    h.roleCache,
+    h.notify,
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController, LeadLostReasonsController],
