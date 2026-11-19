@@ -247,7 +247,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
               exclude={['lost']}
               emptyText={
                 opp.stage === 'lost'
-                  ? 'A manager can reopen a lost opportunity.'
+                  ? 'No further moves from here.'
                   : 'No further manual moves from here.'
               }
             />

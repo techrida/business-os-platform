@@ -139,7 +139,11 @@ export function MarkLostDialog({
       open={open}
       onOpenChange={setOpen}
       title={noun === 'lead' ? 'Mark this lead lost?' : 'Mark this opportunity lost?'}
-      description={`${number} will move to Lost. A manager can reopen it later.`}
+      description={
+        noun === 'lead'
+          ? `${number} will move to Lost. A manager can reopen it later.`
+          : `${number} will move to Lost.`
+      }
       tone="destructive"
       locked={pending}
       closeOnOutsideClick={false}
