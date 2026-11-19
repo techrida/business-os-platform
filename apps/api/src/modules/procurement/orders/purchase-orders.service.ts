@@ -496,12 +496,20 @@ export class PurchaseOrdersService {
             };
             const amendmentId = randomUUID();
             const nextVersion = po.currentVersion + 1;
+            // The vendor is frozen by id and name with the order's number, so the approver reads them as names.
+            const [vendor] = await tx
+              .select({ legalName: vendors.legalName })
+              .from(vendors)
+              .where(and(eq(vendors.tenantId, po.tenantId), eq(vendors.id, po.vendorId)));
             const request = await this.approvals.submit(tx, {
               documentType: PO_AMENDMENT_DOCUMENT_TYPE,
               documentId: amendmentId,
               documentNumber: `${po.number} v${nextVersion}`,
               title: `Amendment of ${po.number} to version ${nextVersion}`,
               snapshot: {
+                purchaseOrderNumber: po.number,
+                vendorPartyId: po.vendorId,
+                vendorName: vendor?.legalName ?? null,
                 amendment: proposal,
                 before: {
                   version: po.currentVersion,
