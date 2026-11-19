@@ -7,8 +7,11 @@ import {
   CustomerAdvanceSchema,
   type DeallocateBody,
   InvoiceSettlementSchema,
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
   PaymentDtoSchema,
   PaymentListItemSchema,
+  type PaymentListItem,
   type PaymentStatus,
   type RejectPaymentBody,
   type ReversePaymentBody,
@@ -88,6 +91,79 @@ function withQuery(path: string, params: Record<string, string | undefined>): st
 /** `GET /v1/payments[?status=]`: a bare array of list rows. */
 export function listPayments(session: Session, status?: PaymentStatus) {
   return call(session, withQuery('/v1/payments', { status }), z.array(PaymentListItemSchema));
+}
+
+export interface PaymentPageFilter {
+  /** Several at once; values outside the contract are dropped, so a hand-edited URL never becomes a filter. */
+  status?: readonly string[] | undefined;
+  method?: readonly string[] | undefined;
+  /** Receipt number, customer name or bank reference; the API ignores one character. */
+  q?: string | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+function paymentQuery(filter: PaymentPageFilter, withStatus: boolean): URLSearchParams {
+  const query = new URLSearchParams();
+  const add = (name: string, values: readonly string[] | undefined, allowed: readonly string[]) => {
+    for (const value of new Set((values ?? []).filter((v) => allowed.includes(v)))) {
+      if (query.getAll(name).length < 20) query.append(name, value);
+    }
+  };
+  if (withStatus) add('status', filter.status, PAYMENT_STATUSES);
+  add('method', filter.method, PAYMENT_METHODS);
+  const q = filter.q?.trim();
+  if (q) query.set('q', q);
+  return query;
+}
+
+/**
+ * One page of `GET /v1/payments` with the number of all matches (the `X-Total-Count` header), for the list
+ * screen. `listPayments` stays for callers that want every row.
+ */
+export async function listPaymentsPage(
+  session: Session,
+  filter: PaymentPageFilter = {},
+): Promise<{ items: PaymentListItem[]; total: number }> {
+  const query = paymentQuery(filter, true);
+  if (filter.limit !== undefined) query.set('limit', String(Math.max(1, Math.floor(filter.limit))));
+  if (filter.offset !== undefined) {
+    query.set('offset', String(Math.max(0, Math.floor(filter.offset))));
+  }
+  const path = query.size > 0 ? `/v1/payments?${query.toString()}` : '/v1/payments';
+  const res = await apiFetch(session, path);
+  const body = await readBody(res);
+  if (!res.ok) throw new ApiError(res.status, `GET /v1/payments failed with ${res.status}`, body);
+  const parsed = z.array(PaymentListItemSchema).safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(502, 'GET /v1/payments returned an invalid body', parsed.error.issues);
+  }
+  const header = res.headers.get('x-total-count');
+  const total = header !== null && /^\d+$/.test(header) ? Number(header) : Number.NaN;
+  // A missing or malformed count would silently render a wrong pager, so it fails like a contract drift.
+  if (!Number.isSafeInteger(total)) {
+    throw new ApiError(502, 'GET /v1/payments returned no valid X-Total-Count', header);
+  }
+  return { items: parsed.data, total };
+}
+
+const PaymentsSummarySchema = z.object({
+  total: z.number().int().min(0),
+  byStatus: z.record(z.enum(PAYMENT_STATUSES), z.number().int().min(0)),
+});
+export type PaymentsSummary = z.infer<typeof PaymentsSummarySchema>;
+
+/** `GET /v1/payments/summary`: counts per status for the same search and methods, ignoring the status filter. */
+export function getPaymentsSummary(
+  session: Session,
+  filter: Pick<PaymentPageFilter, 'q' | 'method'> = {},
+) {
+  const query = paymentQuery(filter, false).toString();
+  return call(
+    session,
+    query === '' ? '/v1/payments/summary' : `/v1/payments/summary?${query}`,
+    PaymentsSummarySchema,
+  );
 }
 
 /** `GET /v1/payments/:id`. */

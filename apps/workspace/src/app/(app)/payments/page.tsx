@@ -1,4 +1,12 @@
-import type { PaymentListItem } from '@bos/contracts';
+import {
+  DEFAULT_ROWS,
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
+  type PaymentListItem,
+  type PaymentStatus,
+  pageWindow,
+  ROWS_OPTIONS,
+} from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import type { NumberSystem } from '@bos/locale';
@@ -6,34 +14,35 @@ import type { NumberSystem } from '@bos/locale';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button, LinkButton } from '@/components/ui/button';
+import { LinkButton } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Select } from '@/components/ui/field';
+import { ResultCount } from '@/components/ui/filter-bar';
 import { Page, PageHeader } from '@/components/ui/page';
-import { SearchInput } from '@/components/ui/search-input';
 import { StatCard } from '@/components/ui/stat-card';
 import { Table, Td, Th } from '@/components/ui/table';
-import { listPayments } from '@/lib/api-receivables';
+import {
+  getPaymentsSummary,
+  listPaymentsPage,
+  type PaymentPageFilter,
+  type PaymentsSummary,
+} from '@/lib/api-receivables';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
-
 import {
-  ListFooter,
-  listHref,
-  listQuery,
-  listWindow,
-  type ListQuery,
-} from '@/components/p3/list-view';
+  activeFilterLabels,
+  clearFiltersHref,
+  hrefWith,
+  type RawParams,
+  readList,
+} from '@/lib/list-params';
+
+import { ListPager } from '../invoices/_components/list-pager';
 import layout from '@/components/p3/list.module.css';
 
-import {
-  methodLabel,
-  PAYMENT_STATUS_OPTIONS,
-  parseStatusFilter,
-  paymentStatusMeta,
-} from './_lib/status';
+import { PaymentFilters } from './_components/payment-filters';
+import { methodLabel, paymentStatusMeta } from './_lib/status';
 import styles from './payments.module.css';
 
 export const metadata: Metadata = { title: 'Payments · Business OS' };
@@ -72,37 +81,63 @@ function PaymentRow({ item, numberSystem }: { item: PaymentListItem; numberSyste
   );
 }
 
+/** What the URL may carry. `readList` drops anything else, and a repeated param is several values. */
+const LIST = {
+  multi: { status: PAYMENT_STATUSES, method: PAYMENT_METHODS },
+  rows: { allowed: ROWS_OPTIONS, default: DEFAULT_ROWS },
+} as const;
+
 export default async function PaymentsPage({
   searchParams,
 }: {
   // Next 16: searchParams is a Promise.
-  searchParams: Promise<ListQuery & { status?: string | string[] }>;
+  searchParams: Promise<RawParams>;
 }) {
   const raw = await searchParams;
-  const status = parseStatusFilter(raw.status);
-  const { q, page } = listQuery(raw);
-  const filters = { status, q };
-  const here = listHref('/payments', filters, page);
+  const state = readList(raw, LIST);
+  const { q, rows, multi } = state;
+  const filter: PaymentPageFilter = { status: multi.status, method: multi.method, q };
+  const here = hrefWith('/payments', raw, { page: state.page > 1 ? state.page : undefined });
   const session = await requireStaffSession(here);
   const numberSystem = await getNumberSystem();
 
   let items: PaymentListItem[] | null = null;
+  let total = 0;
+  let window = pageWindow(state.page, rows);
+  let summary: PaymentsSummary | null = null;
   let problem: { message: string; status: number } | null = null;
   try {
-    items = await listPayments(session, status);
+    // The summary is the stat cards; a failure there hides them, not the table.
+    const counts = getPaymentsSummary(session, filter).catch(() => null);
+    const page = await listPaymentsPage(session, {
+      ...filter,
+      limit: window.limit,
+      offset: window.offset,
+    });
+    window = pageWindow(state.page, rows, page.total);
+    items = page.items;
+    total = page.total;
+    // A page past the end (rows changed) shows the last page instead of nothing.
+    if (items.length === 0 && total > 0) {
+      items = (
+        await listPaymentsPage(session, { ...filter, limit: window.limit, offset: window.offset })
+      ).items;
+    }
+    summary = await counts;
   } catch (err) {
     const f = failureOf(err);
     problem = { message: f.message, status: f.status };
   }
-
-  const needle = q.toLowerCase();
-  const matches = (items ?? []).filter((payment) =>
-    [payment.number ?? 'Not yet numbered', payment.customerName, methodLabel(payment.method)].some(
-      (text) => text.toLowerCase().includes(needle),
-    ),
-  );
-  const window = listWindow(matches, page);
   const mayRecord = hasPermission(session.roles, 'payment.record');
+  const hiding = activeFilterLabels(
+    { q, multi, single: {} },
+    {
+      status: { label: 'Status', format: (v) => paymentStatusMeta(v as PaymentStatus).label },
+      method: { label: 'Method', format: methodLabel },
+    },
+    'Search',
+  );
+  const clearHref = clearFiltersHref('/payments', raw, LIST);
 
   return (
     <Page>
@@ -118,63 +153,39 @@ export default async function PaymentsPage({
         }
       />
 
-      {items !== null && (
+      {summary !== null && (
         <section aria-label="Payment summary" className={layout.stats}>
           <StatCard
-            label={status || q ? 'Matching payments' : 'Total payments'}
+            label={hiding.length > 0 ? 'Matching payments' : 'Total payments'}
             icon="banknote"
-            value={matches.length}
+            value={summary.total}
           />
           <StatCard
             label="Awaiting verification"
             icon="list-checks"
             tone="warning"
-            value={matches.filter((item) => item.status === 'submitted').length}
+            value={summary.byStatus.submitted}
           />
           <StatCard
             label="Verified"
             icon="check-circle"
             tone="success"
-            value={matches.filter((item) => item.status === 'verified').length}
+            value={summary.byStatus.verified}
           />
           <StatCard
             label="Rejected"
             icon="x-circle"
             tone="error"
-            value={matches.filter((item) => item.status === 'rejected').length}
+            value={summary.byStatus.rejected}
           />
         </section>
       )}
-      <form method="get" action="/payments" className={layout.toolbar}>
-        <SearchInput
-          name="q"
-          aria-label="Search payments"
-          placeholder="Search receipts or customers"
-          defaultValue={q}
-          maxLength={100}
-          wrapperClassName={layout.search}
-        />
-        <label className="sr-only" htmlFor="payment-status">
-          Status
-        </label>
-        <Select
-          id="payment-status"
-          className={layout.select}
-          name="status"
-          defaultValue={status ?? ''}
-        >
-          <option value="">All statuses</option>
-          {PAYMENT_STATUS_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </Select>
-        <Button type="submit" variant="secondary">
-          Apply filter
-        </Button>
-        {status !== undefined || q ? <Link href="/payments">Show all payments</Link> : null}
-      </form>
+      <PaymentFilters
+        status={multi.status}
+        method={multi.method}
+        preserve={{ rows: rows === DEFAULT_ROWS ? undefined : String(rows) }}
+      />
+      {items !== null ? <ResultCount shown={items.length} total={total} noun="payment" /> : null}
 
       {problem !== null ? (
         <Alert
@@ -191,17 +202,10 @@ export default async function PaymentsPage({
             ? 'Payments are for the accounts and finance team. Ask an administrator if you need access.'
             : problem.message}
         </Alert>
-      ) : items !== null && matches.length === 0 ? (
-        q ? (
-          <EmptyState icon="search" title="No matching payments.">
-            Try another receipt number or customer name.
-          </EmptyState>
-        ) : status !== undefined ? (
-          <EmptyState
-            icon="banknote"
-            title={`No payments are ${paymentStatusMeta(status).label.toLowerCase()}.`}
-          >
-            Choose another status, or show all payments.
+      ) : items !== null && items.length === 0 ? (
+        hiding.length > 0 ? (
+          <EmptyState icon="search" title="No payments match these filters.">
+            Nothing matches {hiding.join('; ')}. <Link href={clearHref}>Clear filters</Link>
           </EmptyState>
         ) : (
           <EmptyState icon="banknote" title="No payments yet.">
@@ -224,17 +228,17 @@ export default async function PaymentsPage({
               </tr>
             </thead>
             <tbody>
-              {window.rows.map((item) => (
+              {items.map((item) => (
                 <PaymentRow numberSystem={numberSystem} key={item.id} item={item} />
               ))}
             </tbody>
           </Table>
-          <ListFooter
-            count={matches.length}
-            noun="payment"
-            path="/payments"
-            filters={filters}
+          <ListPager
+            pathname="/payments"
+            current={raw}
             window={window}
+            total={total}
+            label="Payment pages"
           />
         </div>
       ) : null}
