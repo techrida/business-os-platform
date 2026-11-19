@@ -197,6 +197,47 @@ describe('inbox detail page', () => {
     expect(html).toContain('Treasury desk');
     expect(html).not.toContain('name unavailable');
   });
+
+  it('titles an unnumbered debit note in words and names its submitter as History does', async () => {
+    const SUBMITTER = '77777777-7777-4777-8777-777777777777';
+    // The frozen shape invoice-approval.service.ts submits: no title, a draft reference and a content hash.
+    const debitNote = {
+      ...request,
+      documentType: 'debit_note',
+      documentNumber: 'Draft debit_note 7d92d5bf',
+      snapshot: {
+        kind: 'debit_note',
+        reference: 'Draft debit_note 7d92d5bf',
+        customerName: 'Acme Traders',
+        currency: 'NPR',
+        total: '1130.00',
+        noteReason: 'Short billed',
+        contentSha256: 'a'.repeat(64),
+      },
+      // The note's creator is the requester; someone else pressed submit.
+      actions: [{ ...request.actions[0], actorUserId: SUBMITTER }],
+      people: [
+        { userId: REQUESTER, name: 'Dev Finance Two' },
+        { userId: SUBMITTER, name: 'Dev Founder' },
+        { userId: NAMED, name: 'Mina Rai' },
+      ],
+    };
+    fetchMock.mockImplementation((input) => {
+      const path = new URL(input as URL | string).pathname;
+      if (path === `/v1/approvals/requests/${RID}`) return Promise.resolve(json(200, debitNote));
+      if (path === '/v1/approvals/inbox') return Promise.resolve(json(200, []));
+      return Promise.resolve(json(403, { error: { code: 'forbidden', message: 'Forbidden' } }));
+    });
+    const html = renderToStaticMarkup(
+      await InboxDetailPage({ params: Promise.resolve({ id: RID }) }),
+    );
+    expect(html).toMatch(/<h1[^>]*>Draft debit note<\/h1>/);
+    expect(html).not.toMatch(/debit_note|7d92d5bf|a{64}/);
+    expect(html).not.toContain('Content sha256');
+    expect(html).toMatch(
+      /Submitted <time[^>]*>[^<]*<\/time> by <span>Dev Founder<\/span> for <span>Dev Finance Two<\/span>/,
+    );
+  });
 });
 
 it('renders the denial returned by the inbox endpoint', async () => {
