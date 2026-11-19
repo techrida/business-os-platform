@@ -250,12 +250,37 @@ describe('set: row owners', () => {
     expect(pointers.get(key('customer_logo', ownerId))).toBe(next);
   });
 
-  it('takes a profile picture uploaded while acting for another entity of the tenant', async () => {
+  it.each(ROW_OWNERS)(
+    '%s: takes an image uploaded while acting for another entity of the tenant',
+    async (ownerType) => {
+      const ownerId = randomUUID();
+      pointers.set(key(ownerType, ownerId), null);
+      const next = addDoc(ownerType, ownerId, { organizationId: OTHER_ORG });
+      await service.set(staff, ownerType, ownerId, { documentId: next });
+      expect(pointers.get(key(ownerType, ownerId))).toBe(next);
+    },
+  );
+
+  it.each(ROW_OWNERS)(
+    '%s: removes the previous image even when another entity of the tenant uploaded it',
+    async (ownerType) => {
+      const ownerId = randomUUID();
+      const old = addDoc(ownerType, ownerId, { organizationId: OTHER_ORG });
+      const next = addDoc(ownerType, ownerId);
+      pointers.set(key(ownerType, ownerId), old);
+      await service.set(staff, ownerType, ownerId, { documentId: next });
+      expect(documents.removeInTransaction).toHaveBeenCalledWith(tx, scope, old);
+      expect(pointers.get(key(ownerType, ownerId))).toBe(next);
+    },
+  );
+
+  it('removes the previous logo of a customer when a user of another entity clears it', async () => {
     const ownerId = randomUUID();
-    pointers.set(key('user_avatar', ownerId), null);
-    const next = addDoc('user_avatar', ownerId, { organizationId: OTHER_ORG });
-    await service.set(staff, 'user_avatar', ownerId, { documentId: next });
-    expect(pointers.get(key('user_avatar', ownerId))).toBe(next);
+    const old = addDoc('customer_logo', ownerId, { organizationId: OTHER_ORG });
+    pointers.set(key('customer_logo', ownerId), old);
+    await service.set(staff, 'customer_logo', ownerId, { documentId: null });
+    expect(documents.removeInTransaction).toHaveBeenCalledWith(tx, scope, old);
+    expect(pointers.get(key('customer_logo', ownerId))).toBeNull();
   });
 
   it('propagates a rethrown non-404 error from removing the previous image', async () => {
@@ -309,6 +334,15 @@ describe('set: entity_logo', () => {
     expect(audit.record.mock.calls[0]?.[1]).toMatchObject({ action: 'image.removed' });
   });
 
+  it('leaves a previous company logo of another entity in place and still moves the pointer', async () => {
+    const old = addDoc('entity_logo', ORG, { organizationId: OTHER_ORG });
+    const next = addDoc('entity_logo', ORG);
+    profile.value = { ...profile.value, logoDocumentId: old };
+    await service.set(staff, 'entity_logo', ORG, { documentId: next });
+    expect(documents.removeInTransaction).not.toHaveBeenCalled();
+    expect(settings.set.mock.calls[0]?.[2]).toMatchObject({ logoDocumentId: next });
+  });
+
   it('null with nothing set writes nothing', async () => {
     await service.set(staff, 'entity_logo', ORG, { documentId: null });
     expect(settings.set).not.toHaveBeenCalled();
@@ -328,15 +362,22 @@ describe('set: refusals', () => {
     expect(audit.record).not.toHaveBeenCalled();
   });
 
-  it('is 404 for a document of another owner type, an unknown or removed one, and another entity', async () => {
+  it('is 404 for a document of another owner type, an unknown or removed one', async () => {
     const ownerId = randomUUID();
     pointers.set(key('vendor_logo', ownerId), null);
     const attachment = addDoc('vendor_bank_evidence', ownerId);
-    const otherEntity = addDoc('vendor_logo', ownerId, { organizationId: OTHER_ORG });
-    for (const documentId of [attachment, otherEntity, randomUUID()]) {
+    for (const documentId of [attachment, randomUUID()]) {
       expect(await statusOf(service.set(staff, 'vendor_logo', ownerId, { documentId }))).toBe(404);
     }
     expect(pointers.get(key('vendor_logo', ownerId))).toBeNull();
+  });
+
+  it('is 404 for a company logo uploaded in another entity: the entity logo stays its own', async () => {
+    const otherEntity = addDoc('entity_logo', ORG, { organizationId: OTHER_ORG });
+    expect(
+      await statusOf(service.set(staff, 'entity_logo', ORG, { documentId: otherEntity })),
+    ).toBe(404);
+    expect(settings.set).not.toHaveBeenCalled();
   });
 
   it('is 404 for another tenant scope (the store sees no document)', async () => {

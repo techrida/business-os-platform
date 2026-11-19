@@ -41,6 +41,7 @@ import type { Principal } from '../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type Actor, type TxScope } from '../../platform/db/tx';
 import { DocumentsService, type ImageHandle } from '../../platform/documents/documents.service';
+import { isTenantWideImageOwner } from '../../platform/documents/image-scope';
 import { SettingsService } from '../../platform/settings/settings.service';
 
 /** The pointer owners that are rows (the entity logo is a setting). */
@@ -205,8 +206,6 @@ export function readCapped(stream: Readable, cap: number): Promise<Buffer> {
 
 /** Version states that can never become a picture: the bytes were refused or carry a virus. */
 const UNUSABLE_STATUSES: ReadonlySet<string> = new Set(['rejected', 'infected']);
-/** People belong to the tenant, not one entity: a profile picture may have been uploaded in any entity. */
-const TENANT_WIDE_OWNER: ImageOwnerType = 'user_avatar';
 const Guid = z.guid();
 const OWNER_NOT_FOUND = 'Not found';
 const IMAGE_NOT_FOUND = 'Image not found';
@@ -428,7 +427,10 @@ export class ImagesService {
     return { documentId };
   }
 
-  /** The new document must be live in the tenant, of exactly this owner, in this entity (an avatar: any entity). */
+  /**
+   * The new document must be live in the tenant, of exactly this owner, in this entity (a tenant-wide image, see
+   * image-scope.ts: a profile picture, customer or vendor logo, may come from any entity of the tenant).
+   */
   private async assertUsableImage(
     tx: DbTransaction,
     scope: TxScope,
@@ -441,7 +443,7 @@ export class ImagesService {
       doc === undefined ||
       doc.ownerType !== ownerType ||
       doc.ownerId !== ownerId ||
-      (ownerType !== TENANT_WIDE_OWNER && doc.organizationId !== scope.organizationId)
+      (!isTenantWideImageOwner(ownerType) && doc.organizationId !== scope.organizationId)
     ) {
       throw new NotFoundException(IMAGE_NOT_FOUND);
     }
@@ -495,9 +497,10 @@ export class ImagesService {
   }
 
   /**
-   * Soft-removes the image the pointer held. Skipped when that document is already gone, belongs to another owner,
-   * or (a profile picture uploaded while acting for another entity) is outside this entity, where
-   * removeInTransaction cannot reach it; the pointer moves either way.
+   * Soft-removes the image the pointer held. A tenant-wide image (a profile picture, customer or vendor logo) is
+   * removed whichever entity of the tenant it was uploaded in; removeInTransaction finds it by tenant. Skipped when
+   * that document is already gone, belongs to another owner, or (an entity logo) is outside this entity; the pointer
+   * moves either way.
    */
   private async removePrevious(
     tx: DbTransaction,
@@ -511,7 +514,7 @@ export class ImagesService {
       doc === undefined ||
       doc.ownerType !== ownerType ||
       doc.ownerId !== ownerId ||
-      doc.organizationId !== scope.organizationId
+      (!isTenantWideImageOwner(ownerType) && doc.organizationId !== scope.organizationId)
     ) {
       if (doc !== undefined) {
         this.logger.warn(
