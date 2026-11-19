@@ -10,8 +10,6 @@ import {
   PERMISSIONS,
   ROLE_KEYS,
   type AccessWarning,
-  type Permission,
-  type Scope,
 } from '@bos/contracts';
 import {
   createDepartment,
@@ -595,7 +593,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
         roles: ['sales'],
         departmentId: env.salesDeptId,
         status: 'active',
-        grants: grants as ReadonlyMap<Permission, Scope>,
+        grants,
       };
       const rows = await db
         .select({ id: leads.id })
