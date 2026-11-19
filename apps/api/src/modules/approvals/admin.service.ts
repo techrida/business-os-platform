@@ -19,11 +19,13 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { withTx, type TxScope } from '../../platform/db/tx';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { APPROVALS_CLOCK, ApprovalsAudit, ApprovalsCaller, type Clock } from './ports';
 import { activeEntityStaff, pgCode } from './requests.service';
 
@@ -50,7 +52,29 @@ export class ApprovalsAdminService {
     private readonly audit: ApprovalsAudit,
     private readonly caller: ApprovalsCaller,
     @Inject(APPROVALS_CLOCK) private readonly clock: Clock,
+    // Optional so unit tests that build the service by hand keep the schema's own SLA defaults (24h/72h/founder),
+    // which equal the setting's default. ApprovalsModule imports SettingsModule, so the app always has it.
+    @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  /**
+   * A spec that leaves `sla` out gets the entity's `approvals.sla_defaults` written into it, so the version stores
+   * (and later freezes into each request) the SLA in force when it was drafted. A spec that names `sla`, even
+   * partly, is left as it is: the schema fills its missing fields exactly as before.
+   */
+  private async withSlaDefaults(input: unknown): Promise<unknown> {
+    if (
+      this.settings === undefined ||
+      input === null ||
+      typeof input !== 'object' ||
+      Array.isArray(input) ||
+      'sla' in input
+    ) {
+      return input;
+    }
+    const { scope } = this.caller.current();
+    return { ...input, sla: await this.settings.get(scope, 'approvals.sla_defaults') };
+  }
 
   /** Runs `fn` in a transaction as the calling user, and turns constraint errors into 409. */
   private async write<T>(
@@ -140,7 +164,7 @@ export class ApprovalsAdminService {
     name: string;
     spec: unknown;
   }): Promise<WorkflowVersionDto> {
-    const spec = parseSpec(b.spec);
+    const spec = parseSpec(await this.withSlaDefaults(b.spec));
     return this.write(async (tx, scope) => {
       const [def] = await tx
         .insert(workflowDefinitions)
@@ -162,7 +186,7 @@ export class ApprovalsAdminService {
 
   /** The next version number as a draft. Requests already submitted keep the version they had. */
   async addVersion(key: string, specInput: unknown): Promise<WorkflowVersionDto> {
-    const spec = parseSpec(specInput);
+    const spec = parseSpec(await this.withSlaDefaults(specInput));
     return this.write(async (tx, scope) => {
       const def = await this.definition(tx, scope, key);
       if (spec.documentType !== def.documentType) {

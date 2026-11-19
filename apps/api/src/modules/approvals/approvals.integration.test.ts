@@ -33,6 +33,7 @@ import type { Principal } from '../../platform/authz/principal';
 import type { Db } from '../../platform/db/db.module';
 import { systemActor, withTx } from '../../platform/db/tx';
 import { buildLink, renderEmail } from '../../platform/notify/templates';
+import { SettingsService } from '../../platform/settings/settings.service';
 import { SqlUsersStore } from '../../platform/users/users.store';
 import { ApprovalsAdminService } from './admin.service';
 import { canonicalSha256 } from '../../platform/hashing/canonical-json';
@@ -1580,5 +1581,76 @@ describe('request eligibility before disclosure or locking', () => {
     await expect(service.act(second.requestId, action, key)).rejects.toMatchObject({ status: 409 });
     expect((await service.get(second.requestId)).status).toBe('pending');
     expect(await countActions(second.requestId, 'approve')).toBe(0);
+  });
+});
+
+describe('approvals.sla_defaults setting (a spec that leaves sla out)', () => {
+  // Own document types, so the test_memo versions other tests publish do not change these routes.
+  let settings: SettingsService;
+  let withSettings: ApprovalsAdminService;
+  const setSla = (value: unknown) =>
+    withTx(db, scope, systemActor('test'), (tx) =>
+      settings.set(tx, 'approvals.sla_defaults', value),
+    );
+  /** Creates and publishes `documentType` through the settings-aware admin service, then submits once. */
+  const publishAndSubmit = async (documentType: string, sla?: object) => {
+    me = U.founder;
+    await withSettings.createWorkflow({
+      key: documentType,
+      name: documentType,
+      spec: { documentType, steps: seedSpec.steps, ...(sla === undefined ? {} : { sla }) },
+    });
+    await withSettings.publish(documentType, 1);
+    service.registerSubject({ documentType, onDecided });
+    const { requestId } = await submit({ documentType });
+    const steps = await db
+      .select()
+      .from(approvalSteps)
+      .where(eq(approvalSteps.requestId, requestId));
+    const first = steps.find((s) => s.seq === 1)!;
+    const stored = (await withSettings.listWorkflows()).find((w) => w.key === documentType)!;
+    return {
+      remindAt: first.remindAt?.toISOString(),
+      escalateAt: first.escalateAt?.toISOString(),
+      sla: WorkflowSpecSchema.parse(stored.versions[0]!.spec).sla,
+    };
+  };
+
+  beforeAll(() => {
+    settings = new SettingsService(db);
+    withSettings = new ApprovalsAdminService(db, audit, caller, clock, settings);
+  });
+
+  it('with nothing set, uses the 24h/72h/founder default exactly as before the setting existed', async () => {
+    expect(await publishAndSubmit('sla_unset')).toEqual({
+      remindAt: '2026-11-09T04:00:00.000Z',
+      escalateAt: '2026-11-11T04:00:00.000Z',
+      sla: { remindAfterHours: 24, escalateAfterHours: 72, escalateTo: { role: 'founder' } },
+    });
+  });
+
+  it('a changed setting drives the reminder, escalation and escalation role; an explicit sla still wins', async () => {
+    try {
+      await setSla({
+        remindAfterHours: 4,
+        escalateAfterHours: 8,
+        escalateTo: { role: 'management' },
+      });
+      expect(await publishAndSubmit('sla_from_setting')).toEqual({
+        remindAt: '2026-11-08T08:00:00.000Z',
+        escalateAt: '2026-11-08T12:00:00.000Z',
+        sla: { remindAfterHours: 4, escalateAfterHours: 8, escalateTo: { role: 'management' } },
+      });
+      // A spec that names sla (even partly) keeps today's behaviour: the schema fills the rest, not the setting.
+      expect(
+        await publishAndSubmit('sla_explicit', { remindAfterHours: 48, escalateAfterHours: 96 }),
+      ).toEqual({
+        remindAt: '2026-11-10T04:00:00.000Z',
+        escalateAt: '2026-11-12T04:00:00.000Z',
+        sla: { remindAfterHours: 48, escalateAfterHours: 96, escalateTo: { role: 'founder' } },
+      });
+    } finally {
+      await setSla({});
+    }
   });
 });
