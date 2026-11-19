@@ -4,9 +4,11 @@
 // is the same 404 as a missing one, never a 400.
 //   GET /v1/images/:documentId               -> the bytes (inline, never sniffed), or 304 for a matching If-None-Match
 //   PUT /v1/images/:ownerType/:ownerId       -> {documentId} after making that image current (null removes it)
+//   POST /v1/images/:ownerType/:ownerId      -> 200 {documentId}: the raw body is the image, stored, queued for scanning and made
+//                                               current in one request (Content-Type image/png|jpeg|webp, x-file-name)
 import { pipeline } from 'node:stream/promises';
 
-import { Body, Controller, Get, Param, Put, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Put, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { AnyAuthenticated } from '../../platform/authz/decorators';
@@ -20,6 +22,12 @@ export const IMAGE_CACHE_CONTROL = 'private, max-age=86400, immutable';
 function caller(): ImageCaller {
   const { scope, actor } = requestTx();
   return { scope, actor, principal: currentPrincipal() };
+}
+
+/** A header as one string. Node joins a repeated custom header into one string, so the array branch is only typing. */
+function singleHeader(req: Request, name: string): string | undefined {
+  const value = req.headers[name];
+  return typeof value === 'string' ? value : undefined;
 }
 
 /** The first If-None-Match header; Node joins repeated ones, so a string array never reaches here in practice. */
@@ -70,5 +78,31 @@ export class ImagesController {
     @Body() body: unknown,
   ): Promise<{ documentId: string | null }> {
     return this.images.set(caller(), ownerType, ownerId, body);
+  }
+
+  /**
+   * Raw upload: the request body IS the image, so the handler hands the request stream to the service and nothing
+   * buffers it here. The global JSON and urlencoded parsers only act on those two content types, so an image/* body
+   * reaches the service unread; a JSON or form body is refused by the service's type check (415) before it reads.
+   * See ImagesService.upload for the check order and every refusal.
+   */
+  @Post(':ownerType/:ownerId')
+  @HttpCode(200)
+  upload(
+    @Param('ownerType') ownerType: string,
+    @Param('ownerId') ownerId: string,
+    @Req() req: Request,
+  ): Promise<{ documentId: string }> {
+    return this.images.upload(
+      ownerType,
+      ownerId,
+      {
+        contentType: singleHeader(req, 'content-type'),
+        contentLength: singleHeader(req, 'content-length'),
+        fileNameHeader: singleHeader(req, 'x-file-name'),
+        stream: req,
+      },
+      caller(),
+    );
   }
 }
