@@ -98,6 +98,24 @@ describe('buildMemoLetterhead', () => {
     ]);
   });
 
+  it('freezes an address whose city and district are each at their 100-character cap', async () => {
+    const city = 'C'.repeat(100);
+    const district = 'D'.repeat(100);
+    const letterhead = await buildMemoLetterhead(
+      fakeSettings(
+        settingsValues({
+          'entity.address': { ...address, line2: 'L'.repeat(200), city, district },
+        }),
+      ),
+      scope,
+      resolvesTo(PNG),
+      'freeze',
+      quietLog(),
+    );
+    expect(letterhead?.addressLines[2]).toBe(`${city}, ${district}`);
+    expect(letterhead?.addressLines[2]).toHaveLength(202);
+  });
+
   it('has no address lines when no address is set, and the default colour when no style is', async () => {
     const letterhead = await buildMemoLetterhead(
       fakeSettings(settingsValues({ 'entity.address': null, 'document.style': undefined })),
