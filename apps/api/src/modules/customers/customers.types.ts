@@ -3,7 +3,9 @@
 // "inputs are validated at the edge" and "no double effects" (Idempotency-Key on every create).
 import {
   CUSTOMER_LIST_MAX_LIMIT,
+  type CustomerCan,
   type CustomerDto,
+  type CustomerVerificationPresence,
   type PartyAccountDto,
   type PersonName,
 } from '@bos/contracts';
@@ -45,9 +47,15 @@ export interface CustomerList {
 
 /**
  * GET /v1/customers/:id: the customer plus, for staff only, its terms with the legal entities the caller can act
- * for and the name of its account owner (`people`), so the page needs no admin directory to label the owner.
+ * for and the name of its account owner (`people`), so the page needs no admin directory to label the owner;
+ * what the caller may do with this record (`can`), and whether it has a verification case (`verification`).
  */
-export type CustomerDetailDto = CustomerDto & { accounts?: PartyAccountDto[]; people?: PersonName[] };
+export type CustomerDetailDto = CustomerDto & {
+  accounts?: PartyAccountDto[];
+  people?: PersonName[];
+  can?: CustomerCan;
+  verification?: CustomerVerificationPresence;
+};
 
 /** Printable ASCII, 1 to 200 characters (a UUID from the client is the expected value). Same rule as approvals. */
 const IdempotencyKeySchema = z.string().regex(/^[\x21-\x7e]{1,200}$/);
