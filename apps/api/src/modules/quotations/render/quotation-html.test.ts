@@ -177,9 +177,9 @@ describe('renderQuotationHtml', () => {
         { label: 'Balance', percent: '33.3334', amount: '333.34', dueDescription: '2026-11-23' },
       ],
     });
-    expect(html).toContain('<td>Advance</td><td>33.3333%</td><td class="muted">On order</td>');
-    expect(html).toContain('<td>Delivery</td><td>33.3333%</td><td class="muted">19 Nov 2026</td>');
-    expect(html).toContain('<td>Balance</td><td>33.3334%</td><td class="muted">23 Nov 2026</td>');
+    expect(html).toContain('<td>Advance</td><td>33.3333%</td><td class="num">USD 333.33</td><td class="muted">On order</td>');
+    expect(html).toContain('<td>Delivery</td><td>33.3333%</td><td class="num">USD 333.33</td><td class="muted">19 Nov 2026</td>');
+    expect(html).toContain('<td>Balance</td><td>33.3334%</td><td class="num">USD 333.34</td><td class="muted">23 Nov 2026</td>');
   });
 
   it('shows the BS date next to the date, and leaves it out on request', () => {
