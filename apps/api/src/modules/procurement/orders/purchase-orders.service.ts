@@ -35,6 +35,7 @@ import { searchPage } from '../../../platform/list';
 import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
 import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
+import { purchaseRequestRef } from '../requests/purchase-requests.service';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
@@ -118,8 +119,8 @@ export interface PurchaseOrderDto {
   proposedLines?: PurchaseOrderLineDto[];
   /**
    * What the caller may do from this order outside the PO routes, from the caller's live grants (detail only):
-   * `enterBill` is the bill entry route's own check (an active staff caller holding payables.bill.enter) on an
-   * order a bill can be entered against (BILLABLE_PO_STATUSES).
+   * `enterBill` is payables.bill.enter on the order's purchase request (the check the order's progress read makes
+   * for the bill form) on an order a bill can be entered against (BILLABLE_PO_STATUSES).
    */
   can?: { enterBill: boolean };
 }
@@ -188,11 +189,19 @@ const toDto = (po: PoRow, lines: readonly PoLineRow[]): PurchaseOrderDto => ({
   lines: lines.map(toLineDto),
 });
 
-/** May `p` enter a bill against an order in `status`? Mirrors POST /v1/payables/bills: the grant alone decides. */
-export function mayEnterBill(p: Principal, status: PoStatus): boolean {
+/**
+ * May `p` enter a bill against an order in `status` raised from `request`? payables.bill.enter on the purchase
+ * request, the record check the order's progress read (the bill form's source) and the bill picker make, so an `own`
+ * grant offers Enter bill only on orders from the caller's own requests.
+ */
+export function mayEnterBill(
+  p: Principal,
+  status: PoStatus,
+  request: Parameters<typeof purchaseRequestRef>[0],
+): boolean {
   return (
     p.orgKind === 'staff' &&
-    can(p, 'payables.bill.enter').allowed &&
+    can(p, 'payables.bill.enter', purchaseRequestRef(request)).allowed &&
     (BILLABLE_PO_STATUSES as readonly string[]).includes(status)
   );
 }
@@ -323,10 +332,28 @@ export class PurchaseOrdersService {
   async get(id: string): Promise<PurchaseOrderDto> {
     const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
+      // The request's owner and department decide can.enterBill only; neither is returned.
       const [row] = await tx
-        .select({ po: purchaseOrders, vendorName: vendors.legalName })
+        .select({
+          po: purchaseOrders,
+          vendorName: vendors.legalName,
+          request: {
+            tenantId: purchaseRequests.tenantId,
+            organizationId: purchaseRequests.organizationId,
+            requesterUserId: purchaseRequests.requesterUserId,
+            departmentId: purchaseRequests.departmentId,
+          },
+        })
         .from(purchaseOrders)
         .innerJoin(vendors, vendorOf(purchaseOrders))
+        .innerJoin(
+          purchaseRequests,
+          and(
+            eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
+            eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
+            eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
+          ),
+        )
         .where(scoped(scope).where(purchaseOrders, eq(purchaseOrders.id, id)));
       if (row === undefined) throw notFound();
       const lines = await linesOf(tx, scope, id, false);
@@ -346,7 +373,7 @@ export class PurchaseOrdersService {
         ...toDto(row.po, lines),
         vendorName: row.vendorName,
         ...(proposed !== undefined ? { proposedLines: proposed } : {}),
-        can: { enterBill: mayEnterBill(principal, row.po.status) },
+        can: { enterBill: mayEnterBill(principal, row.po.status, row.request) },
       };
     });
   }

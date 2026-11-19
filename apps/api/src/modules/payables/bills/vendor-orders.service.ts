@@ -2,15 +2,18 @@
 // the payment request form name a PO; without a picker the person had to paste a raw id, and the accountant and
 // Finance hold no purchase order read. Each picker sits under the grant of the form it serves (payables.bill.enter,
 // payables.payment.request), never procurement's, and returns only what the picker shows: id, number, status and
-// the vendor it belongs to. Scoped in SQL to the acting entity (scoped()) and, when asked, to one vendor.
+// the vendor it belongs to. Scoped in SQL to the acting entity (scoped()) and, when asked, to one vendor. The bill
+// picker also applies the record check the order's progress read makes for payables.bill.enter (on the purchase
+// request the order was raised from), so it never offers an order the bill form then cannot load.
 import type { PoStatus } from '@bos/contracts';
-import { purchaseOrders, scoped } from '@bos/db';
+import { purchaseOrders, purchaseRequests, scoped } from '@bos/db';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { DB, type Db } from '../../../platform/db/db.module';
 import { withTx } from '../../../platform/db/tx';
+import { purchaseRequestScopeWhere } from '../../procurement/requests/purchase-requests.service';
 import { BILLABLE_PO_STATUSES } from './vendor-bill.rules';
 import { VendorBillsCaller } from './vendor-bills.caller';
 
@@ -49,9 +52,18 @@ export class VendorOrdersService {
     private readonly caller: VendorBillsCaller,
   ) {}
 
-  /** The entity's POs a bill can be entered against (BILLABLE_PO_STATUSES, the statuses create() accepts). */
+  /**
+   * The entity's POs a bill can be entered against (BILLABLE_PO_STATUSES, the statuses create() accepts) whose
+   * purchase request the caller's payables.bill.enter reaches: an `own` grant lists only orders raised from the
+   * caller's own requests. The same predicate as the progress read, in SQL before the limit.
+   */
   billable(query: ListVendorOrdersQuery): Promise<VendorOrderOptionDto[]> {
-    return this.options(query, BILLABLE_PO_STATUSES);
+    const { principal } = this.caller.current();
+    return this.options(
+      query,
+      BILLABLE_PO_STATUSES,
+      purchaseRequestScopeWhere(principal, 'payables.bill.enter'),
+    );
   }
 
   /** The entity's POs a payment request can name. */
@@ -59,9 +71,14 @@ export class VendorOrdersService {
     return this.options(query, PAYMENT_REQUEST_PO_STATUSES);
   }
 
+  /**
+   * Every order has its purchase request (a NOT NULL foreign key), so the join drops no row; `requestWhere`, when
+   * given, is a predicate on that request. Only the picker columns are selected.
+   */
   private options(
     query: ListVendorOrdersQuery,
     statuses: readonly PoStatus[],
+    requestWhere?: SQL,
   ): Promise<VendorOrderOptionDto[]> {
     const { scope, actor } = this.caller.current();
     return withTx(this.db, scope, actor, (tx) =>
@@ -73,6 +90,14 @@ export class VendorOrdersService {
           vendorId: purchaseOrders.vendorId,
         })
         .from(purchaseOrders)
+        .innerJoin(
+          purchaseRequests,
+          and(
+            eq(purchaseRequests.tenantId, purchaseOrders.tenantId),
+            eq(purchaseRequests.organizationId, purchaseOrders.organizationId),
+            eq(purchaseRequests.id, purchaseOrders.purchaseRequestId),
+          ),
+        )
         .where(
           scoped(scope).where(
             purchaseOrders,
@@ -81,6 +106,7 @@ export class VendorOrdersService {
               query.vendorId === undefined
                 ? undefined
                 : eq(purchaseOrders.vendorId, query.vendorId),
+              requestWhere,
             ),
           ),
         )
