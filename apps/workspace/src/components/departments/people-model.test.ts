@@ -58,7 +58,11 @@ const levels = (state: ReturnType<typeof initialPeopleState>) =>
 describe('one head, or none', () => {
   it('makes the previous head a manager when another member is set to Head', () => {
     const next = setLevel(initial, BIBEK, 'head');
-    expect(levels(next)).toEqual({ 'Asha K.': 'manager', 'Bibek R.': 'head', 'Chandra T.': 'staff' });
+    expect(levels(next)).toEqual({
+      'Asha K.': 'manager',
+      'Bibek R.': 'head',
+      'Chandra T.': 'staff',
+    });
     expect(headOf(next)?.userId).toBe(BIBEK);
   });
 
@@ -145,7 +149,9 @@ describe('buildDepartmentChanges', () => {
 
   it('orders leaving, joining, head, levels and job titles', () => {
     let staged = movePeople(initial, [CHANDRA], { id: MARKETING, name: 'Marketing' });
-    staged = addPeople(staged, [{ id: DIPA, name: 'Dipa S.', email: null, roles: [], department: null }]);
+    staged = addPeople(staged, [
+      { id: DIPA, name: 'Dipa S.', email: null, roles: [], department: null },
+    ]);
     staged = setHead(staged, BIBEK);
     staged = setLevel(staged, ASHA, 'staff');
     staged = setJobTitle(staged, BIBEK, 'Head of sales');

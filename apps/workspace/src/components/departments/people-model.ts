@@ -192,7 +192,10 @@ export function movePeople(
   };
 }
 
-/** Undoes a staged remove or move. A returning head who meanwhile has a successor comes back a manager. */
+/**
+ * Undoes a staged remove or move. A returning head who meanwhile has a successor comes back a
+ * manager.
+ */
 export function keepPerson(state: PeopleState, userId: string): PeopleState {
   const head = headOf(state);
   return update(state, userId, (person) => ({
@@ -203,7 +206,10 @@ export function keepPerson(state: PeopleState, userId: string): PeopleState {
   }));
 }
 
-/** Sets the level of several people at once. Head is a one-person choice, so it is not offered in bulk. */
+/**
+ * Sets the level of several people at once. Head is a one-person choice, so it is not offered in
+ * bulk.
+ */
 export function setLevelMany(
   state: PeopleState,
   userIds: readonly string[],
@@ -284,7 +290,12 @@ export function buildDepartmentChanges(
   for (const person of staged.people) {
     if (person.origin !== 'member' || !staying(person) || person.level === 'head') continue;
     if (person.level !== levelAfterHeadStep(person)) {
-      changes.push({ kind: 'memberLevel', departmentId, userId: person.userId, level: person.level });
+      changes.push({
+        kind: 'memberLevel',
+        departmentId,
+        userId: person.userId,
+        level: person.level,
+      });
     }
   }
 
@@ -314,11 +325,13 @@ export function recordNotices(state: PeopleState): string[] {
   for (const person of state.people) {
     if (person.origin === 'added' && person.fromDepartment !== null) {
       notices.push(
-        `Records ${person.name} owns stay with ${person.fromDepartment.name}. Reassign them if ${here} should have them.`,
+        `Records ${person.name} owns stay with ${person.fromDepartment.name}. ` +
+          `Reassign them if ${here} should have them.`,
       );
     } else if (person.leaving?.kind === 'move') {
       notices.push(
-        `Records ${person.name} owns stay with ${here}. Reassign them if ${person.leaving.to.name} should have them.`,
+        `Records ${person.name} owns stay with ${here}. ` +
+          `Reassign them if ${person.leaving.to.name} should have them.`,
       );
     } else if (person.leaving?.kind === 'remove') {
       notices.push(`Records ${person.name} owns stay with them and stay under ${here}.`);

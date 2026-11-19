@@ -111,7 +111,10 @@ export default async function UnassignedPeoplePage({
     <Page className={admin.page}>
       <BackToSettings />
       <Breadcrumb
-        items={[{ label: 'Departments', href: '/settings/departments' }, { label: 'No department' }]}
+        items={[
+          { label: 'Departments', href: '/settings/departments' },
+          { label: 'No department' },
+        ]}
       />
       <PageHeader
         title="No department"

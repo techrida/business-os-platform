@@ -381,7 +381,9 @@ export function PeopleCard({
                             variant="tertiary"
                             size="small"
                             aria-label={`Keep ${person.name} in ${name}`}
-                            onClick={() => setStaged((current) => keepPerson(current, person.userId))}
+                            onClick={() =>
+                              setStaged((current) => keepPerson(current, person.userId))
+                            }
                           >
                             Keep
                           </Button>

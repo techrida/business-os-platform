@@ -30,7 +30,7 @@ function StatusFilter({ statuses }: { statuses: readonly string[] }) {
   );
 }
 
-/** Instant search and Status filter for the department list; the URL is the state (UIP-DATA-003). */
+/** Instant search and Status filter for the department list; the URL holds the state. */
 export function DepartmentFilters({ statuses }: { statuses: readonly string[] }) {
   return (
     <FilterBar search={{ label: 'Search departments', placeholder: 'Search by name' }}>

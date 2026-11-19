@@ -58,7 +58,7 @@ const detail = {
   revision: 'rev-1',
 };
 
-/** Answers the department detail with `found` (or 404), the department list and an empty users list. */
+/** Answers the detail with `found` (or 404), the department list and an empty users list. */
 function stubApi(found: unknown) {
   const seen: URL[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
@@ -106,7 +106,9 @@ it('renders the not-found page for an unknown or malformed department id', async
 
 it('shows a retired department as read only with Restore', async () => {
   stubApi({ ...detail, status: 'retired', retiredAt: '2026-11-01T00:00:00.000Z' });
-  const html = renderToStaticMarkup(await DepartmentPage({ params: Promise.resolve({ id: SALES }) }));
+  const html = renderToStaticMarkup(
+    await DepartmentPage({ params: Promise.resolve({ id: SALES }) }),
+  );
   expect(html).toContain('Sales is retired. Its past records stay under Sales.');
   expect(html).toContain('aria-label="Restore Sales"');
   expect(html).toContain('Department head: ');
