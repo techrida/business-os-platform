@@ -7,7 +7,7 @@ import type {
   AccessWarningCode,
 } from '@bos/contracts';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/dialog';
 
@@ -74,6 +74,10 @@ export function AreaCards({ catalogue, canEdit, departments, people, actions }: 
   const [pending, setPending] = useState<Pending | null>(null);
   const [review, setReview] = useState<ReviewTarget | null>(null);
   const [staleKey, setStaleKey] = useState<AccessSettingAreaKey | null>(null);
+  // The discard question is a controlled dialog with no trigger, so it cannot return focus by
+  // itself: remember what asked and focus it again when the question closes. After Discard that
+  // is the toggle of the card that just opened; after Keep editing, the control that asked.
+  const askedFrom = useRef<HTMLElement | null>(null);
 
   const areaOf = (key: AccessSettingAreaKey | null) =>
     key === null ? undefined : catalogue.areas.find((area) => area.key === key);
@@ -90,8 +94,21 @@ export function AreaCards({ catalogue, canEdit, departments, people, actions }: 
     setStaleKey(null);
   }
 
+  function ask(next: Pending) {
+    const active = document.activeElement;
+    askedFrom.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    setPending(next);
+  }
+
+  useEffect(() => {
+    if (pending !== null) return;
+    const target = askedFrom.current;
+    askedFrom.current = null;
+    if (target?.isConnected) target.focus();
+  }, [pending]);
+
   function requestOpen(key: AccessSettingAreaKey | null) {
-    if (dirty && key !== openKey) setPending({ kind: 'open', key });
+    if (dirty && key !== openKey) ask({ kind: 'open', key });
     else switchTo(key);
   }
 
@@ -124,6 +141,7 @@ export function AreaCards({ catalogue, canEdit, departments, people, actions }: 
       }
       event.preventDefault();
       event.stopPropagation();
+      askedFrom.current = link;
       setPending({ kind: 'leave', href: `${url.pathname}${url.search}${url.hash}` });
     };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
