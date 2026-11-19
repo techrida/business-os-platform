@@ -2,7 +2,7 @@
 // and their members, and delegations. Serves the NFR "approvals are auditable": a spec is edited only
 // as a draft, publishing freezes it (the DB trigger refuses later edits), and a new version affects
 // only requests submitted after it is published, because each request keeps its own version id.
-import { WorkflowSpecSchema, type WorkflowSpec } from '@bos/contracts';
+import { WorkflowWriteSpecSchema, type WorkflowSpec } from '@bos/contracts';
 import {
   approvalGroupMembers,
   approvalGroups,
@@ -478,7 +478,7 @@ export class ApprovalsAdminService {
 }
 
 function parseSpec(input: unknown): WorkflowSpec {
-  const parsed = WorkflowSpecSchema.safeParse(input);
+  const parsed = WorkflowWriteSpecSchema.safeParse(input);
   if (!parsed.success) {
     throw new BadRequestException(
       `Invalid workflow spec: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
