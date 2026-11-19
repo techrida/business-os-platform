@@ -43,6 +43,8 @@ const record = {
   cancelReason: null,
   version: 1,
   lines: [{ id, lineNo: 1, openItemId: id, amount: '111500.00' }],
+  vendorName: 'Himal Supplies',
+  can: { readVendor: true },
 };
 
 beforeEach(() => {
