@@ -101,6 +101,25 @@ describe('payment request actions', () => {
     expect(out.error).toMatch(/amount|claim|open/i);
   });
 
+  it('names a currency the company switched off (422) and rotates the key', async () => {
+    // The body the API sends today: its error filter does not pass CURRENCY_NOT_ENABLED yet.
+    api.createPaymentRequest.mockRejectedValueOnce(
+      new ApiError(422, 'refused', {
+        error: {
+          code: 'bad_request',
+          message: 'Currency INR is not enabled for this company',
+          correlationId: 'correlation-1234',
+        },
+      }),
+    );
+    const out = await createPaymentRequestAction(prev, form({ currency: 'INR' }));
+    // Fails on the old code: every unnamed 422 read "The platform did not accept this request".
+    expect(out.error).toBe(
+      'INR is switched off for your company. Choose another currency, or ask an administrator to switch it on in Settings.',
+    );
+    expect(out.key).not.toBe(key);
+  });
+
   it('requires a cancellation reason and sends it trimmed with the key', async () => {
     expect(
       (await cancelPaymentRequestAction(prev, form({ reason: ' ' }))).errors?.['reason'],
