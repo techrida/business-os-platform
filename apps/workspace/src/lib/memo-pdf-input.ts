@@ -32,7 +32,7 @@ export const MemoPdfInputSchema = z.object({
   recommenders: z.array(PersonSchema).max(MEMO_MAX_RECOMMENDERS),
   approvedBy: PersonSchema,
   /**
-   * The band at the top of page 1: address lines, logo and brand colour. Bounded by the contract (4 lines of 200,
+   * The band at the top of page 1: address lines, logo and brand colour. Bounded by the contract (4 lines of 400,
    * a PNG/JPEG/WebP data URL of at most 720,000 characters). Absent on a memo stored before letterheads.
    */
   letterhead: LetterheadSchema.optional(),
