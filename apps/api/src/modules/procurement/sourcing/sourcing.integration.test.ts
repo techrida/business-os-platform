@@ -600,6 +600,23 @@ describe('Founder as requester (AD8, done check 5)', () => {
 });
 
 describe('approval creates the draft PO', () => {
+  it('names the recommended vendor of the commitment for its approver (I-31)', async () => {
+    const c = await committed(['90000.00', '95000.00', '99000.00']);
+    await c.commit();
+    const [request] = await requestsOf(c.rfqId);
+    const { rows } = await exec(
+      scopeA,
+      sql`SELECT v.id, v.legal_name FROM app.vendor_quotations q
+            JOIN app.vendors v ON v.tenant_id = q.tenant_id AND v.id = q.vendor_id
+           WHERE q.id = ${c.quoteIds[0]!}`,
+    );
+    const v = rows[0] as { id: string; legal_name: string };
+    as(U.acct, 'accountant');
+    const dto = await approvals.get(request!.id);
+    expect(dto.snapshot).toMatchObject({ commitment: { vendorId: v.id } });
+    expect(dto.references).toEqual([{ id: v.id, name: v.legal_name }]);
+  });
+
   it('writes a draft PO with the approved total, its NPR snapshot and the band', async () => {
     const c = await committed(['90000.00', '95000.00', '99000.00']);
     await c.commit();

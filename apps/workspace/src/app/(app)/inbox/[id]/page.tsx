@@ -183,7 +183,10 @@ export default async function InboxDetailPage({ params }: { params: Promise<{ id
   const person = (id: string) => (
     <span>{names.get(id.toLowerCase()) ?? 'Person name unavailable'}</span>
   );
-  const rows = snapshotEntries(snapshot, names).filter(
+  // The records the snapshot refers to by id (a vendor, an order), named by the API for this reader.
+  const references = new Map(names);
+  for (const ref of request.references ?? []) references.set(ref.id.toLowerCase(), ref.name);
+  const rows = snapshotEntries(snapshot, references).filter(
     (row) =>
       (!memoTemplate.success || row.key !== 'template') && (!isMemo || row.key !== 'attachments'),
   );

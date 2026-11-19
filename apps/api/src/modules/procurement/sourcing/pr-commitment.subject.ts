@@ -17,11 +17,12 @@ import {
 import { ConflictException, Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
-import type { DbTransaction } from '../../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext } from '../../../platform/documents/tx-context';
 import type { NumberingService } from '../../../platform/settings/numbering.service';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { idAt, procurementReferenceNames } from '../reference-names';
 import { PO_SERIES, PR_COMMITMENT_DOCUMENT_TYPE, poBandOf } from './sourcing.rules';
 
 type Outcome = 'approved' | 'returned' | 'rejected';
@@ -94,6 +95,13 @@ export class PrCommitmentSubject implements ApprovalSubject {
     private readonly numbering: NumberingService,
     private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  /** The recommended vendor of the commitment, by name. */
+  referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
+    return procurementReferenceNames(q, scope, {
+      vendorIds: [idAt(snapshot, 'commitment', 'vendorId')],
+    });
+  }
 
   async onDecided(tx: DbTransaction, rfqId: string, outcome: Outcome): Promise<void> {
     const ctx = await readTxContext(tx);

@@ -30,11 +30,12 @@ import { ConflictException, Logger } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
-import type { DbTransaction } from '../../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { Actor, TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext, type TxContext } from '../../../platform/documents/tx-context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
+import { idAt, procurementReferenceNames } from '../../procurement/reference-names';
 import {
   BILL_AUDIT_ENTITY,
   MATCH_EXCEPTION_AUDIT_ENTITY,
@@ -66,6 +67,14 @@ export class VendorBillSubject implements ApprovalSubject {
     private readonly clock: () => Date = () => new Date(),
     private readonly ledger: LedgerService = new LedgerService(),
   ) {}
+
+  /** The vendor and the order the submitted bill names, by name and number. */
+  referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
+    return procurementReferenceNames(q, scope, {
+      vendorIds: [idAt(snapshot, 'vendorPartyId')],
+      purchaseOrderIds: [idAt(snapshot, 'purchaseOrderId')],
+    });
+  }
 
   async onDecided(tx: DbTransaction, billId: string, outcome: Outcome): Promise<void> {
     const ctx = await readTxContext(tx);
@@ -253,6 +262,11 @@ export class MatchExceptionSubject implements ApprovalSubject {
     private readonly audit: AuditService,
     private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  /** The bill the exception is about, by its number. */
+  referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
+    return procurementReferenceNames(q, scope, { vendorBillIds: [idAt(snapshot, 'vendorBillId')] });
+  }
 
   async onDecided(tx: DbTransaction, exceptionId: string, outcome: Outcome): Promise<void> {
     const ctx = await readTxContext(tx);

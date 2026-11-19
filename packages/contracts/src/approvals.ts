@@ -228,6 +228,13 @@ export const ApprovalActionKindSchema = z.enum([
 export const PersonNameSchema = z.object({ userId: z.string(), name: z.string().min(1) });
 export type PersonName = z.infer<typeof PersonNameSchema>;
 
+/**
+ * A record the frozen snapshot of an approval refers to by id (a vendor, a purchase order, a bill), by the name or
+ * number its own page shows. Sent with the request so an approver needs no directory read to label it.
+ */
+export const ReferenceNameSchema = z.object({ id: z.string(), name: z.string().min(1) });
+export type ReferenceName = z.infer<typeof ReferenceNameSchema>;
+
 export const ApprovalStepDtoSchema = z.object({
   seq: z.number().int().min(1),
   kind: StepKindSchema,
@@ -272,6 +279,8 @@ export const ApprovalRequestDtoSchema = z.object({
   steps: z.array(ApprovalStepDtoSchema),
   actions: z.array(ApprovalActionDtoSchema),
   people: z.array(PersonNameSchema).optional(),
+  /** Names of the records the snapshot refers to by id, when its document type can name them. */
+  references: z.array(ReferenceNameSchema).optional(),
   submittedAt: isoDateTime,
   decidedAt: isoDateTime.nullable(),
 });
