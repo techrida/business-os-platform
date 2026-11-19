@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Dec, formatMoney } from './money.js';
+import { DEFAULT_NUMBER_SYSTEM, Dec, formatMoney, groupDigits } from './money.js';
 
 describe('Dec', () => {
   it('adds without float drift', () => {
@@ -57,5 +57,113 @@ describe('formatMoney', () => {
   it('rejects input that is not a finite decimal', () => {
     expect(() => formatMoney('abc', 'NPR')).toThrow();
     expect(() => formatMoney('Infinity', 'NPR')).toThrow(RangeError);
+  });
+});
+
+describe('DEFAULT_NUMBER_SYSTEM', () => {
+  it('is south_asian', () => {
+    expect(DEFAULT_NUMBER_SYSTEM).toBe('south_asian');
+  });
+});
+
+describe('groupDigits', () => {
+  it.each([
+    ['0', '0', '0'],
+    ['7', '7', '7'],
+    ['999', '999', '999'],
+    ['1000', '1,000', '1,000'],
+    ['12345', '12,345', '12,345'],
+    ['99999', '99,999', '99,999'],
+    ['100000', '1,00,000', '100,000'],
+    ['2018180', '20,18,180', '2,018,180'],
+    ['9999999', '99,99,999', '9,999,999'],
+    ['10000000', '1,00,00,000', '10,000,000'],
+    ['1000000000', '1,00,00,00,000', '1,000,000,000'],
+    ['98765432109876543', '98,76,54,32,10,98,76,543', '98,765,432,109,876,543'],
+  ])('groups %s', (digits, southAsian, international) => {
+    expect(groupDigits(digits, 'south_asian')).toBe(southAsian);
+    expect(groupDigits(digits, 'international')).toBe(international);
+  });
+
+  it('rejects anything but digits', () => {
+    expect(() => groupDigits('-1', 'south_asian')).toThrow(RangeError);
+    expect(() => groupDigits('1.5', 'international')).toThrow(RangeError);
+    expect(() => groupDigits('', 'south_asian')).toThrow(RangeError);
+  });
+});
+
+describe('formatMoney numberSystem', () => {
+  it('groups every currency in lakhs for south_asian', () => {
+    expect(formatMoney('2018180', 'NPR', { numberSystem: 'south_asian' })).toBe('NPR 20,18,180.00');
+    expect(formatMoney('2018180', 'INR', { numberSystem: 'south_asian' })).toBe('INR 20,18,180.00');
+    expect(formatMoney('2018180', 'USD', { numberSystem: 'south_asian' })).toBe('USD 20,18,180.00');
+  });
+
+  it('groups every currency in thousands for international', () => {
+    expect(formatMoney('2018180', 'NPR', { numberSystem: 'international' })).toBe(
+      'NPR 2,018,180.00',
+    );
+    expect(formatMoney('2018180', 'INR', { numberSystem: 'international' })).toBe(
+      'INR 2,018,180.00',
+    );
+    expect(formatMoney('2018180', 'USD', { numberSystem: 'international' })).toBe(
+      'USD 2,018,180.00',
+    );
+  });
+
+  it('keeps rounding, signs and symbols', () => {
+    expect(formatMoney('-1234567.895', 'NPR', { numberSystem: 'international' })).toBe(
+      'NPR -1,234,567.90',
+    );
+    expect(formatMoney('-1234567.895', 'USD', { numberSystem: 'south_asian', symbol: true })).toBe(
+      '-$12,34,567.90',
+    );
+    expect(formatMoney('-0.004', 'NPR', { numberSystem: 'south_asian' })).toBe('NPR 0.00');
+    expect(formatMoney('999999.995', 'NPR', { numberSystem: 'south_asian' })).toBe(
+      'NPR 10,00,000.00',
+    );
+    expect(formatMoney('999999.995', 'NPR', { numberSystem: 'international' })).toBe(
+      'NPR 1,000,000.00',
+    );
+  });
+
+  it('stays exact above 2^53', () => {
+    expect(formatMoney('98765432109876543.21', 'USD', { numberSystem: 'south_asian' })).toBe(
+      'USD 98,76,54,32,10,98,76,543.21',
+    );
+    expect(formatMoney('98765432109876543.21', 'NPR', { numberSystem: 'international' })).toBe(
+      'NPR 98,765,432,109,876,543.21',
+    );
+  });
+
+  it('matches the Intl-based default when the system equals the currency default', () => {
+    for (const amount of [
+      '0',
+      '1',
+      '999.99',
+      '1000',
+      '99999.5',
+      '100000',
+      '12345678.9',
+      '98765432109876543.21',
+    ]) {
+      expect(formatMoney(amount, 'NPR', { numberSystem: 'south_asian' })).toBe(
+        formatMoney(amount, 'NPR'),
+      );
+      expect(formatMoney(amount, 'INR', { numberSystem: 'south_asian' })).toBe(
+        formatMoney(amount, 'INR'),
+      );
+      expect(formatMoney(amount, 'USD', { numberSystem: 'international' })).toBe(
+        formatMoney(amount, 'USD'),
+      );
+    }
+  });
+
+  it('is unchanged without the option', () => {
+    expect(formatMoney('2018180', 'NPR')).toBe('NPR 20,18,180.00');
+    expect(formatMoney('2018180', 'INR')).toBe('INR 20,18,180.00');
+    expect(formatMoney('2018180', 'USD')).toBe('USD 2,018,180.00');
+    expect(formatMoney('2018180', 'USD', { symbol: true })).toBe('$2,018,180.00');
+    expect(formatMoney('2018180', 'NPR', {})).toBe('NPR 20,18,180.00');
   });
 });
