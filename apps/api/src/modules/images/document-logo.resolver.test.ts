@@ -12,6 +12,7 @@ import { Readable } from 'node:stream';
 import { Logger } from '@nestjs/common';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { SCAN_FAILED_INFRA } from '../../platform/documents/scan.processor';
 import { StoredFileNotFoundError } from '../../platform/documents/storage.adapter';
 import {
   DocumentLogoUnavailableError,
@@ -37,6 +38,7 @@ const version = (over: Partial<LogoDocumentRow['versions'][number]> = {}) => ({
   detectedMime: 'image/png',
   sizeBytes: PNG.length,
   storageKey: `${TENANT}/v1`,
+  scanEngine: null,
   ...over,
 });
 
@@ -102,6 +104,19 @@ describe('DocumentLogoResolverFactory', () => {
     ['an infected version', row({ versions: [version({ status: 'infected' })] })],
     ['a version whose scan failed', row({ versions: [version({ status: 'scan_failed' })] })],
     [
+      'a version the scanner refused (scan_failed, not an infrastructure error)',
+      row({ versions: [version({ status: 'scan_failed', scanEngine: 'clamav' })] }),
+    ],
+    [
+      'an older infrastructure scan failure under a refused newest version',
+      row({
+        versions: [
+          version({ version: 1, status: 'scan_failed', scanEngine: SCAN_FAILED_INFRA }),
+          version({ version: 2, status: 'infected' }),
+        ],
+      }),
+    ],
+    [
       'a refused newest version over an older pending one',
       row({
         versions: [
@@ -146,6 +161,29 @@ describe('DocumentLogoResolverFactory', () => {
       expect(storage.openClean).not.toHaveBeenCalled();
     },
   );
+
+  it('throws DocumentLogoPendingError for a logo whose scan failed only because the scanner was unreachable', async () => {
+    // The scan sweeper re-queues such a version (scan.processor.ts), so it may still become clean.
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { resolve, storage } = setup(
+      row({ versions: [version({ status: 'scan_failed', scanEngine: SCAN_FAILED_INFRA })] }),
+    );
+    await expect(resolve(DOC)).rejects.toBeInstanceOf(DocumentLogoPendingError);
+    expect(storage.openClean).not.toHaveBeenCalled();
+  });
+
+  it('throws DocumentLogoPendingError when the newest version failed its scan on infrastructure after a refused one', async () => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { resolve } = setup(
+      row({
+        versions: [
+          version({ version: 1, status: 'rejected' }),
+          version({ version: 2, status: 'scan_failed', scanEngine: SCAN_FAILED_INFRA }),
+        ],
+      }),
+    );
+    await expect(resolve(DOC)).rejects.toBeInstanceOf(DocumentLogoPendingError);
+  });
 
   it('throws DocumentLogoPendingError when the newest version is pending after a refused one', async () => {
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);

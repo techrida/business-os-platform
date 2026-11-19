@@ -7,10 +7,11 @@
 // - the data URL of the newest clean version of the logo document, when the document is a live `entity_logo` of
 //   the scope's tenant AND entity, and the version's detected type is PNG, JPEG or WebP;
 // - null when there is no such document or usable version (unknown, foreign, removed, wrong owner type, refused:
-//   rejected, infected or scan_failed, not an image) or the bytes are over the snapshot cap (logged): the snapshot
+//   rejected, infected or scan_failed for any other reason, not an image) or the bytes are over the snapshot cap (logged): the snapshot
 //   then uses the legacy logo, if any;
 // - DocumentLogoPendingError when the document is a live `entity_logo` of the scope with no clean version yet and
-//   its newest version is still awaiting its bytes or quarantined (awaiting the scan): freezing then would print a
+//   its newest version is still awaiting its bytes, quarantined (awaiting the scan) or scan_failed only because the
+//   scanner was unreachable (SCAN_FAILED_INFRA: the scan sweeper re-queues it): freezing then would print a
 //   logo-less document for good, so the caller treats it as unavailable and the render retries once it is clean.
 //   A clean older version wins over a newer pending one;
 // - a throw when the storage read fails, a missing clean file included: the issuer turns it into
@@ -27,6 +28,7 @@ import { and, eq } from 'drizzle-orm';
 import { CoreConfig } from '../../platform/config/config';
 import { DB, type Db } from '../../platform/db/db.module';
 import type { TxScope } from '../../platform/db/tx';
+import { SCAN_FAILED_INFRA } from '../../platform/documents/scan.processor';
 import {
   DiskStorageAdapter,
   STORAGE_ADAPTER,
@@ -51,6 +53,8 @@ export interface LogoDocumentRow {
     detectedMime: string | null;
     sizeBytes: number;
     storageKey: string;
+    /** The engine that scanned the version; SCAN_FAILED_INFRA on a scan_failed version the sweeper retries. */
+    scanEngine: string | null;
   }[];
 }
 
@@ -74,6 +78,7 @@ export function drizzleLogoDocumentLookup(db: Db): LogoDocumentLookup {
         detectedMime: documentVersions.detectedMime,
         sizeBytes: documentVersions.sizeBytes,
         storageKey: documentVersions.storageKey,
+        scanEngine: documentVersions.scanEngine,
       })
       .from(documents)
       .innerJoin(documentVersions, eq(documentVersions.documentId, documents.id))
@@ -93,13 +98,16 @@ export function drizzleLogoDocumentLookup(db: Db): LogoDocumentLookup {
       organizationId: first.organizationId,
       ownerType: first.ownerType,
       removedAt: first.removedAt,
-      versions: rows.map(({ version, status, detectedMime, sizeBytes, storageKey }) => ({
-        version,
-        status,
-        detectedMime,
-        sizeBytes,
-        storageKey,
-      })),
+      versions: rows.map(
+        ({ version, status, detectedMime, sizeBytes, storageKey, scanEngine }) => ({
+          version,
+          status,
+          detectedMime,
+          sizeBytes,
+          storageKey,
+          scanEngine,
+        }),
+      ),
     };
   };
 }
@@ -113,8 +121,19 @@ function dataUrlChars(bytes: number): number {
 const PENDING_STATUSES: ReadonlySet<string> = new Set(['awaiting_content', 'quarantined']);
 
 /**
+ * The version may still become clean: a pending status, or a scan that failed only because the scanner was
+ * unreachable (the scan sweeper puts it back to quarantined). Any other scan_failed is final.
+ */
+function mayBecomeClean(v: Pick<LogoDocumentRow['versions'][number], 'status' | 'scanEngine'>) {
+  return (
+    PENDING_STATUSES.has(v.status) ||
+    (v.status === 'scan_failed' && v.scanEngine === SCAN_FAILED_INFRA)
+  );
+}
+
+/**
  * The profile's logo document has no clean version yet but may get one (its newest version awaits its bytes or the
- * scan). Retryable: every caller handles it like any resolver throw, as DocumentLogoUnavailableError, so the render
+ * scan, or its scan failed on the scanner being unreachable and the sweeper will retry it). Retryable: every caller handles it like any resolver throw, as DocumentLogoUnavailableError, so the render
  * runs again later instead of freezing a document without its logo.
  */
 export class DocumentLogoPendingError extends Error {
@@ -170,7 +189,7 @@ export class DocumentLogoResolverFactory {
         (top, v) => (top === undefined || v.version > top.version ? v : top),
         undefined,
       );
-      if (newest !== undefined && PENDING_STATUSES.has(newest.status)) {
+      if (newest !== undefined && mayBecomeClean(newest)) {
         this.logger.warn(`document logo not scanned yet: document=${documentId} kind=pending`);
         throw new DocumentLogoPendingError();
       }
