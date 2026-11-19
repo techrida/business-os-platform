@@ -324,7 +324,12 @@ describe('create', () => {
     const res = await createVendor({ kind: 'sole_proprietor' });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     const dto = VendorDtoSchema.parse(res.body);
-    expect(dto).toMatchObject({ status: 'draft', kind: 'sole_proprietor', version: 1 });
+    expect(dto).toMatchObject({
+      status: 'draft',
+      kind: 'sole_proprietor',
+      version: 1,
+      logoDocumentId: null,
+    });
 
     const party = await rowOf<{ kind: string; code: string }>(
       'SELECT kind, code FROM app.parties WHERE id = $1',

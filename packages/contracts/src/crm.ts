@@ -110,6 +110,8 @@ export const CustomerDtoSchema = z.object({
   ownerUserId: z.guid().nullable(),
   defaultCurrency: CurrencySchema.nullable(),
   address: AddressSchema,
+  /** The customer's logo (`app.customers.logo_document_id`); null or absent shows initials. */
+  logoDocumentId: z.guid().nullable().optional(),
   /** Set when this record was merged into another; the target is the live one. */
   mergedIntoId: z.guid().nullable(),
   version: z.number().int().min(1),
