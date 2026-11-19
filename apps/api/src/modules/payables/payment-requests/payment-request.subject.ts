@@ -6,14 +6,17 @@
 //   stop claiming their open items, so a new request may ask for the amount again.
 // - approved again on a request that is already approved (a replayed decision): nothing to do, so it returns.
 // A request that is not waiting for this decision is refused (409), never silently skipped.
+import type { ReferenceName } from '@bos/contracts';
 import { paymentRequests, scoped } from '@bos/db';
 import { ConflictException, Logger } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
-import type { DbTransaction } from '../../../platform/db/db.module';
+import type { Db, DbTransaction } from '../../../platform/db/db.module';
+import type { TxScope } from '../../../platform/db/tx';
 import { readTxContext } from '../../../platform/documents/tx-context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
+import { idAt, procurementReferenceNames } from '../../procurement/reference-names';
 import {
   PAYMENT_REQUEST_AUDIT_ENTITY,
   PAYMENT_REQUEST_DOCUMENT_TYPE,
@@ -24,6 +27,12 @@ type Outcome = 'approved' | 'returned' | 'rejected';
 
 const conflict = (code: string, message: string) => new ConflictException({ code, message });
 
+/** The snapshot's `lines`, or none when it has no array there. */
+function linesOf(snapshot: unknown): unknown[] {
+  const lines = (snapshot as { lines?: unknown } | null)?.lines;
+  return Array.isArray(lines) ? lines : [];
+}
+
 export class PaymentRequestSubject implements ApprovalSubject {
   readonly documentType = PAYMENT_REQUEST_DOCUMENT_TYPE;
   private readonly log = new Logger(PaymentRequestSubject.name);
@@ -32,6 +41,31 @@ export class PaymentRequestSubject implements ApprovalSubject {
     private readonly audit: AuditService,
     private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  /**
+   * The vendor by legal name and each bill by its number (or the vendor's invoice number before one). An open item is
+   * named by the bill it pays and the vendor's bank account by its last four digits, both from the snapshot itself.
+   */
+  async referenceNames(q: Db, scope: TxScope, snapshot: unknown): Promise<ReferenceName[]> {
+    const lines = linesOf(snapshot);
+    const names = await procurementReferenceNames(q, scope, {
+      vendorIds: [idAt(snapshot, 'vendorPartyId')],
+      vendorBillIds: lines.map((line) => idAt(line, 'vendorBillId')),
+    });
+    const byId = new Map(names.map((n) => [n.id, n.name]));
+    const items: ReferenceName[] = lines.flatMap((line) => {
+      const item = idAt(line, 'openItemId');
+      const bill = byId.get(idAt(line, 'vendorBillId') ?? '');
+      return item === undefined || bill === undefined ? [] : [{ id: item, name: bill }];
+    });
+    const account = idAt(snapshot, 'vendorBankAccountId');
+    const last4 = (snapshot as { bankLast4?: unknown } | null)?.bankLast4;
+    const bank: ReferenceName[] =
+      account !== undefined && typeof last4 === 'string' && last4 !== ''
+        ? [{ id: account, name: `Account ending ${last4}` }]
+        : [];
+    return [...names, ...items, ...bank];
+  }
 
   async onDecided(tx: DbTransaction, requestId: string, outcome: Outcome): Promise<void> {
     const { scope } = await readTxContext(tx);
