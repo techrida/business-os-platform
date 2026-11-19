@@ -5,7 +5,15 @@
 // the request's tenant (vendors are tenant level) and entity (departments, orders and bills); the snapshot is never
 // changed.
 import type { ReferenceName } from '@bos/contracts';
-import { departments, purchaseOrders, scoped, vendorBills, vendors } from '@bos/db';
+import {
+  costCenters,
+  departments,
+  purchaseOrderLines,
+  purchaseOrders,
+  scoped,
+  vendorBills,
+  vendors,
+} from '@bos/db';
 import { and, eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '../../platform/db/db.module';
@@ -28,8 +36,8 @@ const ids = (values: readonly (string | undefined)[]): string[] => [
 ];
 
 /**
- * Vendors by legal name, departments by name, orders by number, bills by number (or the vendor's invoice number
- * before one).
+ * Vendors by legal name, departments and cost centres by name, orders by number, bills by number (or the vendor's
+ * invoice number before one), order lines as "Line N: description".
  */
 export async function procurementReferenceNames(
   q: Db,
@@ -39,13 +47,17 @@ export async function procurementReferenceNames(
     departmentIds?: readonly (string | undefined)[];
     purchaseOrderIds?: readonly (string | undefined)[];
     vendorBillIds?: readonly (string | undefined)[];
+    costCenterIds?: readonly (string | undefined)[];
+    purchaseOrderLineIds?: readonly (string | undefined)[];
   },
 ): Promise<ReferenceName[]> {
   const vendorIds = ids(refs.vendorIds ?? []);
   const departmentIds = ids(refs.departmentIds ?? []);
   const poIds = ids(refs.purchaseOrderIds ?? []);
   const billIds = ids(refs.vendorBillIds ?? []);
-  const [vs, depts, pos, bills] = await Promise.all([
+  const ccIds = ids(refs.costCenterIds ?? []);
+  const lineIds = ids(refs.purchaseOrderLineIds ?? []);
+  const [vs, depts, pos, bills, ccs, lines] = await Promise.all([
     vendorIds.length === 0
       ? []
       : q
@@ -75,6 +87,25 @@ export async function procurementReferenceNames(
           .from(vendorBills)
           .where(scoped(scope).where(vendorBills, inArray(vendorBills.id, billIds)))
           .then((rows) => rows.map((r) => ({ id: r.id, name: r.number ?? r.invoiceNo }))),
+    ccIds.length === 0
+      ? []
+      : q
+          .select({ id: costCenters.id, name: costCenters.name })
+          .from(costCenters)
+          .where(scoped(scope).where(costCenters, inArray(costCenters.id, ccIds))),
+    lineIds.length === 0
+      ? []
+      : q
+          .select({
+            id: purchaseOrderLines.id,
+            lineNo: purchaseOrderLines.lineNo,
+            description: purchaseOrderLines.description,
+          })
+          .from(purchaseOrderLines)
+          .where(scoped(scope).where(purchaseOrderLines, inArray(purchaseOrderLines.id, lineIds)))
+          .then((rows) =>
+            rows.map((r) => ({ id: r.id, name: `Line ${r.lineNo}: ${r.description}` })),
+          ),
   ]);
-  return [...vs, ...depts, ...pos, ...bills].filter((r) => r.name.trim() !== '');
+  return [...vs, ...depts, ...pos, ...bills, ...ccs, ...lines].filter((r) => r.name.trim() !== '');
 }

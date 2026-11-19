@@ -254,7 +254,8 @@ describe('QuotationSendService.send', () => {
         quotationNumber: 'QT-2082/83-00042',
         customerName: 'Acme Pvt. Ltd.',
         validUntil: '2026-11-16',
-        linkPath: `/quotations/${QID}`,
+        // The portal's `/quotations/:id` is a version id: the parent quotation id would be "Quotation not found".
+        linkPath: `/quotations/${VID}`,
       },
       dedupeKey: `quotation.sent:${VID}`,
     });

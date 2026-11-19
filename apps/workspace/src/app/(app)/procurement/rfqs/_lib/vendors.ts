@@ -24,8 +24,3 @@ export async function loadVendors(session: Session, status?: 'approved'): Promis
     return { problem: rfqFailure(err, 'load').message };
   }
 }
-
-/** Vendor id to name, from a lookup that may have failed. */
-export function nameIndex(lookup: VendorLookup): Map<string, string> {
-  return new Map((lookup.vendors ?? []).map((v) => [v.id, vendorName(v)]));
-}

@@ -966,7 +966,11 @@ describe('quotation approval: the author names the first-step approver', () => {
     as(X.acc2, 'accountant');
     try {
       const read2 = await approvals.get(request!.id);
-      expect(read2.people).toContainEqual({ userId: X.acc2, name: 'Mina Rai' });
+      expect(read2.people).toContainEqual({
+        userId: X.acc2,
+        name: 'Mina Rai',
+        avatarDocumentId: null,
+      });
     } finally {
       as(f.ownerUserId, 'sales');
     }
@@ -1007,7 +1011,9 @@ describe('quotation approval: the author names the first-step approver', () => {
           .where(inArray(users.id, [...ids])),
       );
       expect(rows).toHaveLength(ids.length);
-      return rows.sort((a, b) => a.userId.localeCompare(b.userId));
+      return rows
+        .map((r) => ({ ...r, avatarDocumentId: null }))
+        .sort((a, b) => a.userId.localeCompare(b.userId));
     };
     const sorted = (people: readonly { userId: string; name: string }[] | undefined) =>
       [...(people ?? [])].sort((a, b) => a.userId.localeCompare(b.userId));
@@ -1061,6 +1067,38 @@ describe('quotation approval: the author names the first-step approver', () => {
     expect(await inboxIds(X.mate, 'sales')).toEqual([]);
     const later = await httpErrorOf(act(X.mate, 'sales', request!.id, 'approve'));
     expect([403, 404]).toContain(later.getStatus());
+  });
+
+  it('shows a named Sales colleague the quotation without a link to a page they cannot open (U18 #2)', async () => {
+    const named = await draft('50000.00');
+    await submitNaming(named, X.mate);
+    const [request] = await requestsOf(named.versionId);
+
+    // The colleague reads only their own quotations, and the quotation page refuses them, so no link.
+    as(X.mate, 'sales');
+    try {
+      const { context } = await approvals.get(request!.id);
+      expect(context).toMatchObject({ href: null, documents: [] });
+      expect(context!.title).toMatch(/^Quotation /);
+      expect(context!.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ key: 'status', value: 'submitted' }),
+          expect.objectContaining({ key: 'total', kind: 'money', currency: 'NPR' }),
+        ]),
+      );
+      expect(
+        (await httpErrorOf(drafting.getVersion(named.quotationId, named.versionId))).getStatus(),
+      ).toBe(404);
+    } finally {
+      as(f.ownerUserId, 'sales');
+    }
+
+    // The author owns the quotation: the same approval links it, and the page opens for them.
+    const { context } = await approvals.get(request!.id);
+    expect(context?.href).toBe(`/quotations/${named.quotationId}`);
+    expect((await drafting.getVersion(named.quotationId, named.versionId)).id).toBe(
+      named.versionId,
+    );
   });
 
   it('admits only the original Sales decision for replay after the Finance step activates', async () => {

@@ -1,7 +1,6 @@
 import { CreateDocumentBodySchema, MAX_UPLOAD_BYTES } from '@bos/contracts';
 
 import { isGuid } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import {
   createBillDocument,
   replaceBillDocument,
@@ -14,6 +13,7 @@ import {
   jsonResponse,
   routeSession,
 } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 import { baseMime, decodeFileName } from '@/lib/kernel-ui';
 
 export const runtime = 'nodejs';
@@ -30,7 +30,8 @@ export async function POST(req: Request): Promise<Response> {
   if (!isSameOrigin(req)) return forbiddenOrigin();
   const session = await routeSession();
   if (session instanceof Response) return session;
-  if (!hasPermission(session.roles, 'payables.bill.enter'))
+  // Live grants, as the new-bill page that uploads here is gated on (not the role defaults).
+  if (!hasGrant(await getGrants(session), 'payables.bill.enter'))
     return bad('Your roles do not allow invoice uploads for vendor bills.', 403);
   const vendorId = req.headers.get('x-vendor-id') ?? '';
   const documentId = req.headers.get('x-document-id');

@@ -16,6 +16,23 @@ const mocks = vi.hoisted(() => ({
   countCustomersByRelationship: vi.fn(),
 }));
 vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }));
+// GET /v1/me for an unedited role answers the role's default grants.
+vi.mock('@/lib/grants', async () => {
+  const { DEFAULT_ROLE_PERMISSIONS } = await import('@bos/contracts');
+  return {
+    getGrants: (session: { roles: string[] }) =>
+      Promise.resolve(
+        new Map(
+          session.roles.flatMap((r) =>
+            Object.entries(
+              DEFAULT_ROLE_PERMISSIONS[r as keyof typeof DEFAULT_ROLE_PERMISSIONS] ?? {},
+            ),
+          ),
+        ),
+      ),
+    hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+  };
+});
 vi.mock('@/components/p2/customers/api', () => ({
   listCustomers: mocks.listCustomers,
   listCustomerIndustries: mocks.listCustomerIndustries,

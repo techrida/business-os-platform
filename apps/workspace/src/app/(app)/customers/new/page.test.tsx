@@ -12,6 +12,11 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve(staff.s
 const api = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('@/lib/api-procurement', () => ({ call: api.call }));
 vi.mock('@/components/p2/customers/actions', () => ({ createCustomerAction: vi.fn() }));
+// The page gates on the live grants (GET /v1/me); sales holds customer.write.
+vi.mock('@/lib/grants', () => ({
+  getGrants: () => Promise.resolve(new Map([['customer.write', 'all']])),
+  hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+}));
 
 const { default: NewCustomerPage } = await import('./page');
 

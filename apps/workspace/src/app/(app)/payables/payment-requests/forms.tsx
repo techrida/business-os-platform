@@ -29,10 +29,16 @@ import {
 export function PaymentRequestEntry({
   idempotencyKey,
   items,
+  orders = [],
   enabledCurrencies,
 }: {
   idempotencyKey: string;
   items: PaymentRequestItem[];
+  /**
+   * The orders a payment request can name (the payables picker), each with its vendor and the text the
+   * picker shows. Only the chosen vendor's orders are offered.
+   */
+  orders?: readonly { id: string; vendorId: string; label: string }[];
   /**
    * The currencies the company has switched on (`currency.enabled`, D44), read once on the server. The
    * platform refuses a request in any other currency, so bills in a switched-off one are not offered.
@@ -68,6 +74,7 @@ export function PaymentRequestEntry({
   const eligible = items.filter(
     (item) => item.vendorPartyId === header.vendorPartyId && item.currency === header.currency,
   );
+  const vendorOrders = orders.filter((o) => o.vendorId === header.vendorPartyId);
   return (
     <div ref={wrap}>
       <form action={action} noValidate className={styles.form}>
@@ -100,6 +107,7 @@ export function PaymentRequestEntry({
                     setHeader((current) => ({
                       ...current,
                       vendorPartyId,
+                      purchaseOrderId: '',
                       currency:
                         items.find(
                           (item) =>
@@ -119,27 +127,44 @@ export function PaymentRequestEntry({
                 </Select>
               )}
             </Field>
-            {(
-              [
-                ['fromBankAccountId', 'Paying entity bank account ID'],
-                ['purchaseOrderId', 'Purchase order ID (optional)'],
-              ] as const
-            ).map(([name, label]) => (
-              <Field key={name} label={label} error={errors[name]}>
-                {(control) => (
-                  <Input
-                    name={name}
-                    value={header[name]}
-                    onChange={(e) =>
-                      setHeader((current) => ({ ...current, [name]: e.target.value }))
-                    }
-                    autoComplete="off"
-                    spellCheck={false}
-                    {...control}
-                  />
-                )}
-              </Field>
-            ))}
+            <Field label="Paying entity bank account ID" error={errors['fromBankAccountId']}>
+              {(control) => (
+                <Input
+                  name="fromBankAccountId"
+                  value={header.fromBankAccountId}
+                  onChange={(e) =>
+                    setHeader((current) => ({ ...current, fromBankAccountId: e.target.value }))
+                  }
+                  autoComplete="off"
+                  spellCheck={false}
+                  {...control}
+                />
+              )}
+            </Field>
+            <Field label="Purchase order (optional)" error={errors['purchaseOrderId']}>
+              {(control) => (
+                <Select
+                  name="purchaseOrderId"
+                  value={header.purchaseOrderId}
+                  onChange={(e) =>
+                    setHeader((current) => ({ ...current, purchaseOrderId: e.target.value }))
+                  }
+                  disabled={header.vendorPartyId === '' || vendorOrders.length === 0}
+                  {...control}
+                >
+                  <option value="">
+                    {header.vendorPartyId !== '' && vendorOrders.length === 0
+                      ? 'This vendor has no purchase orders'
+                      : 'No purchase order'}
+                  </option>
+                  {vendorOrders.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
             <Field
               label="Currency"
               hint={

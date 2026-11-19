@@ -15,6 +15,7 @@ import {
   submitPaymentRequest,
 } from '@/lib/api-payables';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants, hasGrant } from '@/lib/grants';
 
 import { parseReason } from '../../procurement/orders/_lib/forms';
 import type { ActionState } from '../../procurement/orders/_lib/state';
@@ -91,7 +92,8 @@ async function change(
   const key = keyOf(form);
   if (!isGuid(id)) return { key: prev.key, error: incomplete, reload: true };
   const session = await requireStaffSession(`${BASE}/${id}`);
-  if (!hasPermission(session.roles, 'payables.payment.request'))
+  // Live grants, as the request's page that holds these buttons is gated on.
+  if (!hasGrant(await getGrants(session), 'payables.payment.request'))
     return { key, error: noPermission };
   const reason = parseReason(text(form, 'reason'));
   if (op === 'cancel' && !reason.ok) return { key, errors: { reason: reason.error } };

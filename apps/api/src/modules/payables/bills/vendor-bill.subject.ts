@@ -17,6 +17,7 @@
 // - approved again on a bill that is already approved (a replayed decision): openItem and recordEvent run again from
 //   the stored totals. Both are idempotent, so the bill keeps one item and one event and nothing is recomputed.
 // A bill or exception that is not waiting for this decision is refused (409), never silently skipped.
+import type { ApprovalContext } from '@bos/contracts';
 import {
   matchExceptions,
   scoped,
@@ -30,12 +31,15 @@ import { ConflictException, Logger } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import type { AuditService } from '../../../platform/audit/audit.service';
+import type { Principal } from '../../../platform/authz/principal';
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import type { Actor, TxScope } from '../../../platform/db/tx';
 import { actorUuid, readTxContext, type TxContext } from '../../../platform/documents/tx-context';
+import { fact } from '../../approvals/context';
 import type { ApprovalSubject } from '../../approvals/requests.service';
 import { LedgerService } from '../../ledger/ledger.service';
 import { idAt, procurementReferenceNames } from '../../procurement/reference-names';
+import { billContext } from './bill-approval-context';
 import {
   BILL_AUDIT_ENTITY,
   MATCH_EXCEPTION_AUDIT_ENTITY,
@@ -74,6 +78,11 @@ export class VendorBillSubject implements ApprovalSubject {
       vendorIds: [idAt(snapshot, 'vendorPartyId')],
       purchaseOrderIds: [idAt(snapshot, 'purchaseOrderId')],
     });
+  }
+
+  /** The bill as it stands now, with its own file (bill-approval-context.ts). */
+  context(q: Db, scope: TxScope, request: { documentId: string }, viewer: Principal) {
+    return billContext(q, scope, request.documentId, viewer);
   }
 
   async onDecided(tx: DbTransaction, billId: string, outcome: Outcome): Promise<void> {
@@ -266,6 +275,35 @@ export class MatchExceptionSubject implements ApprovalSubject {
   /** The bill the exception is about, by its number. */
   referenceNames(q: Db, scope: TxScope, snapshot: unknown) {
     return procurementReferenceNames(q, scope, { vendorBillIds: [idAt(snapshot, 'vendorBillId')] });
+  }
+
+  /** The bill the exception is about as it stands now, with the exception's reason and status. */
+  async context(
+    q: Db,
+    scope: TxScope,
+    request: { documentId: string },
+    viewer: Principal,
+  ): Promise<ApprovalContext | null> {
+    const [exception] = await q
+      .select({
+        vendorBillId: matchExceptions.vendorBillId,
+        reason: matchExceptions.reason,
+        status: matchExceptions.status,
+      })
+      .from(matchExceptions)
+      .where(scoped(scope).where(matchExceptions, eq(matchExceptions.id, request.documentId)));
+    if (exception === undefined) return null;
+    const bill = await billContext(q, scope, exception.vendorBillId, viewer);
+    if (bill === null) return null;
+    return {
+      ...bill,
+      title: `Match exception on ${bill.title.charAt(0).toLowerCase()}${bill.title.slice(1)}`,
+      fields: [
+        ...fact.text('exceptionReason', 'Exception reason', exception.reason),
+        ...fact.status(exception.status, 'exceptionStatus', 'Exception status'),
+        ...bill.fields,
+      ],
+    };
   }
 
   async onDecided(tx: DbTransaction, exceptionId: string, outcome: Outcome): Promise<void> {

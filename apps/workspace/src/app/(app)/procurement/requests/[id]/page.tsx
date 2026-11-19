@@ -13,7 +13,11 @@ import { LinkButton } from '@/components/ui/button';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { getPurchaseRequest, type PurchaseRequestDto } from '@/lib/api-procurement';
+import {
+  getPurchaseRequest,
+  type LinkedPurchaseOrder,
+  type PurchaseRequestDto,
+} from '@/lib/api-procurement';
 import { getApprovalRequest } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
@@ -21,6 +25,7 @@ import { money, when } from '@/lib/kernel-format';
 import { humanizeKey } from '@/lib/kernel-ui';
 
 import { ApprovalTimeline } from '../../approval-timeline';
+import { PO_STATUS_LABEL } from '../../orders/_lib/model';
 import layout from '../../procurement.module.css';
 import { canStartRfq, rfqGrants } from '../../rfqs/_lib/model';
 import { CancelForm, SubmitForm } from '../_components/command-forms';
@@ -88,6 +93,69 @@ function ApprovalPanel({ load, retry }: { load: ApprovalLoad; retry: string }) {
           )}
         </>
       )}
+    </Panel>
+  );
+}
+
+/**
+ * The orders raised from this request, with what the request's reader may do on each: open its receipts, and
+ * record a service receipt when the API says they may (U18 #4). The requester holds no purchase order read, so
+ * the order is named here and its receipts open by the order's id.
+ */
+function OrdersPanel({ orders }: { orders: readonly LinkedPurchaseOrder[] }) {
+  return (
+    <Panel
+      title="Purchase orders"
+      description="Orders raised from this request. Open one to see what has been received."
+    >
+      <Table
+        className={layout.panelTable ?? ''}
+        caption="Purchase orders of this request"
+        minWidth={640}
+      >
+        <thead>
+          <tr>
+            <Th>Order</Th>
+            <Th>Vendor</Th>
+            <Th>Status</Th>
+            <Th>
+              <span className={styles.srOnly}>Receive</span>
+            </Th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => {
+            const status = PO_STATUS_LABEL[o.status];
+            return (
+              <tr key={o.id}>
+                <Td nowrap>
+                  <Link href={`/procurement/receipts?po=${encodeURIComponent(o.id)}`}>
+                    {o.number}
+                  </Link>
+                </Td>
+                <Td>
+                  <span className={styles.long}>{o.vendorName}</span>
+                </Td>
+                <Td nowrap>
+                  <Badge tone={status.tone}>{status.text}</Badge>
+                </Td>
+                <Td align="end" nowrap>
+                  {o.can.receiveService ? (
+                    <LinkButton
+                      href={`/procurement/receipts/new?po=${encodeURIComponent(o.id)}`}
+                      variant="secondary"
+                      size="small"
+                      aria-label={`Receive service on ${o.number}`}
+                    >
+                      Receive service
+                    </LinkButton>
+                  ) : null}
+                </Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </Table>
     </Panel>
   );
 }
@@ -286,6 +354,10 @@ export default async function PurchaseRequestPage({
           </div>
         ) : null}
       </div>
+
+      {pr.purchaseOrders !== undefined && pr.purchaseOrders.length > 0 ? (
+        <OrdersPanel orders={pr.purchaseOrders} />
+      ) : null}
 
       <Panel
         title="Line items"

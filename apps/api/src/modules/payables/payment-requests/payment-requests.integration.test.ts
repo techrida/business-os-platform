@@ -103,7 +103,12 @@ const roles: Partial<Record<RoleKey, string[]>> = {};
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
-const current: { userId: string; role: RoleKey; inB: boolean } = {
+const current: {
+  userId: string;
+  role: RoleKey;
+  inB: boolean;
+  grants?: Map<Permission, Scope> | undefined;
+} = {
   userId: '',
   role: 'accountant',
   inB: false,
@@ -123,7 +128,7 @@ const principalNow = (): Principal => ({
   roles: [current.role],
   departmentId: null,
   status: 'active',
-  grants: grantsOf(current.role),
+  grants: current.grants ?? grantsOf(current.role),
 });
 const caller = {
   current: () => ({
@@ -262,6 +267,7 @@ afterAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks();
   current.inB = false;
+  current.grants = undefined;
   roles.accountant = [U.acct, U.acct2];
   roles.finance = [U.fin];
   roles.management = [U.mgmt];
@@ -726,6 +732,138 @@ describe('list filters, search and paging', () => {
     const foreign = await service.list({ ...PAGE, q: name });
     expect(ids(foreign)).not.toContain(first.id);
     expect(foreign.total).toBe(foreign.rows.length);
+  });
+});
+
+describe('names on the approval (U18 #1)', () => {
+  it('shows Management the vendor, the bills, the items and the bank account by name, and nothing else of them', async () => {
+    const v = await vendor();
+    const b1 = await approvedBill(v);
+    const b2 = await approvedBill(v);
+    const d = await draft(v, [
+      { openItemId: b1.openItemId, amount: '56500.00' },
+      { openItemId: b2.openItemId, amount: '56500.00' },
+    ]);
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const submitted = await service.submit(d.id, randomUUID());
+    const stored = await read((tx) =>
+      tx
+        .select({
+          id: vendorBills.id,
+          number: vendorBills.number,
+          inv: vendorBills.vendorInvoiceNo,
+        })
+        .from(vendorBills)
+        .where(eq(vendorBills.vendorId, v)),
+    );
+    const billName = (id: string) => {
+      const row = stored.find((b) => b.id === id)!;
+      return row.number ?? row.inv;
+    };
+    const vendorName = `Vendor ${v.slice(0, 6)}`;
+
+    // Management decides the second step; it holds no vendor.read and no payables grant.
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('vendor.read')).toBe(false);
+    const request = await approvals.get(submitted.approvalRequestId!);
+    expect(request.snapshot).toMatchObject({
+      vendorName,
+      lines: [
+        { vendorBillId: b1.billId, billNumber: stored.find((b) => b.id === b1.billId)!.number },
+        { vendorBillId: b2.billId, billNumber: stored.find((b) => b.id === b2.billId)!.number },
+      ],
+    });
+    const { vendorBankAccountId } = request.snapshot as { vendorBankAccountId: string };
+    expect(request.references).toEqual(
+      expect.arrayContaining([
+        { id: v, name: vendorName },
+        { id: b1.billId, name: billName(b1.billId) },
+        { id: b2.billId, name: billName(b2.billId) },
+        { id: b1.openItemId, name: billName(b1.billId) },
+        { id: b2.openItemId, name: billName(b2.billId) },
+        { id: vendorBankAccountId, name: 'Account ending 1234' },
+      ]),
+    );
+    // Only the records the snapshot names, by name: no PAN, no other vendor's or bill's row.
+    expect(request.references).toHaveLength(6);
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${v}`);
+    expect(JSON.stringify(request)).not.toContain((rows[0] as { pan: string }).pan);
+  });
+});
+
+describe('the request on its approval (U18 #2)', () => {
+  it("shows Management the request and the files of the bills it pays, no other bill's file, and no link", async () => {
+    const v = await vendor();
+    const b1 = await approvedBill(v);
+    const b2 = await approvedBill(v);
+    // A bill of the same vendor that this request does not pay: its file has the same owner and must stay hidden.
+    const unpaid = await approvedBill(v);
+    const d = await draft(v, [
+      { openItemId: b1.openItemId, amount: '56500.00' },
+      { openItemId: b2.openItemId, amount: '56500.00' },
+    ]);
+    roles.finance = [U.fin, U.fin2, U.fin3];
+    const submitted = await service.submit(d.id, randomUUID());
+    const files = await read((tx) =>
+      tx
+        .select({ id: vendorBills.id, documentId: vendorBills.documentId })
+        .from(vendorBills)
+        .where(eq(vendorBills.vendorId, v)),
+    );
+    const fileOf = (billId: string) => files.find((f) => f.id === billId)!.documentId;
+
+    as(U.mgmt, 'management');
+    expect(grantsOf('management').has('payables.payment.request')).toBe(false);
+    const { context } = await approvals.get(submitted.approvalRequestId!);
+    expect(context).toMatchObject({ href: null });
+    expect(context!.documents.map((f) => f.documentId)).toEqual([
+      fileOf(b1.billId),
+      fileOf(b2.billId),
+    ]);
+    expect(context!.documents.map((f) => f.documentId)).not.toContain(fileOf(unpaid.billId));
+    expect(context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'vendor', value: `Vendor ${v.slice(0, 6)}` }),
+        expect.objectContaining({ key: 'totalAmount', kind: 'money', value: '113000.00' }),
+        expect.objectContaining({ key: 'status', value: 'pending_approval' }),
+      ]),
+    );
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${v}`);
+    expect(JSON.stringify(context)).not.toContain((rows[0] as { pan: string }).pan);
+  });
+});
+
+describe('the vendor on the request page (U18 #15)', () => {
+  it('names the vendor for Finance and lets them open it; without vendor.read only the name, no link', async () => {
+    const v = await vendor();
+    const bill = await approvedBill(v);
+    const d = await draft(v, [{ openItemId: bill.openItemId, amount: '100.00' }]);
+
+    as(U.fin2, 'finance');
+    const finance = await service.get(d.id);
+    expect(finance).toMatchObject({
+      vendorName: `Vendor ${v.slice(0, 6)}`,
+      can: { readVendor: true },
+    });
+
+    // A role an admin gave payables.payment.request but not vendor.read: the vendor page would refuse them.
+    const withoutVendorRead = grantsOf('finance');
+    withoutVendorRead.delete('vendor.read');
+    current.grants = withoutVendorRead;
+    const narrow = await service.get(d.id);
+    expect(narrow).toMatchObject({
+      vendorName: `Vendor ${v.slice(0, 6)}`,
+      can: { readVendor: false },
+    });
+    // The name is the only vendor field the request carries: no PAN, status or contact details.
+    expect(
+      Object.keys(narrow)
+        .filter((key) => /vendor/i.test(key))
+        .sort(),
+    ).toEqual(['vendorBankAccountId', 'vendorName', 'vendorPartyId']);
+    const { rows } = await exec(scopeA, sql`SELECT pan FROM app.vendors WHERE id = ${v}`);
+    const { pan } = rows[0] as { pan: string };
+    expect(JSON.stringify(narrow)).not.toContain(pan);
   });
 });
 
