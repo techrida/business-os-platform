@@ -3,7 +3,7 @@
 -- A `department` grant reaches a record whose department_id is the caller's department. Until now neither table
 -- had the column, so the scope reached nothing.
 --   * department_id on leads and opportunities, stamped by a BEFORE trigger from the owner's membership in the
---     same entity when a row is inserted or its owner changes (NULL when there is no owner, no membership or no
+--     same entity when a row is inserted or its owner or department changes (NULL when there is no owner, no membership or no
 --     department). A trigger rather than service code: no writer can forget it, and no service file changes.
 --   * Backfill of existing rows from their current owner.
 --   * leads.created_by_user_id: who entered the lead. Finance, Accountant and PMO create leads that belong to a
@@ -52,24 +52,25 @@ WHERE ue."tenant_id" = o."tenant_id" AND ue."organization_id" = o."organization_
 --> statement-breakpoint
 CREATE FUNCTION "app"."stamp_owner_department"() RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog, app, pg_temp
 AS $$
 BEGIN
-  IF TG_OP = 'INSERT' OR NEW."owner_user_id" IS DISTINCT FROM OLD."owner_user_id" THEN
-    NEW."department_id" := (
-      SELECT ue."department_id"
-      FROM "app"."user_entities" ue
-      WHERE ue."tenant_id" = NEW."tenant_id" AND ue."organization_id" = NEW."organization_id"
-        AND ue."user_id" = NEW."owner_user_id"
-    );
-  END IF;
+  -- Always derived: a department written by hand, on insert or by an update that leaves the owner alone, is
+  -- replaced by the owner's.
+  NEW."department_id" := (
+    SELECT ue."department_id"
+    FROM "app"."user_entities" ue
+    WHERE ue."tenant_id" = NEW."tenant_id" AND ue."organization_id" = NEW."organization_id"
+      AND ue."user_id" = NEW."owner_user_id"
+  );
   RETURN NEW;
 END;
 $$;
 --> statement-breakpoint
 CREATE TRIGGER "leads_stamp_owner_department"
-BEFORE INSERT OR UPDATE OF "owner_user_id" ON "app"."leads"
+BEFORE INSERT OR UPDATE OF "owner_user_id", "department_id" ON "app"."leads"
 FOR EACH ROW EXECUTE FUNCTION "app"."stamp_owner_department"();
 --> statement-breakpoint
 CREATE TRIGGER "opportunities_stamp_owner_department"
-BEFORE INSERT OR UPDATE OF "owner_user_id" ON "app"."opportunities"
+BEFORE INSERT OR UPDATE OF "owner_user_id", "department_id" ON "app"."opportunities"
 FOR EACH ROW EXECUTE FUNCTION "app"."stamp_owner_department"();
