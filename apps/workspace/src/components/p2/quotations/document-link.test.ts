@@ -75,14 +75,35 @@ describe('pdfLinkFor', () => {
     }
   });
 
-  it('says "Not available" for a version that was never rendered and is not waiting for it', () => {
+  it('says "PDF available after approval" for a version still before approval', () => {
+    for (const status of ['draft', 'submitted', 'returned'] as const) {
+      const got = pdfLinkFor(
+        QUOTATION,
+        version({ status, renderedDocumentId: null, renderedScanStatus: null }),
+      );
+      expect(got, status).toEqual({ kind: 'words', text: 'PDF available after approval' });
+    }
+  });
+
+  it('says "Not available" for a version that was never rendered and will not be', () => {
+    const before = ['approved', 'draft', 'submitted', 'returned'];
     for (const status of QUOTATION_STATUSES) {
-      if (status === 'approved') continue;
+      if (before.includes(status)) continue;
       const got = pdfLinkFor(
         QUOTATION,
         version({ status, renderedDocumentId: null, renderedScanStatus: null }),
       );
       expect(got, status).toEqual({ kind: 'words', text: 'Not available' });
     }
+  });
+
+  it('keeps the link and the scan words unchanged for a version before approval', () => {
+    expect(pdfLinkFor(QUOTATION, version({ status: 'draft' })).kind).toBe('link');
+    expect(
+      pdfLinkFor(QUOTATION, version({ status: 'draft', renderedScanStatus: 'infected' })),
+    ).toEqual({
+      kind: 'words',
+      text: 'Not available',
+    });
   });
 });
