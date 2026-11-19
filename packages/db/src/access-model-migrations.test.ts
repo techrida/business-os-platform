@@ -321,7 +321,7 @@ describe('0079 head and level stay in step', () => {
     expect(await headOf(departmentId)).toBeNull();
   });
 
-  it('moving the head to another department clears the old department head', async () => {
+  it('moving the head to another department clears the old department head, whatever the level', async () => {
     const first = await newDepartment();
     const second = await newDepartment();
     await setHead(first.departmentId, first.a);
@@ -333,6 +333,53 @@ describe('0079 head and level stay in step', () => {
     );
     expect(await headOf(first.departmentId)).toBeNull();
     expect(await headOf(second.departmentId)).toBeNull();
+
+    // Moved without a level change, a head stays head and so leads the department they join.
+    const third = await newDepartment();
+    await setHead(third.departmentId, third.a);
+    await writeAs(tenantA, (c) =>
+      c.query('UPDATE app.user_entities SET department_id = $2 WHERE user_id = $1', [
+        third.a,
+        second.departmentId,
+      ]),
+    );
+    expect(await headOf(third.departmentId)).toBeNull();
+    expect(await headOf(second.departmentId)).toBe(third.a);
+    expect(await levelOf(third.a)).toBe('head');
+  });
+
+  it('deleting the head membership clears the department head', async () => {
+    const { departmentId, a } = await newDepartment();
+    await setHead(departmentId, a);
+    await writeAs(tenantA, (c) => c.query('DELETE FROM app.user_entities WHERE user_id = $1', [a]));
+    expect(await headOf(departmentId)).toBeNull();
+  });
+
+  it('makes a member head when the department already names them', async () => {
+    // The department is written first (as an admin screen may), the membership arrives later.
+    const departmentId = (await createDepartment(owner, tenantA)).departmentId;
+    const lateUser = (await createStaffUser(owner, tenantA)).userId;
+    await setHead(departmentId, lateUser);
+    expect(await levelOf(lateUser)).toBe('staff');
+    await writeAs(tenantA, (c) =>
+      c.query('UPDATE app.user_entities SET department_id = $2 WHERE user_id = $1', [
+        lateUser,
+        departmentId,
+      ]),
+    );
+    expect(await levelOf(lateUser)).toBe('head');
+    expect(await headOf(departmentId)).toBe(lateUser);
+  });
+
+  it('keeps one head when two members are promoted at the same time', async () => {
+    const { departmentId, a, b } = await newDepartment();
+    await Promise.all([setLevel(a, 'head'), setLevel(b, 'head')]);
+    const heads = await owner.query<{ user_id: string }>(
+      "SELECT user_id FROM app.user_entities WHERE department_id = $1 AND level = 'head'",
+      [departmentId],
+    );
+    expect(heads.rowCount).toBe(1);
+    expect(await headOf(departmentId)).toBe(heads.rows[0]!.user_id);
   });
 
   it('leaves a head with no membership in that department alone', async () => {
@@ -368,7 +415,14 @@ describe('0080 department stamp', () => {
       return rows[0]!.id;
     });
     expect(await leadDepartment(lead)).toBe(salesDept);
-    const opp = await insertOpportunity(tenantA, 'DEAL-10', memberUser);
+    const opp = await writeAs(tenantA, async (c) => {
+      const { rows } = await c.query<{ id: string }>(
+        `INSERT INTO app.opportunities (tenant_id, organization_id, number, name, customer_id, owner_user_id, department_id)
+         VALUES ($1, $2, 'DEAL-10', 'Deal', $3, $4, $5) RETURNING id`,
+        [tenantA.tenantId, tenantA.organizationId, customerId, memberUser, other.departmentId],
+      );
+      return rows[0]!.id;
+    });
     expect(await oppDepartment(opp)).toBe(salesDept);
   });
 
@@ -424,6 +478,21 @@ describe('0080 department stamp', () => {
       c.query("UPDATE app.leads SET title = 'Renamed' WHERE id = $1", [lead]),
     );
     expect(await leadDepartment(lead)).toBe(salesDept);
+  });
+
+  it('replaces a department written by hand on an update that leaves the owner alone', async () => {
+    const other = await newDepartment();
+    const lead = await insertLead(tenantA, 'LD-13', memberUser);
+    const opp = await insertOpportunity(tenantA, 'DEAL-13', memberUser);
+    await writeAs(tenantA, async (c) => {
+      await c.query('UPDATE app.leads SET department_id = $2 WHERE id = $1', [
+        lead,
+        other.departmentId,
+      ]);
+      await c.query('UPDATE app.opportunities SET department_id = NULL WHERE id = $1', [opp]);
+    });
+    expect(await leadDepartment(lead)).toBe(salesDept);
+    expect(await oppDepartment(opp)).toBe(salesDept);
   });
 });
 
@@ -505,12 +574,23 @@ describe('0083 marketing role', () => {
     return Object.fromEntries(rows.map((row) => [row.permission, row.scope]));
   };
 
-  it('gives every tenant exactly the Marketing defaults', async () => {
+  it('gives a tenant that has role rows exactly the Marketing defaults', async () => {
     expect(await marketingOf(tenantA.tenantId)).toEqual(MARKETING_GRANTS);
-    expect(await marketingOf(tenantB.tenantId)).toEqual(MARKETING_GRANTS);
   });
 
-  it('bumps the authz version for a tenant that gained rows and creates it for one that had none', async () => {
+  it('leaves a tenant with no role rows on the code defaults: a lone Marketing row would hide every other role', async () => {
+    expect(await marketingOf(tenantB.tenantId)).toEqual({});
+    const { rows } = await owner.query('SELECT 1 FROM app.role_permissions WHERE tenant_id = $1', [
+      tenantB.tenantId,
+    ]);
+    expect(rows).toHaveLength(0);
+    const versions = await owner.query('SELECT 1 FROM app.authz_versions WHERE tenant_id = $1', [
+      tenantB.tenantId,
+    ]);
+    expect(versions.rows).toHaveLength(0);
+  });
+
+  it('bumps the authz version for a tenant that gained rows and leaves a tenant with no role rows alone', async () => {
     const versionOf = async (tenantId: string) =>
       Number(
         (
@@ -521,10 +601,15 @@ describe('0083 marketing role', () => {
         ).version,
       );
     expect(await versionOf(tenantA.tenantId)).toBe(4);
-    expect(await versionOf(tenantB.tenantId)).toBe(1);
   });
 
   it('is idempotent and keeps a Founder-edited marketing grant', async () => {
+    const versionBefore = (
+      await owner.query<{ version: string }>(
+        'SELECT version FROM app.authz_versions WHERE tenant_id = $1',
+        [tenantA.tenantId],
+      )
+    ).rows[0]!.version;
     await writeAs(tenantA, (c) =>
       c.query(
         "UPDATE app.role_permissions SET scope = 'department', seeded = false WHERE tenant_id = $1 AND role_key = 'marketing' AND permission = 'crm.lead.read'",
@@ -544,6 +629,13 @@ describe('0083 marketing role', () => {
       [tenantA.tenantId],
     );
     expect(rows[0]).toEqual({ scope: 'department', seeded: false });
+    const versionAfter = (
+      await owner.query<{ version: string }>(
+        'SELECT version FROM app.authz_versions WHERE tenant_id = $1',
+        [tenantA.tenantId],
+      )
+    ).rows[0]!.version;
+    expect(versionAfter).toBe(versionBefore);
     const count = await one<{ n: string }>(
       "SELECT count(*) AS n FROM app.role_permissions WHERE tenant_id = $1 AND role_key = 'marketing'",
       [tenantA.tenantId],
