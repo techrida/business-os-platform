@@ -2,12 +2,17 @@
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { choose, click, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm, submit } from '@/test/form-interactions';
 
 vi.mock('server-only', () => ({}));
-const mocks = vi.hoisted(() => ({ retire: vi.fn(), success: vi.fn(), error: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
+  retire: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+}));
 vi.mock('@/app/(app)/settings/departments/actions', () => ({
-  createDepartmentAction: vi.fn(),
+  createDepartmentAction: mocks.create,
   renameDepartmentAction: vi.fn(),
   retireDepartmentAction: mocks.retire,
   restoreDepartmentAction: vi.fn(),
@@ -17,7 +22,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 
-import { RetireDepartmentDialog } from './record-dialogs';
+import { NewDepartmentDialog, RetireDepartmentDialog } from './record-dialogs';
 
 const SALES = '00000000-0000-4000-8000-0000000000d1';
 const MARKETING = '00000000-0000-4000-8000-0000000000d2';
@@ -76,4 +81,25 @@ it('retires an empty department without asking where members go', async () => {
   await click(retireButton());
   await act(() => Promise.resolve());
   expect(mocks.retire).toHaveBeenCalledExactlyOnceWith(SALES, 3, undefined);
+});
+
+it('shows a duplicate name refusal at the Name field', async () => {
+  const message = 'A department named "Sales" already exists.';
+  mocks.create.mockResolvedValue({
+    ok: false,
+    kind: 'invalid',
+    message,
+    fieldErrors: { name: message },
+  });
+  await mountForm(<NewDepartmentDialog staff={[]} open onOpenChange={vi.fn()} />);
+  const name = document.querySelector('input[name="name"]');
+  await fill(name, 'sales');
+  await submit(document.body);
+  await act(() => Promise.resolve());
+  expect(mocks.create).toHaveBeenCalledExactlyOnceWith({ name: 'sales', headUserId: null });
+  expect(name?.getAttribute('aria-invalid')).toBe('true');
+  const describedBy = name?.getAttribute('aria-describedby') ?? '';
+  const described = describedBy.split(' ').map((id) => document.getElementById(id)?.textContent);
+  expect(described).toContain(message);
+  expect(mocks.error).not.toHaveBeenCalled();
 });
