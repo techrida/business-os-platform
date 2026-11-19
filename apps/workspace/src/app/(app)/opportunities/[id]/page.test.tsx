@@ -297,6 +297,13 @@ describe('opportunity Mark lost and lost reason display (D54-3)', () => {
     expect(html).toContain('>Mark lost</button>');
   });
 
+  it('leaves out Mark lost when the lost-reasons list is refused with 403 (read-only access)', async () => {
+    mocks.listOpportunityLostReasonChoices.mockRejectedValue(new ApiError(403, 'forbidden'));
+    const html = await render();
+    expect(mocks.listOpportunityLostReasonChoices).toHaveBeenCalledOnce();
+    expect(html).not.toContain('>Mark lost</button>');
+  });
+
   it('shows lostReason.label over stageReason with the retired note when retired', async () => {
     mocks.getOpportunity.mockResolvedValue(
       opportunity('lost', {
@@ -322,6 +329,13 @@ describe('opportunity Mark lost and lost reason display (D54-3)', () => {
     const html = await render();
     expect(html).toContain('<strong>Budget freeze</strong>');
     expect(html).not.toContain('no longer offered');
+  });
+
+  it('does not promise a reopen on a lost opportunity, which the API refuses for every caller', async () => {
+    mocks.getOpportunity.mockResolvedValue(opportunity('lost', { stageReason: 'Timing' }));
+    const html = await render();
+    expect(html).toContain('No further moves from here.');
+    expect(html).not.toContain('reopen');
   });
 
   it('excludes lost from MoveForm so Lost is only reached through the Mark lost dialog', async () => {
