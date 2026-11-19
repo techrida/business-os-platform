@@ -28,8 +28,8 @@ export function OwnerCell({
     <div className={styles.contact}>
       <Avatar
         name={name}
-        seedId={seedId}
-        imageDocumentId={imageDocumentId}
+        seedId={seedId ?? null}
+        imageDocumentId={imageDocumentId ?? null}
         shape="circle"
         aria-hidden="true"
       />
