@@ -163,7 +163,7 @@ export const inboxRow = (page: Page, title: string) =>
 /**
  * Opens the inbox, waits for the memo's row to appear (the request is created in the submitting
  * transaction, so this is normally immediate; the reload loop covers a slow read), checks the row
- * shows the reason, opens it, and returns once the detail page and its "why" panel are showing.
+ * shows the reason, opens it, and returns once the detail page is showing.
  */
 export async function openFromInbox(
   page: Page,
@@ -181,9 +181,8 @@ export async function openFromInbox(
   await row.getByRole('link', { name: title }).click();
   await page.waitForURL(/\/inbox\/[0-9a-f-]{36}$/, { timeout: 30_000 });
   const requestId = new URL(page.url()).pathname.split('/').pop() ?? '';
-  await expect(page.getByRole('region', { name: 'Why this is in your inbox' })).toContainText(
-    reason,
-  );
+  // The reason shows in the inbox row above; the decision card no longer repeats it.
+  await expect(page.getByRole('region', { name: 'Why this is in your inbox' })).toHaveCount(0);
   // The decision form is a client component with a controlled textarea; let it hydrate.
   await page.waitForLoadState('networkidle');
   return { requestId };
