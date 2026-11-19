@@ -1513,12 +1513,13 @@ describe('the own-scope case list is scoped in SQL, before its limit (audit #9)'
     // No extra data: nothing of Sales B's customers reaches Sales A.
     expect(items.every((c) => c.partyId === mine.partyId)).toBe(true);
 
-    // Sales B (own scope) gets their own newest cases, up to the limit, and not Sales A's.
+    // Sales B (own scope) is paged and counted over their own cases only, never Sales A's.
     as(U.salesB, 'sales');
-    const theirs = VerificationCaseDtoSchema.array().parse(
-      (await api().get('/v1/verification-cases')).body,
-    );
-    expect(theirs).toHaveLength(500);
+    const resB = await api().get('/v1/verification-cases?limit=100');
+    expect(resB.status, JSON.stringify(resB.body)).toBe(200);
+    const theirs = VerificationCaseDtoSchema.array().parse(resB.body);
+    expect(theirs).toHaveLength(100);
+    expect(Number(resB.headers['x-total-count'])).toBe(501);
     expect(theirs.map((c) => c.id)).not.toContain(mine.id);
   });
 });
