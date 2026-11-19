@@ -3,7 +3,7 @@ import type { AdminDepartmentDetail } from '@bos/contracts';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import type { DepartmentStaffOption } from '@/lib/api-departments';
-import { choose, click, mountForm } from '@/test/form-interactions';
+import { choose, click, fill, mountForm } from '@/test/form-interactions';
 
 vi.mock('server-only', () => ({}));
 const dialogs = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
@@ -118,4 +118,27 @@ it('makes a second person Head and sends one head change for review', async () =
   expect(last?.title).toBe('Review changes to Sales');
   expect(last?.expectedRevision).toBe('rev-1');
   expect(last?.changes).toEqual([{ kind: 'head', departmentId: SALES, userId: BIBEK }]);
+});
+
+it('says a person added from another department moves from it, and stages a memberAdd', async () => {
+  const { container } = await mount();
+  await fill(container.querySelector('input[placeholder="Search people"]'), 'chan');
+  const option = [...document.querySelectorAll('[role="option"]')].find((el) =>
+    el.textContent?.includes('Chandra T.'),
+  );
+  expect(option?.textContent).toContain('Moves from Marketing');
+  await click(option ?? null);
+
+  const row = [...container.querySelectorAll('tr')].find((tr) =>
+    tr.textContent?.includes('Chandra T.'),
+  );
+  expect(row?.textContent).toContain('Moves from Marketing');
+  expect(container.textContent).toContain(
+    'Records Chandra T. owns stay with Marketing. Reassign them if Sales should have them.',
+  );
+
+  await click(button(container, 'Review changes'));
+  expect(dialogs.props.at(-1)?.changes).toEqual([
+    { kind: 'memberAdd', departmentId: SALES, userId: CHANDRA, level: 'staff' },
+  ]);
 });
