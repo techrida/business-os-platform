@@ -1,0 +1,114 @@
+/* Lost reasons card (Settings > Sales), on the shared tokens only. One bordered list of rows; a row is the name with its
+   labels on the left and its actions on the right. Phone: the actions drop under the name and may wrap, and the add
+   field takes the full width. Targets are at least 44px tall. */
+
+.card {
+  display: grid;
+  gap: 16px;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.hint {
+  flex: 1 1 260px;
+  max-width: 60ch;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body-small);
+  line-height: var(--line-height-body-small);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: var(--border-width-thin) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--surface-default);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 16px;
+}
+
+.row + .row {
+  border-block-start: var(--border-width-thin) solid var(--border-default);
+}
+
+.row[data-retired] .name {
+  color: var(--text-secondary);
+}
+
+.nameLine {
+  display: flex;
+  flex: 1 1 200px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.name {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.actions > button {
+  min-block-size: 44px;
+}
+
+.edit {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+}
+
+.edit > :first-child {
+  flex: 1 1 240px;
+}
+
+.add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+}
+
+.addField {
+  flex: 1 1 260px;
+}
+
+.add > button {
+  min-block-size: 44px;
+  margin-block-start: 22px;
+}
+
+@media (max-width: 479px) {
+  .add > button {
+    width: 100%;
+    margin-block-start: 0;
+  }
+}
