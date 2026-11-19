@@ -379,7 +379,7 @@ describe('D45: follow-ups follow the owner (PATCH /v1/leads/:id)', () => {
         WHERE tenant_id = $1 AND action = 'activity.reassigned' ORDER BY entity_id`,
       [h.tenantId],
     );
-    expect(rows.map((r: { entity_id: string }) => r.entity_id).sort()).toEqual(
+    expect((rows as { entity_id: string }[]).map((r) => r.entity_id).sort()).toEqual(
       [mine.id, myMeeting.id].sort(),
     );
     for (const r of rows as { before: unknown; after: unknown; meta: unknown }[]) {
