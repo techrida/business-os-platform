@@ -1136,10 +1136,30 @@ export class DocumentsService {
   }
 
   /**
-   * Passes when the caller may do any one of `actions` on `ref`. Otherwise throws the refusal of the first one,
-   * so an owner with a single permission answers exactly as before.
+   * The route-level check of the generic read routes (GET /v1/documents/:id and its link), made before the row is
+   * read. Those routes cannot know the owner until the document is loaded, so a staff caller passes with
+   * `documents.read` or with the `readPermission` of any registered owner type; `assertOwner` then asks, on the owner
+   * ref, for `documents.read` or that one owner's permission, so nobody opens more than before (a `vendor.read` holder
+   * still cannot open a verification case file). Without this, a reviewer named by `verification.review` passed the
+   * record check but was refused at the route. A portal caller is checked against `documents.read` alone: an owner's
+   * `readPermission` is a staff read. The refusal is the `documents.read` one, so a caller holding none of them gets
+   * the same 403 as before for a real, an unknown and a malformed id.
    */
-  private assertAnyOf(actions: readonly Permission[], ref: ResourceRef): void {
+  assertReadRoute(): void {
+    const actions = new Set<Permission>(['documents.read']);
+    if (currentPrincipal()?.orgKind === 'staff') {
+      for (const policy of this.owners.values()) {
+        if (policy.readPermission !== undefined) actions.add(policy.readPermission);
+      }
+    }
+    this.assertAnyOf([...actions]);
+  }
+
+  /**
+   * Passes when the caller may do any one of `actions` (on `ref`, when given). Otherwise throws the refusal of the
+   * first one, so an owner with a single permission answers exactly as before.
+   */
+  private assertAnyOf(actions: readonly Permission[], ref?: ResourceRef): void {
     let first: ForbiddenException | undefined;
     for (const action of actions) {
       try {

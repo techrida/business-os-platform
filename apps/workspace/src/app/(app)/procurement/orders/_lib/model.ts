@@ -1,7 +1,7 @@
 import type { PoStatus } from '@bos/contracts';
 import type { NumberSystems } from '@bos/locale';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
+import type { Grants } from '@/lib/grants';
 import { money } from '@/lib/kernel-format';
 
 /**
@@ -30,11 +30,14 @@ export interface PoGrants {
   confirm: boolean;
 }
 
-/** The permissions the session's roles hold by default. Server-side only. */
-export function poGrants(roles: readonly string[]): PoGrants {
+/**
+ * The two flags from the person's live grants (`getGrants`, GET /v1/me), not the role defaults, so a grant an admin
+ * added or removed shows at once. Any scope counts: the API checks the order itself.
+ */
+export function poGrants(grants: Grants): PoGrants {
   return {
-    issue: hasPermission(roles, 'procurement.po.issue'),
-    confirm: hasPermission(roles, 'procurement.receipt.confirm'),
+    issue: grants.has('procurement.po.issue'),
+    confirm: grants.has('procurement.receipt.confirm'),
   };
 }
 

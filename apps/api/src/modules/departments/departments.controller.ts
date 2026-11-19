@@ -19,8 +19,6 @@ import {
   RetireDepartmentBodySchema,
   UnassignedPeopleQuerySchema,
   type UnassignedPeopleResponse,
-  UpdateDepartmentPeopleBodySchema,
-  type UpdateDepartmentPeopleResponse,
 } from '@bos/contracts';
 import {
   Body,
@@ -103,19 +101,5 @@ export class DepartmentsAdminController {
     @Body() body: unknown,
   ): Promise<AdminDepartmentDetail> {
     return this.departments.restore(id, parseOr400(RestoreDepartmentBodySchema, body));
-  }
-
-  /**
-   * 200 with updated department detail, new access revision and applied effect lines.
-   * 409 `stale_access` when `expectedRevision` no longer matches the entity's current revision.
-   */
-  @Post(':id/people')
-  @HttpCode(200)
-  @Can('admin.roles.write')
-  updatePeople(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: unknown,
-  ): Promise<UpdateDepartmentPeopleResponse> {
-    return this.departments.updatePeople(id, parseOr400(UpdateDepartmentPeopleBodySchema, body));
   }
 }

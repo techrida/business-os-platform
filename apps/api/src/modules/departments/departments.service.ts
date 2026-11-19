@@ -1,5 +1,7 @@
 // Departments admin service (U20b / US-106): entity-scoped department lifecycle (create, rename,
-// retire, restore), unassigned staff discovery, and batched department people/leadership edits.
+// retire, restore) and unassigned staff discovery. Membership, level and head changes are saved through the
+// access save (`AccessSettingsService`, POST /v1/admin/access), which re-checks every warning; this service has no
+// people endpoint of its own.
 //
 // Invariants:
 // - Reads accept either `admin.users.read` or `admin.roles.read` for active staff callers; writes
@@ -11,9 +13,8 @@
 // - Retiring a department with active members requires `moveMembersTo` (another active department id
 //   or explicit `null` to unassign them) and completes in one transaction; historical records keep
 //   their reference to the retired department.
-// - Membership and head changes go through `applyDepartmentChanges`, persist in trigger-safe order
-//   (matching migration 0079), record one audit entry per change, bump the access revision inside
-//   the transaction, and invalidate the authz cache AFTER commit.
+// - A write that changes a membership or a head bumps the access revision inside the transaction and
+//   invalidates the authz cache AFTER commit.
 import {
   ACCESS_LEVEL_RANK,
   type AccessLevel,
@@ -22,7 +23,6 @@ import {
   type AdminDepartmentList,
   type AdminDepartmentsQuery,
   type CreateDepartmentBody,
-  type DepartmentChange,
   type DepartmentHeadRef,
   type DepartmentMember,
   type DepartmentStatus,
@@ -34,8 +34,6 @@ import {
   type UnassignedPeopleQuery,
   type UnassignedPeopleResponse,
   type UnassignedPerson,
-  type UpdateDepartmentPeopleBody,
-  type UpdateDepartmentPeopleResponse,
 } from '@bos/contracts';
 import { departments, idpOrgs, scoped, userEntities, userRoles, users } from '@bos/db';
 import {
@@ -55,7 +53,6 @@ import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { type TxScope, withTx } from '../../platform/db/tx';
 import { searchPage } from '../../platform/list';
 import { ACCESS_REVISION_PORT, type AccessRevisionPort } from './access-revision.port';
-import { applyDepartmentChanges, type DepartmentSnapshot } from './department-changes';
 import { DepartmentsCaller } from './departments.caller';
 
 type Queryable = Db | DbTransaction;
@@ -112,13 +109,6 @@ function staleDepartmentException(): ConflictException {
     code: 'conflict',
     message: 'This department was changed by someone else. Reload and try again.',
   });
-}
-
-function changeTargetsDepartment(change: DepartmentChange, departmentId: string): boolean {
-  if (change.kind === 'memberMove') {
-    return change.fromDepartmentId === departmentId || change.toDepartmentId === departmentId;
-  }
-  return change.departmentId === departmentId;
 }
 
 function departmentLockKey(scope: TxScope): string {
@@ -333,54 +323,6 @@ export class DepartmentsAdminService {
       members,
       version: dept.version,
       revision,
-    };
-  }
-
-  private async loadEntitySnapshot(tx: DbTransaction, scope: TxScope): Promise<DepartmentSnapshot> {
-    const deptRows = await tx
-      .select({
-        id: departments.id,
-        name: departments.name,
-        status: departments.status,
-        headUserId: departments.headUserId,
-      })
-      .from(departments)
-      .where(scoped(scope).where(departments));
-
-    const staffRows = await tx
-      .select({
-        userId: userEntities.userId,
-        displayName: users.displayName,
-        email: users.email,
-        status: users.status,
-        departmentId: userEntities.departmentId,
-        level: userEntities.level,
-        jobTitle: userEntities.jobTitle,
-      })
-      .from(userEntities)
-      .innerJoin(
-        users,
-        and(eq(users.tenantId, userEntities.tenantId), eq(users.id, userEntities.userId)),
-      )
-      .innerJoin(idpOrgs, and(eq(idpOrgs.tenantId, users.tenantId), eq(idpOrgs.id, users.idpOrgId)))
-      .where(
-        and(
-          eq(userEntities.tenantId, scope.tenantId),
-          eq(userEntities.organizationId, scope.organizationId),
-          eq(idpOrgs.kind, 'staff'),
-        ),
-      );
-
-    return {
-      departments: deptRows,
-      people: staffRows.map((row) => ({
-        userId: row.userId,
-        name: displayNameOf(row.displayName, row.email, row.userId),
-        active: row.status === 'active',
-        departmentId: row.departmentId,
-        level: row.level,
-        jobTitle: row.jobTitle,
-      })),
     };
   }
 
@@ -1088,157 +1030,5 @@ export class DepartmentsAdminService {
       }
       throw error;
     }
-  }
-
-  /** POST /v1/admin/departments/:id/people */
-  async updatePeople(
-    id: string,
-    body: UpdateDepartmentPeopleBody,
-  ): Promise<UpdateDepartmentPeopleResponse> {
-    this.assertCanWrite();
-    const { scope, actor } = this.caller.tx();
-
-    for (const change of body.changes) {
-      if (!changeTargetsDepartment(change, id)) {
-        const message = 'Every change in this request must apply to this department.';
-        throw new UnprocessableEntityException({
-          code: 'unprocessable',
-          message,
-          details: { changes: message },
-        });
-      }
-    }
-
-    const response = await withTx(this.db, scope, actor, async (tx) => {
-      await this.lockEntityDepartments(tx, scope);
-
-      const [dept] = await tx
-        .select({ id: departments.id })
-        .from(departments)
-        .where(scoped(scope).where(departments, eq(departments.id, id)))
-        .limit(1);
-
-      if (dept === undefined) {
-        throw new NotFoundException('Department not found');
-      }
-
-      // Check optimistic concurrency and reserve the next revision inside this transaction.
-      // Any validation error below rolls the whole transaction (including this bump) back.
-      const nextRevision = await this.revisions.bump(tx, scope, {
-        expectedRevision: body.expectedRevision,
-        actorUserId: actor.kind === 'user' ? actor.id : null,
-      });
-
-      const snapshot = await this.loadEntitySnapshot(tx, scope);
-      const applied = applyDepartmentChanges(snapshot, body.changes);
-      if (!applied.ok) {
-        throw new UnprocessableEntityException({
-          code: 'unprocessable',
-          message: applied.error.message,
-          details: { [applied.error.field]: applied.error.message },
-        });
-      }
-
-      const nextPeopleById = new Map(applied.next.people.map((p) => [p.userId, p]));
-      const nextDeptsById = new Map(applied.next.departments.map((d) => [d.id, d]));
-
-      const demotionsAndNonHeads: string[] = [];
-      const headPromotions: string[] = [];
-      for (const userId of applied.changedUserIds) {
-        const nextPerson = nextPeopleById.get(userId);
-        if (nextPerson === undefined) continue;
-        if (nextPerson.level === 'head') {
-          headPromotions.push(userId);
-        } else {
-          demotionsAndNonHeads.push(userId);
-        }
-      }
-
-      // Phase 1: apply removals, non-head moves, job-title edits, and head demotions first so
-      // outgoing heads release their department's head_user_id before any new head is promoted.
-      for (const userId of demotionsAndNonHeads) {
-        const nextPerson = nextPeopleById.get(userId);
-        if (nextPerson === undefined) continue;
-        await tx
-          .update(userEntities)
-          .set({
-            departmentId: nextPerson.departmentId,
-            level: nextPerson.level,
-            jobTitle: nextPerson.jobTitle,
-          })
-          .where(
-            and(
-              eq(userEntities.tenantId, scope.tenantId),
-              eq(userEntities.organizationId, scope.organizationId),
-              eq(userEntities.userId, userId),
-            ),
-          );
-      }
-
-      // Phase 2: apply promotions to head; migration 0079's trigger updates departments.head_user_id.
-      for (const userId of headPromotions) {
-        const nextPerson = nextPeopleById.get(userId);
-        if (nextPerson === undefined) continue;
-        await tx
-          .update(userEntities)
-          .set({
-            departmentId: nextPerson.departmentId,
-            level: nextPerson.level,
-            jobTitle: nextPerson.jobTitle,
-          })
-          .where(
-            and(
-              eq(userEntities.tenantId, scope.tenantId),
-              eq(userEntities.organizationId, scope.organizationId),
-              eq(userEntities.userId, userId),
-            ),
-          );
-      }
-
-      // Phase 3: ensure any department whose final head is null (for example if an inactive head
-      // was cleared) has head_user_id = NULL, and stamp updated_at on touched departments.
-      for (const deptId of applied.changedDepartmentIds) {
-        const nextDept = nextDeptsById.get(deptId);
-        if (nextDept === undefined) continue;
-        if (nextDept.headUserId === null) {
-          await tx
-            .update(departments)
-            .set({ headUserId: null, updatedAt: sql`now()` })
-            .where(scoped(scope).where(departments, eq(departments.id, deptId)));
-        } else {
-          await tx
-            .update(departments)
-            .set({ updatedAt: sql`now()` })
-            .where(scoped(scope).where(departments, eq(departments.id, deptId)));
-        }
-      }
-
-      for (const entry of applied.auditEntries) {
-        await this.audit.record(tx, {
-          action: entry.action,
-          entityType: 'departments',
-          entityId: entry.departmentId,
-          before: entry.before,
-          after: entry.after,
-          meta: {
-            ...(entry.userId !== null ? { userId: entry.userId } : {}),
-            summary: entry.summary,
-            ...(body.note !== undefined ? { note: body.note } : {}),
-            ...(body.acknowledged !== undefined ? { acknowledged: body.acknowledged } : {}),
-            revision: nextRevision,
-          },
-        });
-      }
-
-      const detail = await this.loadDetail(tx, scope, id);
-      return {
-        ...detail,
-        applied: [...applied.effects],
-      };
-    });
-
-    // Invalidate authz cache AFTER the transaction commits so no reload caches stale data.
-    await this.authz.invalidate(scope.tenantId, scope.organizationId);
-    return response;
   }
 }

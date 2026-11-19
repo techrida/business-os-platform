@@ -14,6 +14,7 @@ import {
   shortClosePurchaseOrder,
 } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
+import { getGrants } from '@/lib/grants';
 import type { Session } from '@/lib/session';
 
 import { poFailure, type PoOp } from './_lib/failure';
@@ -55,7 +56,8 @@ async function open(
   const key = keyOf(form);
   if (!isGuid(id)) return { ok: false, state: { key: prev.key, error: INCOMPLETE, reload: true } };
   const session = await requireStaffSession(`/procurement/orders/${id}`);
-  if (!poGrants(session.roles).issue) return { ok: false, state: { key, error: NO_PERMISSION } };
+  if (!poGrants(await getGrants(session)).issue)
+    return { ok: false, state: { key, error: NO_PERMISSION } };
   return { ok: true, o: { id, session, key } };
 }
 

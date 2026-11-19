@@ -8,7 +8,6 @@ import { redirect } from 'next/navigation';
 
 import { keyOf } from '@/components/p2/crm/idempotency';
 import { isGuid } from '@/components/p2/customers/format';
-import { hasPermission } from '@/components/p2/customers/permissions';
 import {
   cancelPaymentRequest,
   createPaymentRequest,
@@ -44,7 +43,8 @@ export async function createPaymentRequestAction(
 ): Promise<ActionState> {
   const key = keyOf(form);
   const session = await requireStaffSession(`${BASE}/new`);
-  if (!hasPermission(session.roles, 'payables.payment.request'))
+  // Live grants, as the entry page is gated on: a grant at any scope, `own` included, may make a request.
+  if (!hasGrant(await getGrants(session), 'payables.payment.request'))
     return { key, error: noPermission };
   const count = Number(text(form, 'lineCount'));
   if (!Number.isInteger(count) || count < 1 || count > 200)

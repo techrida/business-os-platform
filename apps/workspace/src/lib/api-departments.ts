@@ -12,7 +12,6 @@ import {
   AdminDepartmentListSchema,
   AdminUsersPageSchema,
   type CreateDepartmentBody,
-  type DepartmentChange,
   type DepartmentStatus,
   type RenameDepartmentBody,
   type RestoreDepartmentBody,
@@ -20,8 +19,6 @@ import {
   type RoleKey,
   type UnassignedPeopleResponse,
   UnassignedPeopleResponseSchema,
-  type UpdateDepartmentPeopleResponse,
-  UpdateDepartmentPeopleResponseSchema,
 } from '@bos/contracts';
 import { z } from 'zod';
 
@@ -206,38 +203,6 @@ export function restoreDepartment(
     `/v1/admin/departments/${encodeURIComponent(id)}/restore`,
     AdminDepartmentDetailSchema,
     { expectedVersion: body.expectedVersion },
-  );
-}
-
-export interface DepartmentPeopleSaveInput {
-  changes: DepartmentChange[];
-  expectedRevision: string;
-  note?: string | undefined;
-  /** True when the person ticked every confirm warning in the review dialog. */
-  acknowledged?: boolean | undefined;
-}
-
-/**
- * `POST /v1/admin/departments/:id/people`: head, add, remove, move, level and job title changes,
- * saved together against the access revision (spec 5.2 path b).
- */
-export function saveDepartmentPeople(
-  session: Session,
-  id: string,
-  input: DepartmentPeopleSaveInput,
-): Promise<UpdateDepartmentPeopleResponse> {
-  const note = input.note?.trim();
-  return requestParsed(
-    session,
-    'POST',
-    `/v1/admin/departments/${encodeURIComponent(id)}/people`,
-    UpdateDepartmentPeopleResponseSchema,
-    {
-      changes: input.changes,
-      expectedRevision: input.expectedRevision,
-      ...(note ? { note } : {}),
-      ...(input.acknowledged !== undefined ? { acknowledged: input.acknowledged } : {}),
-    },
   );
 }
 
