@@ -13,9 +13,11 @@ import { Panel } from '@/components/ui/panel';
 import {
   addPhone,
   canAddPhone,
+  companyLogo,
   countryOptions,
   draftsFromSettings,
   isCardEmpty,
+  logoSource,
   removePhone,
   sameDraft,
   setPhone,
@@ -157,16 +159,20 @@ function CardForm({
 }
 
 /**
- * The Company profile screen: five cards and the live letterhead preview. Every card edits its own
- * draft; only the fields a person has touched are held here, so saving one card never discards what
- * is half typed in another. The preview reads all drafts.
+ * The Company profile screen: five cards and the live letterhead preview. Every card but the logo
+ * edits its own draft; only the fields a person has touched are held here, so saving one card never
+ * discards what is half typed in another. The logo uploads at once and the page refreshes. The
+ * preview reads all drafts and the saved logo.
  */
 export function CompanyEditor({
+  organisationId,
   settings,
   versions,
   action,
   resetCard,
 }: {
+  /** The signed-in organisation: the owner of the logo picture. */
+  organisationId: string;
   settings: CompanySettings;
   /** The version of each setting as the page loaded it. Every save sends it back. */
   versions: CompanyVersions;
@@ -180,7 +186,6 @@ export function CompanyEditor({
     identity: edits.identity ?? base.identity,
     address: edits.address ?? base.address,
     contact: edits.contact ?? base.contact,
-    logo: edits.logo === undefined ? base.logo : edits.logo,
     signatory: edits.signatory ?? base.signatory,
   };
 
@@ -196,9 +201,10 @@ export function CompanyEditor({
       }),
     [],
   );
-  const dirty = (card: Exclude<keyof CompanyDrafts, 'logo'>) =>
+  const dirty = (card: keyof CompanyDrafts) =>
     edits[card] !== undefined && !sameDraft(edits[card], base[card]);
 
+  const logo = companyLogo(settings.profile);
   const identity = draft.identity;
   const address = draft.address;
   const contact = draft.contact;
@@ -455,10 +461,9 @@ export function CompanyEditor({
         </CardForm>
 
         <LogoCard
-          draft={draft.logo}
-          onDraft={(next) => (next === undefined ? clear('logo') : edit('logo', next))}
-          action={action}
-          profileVersion={versions['entity.profile']}
+          organisationId={organisationId}
+          name={settings.profile.displayName?.trim() || 'your company'}
+          logo={logo}
         />
 
         <CardForm
@@ -502,7 +507,7 @@ export function CompanyEditor({
 
       <LetterheadPreview
         model={{
-          logo: draft.logo,
+          logo: logoSource(logo),
           displayName: identity.displayName,
           address,
           phones: contact.phones,

@@ -5,7 +5,8 @@
 // Differences: an invoice is drawn from its frozen row, so only the tenant's number system (`format.number_system`)
 // comes from settings (SettingsModule, as in the quotation worker). This instance
 // registers InvoiceOwnerPolicy as InvoicesModule does on the API's instance. Without it every render is refused
-// (no policy means no generated files).
+// (no policy means no generated files). DocumentLogoModule gives the sweeper the entity logo's clean bytes, so print 1
+// freezes the logo itself (U12).
 import { BullModule } from '@nestjs/bullmq';
 import { ForbiddenException, Inject, Module, type OnModuleInit } from '@nestjs/common';
 
@@ -24,6 +25,10 @@ import { SignedLinks } from '../../../platform/documents/signed-link';
 import { DiskStorageAdapter, STORAGE_ADAPTER } from '../../../platform/documents/storage.adapter';
 import { SettingsModule } from '../../../platform/settings/settings.module';
 import { SettingsService } from '../../../platform/settings/settings.service';
+import {
+  DocumentLogoModule,
+  DocumentLogoResolverFactory,
+} from '../../images/document-logo.resolver';
 import { GotenbergClient } from '../../quotations/render/gotenberg.client';
 import type { RunInTx } from '../../quotations/render/quotation-render.sweeper';
 import { drizzleInvoiceHeadLoader, InvoiceOwnerPolicy } from '../invoice-owner.policy';
@@ -31,6 +36,7 @@ import {
   drizzleInvoiceRenderStore,
   INVOICE_RENDER_CLOCK,
   INVOICE_RENDER_DOCUMENTS,
+  INVOICE_RENDER_LOGOS,
   INVOICE_RENDER_PDF,
   INVOICE_RENDER_SETTINGS,
   INVOICE_RENDER_QUEUE,
@@ -45,6 +51,7 @@ import {
   imports: [
     AuditModule,
     SettingsModule,
+    DocumentLogoModule,
     BullModule.registerQueue({ name: DOCS_SCAN_QUEUE }, { name: INVOICE_RENDER_QUEUE }),
   ],
   providers: [
@@ -98,6 +105,7 @@ import {
       },
     },
     { provide: INVOICE_RENDER_CLOCK, useValue: () => new Date() },
+    { provide: INVOICE_RENDER_LOGOS, useExisting: DocumentLogoResolverFactory },
     InvoiceRenderSweeper,
     InvoiceRenderProcessor,
     InvoiceRenderScheduler,

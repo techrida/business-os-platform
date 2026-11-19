@@ -41,6 +41,7 @@ import {
   PortalForm,
   ProposeBankForm,
 } from '../_components/panel-forms';
+import { CompanyLogoUpload } from '../../customers/_components/company-logo-upload';
 import { vendorFailure } from '../_lib/failure';
 import {
   isEditable,
@@ -483,6 +484,16 @@ export default async function VendorPage({
 
         <div className={styles.sideStack}>
           <Panel title="Profile" className={styles.profile}>
+            <div className={styles.profileLogo}>
+              <CompanyLogoUpload
+                ownerType="vendor_logo"
+                companyId={vendor.id}
+                legalName={vendor.legalName}
+                logoDocumentId={vendor.logoDocumentId ?? null}
+                label="Vendor logo"
+                readOnly={!(grants.write && editable)}
+              />
+            </div>
             <FactList facts={facts} />
           </Panel>
           <Panel

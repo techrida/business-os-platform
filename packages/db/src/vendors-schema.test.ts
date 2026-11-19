@@ -127,6 +127,14 @@ const DRIZZLE: Record<string, PgTable> = {
 
 describe('0032_vendors and src/schema/vendors.ts', () => {
   const parsed = parseSql(SQL_TEXT);
+  // 0054 adds vendors.logo_document_id (no FK, no index).
+  const logosSql = readFileSync(
+    new URL('../migrations/0054_party_logos.sql', import.meta.url),
+    'utf8',
+  );
+  for (const m of logosSql.matchAll(/ALTER TABLE "app"\."(\w+)" ADD COLUMN "(\w+)" /g)) {
+    parsed.get(m[1]!)?.columns.push(m[2]!);
+  }
 
   it('create the same four tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());

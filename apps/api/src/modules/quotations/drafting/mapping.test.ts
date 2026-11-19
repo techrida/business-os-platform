@@ -406,8 +406,20 @@ describe('toQuotationListItem', () => {
       validUntil: '2026-11-30',
       customerName: 'Himal Traders',
       ownerName: null,
+      ownerAvatarDocumentId: null,
       canEdit: false,
     });
+  });
+
+  it("carries the owner's avatar document id for the list's avatar", () => {
+    const avatar = '7a1e2b3c-4d5e-4f60-8a7b-8c9d0e1f2a3b';
+    const item = toQuotationListItem(quotation(), sentUsd(), {
+      customerName: 'Himal Traders',
+      ownerName: 'Sita Sharma',
+      ownerAvatarDocumentId: avatar,
+      canEdit: true,
+    });
+    expect(QuotationListItemSchema.parse(item).ownerAvatarDocumentId).toBe(avatar);
   });
 });
 

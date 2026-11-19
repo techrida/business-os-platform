@@ -146,6 +146,13 @@
   }
 }
 
+/* The logo sits above the profile facts, as wide as the panel, so an editor gets its drop zone (or its compact
+   row at 390px). */
+.profileLogo {
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
 /* One column: the profile leads, then the records, then the status and review cards. */
 @media (max-width: 1199.98px) {
   .sideStack {

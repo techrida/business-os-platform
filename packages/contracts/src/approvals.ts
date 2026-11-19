@@ -225,7 +225,12 @@ export const ApprovalActionKindSchema = z.enum([
  * A person a record refers to, by display name. Records return the names of the people they name, so a reader
  * who may see the record needs no admin directory to label them.
  */
-export const PersonNameSchema = z.object({ userId: z.string(), name: z.string().min(1) });
+export const PersonNameSchema = z.object({
+  userId: z.string(),
+  name: z.string().min(1),
+  /** The person's picture (`app.users.avatar_document_id`); null or absent shows initials. */
+  avatarDocumentId: z.guid().nullable().optional(),
+});
 export type PersonName = z.infer<typeof PersonNameSchema>;
 
 /**
