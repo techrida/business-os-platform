@@ -1,3 +1,4 @@
+import { avatarColour, imagePath } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +45,7 @@ const { default: VendorPage } = await import('./[id]/page');
 const ID = '11111111-1111-4111-8111-111111111111';
 const ACCOUNT = '22222222-2222-4222-8222-222222222222';
 const ORG = '33333333-3333-4333-8333-333333333333';
+const LOGO = '77777777-7777-4777-8777-777777777777';
 
 const apiError = (status: number, code = 'x', extra: Record<string, unknown> = {}) =>
   new ApiError(status, 'x', {
@@ -339,5 +341,50 @@ describe('vendor detail', () => {
     expect(out).toContain(`/verification/${ACCOUNT}`);
     expect(out).toContain('Awaiting review');
     expect(kyb.listVerificationCases).toHaveBeenCalledWith(expect.anything(), { partyId: ID });
+  });
+});
+
+describe('vendor logo', () => {
+  /** The markup of the "Vendor logo" group: from its opening tag to the profile facts after it. */
+  const logoGroup = (out: string) => {
+    const start = out.indexOf('aria-label="Vendor logo"');
+    expect(start).toBeGreaterThan(-1);
+    return out.slice(start, out.indexOf('<dl', start));
+  };
+
+  it('each list row draws its own logo, or initials seeded from its own id', async () => {
+    api.listVendors.mockResolvedValue({
+      items: [vendor({ logoDocumentId: LOGO }), vendor({ id: ACCOUNT, legalName: 'Foreign Ltd' })],
+      total: 2,
+    });
+    const out = await list();
+    expect(out).toContain(`src="${imagePath(LOGO)}"`);
+    expect(out.match(/<img/g)).toHaveLength(1);
+    expect(out).toContain(`--avatar-fill:${avatarColour(ID)}`);
+    expect(out).toContain(`--avatar-fill:${avatarColour(ACCOUNT)}`);
+  });
+
+  it('the detail draws the logo seeded from the vendor id, and lets a writer replace it', async () => {
+    api.getVendor.mockResolvedValue(vendor({ logoDocumentId: LOGO }));
+    const group = logoGroup(await detail());
+    expect(group).toContain(`--avatar-fill:${avatarColour(ID)}`);
+    expect(group).toContain(`src="${imagePath(LOGO)}"`);
+    expect(group).toContain('type="file"');
+  });
+
+  it('is the picture only without vendor.write', async () => {
+    session.roles = ['finance'];
+    api.getVendor.mockResolvedValue(vendor({ logoDocumentId: LOGO }));
+    const out = await detail();
+    expect(logoGroup(out)).toContain(`src="${imagePath(LOGO)}"`);
+    expect(logoGroup(out)).not.toContain('type="file"');
+    expect(out).not.toContain('Edit vendor');
+  });
+
+  it('is the picture only once the vendor can no longer be edited', async () => {
+    api.getVendor.mockResolvedValue(vendor({ status: 'archived' }));
+    const out = await detail();
+    expect(logoGroup(out)).not.toContain('type="file"');
+    expect(logoGroup(out)).not.toContain('<img');
   });
 });
