@@ -5,13 +5,14 @@
 import type { Permission } from '@bos/contracts';
 import { authzVersions, type Scoped, scoped } from '@bos/db';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { eq, type SQL, sql } from 'drizzle-orm';
+import { eq, or, type SQL, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import { DB, type Db } from '../db/db.module';
 import { systemActor, withTx } from '../db/tx';
 import { can } from './can';
 import { type Principal, type ResourceRef, type ScopableTable, principal } from './principal';
+import { type RecordReach, assignedToSql, recordReachOf } from './record-reach';
 import { RoleCache } from './role-cache';
 
 // The @bos/db index exports `Scoped` but not its counterparty helper types, so derive them here.
@@ -46,10 +47,47 @@ function portalRows(p: Principal, table: ScopableTable, s: Scoped): SQL {
   return s.forCounterparty(table as unknown as AnyCounterpartyTable, counterparty.kind, p.partyId);
 }
 
+/** The columns a scope compares, from record-reach.ts when the table is described there. */
+interface ScopeColumns {
+  owner: AnyPgColumn | undefined;
+  department: AnyPgColumn | undefined;
+  /** The table's reach when `action` is its read permission; undefined for every other action. */
+  readReach: RecordReach | undefined;
+}
+
+function columnsOf(table: ScopableTable, action: Permission): ScopeColumns {
+  const reach = recordReachOf(table);
+  if (reach === undefined) {
+    return { owner: table.ownerUserId, department: table.departmentId, readReach: undefined };
+  }
+  return {
+    owner: reach.owner,
+    department: reach.department,
+    readReach: reach.readPermission === action ? reach : undefined,
+  };
+}
+
+/**
+ * `p`'s own rows, the SQL of `isMine()` in can.ts: the owner column, plus on the table's read permission the
+ * creator and the assignees. Undefined when the table has none of them, which matches no row.
+ */
+function mineCondition(p: Principal, table: ScopableTable, c: ScopeColumns): SQL | undefined {
+  const parts: SQL[] = [];
+  if (c.owner !== undefined) parts.push(eq(c.owner, p.userId));
+  const reach = c.readReach;
+  if (reach !== undefined) {
+    if (reach.creator !== undefined) parts.push(eq(reach.creator, p.userId));
+    if (reach.assignment !== undefined) parts.push(assignedToSql(table, reach, p.userId));
+  }
+  if (parts.length === 0) return undefined;
+  return parts.length === 1 ? parts[0] : or(...parts);
+}
+
 /**
  * The SQL twin of `can(p, action, r)` for every row `r` of `table`: a row matches exactly when
  * `can()` would allow it. Each branch mirrors `inScope()` in can.ts; a column the table lacks is
- * treated like a missing `ResourceRef` field, which never matches.
+ * treated like a missing `ResourceRef` field, which never matches. The columns come from
+ * record-reach.ts when the table is described there, else from `ownerUserId` and `departmentId`.
  *
  * Separation of duties is not expressed here (it depends on who prepared each record, not on a
  * column), so an SoD action still needs `assert()` on the chosen record.
@@ -60,14 +98,29 @@ export function scopeWhereFor(p: Principal, table: ScopableTable, action: Permis
   if (scope === undefined) return NOTHING;
 
   const s = scoped({ tenantId: p.tenantId, organizationId: p.organizationId });
+  const c = columnsOf(table, action);
   switch (scope) {
-    case 'own':
-      if (table.ownerUserId === undefined) return NOTHING;
-      return s.where(table, eq(table.ownerUserId, p.userId));
-    case 'department':
-      // No department means no department scope; NULL = NULL would not match anyway, but be explicit.
-      if (p.departmentId === null || table.departmentId === undefined) return NOTHING;
-      return s.where(table, eq(table.departmentId, p.departmentId));
+    case 'assigned': {
+      // Read only: on a write, or on a table no assignment hands over, `can()` refuses it too.
+      const reach = c.readReach;
+      if (reach?.assignment === undefined) return NOTHING;
+      return s.where(table, assignedToSql(table, reach, p.userId));
+    }
+    case 'own': {
+      const mine = mineCondition(p, table, c);
+      return mine === undefined ? NOTHING : s.where(table, mine);
+    }
+    case 'department': {
+      // Cumulative: my own rows anywhere, and every row of my department. No department (mine or the
+      // table's) leaves just the own rows; NULL = NULL would not match anyway, but be explicit.
+      const mine = mineCondition(p, table, c);
+      const parts: SQL[] = mine === undefined ? [] : [mine];
+      if (p.departmentId !== null && c.department !== undefined) {
+        parts.push(eq(c.department, p.departmentId));
+      }
+      if (parts.length === 0) return NOTHING;
+      return s.where(table, parts.length === 1 ? parts[0] : or(...parts));
+    }
     case 'customer_org':
       return portalRows(p, table, s);
     case 'all':
