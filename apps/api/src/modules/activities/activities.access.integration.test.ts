@@ -20,7 +20,7 @@ import {
   LeadOwnerOptionSchema,
   OpportunityDtoSchema,
 } from '@bos/contracts';
-import { leads, opportunities, quotations } from '@bos/db';
+import { leads, opportunities, quotations, users } from '@bos/db';
 import { BadRequestException, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { eq, sql } from 'drizzle-orm';
@@ -509,10 +509,11 @@ describe('opportunities and quotations', () => {
 
   it('shows an owner without a display name as Unnamed user, never part of the address', async () => {
     const nameless = await h.member({ roles: ['sales'], departmentId: salesDepartment });
-    await h.ownerPool.query(
-      `UPDATE app.users SET display_name = NULL, email = 'hidden.person@crestia.example'
-        WHERE tenant_id = $1 AND id = $2`,
-      [h.tenantId, nameless],
+    await withTx(h.db, h.scopeA, systemActor('test'), (tx) =>
+      tx
+        .update(users)
+        .set({ displayName: null, email: 'hidden.person@crestia.example' })
+        .where(eq(users.id, nameless)),
     );
     await opportunityOf(nameless);
     await h.actAs(P.salesManager);
