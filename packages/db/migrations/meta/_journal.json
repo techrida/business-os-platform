@@ -346,6 +346,13 @@
       "breakpoints": true
     },
     {
+      "idx": 51,
+      "version": "7",
+      "when": 1783000000058,
+      "tag": "0058_legacy_company_logo",
+      "breakpoints": true
+    },
+    {
       "idx": 47,
       "version": "7",
       "when": 1783000000062,
