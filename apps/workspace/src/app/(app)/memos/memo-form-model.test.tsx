@@ -1,6 +1,6 @@
 import type { MemoDirectory, MemoTemplateSnapshot } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildPreviewTemplate,
@@ -194,5 +194,23 @@ describe('working draft <-> form', () => {
       recommenders: [RAM],
       approvedBy: SITA,
     });
+  });
+});
+
+describe('a new memo is dated today in Kathmandu, not in UTC', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('just after midnight in Kathmandu (still yesterday in UTC) the date is already the new day', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-19T20:30:00Z')); // 2026-11-20 02:15 in Kathmandu
+    expect(initialTemplateFields(null, directory).date).toBe('2026-11-20');
+  });
+
+  it('just before midnight in Kathmandu the date is still the same day', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-20T18:00:00Z')); // 2026-11-20 23:45 in Kathmandu
+    expect(initialTemplateFields(null, directory).date).toBe('2026-11-20');
   });
 });
