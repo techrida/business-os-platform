@@ -183,6 +183,23 @@ describe('create a standalone bill', () => {
     expect((await createBillAction(prev, form(fields))).error).toMatch(/roles/i);
     expect(api.createBill).not.toHaveBeenCalled();
   });
+
+  // The new-bill page opens on the live grants; its create action agrees (U18 #12).
+  it('lets Procurement create the bill once an admin granted payables.bill.enter', async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([['payables.bill.enter', 'all']]);
+    api.createBill.mockResolvedValue({ id: BILL });
+    await expect(createBillAction(prev, form(fields))).rejects.toThrow(
+      `REDIRECT /payables/bills/${BILL}?created=1`,
+    );
+    expect(api.createBill).toHaveBeenCalledOnce();
+  });
+
+  it('refuses an accountant whose payables.bill.enter was removed, before any write', async () => {
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    expect((await createBillAction(prev, form(fields))).error).toMatch(/roles/i);
+    expect(api.createBill).not.toHaveBeenCalled();
+  });
 });
 
 const apiError = (status: number, code: string) =>
@@ -335,6 +352,20 @@ describe('convert a submission', () => {
     const out = await convertSubmissionAction(prev, form(lineFields()));
     expect(out.error).toMatch(/already has a bill/i);
     expect(out.key).not.toBe(KEY);
+  });
+
+  it('follows the live grants: Procurement granted bill entry converts, an accountant without it cannot', async () => {
+    session.roles = ['procurement'];
+    grants.live = new Map([['payables.bill.enter', 'all']]);
+    api.convertBillSubmission.mockResolvedValue({ id: BILL });
+    await expect(convertSubmissionAction(prev, form(lineFields()))).rejects.toThrow(
+      `REDIRECT /payables/bills/${BILL}?created=1`,
+    );
+    api.convertBillSubmission.mockClear();
+    session.roles = ['accountant'];
+    grants.live = new Map([['payables.bill.read', 'all']]);
+    expect((await convertSubmissionAction(prev, form(lineFields()))).error).toMatch(/roles/i);
+    expect(api.convertBillSubmission).not.toHaveBeenCalled();
   });
 });
 
