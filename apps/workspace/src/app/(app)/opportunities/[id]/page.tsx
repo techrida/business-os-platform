@@ -4,15 +4,10 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystem } from '@bos/locale';
 
-import { getOpportunity, listActivities } from '@/components/p2/crm/crm-api';
+import { getOpportunity, listActivities, listLeadOwners } from '@/components/p2/crm/crm-api';
 import { moneyOrNull } from '@/components/p2/crm/format';
 import { MoveForm } from '@/components/p2/crm/move-form';
-import {
-  ActivityList,
-  LOGGABLE_KINDS,
-  LoadProblem,
-  StageBadge,
-} from '@/components/p2/crm/server-bits';
+import { ActivityList, LoadProblem, peopleById, StageBadge } from '@/components/p2/crm/server-bits';
 import { stageLabel, userMoves } from '@/components/p2/crm/stages';
 import { listQuotations } from '@/components/p2/quotations/api';
 import {
@@ -90,10 +85,12 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const session = await requireStaffSession(`/opportunities/${id}`);
   const numberSystem = await getNumberSystem();
 
-  const [oppResult, activityResult, quotationsResult] = await Promise.allSettled([
+  const [oppResult, activityResult, quotationsResult, peopleResult] = await Promise.allSettled([
     getOpportunity(session, id),
-    listActivities(session, { opportunityId: id, limit: 100 }),
+    listActivities(session, { opportunityId: id, status: 'logged', limit: 100 }),
     listQuotations(session, { opportunityId: id }),
+    // Names for History's actor. Needs crm.lead.write; without it History just omits the name.
+    listLeadOwners(session),
   ]);
 
   if (oppResult.status === 'rejected') {
@@ -118,6 +115,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const moves = userMoves('opportunity', opp.stage);
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
+  const people = peopleById(peopleResult.status === 'fulfilled' ? peopleResult.value : []);
   const quotationProblem =
     quotationsResult.status === 'rejected' ? failureOf(quotationsResult.reason) : null;
   const quotations = quotationsResult.status === 'fulfilled' ? quotationsResult.value : [];
@@ -280,7 +278,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         )}
       </Panel>
 
-      <OpportunityActivities opportunityId={opp.id} kinds={LOGGABLE_KINDS}>
+      <OpportunityActivities opportunityId={opp.id}>
         {activityProblem ? (
           <LoadProblem
             status={activityProblem.status}
@@ -291,7 +289,8 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         ) : (
           <ActivityList
             items={activityResult.status === 'fulfilled' ? activityResult.value : []}
-            empty="Add a call, meeting, email, note or task for this opportunity."
+            people={people}
+            empty="Add a call, meeting, email or note for this opportunity."
           />
         )}
       </OpportunityActivities>

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   requireStaffSession: vi.fn(),
   getOpportunity: vi.fn(),
   listActivities: vi.fn(),
+  listLeadOwners: vi.fn(),
   getCustomer: vi.fn(),
   listQuotations: vi.fn(),
 }));
@@ -21,6 +22,7 @@ vi.mock('@/lib/bff', () => ({ requireStaffSession: mocks.requireStaffSession }))
 vi.mock('@/components/p2/crm/crm-api', () => ({
   getOpportunity: mocks.getOpportunity,
   listActivities: mocks.listActivities,
+  listLeadOwners: mocks.listLeadOwners,
 }));
 vi.mock('@/components/p2/customers/api', () => ({ getCustomer: mocks.getCustomer }));
 vi.mock('@/components/p2/quotations/api', () => ({ listQuotations: mocks.listQuotations }));
@@ -83,6 +85,7 @@ beforeEach(() => {
   mocks.requireStaffSession.mockReset().mockResolvedValue({ accessToken: 'tok', roles: ['sales'] });
   mocks.getOpportunity.mockReset().mockResolvedValue(opportunity());
   mocks.listActivities.mockReset().mockResolvedValue([]);
+  mocks.listLeadOwners.mockReset().mockResolvedValue([]);
   mocks.getCustomer.mockReset().mockResolvedValue(null);
   mocks.listQuotations.mockReset().mockResolvedValue([]);
 });
