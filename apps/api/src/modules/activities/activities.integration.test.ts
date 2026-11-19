@@ -256,7 +256,7 @@ describe('GET /v1/activities', () => {
       leadId: lead.id,
     });
     await post({ kind: 'email', subject: 'Quokka mail', leadId: lead.id });
-    await post({ kind: 'task', subject: 'Unrelated', leadId: lead.id });
+    await post({ kind: 'meeting', subject: 'Unrelated', leadId: lead.id });
 
     const get = async (query: string) => {
       const res = await list(query);
