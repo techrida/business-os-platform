@@ -1,6 +1,11 @@
 // What the memo PDF is made from. Kept apart from the renderer (which imports pdfkit) so the browser can build
 // and type this object without pulling a server library into its bundle.
-import { MEMO_MAX_RECOMMENDERS, type MemoTemplateSnapshot } from '@bos/contracts';
+import {
+  LetterheadSchema,
+  MEMO_MAX_RECOMMENDERS,
+  type Letterhead,
+  type MemoTemplateSnapshot,
+} from '@bos/contracts';
 import { z } from 'zod';
 
 /** The text the paper shows for a signer who has not been picked yet (kept in step with MemoPaper). */
@@ -26,6 +31,11 @@ export const MemoPdfInputSchema = z.object({
   preparedBy: PersonSchema,
   recommenders: z.array(PersonSchema).max(MEMO_MAX_RECOMMENDERS),
   approvedBy: PersonSchema,
+  /**
+   * The band at the top of page 1: address lines, logo and brand colour. Bounded by the contract (4 lines of 400,
+   * a PNG/JPEG/WebP data URL of at most 720,000 characters). Absent on a memo stored before letterheads.
+   */
+  letterhead: LetterheadSchema.optional(),
 });
 export type MemoPdfInput = z.infer<typeof MemoPdfInputSchema>;
 
@@ -37,7 +47,8 @@ const personOf = (p: { name: string; jobTitle: string | null }) => ({
 
 /**
  * The PDF input of a memo template, with blank recommenders already left out. Used for both the stored snapshot of
- * a saved memo and the live values of the form, so the two exports can never drift apart.
+ * a saved memo and the live values of the form, so the two exports can never drift apart. The letterhead frozen on
+ * the template wins; `letterhead` is the live directory letterhead a draft form shows (a draft has none frozen).
  */
 export function memoPdfInputOf(
   template: Pick<
@@ -49,10 +60,13 @@ export function memoPdfInputOf(
     | 'preparedBy'
     | 'recommenders'
     | 'approvedBy'
+    | 'letterhead'
   >,
   title: string,
   body: string,
+  letterhead?: Letterhead,
 ): MemoPdfInput {
+  const shown = template.letterhead ?? letterhead;
   return {
     organizationName: template.organizationName,
     departmentName: template.departmentName,
@@ -63,5 +77,6 @@ export function memoPdfInputOf(
     preparedBy: personOf(template.preparedBy),
     recommenders: template.recommenders.map(personOf),
     approvedBy: personOf(template.approvedBy),
+    ...(shown ? { letterhead: shown } : {}),
   };
 }

@@ -21,12 +21,17 @@ export async function personNames(
   const wanted = [...new Set([...ids].filter((id): id is string => typeof id === 'string'))];
   if (wanted.length === 0) return [];
   const rows = await q
-    .select({ id: users.id, displayName: users.displayName, email: users.email })
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      email: users.email,
+      avatarDocumentId: users.avatarDocumentId,
+    })
     .from(users)
     .where(and(eq(users.tenantId, tenantId), inArray(users.id, wanted)));
   return rows.flatMap((r) => {
     const name = personLabel(r.displayName, r.email);
-    return name ? [{ userId: r.id, name }] : [];
+    return name ? [{ userId: r.id, name, avatarDocumentId: r.avatarDocumentId }] : [];
   });
 }
 

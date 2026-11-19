@@ -50,13 +50,11 @@
   gap: 8px;
 }
 
-.profileIdentity .profileAvatar {
-  width: 76px;
-  height: 76px;
+/* The logo row takes the card's width, so an editor gets its drop zone (or its compact row at 390px). */
+.profileLogo {
+  justify-self: stretch;
+  min-width: 0;
   margin-bottom: 8px;
-  background: var(--button-primary-bg);
-  color: var(--button-primary-text);
-  font-size: 24px;
 }
 
 .profileName {

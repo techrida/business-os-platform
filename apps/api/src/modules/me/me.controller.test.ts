@@ -6,6 +6,7 @@ import {
   type Scope,
 } from '@bos/contracts';
 import { authzVersions } from '@bos/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 
 import { type Principal } from '../../platform/authz/principal';
@@ -24,6 +25,23 @@ const APP_USER = '33333333-3333-4333-8333-333333333333';
 const DEPARTMENT = '44444444-4444-4444-8444-444444444444';
 const IDP_ORG = '99999999-9999-4999-8999-999999999999';
 const SUB = '312345678901234567';
+const AVATAR = '55555555-5555-4555-8555-555555555555';
+
+/** Answers the controller's one users lookup (the picture pointer); records the WHERE parameters so a test can see whose row was read. */
+function fakeDb(rows: { avatarDocumentId: string | null }[] = [{ avatarDocumentId: null }]) {
+  const seen: unknown[][] = [];
+  const db = {
+    select: () => ({
+      from: () => ({
+        where: (condition: Parameters<PgDialect['sqlToQuery']>[0]) => {
+          seen.push(new PgDialect().sqlToQuery(condition).params);
+          return { limit: () => Promise.resolve(rows) };
+        },
+      }),
+    }),
+  };
+  return { db: db as unknown as Db, seen };
+}
 
 type Row = { roleKey: RoleKey; permission: string; scope: string };
 
@@ -66,7 +84,7 @@ function principalOf(
 }
 
 /** GET /v1/me as `p`, through the real request store the interceptor binds. */
-function meAs(p: Principal) {
+function meAs(p: Principal, db: Db = fakeDb().db) {
   return runWithRequestStore('corr-12345678', () => {
     bindIdentity({
       tenantId: p.tenantId,
@@ -80,14 +98,14 @@ function meAs(p: Principal) {
       tokenExp: 1_900_000_000,
     });
     bindPrincipal(p);
-    return new MeController().me();
+    return new MeController(db).me();
   });
 }
 
 describe('MeController', () => {
-  it('returns a MeResponse built from the request context and the principal', () => {
+  it('returns a MeResponse built from the request context and the principal', async () => {
     const roles = ['admin', 'sales'];
-    const body = runWithRequestStore('corr-12345678', () => {
+    const body = await runWithRequestStore('corr-12345678', () => {
       bindIdentity({
         tenantId: TENANT,
         organizationId: ENTITY,
@@ -103,11 +121,12 @@ describe('MeController', () => {
         ...principalOf(['customer_user'], new Map([['portal.quotation.read', 'customer_org']])),
         orgKind: 'customer',
       });
-      return new MeController().me();
+      return new MeController(fakeDb().db).me();
     });
 
     expect(MeResponseSchema.parse(body)).toEqual({
       userId: SUB,
+      id: APP_USER,
       tenantId: TENANT,
       organizationId: ENTITY,
       orgKind: 'customer',
@@ -115,6 +134,7 @@ describe('MeController', () => {
       roles: ['admin', 'sales'],
       correlationId: 'corr-12345678',
       permissions: [{ permission: 'portal.quotation.read', scope: 'customer_org' }],
+      avatarDocumentId: null,
     });
     expect(body.roles).not.toBe(roles);
     // tokenExp, idpOrgId and departmentId are internal: they must not leak into the response.
@@ -123,8 +143,17 @@ describe('MeController', () => {
     expect(body).not.toHaveProperty('departmentId');
   });
 
-  it('throws outside an authenticated request', () => {
-    expect(() => new MeController().me()).toThrow('outside a request');
+  it("carries the caller's own avatar document id, read by tenant and app user id", async () => {
+    const { db, seen } = fakeDb([{ avatarDocumentId: AVATAR }]);
+    const body = await meAs(principalOf(['sales'], new Map()), db);
+
+    expect(MeResponseSchema.parse(body).avatarDocumentId).toBe(AVATAR);
+    expect(body.id).toBe(APP_USER);
+    expect(seen).toEqual([[TENANT, APP_USER]]);
+  });
+
+  it('throws outside an authenticated request', async () => {
+    await expect(new MeController(fakeDb().db).me()).rejects.toThrow('outside a request');
   });
 
   it('answers the live role rows, not the default grants, for a role an admin edited (sales)', async () => {
@@ -136,7 +165,7 @@ describe('MeController', () => {
       { roleKey: 'pmo', permission: 'verification.review', scope: 'all' },
     ];
     const grants = await cacheOver(rows).grantsFor(TENANT, ENTITY, ['sales']);
-    const body = meAs(principalOf(['sales'], grants));
+    const body = await meAs(principalOf(['sales'], grants));
 
     expect(MeResponseSchema.parse(body).permissions).toEqual([
       { permission: 'customer.read', scope: 'all' },
@@ -166,7 +195,9 @@ describe('MeController', () => {
     ];
     const cache = cacheOver(rows);
 
-    const sales = meAs(principalOf(['sales'], await cache.grantsFor(TENANT, ENTITY, ['sales'])));
+    const sales = await meAs(
+      principalOf(['sales'], await cache.grantsFor(TENANT, ENTITY, ['sales'])),
+    );
     const scopes = new Map(sales.permissions?.map((g) => [g.permission, g.scope]));
     expect(scopes.get('verification.read')).toBe('own');
     expect(scopes.get('quotation.read')).toBe('own');
@@ -175,7 +206,7 @@ describe('MeController', () => {
     expect(scopes.has('verification.review')).toBe(false);
     expect(sales.permissions).toHaveLength(Object.keys(DEFAULT_ROLE_PERMISSIONS.sales).length);
 
-    const both = meAs(
+    const both = await meAs(
       principalOf(['sales', 'pmo'], await cache.grantsFor(TENANT, ENTITY, ['sales', 'pmo'])),
     );
     const merged = new Map(both.permissions?.map((g) => [g.permission, g.scope]));
@@ -190,11 +221,13 @@ describe('MeController', () => {
       { roleKey: 'sales', permission: 'customer.write', scope: 'galaxy' },
     ];
     const grants = await cacheOver(rows).grantsFor(TENANT, ENTITY, ['sales']);
-    const body = meAs(principalOf(['sales'], grants));
+    const body = await meAs(principalOf(['sales'], grants));
 
     expect(Object.keys(body).sort()).toEqual(
       [
+        'avatarDocumentId',
         'correlationId',
+        'id',
         'orgKind',
         'organizationId',
         'partyId',
@@ -208,16 +241,17 @@ describe('MeController', () => {
     for (const grant of body.permissions ?? []) {
       expect(Object.keys(grant).sort()).toEqual(['permission', 'scope']);
     }
-    // The ZITADEL sub is the public user id; the app uuid, department and status stay internal.
+    // The ZITADEL sub is the public user id. The app uuid travels only as `id`, the owner id of the caller's
+    // profile picture; department and status stay internal.
     expect(body.userId).toBe(SUB);
+    expect(body.id).toBe(APP_USER);
     const text = JSON.stringify(body);
-    expect(text).not.toContain(APP_USER);
     expect(text).not.toContain(DEPARTMENT);
     expect(text).not.toContain(IDP_ORG);
     expect(body).not.toHaveProperty('status');
     expect(body).not.toHaveProperty('zitadelUserId');
 
-    const invited = meAs(principalOf(['sales'], grants, 'invited'));
+    const invited = await meAs(principalOf(['sales'], grants, 'invited'));
     expect(invited.permissions).toEqual([]);
   });
 });

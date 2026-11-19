@@ -3,6 +3,9 @@
 // font file, and a CSP that forbids anything else, so a render never reaches the network. The function takes the
 // allow-list view and nothing else, so it cannot print an NPR value or a rate. Money goes through `@bos/locale`
 // `formatMoney`, so NPR has lakh grouping (`NPR 20,18,180.00`).
+//
+// The one image allowed is the company logo frozen at render (U12), and only as a data URL that passes the logo schema
+// here; the CSP then allows `img-src data:` and nothing more. With no logo the page is exactly as before.
 import {
   DEFAULT_CUSTOMER_DATE_FORMAT,
   DEFAULT_NUMBER_SYSTEMS,
@@ -13,6 +16,7 @@ import {
   type NumberSystems,
 } from '@bos/locale';
 
+import { documentCsp, printableLogo } from '../../../invoices/render/frozen-logo';
 import type { PurchaseOrderRenderView } from './purchase-order-view';
 
 const escapeHtml = (text: string): string =>
@@ -58,6 +62,7 @@ const CSS = `
   .head .number { font-size: 11pt; font-weight: 600; margin-top: 2pt; }
   .badge { display: inline-block; margin-top: 4pt; padding: 1pt 8pt; border: 1pt solid #666; border-radius: 3pt; font-weight: 600; font-size: 8.5pt; }
   .legal { font-weight: 600; font-size: 11pt; }
+  .logo { display: block; max-height: 56px; max-width: 60mm; margin-bottom: 6pt; }
   .muted { color: #555; }
   .parties { display: flex; gap: 24pt; margin-top: 14pt; }
   .parties > div { flex: 1; }
@@ -94,6 +99,8 @@ export interface RenderPurchaseOrderOptions {
   numberSystems?: NumberSystems;
   /** The company's `format.date`. Left out, the default `19 Nov 2026`. */
   dateFormat?: CustomerDateFormat;
+  /** The logo frozen at render. Printed only when it is a valid logo data URL; otherwise the text header alone. */
+  logoDataUrl?: string | null;
 }
 
 /** Returns the full HTML document for one issued version of a purchase order. Every text is escaped. */
@@ -109,6 +116,11 @@ export function renderPurchaseOrderHtml(
       }),
     );
   const text = (value: string): string => escapeHtml(value);
+  const logo = printableLogo(opts.logoDataUrl);
+  // The logo sits top-left above the buyer's name; the alt text is that name, as the version prints it.
+  const logoImg = logo
+    ? `\n      <img class="logo" src="${escapeHtml(logo)}" alt="${text(view.buyer.legalName)}">`
+    : '';
 
   const meta: [string, string][] = [
     ['PO no.', text(view.number)],
@@ -149,13 +161,13 @@ export function renderPurchaseOrderHtml(
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="${documentCsp(logo)}">
 <title>Purchase Order ${text(view.number)} - version ${view.version}</title>
 <style>${CSS}</style>
 </head>
 <body>
   <div class="head">
-    <div>
+    <div>${logoImg}
       <div class="legal">${text(view.buyer.legalName)}</div>
       ${view.buyer.panVatNo ? `<div class="muted">PAN/VAT ${text(view.buyer.panVatNo)}</div>` : ''}
     </div>

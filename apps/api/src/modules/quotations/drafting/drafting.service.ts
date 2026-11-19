@@ -463,6 +463,7 @@ export class DraftingService {
               current: quotationVersions,
               customerName: customers.legalName,
               ownerName: users.displayName,
+              ownerAvatarDocumentId: users.avatarDocumentId,
             })
             .from(quotations)
             .innerJoin(quotationVersions, onCurrentVersion)
@@ -480,6 +481,7 @@ export class DraftingService {
           toQuotationListItem(r.quotation, r.current, {
             customerName: r.customerName,
             ownerName: r.ownerName,
+            ownerAvatarDocumentId: r.ownerAvatarDocumentId,
             canEdit: capabilitiesOf(principal, r.quotation, r.current.status).canEdit,
           }),
         ),

@@ -13,6 +13,9 @@
 //   also keeps the number grouping and date pattern it was printed with (`render_format`), so a copy printed after
 //   the settings changed still looks like the original. A copy of a print made before 0051 (no stored format) uses
 //   the settings in force when the copy is printed.
+//   Print 1 also freezes the company logo's bytes into that format (U12, see frozen-logo.ts), so a copy printed after
+//   the logo changed or was removed still shows the original's logo. A copy of a print made before logos were frozen
+//   prints without one, and a copy never resolves the logo.
 //
 // Claiming: the slow part (Chromium) runs with no transaction and no lock. The write is then serialised per invoice by
 // a transaction advisory lock and a re-check for a live document, so two workers that raced both render but only one
@@ -53,14 +56,17 @@ import { and, asc, desc, eq, inArray, isNull, lt, notExists, notInArray, sql } f
 import type { Db, DbTransaction } from '../../../platform/db/db.module';
 import { systemActor, type TxScope } from '../../../platform/db/tx';
 import { GotenbergError } from '../../quotations/render/gotenberg.client';
+import { DocumentLogoUnavailableError } from '../../quotations/render/issuer';
 import type {
   Clock,
   PdfRenderer,
   RenderDocuments,
+  RenderLogos,
   RenderSettings,
   RunInTx,
 } from '../../quotations/render/quotation-render.sweeper';
 import { INVOICE_OWNER_TYPE, INVOICE_RENDER_JOB_PREFIX } from '../invoice-owner.policy';
+import { freezeEntityLogo } from './frozen-logo';
 import { renderInvoiceHtml } from './invoice-html';
 import {
   InvoiceNotRenderableError,
@@ -87,6 +93,8 @@ export const INVOICE_RENDER_DOCUMENTS = Symbol('INVOICE_RENDER_DOCUMENTS');
 export const INVOICE_RENDER_SETTINGS = Symbol('INVOICE_RENDER_SETTINGS');
 export const INVOICE_RENDER_PDF = Symbol('INVOICE_RENDER_PDF');
 export const INVOICE_RENDER_CLOCK = Symbol('INVOICE_RENDER_CLOCK');
+/** DocumentLogoResolverFactory in the worker: turns the profile's logo document into the bytes print 1 freezes. */
+export const INVOICE_RENDER_LOGOS = Symbol('INVOICE_RENDER_LOGOS');
 
 export interface RenderCandidate {
   tenantId: string;
@@ -161,7 +169,11 @@ export class RenderSourceMissingError extends Error {
 /** A fixed word for the log: a kind, never a message (messages can carry URLs or customer data). */
 export function failureKind(error: unknown): string {
   if (error instanceof GotenbergError) return `gotenberg_${error.kind}`;
-  if (error instanceof InvoiceNotRenderableError || error instanceof RenderSourceMissingError) {
+  if (
+    error instanceof InvoiceNotRenderableError ||
+    error instanceof RenderSourceMissingError ||
+    error instanceof DocumentLogoUnavailableError
+  ) {
     return error.kind;
   }
   // A Nest service on the way refused (the documents module answers 400, 403 or 404): its status, not its text.
@@ -184,6 +196,7 @@ export class InvoiceRenderSweeper {
     @Inject(INVOICE_RENDER_SETTINGS) private readonly settings: RenderSettings,
     @Inject(INVOICE_RENDER_PDF) private readonly pdf: PdfRenderer,
     @Inject(INVOICE_RENDER_CLOCK) private readonly clock: Clock,
+    @Inject(INVOICE_RENDER_LOGOS) private readonly logos: RenderLogos,
   ) {}
 
   /** One pass over every tenant: render what is due, then clean up what crashed renders left behind. */
@@ -232,6 +245,7 @@ export class InvoiceRenderSweeper {
         renderInvoiceHtml(view, {
           numberSystems: format.numberSystems,
           dateFormat: format.dateFormat,
+          logoDataUrl: format.logoDataUrl ?? null,
         }),
       );
       const file = {
@@ -269,9 +283,10 @@ export class InvoiceRenderSweeper {
   }
 
   /**
-   * The grouping and date pattern this print uses. A copy reuses what print 1 stored; print 1, or a copy of a print
-   * made before 0051 (or one whose stored value no longer parses), reads the settings in force now. An invalid
-   * setting (a hand-edited row) prints the default; it never fails the render.
+   * The grouping, date pattern and logo this print uses. A copy reuses what print 1 stored; print 1, or a copy of a
+   * print made before 0051 (or one whose stored value no longer parses), reads the settings in force now. An invalid
+   * setting (a hand-edited row) prints the default; it never fails the render. Only print 1 resolves the logo: a copy
+   * without a usable stored format prints none, as its original did.
    */
   private async formatFor(
     scope: TxScope,
@@ -291,6 +306,7 @@ export class InvoiceRenderSweeper {
     return {
       numberSystems: numberSystems.success ? numberSystems.data : DEFAULT_NUMBER_SYSTEMS,
       dateFormat: dateFormat.success ? dateFormat.data : DEFAULT_DATE_FORMAT,
+      logoDataUrl: printNo === 1 ? await freezeEntityLogo(this.settings, this.logos, scope) : null,
       capturedAt: this.clock().toISOString(),
     };
   }

@@ -1,3 +1,4 @@
+import { avatarColour, imagePath } from '@bos/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 
@@ -207,6 +208,59 @@ it('ignores a stale id cursor from an older link', async () => {
     await UsersPage({ searchParams: Promise.resolve({ after: DEPARTMENT, status: 'active' }) });
     const list = seen.find((url) => url.pathname === '/v1/admin/users')!;
     expect(list.searchParams.has('after')).toBe(false);
+  } finally {
+    request.mockRestore();
+  }
+});
+
+it('gives each row avatar its user id colour and picture, and a picture button named for the person', async () => {
+  const PICTURED = '00000000-0000-4000-9000-00000000000a';
+  const PLAIN = '00000000-0000-4000-9000-00000000000b';
+  const PICTURE = '00000000-0000-4000-a000-0000000000ff';
+  const row = (id: string, displayName: string, avatarDocumentId?: string | null) => ({
+    id,
+    displayName,
+    email: `${displayName.toLowerCase()}@example.test`,
+    idpOrgId: IDP,
+    status: 'active',
+    roles: [],
+    department: null,
+    createdAt: '2026-11-19T00:00:00.000Z',
+    lastActiveAt: null,
+    ...(avatarDocumentId === undefined ? {} : { avatarDocumentId }),
+  });
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    return Promise.resolve(
+      Response.json(
+        url.pathname.endsWith('/summary')
+          ? {
+              total: 2,
+              active: 2,
+              invited: 0,
+              deactivated: 0,
+              departments: [],
+              canSendPasswordReset: false,
+            }
+          : {
+              // One row with a picture, one whose API answer omits the field (an older API).
+              items: [row(PICTURED, 'Asha', PICTURE), row(PLAIN, 'Bikash')],
+              nextPage: null,
+              nextAfter: null,
+            },
+      ),
+    );
+  });
+  try {
+    const html = renderToStaticMarkup(await UsersPage({ searchParams: Promise.resolve({}) }));
+    const avatars = html.match(/style="--avatar-fill:[^"]*" aria-hidden="true">.*?<\/span>/g) ?? [];
+    expect(avatars).toHaveLength(2);
+    expect(avatars[0]).toContain(`--avatar-fill:${avatarColour(PICTURED)}`);
+    expect(avatars[0]).toContain(`src="${imagePath(PICTURE)}"`);
+    expect(avatars[1]).toContain(`--avatar-fill:${avatarColour(PLAIN)}`);
+    expect(avatars[1]).not.toContain('<img');
+    expect(html).toContain('aria-label="Change Asha picture"');
+    expect(html).toContain('aria-label="Change Bikash picture"');
   } finally {
     request.mockRestore();
   }

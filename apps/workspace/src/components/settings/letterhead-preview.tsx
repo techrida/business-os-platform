@@ -1,9 +1,15 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+
+import { scanPollDelays } from '@/components/ui/image-upload';
 import { Panel } from '@/components/ui/panel';
 
 import { addressLines, type AddressDraft } from './company-profile';
 import styles from './company-editor.module.css';
 
 export interface LetterheadModel {
+  /** Where the logo is read from: `/api/images/:id`, a logo not yet moved (data URL), or null for none. */
   logo: string | null;
   displayName: string;
   address: AddressDraft;
@@ -35,11 +41,7 @@ export function LetterheadPreview({ model }: { model: LetterheadModel }) {
       className={styles.aside}
     >
       <div className={styles.sheet}>
-        {model.logo ? (
-          // A data URL the person just chose or saved: drawn through <img> only, never inlined.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className={styles.sheetLogo} src={model.logo} alt="Company logo" />
-        ) : null}
+        {model.logo ? <SheetLogo key={model.logo} src={model.logo} /> : null}
         <p className={`${styles.sheetName} ${name ? '' : styles.sheetEmpty}`}>
           {name || 'Company name'}
         </p>
@@ -56,5 +58,39 @@ export function LetterheadPreview({ model }: { model: LetterheadModel }) {
         </ul>
       </div>
     </Panel>
+  );
+}
+
+/**
+ * The logo on the sheet. A just-uploaded logo answers 404 until its virus scan is done, so a failed load is hidden
+ * and tried again on the same backoff ImageUpload uses (about a minute in all); after that the sheet goes without.
+ * The parent keys this on `src`, so a new logo starts over.
+ */
+function SheetLogo({ src }: { src: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!failed) return;
+    const delay = scanPollDelays()[attempt];
+    if (delay === undefined) return;
+    const timer = setTimeout(() => {
+      setAttempt((value) => value + 1);
+      setFailed(false);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [failed, attempt]);
+
+  if (failed) return null;
+  return (
+    // Same-origin image route or a stored data URL: drawn through <img> only, never inlined.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      key={attempt}
+      className={styles.sheetLogo}
+      src={src}
+      alt="Company logo"
+      onError={() => setFailed(true)}
+    />
   );
 }

@@ -51,6 +51,17 @@ export interface DocumentOwnerPolicy {
    * the type, size and scan rules are unchanged. P3: payment proof uses `payment.record`.
    */
   uploadPermission?: Permission;
+  /**
+   * The declared types this owner takes (U12: PNG, JPEG and WebP for logos and avatars). It only narrows the generic
+   * allow-list (ALLOWED_MIME): a type outside either is a 415 before any row is written. Absent means the generic list.
+   * Applies to every staff and system create and new version of this owner; the type check and the scan still run.
+   */
+  allowedMime?: readonly string[];
+  /**
+   * The largest declared size this owner takes, in bytes (U12: IMAGE_MAX_BYTES). It only narrows MAX_UPLOAD_BYTES:
+   * anything larger is a 413 before any row is written. Absent means the generic limit.
+   */
+  maxBytes?: number;
   /** The record's ResourceRef for authz, or null when the owner does not exist or is invisible. */
   resource(scope: TxScope, ownerId: string): Promise<ResourceRef | null>;
   /**

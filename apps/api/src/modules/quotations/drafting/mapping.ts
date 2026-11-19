@@ -212,7 +212,12 @@ export function toQuotationDto(q: QuotationRow, currentStatus: QuotationStatus):
 export function toQuotationListItem(
   q: QuotationRow,
   current: QuotationVersionRow,
-  names: { customerName: string; ownerName: string | null; canEdit: boolean },
+  names: {
+    customerName: string;
+    ownerName: string | null;
+    ownerAvatarDocumentId?: string | null;
+    canEdit: boolean;
+  },
 ): QuotationListItem {
   return {
     ...toQuotationDto(q, current.status),
@@ -221,6 +226,7 @@ export function toQuotationListItem(
     total: current.total,
     validUntil: current.validUntil,
     ownerName: names.ownerName,
+    ownerAvatarDocumentId: names.ownerAvatarDocumentId ?? null,
     canEdit: names.canEdit,
   };
 }
