@@ -4,7 +4,9 @@
 -- grant. Same grants as `DEFAULT_ROLE_PERMISSIONS.marketing` in packages/contracts: the kernel staff base (own
 -- memos, documents and request reads) plus own crm.lead.read and crm.lead.write. Rows are `seeded`. A tenant
 -- that already holds a marketing row for a permission keeps it. The authz version moves only for tenants that
--- gained a row. The role key itself is a contracts and dev-identity matter; nothing here touches an identity
+-- gained a row. Only tenants that already have role_permissions rows get them: a tenant with none is still on
+-- the code defaults (which hold marketing), and the grant loader leaves them as soon as one row exists, so
+-- inserting here would strip every other role of its grants. The role key itself is a contracts and dev-identity matter; nothing here touches an identity
 -- provider.
 
 DO $$
@@ -22,6 +24,7 @@ BEGIN
     SELECT org.tenant_id, org.id AS organization_id
     FROM app.organizations org
     WHERE org.is_default
+      AND EXISTS (SELECT 1 FROM app.role_permissions rp WHERE rp.tenant_id = org.tenant_id)
     ORDER BY org.tenant_id
   LOOP
     PERFORM set_config('bos.organization_id', target.organization_id::text, true);
