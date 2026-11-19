@@ -1,4 +1,4 @@
-import type { CustomerQuotationView } from '@bos/contracts';
+import { trimPercent, type CustomerQuotationView } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
 import type { ReactNode } from 'react';
 
@@ -184,11 +184,11 @@ export function QuotationView({
               <ul className={styles.schedule}>
                 {view.paymentSchedule.map((m, i) => (
                   <li key={`${m.label}-${i}`}>
-                    <span className={styles.schedulePercent}>{m.percent}%</span>
+                    <span className={styles.schedulePercent}>{trimPercent(m.percent)}%</span>
                     <span>
                       {m.label}
                       {m.dueDescription ? (
-                        <span className={styles.muted}> · {m.dueDescription}</span>
+                        <span className={styles.muted}> · {formatDay(m.dueDescription)}</span>
                       ) : null}
                     </span>
                   </li>
