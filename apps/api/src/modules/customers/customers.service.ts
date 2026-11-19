@@ -12,6 +12,7 @@
 import {
   type Address,
   type ContactDto,
+  type CustomerCan,
   type CreateContactBody,
   type CreateCustomerBody,
   type CustomerDto,
@@ -28,6 +29,7 @@ import {
   parties,
   userEntities,
   users,
+  verificationCases,
 } from '@bos/db';
 import {
   BadRequestException,
@@ -41,7 +43,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNotNull, like, ne, or, sql, type SQL } from 'drizzle-orm';
 
-import { type Principal, type ResourceRef } from '../../platform/authz/can';
+import { can as decide, type Principal, type ResourceRef } from '../../platform/authz/can';
 import { AuthzService } from '../../platform/authz/authz.service';
 import { DB, type Db, type DbTransaction } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
@@ -127,12 +129,34 @@ export function toContactDto(row: ContactRow): ContactDto {
  * acting entity (every entity of the tenant sees every customer, D17). `customerPartyId` is the customer's own
  * party id: a portal caller holding `customer_org` matches only their own company.
  */
-export function customerRef(row: CustomerRow, p: Principal): ResourceRef {
+export function customerRef(
+  row: Pick<CustomerRow, 'tenantId' | 'id' | 'ownerUserId'>,
+  p: Principal,
+): ResourceRef {
   return {
     tenantId: row.tenantId,
     organizationId: p.organizationId,
     ownerUserId: row.ownerUserId,
     customerPartyId: row.id,
+  };
+}
+
+/**
+ * What `p` may do with this customer, by the same decisions the routes make on it: customer.write as PATCH does
+ * (staff only), and for a case both grants VerificationService.create checks on the party (customer.write and
+ * verification.read), on a customer that was not merged away (create refuses that one as not found).
+ */
+export function customerCapabilities(
+  row: Pick<CustomerRow, 'tenantId' | 'id' | 'ownerUserId' | 'mergedIntoId'>,
+  p: Principal,
+): CustomerCan {
+  const ref = customerRef(row, p);
+  const write = p.orgKind === 'staff' && decide(p, 'customer.write', ref).allowed;
+  const readVerification = decide(p, 'verification.read', ref).allowed;
+  return {
+    write,
+    readVerification,
+    openVerification: write && readVerification && row.mergedIntoId === null,
   };
 }
 
@@ -230,11 +254,30 @@ export class CustomersService {
     // no entities, so the field is left out (not an empty list, which would claim "no terms set").
     if (principal.orgKind !== 'staff') return dto;
     // The owner by name, read in the customer's tenant only, so the page needs no admin directory (403 for Sales).
-    const [accounts, people] = await Promise.all([
+    const [accounts, people, hasCase] = await Promise.all([
       this.accountsFor(scope.tenantId, principal.userId, id),
       personNames(this.db, row.tenantId, [row.ownerUserId]),
+      this.hasVerificationCase(scope.tenantId, id),
     ]);
-    return { ...dto, accounts, people };
+    return {
+      ...dto,
+      accounts,
+      people,
+      can: customerCapabilities(row, principal),
+      verification: { exists: hasCase },
+    };
+  }
+
+  /** Whether the customer has a verification case. Existence only; the case is read under verification.read. */
+  private async hasVerificationCase(tenantId: string, partyId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: verificationCases.id })
+      .from(verificationCases)
+      .where(
+        and(eq(verificationCases.tenantId, tenantId), eq(verificationCases.partyId, partyId)),
+      )
+      .limit(1);
+    return row !== undefined;
   }
 
   // ------------------------------------------------------------------------------------------------- create
