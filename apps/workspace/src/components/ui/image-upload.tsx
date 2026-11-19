@@ -49,6 +49,8 @@ export function scanPollDelays(
 const UPLOAD_FAILED = 'The picture could not be uploaded. Try again.';
 const REMOVE_FAILED = 'The picture could not be removed. Try again.';
 const OFFLINE = 'The server could not be reached. Check your connection and try again.';
+const SCAN_TIMED_OUT =
+  'The picture could not be used yet. If it does not appear soon, upload another.';
 
 /** The `{error:{message}}` of a refused request, or `fallback` when the body is anything else. */
 async function refusalMessage(response: Response, fallback: string): Promise<string> {
@@ -180,7 +182,11 @@ export function ImageUpload({
     const step = (index: number) => {
       const delay = delays[index];
       if (delay === undefined) {
+        // The budget ran out. A refused or infected picture also answers 404, so it may never be served: say so
+        // once, instead of quietly showing the initials. A cancelled poll (unmount, new upload, removal) never
+        // gets here, since its `stopped` check returns first.
         finish(false);
+        toast.error(SCAN_TIMED_OUT);
         return;
       }
       timer = setTimeout(() => {
