@@ -12,7 +12,6 @@ const TOKEN = 'eyJ.secret-access-token.sig';
 const ORG = '11111111-1111-4111-8111-111111111111';
 const DOC = '22222222-2222-4222-8222-222222222222';
 const VER = '33333333-3333-4333-8333-333333333333';
-const WHEN = '2026-11-19T05:45:00.000Z';
 
 const session: Session = {
   id: 'A'.repeat(43),
@@ -24,28 +23,6 @@ const session: Session = {
   accessExp: 2_000_000_000,
   createdAt: 1_700_000_000,
   lastSeenAt: 1_700_000_000,
-};
-
-const created = {
-  documentId: DOC,
-  versionId: VER,
-  uploadPath: `/v1/documents/${DOC}/versions/${VER}/content`,
-};
-
-const version = {
-  id: VER,
-  documentId: DOC,
-  version: 1,
-  filename: 'logo.png',
-  declaredMime: 'image/png',
-  detectedMime: null,
-  sizeBytes: 4,
-  sha256: 'a'.repeat(64),
-  status: 'quarantined',
-  scanSignature: null,
-  scannedAt: null,
-  uploadedBy: ORG,
-  createdAt: WHEN,
 };
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
@@ -99,103 +76,94 @@ afterEach(() => {
 });
 
 describe('uploadImage', () => {
-  it('reserves the document, streams the bytes, then points the record at it', async () => {
-    fetchMock
-      .mockResolvedValueOnce(reply(created, 201))
-      .mockResolvedValueOnce(reply(version))
-      .mockResolvedValueOnce(reply(undefined, 204));
+  const sentBytes = async (call: Call | undefined): Promise<number[]> =>
+    Array.from(new Uint8Array(await new Response(call?.body as BodyInit).arrayBuffer()));
+
+  it('sends the bytes in one POST that creates the document and points the record at it', async () => {
+    fetchMock.mockResolvedValueOnce(reply({ documentId: DOC }));
 
     const out = await uploadImage(session, 'entity_logo', ORG, file);
     expect(out).toEqual({ documentId: DOC });
 
-    const [create, content, pointer] = calls();
-    expect(calls()).toHaveLength(3);
+    const all = calls();
+    expect(all).toHaveLength(1);
+    const [only] = all;
+    expect(only?.method).toBe('POST');
+    expect(only?.url).toBe(`http://api:3001/v1/images/entity_logo/${ORG}`);
+    expect(only?.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+    expect(only?.headers.get('content-type')).toBe('image/png');
+    expect(only?.headers.get('x-file-name')).toBe('logo.png');
+    expect(await sentBytes(only)).toEqual(Array.from(PNG));
+  });
 
-    expect(create?.method).toBe('POST');
-    expect(create?.url).toBe('http://api:3001/v1/documents');
-    expect(JSON.parse(String(create?.body))).toEqual({
-      ownerType: 'entity_logo',
-      ownerId: ORG,
-      filename: 'logo.png',
-      declaredMime: 'image/png',
-      sizeBytes: 4,
-    });
-
-    expect(content?.method).toBe('PUT');
-    expect(content?.url).toBe(`http://api:3001${created.uploadPath}`);
-    expect(content?.headers.get('content-type')).toBe('image/png');
-    expect(content?.headers.get('content-length')).toBe('4');
-    const sent = new Uint8Array(await new Response(content?.body as ReadableStream).arrayBuffer());
-    expect(Array.from(sent)).toEqual(Array.from(PNG));
-
-    expect(pointer?.method).toBe('PUT');
-    expect(pointer?.url).toBe(`http://api:3001/v1/images/entity_logo/${ORG}`);
-    expect(pointer?.headers.get('content-type')).toBe('application/json');
-    expect(JSON.parse(String(pointer?.body))).toEqual({ documentId: DOC });
-    expect(pointer?.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
+  it('encodes the file name so a name outside ASCII is a valid header value', async () => {
+    fetchMock.mockResolvedValueOnce(reply({ documentId: DOC }));
+    await uploadImage(session, 'customer_logo', ORG, { ...file, name: 'Café logo.png' });
+    expect(calls()[0]?.headers.get('x-file-name')).toBe('Caf%C3%A9%20logo.png');
   });
 
   it('accepts an ArrayBuffer and encodes the owner id as one path segment', async () => {
-    fetchMock
-      .mockResolvedValueOnce(reply(created, 201))
-      .mockResolvedValueOnce(reply(version))
-      .mockResolvedValueOnce(reply(undefined, 204));
-
+    fetchMock.mockResolvedValueOnce(reply({ documentId: DOC }));
     await uploadImage(session, 'user_avatar', '../admin', { ...file, bytes: PNG.slice().buffer });
-    const pointer = calls()[2];
-    expect(pointer?.url).toBe('http://api:3001/v1/images/user_avatar/..%2Fadmin');
-    expect(JSON.parse(String(calls()[0]?.body)).sizeBytes).toBe(4);
+    const [only] = calls();
+    expect(only?.url).toBe('http://api:3001/v1/images/user_avatar/..%2Fadmin');
+    expect(await sentBytes(only)).toEqual(Array.from(PNG));
   });
 
-  it('removes the just-uploaded document when the pointer cannot be moved, then rethrows', async () => {
-    fetchMock
-      .mockResolvedValueOnce(reply(created, 201))
-      .mockResolvedValueOnce(reply(version))
-      .mockResolvedValueOnce(reply(internals, 409))
-      .mockResolvedValueOnce(reply(undefined, 204));
-
-    const err = await uploadImage(session, 'customer_logo', ORG, file).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ImageError);
-    expect((err as ImageError).status).toBe(409);
-
-    const all = calls();
-    expect(all).toHaveLength(4);
-    expect(all[3]?.method).toBe('DELETE');
-    expect(all[3]?.url).toBe(`http://api:3001/v1/documents/${DOC}`);
+  it('sends only the viewed bytes of a Uint8Array that is a slice of a larger buffer', async () => {
+    fetchMock.mockResolvedValueOnce(reply({ documentId: DOC }));
+    const backing = new Uint8Array([0, 0, ...PNG, 0, 0]);
+    await uploadImage(session, 'entity_logo', ORG, { ...file, bytes: backing.subarray(2, 6) });
+    expect(await sentBytes(calls()[0])).toEqual(Array.from(PNG));
   });
 
-  it('still rethrows the pointer error when the cleanup itself fails', async () => {
-    fetchMock
-      .mockResolvedValueOnce(reply(created, 201))
-      .mockResolvedValueOnce(reply(version))
-      .mockResolvedValueOnce(reply(internals, 403))
-      .mockRejectedValueOnce(new TypeError('fetch failed'));
+  it.each([
+    [403, /permission/],
+    [404, /not found/],
+    [409, /changed at the same time/],
+    [413, /too large/],
+    [415, /PNG, JPEG or WebP/],
+  ])(
+    'maps %i to a readable ImageError and makes no follow-up call (the API cleans up)',
+    async (status, text) => {
+      fetchMock.mockResolvedValueOnce(reply(internals, status));
+      const err = await uploadImage(session, 'vendor_logo', ORG, file).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImageError);
+      const imageErr = err as ImageError;
+      expect(imageErr.status).toBe(status);
+      expect(imageErr.message).toMatch(text);
+      expect(imageErr.message).not.toContain('pg:');
+      expect(JSON.stringify(imageErr)).not.toContain('pg:');
+      expect(calls()).toHaveLength(1);
+    },
+  );
 
-    const err = await uploadImage(session, 'vendor_logo', ORG, file).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ImageError);
-    expect((err as ImageError).status).toBe(403);
-    expect(calls()).toHaveLength(4);
-  });
-
-  it('does not touch the pointer or clean up when the API refuses the file at reservation', async () => {
-    fetchMock.mockResolvedValueOnce(reply(internals, 415));
-    const err = await uploadImage(session, 'entity_logo', ORG, {
-      ...file,
-      name: 'logo.svg',
-      mime: 'image/svg+xml',
-    }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ImageError);
-    expect((err as ImageError).status).toBe(415);
+  it('leaves other statuses as ApiError so the usual handling (sign in again, API down) applies', async () => {
+    fetchMock.mockResolvedValueOnce(reply(internals, 401));
+    const err = await uploadImage(session, 'entity_logo', ORG, file).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(ImageError);
+    expect((err as ApiError).status).toBe(401);
+    expect((err as ApiError).body).toBeUndefined();
     expect(calls()).toHaveLength(1);
   });
 
-  it('maps a refusal of the content (type check) without moving the pointer', async () => {
-    fetchMock
-      .mockResolvedValueOnce(reply(created, 201))
-      .mockResolvedValueOnce(reply(internals, 415));
+  it.each([
+    ['a missing documentId', () => reply({ id: DOC })],
+    ['a non-string documentId', () => reply({ documentId: 42 })],
+    ['an empty documentId', () => reply({ documentId: '' })],
+    ['a JSON null', () => reply(null)],
+    ['an empty body', () => reply(undefined)],
+    ['a body that is not JSON', () => new Response('<html>pg: oops</html>', { status: 200 })],
+  ])('rejects a 200 with %s as a 502 ApiError without keeping the body', async (_, res) => {
+    fetchMock.mockResolvedValueOnce(res());
     const err = await uploadImage(session, 'entity_logo', ORG, file).catch((e: unknown) => e);
-    expect((err as ImageError).status).toBe(415);
-    expect(calls().map((c) => c.method)).toEqual(['POST', 'PUT']);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(ImageError);
+    expect((err as ApiError).status).toBe(502);
+    expect((err as ApiError).body).toBeUndefined();
+    expect((err as ApiError).message).not.toContain('pg:');
+    expect(calls()).toHaveLength(1);
   });
 });
 
@@ -237,12 +205,6 @@ describe('error mapping', () => {
     expect(err).not.toBeInstanceOf(ImageError);
     expect((err as ApiError).status).toBe(401);
     expect((err as ApiError).body).toBeUndefined();
-  });
-
-  it('maps a reservation 413 too', async () => {
-    fetchMock.mockResolvedValueOnce(reply(internals, 413));
-    const err = await uploadImage(session, 'entity_logo', ORG, file).catch((e: unknown) => e);
-    expect((err as ImageError).status).toBe(413);
   });
 });
 

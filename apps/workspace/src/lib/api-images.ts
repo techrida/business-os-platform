@@ -3,13 +3,12 @@ import 'server-only';
 import type { ImageOwnerType, SetImageBody } from '@bos/contracts';
 
 import { ApiError, apiFetch } from './api';
-import { createDocument, removeDocument, uploadDocumentContent } from './api-kernel';
 import type { Session } from './session';
 
 /**
  * Server-only calls for record pictures (company logo, profile picture, customer and vendor logos; D33).
- * A picture is a document of an image owner type: upload it through the documents pipeline, then point the
- * record at it with `PUT /v1/images/:ownerType/:ownerId`. Reading goes through `GET /v1/images/:documentId`.
+ * A picture is a document of an image owner type: `POST /v1/images/:ownerType/:ownerId` uploads it and points the
+ * record at it in one call, `PUT` on the same path removes it, and reading goes through `GET /v1/images/:documentId`.
  */
 
 /** One path segment from a caller-supplied id: encoded, so `../` can never climb out of the route. */
@@ -74,9 +73,10 @@ async function setImage(
 }
 
 /**
- * Uploads a picture and makes it the record's current one: reserve the document, send the bytes, move the pointer.
- * The API checks the type and size (415, 413) and scans it; until the scan is clean the picture reads as 404.
- * If the pointer cannot be moved, the just-uploaded document is removed (best effort) and the error is rethrown.
+ * Uploads a picture and makes it the record's current one in one call: `POST /v1/images/:ownerType/:ownerId` with
+ * the raw bytes. The API creates the document, checks the type and size (415, 413), scans it and moves the pointer;
+ * until the scan is clean the picture reads as 404. If any step after creating the document fails, the API removes
+ * that document itself, so there is nothing to clean up here.
  */
 export async function uploadImage(
   session: Session,
@@ -85,34 +85,37 @@ export async function uploadImage(
   file: { bytes: Uint8Array | ArrayBuffer; name: string; mime: string },
 ): Promise<{ documentId: string }> {
   const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
-  let documentId: string;
+  const label = `POST /v1/images/${seg(ownerType)}`;
+  let res: Response;
   try {
-    const created = await createDocument(session, {
-      ownerType,
-      ownerId,
-      filename: file.name,
-      declaredMime: file.mime,
-      sizeBytes: bytes.byteLength,
-    });
-    documentId = created.documentId;
-    await uploadDocumentContent(session, created, {
-      body: new Blob([bytes as Uint8Array<ArrayBuffer>]).stream(),
-      contentLength: bytes.byteLength,
-      contentType: file.mime,
+    res = await apiFetch(session, `/v1/images/${seg(ownerType)}/${seg(ownerId)}`, {
+      method: 'POST',
+      headers: {
+        // The file's own type: the API's JSON and form parsers only act on their own types.
+        'content-type': file.mime,
+        // Encoded, so a name outside ASCII (or with a newline) is still a valid header value.
+        'x-file-name': encodeURIComponent(file.name),
+      },
+      body: bytes as Uint8Array<ArrayBuffer>,
     });
   } catch (err) {
     throw toImageError(err);
   }
+  if (!res.ok) throw toImageError(await failed(res, label));
 
+  let body: unknown;
   try {
-    await setImage(session, ownerType, ownerId, documentId);
-  } catch (err) {
-    try {
-      await removeDocument(session, documentId);
-    } catch {
-      // Best effort: an unreferenced document is harmless and the pointer error is what the caller needs.
-    }
-    throw toImageError(err);
+    body = await res.json();
+  } catch {
+    body = undefined;
+  }
+  const documentId =
+    typeof body === 'object' && body !== null
+      ? (body as { documentId?: unknown }).documentId
+      : undefined;
+  if (typeof documentId !== 'string' || documentId === '') {
+    // 502: the upstream answered, but not with the shape we agreed on. The body is not kept.
+    throw new ApiError(502, `${label} returned an invalid body`);
   }
   return { documentId };
 }
