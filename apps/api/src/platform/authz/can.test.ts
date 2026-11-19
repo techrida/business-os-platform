@@ -1,5 +1,6 @@
 // Table tests for `can()`: every scope with a matching and a non-matching record, the deny reasons,
-// and the latency budget (P1 plan §7 U1: 100k calls, p99 < 0.05 ms).
+// the read reach of CRM records (D50, D55-3) and the latency budget (P1 plan §7 U1: 100k calls,
+// p99 < 0.05 ms).
 //
 // ADR 0027: every principal's `organizationId` is the acting legal entity, the same value for staff
 // and portal callers. A portal caller is told apart by `partyId`, and only the counterparty columns
@@ -7,6 +8,7 @@
 import { performance } from 'node:perf_hooks';
 
 import {
+  type AccessScope,
   DEFAULT_ROLE_PERMISSIONS,
   type OrgKind,
   type Permission,
@@ -37,7 +39,7 @@ const PARTY_OF: Record<OrgKind, string | null> = {
 };
 
 function principalWith(
-  grants: Partial<Record<Permission, Scope>>,
+  grants: Partial<Record<Permission, AccessScope>>,
   over: Partial<Principal> = {},
 ): Principal {
   const orgKind = over.orgKind ?? 'staff';
@@ -52,7 +54,7 @@ function principalWith(
     roles: [],
     departmentId: MY_DEPT,
     status: 'active',
-    grants: new Map(Object.entries(grants) as [Permission, Scope][]),
+    grants: new Map(Object.entries(grants) as [Permission, AccessScope][]),
     ...over,
   };
 }
@@ -64,7 +66,7 @@ const rec = (over: Partial<ResourceRef> = {}): ResourceRef => ({
   ...over,
 });
 
-const ALLOWED = (scope: Scope): Decision => ({ allowed: true, scope });
+const ALLOWED = (scope: AccessScope): Decision => ({ allowed: true, scope });
 const DENIED = (reason: Extract<Decision, { allowed: false }>['reason']): Decision => ({
   allowed: false,
   reason,
@@ -371,6 +373,118 @@ describe('can(): grants and status', () => {
   it('does not mistake an empty tenant id for a match', () => {
     const p = principalWith({ 'memo.read': 'all' }, { tenantId: '', organizationId: ENTITY });
     expect(can(p, 'memo.read', rec({ tenantId: '' }))).toEqual(DENIED('out_of_scope'));
+  });
+});
+
+describe('can(): cumulative scopes', () => {
+  it('lets department reach my own records in another department or with none', () => {
+    const p = principalWith({ 'memo.read': 'department' });
+    expect(can(p, 'memo.read', rec({ ownerUserId: ME, departmentId: OTHER_DEPT }))).toEqual(
+      ALLOWED('department'),
+    );
+    expect(can(p, 'memo.read', rec({ ownerUserId: ME }))).toEqual(ALLOWED('department'));
+    expect(
+      can(p, 'memo.read', rec({ ownerUserId: SOMEONE_ELSE, departmentId: OTHER_DEPT })),
+    ).toEqual(DENIED('out_of_scope'));
+  });
+
+  it('makes department behave as own for a user with no department', () => {
+    const p = principalWith({ 'memo.read': 'department' }, { departmentId: null });
+    expect(can(p, 'memo.read', rec({ ownerUserId: ME, departmentId: null }))).toEqual(
+      ALLOWED('department'),
+    );
+    expect(can(p, 'memo.read', rec({ ownerUserId: SOMEONE_ELSE, departmentId: null }))).toEqual(
+      DENIED('out_of_scope'),
+    );
+  });
+});
+
+// D50 and D55-3: `own` on a CRM read also covers the leads a person entered and the records they hold a live
+// follow-up on. Writes stay with the owner, and a permission outside record-reach.ts ignores both lists.
+describe('can(): read reach on CRM records', () => {
+  const LEAD_READ: Permission = 'crm.lead.read';
+  const LEAD_WRITE: Permission = 'crm.lead.write';
+  const OPPORTUNITY_READ: Permission = 'crm.opportunity.read';
+  /** A record someone else owns, in another department, so only the reach can match. */
+  const theirs = { ownerUserId: SOMEONE_ELSE, departmentId: OTHER_DEPT } as const;
+
+  it.each(['own', 'department'] as const)(
+    '%s on a lead read reaches a lead I entered or hold a follow-up on',
+    (scope) => {
+      const p = principalWith({ [LEAD_READ]: scope });
+      expect(can(p, LEAD_READ, rec({ ...theirs, creatorUserId: ME }))).toEqual(ALLOWED(scope));
+      expect(can(p, LEAD_READ, rec({ ...theirs, assigneeUserIds: [SOMEONE_ELSE, ME] }))).toEqual(
+        ALLOWED(scope),
+      );
+      expect(
+        can(
+          p,
+          LEAD_READ,
+          rec({ ...theirs, creatorUserId: SOMEONE_ELSE, assigneeUserIds: [SOMEONE_ELSE] }),
+        ),
+      ).toEqual(DENIED('out_of_scope'));
+      // The reach stays inside the acting entity, like the list query's `scoped()`.
+      expect(
+        can(p, LEAD_READ, rec({ ...theirs, organizationId: OTHER_ENTITY, creatorUserId: ME })),
+      ).toEqual(DENIED('out_of_scope'));
+    },
+  );
+
+  it.each(['own', 'department'] as const)(
+    'never lets %s on a write reach a record through its creator or assignees',
+    (scope) => {
+      const p = principalWith({ [LEAD_WRITE]: scope });
+      expect(
+        can(p, LEAD_WRITE, rec({ ...theirs, creatorUserId: ME, assigneeUserIds: [ME] })),
+      ).toEqual(DENIED('out_of_scope'));
+      expect(can(p, LEAD_WRITE, rec({ ownerUserId: ME }))).toEqual(ALLOWED(scope));
+    },
+  );
+
+  it('honours the creator only on leads, and the assignees on opportunities too', () => {
+    const p = principalWith({ [OPPORTUNITY_READ]: 'own' });
+    expect(can(p, OPPORTUNITY_READ, rec({ ...theirs, creatorUserId: ME }))).toEqual(
+      DENIED('out_of_scope'),
+    );
+    expect(can(p, OPPORTUNITY_READ, rec({ ...theirs, assigneeUserIds: [ME] }))).toEqual(
+      ALLOWED('own'),
+    );
+  });
+
+  it('ignores creator and assignees on a permission without read reach', () => {
+    const p = principalWith({ 'memo.read': 'own' });
+    expect(
+      can(p, 'memo.read', rec({ ...theirs, creatorUserId: ME, assigneeUserIds: [ME] })),
+    ).toEqual(DENIED('out_of_scope'));
+  });
+
+  it('lets assigned read only what I hold a follow-up on', () => {
+    const p = principalWith({ [LEAD_READ]: 'assigned' });
+    expect(can(p, LEAD_READ)).toEqual(ALLOWED('assigned'));
+    expect(can(p, LEAD_READ, rec({ ...theirs, assigneeUserIds: [ME] }))).toEqual(
+      ALLOWED('assigned'),
+    );
+    // Owning or entering a record is not an assignment.
+    expect(can(p, LEAD_READ, rec({ ownerUserId: ME }))).toEqual(DENIED('out_of_scope'));
+    expect(can(p, LEAD_READ, rec({ ...theirs, creatorUserId: ME }))).toEqual(
+      DENIED('out_of_scope'),
+    );
+    expect(can(p, LEAD_READ, rec({ ...theirs, assigneeUserIds: [] }))).toEqual(
+      DENIED('out_of_scope'),
+    );
+    expect(
+      can(p, LEAD_READ, rec({ ...theirs, organizationId: OTHER_ENTITY, assigneeUserIds: [ME] })),
+    ).toEqual(DENIED('out_of_scope'));
+  });
+
+  it('treats assigned on a write or a permission without assignments as no grant, even at route level', () => {
+    const p = principalWith({ [LEAD_WRITE]: 'assigned', 'memo.read': 'assigned' });
+    expect(can(p, LEAD_WRITE)).toEqual(DENIED('no_permission'));
+    expect(can(p, LEAD_WRITE, rec({ ownerUserId: ME, assigneeUserIds: [ME] }))).toEqual(
+      DENIED('no_permission'),
+    );
+    expect(can(p, 'memo.read')).toEqual(DENIED('no_permission'));
+    expect(can(p, 'memo.read', rec({ assigneeUserIds: [ME] }))).toEqual(DENIED('no_permission'));
   });
 });
 

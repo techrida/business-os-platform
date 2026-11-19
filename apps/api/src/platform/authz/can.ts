@@ -1,9 +1,10 @@
 // The one authorization decision: may this principal do this action, optionally on this record?
 // Pure and synchronous with no I/O, so it is table-testable and costs microseconds. Serves the NFRs
 // "authorization is deny-by-default" and "< 5 ms per decision" (P1 plan §1, k-authz; §7 U1).
-import { type Permission, type Scope, SCOPES, SOD_PERMISSIONS } from '@bos/contracts';
+import { ACCESS_SCOPES, type AccessScope, type Permission, SOD_PERMISSIONS } from '@bos/contracts';
 
 import type { Decision, DenyReason, Principal, ResourceRef } from './principal';
+import { type ReadReach, readReachOf } from './record-reach';
 
 // The types live in principal.ts; re-exported so callers can import the decision and its inputs
 // from one place (U4's documents ports import `ResourceRef` from here).
@@ -19,8 +20,8 @@ const DENY_SOD = deny('separation_of_duties');
 
 // A Map, not an object literal: `ALLOW.get('toString')` is undefined, where `obj['toString']`
 // would return an inherited function and read as an allow.
-const ALLOW: ReadonlyMap<Scope, Decision> = new Map(
-  SCOPES.map((scope) => [scope, Object.freeze({ allowed: true, scope }) as Decision]),
+const ALLOW: ReadonlyMap<AccessScope, Decision> = new Map(
+  ACCESS_SCOPES.map((scope) => [scope, Object.freeze({ allowed: true, scope }) as Decision]),
 );
 
 const SOD: ReadonlySet<Permission> = new Set(SOD_PERMISSIONS);
@@ -48,19 +49,46 @@ function counterpartyOf(p: Principal, r: ResourceRef): string | null | undefined
 const namesMyParty = (p: Principal, r: ResourceRef): boolean =>
   sameId(r.organizationId, p.organizationId) && sameId(counterpartyOf(p, r), p.partyId);
 
+/**
+ * `r` is one of `p`'s own records. Scopes are cumulative (spec A2, review R1): `own` is in `department` and
+ * `all`, so this is the base of each. On a read permission with read reach (record-reach.ts) it also covers the
+ * record's creator and assignees; a write never does (D55-3), so `reach` is undefined for every write.
+ */
+function isMine(p: Principal, r: ResourceRef, reach: ReadReach | undefined): boolean {
+  if (sameId(r.ownerUserId, p.userId)) return true;
+  if (reach === undefined) return false;
+  if (reach.creator && sameId(r.creatorUserId, p.userId)) return true;
+  return reach.assignee && isAssignee(p, r);
+}
+
+const isAssignee = (p: Principal, r: ResourceRef): boolean =>
+  r.assigneeUserIds !== undefined && p.userId.length > 0 && r.assigneeUserIds.includes(p.userId);
+
 /** Does `scope` reach `r` for `p`? The tenant was already checked by the caller. */
-function inScope(p: Principal, scope: Scope, r: ResourceRef): boolean {
+function inScope(
+  p: Principal,
+  scope: AccessScope,
+  r: ResourceRef,
+  reach: ReadReach | undefined,
+): boolean {
   switch (scope) {
-    // `own` and `department` also need the acting entity, so a record check agrees with the list
-    // query: `scopeWhere()` builds these on `scoped()`, which filters tenant and entity.
-    case 'own':
-      return sameId(r.organizationId, p.organizationId) && sameId(r.ownerUserId, p.userId);
-    case 'department':
-      // A user with no department has no department scope; two nulls are not a match.
+    // `assigned`, `own` and `department` also need the acting entity, so a record check agrees with
+    // the list query: `scopeWhere()` builds these on `scoped()`, which filters tenant and entity.
+    case 'assigned':
+      // Only work given to them, read only. `can()` already refused this scope on any permission without
+      // assignee reach, so `reach` is defined here.
       return (
-        p.departmentId !== null &&
+        sameId(r.organizationId, p.organizationId) && reach?.assignee === true && isAssignee(p, r)
+      );
+    case 'own':
+      return sameId(r.organizationId, p.organizationId) && isMine(p, r, reach);
+    case 'department':
+      // Own records count wherever they sit. A user with no department reaches only those, and two nulls are
+      // not a match; a record (or table) with no department is reached as `own` (review R2).
+      return (
         sameId(r.organizationId, p.organizationId) &&
-        sameId(r.departmentId, p.departmentId)
+        (isMine(p, r, reach) ||
+          (p.departmentId !== null && sameId(r.departmentId, p.departmentId)))
       );
     case 'customer_org':
       // A customer matches only the customer column and a vendor only the vendor column; staff
@@ -86,7 +114,8 @@ function inScope(p: Principal, scope: Scope, r: ResourceRef): boolean {
  * 1. Status. Only `active` passes. `invited` is treated as inactive in P1: an invited user has not
  *    finished sign-up (no password or MFA yet), so a token for them should not act. Any other
  *    status string, including one this code does not know, also denies.
- * 2. Grant. No grant for `action` is `no_permission`.
+ * 2. Grant. No grant for `action` is `no_permission`. So is `assigned` on a permission without assignee
+ *    reach (any write, and every read that no assignment can hand over): it grants nothing there.
  * 3. No `r`: a route-level check, and the grant alone decides.
  * 4. Tenant. A different tenant is always `out_of_scope`, whatever the scope.
  * 5. Scope (see `inScope`).
@@ -106,10 +135,15 @@ export function can(p: Principal, action: Permission, r?: ResourceRef): Decision
   // An unknown scope value from the database is not a grant.
   if (allow === undefined) return DENY_NO_PERMISSION;
 
+  // Read reach exists only on the read permissions record-reach.ts names, so writes ignore creators and
+  // assignees, and `assigned` means nothing on any other permission.
+  const reach = readReachOf(action);
+  if (scope === 'assigned' && reach?.assignee !== true) return DENY_NO_PERMISSION;
+
   if (r === undefined) return allow;
 
   if (!sameId(r.tenantId, p.tenantId)) return DENY_OUT_OF_SCOPE;
-  if (!inScope(p, scope, r)) return DENY_OUT_OF_SCOPE;
+  if (!inScope(p, scope, r, reach)) return DENY_OUT_OF_SCOPE;
 
   if (SOD.has(action) && (r.sodUserIds === undefined || r.sodUserIds.includes(p.userId))) {
     return DENY_SOD;
