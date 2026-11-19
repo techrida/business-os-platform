@@ -93,8 +93,12 @@
 .option[aria-checked='true']:active:not(:disabled) {
   border-color: var(--type-ring);
   background: var(--type-bg);
-  box-shadow: 0 0 0 1px var(--type-ring);
   color: var(--type-text);
+}
+
+/* The 2px ring yields to the global focus shadow while the selected type has keyboard focus. */
+.option[aria-checked='true']:not(:focus-visible) {
+  box-shadow: 0 0 0 1px var(--type-ring);
 }
 
 .option:disabled {
