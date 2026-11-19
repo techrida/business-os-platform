@@ -9,7 +9,6 @@ import {
   type AccessAssignmentRule,
   type AccessGrantRow,
   type AccessLevelRule,
-  type RoleKey,
 } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
@@ -102,11 +101,11 @@ describe('access-catalogue completeness', () => {
 
   it('permits every default grant in DEFAULT_ROLE_PERMISSIONS under isScopeAllowedForRole', () => {
     for (const role of ROLE_KEYS) {
-      const grants = DEFAULT_ROLE_PERMISSIONS[role as RoleKey];
+      const grants = DEFAULT_ROLE_PERMISSIONS[role];
       for (const [permission, scope] of Object.entries(grants)) {
         expect(
-          isScopeAllowedForRole(role, permission as (typeof PERMISSIONS)[number], scope),
-          `${role} ${permission} ${scope}`,
+          isScopeAllowedForRole(role, permission as (typeof PERMISSIONS)[number], scope ?? null),
+          `${role} ${permission} ${String(scope)}`,
         ).toBe(true);
       }
     }
