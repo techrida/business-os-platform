@@ -8,7 +8,17 @@ import type { ReactNode } from 'react';
  * `footer` (the language switcher) is rendered in the footer row of the auth column. Layout and breakpoints
  * live in styles/bos-shell.css. Must stay usable from client components (global-error.tsx imports it).
  */
-export function LoginShell({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+export function LoginShell({
+  children,
+  footer,
+  helpHref,
+  privacyHref,
+}: {
+  children: ReactNode;
+  footer?: ReactNode;
+  helpHref?: string;
+  privacyHref?: string;
+}) {
   return (
     <main className="bos-login-page">
       <div className="bos-login-card">
@@ -17,7 +27,9 @@ export function LoginShell({ children, footer }: { children: ReactNode; footer?:
           <div className="bos-shell-body">
             <div className="bos-shell-content">{children}</div>
           </div>
-          <AuthFooter>{footer}</AuthFooter>
+          <AuthFooter helpHref={helpHref} privacyHref={privacyHref}>
+            {footer}
+          </AuthFooter>
         </div>
         <AuthAside />
       </div>
