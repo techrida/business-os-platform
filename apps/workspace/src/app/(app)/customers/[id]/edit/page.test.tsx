@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { CustomerDetail } from '@/components/p2/customers/api';
 import type { Session } from '@/lib/session';
 
 vi.mock('server-only', () => ({}));
@@ -17,13 +18,22 @@ const staff = vi.hoisted(() => ({
 vi.mock('@/lib/bff', () => ({ requireStaffSession: () => Promise.resolve(staff.session) }));
 const api = vi.hoisted(() => ({ call: vi.fn(), getCustomer: vi.fn() }));
 vi.mock('@/lib/api-procurement', () => ({ call: api.call }));
-vi.mock('@/components/p2/customers/api', () => ({ getCustomer: api.getCustomer }));
+// The page reads the customer with its per-record `can` flags (getCustomerDetail) and keeps the real customerCan.
+vi.mock('@/components/p2/customers/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/p2/customers/api')>()),
+  getCustomerDetail: api.getCustomer,
+}));
 vi.mock('@/components/p2/customers/actions', () => ({ updateCustomerAction: vi.fn() }));
+// The page gates on the live grants (GET /v1/me); sales holds customer.write.
+vi.mock('@/lib/grants', () => ({
+  getGrants: () => Promise.resolve(new Map([['customer.write', 'all']])),
+  hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+}));
 
 const { default: EditCustomerPage } = await import('./page');
 
 const ID = '11111111-1111-4111-8111-111111111111';
-const customer = (defaultCurrency: CustomerDto['defaultCurrency']): CustomerDto => ({
+const customer = (defaultCurrency: CustomerDto['defaultCurrency']): CustomerDetail => ({
   id: ID,
   number: 'CUS-0001',
   legalName: 'Himalayan Construction Pvt. Ltd.',
@@ -37,6 +47,7 @@ const customer = (defaultCurrency: CustomerDto['defaultCurrency']): CustomerDto 
   version: 2,
   createdAt: '2026-11-08T05:45:00.000Z',
   updatedAt: '2026-11-08T05:45:00.000Z',
+  can: { write: true, readVerification: false, openVerification: false },
 });
 
 const render = async () =>

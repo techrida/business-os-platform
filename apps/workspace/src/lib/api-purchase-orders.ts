@@ -71,15 +71,19 @@ const poFields = {
   version: z.number().int(),
 };
 
-/** A row of the list: the PO without its lines. */
-export const PoListItemSchema = z.object(poFields);
+/** A row of the list: the PO without its lines, always with its vendor's legal name. */
+export const PoListItemSchema = z.object({ ...poFields, vendorName: Text });
 export type PoListItem = z.infer<typeof PoListItemSchema>;
 
 export const PurchaseOrderSchema = z.object({
   ...poFields,
+  /** The vendor's legal name: sent by the detail read, left out by the write routes. */
+  vendorName: Text.optional(),
   lines: z.array(PoLineSchema),
   /** A draft with no lines yet: the approved quotation's lines that issue will copy in. Read-only. */
   proposedLines: z.array(PoLineSchema).optional(),
+  /** What the caller may do from this order, from their live grants. Sent by the detail read only. */
+  can: z.object({ enterBill: z.boolean() }).optional(),
 });
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 
@@ -178,6 +182,15 @@ export const ReceivableOrderSchema = z.strictObject({
   openQuantity: Text,
 });
 export type ReceivableOrder = z.infer<typeof ReceivableOrderSchema>;
+
+/** One purchase order raised from the caller's own purchase requests: the receipts picker of a requester. */
+export const RequestedOrderSchema = z.strictObject({
+  id: z.guid(),
+  number: Text,
+  status: PoStatusSchema,
+  vendorName: Text,
+});
+export type RequestedOrder = z.infer<typeof RequestedOrderSchema>;
 
 async function readBody(res: Response): Promise<unknown> {
   const text = await res.text();
@@ -349,6 +362,11 @@ export function listReceivableOrders(session: Session, limit?: number): Promise<
       ? '/v1/procurement/receivable-orders'
       : `/v1/procurement/receivable-orders?limit=${encodeURIComponent(String(limit))}`;
   return call(session, path, z.array(ReceivableOrderSchema));
+}
+
+/** The purchase orders of the caller's own purchase requests (needs procurement.pr.read), newest first. */
+export function listRequestedOrders(session: Session): Promise<RequestedOrder[]> {
+  return call(session, '/v1/procurement/requested-orders', z.array(RequestedOrderSchema));
 }
 
 export function getReceipt(session: Session, id: string): Promise<Receipt> {

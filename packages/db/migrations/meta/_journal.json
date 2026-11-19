@@ -442,6 +442,20 @@
       "when": 1783000000083,
       "tag": "0083_marketing_role",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1783000000090,
+      "tag": "0090_opportunity_lost_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1783000000091,
+      "tag": "0091_opportunity_lost_reason_data",
+      "breakpoints": true
     }
   ]
 }

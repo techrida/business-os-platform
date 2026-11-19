@@ -462,7 +462,8 @@ describe('purchase request: the decision', () => {
     as(U.head, 'operations_officer');
     const dto = await approvals.get(request.id);
     expect(dto.snapshot).toMatchObject({ purchaseRequest: { departmentId: dept.headed } });
-    expect(dto.references).toEqual([{ id: dept.headed, name: d!.name }]);
+    // The cost centre is named too; the exact set is pinned in the I-27 block below.
+    expect(dto.references).toContainEqual({ id: dept.headed, name: d!.name });
   });
 
   it('lets the designated officer read, see and decide only their active PR head step, with an exact replay', async () => {
@@ -477,7 +478,8 @@ describe('purchase request: the decision', () => {
     const first = await approvals.act(request.id, action, key);
     expect((await prRow(id)).status).toBe('dept_approved');
     expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
-    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    // The head who decided keeps reading the request (U18 #10); deciding again still needs the replay.
+    expect((await approvals.get(request.id)).requestId).toBe(request.id);
     await approvals.getForAction(request.id, action, key);
     expect(await approvals.act(request.id, action, key)).toEqual(first);
     as(U.other, 'operations_officer');
@@ -566,7 +568,8 @@ describe('purchase request: the decision', () => {
     await act(U.head, 'operations_officer', request.id, 'approve');
     as(U.head, 'operations_officer');
     expect((await approvals.inbox()).some((i) => i.requestId === request.id)).toBe(false);
-    expect((await httpErrorOf(approvals.get(request.id))).getStatus()).toBe(404);
+    // They still read the request they decided (U18 #10), but cannot decide the Management step.
+    expect((await approvals.get(request.id)).status).toBe('pending');
     expect(
       (
         await httpErrorOf(
@@ -983,6 +986,46 @@ describe('department and cost-centre names on a request (I-27)', () => {
         .then((r) => r.rows);
       return { departmentName: d!.name, costCenterName: c!.name };
     });
+
+  it('names the department and cost centre on the approval for the department head, and nothing else (U18 #3)', async () => {
+    const { request } = await submitted();
+    const expected = await namesOf(dept.headed, centers.active);
+    // The head decides with the staff base grants: no department or cost-centre directory read.
+    as(U.head, 'operations_officer');
+    const approval = await approvals.get(request.id);
+    expect(approval.snapshot).toMatchObject({
+      purchaseRequest: { departmentId: dept.headed, costCenterId: centers.active },
+    });
+    expect(approval.references).toEqual(
+      expect.arrayContaining([
+        { id: dept.headed, name: expected.departmentName },
+        { id: centers.active, name: expected.costCenterName },
+      ]),
+    );
+    expect(approval.references).toHaveLength(2);
+  });
+
+  it('shows the department head the request as it stands, with no link to a page it cannot open (U18 #2)', async () => {
+    const { id, request } = await submitted();
+    const expected = await namesOf(dept.headed, centers.active);
+    // The head reads only their own requests, and this one is the requester's: the request page would 404.
+    as(U.head, 'operations_officer');
+    const approval = await approvals.get(request.id);
+    expect(approval.context).toMatchObject({ href: null, documents: [] });
+    // The page the link would open refuses the head too, so hiding it removes a dead end rather than a way in.
+    expect((await httpErrorOf(service.get(id))).getStatus()).toBe(404);
+    expect(approval.context!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'department', value: expected.departmentName }),
+        expect.objectContaining({ key: 'costCenter', value: expected.costCenterName }),
+        expect.objectContaining({ key: 'status', value: 'submitted' }),
+      ]),
+    );
+    // The requester reads their own request, so the same approval links it for them.
+    as(U.req, 'operations_officer');
+    expect((await approvals.get(request.id)).context?.href).toBe(`/procurement/requests/${id}`);
+    expect((await service.get(id)).id).toBe(id);
+  });
 
   it("names another requester's department and cost centre for Procurement, in the detail and the list", async () => {
     const mine = await draft();

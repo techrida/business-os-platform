@@ -737,7 +737,7 @@ describe('call-back evidence upload (V2b)', () => {
     ).toMatchObject({ id: a.id, verifiedBy: U.finance, callbackEvidenceDocumentId: documentId });
   });
 
-  it('is 403 without vendor.bank.propose, even with documents.upload at all', async () => {
+  it('is 403 without vendor.bank.propose or vendor.bank.verify, even with documents.upload at all', async () => {
     const vendorId = await newVendor();
     const a = await proposed(vendorId);
     asProcurementOnly();
@@ -747,10 +747,56 @@ describe('call-back evidence upload (V2b)', () => {
     as('accountant', 'accountant', { extra: ['documents.upload'] });
     expect((await createEvidence(vendorId, a.id)).status).toBe(403);
     expect((await putContent(created.body.uploadPath)).status).toBe(403);
-    // The checker cannot attach the evidence it is about to judge.
-    asVerifier();
+    as('other', 'sales');
     expect((await createEvidence(vendorId, a.id)).status).toBe(403);
     expect((await putContent(created.body.uploadPath)).status).toBe(403);
+  });
+
+  it('finance uploads the call-back evidence for an account the vendor proposed and verifies with it', async () => {
+    const vendorId = await newVendor();
+    const portalUser = (
+      await createPortalUser(appPool, { tenantId, idpOrgId: vendorIdp.get(vendorId)! })
+    ).userId;
+    current.userId = portalUser;
+    current.orgKind = 'vendor';
+    current.partyId = vendorId;
+    current.grants = grantsOf('vendor_user');
+    const a = await service.proposeFromPortal(
+      { tenantId, organizationId: orgA },
+      vendorId,
+      { bankName: 'Nabil Bank', accountName: 'Himal Traders', accountNumber: nextNumber().digits },
+      randomUUID(),
+    );
+
+    // The default finance role: vendor.bank.verify, no vendor.bank.propose and no documents.upload.
+    asVerifier();
+    expect(current.grants.has('vendor.bank.propose')).toBe(false);
+    expect(current.grants.has('documents.upload')).toBe(false);
+    const created = await createEvidence(vendorId, a.id);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const put = await putContent(created.body.uploadPath);
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(await processor.scanVersion(scanJob(created.body.versionId), true)).toBe('clean');
+
+    const ok = await verify(vendorId, a.id, created.body.documentId as string);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.status).toBe('active');
+    expect(await rawAccount(a.id)).toMatchObject({ status: 'active', verified_by: U.finance });
+  });
+
+  it('evidence attached by the proposer does not let the proposer verify (maker-checker unchanged)', async () => {
+    const vendorId = await newVendor();
+    // The founder holds both grants: it proposes and attaches, and is still refused at verify.
+    as('founder', 'founder');
+    const a = await proposed(vendorId);
+    const created = await createEvidence(vendorId, a.id);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect((await putContent(created.body.uploadPath)).status).toBe(200);
+    expect(await processor.scanVersion(scanJob(created.body.versionId), true)).toBe('clean');
+    const res = await verify(vendorId, a.id, created.body.documentId as string);
+    expect(res.status).toBe(403);
+    expect(res.body.error.reason).toBe('separation_of_duties');
+    expect((await rawAccount(a.id)).status).toBe('proposed');
   });
 
   it('takes no evidence once the account is active or retired, nor bytes for a file created before verify', async () => {

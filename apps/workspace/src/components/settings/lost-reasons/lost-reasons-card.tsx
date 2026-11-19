@@ -1,12 +1,17 @@
 'use client';
 
-import { LEAD_LOST_REASON_LABEL_MAX, type LeadLostReason } from '@bos/contracts';
+import {
+  LEAD_LOST_REASON_LABEL_MAX,
+  LOST_REASONS_STALE_MESSAGE,
+  lostReasonsToken,
+  type LeadLostReason,
+} from '@bos/contracts';
 import { useId, useState, useTransition, type FormEvent } from 'react';
 
 import {
   addLostReasonAction,
-  moveLostReasonAction,
   renameLostReasonAction,
+  reorderLostReasonsAction,
   resetLostReasonsAction,
   setLostReasonRetiredAction,
 } from '@/app/(app)/settings/sales/actions';
@@ -17,17 +22,20 @@ import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/field';
 import { toast } from '@/components/ui/toast';
 
-import { isDefaultList, labelProblem } from './lost-reasons-model';
+import { isDefaultList, labelProblem, movedOrder } from './lost-reasons-model';
 import styles from './lost-reasons.module.css';
 
 /**
- * The Founder's Lost reasons card (D49): the list Mark lost offers, in order. Each reason can be renamed, moved up or
- * down, and retired or restored; a new one is added at the end, and Reset puts the seven defaults back (D32). A retired
- * reason is hidden from Mark lost but stays on the leads that carry it, so nothing is deleted. Every change is its own
- * request and the page revalidates, so the list always shows what the server holds.
+ * The Founder's Lost reasons card (D49, D54-3, D54-4): the shared list Mark lost offers for leads
+ * and opportunities, in order. Each reason can be renamed, moved up or down, and retired or
+ * restored; a new one is added at the end, and Reset puts the seven defaults back (D32). A retired
+ * reason is hidden from Mark lost but stays on the leads and opportunities that carry it, so
+ * nothing is deleted. Reorder and Reset send the displayed list's token (`lostReasonsToken`), so a
+ * stale screen never overwrites someone else's change.
  */
 export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[] }) {
   const ordered = [...reasons].sort((a, b) => a.position - b.position);
+  const expectedOrder = lostReasonsToken(ordered);
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -42,7 +50,13 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
       try {
         const state = await action();
         if (state.status === 'error') {
-          toast.error(state.message);
+          if (state.message === LOST_REASONS_STALE_MESSAGE) {
+            toast.error(state.message, {
+              action: { label: 'Reload', onClick: () => window.location.reload() },
+            });
+          } else {
+            toast.error(state.message);
+          }
           return;
         }
         toast.success(state.message);
@@ -91,9 +105,9 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
     <div className={styles.card}>
       <div className={styles.head}>
         <p className={styles.hint}>
-          Offered when a lead is marked lost, in this order. Renaming a reason renames it on every
-          lead that used it. A retired reason is no longer offered but stays on the leads that have
-          it.
+          Offered when a lead or opportunity is marked lost, in this order. Renaming a reason
+          renames it on every lead and opportunity that used it. A retired reason is no longer
+          offered but stays on the leads and opportunities that have it.
         </p>
         <ResetToDefaultButton
           section="sales"
@@ -101,10 +115,11 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
           label="the lost reasons"
           isDefault={isDefaultList(ordered)}
           defaultText="the 7 app default reasons"
-          action={resetLostReasonsAction}
+          action={() => resetLostReasonsAction(expectedOrder)}
+          reloadOnMessage={LOST_REASONS_STALE_MESSAGE}
           confirm={{
             title: 'Reset the lost reasons to default?',
-            body: 'The seven default reasons come back with their names, order and active state. Reasons you added are retired and listed after them. Leads keep the reason they were closed with.',
+            body: 'The seven default reasons come back with their names, order and active state. Reasons you added are retired and listed after them. Leads and opportunities keep the reason they were closed with.',
             confirmLabel: 'Reset lost reasons',
           }}
         />
@@ -154,7 +169,14 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
                     variant="secondary"
                     disabled={pending || index === 0}
                     aria-label={`Move ${reason.label} up`}
-                    onClick={() => run(() => moveLostReasonAction(reason.id, 'up'))}
+                    onClick={() =>
+                      run(() =>
+                        reorderLostReasonsAction(
+                          movedOrder(ordered, reason.id, 'up'),
+                          expectedOrder,
+                        ),
+                      )
+                    }
                   >
                     Up
                   </Button>
@@ -163,7 +185,14 @@ export function LostReasonsCard({ reasons }: { reasons: readonly LeadLostReason[
                     variant="secondary"
                     disabled={pending || index === ordered.length - 1}
                     aria-label={`Move ${reason.label} down`}
-                    onClick={() => run(() => moveLostReasonAction(reason.id, 'down'))}
+                    onClick={() =>
+                      run(() =>
+                        reorderLostReasonsAction(
+                          movedOrder(ordered, reason.id, 'down'),
+                          expectedOrder,
+                        ),
+                      )
+                    }
                   >
                     Down
                   </Button>

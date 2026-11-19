@@ -48,9 +48,18 @@ export interface DocumentOwnerPolicy {
   /**
    * The permission that authorises a staff upload to this owner (create, receive, new version, remove), checked
    * against the same owner ref. Absent means `documents.upload`. Reads, the system path, the counterparty hook,
-   * the type, size and scan rules are unchanged. P3: payment proof uses `payment.record`.
+   * the type, size and scan rules are unchanged. P3: payment proof uses `payment.record`. A list means any one of
+   * them, each checked on the owner ref (P4 bank evidence: whoever proposes or verifies the account).
    */
-  uploadPermission?: Permission;
+  uploadPermission?: Permission | readonly Permission[];
+  /**
+   * A permission that also authorises a staff read of this owner's files (get, download link), checked on the
+   * owner ref. It is in addition to `documents.read`, never instead: a caller passes with either. Lets the owning
+   * module's own read grant open its records' files without widening `documents.read` (P4: `vendor.read` for a
+   * vendor's bank evidence and submitted files; K3: `verification.review` for case files). Absent means
+   * `documents.read` alone, as before.
+   */
+  readPermission?: Permission;
   /**
    * The declared types this owner takes (U12: PNG, JPEG and WebP for logos and avatars). It only narrows the generic
    * allow-list (ALLOWED_MIME): a type outside either is a 415 before any row is written. Absent means the generic list.

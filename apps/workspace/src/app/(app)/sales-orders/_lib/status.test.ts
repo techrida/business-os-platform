@@ -6,6 +6,7 @@ import { readList } from '@/lib/list-params';
 import { IDS, scheduleLine } from './fixtures';
 import {
   evidenceKindLabel,
+  heldInvoiceLabel,
   lineAction,
   SALES_ORDER_LIST_SPEC,
   salesOrderStatusMeta,
@@ -67,7 +68,12 @@ describe('lineAction (what a schedule line offers)', () => {
   });
 
   it('links to the invoice of a drafted or invoiced line, whatever the order status', () => {
-    const drafted = { ...planned, status: 'drafted' as const, invoiceId: IDS.invoice };
+    const drafted = {
+      ...planned,
+      status: 'drafted' as const,
+      invoiceId: IDS.invoice,
+      can: { openInvoice: true },
+    };
     expect(lineAction('confirmed', drafted, can)).toBe('open_invoice');
     expect(lineAction('completed', { ...drafted, status: 'invoiced' }, can)).toBe('open_invoice');
   });
@@ -79,5 +85,33 @@ describe('lineAction (what a schedule line offers)', () => {
     ).toBe('none');
     expect(lineAction('draft', planned, can)).toBe('none');
     expect(lineAction('cancelled', { ...planned, status: 'billable' }, can)).toBe('none');
+  });
+});
+
+// Audit #7: Sales reads its own orders but may not open invoices. A held invoice is named, not linked.
+describe('a line that holds an invoice the person may not open', () => {
+  const can = { mark: true, draft: true };
+  const drafted = scheduleLine({
+    id: IDS.advance,
+    seq: 1,
+    status: 'drafted',
+    invoiceId: IDS.invoice,
+    invoice: { number: null, status: 'draft' },
+    can: { openInvoice: false },
+  });
+
+  it('names the invoice instead of linking to it, and without flags too', () => {
+    expect(lineAction('confirmed', drafted, can)).toBe('show_invoice');
+    const { can: _omitted, ...withoutFlags } = drafted;
+    expect(lineAction('confirmed', withoutFlags, can)).toBe('show_invoice');
+  });
+
+  it('says the number and the status in one word', () => {
+    expect(heldInvoiceLabel({ number: null, status: 'draft' })).toBe('Not numbered yet · Draft');
+    expect(heldInvoiceLabel({ number: 'INV-2083/84-00007', status: 'submitted' })).toBe(
+      'INV-2083/84-00007 · Submitted',
+    );
+    expect(heldInvoiceLabel(null)).toBeNull();
+    expect(heldInvoiceLabel(undefined)).toBeNull();
   });
 });

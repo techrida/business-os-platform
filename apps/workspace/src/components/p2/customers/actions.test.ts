@@ -12,7 +12,12 @@ vi.mock('next/navigation', () => ({
     throw new Error(`redirect ${to}`);
   },
 }));
-vi.mock('./permissions', () => ({ hasPermission: () => true }));
+// The live grants from /v1/me; a test swaps them to act as a role an admin edited.
+const grants = vi.hoisted(() => ({ live: new Map<string, string>([['customer.write', 'all']]) }));
+vi.mock('@/lib/grants', () => ({
+  getGrants: () => Promise.resolve(grants.live),
+  hasGrant: (g: Map<string, string>, p: string) => g.has(p),
+}));
 
 const api = vi.hoisted(() => ({
   createContact: vi.fn(),
@@ -52,7 +57,26 @@ const createForm = () =>
     idempotencyKey: IDEM,
   });
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  grants.live = new Map([['customer.write', 'all']]);
+});
+
+describe('the live grants, not the role defaults (audit #5)', () => {
+  it('refuses a sales user whose customer.write an admin removed, before calling the API', async () => {
+    // The session still says `sales`, whose defaults include customer.write; the live grants do not.
+    grants.live = new Map([['customer.read', 'all']]);
+    const created = await createCustomerAction({ key: IDEM, errors: {} }, createForm());
+    expect(created.error).toMatch(/do not include changing customers/i);
+    const contact = await addContactAction(
+      { key: IDEM, errors: {}, savedCount: 0 },
+      form({ customerId: ID, fullName: 'Sita Rai', idempotencyKey: IDEM }),
+    );
+    expect(contact.error).toMatch(/do not include changing customers/i);
+    expect(api.createCustomer).not.toHaveBeenCalled();
+    expect(api.createContact).not.toHaveBeenCalled();
+  });
+});
 
 describe('createCustomerAction', () => {
   it('says another customer has the PAN/VAT number, and rotates the key', async () => {

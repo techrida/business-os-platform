@@ -2,7 +2,12 @@
 import { customers } from '@bos/db';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
-import { type PartyOwner, type PartyOwnerPort, type PartyQuery } from './party-owner.port';
+import {
+  type PartyLabel,
+  type PartyOwner,
+  type PartyOwnerPort,
+  type PartyQuery,
+} from './party-owner.port';
 
 export class CustomerPartyOwner implements PartyOwnerPort {
   readonly kind = 'customer' as const;
@@ -39,6 +44,27 @@ export class CustomerPartyOwner implements PartyOwnerPort {
       .from(customers)
       .where(and(eq(customers.tenantId, tenantId), inArray(customers.id, [...partyIds])));
     return new Map(rows.map((r) => [r.id, r.ownerUserId]));
+  }
+
+  async labelsOf(
+    q: PartyQuery,
+    tenantId: string,
+    partyIds: readonly string[],
+  ): Promise<ReadonlyMap<string, PartyLabel>> {
+    if (partyIds.length === 0) return new Map();
+    const rows = await q
+      .select({ id: customers.id, name: customers.legalName, number: customers.number })
+      .from(customers)
+      .where(and(eq(customers.tenantId, tenantId), inArray(customers.id, [...partyIds])));
+    return new Map(rows.map((r) => [r.id, { name: r.name, number: r.number }]));
+  }
+
+  ownedBy(q: PartyQuery, tenantId: string, userId: string) {
+    // A merged-away customer keeps its case, and its owner still reads it (ownersOf does not filter either).
+    return q
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(eq(customers.tenantId, tenantId), eq(customers.ownerUserId, userId)));
   }
 
   counterparty(partyId: string) {

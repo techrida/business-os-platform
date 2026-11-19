@@ -27,6 +27,7 @@ import {
 import {
   billingScheduleLines,
   documents,
+  invoices,
   opportunities,
   quotationVersions,
   quotations,
@@ -54,6 +55,7 @@ import type { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { LeadLostReasonsService } from '../leads/lost-reasons.service';
 import { OpportunitiesService } from '../opportunities/opportunities.service';
 import { DraftingService } from '../quotations/drafting/drafting.service';
 import {
@@ -185,6 +187,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     audit,
     caller,
+    new LeadLostReasonsService(db, audit, caller),
   );
   const outcomes = new QuotationOutcomeService(
     settings,
@@ -855,5 +858,64 @@ describe('SalesOrdersService.markBillable', () => {
     });
     current.scope = scopeA;
     expect((await service.detail(detail.order.id)).schedule[1]!.status).toBe('planned');
+  });
+});
+
+// Audit #7: Sales reads its own order but holds no invoice.read, so an "Open invoice" link led to a refusal. The
+// order now names each held invoice (number and status only) under its own read, and says per line whether the
+// caller may open it, by the same invoice.read filter the invoice route applies.
+describe('SalesOrdersService.detail held invoices (audit #7)', () => {
+  async function holdInvoice(detail: SalesOrderDetail): Promise<string> {
+    const line = detail.schedule[0]!;
+    return withTx(db, scopeA, userActor(), async (tx) => {
+      const [row] = await tx
+        .insert(invoices)
+        .values({
+          tenantId: scopeA.tenantId,
+          organizationId: scopeA.organizationId,
+          kind: 'tax_invoice',
+          status: 'draft',
+          customerPartyId: f.customerPartyId,
+          salesOrderId: detail.order.id,
+          scheduleLineId: line.id,
+          currency: 'NPR',
+        })
+        .returning({ id: invoices.id });
+      await tx
+        .update(billingScheduleLines)
+        .set({ status: 'drafted', invoiceId: row!.id })
+        .where(eq(billingScheduleLines.id, line.id));
+      return row!.id;
+    });
+  }
+
+  it('names the invoice to Sales without a link, and only the number and status', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    const invoiceId = await holdInvoice(detail);
+
+    const asSales = parsed(await service.detail(detail.order.id));
+    const held = asSales.schedule[0]!;
+    expect(held.invoiceId).toBe(invoiceId);
+    expect(held.invoice).toEqual({ number: null, status: 'draft' });
+    expect(Object.keys(held.invoice!).sort()).toEqual(['number', 'status']);
+    expect(held.can).toEqual({ openInvoice: false });
+    expect(asSales.schedule[1]!.invoice).toBeNull();
+    expect(asSales.schedule[1]!.can).toEqual({ openInvoice: false });
+    expect(asSales.can).toEqual({ markBillable: false, draftInvoice: false });
+  });
+
+  it('lets a role that reads invoices open it, and follows a live grant given to Sales', async () => {
+    const detail = await confirm(await acceptedQuotation());
+    await holdInvoice(detail);
+
+    current.grants = grantsOf('accountant');
+    const asAccountant = parsed(await service.detail(detail.order.id));
+    expect(asAccountant.schedule[0]!.can).toEqual({ openInvoice: true });
+    expect(asAccountant.can).toEqual({ markBillable: true, draftInvoice: true });
+
+    current.grants = new Map([...grantsOf('sales'), ['invoice.read', 'all']]);
+    const asEditedSales = parsed(await service.detail(detail.order.id));
+    expect(asEditedSales.schedule[0]!.can).toEqual({ openInvoice: true });
+    expect(asEditedSales.can).toEqual({ markBillable: false, draftInvoice: false });
   });
 });

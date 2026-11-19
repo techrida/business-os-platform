@@ -1,7 +1,14 @@
 import { LEAD_STAGES, OPPORTUNITY_STAGES } from '@bos/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { boardColumns, groupByStage, isSetBySystem, stageLabel, userMoves } from './stages';
+import {
+  boardColumns,
+  boardMoves,
+  groupByStage,
+  isSetBySystem,
+  stageLabel,
+  userMoves,
+} from './stages';
 
 const codes = (kind: 'lead' | 'opportunity', from: string) =>
   userMoves(kind, from as never).map((m) => m.stage);
@@ -45,6 +52,23 @@ describe('userMoves', () => {
   });
 });
 
+describe('boardMoves', () => {
+  it('excludes lost from every lead and opportunity stage while keeping the other user moves', () => {
+    for (const from of LEAD_STAGES) {
+      expect(boardMoves('lead', from).map((m) => m.stage)).not.toContain('lost');
+    }
+    for (const from of OPPORTUNITY_STAGES) {
+      expect(boardMoves('opportunity', from).map((m) => m.stage)).not.toContain('lost');
+    }
+    expect(boardMoves('lead', 'new').map((m) => m.stage)).toEqual(['contacted', 'on_hold']);
+    expect(boardMoves('lead', 'qualified').map((m) => m.stage)).toEqual(['on_hold']);
+    expect(boardMoves('opportunity', 'qualified').map((m) => m.stage)).toEqual([
+      'requirement_received',
+    ]);
+    expect(boardMoves('opportunity', 'negotiation').map((m) => m.stage)).toEqual(['on_hold']);
+  });
+});
+
 describe('isSetBySystem', () => {
   it('marks the stages only the system can set', () => {
     expect(isSetBySystem('opportunity', 'won')).toBe(true);
@@ -62,6 +86,15 @@ describe('boardColumns and groupByStage', () => {
     expect(cols.find((c) => c.stage === 'won')?.note).toBe('Set by the system');
     expect(cols.find((c) => c.stage === 'negotiation')?.note).toBeUndefined();
     expect(boardColumns('lead').find((c) => c.stage === 'converted')?.note).toBe('Set by Convert');
+  });
+
+  it('notes that Lost must be marked on the record page for leads and opportunities', () => {
+    expect(boardColumns('lead').find((c) => c.stage === 'lost')?.note).toBe(
+      'Mark lost on the record page',
+    );
+    expect(boardColumns('opportunity').find((c) => c.stage === 'lost')?.note).toBe(
+      'Mark lost on the record page',
+    );
   });
 
   it('groups records by stage and keeps every column, even when empty', () => {

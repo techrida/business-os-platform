@@ -1,6 +1,7 @@
 'use client';
 
 import { ALLOWED_MIME, MAX_UPLOAD_BYTES } from '@bos/contracts';
+import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -14,6 +15,11 @@ import styles from '../payables.module.css';
 
 export interface BillEntryHeader {
   vendors: readonly { id: string; name: string }[];
+  /**
+   * The orders a bill can be entered against (the payables picker, no purchase order read needed), each
+   * with its vendor and the text the picker shows. Only the chosen vendor's orders are offered.
+   */
+  orders?: readonly { id: string; vendorId: string; label: string }[];
   vendorPartyId?: string;
   vendorName?: string;
   purchaseOrderId?: string;
@@ -33,6 +39,7 @@ export function BillHeaderInputs({
   pending: boolean;
   onReady: (ready: boolean) => void;
 }) {
+  const router = useRouter();
   const [vendorId, setVendorId] = useState(entry.vendorPartyId ?? '');
   const [invoiceNo, setInvoiceNo] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(entry.today ?? '');
@@ -42,6 +49,7 @@ export function BillHeaderInputs({
   const [problem, setProblem] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const busy = uploading || pending;
+  const vendorOrders = vendorId ? (entry.orders ?? []).filter((o) => o.vendorId === vendorId) : [];
 
   async function upload() {
     setProblem('');
@@ -132,6 +140,33 @@ export function BillHeaderInputs({
             )}
           </Field>
         )}
+        {vendorOrders.length > 0 ? (
+          <Field
+            label="Purchase order"
+            hint="Pick the order this invoice bills. The page reloads with the order's lines."
+          >
+            {(control) => (
+              <Select
+                // Not read by the save: picking an order reloads the page with it as ?po=.
+                name="orderPicker"
+                value=""
+                disabled={busy}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (id !== '') router.push(`/payables/bills/new?po=${encodeURIComponent(id)}`);
+                }}
+                {...control}
+              >
+                <option value="">No purchase order</option>
+                {vendorOrders.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ) : null}
         <Field label="Vendor invoice number" error={errors['vendorInvoiceNo']}>
           {(control) => (
             <Input

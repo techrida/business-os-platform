@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { NumberSystems } from '@bos/locale';
 
-import { hasPermission } from '@/components/p2/customers/permissions';
 import detail from '@/components/p2/quotations/detail.module.css';
+import { SuccessNotice } from '@/components/p4/success-notice';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
@@ -25,6 +25,7 @@ import { MarkBillableDialog, type EvidenceOption } from '../_components/mark-bil
 import local from '../_components/sales-orders.module.css';
 import {
   evidenceKindLabel,
+  heldInvoiceLabel,
   isGuid,
   lineAction,
   salesOrderStatusMeta,
@@ -290,10 +291,19 @@ function Schedule({
                           idempotencyKey={randomUUID()}
                           reloadHref={reloadHref}
                         />
-                      ) : action === 'open_invoice' && line.invoiceId !== null ? (
-                        <Link href={`/invoices/${encodeURIComponent(line.invoiceId)}`}>
-                          Open invoice
-                        </Link>
+                      ) : action === 'open_invoice' || action === 'show_invoice' ? (
+                        <span className={local.step}>
+                          {action === 'open_invoice' && line.invoiceId !== null ? (
+                            <Link href={`/invoices/${encodeURIComponent(line.invoiceId)}`}>
+                              Open invoice
+                            </Link>
+                          ) : (
+                            <span>Invoice</span>
+                          )}
+                          {heldInvoiceLabel(line.invoice) !== null ? (
+                            <span className={local.meta}>{heldInvoiceLabel(line.invoice)}</span>
+                          ) : null}
+                        </span>
                       ) : null}
                     </div>
                   </Td>
@@ -329,10 +339,18 @@ function Evidence({ items }: { items: SalesOrderDetail['evidence'] }) {
   );
 }
 
-export default async function SalesOrderPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function SalesOrderPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  /** `drafted=1`: the draft invoice action came back here because the person may not open the invoice. */
+  searchParams?: Promise<{ drafted?: string | string[] }>;
+}) {
   const { id } = await params;
   // Not an id: no order can have it, so there is nothing to ask the API.
   if (!isGuid(id)) notFound();
+  const justDrafted = searchParams !== undefined && (await searchParams).drafted === '1';
   const path = `/sales-orders/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
   const numberSystems = await getNumberSystems();
@@ -368,9 +386,10 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
 
   const { order } = data;
   const { label, tone } = salesOrderStatusMeta(order.status);
+  // From the order itself (the caller's live grants), not the session's role defaults.
   const can = {
-    mark: hasPermission(session.roles, 'sales_order.mark_billable'),
-    draft: hasPermission(session.roles, 'invoice.draft'),
+    mark: data.can?.markBillable ?? false,
+    draft: data.can?.draftInvoice ?? false,
   };
   const evidence: EvidenceOption[] = data.evidence.map((item, index) => ({
     documentId: item.documentId,
@@ -390,6 +409,9 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
         status={<Badge tone={tone}>{label}</Badge>}
         description={`Sales order · ${money(order.totals.total, order.currency, numberSystems)}`}
       />
+      {justDrafted ? (
+        <SuccessNotice message="The invoice draft was created. It is listed on its billing step below." />
+      ) : null}
 
       {order.status === 'draft' ? (
         <Alert tone="info" title="This order is a draft.">

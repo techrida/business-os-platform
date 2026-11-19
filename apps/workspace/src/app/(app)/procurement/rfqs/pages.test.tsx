@@ -85,6 +85,10 @@ const rfq = (over: Record<string, unknown> = {}) => ({
   deadline: '2026-12-01T10:00:00.000Z',
   status: 'open',
   vendorIds: [V1, V2],
+  vendors: [
+    { id: V1, name: 'Everest Supplies Pvt Ltd' },
+    { id: V2, name: 'Himal Traders Pvt Ltd' },
+  ],
   recommendedQuotationId: null,
   fewerThanThreeReason: null,
   recommendationRationale: null,
@@ -104,6 +108,7 @@ const quotation = {
   totalNpr: '5085000.00',
   deliveryDays: 14,
   documentId: PR,
+  vendorName: 'Everest Supplies Pvt Ltd',
   averageScore: null,
   scores: [],
 };
@@ -264,11 +269,17 @@ describe('the detail', () => {
     expect(out).toContain('Enter a quotation');
   });
 
-  it('falls back to short ids when vendor names do not load', async () => {
-    vendorApi.listVendors.mockRejectedValue(new ApiError(502, 'x'));
+  it('names the invited and quoting vendors from the RFQ itself, with no vendor directory read', async () => {
+    vendorApi.listVendors.mockRejectedValue(apiError(403));
     const out = await detail();
-    expect(out).toContain('Quotations');
-    expect(out).not.toContain('Everest');
+    expect(out).toContain('Everest Supplies Pvt Ltd, Himal Traders Pvt Ltd');
+    expect(out).not.toContain('Vendor name unavailable');
+    expect(vendorApi.listVendors).not.toHaveBeenCalled();
+    const quote = await quotePage();
+    expect(quote).toContain('Everest Supplies Pvt Ltd');
+    expect(quote).toContain('Himal Traders Pvt Ltd');
+    expect(quote).not.toContain('Vendor name unavailable');
+    expect(vendorApi.listVendors).not.toHaveBeenCalled();
   });
 
   it('only a clean scan gets a Convert button; the others say why', async () => {
@@ -470,6 +481,7 @@ describe('scoring, recommending and committing on the detail', () => {
     ...quotation,
     id: Q2,
     vendorId: V2,
+    vendorName: 'Himal Traders Pvt Ltd',
     total: '6000000.00',
     totalNpr: '6000000.00',
   };
@@ -499,7 +511,7 @@ describe('scoring, recommending and committing on the detail', () => {
   it('the recommendation lists the quotations by vendor and server total', async () => {
     rfqApi.getComparison.mockResolvedValue([scored, second]);
     const out = await detail();
-    expect(out).toMatch(/Everest, [^<]*50,85,000\.00/);
+    expect(out).toMatch(/Everest Supplies Pvt Ltd, [^<]*50,85,000\.00/);
     expect(out).toContain(`value="${Q2}"`);
   });
 

@@ -5,6 +5,7 @@ import {
   type LeadLostReason,
   LeadLostReasonSchema,
   type ReorderLeadLostReasonsBody,
+  type ResetLeadLostReasonsBody,
   type UpdateLeadLostReasonBody,
 } from '@bos/contracts';
 import { z } from 'zod';
@@ -12,7 +13,7 @@ import { z } from 'zod';
 import { call, seg } from './api-procurement';
 import type { Session } from './session';
 
-// The tenant's list of lost reasons (D49). The Mark lost dialog reads the choices (crm.lead.write); the Settings card
+// The tenant's list of lost reasons (D49, D54-3). The Mark lost dialog reads the choices (crm.lead.write / crm.opportunity.write); the Settings card
 // reads and changes the whole list (admin.settings.write, the Founder). Every call carries the staff session and every
 // answer is parsed with the contracts' schemas.
 
@@ -27,6 +28,11 @@ const json = (method: 'POST' | 'PATCH' | 'PUT', body: unknown): RequestInit => (
 /** The options a person marking a lead lost can pick, in the list's order, without retired ones. */
 export function listLeadLostReasonChoices(session: Session): Promise<LeadLostReason[]> {
   return call(session, '/v1/lead-lost-reasons', List);
+}
+
+/** The options a person marking an opportunity lost can pick, in the list's order, without retired ones. */
+export function listOpportunityLostReasonChoices(session: Session): Promise<LeadLostReason[]> {
+  return call(session, '/v1/opportunity-lost-reasons', List);
 }
 
 /** Every option, retired ones included, for the Settings card. */
@@ -56,7 +62,7 @@ export function updateLeadLostReason(
   );
 }
 
-/** Every option id in the new order; answers the whole list. */
+/** Every option id in the new order, only while the list matches `expectedOrder` (D54-4); answers the whole list. */
 export function reorderLeadLostReasons(
   session: Session,
   body: ReorderLeadLostReasonsBody,
@@ -64,7 +70,10 @@ export function reorderLeadLostReasons(
   return call(session, '/v1/admin/lead-lost-reasons/order', List, json('PUT', body));
 }
 
-/** Back to the seven defaults (D32); answers the whole list. */
-export function resetLeadLostReasons(session: Session): Promise<LeadLostReason[]> {
-  return call(session, '/v1/admin/lead-lost-reasons/reset', List, { method: 'POST' });
+/** Back to the seven defaults (D32), only while the list matches `expectedOrder` (D54-4); answers the whole list. */
+export function resetLeadLostReasons(
+  session: Session,
+  body: ResetLeadLostReasonsBody,
+): Promise<LeadLostReason[]> {
+  return call(session, '/v1/admin/lead-lost-reasons/reset', List, json('POST', body));
 }

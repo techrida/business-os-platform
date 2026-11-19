@@ -15,6 +15,7 @@ import {
   ROLE_KEYS,
   WorkflowSpecSchema,
   type ApprovalActionBody,
+  type ApprovalContext,
   type ApprovalRequestDto,
   type InboxItemDto,
   type ReferenceName,
@@ -43,10 +44,11 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { can } from '../../platform/authz/can';
@@ -110,6 +112,17 @@ export interface ApprovalSubject {
    * changed; an id the subject cannot name is left out, and the page says the name is unavailable.
    */
   referenceNames?(q: Db, scope: TxScope, snapshot: unknown): Promise<ReferenceName[]>;
+  /**
+   * Optional: the record as it stands now, for `viewer`, who may already read this request (an approver needs no read
+   * grant on the record). Main fields and the record's own files only; files and the link to the record's page are
+   * gated on `viewer`'s grants (context.ts). Null when the record is gone. Only the plain read (get) asks for it.
+   */
+  context?(
+    q: Db,
+    scope: TxScope,
+    request: { documentId: string; snapshot: unknown },
+    viewer: Principal,
+  ): Promise<ApprovalContext | null>;
 }
 
 export interface SubmitInput {
@@ -228,6 +241,7 @@ const forbidden = (reason: 'out_of_scope' | 'separation_of_duties', message: str
 @Injectable()
 export class ApprovalsService {
   private readonly subjects = new Map<string, ApprovalSubject>();
+  private readonly log = new Logger(ApprovalsService.name);
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -1005,7 +1019,10 @@ export class ApprovalsService {
     return items;
   }
 
-  /** One request for its requester, a generic reader, or its currently eligible PR department head. */
+  /**
+   * One request for its requester, a generic reader, its currently eligible PR department head or named assignee, or
+   * anyone with an action on it (a head who decided keeps reading it).
+   */
   async get(requestId: string): Promise<ApprovalRequestDto> {
     return this.readRequest(requestId);
   }
@@ -1053,13 +1070,14 @@ export class ApprovalsService {
           )
       : [];
     const groupNames = new Map(groups.map((group) => [group.id, group.name]));
-    const references = await this.subjects
-      .get(dto.documentType)
-      ?.referenceNames?.(this.db, scope, dto.snapshot);
+    const subject = this.subjects.get(dto.documentType);
+    const references = await subject?.referenceNames?.(this.db, scope, dto.snapshot);
+    const context = replay === undefined ? await this.contextOf(subject, dto, principal) : null;
     return {
       ...dto,
       people,
       ...(references !== undefined ? { references } : {}),
+      ...(context !== null ? { context } : {}),
       steps: dto.steps.map((step) => ({
         ...step,
         groupName: step.groupId ? (groupNames.get(step.groupId) ?? null) : null,
@@ -1099,6 +1117,10 @@ export class ApprovalsService {
           }).allowed
         : can(principal, 'approvals.requests.act').allowed;
     if (allowed) return;
+    // Whoever acted on this request (themselves or as a delegate), or the person a delegate acted for, keeps reading
+    // it once their step has moved on: a department head or a named assignee who reloads the request they just
+    // decided must not get a 404. A plain read only: deciding again still takes the checks below.
+    if (replay === undefined && (await this.tookPart(scope, requestId, principal.userId))) return;
     if (request.documentType === 'purchase_request') {
       const steps = await this.stepsOf(this.db, requestId);
       const current = steps.find((s) => s.seq === request.currentSeq);
@@ -1252,6 +1274,49 @@ export class ApprovalsService {
         p.userId,
       )
     );
+  }
+
+  /**
+   * The subject's view of its record for this reader, or null. A record that cannot be described (gone, or a read
+   * that fails) never stops the approver reading and deciding the request: the page simply shows no context.
+   */
+  private async contextOf(
+    subject: ApprovalSubject | undefined,
+    dto: ApprovalRequestDto,
+    viewer: Principal,
+  ): Promise<ApprovalContext | null> {
+    if (subject?.context === undefined) return null;
+    const { scope } = this.caller.current();
+    try {
+      return await subject.context(
+        this.db,
+        scope,
+        { documentId: dto.documentId, snapshot: dto.snapshot },
+        viewer,
+      );
+    } catch (error) {
+      this.log.warn(
+        `no context for ${dto.documentType} ${dto.documentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  /** True when `userId` has an action on the request, as its actor or as the person a delegate acted for. */
+  private async tookPart(scope: TxScope, requestId: string, userId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ requestId: approvalActions.requestId })
+      .from(approvalActions)
+      .where(
+        and(
+          eq(approvalActions.tenantId, scope.tenantId),
+          eq(approvalActions.organizationId, scope.organizationId),
+          eq(approvalActions.requestId, requestId),
+          or(eq(approvalActions.actorUserId, userId), eq(approvalActions.onBehalfOfUserId, userId)),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
   }
 
   /** The caller's own earlier action on the request under `replay`'s Idempotency-Key, if any. */

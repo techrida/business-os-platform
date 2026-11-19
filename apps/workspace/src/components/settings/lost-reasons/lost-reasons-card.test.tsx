@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { DEFAULT_LEAD_LOST_REASONS, type LeadLostReason } from '@bos/contracts';
+import {
+  DEFAULT_LEAD_LOST_REASONS,
+  LOST_REASONS_STALE_MESSAGE,
+  lostReasonsToken,
+  type LeadLostReason,
+} from '@bos/contracts';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -9,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   rename: vi.fn(),
   retire: vi.fn(),
-  move: vi.fn(),
+  reorder: vi.fn(),
   reset: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
@@ -18,13 +23,14 @@ vi.mock('@/app/(app)/settings/sales/actions', () => ({
   addLostReasonAction: mocks.add,
   renameLostReasonAction: mocks.rename,
   setLostReasonRetiredAction: mocks.retire,
-  moveLostReasonAction: mocks.move,
+  reorderLostReasonsAction: mocks.reorder,
   resetLostReasonsAction: mocks.reset,
 }));
 vi.mock('@/app/(app)/settings/_components/actions', () => ({ resetSettingAction: vi.fn() }));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 
 import { LostReasonsCard } from './lost-reasons-card';
+import { movedOrder } from './lost-reasons-model';
 
 const reason = (n: number, label: string, extra: Partial<LeadLostReason> = {}): LeadLostReason => ({
   id: `00000000-0000-4000-8000-00000000000${n}`,
@@ -49,7 +55,7 @@ beforeEach(() => {
       disconnect = vi.fn();
     },
   );
-  for (const m of [mocks.add, mocks.rename, mocks.retire, mocks.move, mocks.reset]) {
+  for (const m of [mocks.add, mocks.rename, mocks.retire, mocks.reorder, mocks.reset]) {
     m.mockResolvedValue(ok);
   }
 });
@@ -91,7 +97,7 @@ it('shows a retired reason with a Retired label and a Restore button, and offers
   await m.unmount();
 });
 
-it('retires with the version it showed and moves by id, and toasts the outcome', async () => {
+it('retires with the version it showed and reorders with the displayed ids and token', async () => {
   const m = await mountForm(<LostReasonsCard reasons={DEFAULTS} />);
   await click(button('Retire No response'));
   await settle();
@@ -100,7 +106,57 @@ it('retires with the version it showed and moves by id, and toasts the outcome',
 
   await click(button('Move Timing up'));
   await settle();
-  expect(mocks.move).toHaveBeenCalledExactlyOnceWith(DEFAULTS[5]!.id, 'up');
+  expect(mocks.reorder).toHaveBeenCalledExactlyOnceWith(
+    movedOrder(DEFAULTS, DEFAULTS[5]!.id, 'up'),
+    lostReasonsToken(DEFAULTS),
+  );
+  await m.unmount();
+});
+
+it('shows the stale message with a Reload action when a reorder is refused as stale', async () => {
+  mocks.reorder.mockResolvedValue({ status: 'error', message: LOST_REASONS_STALE_MESSAGE });
+  const m = await mountForm(<LostReasonsCard reasons={DEFAULTS} />);
+  await click(button('Move Price down'));
+  await settle();
+  expect(mocks.reorder).toHaveBeenCalledExactlyOnceWith(
+    movedOrder(DEFAULTS, DEFAULTS[0]!.id, 'down'),
+    lostReasonsToken(DEFAULTS),
+  );
+  expect(mocks.error).toHaveBeenCalledOnce();
+  const [message, options] = mocks.error.mock.calls[0] as [
+    string,
+    { action?: { label: string; onClick: () => void } },
+  ];
+  expect(message).toBe(LOST_REASONS_STALE_MESSAGE);
+  expect(options.action?.label).toBe('Reload');
+  expect(typeof options.action?.onClick).toBe('function');
+  expect(mocks.success).not.toHaveBeenCalled();
+  expect(rows()).toHaveLength(7);
+  await m.unmount();
+});
+
+it('sends the displayed token on reset and shows the stale message with Reload when refused', async () => {
+  const list = [...DEFAULTS.slice(0, 5), reason(5, 'Timing', { retired: true }), DEFAULTS[6]!];
+  mocks.reset.mockResolvedValue({ status: 'error', message: LOST_REASONS_STALE_MESSAGE });
+  const m = await mountForm(<LostReasonsCard reasons={list} />);
+  await click(button('Reset the lost reasons to default'));
+  const confirmBtn =
+    [...document.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === 'Reset lost reasons',
+    ) ?? null;
+  await click(confirmBtn);
+  await settle();
+  expect(mocks.reset).toHaveBeenCalledExactlyOnceWith(lostReasonsToken(list));
+  expect(mocks.error).toHaveBeenCalledOnce();
+  const [message, options] = mocks.error.mock.calls[0] as [
+    string,
+    { id?: string; action?: { label: string; onClick: () => void } },
+  ];
+  expect(message).toBe(LOST_REASONS_STALE_MESSAGE);
+  expect(options.id).toBe('reset:lead_lost_reasons');
+  expect(options.action?.label).toBe('Reload');
+  expect(typeof options.action?.onClick).toBe('function');
+  expect(mocks.success).not.toHaveBeenCalled();
   await m.unmount();
 });
 
