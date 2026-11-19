@@ -16,9 +16,12 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { Can } from '../../../platform/authz/decorators';
+import { setTotalCount } from '../../../platform/list';
 import { parseOr400 } from '../../approvals/approvals.controller';
 import { requireIdempotencyKey } from '../../customers/customers.types';
 import {
@@ -51,11 +54,18 @@ export class SourcingController {
     );
   }
 
-  /** The entity's RFQs, newest first. Query: `status`, `limit` (default 50, at most 200). */
+  /**
+   * The entity's RFQs, newest first. Query: `status` (repeatable), `q`, `limit` (default 50, at most 200), `offset`;
+   * X-Total-Count is the number of all matches. Parsed before the call so a bad query throws at once.
+   */
   @Get()
   @Can('procurement.sourcing')
-  list(@Query() query: unknown): Promise<RfqListItem[]> {
-    return this.sourcing.listRfqs(parseOr400(ListRfqsQuerySchema, query));
+  list(@Query() query: unknown, @Res({ passthrough: true }) res: Response): Promise<RfqListItem[]> {
+    const parsed = parseOr400(ListRfqsQuerySchema, query);
+    return this.sourcing.listRfqs(parsed).then(({ rows, total }) => {
+      setTotalCount(res, total);
+      return rows;
+    });
   }
 
   @Get(':id')

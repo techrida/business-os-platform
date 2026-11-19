@@ -44,6 +44,7 @@ import { AuditService } from '../../../platform/audit/audit.service';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
+import { searchPage } from '../../../platform/list';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
@@ -215,31 +216,50 @@ export class SourcingService {
   }
 
   /**
-   * The acting entity's RFQs, newest first, optionally of one status. The two counts come from one grouped query
-   * each (not one per row); a quotation is a row of vendor_quotations, an invitation a row of rfq_vendors.
+   * One page of the acting entity's RFQs, newest first, optionally of some statuses and a search, with the total of
+   * all matches. The two counts come from one grouped query each (not one per row); a quotation is a row of
+   * vendor_quotations, an invitation a row of rfq_vendors.
    */
-  async listRfqs(query: ListRfqsQuery): Promise<RfqListItem[]> {
+  async listRfqs(query: ListRfqsQuery): Promise<{ rows: RfqListItem[]; total: number }> {
     const { scope } = this.caller.current();
-    const rows = await this.db
-      .select({ rfq: rfqs, purchaseRequestNumber: purchaseRequests.number })
-      .from(rfqs)
-      .innerJoin(
-        purchaseRequests,
-        and(
-          eq(purchaseRequests.tenantId, rfqs.tenantId),
-          eq(purchaseRequests.organizationId, rfqs.organizationId),
-          eq(purchaseRequests.id, rfqs.purchaseRequestId),
-        ),
-      )
-      .where(
-        scoped(scope).where(
-          rfqs,
-          query.status === undefined ? undefined : eq(rfqs.status, query.status),
-        ),
-      )
-      .orderBy(desc(rfqs.createdAt), desc(rfqs.id))
-      .limit(query.limit);
-    if (rows.length === 0) return [];
+    const join = and(
+      eq(purchaseRequests.tenantId, rfqs.tenantId),
+      eq(purchaseRequests.organizationId, rfqs.organizationId),
+      eq(purchaseRequests.id, rfqs.purchaseRequestId),
+    );
+    const page = await searchPage(this.db, {
+      q: query.q,
+      columns: [rfqs.number, purchaseRequests.number],
+      where: scoped(scope).where(
+        rfqs,
+        query.status === undefined || query.status.length === 0
+          ? undefined
+          : inArray(rfqs.status, query.status),
+      ),
+      orderBy: [desc(rfqs.createdAt), desc(rfqs.id)],
+      limit: query.limit,
+      offset: query.offset,
+      rows: (tx, p) =>
+        tx
+          .select({ rfq: rfqs, purchaseRequestNumber: purchaseRequests.number })
+          .from(rfqs)
+          .innerJoin(purchaseRequests, join)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: async (tx, where) => {
+        const [row] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(rfqs)
+          .innerJoin(purchaseRequests, join)
+          .where(where);
+        return row?.n ?? 0;
+      },
+    });
+    const rows = page.rows;
+    const total = page.total;
+    if (rows.length === 0) return { rows: [], total };
     const ids = rows.map((r) => r.rfq.id);
     const invited = await this.db
       .select({ rfqId: rfqVendors.rfqId, n: sql<number>`count(*)::int` })
@@ -253,16 +273,19 @@ export class SourcingService {
       .groupBy(vendorQuotations.rfqId);
     const invitedBy = new Map(invited.map((r) => [r.rfqId, r.n]));
     const quotedBy = new Map(quoted.map((r) => [r.rfqId, r.n]));
-    return rows.map((r) => ({
-      id: r.rfq.id,
-      number: r.rfq.number,
-      purchaseRequestId: r.rfq.purchaseRequestId,
-      purchaseRequestNumber: r.purchaseRequestNumber,
-      status: r.rfq.status,
-      deadline: r.rfq.deadline.toISOString(),
-      invitedVendorCount: invitedBy.get(r.rfq.id) ?? 0,
-      quotationCount: quotedBy.get(r.rfq.id) ?? 0,
-    }));
+    return {
+      rows: rows.map((r) => ({
+        id: r.rfq.id,
+        number: r.rfq.number,
+        purchaseRequestId: r.rfq.purchaseRequestId,
+        purchaseRequestNumber: r.purchaseRequestNumber,
+        status: r.rfq.status,
+        deadline: r.rfq.deadline.toISOString(),
+        invitedVendorCount: invitedBy.get(r.rfq.id) ?? 0,
+        quotationCount: quotedBy.get(r.rfq.id) ?? 0,
+      })),
+      total,
+    };
   }
 
   /**

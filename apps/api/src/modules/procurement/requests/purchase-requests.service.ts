@@ -44,6 +44,7 @@ import { AuthzService } from '../../../platform/authz/authz.service';
 import type { Principal, ResourceRef } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../../platform/db/idempotency';
+import { searchPage } from '../../../platform/list';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
@@ -159,23 +160,44 @@ export class PurchaseRequestsService {
 
   // ------------------------------------------------------------------------------------------------- reads
 
-  /** The requests the caller may read in the acting entity, newest first. */
-  async list(query: ListPurchaseRequestsQuery): Promise<PurchaseRequestListItem[]> {
+  /**
+   * One page of the requests the caller may read in the acting entity, newest first, with the total of all matches.
+   * The scope is part of `where`, so neither a filter nor a search can reach a request the caller may not read.
+   */
+  async list(
+    query: ListPurchaseRequestsQuery,
+  ): Promise<{ rows: PurchaseRequestListItem[]; total: number }> {
     const { principal, scope } = this.caller.current();
     const filters: SQL[] = [purchaseRequestScopeWhere(principal, READ_ACTION)];
-    if (query.status !== undefined) filters.push(eq(purchaseRequests.status, query.status));
-    const rows = await this.db
-      .select()
-      .from(purchaseRequests)
-      .where(and(...filters))
-      .orderBy(desc(purchaseRequests.createdAt), desc(purchaseRequests.id))
-      .limit(query.limit);
+    if (query.status !== undefined && query.status.length > 0) {
+      filters.push(inArray(purchaseRequests.status, query.status));
+    }
+    const page = await searchPage(this.db, {
+      q: query.q,
+      columns: [purchaseRequests.number, purchaseRequests.justification],
+      where: and(...filters),
+      orderBy: [desc(purchaseRequests.createdAt), desc(purchaseRequests.id)],
+      limit: query.limit,
+      offset: query.offset,
+      rows: (tx, p) =>
+        tx
+          .select()
+          .from(purchaseRequests)
+          .where(p.where)
+          .orderBy(...p.orderBy)
+          .limit(p.limit)
+          .offset(p.offset),
+      count: (tx, where) => tx.$count(purchaseRequests, where),
+    });
     const rfqIds = await this.liveRfqIds(
       this.db,
       scope,
-      rows.map((r) => r.id),
+      page.rows.map((r) => r.id),
     );
-    return rows.map((r) => toListItem(r, rfqIds.get(r.id) ?? null));
+    return {
+      rows: page.rows.map((r) => toListItem(r, rfqIds.get(r.id) ?? null)),
+      total: page.total,
+    };
   }
 
   /** One request with its lines; 404 outside the caller's entity or scope. */
