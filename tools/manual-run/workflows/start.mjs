@@ -452,8 +452,16 @@ export function workflow(cfg) {
           s.checks.push(
             `after Sign out: ${new URL(page.url()).host}${new URL(page.url()).pathname}`,
           );
-          await page.goto(`${cfg.appUrl}/inbox`, { waitUntil: 'domcontentloaded' });
-          await page.waitForLoadState('load').catch(() => {});
+          // A dev-server restart can answer one hop with 5xx; retry the plain GET, never the sign-out.
+          for (let i = 0; i < 4; i++) {
+            const res = await page
+              .goto(`${cfg.appUrl}/inbox`, { waitUntil: 'domcontentloaded' })
+              .catch(() => null);
+            await page.waitForLoadState('load').catch(() => {});
+            if (res && res.status() < 500 && !page.url().startsWith('chrome-error://')) break;
+            s.checks.push(`note: /inbox answered ${res?.status() ?? 'a network error'}; retrying`);
+            await page.waitForTimeout(10000);
+          }
           s.expect(
             !page.url().startsWith(`${cfg.appUrl}/inbox`),
             'signed out: /inbox sends you to sign-in',
