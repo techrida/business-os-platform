@@ -26,6 +26,8 @@ import {
   purchaseOrders,
   purchaseRequestLines,
   purchaseRequests,
+  receiptLines,
+  receipts,
   rfqs,
   scoped,
   vendors,
@@ -40,6 +42,7 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { and, asc, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
@@ -241,20 +244,11 @@ export class PurchaseRequestsService {
         number: purchaseOrders.number,
         status: purchaseOrders.status,
         vendorName: vendors.legalName,
-        serviceLines: sql<number>`count(${purchaseOrderLines.id}) filter (where ${purchaseOrderLines.kind} = 'service')::int`,
       })
       .from(purchaseOrders)
       .innerJoin(
         vendors,
         and(eq(vendors.tenantId, purchaseOrders.tenantId), eq(vendors.id, purchaseOrders.vendorId)),
-      )
-      .leftJoin(
-        purchaseOrderLines,
-        and(
-          eq(purchaseOrderLines.tenantId, purchaseOrders.tenantId),
-          eq(purchaseOrderLines.organizationId, purchaseOrders.organizationId),
-          eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
-        ),
       )
       .where(
         scoped(scope).where(
@@ -262,8 +256,11 @@ export class PurchaseRequestsService {
           and(eq(purchaseOrders.purchaseRequestId, row.id), ne(purchaseOrders.status, 'draft')),
         ),
       )
-      .groupBy(purchaseOrders.id, purchaseOrders.number, purchaseOrders.status, vendors.legalName)
       .orderBy(asc(purchaseOrders.number));
+    const serviceRoom = await this.serviceRoomOf(
+      scope,
+      orders.map((o) => o.id),
+    );
     // Mirrors ReceiptsService.assertMayReceive for a service receipt: the requester themselves, or the receipt
     // confirm grant on this request.
     const mayReceive =
@@ -285,9 +282,66 @@ export class PurchaseRequestsService {
       vendorName: o.vendorName,
       can: {
         receiveService:
-          mayReceive && RECEIVING_PO_STATUSES.includes(o.status) && o.serviceLines > 0,
+          mayReceive && RECEIVING_PO_STATUSES.includes(o.status) && serviceRoom.has(o.id),
       },
     }));
+  }
+
+  /**
+   * The orders (of `orderIds`) with a service line that still has room for a receipt: ordered - cancelled - every
+   * non-discarded receipt line on it, so confirmed receipts, reversals and drafts count as the receipt routes and
+   * the new receipt page count them (ReceiptsService.quantitiesOf, a draft holds its quantity). Read for the flag
+   * only; no quantity is returned.
+   */
+  private async serviceRoomOf(scope: TxScope, orderIds: readonly string[]): Promise<Set<string>> {
+    if (orderIds.length === 0) return new Set();
+    const [lines, taken] = await Promise.all([
+      this.db
+        .select({
+          id: purchaseOrderLines.id,
+          purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+          orderedQuantity: purchaseOrderLines.orderedQuantity,
+          cancelledQuantity: purchaseOrderLines.cancelledQuantity,
+        })
+        .from(purchaseOrderLines)
+        .where(
+          scoped(scope).where(
+            purchaseOrderLines,
+            and(
+              inArray(purchaseOrderLines.purchaseOrderId, [...orderIds]),
+              eq(purchaseOrderLines.kind, 'service'),
+            ),
+          ),
+        ),
+      this.db
+        .select({ poLineId: receiptLines.poLineId, quantity: receiptLines.quantity })
+        .from(receiptLines)
+        .innerJoin(
+          receipts,
+          and(eq(receipts.tenantId, receiptLines.tenantId), eq(receipts.id, receiptLines.receiptId)),
+        )
+        .where(
+          scoped(scope).where(
+            receiptLines,
+            and(
+              inArray(receiptLines.purchaseOrderId, [...orderIds]),
+              ne(receipts.status, 'discarded'),
+            ),
+          ),
+        ),
+    ]);
+    const takenByLine = new Map<string, Decimal>();
+    for (const t of taken) {
+      takenByLine.set(t.poLineId, (takenByLine.get(t.poLineId) ?? new Decimal(0)).plus(t.quantity));
+    }
+    const withRoom = new Set<string>();
+    for (const l of lines) {
+      const room = new Decimal(l.orderedQuantity)
+        .minus(l.cancelledQuantity)
+        .minus(takenByLine.get(l.id) ?? 0);
+      if (room.greaterThan(0)) withRoom.add(l.purchaseOrderId);
+    }
+    return withRoom;
   }
 
   /**
