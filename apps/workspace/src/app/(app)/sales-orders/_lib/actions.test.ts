@@ -198,8 +198,26 @@ describe('markBillableAction', () => {
 });
 
 describe('draftInvoiceAction', () => {
+  /** The order as read again after the draft: the line holds the invoice, openable or not. */
+  const drafted = (openInvoice: boolean) =>
+    salesOrderDetail({
+      schedule: [
+        scheduleLine({
+          id: IDS.advance,
+          seq: 1,
+          status: 'drafted',
+          invoiceId: IDS.invoice,
+          can: { openInvoice },
+        }),
+      ],
+    });
+
   it('drafts from the line with the page key, then opens the invoice', async () => {
-    mocks.apiFetch.mockImplementation(() => answer(200, invoiceDetail()));
+    mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
+      path === '/v1/invoices/from-schedule'
+        ? answer(200, invoiceDetail())
+        : answer(200, drafted(true)),
+    );
     const to = await redirectTarget(draftInvoiceAction(prev, draftForm()));
     expect(to).toBe(`NEXT_REDIRECT /invoices/${IDS.invoice}`);
     const [, path, init] = call();
@@ -212,19 +230,7 @@ describe('draftInvoiceAction', () => {
     mocks.apiFetch.mockImplementation((_s: unknown, path: string) =>
       path === '/v1/invoices/from-schedule'
         ? refusal(409, 'SCHEDULE_LINE_TAKEN')
-        : answer(
-            200,
-            salesOrderDetail({
-              schedule: [
-                scheduleLine({
-                  id: IDS.advance,
-                  seq: 1,
-                  status: 'drafted',
-                  invoiceId: IDS.invoice,
-                }),
-              ],
-            }),
-          ),
+        : answer(200, drafted(true)),
     );
     const state = await draftInvoiceAction(prev, draftForm());
     expect(state.error).toMatch(/already has an invoice/i);
