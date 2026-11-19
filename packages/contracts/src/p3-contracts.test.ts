@@ -647,9 +647,11 @@ describe('invoice contracts', () => {
       invoicing.CustomerInvoiceViewSchema,
       invoicing.PortalInvoiceListItemSchema,
     ]) {
-      const leaks = schemaKeys(schema).filter((k) =>
-        words(k).some((w) => CUSTOMER_VIEW_FORBIDDEN_WORDS.includes(w)),
-      );
+      // `format.numberSystems` is keyed by currency code (the first print's grouping per currency), so the
+      // upper-case code NPR is a customer-safe key. A lower-case `npr` field (the internal NPR value) still fails.
+      const leaks = schemaKeys(schema)
+        .filter((k) => k !== 'NPR')
+        .filter((k) => words(k).some((w) => CUSTOMER_VIEW_FORBIDDEN_WORDS.includes(w)));
       expect(leaks).toEqual([]);
     }
   });

@@ -49,6 +49,7 @@ import { can } from '../../platform/authz/can';
 import type { Principal } from '../../platform/authz/principal';
 import { systemActor, withTx, type TxScope } from '../../platform/db/tx';
 import type { NotifyService } from '../../platform/notify/notify.service';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -177,6 +178,7 @@ beforeAll(async () => {
     authz as unknown as AuthzService,
     audit,
     caller,
+    new CurrencyEnabledService(settings),
   );
   opportunitiesService = new OpportunitiesService(
     db,

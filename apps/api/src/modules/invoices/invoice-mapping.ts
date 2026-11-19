@@ -2,7 +2,9 @@
 // table later never reaches a client until it is named here. Serves the NFR "paid is derived": there is no paid field
 // to map (plan A8). Money stays text; the content hash is hex; the NPR value exists only once frozen at issue.
 import {
+  DocumentFormatSnapshotSchema,
   PartySnapshotSchema,
+  type DocumentFormatSnapshot,
   type InvoiceDetail,
   type InvoiceDto,
   type InvoiceLineDto,
@@ -133,7 +135,22 @@ export function toInvoiceDetail(parts: InvoiceParts): InvoiceDetail {
           ? []
           : [{ printNo: p.printNo, printedBy: p.printedBy, printedAt: p.printedAt.toISOString() }],
       ),
+    format: firstPrintFormat(parts.prints),
   };
+}
+
+/**
+ * The number and date format the original PDF was drawn with: the one stored on print 1, which every copy reuses
+ * (the render sweeper's `formatFor`). Read from the raw rows, not the mapped `prints`, which leave out a print with no
+ * user. Null when there is no print 1, it predates the stored format, or what is stored does not validate.
+ */
+export function firstPrintFormat(
+  prints: readonly Pick<InvoicePrintRow, 'printNo' | 'renderFormat'>[],
+): DocumentFormatSnapshot | null {
+  const original = prints.find((p) => p.printNo === 1);
+  if (original === undefined || original.renderFormat === null) return null;
+  const parsed = DocumentFormatSnapshotSchema.safeParse(original.renderFormat);
+  return parsed.success ? parsed.data : null;
 }
 
 export function toInvoiceListItem(row: InvoiceRow, customerName: string): InvoiceListItem {

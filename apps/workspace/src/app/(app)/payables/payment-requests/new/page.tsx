@@ -7,6 +7,7 @@ import { hasPermission } from '@/components/p2/customers/permissions';
 import { Alert } from '@/components/ui/alert';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { requireStaffSession } from '@/lib/bff';
+import { loadEnabledCurrencies } from '@/lib/enabled-currencies.server';
 import { listPaymentRequestItems, type PaymentRequestItem } from '@/lib/api-payables';
 
 import { PaymentRequestEntry } from '../forms';
@@ -20,6 +21,7 @@ export default async function NewPaymentRequestPage() {
   const allowed = hasPermission(session.roles, 'payables.payment.request');
   let items: PaymentRequestItem[] = [];
   let problem: string | undefined;
+  const enabledCurrencies = allowed ? await loadEnabledCurrencies(session) : [];
   if (allowed) {
     try {
       items = await listPaymentRequestItems(session);
@@ -54,7 +56,11 @@ export default async function NewPaymentRequestPage() {
             have claimed the remaining balances.
           </Alert>
         ) : (
-          <PaymentRequestEntry idempotencyKey={randomUUID()} items={items} />
+          <PaymentRequestEntry
+            idempotencyKey={randomUUID()}
+            items={items}
+            enabledCurrencies={enabledCurrencies}
+          />
         )
       ) : (
         <Alert tone="info" role="alert">

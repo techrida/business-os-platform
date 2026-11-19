@@ -54,6 +54,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  UnprocessableEntityException,
   type OnModuleInit,
 } from '@nestjs/common';
 import {
@@ -89,6 +90,7 @@ import { DocumentsService } from '../../platform/documents/documents.service';
 import { personLabel } from '../../platform/users/person-names';
 import { readTxContext } from '../../platform/documents/tx-context';
 import { NotifyService } from '../../platform/notify/notify.service';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { MoneyService } from '../../platform/settings/money.service';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { SettingsService } from '../../platform/settings/settings.service';
@@ -248,6 +250,11 @@ export function memoRef(row: MemoRow): ResourceRef {
 @Injectable()
 export class TestMemoService implements OnModuleInit {
   private readonly log = new Logger(TestMemoService.name);
+  /**
+   * The D44 check that a memo's currency is switched on. Built from the injected SettingsService rather than
+   * injected itself, so every existing positional construction of this service keeps compiling and still checks.
+   */
+  private readonly currencies: CurrencyEnabledService;
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -262,7 +269,9 @@ export class TestMemoService implements OnModuleInit {
     private readonly settings: SettingsService,
     // Optional: a missing notify module only slows delivery (the 5 s drain still sends), it never fails a submit.
     @Optional() private readonly notify?: NotifyService,
-  ) {}
+  ) {
+    this.currencies = new CurrencyEnabledService(settings);
+  }
 
   /**
    * Both registries throw on a duplicate, so this runs once, when the module starts. onDecided is only called from
@@ -439,6 +448,9 @@ export class TestMemoService implements OnModuleInit {
     // Read before the transaction: the read uses the pool, so it must not hold a second connection while the
     // series row is locked. The default (MEMO) prints exactly what the series stored before the setting existed.
     const prefix = await this.settings.get(scope, 'numbering.memo_prefix');
+    // 422 CURRENCY_NOT_ENABLED for a currency the company switched off (D44). Also a pool read, so it runs here,
+    // before the series row is locked. A template memo that omits money stores NPR, which is always on.
+    await this.currencies.assertEnabled(scope, body.currency);
     return withTx(this.db, scope, actor, async (tx) => {
       // The FK also refuses a vendor or foreign party, but as a 500; name the problem as a 400 instead.
       if (body.customerPartyId) {
@@ -614,12 +626,25 @@ export class TestMemoService implements OnModuleInit {
     const { scope, actor, principal } = this.caller.current();
     const template = body.template ? await this.templateSnapshot(body.template) : undefined;
     const now = this.clock();
+    // D44: the enabled list is a pool read, so it runs here and not while the memo row is locked. The refusal is
+    // held and thrown only once the lock shows the currency actually changes: a memo whose currency was switched
+    // off after it was written keeps saving edits as long as it keeps that currency.
+    let currencyRefusal: UnprocessableEntityException | undefined;
+    if (body.currency !== undefined) {
+      try {
+        await this.currencies.assertEnabled(scope, body.currency);
+      } catch (error) {
+        if (!(error instanceof UnprocessableEntityException)) throw error;
+        currencyRefusal = error;
+      }
+    }
     return withTx(this.db, scope, actor, async (tx) => {
       const row = await this.lock(tx, scope, id);
       // Scope first (404), then state (409): someone who may not edit learns nothing about the status.
       this.assertVisible('memo.update', row);
       this.assertEditable(row);
       this.assertVersion(row, body.expectedVersion);
+      if (currencyRefusal !== undefined && body.currency !== row.currency) throw currencyRefusal;
 
       const money: Money = {
         amount: body.amount ?? row.amount,

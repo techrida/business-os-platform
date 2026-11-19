@@ -7,9 +7,10 @@ import { ResetToDefaultButton } from '@/components/settings/reset-to-default';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { Panel } from '@/components/ui/panel';
+import { toast } from '@/components/ui/toast';
 import type { SettingsSectionId } from '@/lib/settings-nav';
 
-import { IDLE } from '../action-state';
+import { IDLE, type ActionState } from '../action-state';
 import { roleLabel } from '../users/role-checkboxes';
 import { FormStatus } from '../ui';
 import { saveCardAction } from './actions';
@@ -64,7 +65,16 @@ export function SettingCard({
     fields.map((f) => [f.key, f.kind === 'currencies' ? f.current.split(/,\s*/) : [f.current]]),
   );
   const [values, setValues] = useState<Values>(initial);
-  const [state, formAction, pending] = useActionState(saveCardAction, IDLE);
+  // A saved change gives the card new current values, so the page remounts it and drops the effect that would
+  // announce the result: the success toast is raised here, from the action itself.
+  const [state, formAction, pending] = useActionState(
+    async (previous: ActionState, formData: FormData): Promise<ActionState> => {
+      const result = await saveCardAction(previous, formData);
+      if (result.status === 'ok') toast.success(result.message, { id: 'setting-card-saved' });
+      return result;
+    },
+    IDLE,
+  );
   const dirty = fields.some(
     (f) => (values[f.key] ?? []).join(',') !== (initial[f.key] ?? []).join(','),
   );
@@ -114,7 +124,7 @@ export function SettingCard({
         </div>
         <div className={styles.foot}>
           <div className={styles.status}>
-            <FormStatus state={state} pending={pending} />
+            <FormStatus state={state} pending={pending} successToast={false} />
           </div>
           <Button type="submit" disabled={!dirty || pending}>
             Save

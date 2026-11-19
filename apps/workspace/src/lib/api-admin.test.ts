@@ -4,6 +4,7 @@ import {
   addFxRate,
   addWorkflowVersion,
   createDelegation,
+  getApprovalSlaDefaults,
   getSetting,
   inviteUser,
   listApprovalGroups,
@@ -206,6 +207,18 @@ describe('settings, number series and FX', () => {
     const s = await getSetting(session, 'tax.vat_rate');
     expect(s).toEqual({ key: 'tax.vat_rate', value: '13', version: null });
     expect(lastCall().url.pathname).toBe('/v1/admin/settings/tax.vat_rate');
+  });
+
+  it('reads the default approval times from the workflow-editor route, not the admin settings route', async () => {
+    const value = {
+      remindAfterHours: 8,
+      escalateAfterHours: 36,
+      escalateTo: { role: 'management' },
+    };
+    fetchMock.mockResolvedValueOnce(json({ key: 'approvals.sla_defaults', value, version: 3 }));
+    const s = await getApprovalSlaDefaults(session);
+    expect(s).toEqual({ key: 'approvals.sla_defaults', value, version: 3 });
+    expect(lastCall().url.pathname).toBe('/v1/admin/approval-sla-defaults');
   });
 
   it('writes a setting as { value }', async () => {

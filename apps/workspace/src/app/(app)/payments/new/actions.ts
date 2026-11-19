@@ -10,6 +10,7 @@ import { todayInKathmandu } from '@/app/(app)/settings/format';
 import { hasPermission } from '@/components/p2/customers/permissions';
 import { submitPayment } from '@/lib/api-receivables';
 import { requireStaffSession } from '@/lib/bff';
+import { currencyNotEnabledText } from '@/lib/kernel-ui';
 
 import { describePaymentFailure } from '../_lib/failure';
 
@@ -85,6 +86,8 @@ function refused(err: unknown, key: string): RecordPaymentState {
   if (failure.status === 422 && codeOf(err) === 'unknown_customer') {
     return { key: next, error: NOT_FOUND_MESSAGE };
   }
+  const switchedOff = currencyNotEnabledText(err);
+  if (switchedOff !== undefined) return { key: next, error: switchedOff };
   if (failure.kind === 'not_found') return { key: next, error: NOT_FOUND_MESSAGE };
   if (failure.kind === 'stale') return { key: next, error: STALE_MESSAGE, reload: true };
   return { key: next, error: failure.message };

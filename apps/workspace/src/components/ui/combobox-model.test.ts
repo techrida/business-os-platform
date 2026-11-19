@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ADD_OPTION_ID,
+  addOptionFor,
   layoutOptions,
   matchesQuery,
   moveActive,
@@ -113,5 +115,59 @@ describe('resultsAnnouncement', () => {
     expect(resultsAnnouncement(0, 7, texts)).toBe(texts.noMatch);
     expect(resultsAnnouncement(1, 7, texts)).toBe('1 result available');
     expect(resultsAnnouncement(3, 7, texts)).toBe('3 results available');
+  });
+});
+
+describe('keepOrder', () => {
+  const reasons: ComboboxOption[] = ['Price', 'Chose a competitor', 'Timing', 'Other'].map(
+    (label, i) => ({
+      id: `r${i}`,
+      label,
+    }),
+  );
+
+  it('lists options in the order given, where the default sorts them by name', () => {
+    expect(layoutOptions(reasons, '').flat.map((o) => o.label)).toEqual([
+      'Chose a competitor',
+      'Other',
+      'Price',
+      'Timing',
+    ]);
+    expect(layoutOptions(reasons, '', undefined, undefined, true).flat.map((o) => o.label)).toEqual(
+      ['Price', 'Chose a competitor', 'Timing', 'Other'],
+    );
+  });
+});
+
+describe('addOptionFor', () => {
+  const reasons: ComboboxOption[] = [
+    { id: 'a', label: 'Price' },
+    { id: 'b', label: 'No budget' },
+  ];
+  const label = (text: string) => `Add "${text}"`;
+
+  it('offers the typed text, trimmed, when no option has those words', () => {
+    expect(addOptionFor(reasons, '  Slow to reply ', label)).toEqual({
+      id: ADD_OPTION_ID,
+      label: 'Add "Slow to reply"',
+      searchText: 'Slow to reply',
+    });
+  });
+
+  it('offers nothing for an empty box, or for text an option already has (any case or spacing)', () => {
+    expect(addOptionFor(reasons, '', label)).toBeNull();
+    expect(addOptionFor(reasons, '   ', label)).toBeNull();
+    expect(addOptionFor(reasons, 'price', label)).toBeNull();
+    expect(addOptionFor(reasons, ' NO BUDGET ', label)).toBeNull();
+  });
+
+  it('still offers a partial match, so "Pric" can become its own option', () => {
+    expect(addOptionFor(reasons, 'Pric', label)?.label).toBe('Add "Pric"');
+  });
+
+  it('shows up in the layout after the matches when appended to the options', () => {
+    const add = addOptionFor(reasons, 'bud', label)!;
+    const flat = layoutOptions([...reasons, add], 'bud', undefined, undefined, true).flat;
+    expect(flat.map((o) => o.label)).toEqual(['No budget', 'Add "bud"']);
   });
 });

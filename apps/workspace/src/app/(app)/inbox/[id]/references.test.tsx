@@ -24,6 +24,7 @@ const BILL = '22222222-2222-4222-8222-222222222222';
 const REQUESTER = '33333333-3333-4333-8333-333333333333';
 const VENDOR = '66666666-6666-4666-8666-666666666666';
 const PO = '77777777-7777-4777-8777-777777777777';
+const DEPARTMENT = '88888888-8888-4888-8888-888888888888';
 const WHEN = '2026-11-18T05:45:00.000Z';
 
 const billRequest = (over: Record<string, unknown> = {}) => ({
@@ -87,6 +88,23 @@ describe('approval snapshot references (I-31)', () => {
     });
     const text = await render();
     expect(text).toContain('Dev Vendor Co');
+    expect(text).not.toContain('Name unavailable');
+  });
+
+  it('names the requesting department inside a purchase request snapshot', async () => {
+    answer = billRequest({
+      documentType: 'purchase_request',
+      snapshot: {
+        purchaseRequest: {
+          number: 'PR-2083/84-00003',
+          departmentId: DEPARTMENT,
+          estimatedTotal: '45000.00',
+        },
+      },
+      references: [{ id: DEPARTMENT, name: 'Operations' }],
+    });
+    const text = await render();
+    expect(text).toContain('Operations');
     expect(text).not.toContain('Name unavailable');
   });
 

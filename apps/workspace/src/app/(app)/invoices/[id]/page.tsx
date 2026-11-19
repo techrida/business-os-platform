@@ -14,12 +14,14 @@ import { failureOf } from '@/lib/api-kernel';
 import { getCustomerStatement } from '@/lib/api-receivables';
 import { listTaxCodes } from '@/lib/api-tax-codes';
 import { requireStaffSession } from '@/lib/bff';
-import { getNumberSystems } from '@/lib/display-settings';
+import { getDisplaySettings } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 import type { Session } from '@/lib/session';
 
 import { InvoiceKindBadge, InvoiceStatusBadge } from '../_components/badges';
-import { DayValue, Lines, NprSnapshot, Totals } from '../_components/detail-parts';
+import { LineBreakdown, NprSnapshot } from '../_components/detail-parts';
+import { documentFormat } from '../_components/document/format';
+import { InvoiceDocument } from '../_components/document/invoice-document';
 import { InvoiceActions } from '../_components/invoice-actions';
 import { InvoicePreview } from '../_components/invoice-preview';
 import { InvoiceProgress } from '../_components/invoice-progress';
@@ -65,39 +67,6 @@ function facts(
   numberSystems: NumberSystems,
 ): Fact[] {
   const out: Fact[] = [
-    {
-      key: 'number',
-      label: 'Number',
-      value:
-        invoice.number !== null ? (
-          <span className={styles.wrap}>{invoice.number}</span>
-        ) : (
-          <span className={styles.quiet}>Not numbered yet</span>
-        ),
-    },
-    {
-      key: 'issued',
-      label: 'Issue date',
-      value:
-        invoice.issueDate !== null ? (
-          <>
-            <DayValue iso={invoice.issueDate} />
-            {invoice.issueDateBs !== null ? ` (${invoice.issueDateBs} BS)` : ''}
-          </>
-        ) : (
-          <span className={styles.quiet}>Set when the invoice is issued</span>
-        ),
-    },
-    {
-      key: 'due',
-      label: 'Due date',
-      value:
-        invoice.dueDate !== null ? (
-          <DayValue iso={invoice.dueDate} />
-        ) : (
-          <span className={styles.quiet}>None</span>
-        ),
-    },
     ...(settlement !== null
       ? [
           {
@@ -158,20 +127,9 @@ function facts(
       ),
     },
     { key: 'fy', label: 'Fiscal year', value: invoice.fiscalYear ?? '—' },
-    { key: 'currency', label: 'Currency', value: invoice.currency },
   );
   if (invoice.status !== 'issued' || invoice.kind === 'proforma') {
     out.push({ key: 'pdf', label: 'PDF', value: pdfAvailability(invoice) });
-  }
-  if (invoice.buyer?.address) {
-    out.push({ key: 'billingAddress', label: 'Billing address', value: invoice.buyer.address });
-  }
-  if (invoice.buyer?.panVatNo) {
-    out.push({
-      key: 'buyerTaxNumber',
-      label: 'Customer tax number',
-      value: invoice.buyer.panVatNo,
-    });
   }
   if (invoice.manualReason !== null) {
     out.push({
@@ -198,7 +156,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   if (!UUID.test(id)) notFound();
   const path = `/invoices/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
-  const numberSystems = await getNumberSystems();
+  const display = await getDisplaySettings();
 
   let detail: InvoiceDetail;
   try {
@@ -226,6 +184,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   }
 
   const { invoice } = detail;
+  // Numbers and dates as the first print drew them, so the screen matches every copy of the PDF; never printed,
+  // today's settings.
+  const format = documentFormat(detail.format, display);
+  const { numberSystems } = format;
   // Issued: the buyer as frozen at issue. A draft has no snapshot yet, so the API sends the customer's current name.
   const customerName = invoice.buyer?.legalName ?? detail.customerName;
   const gates = invoiceGates(invoice, session.roles);
@@ -277,14 +239,27 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
       <div className={styles.columns}>
         <div className={styles.detailMain}>
-          <Panel title="Invoice details" description={`Last changed ${when(invoice.updatedAt)}`}>
-            <FactList facts={facts(invoice, customerName, settlement, numberSystems)} />
-          </Panel>
-          <Lines detail={detail} numberSystems={numberSystems} />
+          <InvoiceDocument
+            detail={detail}
+            customerName={customerName}
+            format={format}
+            sellerContact={display.sellerContact}
+          />
         </div>
         <div className={styles.side}>
-          <Totals invoice={invoice} numberSystems={numberSystems} />
-          <NprSnapshot invoice={invoice} numberSystems={numberSystems} />
+          <Panel
+            as="aside"
+            title="Invoice details"
+            description={`Last changed ${when(invoice.updatedAt, 'datetime', format.dateFormat)}`}
+          >
+            <FactList facts={facts(invoice, customerName, settlement, numberSystems)} />
+          </Panel>
+          <NprSnapshot
+            invoice={invoice}
+            numberSystems={numberSystems}
+            dateFormat={format.dateFormat}
+          />
+          <LineBreakdown detail={detail} numberSystems={numberSystems} />
           {gates.notes ? (
             <Panel as="aside" title="Adjustments">
               <div className={styles.noteSlot} data-slot="invoice-note-actions">

@@ -12,6 +12,7 @@ import {
   DEFAULT_ROLE_PERMISSIONS,
   LEAD_STAGES,
   type LeadDto,
+  type LeadLostReasonRef,
   type LeadOwnerOption,
   type LeadStage,
   type LeadStageChangeBody,
@@ -37,12 +38,14 @@ import { type ResourceRef } from '../../platform/authz/can';
 import { DB, type Db } from '../../platform/db/db.module';
 import { updateVersioned, withIdempotency } from '../../platform/db/idempotency';
 import { withTx, type DbTransaction, type TxScope } from '../../platform/db/tx';
+import { CurrencyEnabledService } from '../../platform/settings/currency-enabled';
 import { searchPage } from '../../platform/list';
 import { NumberingService } from '../../platform/settings/numbering.service';
 import { nameIn, personNameMap } from '../../platform/users/person-names';
 import { isPlannedSql, nextFollowUpSql } from '../activities/activities.types';
 import { activeStaffOfEntity, assertLeadAssignee, mayAssignLead } from './lead-assignee';
 import { LeadsCaller } from './leads.caller';
+import { LeadLostReasonsService, lostReasonRefs } from './lost-reasons.service';
 import {
   changedLeadFields,
   type LeadRow,
@@ -124,6 +127,8 @@ export class LeadsService {
     private readonly audit: AuditService,
     private readonly numbering: NumberingService,
     private readonly caller: LeadsCaller,
+    private readonly currencies: CurrencyEnabledService,
+    private readonly lostReasons: LeadLostReasonsService,
   ) {}
 
   // -------------------------------------------------------------------------------------------------- read
@@ -155,9 +160,19 @@ export class LeadsService {
       scope.tenantId,
       rows.map((r) => r.ownerUserId),
     );
+    const refs = await lostReasonRefs(
+      this.db,
+      scope.tenantId,
+      rows.map((r) => r.lostReasonId),
+    );
     return {
       rows: rows.map(({ nextFollowUp, ...row }) =>
-        toLeadDto(row, nextFollowUp, nameIn(names, row.ownerUserId)),
+        toLeadDto(
+          row,
+          nextFollowUp,
+          nameIn(names, row.ownerUserId),
+          refs.get(row.lostReasonId ?? '') ?? null,
+        ),
       ),
       total,
     };
@@ -199,7 +214,12 @@ export class LeadsService {
     if (found === undefined) throw notFound();
     const { nextFollowUp, ...row } = found;
     this.assertVisible('crm.lead.read', row);
-    return toLeadDto(row, nextFollowUp, await this.ownerNameOf(this.db, row));
+    return toLeadDto(
+      row,
+      nextFollowUp,
+      await this.ownerNameOf(this.db, row),
+      await this.lostReasonOf(this.db, row),
+    );
   }
 
   // ------------------------------------------------------------------------------------------------- create
@@ -213,6 +233,9 @@ export class LeadsService {
    * `followUp` (or the old `nextFollowUpAt`, a call named "Follow up") plans the first follow-up as a planned
    * activity in the same transaction (D39): assigned to the owner unless named, named after its kind unless given a
    * subject. The `leads.next_follow_up_at` column is no longer written.
+   *
+   * The currency must be switched on for the company (D44, 422 CURRENCY_NOT_ENABLED), checked before the LD number
+   * is taken so a refusal uses up no number.
    */
   async create(body: CreateLeadBody, idempotencyKey?: string): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -240,6 +263,7 @@ export class LeadsService {
             'followUp.assigneeUserId',
           );
         }
+        await this.currencies.assertEnabled(scope, body.currency);
         const { number } = await this.numbering.issue(tx, LEAD_SERIES, now);
         const [row] = await tx
           .insert(leads)
@@ -272,7 +296,7 @@ export class LeadsService {
           after: { number, stage: row!.stage, ownerUserId },
         });
         const ownerName = await this.ownerNameOf(tx, row!);
-        if (followUp === undefined) return toLeadDto(row!, null, ownerName);
+        if (followUp === undefined) return toLeadDto(row!, null, ownerName, null);
         const dueAt = new Date(followUp.dueAt);
         const [planned] = await tx
           .insert(activities)
@@ -294,7 +318,7 @@ export class LeadsService {
           after: { kind: followUp.kind, leadId: row!.id, dueAt: followUp.dueAt, assigneeUserId },
         });
         // The only planned activity of a new lead, so it is the next follow-up.
-        return toLeadDto(row!, dueAt, ownerName);
+        return toLeadDto(row!, dueAt, ownerName, null);
       };
       if (idempotencyKey === undefined) return run();
       const done = await withIdempotency(
@@ -321,19 +345,40 @@ export class LeadsService {
       // Scope first (404), then state (409): someone who may not edit learns nothing about the stage.
       this.assertVisible('crm.lead.write', row);
 
+      // Lost carries an option of the tenant's list (D49), or a new one added in this same step. The planner still
+      // sees a `reason`: the option's words, which the lead keeps as a snapshot beside the reference.
+      let reason = body.reason;
+      let lostReasonId: string | null = null;
+      const planProbe = planLeadStageChange({
+        current: row.stage,
+        currentVersion: row.version,
+        to: body.stage,
+        by,
+        reason: body.stage === 'lost' ? 'probe' : body.reason,
+        note: body.note,
+        expectedVersion: body.expectedVersion,
+      });
+      if (!planProbe.ok) throw refusalToException(planProbe.kind, planProbe.message);
+      if (body.stage === 'lost') {
+        const chosen = await this.lostReasons.choose(tx, scope.tenantId, body);
+        reason = chosen.label;
+        lostReasonId = chosen.id;
+      }
       const plan = planLeadStageChange({
         current: row.stage,
         currentVersion: row.version,
         to: body.stage,
         by,
-        reason: body.reason,
+        reason,
         note: body.note,
         expectedVersion: body.expectedVersion,
       });
       if (!plan.ok) throw refusalToException(plan.kind, plan.message);
 
+      // Leaving lost (or any move that is not to lost) clears the reference with the text.
       const updated = await updateVersioned(tx, leads, id, body.expectedVersion, {
         ...plan.set,
+        lostReasonId,
         updatedAt: new Date(),
       });
       await this.audit.record(tx, {
@@ -342,7 +387,7 @@ export class LeadsService {
         entityId: id,
         before: { stage: row.stage, version: row.version },
         after: { stage: updated.stage, version: updated.version },
-        meta: { reason: plan.set.stageReason, note: plan.set.stageNote },
+        meta: { reason: plan.set.stageReason, note: plan.set.stageNote, lostReasonId },
       });
       await tx.insert(activities).values({
         ...scope,
@@ -352,7 +397,12 @@ export class LeadsService {
         leadId: id,
         createdByUserId: principal.userId,
       });
-      return toLeadDto(updated, await this.nextFollowUpOf(tx, id), await this.ownerNameOf(tx, updated));
+      return toLeadDto(
+        updated,
+        await this.nextFollowUpOf(tx, id),
+        await this.ownerNameOf(tx, updated),
+        await this.lostReasonOf(tx, updated),
+      );
     });
   }
 
@@ -362,8 +412,9 @@ export class LeadsService {
    * An edit of the lead's own fields; only the fields sent change. Checks run in this order, the first failure is
    * the answer: out of scope 404, stale version 409, converted 400, nothing changed 400, then a new owner (the same
    * rule as create: an `own` grant cannot hand the lead to someone else, 403; not an active staff member of the
-   * entity, 400).
-   * Currency has no default here, so an owner-only edit keeps the lead's currency.
+   * entity, 400), then a new currency that the company has not switched on (D44, 422 CURRENCY_NOT_ENABLED).
+   * Currency has no default here, so an owner-only edit keeps the lead's currency. Only a changed currency is
+   * checked: a lead whose currency was switched off later can still have its other fields edited.
    */
   async update(id: string, body: UpdateLeadBody): Promise<LeadDto> {
     const { scope, actor, principal } = this.caller.current();
@@ -396,6 +447,9 @@ export class LeadsService {
         this.authz.assert('crm.lead.write', leadRef({ ...row, ownerUserId: newOwner }));
         await assertLeadAssignee(tx, principal, scope, newOwner, 'ownerUserId');
       }
+      if (changes.some((c) => c.field === 'currency')) {
+        await this.currencies.assertEnabled(scope, fields.currency);
+      }
 
       const updated = await updateVersioned(tx, leads, id, expectedVersion, {
         ...set,
@@ -418,7 +472,12 @@ export class LeadsService {
         });
         await this.moveFollowUps(tx, scope, id, row.ownerUserId, newOwner);
       }
-      return toLeadDto(updated, await this.nextFollowUpOf(tx, id), await this.ownerNameOf(tx, updated));
+      return toLeadDto(
+        updated,
+        await this.nextFollowUpOf(tx, id),
+        await this.ownerNameOf(tx, updated),
+        await this.lostReasonOf(tx, updated),
+      );
     });
   }
 
@@ -587,6 +646,17 @@ export class LeadsService {
         meta: { reason: 'lead_owner_changed', leadId },
       });
     }
+  }
+
+  /** The lost reason option of a lead, by its current label (D49); null for a lead without one. */
+  private async lostReasonOf(
+    q: Db | DbTransaction,
+    row: Pick<LeadRow, 'tenantId' | 'lostReasonId'>,
+  ): Promise<LeadLostReasonRef | null> {
+    if (row.lostReasonId === null) return null;
+    return (
+      (await lostReasonRefs(q, row.tenantId, [row.lostReasonId])).get(row.lostReasonId) ?? null
+    );
   }
 
   /** The owner's display name (D46), read in the lead's tenant. */

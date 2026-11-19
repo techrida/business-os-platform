@@ -1,6 +1,6 @@
 'use client';
 
-import { CURRENCIES, type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
+import { type Currency, PAYMENT_METHODS, type PaymentMethod } from '@bos/contracts';
 import { type ReactNode, useActionState, useEffect, useId, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
@@ -11,6 +11,7 @@ import { Icon } from '@/components/ui/icon';
 import { PageHeader } from '@/components/ui/page';
 import { toast } from '@/components/ui/toast';
 import { Panel } from '@/components/ui/panel';
+import { CURRENCY_NAME, currencyChoices } from '@/lib/enabled-currencies';
 
 import { methodLabel } from '../_lib/status';
 
@@ -26,6 +27,18 @@ export interface CustomerOption {
   number: string;
   /** The customer's usual currency, used as the starting choice. */
   defaultCurrency: Currency | null;
+}
+
+/**
+ * The currency the form starts on for a customer: their usual one while it is enabled in Settings,
+ * else NPR, which is always enabled. A switched-off currency is never preselected: the API would
+ * refuse it, and its option is disabled, so the person could not pick it back after moving off it.
+ */
+export function startCurrency(
+  defaultCurrency: Currency | null | undefined,
+  enabled: readonly Currency[],
+): Currency {
+  return defaultCurrency && enabled.includes(defaultCurrency) ? defaultCurrency : 'NPR';
 }
 
 interface Proof {
@@ -48,6 +61,7 @@ export function PaymentForm({
   idempotencyKey,
   today,
   customers,
+  enabledCurrencies,
   initialCustomerId,
   reloadHref,
   children,
@@ -57,6 +71,8 @@ export function PaymentForm({
   /** Today in Kathmandu, as `YYYY-MM-DD`: the latest date a payment can have been received. */
   today: string;
   customers: readonly CustomerOption[];
+  /** The currencies enabled in Settings (`currency.enabled`), NPR first. */
+  enabledCurrencies: readonly Currency[];
   initialCustomerId: string;
   reloadHref: string;
   children?: ReactNode;
@@ -70,8 +86,11 @@ export function PaymentForm({
 
   // Controlled: React 19 resets uncontrolled fields after every action.
   const [customerId, setCustomerId] = useState(initialCustomerId);
-  const [currency, setCurrency] = useState<string>(
-    customers.find((c) => c.id === initialCustomerId)?.defaultCurrency ?? 'NPR',
+  const [currency, setCurrency] = useState<string>(() =>
+    startCurrency(
+      customers.find((c) => c.id === initialCustomerId)?.defaultCurrency,
+      enabledCurrencies,
+    ),
   );
   const [currencyChosen, setCurrencyChosen] = useState(false);
   const [amount, setAmount] = useState('');
@@ -97,7 +116,7 @@ export function PaymentForm({
   function chooseCustomer(id: string) {
     setCustomerId(id);
     const fallback = customers.find((c) => c.id === id)?.defaultCurrency;
-    if (!currencyChosen && fallback) setCurrency(fallback);
+    if (!currencyChosen && fallback) setCurrency(startCurrency(fallback, enabledCurrencies));
   }
 
   async function addFiles(files: FileList | null) {
@@ -147,6 +166,14 @@ export function PaymentForm({
     // Allow choosing the same file again after removing it.
     if (pickerRef.current) pickerRef.current.value = '';
   }
+
+  // The chosen customer's usual currency stays in the list when it is switched off, but disabled.
+  const usualCurrency = customers.find((c) => c.id === customerId)?.defaultCurrency ?? null;
+  const usualOffHint =
+    usualCurrency !== null && !enabledCurrencies.includes(usualCurrency)
+      ? `This customer usually pays in ${CURRENCY_NAME[usualCurrency]}, which is switched off in Settings.`
+      : undefined;
+  const currencyOptions = currencyChoices(enabledCurrencies, usualCurrency);
 
   const busy = pending || uploading > 0;
   const customerLocked = proofs.length > 0 || uploading > 0;
@@ -222,7 +249,7 @@ export function PaymentForm({
             </Field>
 
             <div className={styles.grid}>
-              <Field label="Currency" error={fe.currency}>
+              <Field label="Currency" hint={usualOffHint} error={fe.currency}>
                 {(control) => (
                   <Select
                     name="currency"
@@ -234,9 +261,9 @@ export function PaymentForm({
                     }}
                     {...control}
                   >
-                    {CURRENCIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
+                    {currencyOptions.map((c) => (
+                      <option key={c.value} value={c.value} disabled={!c.enabled}>
+                        {c.label}
                       </option>
                     ))}
                   </Select>

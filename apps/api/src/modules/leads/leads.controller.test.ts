@@ -13,6 +13,7 @@ import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
 
 const ID = '4f6c7a5e-0d52-4d1e-9d8a-3f1d2c3b4a5f';
+const LOST_REASON = '7b0e6c1a-2f4d-4c55-8a39-6d1f5e2c9b10';
 const VALID_LEAD = {
   title: 'Website for Acme',
   source: 'referral',
@@ -194,11 +195,21 @@ describe('LeadsController', () => {
     expect(service.create).not.toHaveBeenCalled();
   });
 
-  it('never passes converted to the service, nor a lost without reason and note', async () => {
+  it('never passes converted to the service, nor a lost without one chosen reason and a note', async () => {
     const { service, controller } = await setup();
     for (const body of [
       { stage: 'converted', expectedVersion: 1 },
       { stage: 'lost', expectedVersion: 1 },
+      { stage: 'lost', reason: 'price', note: 'too dear', expectedVersion: 1 },
+      { stage: 'lost', lostReasonId: LOST_REASON, expectedVersion: 1 },
+      {
+        stage: 'lost',
+        lostReasonId: LOST_REASON,
+        newLostReason: 'Slow',
+        note: 'n',
+        expectedVersion: 1,
+      },
+      { stage: 'contacted', lostReasonId: LOST_REASON, expectedVersion: 1 },
       { stage: 'on_hold', reason: 'budget', expectedVersion: 1 },
       { stage: 'contacted' },
     ]) {
@@ -208,8 +219,12 @@ describe('LeadsController', () => {
     }
     expect(service.changeStage).not.toHaveBeenCalled();
 
-    const ok = { stage: 'lost', reason: 'price', note: 'too dear', expectedVersion: 4 };
-    await controller.changeStage(ID, ok);
-    expect(service.changeStage).toHaveBeenCalledWith(ID, ok);
+    for (const ok of [
+      { stage: 'lost', lostReasonId: LOST_REASON, note: 'too dear', expectedVersion: 4 },
+      { stage: 'lost', newLostReason: 'Slow to reply', note: 'too dear', expectedVersion: 4 },
+    ]) {
+      await controller.changeStage(ID, ok);
+      expect(service.changeStage).toHaveBeenCalledWith(ID, ok);
+    }
   });
 });
