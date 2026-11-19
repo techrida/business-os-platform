@@ -95,8 +95,8 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
       // Planned follow-ups on the deal itself (migrated open tasks included).
       listActivities(session, { opportunityId: id, status: 'planned', limit: 100 }),
       listQuotations(session, { opportunityId: id }),
-      // Names for History's actor and assignees. The owners list (also the Reschedule choices)
-      // needs crm.lead.write, so it is only asked for with it; the directory fills in names.
+      // The owners list (the Reschedule choices) needs crm.lead.write, so it is only asked for with it;
+      // names on the page come from the records themselves (D46).
       loadPeople(session, { owners: canAssignFollowUps(session) }),
     ]);
 
@@ -122,8 +122,7 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
   const moves = userMoves('opportunity', opp.stage);
   const activityProblem =
     activityResult.status === 'rejected' ? failureOf(activityResult.reason) : null;
-  const { owners, names } =
-    peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [], names: new Map() };
+  const { owners } = peopleResult.status === 'fulfilled' ? peopleResult.value : { owners: [] };
   const plannedProblem =
     plannedResult.status === 'rejected' ? failureOf(plannedResult.reason).message : null;
   // Overdue is measured against the server's clock for this render.
@@ -306,7 +305,6 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         <FollowUpsCard
           items={plannedResult.status === 'fulfilled' ? plannedResult.value : []}
           owners={owners}
-          names={names}
           schedule={false}
           now={now}
           className={styles.records}
@@ -324,7 +322,6 @@ export default async function OpportunityPage({ params }: { params: Promise<{ id
         ) : (
           <ActivityList
             items={activityResult.status === 'fulfilled' ? activityResult.value : []}
-            people={names}
             empty="Add a call, meeting, email or note for this opportunity."
           />
         )}

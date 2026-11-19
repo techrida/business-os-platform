@@ -55,7 +55,13 @@ const save = (container: HTMLElement) =>
 
 function mount(ownerUserId: string | null = OWNER, list: readonly LeadOwnerOption[] = owners) {
   return mountForm(
-    <LeadOwnerField leadId={LEAD} version={6} ownerUserId={ownerUserId} owners={list} />,
+    <LeadOwnerField
+      leadId={LEAD}
+      version={6}
+      ownerUserId={ownerUserId}
+      ownerName={ownerUserId === null ? null : ownerUserId === OWNER ? 'Sita Rai' : 'Kiran Gurung'}
+      owners={list}
+    />,
   );
 }
 
@@ -120,9 +126,10 @@ it('keeps a refusal next to the control', async () => {
   expect(container.textContent).toMatch(/permission/i);
 });
 
-it('says "Name unavailable" for an owner outside the list and starts on an empty choice', async () => {
+it('names an owner outside the list from the lead and starts on an empty choice', async () => {
   const { container } = await mount(STRANGER);
-  expect(container.textContent).toContain('Name unavailable');
+  expect(container.textContent).toContain('Kiran Gurung');
+  expect(container.textContent).not.toContain('unavailable');
   expect(container.querySelector<HTMLInputElement>('input[name="ownerUserId"]')?.value).toBe('');
   expect(save(container)?.disabled).toBe(true);
 });
