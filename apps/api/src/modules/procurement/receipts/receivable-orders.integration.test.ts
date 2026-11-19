@@ -37,6 +37,7 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ReceivableOrdersService } from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
+import { RequestedOrdersService } from './requested-orders.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -53,12 +54,13 @@ let scopeA: TxScope;
 let scopeB: TxScope;
 let receipts: ReceiptsService;
 let orders: ReceivableOrdersService;
+let requested: RequestedOrdersService;
 let taxCodeId = '';
 let vendorId = '';
 let departmentA = '';
 let departmentB = '';
 
-const U = { warehouse: '', requester: '', procurement: '' };
+const U = { warehouse: '', requester: '', otherRequester: '', procurement: '' };
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
@@ -170,6 +172,7 @@ beforeAll(async () => {
       .userId;
   U.warehouse = await staff('warehouse');
   U.requester = await staff('operations_officer');
+  U.otherRequester = await staff('operations_officer');
   U.procurement = await staff('procurement');
 
   departmentA = (await createDepartment(appPool, scopeA)).departmentId;
@@ -210,6 +213,7 @@ beforeAll(async () => {
     () => now,
   );
   orders = new ReceivableOrdersService(db, caller);
+  requested = new RequestedOrdersService(db, caller);
 });
 
 afterAll(async () => {
@@ -242,11 +246,18 @@ interface Po {
   id: string;
   number: string;
   lineIds: string[];
+  prId: string;
 }
 
 /** A request and a PO in `scope` (issued unless told otherwise) with one line per spec; issued at `issuedAt`. */
 async function newPo(
-  options: { scope?: TxScope; status?: string; lines?: LineSpec[]; issuedAt?: string } = {},
+  options: {
+    scope?: TxScope;
+    status?: string;
+    lines?: LineSpec[];
+    issuedAt?: string;
+    requester?: string;
+  } = {},
 ): Promise<Po> {
   const scope = options.scope ?? scopeA;
   const status = options.status ?? 'issued';
@@ -264,7 +275,7 @@ async function newPo(
       scope.organizationId,
       `PR-${randomUUID()}`,
       scope === scopeA ? departmentA : departmentB,
-      U.requester,
+      options.requester ?? U.requester,
       (await createCostCenter(appPool, scope)).costCenterId,
     ],
   );
@@ -315,7 +326,7 @@ async function newPo(
     );
     lineIds.push(line!.id);
   }
-  return { id: po!.id, number: po!.number, lineIds };
+  return { id: po!.id, number: po!.number, lineIds, prId: pr!.id };
 }
 
 /** A receipt of `quantity` on one PO line through the receipt service; confirmed unless `draft`. */
@@ -434,5 +445,68 @@ describe('receivable orders', () => {
     expect(idsB).not.toContain(inA.id);
     current.scope = null;
     expect((await listed()).map((r) => r.id)).not.toContain(inB.id);
+  });
+});
+
+// The purchase orders of the caller's own requests (U18 #4): the receipts page's picker for a requester, who holds
+// no purchase order read. Always the caller's own requests, whatever their read scope, and only the acting entity.
+describe("the requester's own purchase orders", () => {
+  const asRequester = (userId = U.requester) => {
+    current.userId = userId;
+    current.role = 'operations_officer';
+  };
+  const mine = async () => requested.list({ limit: 200 });
+
+  it("lists the caller's own orders with number, status and vendor, without drafts or cancelled ones", async () => {
+    const service = await newPo({ lines: [SERVICE1] });
+    const done = await newPo({ status: 'fully_received' });
+    const draft = await newPo({ status: 'draft' });
+    const cancelled = await newPo();
+    await ownerRun(
+      scopeA.organizationId,
+      `UPDATE app.purchase_orders SET status = 'cancelled', closed_reason = 'Vendor withdrew' WHERE id = $1`,
+      [cancelled.id],
+    );
+    asRequester();
+    const rows = await mine();
+    expect(rows.find((r) => r.id === service.id)).toEqual({
+      id: service.id,
+      number: service.number,
+      status: 'issued',
+      vendorName: VENDOR_NAME,
+    });
+    expect(rows.find((r) => r.id === done.id)?.status).toBe('fully_received');
+    const ids = rows.map((r) => r.id);
+    expect(ids).not.toContain(draft.id);
+    expect(ids).not.toContain(cancelled.id);
+  });
+
+  it('returns only the picker fields: no amount, vendor id, request or creator rides along', async () => {
+    await newPo({ lines: [SERVICE1] });
+    asRequester();
+    const rows = await mine();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(['id', 'number', 'status', 'vendorName']);
+    }
+  });
+
+  it("never lists another requester's orders, even to a caller who reads every request", async () => {
+    const theirs = await newPo({ requester: U.otherRequester });
+    asRequester();
+    expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
+    current.userId = U.procurement;
+    current.role = 'procurement';
+    expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
+    asRequester(U.otherRequester);
+    expect((await mine()).map((r) => r.id)).toContain(theirs.id);
+  });
+
+  it("never lists another entity's orders", async () => {
+    const inB = await newPo({ scope: scopeB });
+    asRequester();
+    expect((await mine()).map((r) => r.id)).not.toContain(inB.id);
+    current.scope = scopeB;
+    expect((await mine()).map((r) => r.id)).toEqual([inB.id]);
   });
 });
