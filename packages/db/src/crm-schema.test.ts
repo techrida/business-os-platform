@@ -183,6 +183,11 @@ describe('0015_crm and src/schema/crm.ts', () => {
     parsed,
     readFileSync(new URL('../migrations/0062_activity_follow_ups.sql', import.meta.url), 'utf8'),
   );
+  // 0080 adds leads.department_id and created_by_user_id and opportunities.department_id, with their keys and indexes.
+  applyAlters(
+    parsed,
+    readFileSync(new URL('../migrations/0080_lead_department_stamp.sql', import.meta.url), 'utf8'),
+  );
 
   it('create the same nine tables', () => {
     expect([...parsed.keys()].sort()).toEqual(Object.keys(DRIZZLE).sort());
