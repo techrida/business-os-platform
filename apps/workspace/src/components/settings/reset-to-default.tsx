@@ -30,6 +30,8 @@ interface ResetToDefaultBase {
   confirm?: ResetConfirm | undefined;
   /** Where the screen places it (beside the label or the value). */
   className?: string | undefined;
+  /** When a failed reset returns this exact message, the error toast offers a Reload action. */
+  reloadOnMessage?: string | undefined;
 }
 
 /**
@@ -78,6 +80,7 @@ export function ResetToDefaultButton({
   defaultText,
   confirm,
   className,
+  reloadOnMessage,
   action,
   loadedVersion,
 }: ResetToDefaultButtonProps) {
@@ -96,7 +99,13 @@ export function ResetToDefaultButton({
         ? action()
         : resetSettingAction(section, settingKey, loadedVersion));
       if (state.status === 'error') {
-        toast.error(state.message.split('\n')[0] ?? state.message, { id: `reset:${settingKey}` });
+        const message = state.message.split('\n')[0] ?? state.message;
+        toast.error(message, {
+          id: `reset:${settingKey}`,
+          ...(reloadOnMessage && message === reloadOnMessage
+            ? { action: { label: 'Reload', onClick: () => window.location.reload() } }
+            : {}),
+        });
         return false;
       }
       toast.success(`${label} reset to default`, { id: `reset:${settingKey}` });

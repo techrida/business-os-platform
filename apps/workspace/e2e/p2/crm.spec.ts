@@ -61,7 +61,9 @@ test('a salesperson creates a lead, logs a call and moves it with the Move contr
       await page.getByRole('button', { name: 'Mark lost', exact: true }).click();
       const lost = page.getByRole('dialog', { name: 'Mark this lead lost?' });
       await lost.getByRole('button', { name: 'Mark lost', exact: true }).click();
-      await expect(lost.getByText('Give a reason, up to 200 characters.')).toBeVisible();
+      await expect(
+        lost.getByText('Choose a reason from the list, or add a new one.'),
+      ).toBeVisible();
       await expect(
         lost.getByText('Add a note for the record, up to 2,000 characters.'),
       ).toBeVisible();

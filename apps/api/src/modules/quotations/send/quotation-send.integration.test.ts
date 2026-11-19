@@ -52,6 +52,7 @@ import { NotifyService } from '../../../platform/notify/notify.service';
 import { CurrencyEnabledService } from '../../../platform/settings/currency-enabled';
 import type { MoneyService } from '../../../platform/settings/money.service';
 import { NumberingService } from '../../../platform/settings/numbering.service';
+import { LeadLostReasonsService } from '../../leads/lost-reasons.service';
 import { SettingsService } from '../../../platform/settings/settings.service';
 import { OpportunitiesService } from '../../opportunities/opportunities.service';
 import { PortalController } from '../../portal/portal.controller';
@@ -209,7 +210,13 @@ beforeAll(async () => {
     {} as UserDirectory,
     queue as unknown as Queue,
   );
-  const opps = new OpportunitiesService(db, authz as unknown as AuthzService, audit, caller);
+  const opps = new OpportunitiesService(
+    db,
+    authz as unknown as AuthzService,
+    audit,
+    caller,
+    new LeadLostReasonsService(db, audit, caller),
+  );
   const make = (now: Date) =>
     new QuotationSendService(
       db,
