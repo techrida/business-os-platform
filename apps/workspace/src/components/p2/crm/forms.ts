@@ -101,6 +101,8 @@ const lastKey = (path: PropertyKey[]): string => String(path[path.length - 1] ??
 const STAGE_MESSAGES: Record<string, string> = {
   stage: 'Choose a stage this record can move to.',
   reason: 'Give a reason, up to 200 characters.',
+  lostReasonId: 'Choose a reason from the list, or add a new one.',
+  newLostReason: 'Keep a new reason to 60 characters or fewer.',
   note: 'Add a note for the record, up to 2,000 characters.',
   expectedVersion: RELOAD,
 };
@@ -113,6 +115,10 @@ export function parseStageMove(
   const input = defined({
     stage: field(form, 'stage'),
     reason: field(form, 'reason'),
+    // A lead moved to Lost carries an option of the tenant's list, or a new one to add (D49).
+    ...(kind === 'lead'
+      ? { lostReasonId: field(form, 'lostReasonId'), newLostReason: field(form, 'newLostReason') }
+      : {}),
     note: field(form, 'note'),
     expectedVersion: numberField(form, 'expectedVersion') ?? Number.NaN,
   });

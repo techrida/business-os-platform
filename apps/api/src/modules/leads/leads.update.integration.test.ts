@@ -38,6 +38,7 @@ import { NumberingService } from '../../platform/settings/numbering.service';
 import { ErrorBodyFilter } from '../../platform/tenancy/error-body.filter';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
+import { LeadLostReasonsService } from './lost-reasons.service';
 import { startHarness, type Harness } from './test/harness';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -64,6 +65,7 @@ beforeAll(async () => {
     new AuditService(h.db),
     new NumberingService(),
     h.caller,
+    new LeadLostReasonsService(h.db, new AuditService(h.db), h.caller),
   );
   const moduleRef = await Test.createTestingModule({
     controllers: [LeadsController],
@@ -366,7 +368,10 @@ describe('D45: follow-ups follow the owner (PATCH /v1/leads/:id)', () => {
     const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
 
-    expect(await activityRow(mine.id)).toMatchObject({ assigneeUserId: h.users.salesB, version: 2 });
+    expect(await activityRow(mine.id)).toMatchObject({
+      assigneeUserId: h.users.salesB,
+      version: 2,
+    });
     expect(await activityRow(myMeeting.id)).toMatchObject({ assigneeUserId: h.users.salesB });
     for (const row of [theirs, unassigned, completed, cancelled, onOtherLead]) {
       const after = await activityRow(row.id);
@@ -394,7 +399,10 @@ describe('D45: follow-ups follow the owner (PATCH /v1/leads/:id)', () => {
     const mine = await plan(lead.id, h.users.salesA);
     const res = await patch(lead.id, { ownerUserId: h.users.salesB, expectedVersion: 1 });
     expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(await activityRow(mine.id)).toMatchObject({ assigneeUserId: h.users.salesA, version: 1 });
+    expect(await activityRow(mine.id)).toMatchObject({
+      assigneeUserId: h.users.salesA,
+      version: 1,
+    });
   });
 
   it('an edit that does not change the owner moves nothing', async () => {
@@ -403,7 +411,10 @@ describe('D45: follow-ups follow the owner (PATCH /v1/leads/:id)', () => {
     h.as('boss', 'founder');
     const res = await patch(lead.id, { title: 'Renamed', expectedVersion: 1 });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(await activityRow(mine.id)).toMatchObject({ assigneeUserId: h.users.salesA, version: 1 });
+    expect(await activityRow(mine.id)).toMatchObject({
+      assigneeUserId: h.users.salesA,
+      version: 1,
+    });
   });
 
   it('a lead without an owner leaves its unassigned follow-ups unassigned when it gets one', async () => {

@@ -17,7 +17,15 @@ export interface SidebarUser {
  * Expanded navigation on desktop, a rail on tablet and a drawer on mobile. Admin screens show
  * only for people who can see admin; permission-gated CRM items only for roles that grant them.
  */
-export function Sidebar({ user, roles }: { user: SidebarUser; roles: readonly string[] }) {
+export function Sidebar({
+  user,
+  roles,
+  counts = {},
+}: {
+  user: SidebarUser;
+  roles: readonly string[];
+  counts?: Readonly<Record<string, number>>;
+}) {
   return (
     <div id="app-sidebar" className={styles.sidebar}>
       <div className={styles.top}>
@@ -26,7 +34,7 @@ export function Sidebar({ user, roles }: { user: SidebarUser; roles: readonly st
         <DrawerCloseButton />
       </div>
       <ShellNavSearch className={styles.drawerSearch} />
-      <ShellNav groups={visibleGroups(canSeeAdmin(roles), permissionChecker(roles))} />
+      <ShellNav groups={visibleGroups(canSeeAdmin(roles), permissionChecker(roles))} counts={counts} />
       <div className={styles.footer}>
         <div className={styles.userCard}>
           <Avatar name={user.name.split(',')[0] ?? user.name} />

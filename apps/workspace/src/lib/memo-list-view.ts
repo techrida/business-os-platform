@@ -24,3 +24,46 @@ export function memoRowNote(memo: Pick<MemoListItem, 'departmentName' | 'ownerNa
     .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
     .join(' · ');
 }
+
+export interface MemoSummaryCard {
+  key: 'all' | 'draft' | 'submitted' | 'returned' | 'approved';
+  label: string;
+  value: number;
+  icon: 'file-text' | 'list' | 'inbox' | 'alert-triangle' | 'check-circle';
+  tone: 'info' | 'success' | 'warning' | 'error' | 'neutral';
+}
+
+/**
+ * The KPI cards over the memos the caller may open, from one count per status (each the `total` of a list read
+ * filtered to that status). "All memos" is their sum, so it can never disagree with the cards beside it.
+ * Rejected memos count toward the total but get no card of their own.
+ */
+export function memoSummaryCards(counts: Readonly<Record<string, number>>): MemoSummaryCard[] {
+  const at = (status: string) => counts[status] ?? 0;
+  const all = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  return [
+    { key: 'all', label: 'All memos', value: all, icon: 'file-text', tone: 'info' },
+    { key: 'draft', label: 'Drafts', value: at('draft'), icon: 'list', tone: 'neutral' },
+    {
+      key: 'submitted',
+      label: 'Waiting for approval',
+      value: at('submitted'),
+      icon: 'inbox',
+      tone: 'warning',
+    },
+    {
+      key: 'returned',
+      label: 'Returned',
+      value: at('returned'),
+      icon: 'alert-triangle',
+      tone: 'error',
+    },
+    {
+      key: 'approved',
+      label: 'Approved',
+      value: at('approved'),
+      icon: 'check-circle',
+      tone: 'success',
+    },
+  ];
+}

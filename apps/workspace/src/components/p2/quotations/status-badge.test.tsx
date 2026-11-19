@@ -30,4 +30,12 @@ describe('QuotationStatusBadge', () => {
     );
     expect(html).not.toContain('Rejected');
   });
+
+  it('draws a decorative icon beside the label for every status', () => {
+    for (const status of QUOTATION_STATUSES) {
+      const html = renderToStaticMarkup(<QuotationStatusBadge status={status} />);
+      expect(html, status).toContain('<svg');
+      expect(html, status).toContain('aria-hidden="true"');
+    }
+  });
 });

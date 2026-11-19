@@ -99,3 +99,13 @@
 .activity time {
   font-size: var(--font-size-caption);
 }
+
+.owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quiet {
+  color: var(--text-secondary);
+}
