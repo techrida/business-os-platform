@@ -142,11 +142,11 @@ test.describe('invoice document preview', () => {
       const response = page.waitForResponse(
         (res) => new URL(res.url()).pathname === path + '/preview',
       );
-      await page.getByRole('button', { name: 'Preview invoice', exact: true }).click();
+      await page.getByRole('button', { name: 'View PDF', exact: true }).click();
 
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      await expect(dialog.locator('iframe')).toBeVisible();
+      await expect(dialog.locator('canvas').first()).toBeVisible();
       await expect(dialog.getByRole('link', { name: 'Download' })).toHaveAttribute('href', path);
       const preview = await response;
       expect(preview.ok()).toBe(true);
