@@ -65,6 +65,18 @@ describe('renderInvoiceHtml', () => {
     expect(html).not.toContain('Copy of original');
   });
 
+  it('formats the issue date and both due-date placements with the customer default', () => {
+    const html = renderInvoiceHtml(
+      sample({
+        issueDate: '2026-08-19',
+        issueDateBs: '2083-05-03',
+        dueDate: '2026-09-19',
+      }),
+    );
+    expect(html).toContain('19 Aug 2026');
+    expect(html.match(/19 Sep 2026/g)).toHaveLength(2);
+  });
+
   it('marks a reprint "Copy of original (n)" with n from the view', () => {
     expect(renderInvoiceHtml(sample({ copyNo: 1 }))).toContain('Copy of original (1)');
     expect(renderInvoiceHtml(sample({ copyNo: 3 }))).toContain('Copy of original (3)');
