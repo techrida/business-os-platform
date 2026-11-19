@@ -65,16 +65,35 @@ export function checkOrigin(name, value, { allowNonLocal = false } = {}) {
   return u.origin;
 }
 
+/**
+ * Run labels are case-insensitive and lower-cased here: the app matches names case-insensitively,
+ * so SCR1 and scr1 would otherwise find each other's records. No dashes: `-` separates the label
+ * from the viewport width in the run key, so `x` and `x-1440` cannot produce overlapping keys.
+ */
+export function normaliseLabel(raw) {
+  const label = String(raw ?? '')
+    .trim()
+    .toLowerCase();
+  if (!/^[a-z0-9]{1,24}$/.test(label))
+    throw new Error(
+      `Set a run label: --label scr1 or RUN_LABEL=scr1 (letters and digits only, max 24; got ${JSON.stringify(raw ?? '')}).`,
+    );
+  return label;
+}
+
+export const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Matches this run's unique text (a name carrying the run key) anywhere in a row or name, but not
+ * as the prefix of a longer run key: `SCR-ab-144` must not match `SCR-ab-1440`.
+ */
+export const runMatch = (text) => new RegExp(`${escapeRe(text)}(?![\\w-])`);
+
 const bool = (v, dflt) =>
   v === undefined || v === '' ? dflt : !/^(0|false|no|off)$/i.test(String(v));
 
 export function loadConfig(args = {}) {
-  const label = String(args.label ?? env.RUN_LABEL ?? '').trim();
-  if (!/^[A-Za-z0-9-]{1,24}$/.test(label)) {
-    throw new Error(
-      'Set a run label: --label SCR1 or RUN_LABEL=SCR1 (letters, digits, dashes; max 24).',
-    );
-  }
+  const label = normaliseLabel(args.label ?? env.RUN_LABEL);
   const viewportText = String(args.viewport ?? env.VIEWPORT ?? '1440x900');
   const viewport = parseViewport(viewportText);
   const personasFile = env.PERSONAS_FILE;

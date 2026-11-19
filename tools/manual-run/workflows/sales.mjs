@@ -4,7 +4,7 @@
 // per-document Approve then Approve customer (reason + confirm); one 100% Advance milestone
 // (total NPR 135,600); payments are 67,800.00 twice; Dev Founder confirms the order.
 // Unique values (names, PAN, e-mail, bank references) carry the run key so runs never collide.
-import { uniqueValues } from '../lib/config.mjs';
+import { escapeRe, runMatch, uniqueValues } from '../lib/config.mjs';
 import { StepFailure } from '../lib/session.mjs';
 import { demoFile, findMail, isPdf, mailMessage, pdfText } from '../lib/support.mjs';
 
@@ -39,6 +39,9 @@ export function workflow(cfg) {
     pay1: u.bankRef(1),
     pay2: u.bankRef(2),
   };
+  // This run's records are found by these, never by a longer run key that starts with the same text.
+  const L = runMatch(v.leadTitle);
+  const C = runMatch(v.company);
 
   const as = async (s, name) => {
     const who = await s.switchTo(name);
@@ -61,7 +64,7 @@ export function workflow(cfg) {
     const row = s.page
       .getByRole('table', { name: 'Waiting approvals' })
       .getByRole('row')
-      .filter({ hasText: match });
+      .filter({ hasText: typeof match === 'string' ? runMatch(match) : match });
     for (
       let i = 0;
       i < 8 &&
@@ -156,7 +159,7 @@ export function workflow(cfg) {
    */
   const adoptPayment = async (s, before) => {
     await s.goto('/payments', (p) => h1(p, 'Payments'));
-    const rows = s.page.getByRole('row').filter({ hasText: v.company });
+    const rows = s.page.getByRole('row').filter({ hasText: C });
     await s.page.waitForTimeout(1500);
     if ((await rows.count()) <= before) return null;
     const pending = rows.filter({ hasText: 'Awaiting verification' }).first();
@@ -173,7 +176,7 @@ export function workflow(cfg) {
     if (earlier) return earlier;
     await s.goto('/payments/new', (p) => h1(p, 'Record payment'));
     await s.page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await s.choose('Customer', new RegExp(escapeRe(v.company)));
+    await s.choose('Customer', C);
     if (await s.select('Currency').count()) await s.choose('Currency', 'NPR').catch(() => {});
     await s.fill('Amount received', '67800.00');
     await s.choose('Payment method', 'Bank transfer');
@@ -301,7 +304,7 @@ export function workflow(cfg) {
           await s.fill('Contact person', v.contact);
           await s.pause();
           await s.click(s.button('Create lead'), 'Create lead');
-          await s.see(h1(s.page, v.leadTitle), 'the saved lead', cfg.navTimeout);
+          await s.see(h1(s.page, L), 'the saved lead', cfg.navTimeout);
           s.record('leadUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
 
           await s.caption('sales-1 — log the discovery call');
@@ -366,16 +369,16 @@ export function workflow(cfg) {
             await d.getByRole('button', { name: 'Convert', exact: true }).click();
             await s.page.waitForURL(/\/opportunities\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
             s.record('opportunityUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
-            await s.see(h1(s.page, v.leadTitle), 'the linked opportunity');
+            await s.see(h1(s.page, L), 'the linked opportunity');
             await s.see(status(s, 'Qualified'), 'opportunity stage Qualified');
             const text = await main(s);
-            s.expect(text.includes(v.company), 'the opportunity names the new customer');
+            s.expect(C.test(text), 'the opportunity names the new customer');
           }
           await s.caption('sales-2 — the lead is Converted');
-          await openUrl(s, 'leadUrl', (p) => h1(p, v.leadTitle));
+          await openUrl(s, 'leadUrl', (p) => h1(p, L));
           await s.see(status(s, 'Converted'), 'lead stage Converted');
           const customerHref = await s.page
-            .getByRole('link', { name: v.company })
+            .getByRole('link', { name: C })
             .first()
             .getAttribute('href')
             .catch(() => null);
@@ -393,7 +396,7 @@ export function workflow(cfg) {
             s.page.getByRole('region', { name: 'Quotation Sent' }).getByText('Set by the system'),
             'Quotation Sent is set by the system',
           );
-          const card = s.page.getByRole('link', { name: v.leadTitle });
+          const card = s.page.getByRole('link', { name: L });
           await s.see(card, 'this run’s opportunity card');
           // The card's own "Move to" select: the nearest ancestor of the card link that has one.
           const trigger = card
@@ -416,7 +419,7 @@ export function workflow(cfg) {
               'card has no Move control in this layout; the region labels were checked',
             );
           await s.click(card, 'reopen the opportunity');
-          await s.see(h1(s.page, v.leadTitle), 'the opportunity reopened');
+          await s.see(h1(s.page, L), 'the opportunity reopened');
         },
       },
       {
@@ -427,10 +430,10 @@ export function workflow(cfg) {
           await s.goto('/customers', (p) => p.getByLabel('Search organizations'));
           await s.fill('Search organizations', v.company);
           await s.click(s.button('Search').or(s.button('Apply')), 'Search');
-          const row = s.page.getByRole('link', { name: v.company }).first();
+          const row = s.page.getByRole('link', { name: C }).first();
           await s.see(row, `the customer ${v.company} in the results`);
           await s.click(row, 'open the customer');
-          await s.see(h1(s.page, v.company), 'the customer page');
+          await s.see(h1(s.page, C), 'the customer page');
           s.record('customerUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
           const owner = await main(s);
           if (/Owner name unavailable/.test(owner))
@@ -561,7 +564,7 @@ export function workflow(cfg) {
           await dialog.getByRole('button', { name: 'Approve customer', exact: true }).click();
           await s.seeText('This customer is verified.');
           await s.caption('sales-5 — the customer shows the approved verification');
-          await openUrl(s, 'customerUrl', (p) => h1(p, v.company));
+          await openUrl(s, 'customerUrl', (p) => h1(p, C));
           const text = await main(s);
           s.expect(
             /Verified|Approved/.test(text),
@@ -575,7 +578,7 @@ export function workflow(cfg) {
         title: 'Build and price the quotation',
         async run(s) {
           await as(s, 'Dev Sales');
-          await openUrl(s, 'opportunityUrl', (p) => h1(p, v.leadTitle));
+          await openUrl(s, 'opportunityUrl', (p) => h1(p, L));
           const start = s.page
             .getByRole('link', { name: 'New quotation' })
             .or(s.button('New quotation'));
@@ -722,7 +725,7 @@ export function workflow(cfg) {
             p.getByText(mail.Subject).filter({ visible: true }).first(),
           );
           await s.pause(1500);
-          await openUrl(s, 'opportunityUrl', (p) => h1(p, v.leadTitle));
+          await openUrl(s, 'opportunityUrl', (p) => h1(p, L));
           await s.see(status(s, 'Quotation Sent'), 'opportunity stage Quotation Sent');
         },
       },
@@ -752,7 +755,7 @@ export function workflow(cfg) {
           );
           await d.getByRole('button', { name: 'Done' }).click();
           await s.see(status(s, 'Accepted'), 'quotation Accepted');
-          await openUrl(s, 'opportunityUrl', (p) => h1(p, v.leadTitle));
+          await openUrl(s, 'opportunityUrl', (p) => h1(p, L));
           await s.see(status(s, 'Won'), 'opportunity Won');
         },
       },
@@ -772,7 +775,7 @@ export function workflow(cfg) {
             const d = s.page.getByRole('dialog', { name: 'Confirm a sales order' });
             await s.choose(
               s.select('Accepted quotation', { scope: d }).or(d.getByLabel('Accepted quotation')),
-              new RegExp(escapeRe(s.need('quotationNumber'))),
+              runMatch(s.need('quotationNumber')),
             );
             await s.pause(400);
             await d.getByRole('button', { name: 'Confirm order' }).click();
@@ -911,10 +914,7 @@ export function workflow(cfg) {
           }
           await s.caption('sales-11 — the issued invoice is in receivables');
           await s.goto('/receivables/aging', (p) => h1(p, 'Receivables aging'));
-          await s.see(
-            s.page.getByRole('link', { name: v.company }),
-            'the customer in receivables aging',
-          );
+          await s.see(s.page.getByRole('link', { name: C }), 'the customer in receivables aging');
         },
       },
       {
@@ -937,17 +937,14 @@ export function workflow(cfg) {
           await verifyAndAllocate(s, 'payment1Url', 'receipt1');
           await s.caption('sales-13 — the invoice has NPR 67,800 open');
           await s.goto('/receivables/aging', (p) => h1(p, 'Receivables aging'));
-          const row = s.page.getByRole('row').filter({ hasText: v.company });
+          const row = s.page.getByRole('row').filter({ hasText: C });
           await s.see(row, 'the customer row in aging');
           s.expect(
             hasAmount(await s.text(row), 67800),
             'aging shows NPR 67,800 open',
             await s.text(row),
           );
-          await s.click(
-            s.page.getByRole('link', { name: v.company }),
-            'open the customer statement',
-          );
+          await s.click(s.page.getByRole('link', { name: C }), 'open the customer statement');
           await s.page.waitForURL(/\/receivables\/customers\//, { timeout: cfg.navTimeout });
           s.record('statementUrl', s.page.url().replace(cfg.appUrl, ''));
           await statementOpen(s, 67800);
@@ -1026,15 +1023,11 @@ export function workflow(cfg) {
           );
           await s.goto('/receivables/aging', (p) => h1(p, 'Receivables aging'));
           await s.notVisible(
-            s.page.getByRole('row').filter({ hasText: v.company }),
+            s.page.getByRole('row').filter({ hasText: C }),
             'an aging row for the fully paid customer',
           );
         },
       },
     ],
   };
-}
-
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

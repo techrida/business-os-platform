@@ -27,10 +27,10 @@ and a note is written.
 ## Run
 
 ```sh
-node tools/manual-run/run.mjs --workflow start,sales --viewport 1440x900 --label SCR1
-node tools/manual-run/run.mjs --workflow all --viewport all --label SCR2   # three viewports, one after another
-node tools/manual-run/run.mjs --workflow sales --label SCR1 --from sales-7  # resume (see limits)
-node tools/manual-run/run.mjs --workflow sales --label SCR1 --only sales-3,sales-4
+node tools/manual-run/run.mjs --workflow start,sales --viewport 1440x900 --label scr1
+node tools/manual-run/run.mjs --workflow all --viewport all --label scr2   # three viewports, one after another
+node tools/manual-run/run.mjs --workflow sales --label scr1 --from sales-7  # resume (see limits)
+node tools/manual-run/run.mjs --workflow sales --label scr1 --only sales-3,sales-4
 ```
 
 Flags: `--workflow start|sales|procurement|branches|all` (comma list allowed), `--viewport 1440x900|820x1180|390x844|all`, `--label`, `--from <step>`, `--only <step,step>`, `--headed`, `--no-captions`.
@@ -59,26 +59,26 @@ It lists every visible control with the role and accessible name that `getByRole
 
 ## Environment
 
-| Variable                                                 | Default                                  | Meaning                                                                           |
-| -------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------- |
-| `APP_URL`                                                | `https://app.testrun.localhost:58343`    | staff workspace                                                                   |
-| `PORTAL_URL`                                             | `https://portal.testrun.localhost:58343` | customer portal (not used in Phase A)                                             |
-| `MAIL_URL`                                               | `https://mail.testrun.localhost:58343`   | Mailpit UI and API                                                                |
-| `AUTH_URL`                                               | `APP_URL` with `app.` → `auth.`          | ZITADEL login origin (real sign-in, start-6)                                      |
-| `PERSONAS_FILE`                                          | required                                 | the stack's `.dev/personas.json`; only read in memory                             |
-| `CA_FILE`                                                | `<personas dir>/caddy-root.crt`          | the stack's local CA; TLS is always verified. `NODE_EXTRA_CA_CERTS` is never used |
-| `RUN_LABEL` / `--label`                                  | required                                 | makes every name, PAN, email and bank reference unique                            |
-| `VIEWPORT` / `--viewport`                                | `1440x900`                               | page size and video size                                                          |
-| `VIDEO_DIR`                                              | `/home/crestia/bos-runtimes/manual-run`  | output root, outside git                                                          |
-| `PACE`                                                   | `600`                                    | ms pause after each action so viewers can follow                                  |
-| `SLOWMO`                                                 | `0`                                      | Playwright slowMo                                                                 |
-| `HEADLESS` / `--headed`                                  | headless                                 |                                                                                   |
-| `CAPTIONS` / `--no-captions`                             | on                                       | caption banner overlay                                                            |
-| `DEMO_FILES`                                             | generated tiny PDFs                      | demo kit folder (customer-pan.pdf, payment-proof.pdf, …)                          |
-| `NETNS`                                                  | `auto`                                   | `0` turns off network isolation; `auto` and `1` refuse a non-loopback origin      |
-| `ALLOW_NON_LOCAL_TARGET`                                 | unset                                    | `1` allows origins outside the local hosts listed below                           |
-| `BROWSER_TZ`                                             | host zone                                | browser time zone                                                                 |
-| `STEP_TIMEOUT_MS`, `ACTION_TIMEOUT_MS`, `NAV_TIMEOUT_MS` | 360000 / 45000 / 120000                  | per-step limits; long steps set their own                                         |
+| Variable                                                 | Default                                  | Meaning                                                                                                         |
+| -------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `APP_URL`                                                | `https://app.testrun.localhost:58343`    | staff workspace                                                                                                 |
+| `PORTAL_URL`                                             | `https://portal.testrun.localhost:58343` | customer portal (not used in Phase A)                                                                           |
+| `MAIL_URL`                                               | `https://mail.testrun.localhost:58343`   | Mailpit UI and API                                                                                              |
+| `AUTH_URL`                                               | `APP_URL` with `app.` → `auth.`          | ZITADEL login origin (real sign-in, start-6)                                                                    |
+| `PERSONAS_FILE`                                          | required                                 | the stack's `.dev/personas.json`; only read in memory                                                           |
+| `CA_FILE`                                                | `<personas dir>/caddy-root.crt`          | the stack's local CA; TLS is always verified. `NODE_EXTRA_CA_CERTS` is never used                               |
+| `RUN_LABEL` / `--label`                                  | required                                 | letters and digits only, lower-cased (`SCR1` is `scr1`); makes every name, PAN, email and bank reference unique |
+| `VIEWPORT` / `--viewport`                                | `1440x900`                               | page size and video size                                                                                        |
+| `VIDEO_DIR`                                              | `/home/crestia/bos-runtimes/manual-run`  | output root, outside git                                                                                        |
+| `PACE`                                                   | `600`                                    | ms pause after each action so viewers can follow                                                                |
+| `SLOWMO`                                                 | `0`                                      | Playwright slowMo                                                                                               |
+| `HEADLESS` / `--headed`                                  | headless                                 |                                                                                                                 |
+| `CAPTIONS` / `--no-captions`                             | on                                       | caption banner overlay                                                                                          |
+| `DEMO_FILES`                                             | generated tiny PDFs                      | demo kit folder (customer-pan.pdf, payment-proof.pdf, …)                                                        |
+| `NETNS`                                                  | `auto`                                   | `0` turns off network isolation; `auto` and `1` refuse a non-loopback origin                                    |
+| `ALLOW_NON_LOCAL_TARGET`                                 | unset                                    | `1` allows origins outside the local hosts listed below                                                         |
+| `BROWSER_TZ`                                             | host zone                                | browser time zone                                                                                               |
+| `STEP_TIMEOUT_MS`, `ACTION_TIMEOUT_MS`, `NAV_TIMEOUT_MS` | 360000 / 45000 / 120000                  | per-step limits; long steps set their own                                                                       |
 
 ### Another stack or machine
 
@@ -100,7 +100,7 @@ Network isolation needs every origin on loopback (`localhost`, `*.localhost`, `1
   - A page that may hold input, or may be mid-submit, is never reloaded. A reload there once threw away a filled payment form, and a second click could have recorded the payment twice.
   - An error that remains after the reloads fails the step.
 - **Captions.** The caption banner is a fixed shadow-DOM overlay with `pointer-events:none`. It is inserted only after hydration, because inserting it earlier broke hydration. Turn it off with `--no-captions`.
-- **Unique data.** All unique values come from `runKey = <label>-<viewport width>`, so the three viewport runs of one label never collide. A run only opens and changes records it created; existing manual-run records are never touched.
+- **Unique data.** All unique values come from `runKey = <label>-<viewport width>`, so the three viewport runs of one label never collide. Labels are lower-cased and hold no dash, so `SCR1` and `scr1` are the same label and one run key can never be the start of another. Rows, links and headings are found by this run's name followed by a non-word character (`runMatch` in `lib/config.mjs`), so `…-144` never matches `…-1440`. A run only opens and changes records it created; existing manual-run records are never touched. Output folders from before 20 Nov 2026 with upper-case labels (`SCR1`, `SCR2`) cannot be resumed under the lower-cased label.
 
 ## Adding steps or a workflow (Phase B)
 

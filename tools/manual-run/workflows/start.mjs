@@ -2,6 +2,7 @@
 // Exact values come from docs/testrun-2026-11-19/steps/start-*.md and the "Update 19 Nov" boxes:
 // the new-memo button is Next (autosave), draft buttons are "Download preview as PDF" / "Print preview".
 /* global window, document, MutationObserver -- referenced inside page.evaluate callbacks, which run in the browser */
+import { runMatch } from '../lib/config.mjs';
 import { realLogin } from '../lib/session.mjs';
 import { isPdf, pdfText, findMail } from '../lib/support.mjs';
 
@@ -9,6 +10,8 @@ const ROLE = { 'Dev Sales': 'sales', 'Dev Accountant': 'accountant', 'Dev Financ
 
 export function workflow(cfg) {
   const subject = `BOS Demo — service delivery approval SCR-${cfg.runKey}`;
+  // Finds this run's memo by its subject, never a longer run key that starts with it.
+  const mine = runMatch(subject);
   const body =
     'Please approve delivery of the Business OS demonstration service to Himalayan Demo Labs.\n\n' +
     'The sales team will prepare a quotation and collect payment after independent financial review.\n' +
@@ -25,7 +28,7 @@ export function workflow(cfg) {
   };
 
   const openMemo = async (s) => {
-    await s.goto(s.need('memoUrl'), (p) => p.getByRole('heading', { level: 1, name: subject }));
+    await s.goto(s.need('memoUrl'), (p) => p.getByRole('heading', { level: 1, name: mine }));
   };
 
   const approveFromInbox = async (s, comment) => {
@@ -35,7 +38,7 @@ export function workflow(cfg) {
     const row = s.page
       .getByRole('table', { name: 'Waiting approvals' })
       .getByRole('row')
-      .filter({ hasText: subject });
+      .filter({ hasText: mine });
     for (
       let i = 0;
       i < 6 &&
@@ -51,7 +54,7 @@ export function workflow(cfg) {
     await s.see(row, `inbox row "${subject}"`);
     await s.click(row.first().getByRole('link').first(), 'the inbox row');
     await s.page.waitForURL(new RegExp(`/inbox/${requestId}`));
-    await s.see(s.page.getByText(subject).first(), 'the frozen memo paper with its subject');
+    await s.see(s.page.getByText(mine).first(), 'the frozen memo paper with its subject');
     await s.pause();
     await s.click(s.button('Approve'), 'Approve');
     const dialog = s.page.getByRole('dialog', { name: 'Approve request' });
@@ -180,7 +183,7 @@ export function workflow(cfg) {
           await s.pause();
           await s.click(s.button('Next'), 'Next (saves the memo)');
           await s.page.waitForURL(/\/memos\/[0-9a-f-]{36}(\?.*)?$/, { timeout: cfg.navTimeout });
-          await s.see(s.page.getByRole('heading', { level: 1, name: subject }), 'the saved memo');
+          await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the saved memo');
           const url = s.page.url().split('?')[0];
           s.record('memoUrl', url.replace(cfg.appUrl, ''));
           const number = /MEMO-[\w/-]*\d{5}/.exec(await s.text())?.[0];
@@ -188,14 +191,11 @@ export function workflow(cfg) {
 
           await s.caption('start-2 — Memos list → open the row');
           await s.goto('/memos', (p) => p.getByRole('heading', { level: 1, name: 'Memos' }));
-          const link = s.page.getByRole('link', { name: subject }).first();
+          const link = s.page.getByRole('link', { name: mine }).first();
           await s.see(link, `Memos row "${subject}"`);
           await s.click(link, 'the memo row');
           await s.page.waitForURL(new RegExp(url.replace(cfg.appUrl, '').replace(/[/]/g, '\\/')));
-          await s.see(
-            s.page.getByRole('heading', { level: 1, name: subject }),
-            'the memo reopened',
-          );
+          await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the memo reopened');
           const main = await s.text(s.page.getByRole('main'));
           for (const [what, needle] of [
             ['first paragraph', 'Please approve delivery of the Business OS demonstration service'],
@@ -382,8 +382,8 @@ export function workflow(cfg) {
           await asPersona(s, 'Dev Sales');
           await s.caption('start-5 — Sales: Memos → the approved memo');
           await s.goto('/memos', (p) => p.getByRole('heading', { level: 1, name: 'Memos' }));
-          await s.click(s.page.getByRole('link', { name: subject }).first(), 'the memo row');
-          await s.see(s.page.getByRole('heading', { level: 1, name: subject }), 'the memo');
+          await s.click(s.page.getByRole('link', { name: mine }).first(), 'the memo row');
+          await s.see(s.page.getByRole('heading', { level: 1, name: mine }), 'the memo');
           await s.see(s.page.getByText('Approved', { exact: true }), 'status Approved for Sales');
 
           await s.caption('start-5 — notification bell: opening the panel must not mark all read');
@@ -394,7 +394,7 @@ export function workflow(cfg) {
           await s.see(panel, 'the notifications panel');
           const item = panel
             .getByRole('listitem')
-            .filter({ hasText: s.state.memoNumber ?? subject });
+            .filter({ hasText: runMatch(s.state.memoNumber ?? subject) });
           await s.see(item, 'a notification for this memo', 60000);
           await s.page.waitForTimeout(1500);
           const after = await bell.first().getAttribute('aria-label');
