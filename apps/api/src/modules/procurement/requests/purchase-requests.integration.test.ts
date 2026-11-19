@@ -934,6 +934,24 @@ describe('department and cost-centre names on a request (I-27)', () => {
       return { departmentName: d!.name, costCenterName: c!.name };
     });
 
+  it('names the department and cost centre on the approval for the department head, and nothing else (U18 #3)', async () => {
+    const { request } = await submitted();
+    const expected = await namesOf(dept.headed, centers.active);
+    // The head decides with the staff base grants: no department or cost-centre directory read.
+    as(U.head, 'operations_officer');
+    const approval = await approvals.get(request.id);
+    expect(approval.snapshot).toMatchObject({
+      purchaseRequest: { departmentId: dept.headed, costCenterId: centers.active },
+    });
+    expect(approval.references).toEqual(
+      expect.arrayContaining([
+        { id: dept.headed, name: expected.departmentName },
+        { id: centers.active, name: expected.costCenterName },
+      ]),
+    );
+    expect(approval.references).toHaveLength(2);
+  });
+
   it("names another requester's department and cost centre for Procurement, in the detail and the list", async () => {
     const mine = await draft();
     const expected = await namesOf(dept.headed, centers.active);
