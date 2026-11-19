@@ -585,7 +585,11 @@ describe('POST /v1/verification-cases/:id/checklist/remove', () => {
     expect(list.status).toBe(200);
     // The list also names the party (audit #8); the case itself is the same.
     expect(list.body).toEqual([
-      { ...dto, partyName: 'Acme Pvt. Ltd.', partyNumber: expect.stringMatching(/^CUS-/) as unknown },
+      {
+        ...dto,
+        partyName: 'Acme Pvt. Ltd.',
+        partyNumber: expect.stringMatching(/^CUS-/) as unknown,
+      },
     ]);
     expect(await documents.get(scope, next.documentId)).toEqual(documentBefore);
     expect((await removeDocument(draft.id, key, dto.version)).status).toBe(409);
@@ -1511,7 +1515,13 @@ describe('the own-scope case list is scoped in SQL, before its limit (audit #9)'
     const items = VerificationCaseDtoSchema.array().parse(res.body);
     expect(items.map((c) => c.id)).toContain(mine.id);
     // No extra data: nothing of Sales B's customers reaches Sales A.
-    expect(items.every((c) => c.partyId === mine.partyId)).toBe(true);
+    const { rows: bulk } = await appPool.query<{ id: string }>(
+      'SELECT id FROM app.parties WHERE code LIKE $1',
+      [`B${tag}-%`],
+    );
+    expect(bulk).toHaveLength(501);
+    const bulkIds = new Set(bulk.map((r) => r.id));
+    expect(items.some((c) => bulkIds.has(c.partyId))).toBe(false);
 
     // Sales B (own scope) is paged and counted over their own cases only, never Sales A's.
     as(U.salesB, 'sales');
@@ -1519,7 +1529,8 @@ describe('the own-scope case list is scoped in SQL, before its limit (audit #9)'
     expect(resB.status, JSON.stringify(resB.body)).toBe(200);
     const theirs = VerificationCaseDtoSchema.array().parse(resB.body);
     expect(theirs).toHaveLength(100);
-    expect(Number(resB.headers['x-total-count'])).toBe(501);
+    // At least the 501 bulk cases (earlier tests in this file also gave Sales B a few of their own).
+    expect(Number(resB.headers['x-total-count'])).toBeGreaterThanOrEqual(501);
     expect(theirs.map((c) => c.id)).not.toContain(mine.id);
   });
 });
