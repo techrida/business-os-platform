@@ -22,7 +22,7 @@ export const metadata: Metadata = { title: 'Currencies and exchange rates · Bus
 export default async function CurrenciesPage() {
   const session = await requireSection('currencies');
   const [fields, rates] = await Promise.all([
-    loadFields(session, ['fx.max_rate_age_days']),
+    loadFields(session, ['currency.enabled', 'fx.max_rate_age_days']),
     section('view exchange rates', () => listFxRates(session, { limit: 50 })),
   ]);
 
