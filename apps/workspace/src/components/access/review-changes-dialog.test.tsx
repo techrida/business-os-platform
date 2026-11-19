@@ -206,7 +206,7 @@ it('closes and reports a stale save without saving again', async () => {
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it('returns focus to the opener after Escape and after Back, and Escape saves nothing', async () => {
+it('returns focus to the opener after Escape and after Back; Escape saves nothing', async () => {
   const runSave = vi.fn((_input: SaveInput) => Promise.resolve<ReviewSaveResult>({ ok: true }));
   const opener = await openDialog({ runSave });
   expect(document.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
