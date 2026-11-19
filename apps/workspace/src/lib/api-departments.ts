@@ -148,7 +148,13 @@ export function createDepartment(
     name: body.name,
     ...(body.headUserId !== undefined ? { headUserId: body.headUserId } : {}),
   };
-  return requestParsed(session, 'POST', '/v1/admin/departments', AdminDepartmentDetailSchema, payload);
+  return requestParsed(
+    session,
+    'POST',
+    '/v1/admin/departments',
+    AdminDepartmentDetailSchema,
+    payload,
+  );
 }
 
 /** `PATCH /v1/admin/departments/:id` (rename), guarded by the department's version. */
@@ -269,7 +275,9 @@ export async function listActiveStaff(session: Session): Promise<DepartmentStaff
           name: user.displayName?.trim() || user.email?.trim() || 'Unnamed person',
           email: user.email,
           roles: user.roles,
-          department: user.department ? { id: user.department.id, name: user.department.name } : null,
+          department: user.department
+            ? { id: user.department.id, name: user.department.name }
+            : null,
         });
       }
       after = page.nextAfter;
@@ -334,7 +342,8 @@ export function mapDepartmentWriteError(error: unknown): DepartmentWriteFailure 
     case 409:
       return {
         kind: 'stale',
-        message: code === 'stale_access' ? DEPARTMENT_ACCESS_STALE_MESSAGE : DEPARTMENT_STALE_MESSAGE,
+        message:
+          code === 'stale_access' ? DEPARTMENT_ACCESS_STALE_MESSAGE : DEPARTMENT_STALE_MESSAGE,
       };
     case 400:
     case 422: {
