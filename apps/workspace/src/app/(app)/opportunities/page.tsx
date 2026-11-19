@@ -10,6 +10,7 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
+import { ownerFilterNames } from '@/components/p2/crm/crm-api';
 import { ListFooter } from '@/components/p2/crm/list-footer';
 import {
   listOpportunitiesPage,
@@ -28,7 +29,6 @@ import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
-import { userNames } from '@/lib/business-labels';
 import { when } from '@/lib/kernel-format';
 import {
   activeFilterLabels,
@@ -126,7 +126,7 @@ export default async function OpportunitiesPage({
   const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
   const sp = await searchParams;
-  const names = await userNames(session);
+  const names = await ownerFilterNames(session, 'opportunities');
   const ownerOptions = [...names]
     .map(([value, label]) => ({ value, label }))
     .sort((a, b) => a.label.localeCompare(b.label));

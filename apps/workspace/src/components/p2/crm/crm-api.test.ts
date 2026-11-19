@@ -9,6 +9,7 @@ import {
   listActivities,
   listLeadOwners,
   listOpportunities,
+  ownerFilterNames,
   rescheduleActivity,
   updateLead,
 } from './crm-api';
@@ -100,6 +101,20 @@ it('lists lead owners and validates each option', async () => {
     Promise.resolve(Response.json([{ userId: 'nope' }])),
   );
   await expect(listLeadOwners(session)).rejects.toMatchObject({ status: 502 });
+});
+
+it('names the Owner filter people from the area owner-filter route, with Unnamed user for a blank name', async () => {
+  const people = [
+    { userId: '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d', displayName: 'Sunita Shrestha', email: '' },
+    { userId: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5e', displayName: ' ', email: '' },
+  ];
+  vi.mocked(apiFetch).mockImplementation(() => Promise.resolve(Response.json(people)));
+  const names = await ownerFilterNames(session, 'opportunities');
+  expect(apiFetch).toHaveBeenLastCalledWith(session, '/v1/opportunities/owner-filter', undefined);
+  expect([...names.values()]).toEqual(['Sunita Shrestha', 'Unnamed user']);
+
+  vi.mocked(apiFetch).mockImplementation(() => Promise.resolve(Response.json({ nope: 1 })));
+  expect((await ownerFilterNames(session, 'leads')).size).toBe(0);
 });
 
 it('patches the lead with the owner and version', async () => {

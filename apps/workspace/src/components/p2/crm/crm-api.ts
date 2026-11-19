@@ -122,8 +122,29 @@ export function createLead(session: Session, body: CreateLeadBody, idempotencyKe
  * People the caller may hand a lead (or its follow-up) to. A caller with `own` scope gets only
  * themselves, so the select then has one option.
  */
-export function listLeadOwners(session: Session) {
-  return call(session, '/v1/leads/owners', listOf(LeadOwnerOptionSchema));
+export function listLeadOwners(session: Session, context?: 'create' | 'reassign') {
+  const suffix = context === undefined ? '' : `?context=${context}`;
+  return call(session, `/v1/leads/owners${suffix}`, listOf(LeadOwnerOptionSchema));
+}
+
+/**
+ * The Owner filter's people for the leads or opportunities list: the owners of records the caller may read plus the
+ * people they may hand one to (`GET /v1/<area>/owner-filter`). Open to everyone who can read the list, unlike the
+ * admin user directory. A failed read leaves the filter out rather than blocking the list.
+ */
+export async function ownerFilterNames(
+  session: Session,
+  area: 'leads' | 'opportunities',
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  try {
+    for (const o of await call(session, `/v1/${area}/owner-filter`, listOf(LeadOwnerOptionSchema))) {
+      names.set(o.userId, o.displayName.trim() || 'Unnamed user');
+    }
+  } catch {
+    // Names are a courtesy; the list still loads without the Owner control.
+  }
+  return names;
 }
 
 /** Edit the lead's own fields (today: the owner). Answers the updated lead; 409 when stale. */

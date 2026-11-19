@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { NumberSystems } from '@bos/locale';
 
 import { Board } from '@/components/p2/crm/board';
-import { listLeadOwners } from '@/components/p2/crm/crm-api';
+import { listLeadOwners, ownerFilterNames } from '@/components/p2/crm/crm-api';
 import {
   getLeadSummary,
   type LeadSummary,
@@ -33,7 +33,6 @@ import { StatCard } from '@/components/ui/stat-card';
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
-import { userNames } from '@/lib/business-labels';
 import { getNumberSystems } from '@/lib/display-settings';
 import {
   activeFilterLabels,
@@ -90,7 +89,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const session = await requireStaffSession(PATH);
   const numberSystems = await getNumberSystems();
   const sp = await searchParams;
-  const names = await userNames(session);
+  const names = await ownerFilterNames(session, 'leads');
   const ownerOptions = [...names]
     .map(([value, label]) => ({ value, label }))
     .sort((a, b) => a.label.localeCompare(b.label));
