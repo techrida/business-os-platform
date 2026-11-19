@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { renderPurchaseOrderHtml } from './purchase-order-html';
+
 import {
   PurchaseOrderNotRenderableError,
   PurchaseOrderRenderViewSchema,
@@ -177,6 +179,18 @@ describe('toPurchaseOrderRenderView', () => {
     const view = toPurchaseOrderRenderView(input());
     expect(view.issueDate).toBe('2026-11-09');
     expect(view.issueDateBs).toBe('2083-07-23');
+  });
+
+  it('carries a four-place advance through the frozen version to the printed order', () => {
+    const snap = snapshot();
+    snap.purchaseOrder.advancePercent = '33.3334';
+    const view = toPurchaseOrderRenderView(
+      input({ version: { ...input().version, snapshot: snap } }),
+    );
+    const html = renderPurchaseOrderHtml(view);
+    expect(html).toContain('33.3334%');
+    expect(html).toContain('09 Nov 2026');
+    expect(html).toContain('01 Dec 2026');
   });
 
   it('prints no advance when it is zero and keeps a missing delivery as null', () => {
