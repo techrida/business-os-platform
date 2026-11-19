@@ -1,10 +1,10 @@
+import { formatCustomerDate } from '@bos/locale';
 import type { VendorPortalPurchaseOrderListItem } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
 
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 
-import { formatDay } from '../portal/quotation-status';
 import styles from './vendor.module.css';
 import { PO_STATUS_LOOK } from './vendor-status';
 
@@ -52,7 +52,7 @@ export function PurchaseOrderList({
                 <td>
                   <Badge tone={look.tone}>{look.label}</Badge>
                 </td>
-                <td className={styles.nowrap}>{formatDay(po.issueDate)}</td>
+                <td className={styles.nowrap}>{formatCustomerDate(po.issueDate)}</td>
                 <td className={`${styles.num} ${styles.nowrap}`}>
                   {formatMoney(po.total, po.currency)}
                 </td>

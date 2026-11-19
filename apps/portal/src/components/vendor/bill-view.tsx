@@ -1,9 +1,9 @@
+import { formatCustomerDate } from '@bos/locale';
 import type { VendorPortalBillView } from '@bos/contracts';
 import { formatMoney } from '@bos/locale';
 
 import { Badge } from '@/components/ui/badge';
 
-import { formatDay } from '../portal/quotation-status';
 import styles from './vendor.module.css';
 import { BILL_STATUS_LOOK } from './vendor-status';
 
@@ -29,7 +29,7 @@ export function BillView({ view }: { view: VendorPortalBillView }) {
           </div>
           <div>
             <dt>Invoice date</dt>
-            <dd>{formatDay(view.invoiceDate)}</dd>
+            <dd>{formatCustomerDate(view.invoiceDate)}</dd>
           </div>
           <div>
             <dt>TDS withheld</dt>
@@ -64,7 +64,7 @@ export function BillView({ view }: { view: VendorPortalBillView }) {
               <tbody>
                 {view.payments.map((p) => (
                   <tr key={`${p.paidOn}-${p.reference}`}>
-                    <td className={styles.nowrap}>{formatDay(p.paidOn)}</td>
+                    <td className={styles.nowrap}>{formatCustomerDate(p.paidOn)}</td>
                     <td className={styles.description}>{p.reference}</td>
                     <td className={`${styles.num} ${styles.nowrap}`}>{money(p.amount)}</td>
                   </tr>

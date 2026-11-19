@@ -7,6 +7,7 @@
 // immutable), never from the live purchase_order_lines: an amendment moves the live lines, and a reprint of version 1
 // must still say version 1. Only the names that are not in the snapshot (the vendor, the buying entity, the tax code
 // labels, the delivery terms of the request) are read when the version is rendered.
+import { PurchaseOrderAdvancePercentSchema, trimPercent } from '@bos/contracts';
 import { Dec, formatBs, kathmanduDate } from '@bos/locale';
 import { z } from 'zod';
 
@@ -31,7 +32,7 @@ export const PurchaseOrderRenderViewSchema = z.strictObject({
   vendor: party,
   paymentTermsDays: z.number().int().min(0),
   /** null when no advance is due; "25" for 25 percent. */
-  advancePercent: z.string().nullable(),
+  advancePercent: PurchaseOrderAdvancePercentSchema.nullable(),
   requiredBy: z.iso.date().nullable(),
   deliveryLocation: z.string().nullable(),
   lines: z.array(
@@ -60,7 +61,7 @@ const SnapshotSchema = z.object({
     number: z.string().min(1),
     currency: z.enum(['NPR', 'INR', 'USD']),
     paymentTermsDays: z.number().int().min(0),
-    advancePercent: z.string(),
+    advancePercent: PurchaseOrderAdvancePercentSchema,
   }),
   lines: z
     .array(
@@ -102,7 +103,7 @@ export class PurchaseOrderNotRenderableError extends Error {
   }
 }
 
-/** numeric(18,4) and numeric(5,2) come back padded ("12.5000", "25.00"); show "12.5" and "25". */
+/** Quantities come back padded ("12.5000"); show "12.5". */
 const trimZeros = (value: string): string =>
   value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 
@@ -158,7 +159,7 @@ export function toPurchaseOrderRenderView(input: PurchaseOrderViewInput): Purcha
     if (!(error instanceof RangeError)) throw error;
   }
 
-  const advance = new Dec(po.advancePercent);
+  const advance = trimPercent(po.advancePercent);
   return PurchaseOrderRenderViewSchema.parse({
     number: po.number,
     version: input.version.version,
@@ -168,7 +169,7 @@ export function toPurchaseOrderRenderView(input: PurchaseOrderViewInput): Purcha
     buyer: { legalName: input.buyer.legalName, panVatNo: input.buyer.panVatNo },
     vendor: { legalName: input.vendor.legalName, panVatNo: input.vendor.pan },
     paymentTermsDays: po.paymentTermsDays,
-    advancePercent: advance.isZero() ? null : trimZeros(po.advancePercent),
+    advancePercent: new Dec(advance).isZero() ? null : advance,
     requiredBy: input.delivery.requiredBy,
     deliveryLocation: input.delivery.deliveryLocation,
     lines,

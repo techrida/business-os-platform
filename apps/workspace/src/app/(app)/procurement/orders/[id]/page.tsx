@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { trimPercent } from '@bos/contracts';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -358,7 +359,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     {
       key: 'advance',
       label: 'Advance',
-      value: <span className={styles.numeric}>{po.advancePercent}%</span>,
+      value: <span className={styles.numeric}>{trimPercent(po.advancePercent)}%</span>,
     },
     {
       key: 'issued',

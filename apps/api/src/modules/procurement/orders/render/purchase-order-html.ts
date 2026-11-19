@@ -3,7 +3,7 @@
 // font file, and a CSP that forbids anything else, so a render never reaches the network. The function takes the
 // allow-list view and nothing else, so it cannot print an NPR value or a rate. Money goes through `@bos/locale`
 // `formatMoney`, so NPR has lakh grouping (`NPR 20,18,180.00`).
-import { formatKathmandu, formatMoney, toBs } from '@bos/locale';
+import { formatCustomerDate, formatMoney, toBs } from '@bos/locale';
 
 import type { PurchaseOrderRenderView } from './purchase-order-view';
 
@@ -20,7 +20,7 @@ const kathmanduNoon = (isoDate: string): Date => new Date(`${isoDate}T12:00:00+0
 
 /** The Gregorian date with the Bikram Sambat date beside it (the given one, or converted when none is given). */
 function dateCell(isoDate: string, bs: string | null): string {
-  const gregorian = escapeHtml(formatKathmandu(kathmanduNoon(isoDate), 'date'));
+  const gregorian = escapeHtml(formatCustomerDate(isoDate));
   if (bs !== null) return `${gregorian} <span class="bs">(${escapeHtml(bs)} BS)</span>`;
   try {
     const converted = toBs(kathmanduNoon(isoDate));

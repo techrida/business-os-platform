@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { DocumentVersionStatusSchema } from './documents.js';
 import { CurrencySchema } from './money.js';
-import { NonNegativeDecimalString, QuantityString } from './quotations.js';
+import { NonNegativeDecimalString, PercentFourDecimals, QuantityString } from './quotations.js';
 
 const isoDate = z.iso.date();
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -358,6 +358,9 @@ export type ConfirmReceiptBody = z.infer<typeof ConfirmReceiptBodySchema>;
 
 export const ReverseReceiptBodySchema = z.strictObject({ reason: text(500) });
 export type ReverseReceiptBody = z.infer<typeof ReverseReceiptBodySchema>;
+
+/** A purchase order advance percentage, including values saved before four-place precision. */
+export const PurchaseOrderAdvancePercentSchema = PercentFourDecimals;
 
 /** Amend an issued PO: a new version. Changing the vendor is a cancel and a new PO, so no vendor field here. */
 export const AmendPurchaseOrderBodySchema = z.strictObject({
