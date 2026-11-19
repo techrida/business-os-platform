@@ -1,6 +1,6 @@
 // A made-up quotation for the Settings thumbnails. It goes through the same renderer as a real PDF, so a
 // preview cannot draw something the document cannot. Every name and figure here is invented.
-import type { CustomerQuotationView } from '@bos/contracts';
+import { defaultPortalDisplay, type CustomerQuotationView } from '@bos/contracts';
 
 const LINES: readonly [string, string, string, string, string][] = [
   ['Inventory and dispatch modules', 'lot', '1', '480000.00', '480000.00'],
@@ -66,6 +66,8 @@ export function sampleQuotationView(): CustomerQuotationView {
       total: '1037001.00',
     },
     taxSummary: [{ label: 'VAT', percent: '13', base: taxable, tax: vat }],
+    // The renderer formats from its own snapshot, not from this field; the default keeps the view valid.
+    display: defaultPortalDisplay(),
     file: null,
   };
 }

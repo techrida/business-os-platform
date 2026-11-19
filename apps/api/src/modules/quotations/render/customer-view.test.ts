@@ -76,6 +76,10 @@ const input = (over: Partial<CustomerViewInput> = {}): CustomerViewInput => ({
   ],
   taxSummary: [{ label: 'VAT', rate: '13.0000', base: '540000.00', tax: '70200.00' }],
   issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: '301234567', address },
+  display: {
+    numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+    dateFormat: 'dd/MM/yyyy',
+  },
   ...over,
 });
 
@@ -107,6 +111,22 @@ describe('toCustomerQuotationView', () => {
     });
   });
 
+  it('carries the display it was given, copied field by field', () => {
+    const base = input();
+    const view = toCustomerQuotationView(base);
+    expect(view.display).toEqual({
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'international' },
+      dateFormat: 'dd/MM/yyyy',
+    });
+    expect(view.display).not.toBe(base.display);
+    // An extra key riding on the display input never reaches the view.
+    const extra = toCustomerQuotationView({
+      ...base,
+      display: { ...base.display, marginPct: '25' } as CustomerViewInput['display'],
+    });
+    expect(JSON.stringify(extra)).not.toContain('marginPct');
+  });
+
   it('passes the terms and conditions through unchanged', () => {
     const base = input();
     const view = toCustomerQuotationView({
@@ -118,7 +138,8 @@ describe('toCustomerQuotationView', () => {
   });
 
   it('leaks no internal column: cost, margin, FX, NPR equivalent, approval, hashes', () => {
-    const json = JSON.stringify(toCustomerQuotationView(input()));
+    const view = toCustomerQuotationView(input());
+    const json = JSON.stringify(view);
     for (const secret of [
       'unitCost',
       'internalCostTotal',
@@ -137,7 +158,11 @@ describe('toCustomerQuotationView', () => {
     ]) {
       expect(json, secret).not.toContain(secret);
     }
-    const keys = [...json.matchAll(/"([A-Za-z]+)":/g)].map((m) => m[1]!.toLowerCase());
+    // `display` is formatting choices keyed by currency code (NPR, INR, USD); the code is not an NPR equivalent.
+    const { display: _display, ...rest } = view;
+    const keys = [...JSON.stringify(rest).matchAll(/"([A-Za-z]+)":/g)].map((m) =>
+      m[1]!.toLowerCase(),
+    );
     for (const word of CUSTOMER_VIEW_FORBIDDEN_WORDS) {
       expect(
         keys.filter((k) => k.includes(word)),

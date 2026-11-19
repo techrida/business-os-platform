@@ -1,4 +1,5 @@
 import {
+  defaultPortalDisplay,
   CUSTOMER_VIEW_FORBIDDEN_WORDS,
   CustomerQuotationViewSchema,
   DOCUMENT_LAYOUTS,
@@ -26,6 +27,7 @@ const address = {
 const sample = (currency: 'USD' | 'NPR', over: Partial<CustomerQuotationView> = {}) =>
   CustomerQuotationViewSchema.parse({
     id: '11111111-1111-4111-8111-111111111111',
+    display: defaultPortalDisplay(),
     number: 'QT-2082-0042',
     revisionNo: 2,
     status: 'sent',
@@ -191,9 +193,9 @@ describe('renderQuotationHtml', () => {
   });
 
   it('groups money by the snapshot number system, South Asian when there is no snapshot', () => {
-    // Without a snapshot every currency uses lakh grouping (the brief's default), USD included.
+    // Without a snapshot each currency uses its default (D30): NPR and INR lakh grouping, USD thousands.
     const usd = renderQuotationHtml(sample('USD'));
-    expect(usd).toContain('USD 40,68,000.00');
+    expect(usd).toContain('USD 4,068,000.00');
     expect(usd).toContain('45,000.00');
     const npr = renderQuotationHtml(sample('NPR'));
     expect(npr).toContain('NPR 40,68,000.00');
@@ -207,6 +209,27 @@ describe('renderQuotationHtml', () => {
     expect(intl).not.toContain('40,68,000.00');
   });
 
+  it('applies a legacy single-system snapshot to every currency and a per-currency map to each', () => {
+    const legacy = renderQuotationHtml(sample('USD'), {
+      snapshot: snapshot('banded', '#1d4ed8', { numberSystem: 'south_asian' }),
+    });
+    expect(legacy).toContain('USD 40,68,000.00');
+    const mapped = renderQuotationHtml(sample('USD'), {
+      snapshot: snapshot('banded', '#1d4ed8', {
+        numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
+      }),
+    });
+    expect(mapped).toContain('USD 40,68,000.00');
+    expect(mapped).toContain('Forty Lakh Sixty Eight Thousand Dollars Only');
+    const npr = renderQuotationHtml(sample('NPR'), {
+      snapshot: snapshot('banded', '#1d4ed8', {
+        numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
+      }),
+    });
+    expect(npr).toContain('NPR 4,068,000.00');
+    expect(npr).toContain('Four Million Sixty Eight Thousand Rupees Only');
+  });
+
   it('names the currency once in the item headers and prints bare figures in the rows', () => {
     const html = renderQuotationHtml(sample('NPR'));
     expect(html).toContain('Unit price (NPR)');
@@ -217,7 +240,7 @@ describe('renderQuotationHtml', () => {
   it('shows the VAT line by percent and base, and the discount only when there is one', () => {
     const html = renderQuotationHtml(sample('USD'));
     expect(html).toContain('VAT (13%)');
-    expect(html).toContain('USD 4,68,000.00');
+    expect(html).toContain('USD 468,000.00');
     expect(html).toContain('Discount');
     expect(html).toContain('Total due');
     const noDiscount = renderQuotationHtml(
@@ -296,7 +319,7 @@ describe('renderQuotationHtml', () => {
     const terms = 'Payment within 15 days.\nPrices exclude freight.';
     const html = renderQuotationHtml(sample('USD', { termsAndConditions: terms }));
     expect(html).toContain('<h2>Terms and conditions</h2>');
-    expect(html).toContain('Payment within 15 days.\nPrices exclude freight.');
+    expect(html).toContain('<p>Payment within 15 days.<br>Prices exclude freight.</p>');
     expect(html.indexOf('<h2>Delivery timeline</h2>')).toBeGreaterThan(-1);
     expect(html.indexOf('<h2>Terms and conditions</h2>')).toBeGreaterThan(
       html.indexOf('<h2>Delivery timeline</h2>'),
@@ -363,6 +386,81 @@ describe.each(CASES)('layout %s in %s', (layout, colour) => {
     expect(html).toContain('<h2>Terms and conditions</h2>');
     expect(html).toContain('Goods remain ours until paid.');
     expect(render()).not.toContain('Terms and conditions');
+  });
+
+  describe('rich wording', () => {
+    const FIELDS = [
+      'scope',
+      'assumptions',
+      'exclusions',
+      'termsAndConditions',
+      'deliveryTimeline',
+    ] as const;
+    const NO_WORDING = {
+      scope: null,
+      assumptions: null,
+      exclusions: null,
+      termsAndConditions: null,
+      deliveryTimeline: null,
+    } as const;
+    const RICH =
+      '<p>Intro <strong>bold</strong> and <em>slanted</em></p><ul><li>First bullet<ul><li>Nested bullet</li></ul></li><li>Second bullet</li></ul><ol><li>Step one</li><li>Step two</li></ol>';
+    const HOSTILE =
+      '<p>Safe words</p><script>alert(1)</script><p><a href="javascript:alert(1)">click</a></p><img src=x onerror=alert(1)><ul><li onclick="x()">item</li></ul>';
+
+    it.each(FIELDS)('draws %s as lists and emphasis', (field) => {
+      const html = render(sample('NPR', { ...NO_WORDING, [field]: RICH }));
+      expect(html).toContain('<strong>bold</strong>');
+      expect(html).toContain('<em>slanted</em>');
+      expect(html).toContain(
+        '<ul><li>First bullet<ul><li>Nested bullet</li></ul></li><li>Second bullet</li></ul>',
+      );
+      expect(html).toContain('<ol><li>Step one</li><li>Step two</li></ol>');
+      expect(html).toContain('<div class="rich">');
+    });
+
+    it.each(FIELDS)('never lets markup through in %s', (field) => {
+      const html = render(sample('NPR', { ...NO_WORDING, [field]: HOSTILE }));
+      expect(html).toContain('Safe words');
+      expect(html).toContain('<li>item</li>');
+      expect(html).not.toContain('<script');
+      expect(html).not.toContain('<a ');
+      expect(html).not.toContain('onerror');
+      expect(html).not.toContain('onclick');
+      expect(html).not.toContain('javascript:');
+      expect(html).not.toContain('alert(1)');
+      expect(html).not.toContain('<img src=x');
+    });
+
+    it('draws legacy plain text as an escaped paragraph with line breaks', () => {
+      const html = render(
+        sample('NPR', { ...NO_WORDING, termsAndConditions: 'Line one\nLine <b>two</b> & more' }),
+      );
+      expect(html).toContain('<p>Line one<br>Line &lt;b&gt;two&lt;/b&gt; &amp; more</p>');
+      expect(html).not.toContain('<b>');
+      expect(html).not.toContain('<br>Line <b');
+    });
+
+    it('prints no section for an empty field', () => {
+      for (const empty of [null, '', '   ', '<p></p>', '<p><script>alert(1)</script></p>']) {
+        const html = render(sample('NPR', { ...NO_WORDING, termsAndConditions: empty }));
+        expect(html, String(empty)).not.toContain('Terms and conditions');
+        expect(html, String(empty)).not.toContain('class="rich"');
+      }
+    });
+
+    it('keeps the signatory in one unbreakable box with the last wording section', () => {
+      const html = render(sample('NPR', { ...NO_WORDING, termsAndConditions: RICH }));
+      const keep = html.slice(html.indexOf('<div class="sign-keep">'));
+      expect(keep.indexOf('<h2>Terms and conditions</h2>')).toBeGreaterThan(-1);
+      expect(keep.indexOf('<h2>Terms and conditions</h2>')).toBeLessThan(
+        keep.indexOf('<section class="sign">'),
+      );
+      const css = cssOf(html);
+      expect(css).toMatch(/\.sign-keep \{ break-inside: avoid; \}/);
+      expect(css).toMatch(/\.rich li \{[^}]*break-inside: avoid;/);
+      expect(css).toMatch(/\.rich li \{[^}]*orphans: 2; widows: 2;/);
+    });
   });
 
   it('prints the amount in words in both number systems', () => {

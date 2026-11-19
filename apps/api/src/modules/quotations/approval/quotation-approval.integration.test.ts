@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_ROLE_PERMISSIONS,
   QuotationApprovalSnapshotSchema,
+  defaultPortalDisplay,
   type ApprovalRequestDto,
   type CreateQuotationBody,
   type Discount,
@@ -781,6 +782,7 @@ describe('quotation approval: terms and conditions', () => {
         lines,
         taxSummary,
         issuer: { legalName: 'Techrida Pvt. Ltd.', panVatNo: null, address },
+        display: defaultPortalDisplay(),
       },
       { purpose: 'render' },
     );

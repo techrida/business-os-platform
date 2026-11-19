@@ -62,22 +62,25 @@ describe('buildDocumentStyleSnapshot', () => {
   const settingsOf = (over: Record<string, unknown> = {}) =>
     fakeSettings({ ...DOCUMENT_SETTING_DEFAULTS, 'entity.pan_vat_no': '301234567', ...over });
 
-  it('reads the four settings for the entity scope and stamps the capture time', async () => {
+  it('reads the five settings for the entity scope and stamps the capture time', async () => {
     const { settings, asked } = settingsOf({
       'document.style': { layout: 'ledger', primaryColour: '#0F766E' },
-      'format.number_system': 'international',
+      'format.number_systems': { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
+      'format.date': 'dd/MM/yyyy',
     });
     await expect(buildDocumentStyleSnapshot(settings, scope, at)).resolves.toEqual({
       style: { layout: 'ledger', primaryColour: '#0f766e' },
       profile: { ...DOCUMENT_SETTING_DEFAULTS['entity.profile'], panVatNo: '301234567' },
-      numberSystem: 'international',
+      numberSystems: { NPR: 'international', INR: 'south_asian', USD: 'south_asian' },
+      dateFormat: 'dd/MM/yyyy',
       capturedAt: '2026-11-09T06:00:00.000Z',
     });
     expect(asked.map((a) => a.key).sort()).toEqual([
       'document.style',
       'entity.pan_vat_no',
       'entity.profile',
-      'format.number_system',
+      'format.date',
+      'format.number_systems',
     ]);
     expect(asked.every((a) => a.scope === scope)).toBe(true);
   });
@@ -108,7 +111,8 @@ describe('buildDocumentStyleSnapshot', () => {
     ['document.style', null],
     ['entity.profile', { displayName: 'x' }],
     ['entity.profile', undefined],
-    ['format.number_system', 'metric'],
+    ['format.number_systems', { NPR: 'metric', INR: 'south_asian', USD: 'south_asian' }],
+    ['format.date', 'yy-dd'],
   ])('refuses with a typed error when %s is %j', async (key, bad) => {
     const { settings } = settingsOf({ [key]: bad });
     const error = await buildDocumentStyleSnapshot(settings, scope, at).catch((e: unknown) => e);
