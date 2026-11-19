@@ -105,9 +105,15 @@ describe('P3 permissions', () => {
       if (['founder', 'management', 'finance', 'accountant', 'customer_user'].includes(role))
         continue;
       for (const p of P3_PERMISSIONS) {
+        // D23: Sales reads the sales orders that come from its own quotations.
+        if (role === 'sales' && p === 'sales_order.read') continue;
         expect(DEFAULT_ROLE_PERMISSIONS[role][p], `${role} ${p}`).toBeUndefined();
       }
     }
+  });
+
+  it('lets sales read only its own sales orders (D23)', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.sales['sales_order.read']).toBe('own');
   });
 });
 
