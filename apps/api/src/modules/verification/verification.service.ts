@@ -29,6 +29,7 @@ import {
   type VerificationPartyKind,
 } from '@bos/contracts';
 import { parties, users, verificationCases, verificationReviewEvents } from '@bos/db';
+import { kathmanduDateString } from '@bos/locale';
 import {
   BadRequestException,
   ConflictException,
@@ -365,7 +366,7 @@ export class VerificationService implements OnModuleInit {
           v?.status === 'clean' &&
           v.sha256 &&
           v.scannedAt &&
-          (!i.expiresOn || i.expiresOn > this.now().toISOString().slice(0, 10))
+          (!i.expiresOn || i.expiresOn > kathmanduDateString(this.now()))
         );
       });
     const clean = eligible.every(
@@ -515,7 +516,7 @@ export class VerificationService implements OnModuleInit {
       const reopened = await updateVersioned(tx, verificationCases, l.row.id, l.row.version, {
         status: 'draft',
         reviewPolicy: l.row.partyKind === 'customer' ? 'document_review_v1' : 'case_review_v0',
-        checklist: reopenChecklist(checklistOf(l.row), now.toISOString().slice(0, 10)),
+        checklist: reopenChecklist(checklistOf(l.row), kathmanduDateString(now)),
         reviewerUserId: null,
         decidedAt: null,
         reason: null,
@@ -751,7 +752,7 @@ export class VerificationService implements OnModuleInit {
             )
           )
             throw conflict('Rejected evidence must be replaced with a new file version');
-          if (item.expiresOn && item.expiresOn <= this.now().toISOString().slice(0, 10))
+          if (item.expiresOn && item.expiresOn <= kathmanduDateString(this.now()))
             throw conflict('Evidence has expired');
           item.status = 'provided';
           item.evidence = {
@@ -1127,7 +1128,7 @@ export class VerificationService implements OnModuleInit {
       (latest.status !== 'clean' ||
         !latest.sha256 ||
         !latest.scannedAt ||
-        (item.expiresOn !== null && item.expiresOn <= this.now().toISOString().slice(0, 10)))
+        (item.expiresOn !== null && item.expiresOn <= kathmanduDateString(this.now())))
     )
       throw conflict('Evidence must be clean and unexpired');
   }
