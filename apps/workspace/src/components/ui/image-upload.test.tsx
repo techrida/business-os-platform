@@ -394,6 +394,112 @@ describe('ImageUpload', () => {
     expect(scans()).toBe(2);
   });
 
+  it('reports the document again, and tells the page, once the picture is served', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    scanStatuses = [404, 200];
+    resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+    const announced: unknown[] = [];
+    const listen = (event: Event) => announced.push((event as CustomEvent<unknown>).detail);
+    window.addEventListener('bos:image-ready', listen);
+    try {
+      mounted = await mountForm(picker());
+      await choose(png());
+      expect(onChange.mock.calls).toEqual([[UPLOADED]]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      // Still scanning: nothing more yet.
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(announced).toEqual([]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(onChange.mock.calls).toEqual([[UPLOADED], [UPLOADED]]);
+      expect(announced).toEqual([SCAN_URL]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(onChange).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener('bos:image-ready', listen);
+    }
+  });
+
+  describe('a scan answer that arrives after the upload stopped being current', () => {
+    /** Holds the next scan request open until `serve()` answers it with 200. */
+    function holdScan() {
+      const held: { serve: () => void } = { serve: () => undefined };
+      const fallback = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+        if (url === SCAN_URL && !init?.method) {
+          return new Promise<Response>((resolve) => {
+            held.serve = () => resolve(new Response(null, { status: 200 }));
+          });
+        }
+        return fallback(url, init);
+      });
+      return held;
+    }
+
+    async function uploadAndHoldTheFirstCheck() {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
+      const held = holdScan();
+      mounted = await mountForm(picker());
+      await choose(png());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(fetchMock.mock.calls.filter(([url]) => url === SCAN_URL)).toHaveLength(1);
+      return held;
+    }
+
+    async function serveAndWait(held: { serve: () => void }) {
+      await act(async () => {
+        held.serve();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await settle();
+    }
+
+    it('does not report it after an unmount', async () => {
+      const held = await uploadAndHoldTheFirstCheck();
+      await mounted!.unmount();
+      mounted = undefined;
+      await serveAndWait(held);
+      expect(onChange.mock.calls).toEqual([[UPLOADED]]);
+    });
+
+    it('does not report it after a removal', async () => {
+      const held = await uploadAndHoldTheFirstCheck();
+      await click(byName('Remove Ada Lovelace picture'));
+      await click(byName('Remove picture'));
+      await settle();
+      expect(calls('DELETE')).toHaveLength(1);
+      await serveAndWait(held);
+      expect(onChange.mock.calls).toEqual([[UPLOADED], [null]]);
+    });
+
+    it('does not report it after a newer upload', async () => {
+      const SECOND = '99999999-8888-4777-8666-555555555555';
+      const held = await uploadAndHoldTheFirstCheck();
+      const current = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+        init?.method === 'POST'
+          ? Promise.resolve(json(200, { documentId: SECOND }))
+          : current(url, init),
+      );
+      await choose(png('second.png'));
+      expect(onChange.mock.calls).toEqual([[UPLOADED], [SECOND]]);
+      await serveAndWait(held);
+      // The second picture never passes its scan here, so its watch runs out without a second report either.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180_000);
+      });
+      expect(onChange.mock.calls).toEqual([[UPLOADED], [SECOND]]);
+    });
+  });
+
   it('stops polling when unmounted', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     resize.shrink = () => Promise.resolve(png('shrunk.png', 32));
