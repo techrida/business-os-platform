@@ -462,6 +462,8 @@ export const LeadDtoSchema = z.object({
   source: LeadSourceSchema,
   campaign: z.string().nullable(),
   ownerUserId: z.guid().nullable(),
+  /** The owner's display name (D46): name only, joined under the lead's own read permission. */
+  ownerName: z.string().nullable(),
   companyName: z.string(),
   contactName: z.string(),
   email: z.string().nullable(),
@@ -535,6 +537,8 @@ export const OpportunityDtoSchema = z.object({
   contactId: z.guid().nullable(),
   leadId: z.guid().nullable(),
   ownerUserId: z.guid().nullable(),
+  /** The owner's display name (D46). */
+  ownerName: z.string().nullable(),
   stage: OpportunityStageSchema,
   stageReason: z.string().nullable(),
   stageNote: z.string().nullable(),
@@ -630,6 +634,8 @@ export const ActivityDtoSchema = z
     quotationId: z.guid().nullable(),
     dueAt: isoDateTime.nullable(),
     assigneeUserId: z.guid().nullable(),
+    /** The assignee's display name (D46): name only, joined under the subject's own read permission. */
+    assigneeName: z.string().nullable(),
     completedAt: isoDateTime.nullable(),
     /** Set when a planned activity is cancelled. A cancelled one is neither planned nor in History. */
     cancelledAt: isoDateTime.nullable(),
@@ -637,6 +643,8 @@ export const ActivityDtoSchema = z
     planned: z.boolean(),
     /** Who logged or scheduled it; null for rows written before this was recorded. */
     createdByUserId: z.guid().nullable(),
+    /** The author's display name (D46); null when `createdByUserId` is. */
+    createdByName: z.string().nullable(),
     occurredAt: isoDateTime,
     version: z.number().int().min(1),
   })

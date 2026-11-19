@@ -22,7 +22,6 @@ import {
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
-import { userNames } from '@/lib/business-labels';
 import { auditEventLabel, toAttachmentView } from '@/lib/kernel-ui';
 import { memoDraftAccount } from '@/lib/memo-working-draft';
 
@@ -54,7 +53,7 @@ const MEMO_CONTEXT = {
   rejected: 'This memo was rejected.',
 };
 
-function Timeline({ events, people }: { events: AuditEventDto[]; people: Map<string, string> }) {
+function Timeline({ events }: { events: AuditEventDto[] }) {
   return (
     <ol className={styles.history}>
       {events.map((e) => (
@@ -62,9 +61,7 @@ function Timeline({ events, people }: { events: AuditEventDto[]; people: Map<str
           <div className={styles.eventHead}>
             <span className={styles.eventName}>{auditEventLabel(e.action)}</span>
             <span className={styles.eventMeta}>
-              {e.actorKind === 'user'
-                ? (e.actorDisplayName ?? people.get(e.actorId) ?? 'Person name unavailable')
-                : e.actorKind}
+              {e.actorKind === 'user' ? (e.actorDisplayName ?? 'Unnamed user') : e.actorKind}
             </span>
             <time className={styles.eventMeta} dateTime={e.occurredAt}>
               {when(e.occurredAt)}
@@ -88,7 +85,6 @@ export default async function MemoPage({
   const session = await requireStaffSession(path);
   const numberSystems = await getNumberSystems();
   const query = await searchParams;
-  const people = await userNames(session);
   const saved = query.saved === '1';
   const submitted =
     query.submitted === 'pending' || query.submitted === 'blocked' ? query.submitted : null;
@@ -125,8 +121,8 @@ export default async function MemoPage({
 
   // The API builds this route with the same people and the same separation-of-duties list as submit, so
   // it shows what submit will create: for an internal memo, the people the author selected, in order.
-  // `GET /v1/audit` needs `audit.read`. Without it the page asks nothing (as `userNames` does for the
-  // directory), so the API logs no 403 per view; a 403 from a grant revoked later still reads as hidden.
+  // `GET /v1/audit` needs `audit.read`. Without it the page asks nothing (as the directory
+  // lookup once did), so the API logs no 403 per view; a 403 from a grant revoked later still reads as hidden.
   const mayReadAudit = hasPermission(session.roles, 'audit.read');
   const entityIds = mayReadAudit
     ? [memo.id, ...(memo.approval ? [memo.approval.requestId] : [])]
@@ -145,7 +141,7 @@ export default async function MemoPage({
   const stages = request
     ? approvalStages(
         request.steps,
-        people,
+        new Map(request.people?.map((p) => [p.userId, p.name]) ?? []),
         memo.template ? [...memo.template.recommenders, memo.template.approvedBy] : [],
       )
     : [];
@@ -410,7 +406,7 @@ export default async function MemoPage({
             ) : events.length === 0 ? (
               <p className={styles.note}>No events recorded yet.</p>
             ) : (
-              <Timeline events={events} people={people} />
+              <Timeline events={events} />
             )}
           </Panel>
         </div>
