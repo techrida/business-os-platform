@@ -53,6 +53,7 @@ export const ENDPOINTS = {
   // (proto/zitadel/management.proto): GET = GetLoginPolicy (effective policy; `isDefault` true means
   // inherited from the instance), POST = AddCustomLoginPolicy, PUT = UpdateCustomLoginPolicy.
   orgLoginPolicy: '/management/v1/policies/login',
+  instanceLoginPolicy: '/admin/v1/policies/login',
 
   // admin v1 (REST): `AddSMTPConfig` is deprecated in favour of the email-provider endpoints.
   listEmailProviders: '/admin/v1/email/_search',
@@ -225,6 +226,7 @@ export interface ZitadelApi {
    * custom org policy when the org inherits the instance default. Returns true when it changed
    * something, false when self-registration was already off (nothing is written then).
    */
+  ensureInstancePasswordReset(): Promise<boolean>;
   ensureStaffLoginPolicy(orgId: string): Promise<boolean>;
 
   /** Returns true when a provider was created (false: already present). */
@@ -341,6 +343,19 @@ const CARRY_OVER = [
   'disableLoginWithPhone',
   'forceMfaLocalOnly',
 ] as const;
+function loginPolicyWithPrivateReset(
+  policy: z.infer<typeof LoginPolicyResponse>['policy'],
+  allowRegister: boolean,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    allowRegister,
+    hidePasswordReset: false,
+    ignoreUnknownUsernames: true,
+  };
+  for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+  return body;
+}
+
 const TokenResponse = z.object({ access_token: Str.min(1) });
 
 function parse<S extends z.ZodType>(schema: S, data: unknown, what: string): z.infer<S> {
@@ -685,6 +700,21 @@ export class ZitadelClient implements ZitadelApi {
     );
   }
 
+  async ensureInstancePasswordReset(): Promise<boolean> {
+    const { policy } = parse(
+      LoginPolicyResponse,
+      await this.transport.get(ENDPOINTS.instanceLoginPolicy),
+      'Get instance login policy',
+    );
+    if (!policy.hidePasswordReset && policy.ignoreUnknownUsernames) return false;
+
+    await this.transport.put(
+      ENDPOINTS.instanceLoginPolicy,
+      loginPolicyWithPrivateReset(policy, policy.allowRegister),
+    );
+    return true;
+  }
+
   async ensureStaffLoginPolicy(orgId: string): Promise<boolean> {
     const asOrg = { 'x-zitadel-orgid': orgId };
     const current = parse(
@@ -697,12 +727,7 @@ export class ZitadelClient implements ZitadelApi {
       return false;
     }
 
-    const body: Record<string, unknown> = {
-      allowRegister: false,
-      hidePasswordReset: false,
-      ignoreUnknownUsernames: true,
-    };
-    for (const key of CARRY_OVER) if (policy[key] !== undefined) body[key] = policy[key];
+    const body = loginPolicyWithPrivateReset(policy, false);
 
     if (policy.isDefault || current.isDefault) {
       // Inherited from the instance: create the org's own policy, starting from the same settings.
