@@ -373,6 +373,7 @@ export class Session {
         this.log(`    (element not hydrated after ${timeout / 1000} s [${state}]; continuing)`);
         return;
       }
+      await this.assetsServed(el.page());
       this.log(`    (page ${state} after ${timeout / 1000} s, reloading: ${locator})`);
       await el
         .page()
@@ -382,6 +383,38 @@ export class Session {
     throw new StepFailure(
       `The page never became interactive (React did not hydrate ${locator}) after four reloads`,
     );
+  }
+
+  /**
+   * After a restart the dev server answers 502 for script chunks and stylesheets while it
+   * recompiles, sometimes for minutes; a reload in that window fails the same way. Wait until the
+   * page's own /_next/ assets answer 200 again (plain GETs), up to three minutes.
+   */
+  async assetsServed(page, budgetMs = 180000) {
+    const until = Date.now() + budgetMs;
+    for (;;) {
+      const bad = await page
+        .evaluate(async () => {
+          const urls = [
+            ...[...document.querySelectorAll('script[src*="/_next/"]')].map((e) => e.src),
+            ...[...document.querySelectorAll('link[rel="stylesheet"][href*="/_next/"]')].map(
+              (e) => e.href,
+            ),
+          ];
+          const codes = await Promise.all(
+            urls.map((u) =>
+              fetch(u, { cache: 'no-store' })
+                .then((r) => r.status)
+                .catch(() => 0),
+            ),
+          );
+          return codes.filter((c) => c !== 200).length;
+        })
+        .catch(() => -1);
+      if (bad === 0 || bad === -1 || Date.now() > until) return;
+      this.log(`    (dev server still failing ${bad} asset(s); waiting before the reload)`);
+      await sleep(10000);
+    }
   }
 
   async click(locator, what) {
