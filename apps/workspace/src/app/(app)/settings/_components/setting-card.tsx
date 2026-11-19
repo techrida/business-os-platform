@@ -107,6 +107,7 @@ export function SettingCard({
                 label={f.label}
                 isDefault={f.isDefault}
                 defaultText={f.defaultText}
+                loadedVersion={f.version}
               />
             </div>
           ))}

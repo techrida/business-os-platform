@@ -16,6 +16,7 @@ const vat = (isDefault: boolean): FieldSpec => ({
   label: 'Default VAT rate (%)',
   kind: 'percent',
   current: isDefault ? '13' : '10',
+  version: isDefault ? null : 4,
   defaultText: '13',
   isDefault,
 });
@@ -25,6 +26,7 @@ const prefix = (isDefault: boolean): FieldSpec => ({
   label: 'Memo number prefix',
   kind: 'prefix',
   current: isDefault ? 'MEMO' : 'DOC',
+  version: isDefault ? null : 2,
   defaultText: 'MEMO',
   isDefault,
 });

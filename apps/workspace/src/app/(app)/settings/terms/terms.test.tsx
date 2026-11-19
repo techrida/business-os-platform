@@ -28,9 +28,20 @@ const api = vi.hoisted(() => ({
   deleteTermPreset: vi.fn(),
 }));
 vi.mock('@/lib/api-term-presets', () => api);
-const putSetting = vi.fn<(session: Session, key: string, value: unknown) => Promise<unknown>>();
+const putSetting =
+  vi.fn<
+    (
+      session: Session,
+      key: string,
+      value: unknown,
+      expectedVersion?: number | null,
+    ) => Promise<unknown>
+  >();
+const getSetting = vi.fn<(session: Session, key: string) => Promise<unknown>>();
 vi.mock('@/lib/api-admin', () => ({
-  putSetting: (session: Session, key: string, value: unknown) => putSetting(session, key, value),
+  putSetting: (session: Session, key: string, value: unknown, expectedVersion?: number | null) =>
+    putSetting(session, key, value, expectedVersion),
+  getSetting: (session: Session, key: string) => getSetting(session, key),
 }));
 
 const { default: TermsPage } = await import('./page');
@@ -54,6 +65,8 @@ beforeEach(() => {
   getSession.mockReset();
   putSetting.mockReset();
   putSetting.mockResolvedValue({ version: 2 });
+  getSetting.mockReset();
+  getSetting.mockResolvedValue({ key: 'quotation.term_presets', value: [], version: 3 });
 });
 
 describe('the Saved terms page', () => {
@@ -125,6 +138,15 @@ describe('the Saved terms page', () => {
     expect(renderToStaticMarkup((await TermsPage()) as ReactElement)).toContain(
       'aria-label="Reset all term sets to default"',
     );
+  });
+
+  it('keeps the list but offers no reset when the saved version cannot be read', async () => {
+    getSession.mockResolvedValue(session(['founder']));
+    getSetting.mockRejectedValue(new ApiError(403, 'no'));
+    api.listTermPresets.mockResolvedValue([...DEFAULT_TERM_PRESETS, preset]);
+    const html = renderToStaticMarkup((await TermsPage()) as ReactElement);
+    expect(html).toContain('aria-label="Edit Standard build"');
+    expect(html).not.toContain('Reset all term sets to default');
   });
 
   it('shows the empty state with Add term set when nothing is saved', async () => {
@@ -286,7 +308,7 @@ describe('removePresetAction', () => {
 describe('resetting every term set to the app defaults', () => {
   it('writes exactly DEFAULT_TERM_PRESETS to quotation.term_presets for a founder and refreshes the page', async () => {
     getSession.mockResolvedValue(session(['founder']));
-    expect(await resetSettingAction('terms', 'quotation.term_presets')).toMatchObject({
+    expect(await resetSettingAction('terms', 'quotation.term_presets', 3)).toMatchObject({
       status: 'ok',
     });
     expect(putSetting).toHaveBeenCalledTimes(1);
@@ -294,6 +316,7 @@ describe('resetting every term set to the app defaults', () => {
       expect.anything(),
       'quotation.term_presets',
       DEFAULT_TERM_PRESETS,
+      3,
     );
     expect(SETTING_DEFAULTS['quotation.term_presets']).toBe(DEFAULT_TERM_PRESETS);
     expect(revalidatePath).toHaveBeenCalledWith('/settings/terms');
@@ -301,11 +324,11 @@ describe('resetting every term set to the app defaults', () => {
 
   it('refuses a person without the terms permission before any write', async () => {
     getSession.mockResolvedValue(session(['sales']));
-    await expect(resetSettingAction('terms', 'quotation.term_presets')).rejects.toThrow(
+    await expect(resetSettingAction('terms', 'quotation.term_presets', 3)).rejects.toThrow(
       'REDIRECT:/settings/denied',
     );
     getSession.mockResolvedValue(null);
-    await expect(resetSettingAction('terms', 'quotation.term_presets')).rejects.toThrow(
+    await expect(resetSettingAction('terms', 'quotation.term_presets', 3)).rejects.toThrow(
       'REDIRECT:',
     );
     expect(putSetting).not.toHaveBeenCalled();
@@ -313,7 +336,7 @@ describe('resetting every term set to the app defaults', () => {
 
   it('writes no other setting through the terms section', async () => {
     getSession.mockResolvedValue(session(['founder']));
-    expect(await resetSettingAction('terms', 'tax.vat_rate')).toMatchObject({ status: 'error' });
+    expect(await resetSettingAction('terms', 'tax.vat_rate', 3)).toMatchObject({ status: 'error' });
     expect(putSetting).not.toHaveBeenCalled();
   });
 });

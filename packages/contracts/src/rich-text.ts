@@ -143,6 +143,7 @@ export function sanitizeRichText(input: string): string {
   const starts: number[] = [];
   const hasContent: boolean[] = [];
   let listDepth = 0;
+  let skippedLists = 0;
   let dropUntil: string | null = null;
   let dropDepth = 0;
 
@@ -228,7 +229,11 @@ export function sanitizeRichText(input: string): string {
         continue;
       }
       if (name === 'ul' || name === 'ol') {
-        if (listDepth >= MAX_LIST_DEPTH) continue;
+        if (listDepth >= MAX_LIST_DEPTH) {
+          // Too deep: the list is flattened into its parent, so its close tag must be skipped too.
+          skippedLists += 1;
+          continue;
+        }
         if (top() === 'p') closeParagraph();
         if (top() === 'ul' || top() === 'ol') openEl('li');
         openEl(name);
@@ -254,6 +259,10 @@ export function sanitizeRichText(input: string): string {
     // A closing tag.
     if (BLOCK_ALIASES.has(name)) {
       if (!stack.includes('li')) while (stack.length > 0) closeTop();
+      continue;
+    }
+    if ((name === 'ul' || name === 'ol') && skippedLists > 0) {
+      skippedLists -= 1;
       continue;
     }
     if (name === 'p' && stack.includes('li')) continue;

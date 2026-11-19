@@ -15,6 +15,7 @@ const props = {
   settingKey: 'tax.vat_rate',
   label: 'Default VAT rate (%)',
   defaultText: '13',
+  loadedVersion: 4,
 } as const;
 
 describe('ResetToDefaultButton', () => {
