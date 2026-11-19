@@ -20,9 +20,12 @@ describe('readStatusFilter', () => {
 
   it('treats status=all as every status, distinct from no param', () => {
     expect(readStatusFilter('all')).toEqual({ status: [], all: true, isDefault: false });
-    expect(readStatusFilter(['submitted', 'all'])).toEqual({
-      status: [],
-      all: true,
+  });
+
+  it('lets a chosen status beat a leftover all from a no-JavaScript submit', () => {
+    expect(readStatusFilter(['all', 'submitted'])).toEqual({
+      status: ['submitted'],
+      all: false,
       isDefault: false,
     });
   });

@@ -19,8 +19,11 @@ export interface StatusFilter {
 
 export function readStatusFilter(raw: string | string[] | undefined): StatusFilter {
   const values = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
-  if (values.includes(ALL_STATUSES)) return { status: [], all: true, isDefault: false };
   const status = parseStatusFilters(raw);
+  // A chosen status beats a leftover `all` (a no-JavaScript submit sends both).
+  if (values.includes(ALL_STATUSES) && status.length === 0) {
+    return { status: [], all: true, isDefault: false };
+  }
   return status.length > 0
     ? { status, all: false, isDefault: false }
     : { status: [...DEFAULT_STATUSES], all: false, isDefault: true };
