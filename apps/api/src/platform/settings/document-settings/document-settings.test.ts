@@ -14,6 +14,7 @@ import {
   type Permission,
   type RoleKey,
   type TermPreset,
+  EMPTY_COMPANY_PROFILE,
 } from '@bos/contracts';
 import {
   BadRequestException,
@@ -88,6 +89,7 @@ function fakeSettings(
   const service = {
     get: vi.fn((_scope: unknown, key: string) => {
       calls.push(`get:${key}`);
+      if (key === 'entity.profile') return Promise.resolve(structuredClone(EMPTY_COMPANY_PROFILE));
       return Promise.resolve(
         key === 'format.number_system' ? numberSystem : structuredClone(state.list),
       );
@@ -411,6 +413,7 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
   }
 
   const writes = [
+    ['POST admin/settings/documents/preview', proto.preview],
     ['POST admin/term-presets', proto.create],
     ['PATCH admin/term-presets/:id', proto.update],
     ['DELETE admin/term-presets/:id', proto.remove],
@@ -491,5 +494,36 @@ describe('route guards (what the tenancy interceptor enforces before a handler r
     expect(service.create).toHaveBeenCalledWith({ a: 1 });
     expect(service.update).toHaveBeenCalledWith(ID_A, { b: 2 });
     expect(service.remove).toHaveBeenCalledWith(ID_A);
+  });
+});
+
+describe('POST admin/settings/documents/preview', () => {
+  it('draws the sample quotation in the chosen layout and colour for the founder', async () => {
+    const { documentSettings } = build([], 'international');
+    const { html } = await documentSettings.previewDocument({
+      layout: 'ledger',
+      primaryColour: '#BE123C',
+    });
+    expect(html).toContain('#be123c');
+    expect(html).toContain('Quotation');
+    expect(html).toContain('Million');
+  });
+
+  it('refuses anyone without admin.settings.write', async () => {
+    currentPrincipal = principalOf('sales');
+    const { documentSettings } = build();
+    await expect(
+      documentSettings.previewDocument({ layout: 'banded', primaryColour: '#1d4ed8' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses a bad colour or an unknown layout with 400', async () => {
+    const { documentSettings } = build();
+    await expect(
+      documentSettings.previewDocument({ layout: 'banded', primaryColour: 'red' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      documentSettings.previewDocument({ layout: 'nope', primaryColour: '#1d4ed8' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

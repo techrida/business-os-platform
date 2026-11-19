@@ -28,6 +28,14 @@ export class DocumentSettingsController {
     return this.documentSettings.list(query);
   }
 
+  /** `{ html }` of a sample quotation in the given layout and colour (Settings thumbnails). */
+  @Post('admin/settings/documents/preview')
+  @HttpCode(200)
+  @Can('admin.settings.write')
+  preview(@Body() body: unknown): Promise<{ html: string }> {
+    return this.documentSettings.previewDocument(body);
+  }
+
   /** 201 with the new preset (the server generates the id). 409 when the name is taken within the kind. */
   @Post('admin/term-presets')
   @HttpCode(201)
