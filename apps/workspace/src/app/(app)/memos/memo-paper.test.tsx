@@ -44,7 +44,7 @@ const bandOf = (html: string) => /<header[\s\S]*?<\/header>/.exec(html)?.[0] ?? 
 const styleWith = (prop: string, value: string) => `${prop}:${value}`;
 
 describe('the memo letterhead band', () => {
-  it('shows the large Memo title, the company, its address lines and the department', () => {
+  it('shows the large Memo title, then the company, the department and its address lines', () => {
     const band = bandOf(render({ ...stored, letterhead }));
     expect(band).toContain('>Memo</p>');
     expect(band).not.toContain('(MEMO)');
@@ -52,8 +52,13 @@ describe('the memo letterhead band', () => {
     expect(band).toContain('Kupondole, Lalitpur');
     expect(band).toContain('Bagmati, Nepal 44600');
     expect(band).toContain('General');
-    // The department comes after the company block's address, not before it.
-    expect(band.indexOf('General')).toBeGreaterThan(band.indexOf('Bagmati, Nepal 44600'));
+    // The PDF's order: company name, department, then the address lines.
+    const name = band.indexOf('Techrida Pvt. Ltd.');
+    const department = band.indexOf('General');
+    const firstLine = band.indexOf('Kupondole, Lalitpur');
+    expect(department).toBeGreaterThan(name);
+    expect(firstLine).toBeGreaterThan(department);
+    expect(band.indexOf('Bagmati, Nepal 44600')).toBeGreaterThan(firstLine);
   });
 
   it('draws the logo with the company name as its text alternative', () => {
