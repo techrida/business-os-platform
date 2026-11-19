@@ -253,10 +253,10 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     const env = await createSeededEnv();
     const initial = await env.service.getCatalogue(env.scope);
 
-    // Give pmo crm.lead.write = 'own' (no confirm warning: pmo has 0 active people, not 'all').
+    // Give pmo crm.lead.write = 'department' (differs from the default 'own'; no confirm warning: not 'all').
     const afterEdit = await env.service.save(env.scope, userActor(env.founderId), {
       expectedRevision: initial.revision,
-      changes: [{ kind: 'grant', role: 'pmo', permission: 'crm.lead.write', scope: 'own' }],
+      changes: [{ kind: 'grant', role: 'pmo', permission: 'crm.lead.write', scope: 'department' }],
       note: 'Allow PMO to update their own leads',
       acknowledged: [],
     });
@@ -279,7 +279,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     expect(edited).toEqual({
       roleKey: 'pmo',
       permission: 'crm.lead.write',
-      scope: 'own',
+      scope: 'department',
       seeded: false,
     });
     const untouched = rpRes.rows.find(
@@ -456,6 +456,7 @@ describe('AccessSettingsService integration (real Postgres)', () => {
     });
     expect(afterAck.revision).toBe('1');
     const auditAfterAck = await env.audit.list(env.scope, { limit: 100 });
+    console.log('DEBUG-AUDIT', JSON.stringify(auditAfterAck.map((e) => [e.action, e.meta])));
     const grantEvt = auditAfterAck.find((e) => e.action === 'access.grant.changed');
     expect(grantEvt?.meta).toMatchObject({ acknowledged: ['W4'], note: 'Small team override' });
 
