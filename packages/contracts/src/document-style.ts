@@ -19,7 +19,7 @@ export type DocumentLayout = z.infer<typeof DocumentLayoutSchema>;
 export const DOCUMENT_LAYOUT_LABELS: Record<DocumentLayout, { name: string; hint: string }> = {
   banded: { name: 'Banded', hint: 'Colour band across the top, details beside the client' },
   'duo-cards': { name: 'Two cards', hint: 'From and To in side-by-side cards' },
-  ledger: { name: 'Ledger', hint: 'Bordered table with a discount column' },
+  ledger: { name: 'Ledger', hint: 'Bordered table with boxed totals' },
   'side-labels': { name: 'Side labels', hint: 'Labelled blocks down the left edge' },
   tinted: { name: 'Tinted header', hint: 'Soft tinted header and totals' },
 };

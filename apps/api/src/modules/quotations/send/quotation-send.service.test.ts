@@ -47,6 +47,7 @@ const SCOPE = { tenantId: TENANT, organizationId: ORG };
 const ACTOR = { kind: 'user' as const, id: CALLER };
 
 const versionRow = (over: Partial<QuotationVersionRow> = {}): QuotationVersionRow => ({
+  documentStyle: null,
   id: VID,
   tenantId: TENANT,
   organizationId: ORG,
