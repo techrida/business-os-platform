@@ -1,11 +1,20 @@
 // The things every step does through the real UI: captions, navigation that survives the dev
 // server compiling a route, the Dev account switcher, custom dropdowns, typeahead pickers and
 // native file choosers. Workflows call these instead of raw Playwright where a pattern repeats.
-/* global window, document, getComputedStyle, CSSStyleSheet -- referenced inside page.evaluate callbacks, which run in the browser */
-import { createHmac } from 'node:crypto';
+/* global window, document, getComputedStyle -- referenced inside page.evaluate callbacks, which run in the browser */
 import { readFileSync } from 'node:fs';
 
-import { redactText, redactUrl } from './redact.mjs';
+import { configuredOrigins, OriginError, originAllowed, requireOrigin } from './origins.mjs';
+import {
+  redactText,
+  redactUrl,
+  registerCode,
+  registerSecret,
+  registerTotpSecret,
+} from './redact.mjs';
+import { totp } from './totp.mjs';
+
+export { totp };
 
 // The app's route error panel ("This page/sales order/… did not open") or a raw server error.
 const BROKEN_PAGE = /\bdid not open\b|Application error|Internal Server Error/;
@@ -13,6 +22,22 @@ const BROKEN_PAGE = /\bdid not open\b|Application error|Internal Server Error/;
 export class StepFailure extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A wait that ends (rejecting with the abort reason) when `signal` aborts. */
+export function abortableSleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Overlay drawn in the recorded page only. pointer-events:none keeps it out of hit testing, so it
@@ -60,6 +85,12 @@ export class Session {
     this.findings = [];
     this.persona = null;
     this.consoleErrors = [];
+    // Aborted when the step runs out of time: Node-side waits (Mailpit polling, pauses) end with it.
+    this.controller = new AbortController();
+    this.signal = this.controller.signal;
+    // Called after every record() so state.json follows each server-side change (the runner sets it).
+    this.persist = null;
+    this.blockedUrls = new Set();
   }
 
   /**
@@ -77,6 +108,39 @@ export class Session {
 
   guard() {
     if (this.abortReason) throw new StepFailure(`Stopped: ${this.abortReason}`);
+  }
+
+  /**
+   * Requests (and WebSockets) to any origin outside APP/PORTAL/MAIL/AUTH are aborted in the browser
+   * and reported as a finding of the current step (URL without its query). Installed on every
+   * context before its first page opens. Session.abort's later route runs before this one.
+   */
+  async guardContext(context) {
+    const allowed = configuredOrigins(this.cfg);
+    await context.route('**/*', (route) => {
+      const url = route.request().url();
+      if (originAllowed(url, allowed)) return route.continue();
+      this.blocked(url);
+      return route.abort('blockedbyclient');
+    });
+    await context.routeWebSocket(/.*/, (ws) => {
+      if (originAllowed(ws.url(), allowed)) ws.connectToServer();
+      else {
+        this.blocked(ws.url());
+        ws.close().catch(() => {});
+      }
+    });
+  }
+
+  blocked(url) {
+    const clean = redactUrl(url);
+    if (this.blockedUrls.has(clean)) return;
+    this.blockedUrls.add(clean);
+    this.findings.push({
+      severity: 'high',
+      text: `Blocked a request outside the configured origins: ${clean}`,
+    });
+    this.log(`  ! blocked a request outside the configured origins: ${clean}`);
   }
 
   watch(page) {
@@ -104,10 +168,11 @@ export class Session {
   static async open({ context, cfg, state, log }) {
     const store = { text: '' };
     await Session.prepareContext(context, cfg, store);
-    const page = await context.newPage();
-    const session = new Session({ context, page, cfg, state, log });
+    const session = new Session({ context, page: null, cfg, state, log });
+    await session.guardContext(context);
+    session.page = await context.newPage();
     session._captionStore = store;
-    session.watch(page);
+    session.watch(session.page);
     return session;
   }
 
@@ -130,6 +195,7 @@ export class Session {
     context.setDefaultTimeout(this.cfg.actionTimeout);
     context.setDefaultNavigationTimeout(this.cfg.navTimeout);
     await Session.prepareContext(context, this.cfg, this._captionStore);
+    await this.guardContext(context);
     const page = this.watch(await context.newPage());
     this.extraContexts = [...(this.extraContexts ?? []), { name, context, pages: [page] }];
     this.windows = [...(this.windows ?? []), context];
@@ -137,7 +203,8 @@ export class Session {
   }
 
   // ---- captions -------------------------------------------------------------------------------
-  async caption(text) {
+  async caption(raw) {
+    const text = redactText(raw);
     this.captionText = text;
     if (this._captionStore) this._captionStore.text = text;
     this.log(`  · ${text}`);
@@ -253,7 +320,7 @@ export class Session {
    * screen triggers up to three reloads, 15 s apart.
    */
   async goto(url, ready, { page = this.page, attempts = 4 } = {}) {
-    const full = url.startsWith('http') ? url : this.cfg.appUrl + url;
+    const full = this.resolve(url);
     let lastError = '';
     for (let i = 1; i <= attempts; i++) {
       this.guard();
@@ -270,6 +337,21 @@ export class Session {
       }
     }
     throw new StepFailure(`Page ${full} did not become ready: ${lastError}`);
+  }
+
+  /**
+   * A path is resolved on APP_URL; an absolute URL must be on one of the configured origins
+   * (APP, PORTAL, MAIL, AUTH), anything else fails the step before the browser goes there.
+   */
+  resolve(url) {
+    const full = new URL(String(url), this.cfg.appUrl).href;
+    try {
+      requireOrigin(full, configuredOrigins(this.cfg), 'Navigation');
+    } catch (error) {
+      if (error instanceof OriginError) throw new StepFailure(error.message);
+      throw error;
+    }
+    return full;
   }
 
   async waitReady(ready, page = this.page) {
@@ -569,13 +651,22 @@ export class Session {
   }
 
   async pause(ms = this.cfg.pace) {
-    if (ms > 0) await sleep(ms);
+    if (ms > 0) await abortableSleep(ms, this.signal);
   }
 }
 
 // ---- real sign-in (password + one-time code), used for the portal and the private-window check --
+/**
+ * One persona from PERSONAS_FILE. Every persona's password and TOTP secret in the file is
+ * registered with the redactor first, so no console line or result can carry one. Values are
+ * never logged.
+ */
 export function readPersona(file, key) {
   const list = JSON.parse(readFileSync(file, 'utf8'));
+  for (const r of list) {
+    registerSecret(r.password);
+    registerTotpSecret(r.totpSecret);
+  }
   const p = list.find((r) => r.key === key);
   if (!p)
     throw new StepFailure(
@@ -584,90 +675,148 @@ export function readPersona(file, key) {
   return p;
 }
 
-export function totp(secret, now = Date.now()) {
-  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = '';
-  for (const ch of secret.replace(/[\s=]/g, '').toUpperCase())
-    bits += A.indexOf(ch).toString(2).padStart(5, '0');
-  const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
-  const ctr = Buffer.alloc(8);
-  ctr.writeBigUInt64BE(BigInt(Math.floor(now / 30000)));
-  const h = createHmac('sha1', key).update(ctr).digest();
-  const o = h[h.length - 1] & 15;
-  return String((h.readUInt32BE(o) & 0x7fffffff) % 1_000_000).padStart(6, '0');
+// The sign-in page draws the one-time code twice: in the (transparent) input, and digit by digit in
+// the visible boxes of the code widget (`.bos-otp-slot` inside input-otp's container). Both are
+// made invisible in every document of the sign-in window, before the first page loads, so a code is
+// never legible in the video or a failure screenshot.
+export const LOGIN_MASK_CSS = [
+  'input[name=code],input[autocomplete=one-time-code]{-webkit-text-security:disc!important;' +
+    'color:transparent!important;-webkit-text-fill-color:transparent!important;caret-color:transparent!important}',
+  '.bos-otp-slots,.bos-otp-slots *,[data-input-otp-container],[data-input-otp-container] *' +
+    '{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}',
+].join('\n');
+
+// A constructed stylesheet is CSSOM, which the login page's Content-Security-Policy does not block.
+const LOGIN_MASK_SCRIPT = `(() => {
+  const apply = () => {
+    if (window.__manualRunMasked) return;
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(${JSON.stringify(LOGIN_MASK_CSS)});
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      window.__manualRunMasked = true;
+    } catch (e) {}
+  };
+  apply();
+  document.addEventListener('DOMContentLoaded', apply);
+})();`;
+
+/**
+ * Counts (no values) of the code input and the code boxes, and how many of each are masked. The
+ * step refuses to type the code unless there is at least one of each and all are masked.
+ */
+async function maskState(page) {
+  await page.evaluate(LOGIN_MASK_SCRIPT).catch(() => {});
+  return page.evaluate(() => {
+    const hidden = (el) => {
+      const cs = getComputedStyle(el);
+      const clear = (c) => c === 'transparent' || c === 'rgba(0, 0, 0, 0)';
+      return clear(cs.color) && clear(cs.getPropertyValue('-webkit-text-fill-color'));
+    };
+    const inputs = [
+      ...document.querySelectorAll('input[name=code],input[autocomplete=one-time-code]'),
+    ];
+    const boxes = [...document.querySelectorAll('.bos-otp-slot,[data-input-otp-container] span')];
+    return {
+      inputs: inputs.length,
+      inputsMasked: inputs.filter(
+        (el) =>
+          getComputedStyle(el).getPropertyValue('-webkit-text-security') === 'disc' && hidden(el),
+      ).length,
+      boxes: boxes.length,
+      boxesMasked: boxes.filter(hidden).length,
+    };
+  });
 }
 
 /**
- * Draws the one-time code as dots so it is never legible in the video or a failure screenshot.
- * A constructed stylesheet (kept across re-renders) plus an inline style; both are CSSOM, which
- * the login page's Content-Security-Policy does not block. Refuses to continue if neither applies.
+ * Types the login into the stack's own sign-in form: login name, password, then a one-time code.
+ * Before each value is typed the page must be on AUTH_URL's origin exactly; otherwise nothing is
+ * typed. Errors are generic: a Playwright error can quote the typed value, so its message and call
+ * log never leave this function.
  */
-async function maskInput(session, input) {
-  const how = await input.evaluate((el) => {
-    const css = 'input[name=code]{-webkit-text-security:disc!important}';
-    try {
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync(css);
-      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-    } catch {
-      // the inline style below still applies
-    }
-    el.style.setProperty('-webkit-text-security', 'disc', 'important');
-    if (getComputedStyle(el).getPropertyValue('-webkit-text-security') === 'disc') return 'disc';
-    // Fallback: invisible text.
-    el.style.setProperty('color', 'transparent', 'important');
-    el.style.setProperty('text-shadow', 'none', 'important');
-    return getComputedStyle(el).color === 'rgba(0, 0, 0, 0)' ? 'transparent' : 'none';
-  });
-  if (how === 'none')
-    throw new StepFailure('Could not mask the one-time code input; not typing it on video');
-  session.checks.push(`one-time code input masked (${how}) before typing`);
-}
-
-/** Types the login into ZITADEL's own form. Values are never logged. */
 export async function realLogin(session, page, key, startUrl) {
-  const p = readPersona(session.cfg.personasFile, key);
-  const host = new URL(startUrl).host;
-  await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
-  const loginName = page.locator('input[name=loginName]');
-  await loginName.waitFor({ state: 'visible', timeout: session.cfg.navTimeout });
-  const cont = page.locator('button[type=submit]', { hasText: 'Continue' });
-  // The login app is a React page too: a value typed before it hydrates leaves Continue disabled.
-  const fillUntilEnabled = async (field, value) => {
-    for (let i = 0; i < 4; i++) {
-      await field.fill('');
-      await field.pressSequentially(value, { delay: 20 });
-      await cont.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
-      for (let t = 0; t < 12; t++) {
-        if (await cont.isEnabled().catch(() => false)) return;
-        await sleep(500);
+  const cfg = session.cfg;
+  const p = readPersona(cfg.personasFile, key);
+  const loginOrigins = [cfg.authUrl];
+  let stage = 'open the sign-in page';
+  const onLoginPage = (what) => requireOrigin(page.url(), loginOrigins, `Before typing ${what}`);
+  try {
+    const appOrigin = requireOrigin(startUrl, configuredOrigins(cfg), 'Sign-in start');
+    await page.context().addInitScript(LOGIN_MASK_SCRIPT);
+    await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
+    stage = 'reach the login name field';
+    const loginName = page.locator('input[name=loginName]');
+    await loginName.waitFor({ state: 'visible', timeout: cfg.navTimeout });
+    const cont = page.locator('button[type=submit]', { hasText: 'Continue' });
+    // The login app is a React page too: a value typed before it hydrates leaves Continue disabled.
+    const fillUntilEnabled = async (field, value, what) => {
+      for (let i = 0; i < 4; i++) {
+        session.guard();
+        onLoginPage(what);
+        await field.fill('');
+        await field.pressSequentially(value, { delay: 20 });
+        await cont.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+        for (let t = 0; t < 12; t++) {
+          if (await cont.isEnabled().catch(() => false)) return;
+          await sleep(500);
+        }
+        await sleep(3000);
       }
-      await sleep(3000);
+    };
+    stage = 'type the login name';
+    await fillUntilEnabled(loginName, p.preferredLoginName || p.username, 'the login name');
+    await cont.click();
+    stage = 'reach the password field';
+    const pw = page.locator('input[type=password]');
+    await pw.waitFor({ state: 'visible' });
+    stage = 'type the password';
+    await fillUntilEnabled(pw, p.password, 'the password');
+    await cont.click();
+    if (p.totpSecret) {
+      stage = 'reach the one-time code field';
+      const code = page.locator('input[name=code]');
+      await code.waitFor({ state: 'visible', timeout: 60000 });
+      stage = 'mask the one-time code';
+      const m = await maskState(page);
+      if (!m.inputs || !m.boxes || m.inputsMasked !== m.inputs || m.boxesMasked !== m.boxes)
+        throw new StepFailure(
+          `Could not mask the one-time code (input ${m.inputsMasked}/${m.inputs}, boxes ` +
+            `${m.boxesMasked}/${m.boxes}); not typing it on video`,
+        );
+      session.checks.push(
+        `one-time code masked before typing (input ${m.inputsMasked}/${m.inputs}, boxes ${m.boxesMasked}/${m.boxes})`,
+      );
+      const left = 30 - (Math.floor(Date.now() / 1000) % 30);
+      if (left < 5) await sleep((left + 1) * 1000);
+      stage = 'type the one-time code';
+      session.guard();
+      onLoginPage('the one-time code');
+      const value = totp(p.totpSecret);
+      registerCode(value);
+      session.log(`  · typing the one-time code (masked) at ${new Date().toISOString()}`);
+      await code.fill(value);
+      const moved = await page
+        .waitForURL((u) => new URL(u).origin === appOrigin, { timeout: 15000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!moved) {
+        const b = page.locator('button[type=submit]', { hasText: 'Continue' });
+        if (await b.isVisible().catch(() => false)) await b.click().catch(() => {});
+      }
     }
-  };
-  await fillUntilEnabled(loginName, p.preferredLoginName || p.username);
-  await cont.click();
-  const pw = page.locator('input[type=password]');
-  await pw.waitFor({ state: 'visible' });
-  await fillUntilEnabled(pw, p.password);
-  await cont.click();
-  if (p.totpSecret) {
-    const code = page.locator('input[name=code]');
-    await code.waitFor({ state: 'visible', timeout: 60000 });
-    await maskInput(session, code);
-    const left = 30 - (Math.floor(Date.now() / 1000) % 30);
-    if (left < 5) await sleep((left + 1) * 1000);
-    await code.fill(totp(p.totpSecret));
-    const moved = await page
-      .waitForURL((u) => new URL(u).host === host, { timeout: 15000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!moved) {
-      const b = page.locator('button[type=submit]', { hasText: 'Continue' });
-      if (await b.isVisible().catch(() => false)) await b.click().catch(() => {});
-    }
+    stage = 'return to the app';
+    await page.waitForURL(
+      (u) => new URL(u).origin === appOrigin && !/\/auth\//.test(new URL(u).pathname),
+      { timeout: cfg.navTimeout },
+    );
+  } catch (error) {
+    if (session.abortReason) throw new StepFailure(`Stopped: ${session.abortReason}`);
+    if (error instanceof StepFailure || error instanceof OriginError)
+      throw new StepFailure(redactText(error.message));
+    throw new StepFailure(
+      `Real sign-in failed while trying to ${stage} (${error?.name === 'TimeoutError' ? 'timed out' : 'a browser action failed'}). ` +
+        'The browser error is withheld because it can quote typed credentials.',
+    );
   }
-  await page.waitForURL((u) => new URL(u).host === host && !/\/auth\//.test(new URL(u).pathname), {
-    timeout: session.cfg.navTimeout,
-  });
 }

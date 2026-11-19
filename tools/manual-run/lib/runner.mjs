@@ -19,9 +19,7 @@ import {
 const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export function origins(cfg) {
-  return [cfg.appUrl, cfg.portalUrl, cfg.mailUrl, cfg.authUrl];
-}
+export const origins = configuredOrigins;
 
 const ORIGIN_KEYS = { app: 'appUrl', portal: 'portalUrl', mail: 'mailUrl', auth: 'authUrl' };
 
