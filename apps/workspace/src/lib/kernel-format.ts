@@ -116,7 +116,7 @@ const referenceKeys = new Set([
 function snapshotValue(value: unknown, references: ReadonlyMap<string, string>): unknown {
   if (Array.isArray(value)) return value.map((item) => snapshotValue(item, references));
   if (typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) {
-    return references.get(value) ?? 'Name unavailable';
+    return references.get(value.toLowerCase()) ?? 'Name unavailable';
   }
   if (value === null || typeof value !== 'object') return value;
   return Object.fromEntries(
@@ -130,7 +130,7 @@ function snapshotValue(value: unknown, references: ReadonlyMap<string, string>):
           raw == null
             ? 'Not assigned'
             : typeof raw === 'string'
-              ? (references.get(raw) ?? 'Name unavailable')
+              ? (references.get(raw.toLowerCase()) ?? 'Name unavailable')
               : 'Name unavailable',
         ];
       }
