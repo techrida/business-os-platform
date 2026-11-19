@@ -340,35 +340,37 @@ export function workflow(cfg) {
         title: 'Convert to customer and opportunity',
         async run(s) {
           await as(s, 'Dev Sales');
-          await openUrl(s, 'leadUrl', (p) =>
-            p.getByRole('button', { name: 'Convert to opportunity' }),
-          );
-          await s.click(s.button('Convert to opportunity'), 'Convert to opportunity');
-          const d = s.page.getByRole('dialog', { name: 'Convert lead to opportunity' });
-          await s.see(d, 'the Convert dialog');
-          await d.getByLabel('Create a new organization').check();
-          const fill = async (label, value) => {
-            await d.getByLabel(label, { exact: true }).fill(value);
-          };
-          await fill('Legal name', v.company);
-          await fill('PAN or VAT number', v.pan);
-          await fill('Address', '17 Demo Marg');
-          await fill('City', 'Kathmandu');
-          await fill('Country code', 'NP');
-          const newContact = d.getByLabel('Create a new contact');
-          if (await newContact.count()) await newContact.check();
-          await fill('Contact name', v.contact);
-          await fill('Email', v.email);
-          await fill('Opportunity name', v.leadTitle);
-          await s.pause();
-          await d.getByRole('button', { name: 'Convert', exact: true }).click();
-          await s.page.waitForURL(/\/opportunities\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
-          s.record('opportunityUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
-          await s.see(h1(s.page, v.leadTitle), 'the linked opportunity');
-          await s.see(status(s, 'Qualified'), 'opportunity stage Qualified');
-          const text = await main(s);
-          s.expect(text.includes(v.company), 'the opportunity names the new customer');
-
+          // Retry-safe: an earlier attempt that converted the lead recorded the opportunity.
+          if (!s.state.opportunityUrl) {
+            await openUrl(s, 'leadUrl', (p) =>
+              p.getByRole('button', { name: 'Convert to opportunity' }),
+            );
+            await s.click(s.button('Convert to opportunity'), 'Convert to opportunity');
+            const d = s.page.getByRole('dialog', { name: 'Convert lead to opportunity' });
+            await s.see(d, 'the Convert dialog');
+            await d.getByLabel('Create a new organization').check();
+            const fill = async (label, value) => {
+              await d.getByLabel(label, { exact: true }).fill(value);
+            };
+            await fill('Legal name', v.company);
+            await fill('PAN or VAT number', v.pan);
+            await fill('Address', '17 Demo Marg');
+            await fill('City', 'Kathmandu');
+            await fill('Country code', 'NP');
+            const newContact = d.getByLabel('Create a new contact');
+            if (await newContact.count()) await newContact.check();
+            await fill('Contact name', v.contact);
+            await fill('Email', v.email);
+            await fill('Opportunity name', v.leadTitle);
+            await s.pause();
+            await d.getByRole('button', { name: 'Convert', exact: true }).click();
+            await s.page.waitForURL(/\/opportunities\/[0-9a-f-]{36}/, { timeout: cfg.navTimeout });
+            s.record('opportunityUrl', s.page.url().split('?')[0].replace(cfg.appUrl, ''));
+            await s.see(h1(s.page, v.leadTitle), 'the linked opportunity');
+            await s.see(status(s, 'Qualified'), 'opportunity stage Qualified');
+            const text = await main(s);
+            s.expect(text.includes(v.company), 'the opportunity names the new customer');
+          }
           await s.caption('sales-2 — the lead is Converted');
           await openUrl(s, 'leadUrl', (p) => h1(p, v.leadTitle));
           await s.see(status(s, 'Converted'), 'lead stage Converted');
