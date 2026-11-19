@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { Field, Input } from '@/components/ui/field';
+import { SuggestInput } from '@/components/ui/suggest-input';
 
 import adminStyles from '../admin.module.css';
 import { IDLE, type ActionState } from '../action-state';
@@ -227,21 +228,14 @@ export function DelegationForm({
         </Field>
         <Field label="Document type (optional)">
           {(control) => (
-            <>
-              <Input
-                {...control}
-                name="documentType"
-                list="deleg-doc-types"
-                autoComplete="off"
-                placeholder="All documents"
-                defaultValue={kept.documentType ?? ''}
-              />
-              <datalist id="deleg-doc-types">
-                {documentTypes.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
-            </>
+            <SuggestInput
+              {...control}
+              name="documentType"
+              suggestions={documentTypes}
+              autoComplete="off"
+              placeholder="All documents"
+              defaultValue={kept.documentType ?? ''}
+            />
           )}
         </Field>
       </div>

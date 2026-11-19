@@ -5,10 +5,17 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
+import { listPaymentTerms } from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
+import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
 import { ClientDecision, DetailActions } from '@/components/p2/quotations/detail-actions';
 import { pdfLinkFor } from '@/components/p2/quotations/document-link';
+import {
+  canSeeInternalFigures,
+  withoutInternalFigures,
+} from '@/components/p2/quotations/internal-data';
+import { PreparingRefresh } from '@/components/p2/quotations/preparing-refresh';
 import { QuotationStatusBadge } from '@/components/p2/quotations/status-badge';
 import { StatusHistory } from '@/components/p2/quotations/status-history';
 import { VersionDrawer, type RevisionRow } from '@/components/p2/quotations/version-drawer';
@@ -16,6 +23,7 @@ import { Alert } from '@/components/ui/alert';
 import { Icon } from '@/components/ui/icon';
 import { Breadcrumb, Page, PageHeader } from '@/components/ui/page';
 import { FactList, Panel, type Fact } from '@/components/ui/panel';
+import { ViewDocument } from '@/components/ui/view-document';
 import { listSalesOrders } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
@@ -28,17 +36,51 @@ export const dynamic = 'force-dynamic';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The customer PDF of one version: a link, or words. The link is a plain anchor and never
- * `next/link`: the route behind it issues a single-use signed link on every call, and a prefetch
- * would spend it before the person clicks.
+ * The customer PDF of one version: a viewer button, or words. Nothing here requests the document:
+ * the route behind the link issues a single-use signed link on every call, so the page only renders
+ * a button that fetches the preview when it is opened, and a plain Download anchor (never
+ * `next/link`, which would prefetch it). The words go through `PreparingRefresh`, which re-renders
+ * the page while a file is on its way and does nothing for words that will not change. It is a
+ * client module, so the server cannot ask it `shouldAutoRefresh`: it asks itself.
  */
-function Pdf({ quotationId, version }: { quotationId: string; version: QuotationVersionDto }) {
-  const pdf = pdfLinkFor(quotationId, version);
+function Pdf({
+  quotation,
+  version,
+}: {
+  quotation: QuotationDetail['quotation'];
+  version: QuotationVersionDto;
+}) {
+  const pdf = pdfLinkFor(quotation.id, version);
   return pdf.kind === 'link' ? (
-    <a href={pdf.href}>Download PDF</a>
+    <ViewDocument
+      name={`${quotation.number}-rev${version.revisionNo}.pdf`}
+      previewUrl={`${pdf.href}/preview`}
+      downloadUrl={pdf.href}
+      label="View PDF"
+      variant="link"
+      withDownload
+      context={`of revision ${version.revisionNo}`}
+    />
   ) : (
-    <span className={styles.pdfWords}>{pdf.text}</span>
+    <span className={styles.pdfWords}>
+      <PreparingRefresh text={pdf.text} />
+    </span>
   );
+}
+
+/**
+ * The revision the `?rev=` query names: a version id or a revision number. Anything else (absent,
+ * repeated, malformed, unknown) names nothing, and the page shows the current revision.
+ */
+function requestedRevision(
+  versions: readonly QuotationVersionDto[],
+  rev: string | string[] | undefined,
+): QuotationVersionDto | null {
+  if (typeof rev !== 'string') return null;
+  if (UUID.test(rev)) return versions.find((v) => v.id.toLowerCase() === rev.toLowerCase()) ?? null;
+  if (/^[1-9][0-9]{0,5}$/.test(rev))
+    return versions.find((v) => v.revisionNo === Number(rev)) ?? null;
+  return null;
 }
 
 function Totals({
@@ -80,23 +122,34 @@ function Totals({
   );
 }
 
-function revisionRows(detail: QuotationDetail, numberSystem: NumberSystem): RevisionRow[] {
+function revisionRows(
+  detail: QuotationDetail,
+  path: string,
+  numberSystem: NumberSystem,
+): RevisionRow[] {
   const { quotation, versions } = detail;
   return [...versions]
     .sort((a, b) => b.revisionNo - a.revisionNo)
     .map((v) => ({
       id: v.id,
       label: `Rev ${v.revisionNo}`,
+      href: v.id === quotation.currentVersionId ? path : `${path}?rev=${encodeURIComponent(v.id)}`,
       current: v.id === quotation.currentVersionId,
       status: <QuotationStatusBadge status={v.status} rejectionSource={v.rejectionSource} />,
       total: money(v.totals.total, v.currency, numberSystem),
       validUntil: when(v.validUntil, 'date'),
       note: v.revisionReason,
-      pdf: <Pdf quotationId={quotation.id} version={v} />,
+      pdf: <Pdf quotation={quotation} version={v} />,
     }));
 }
 
-export default async function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function QuotationDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<{ rev?: string | string[] }>;
+}) {
   const { id } = await params;
   // Not a UUID: no quotation can have this id, so there is nothing to ask the API.
   if (!UUID.test(id)) notFound();
@@ -104,10 +157,13 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
   const session = await requireStaffSession(path);
 
   const numberSystem = await getNumberSystem();
-
+  // Internal figures (unit cost, cost total, margin) are removed here, before the data reaches any
+  // component: the rest of this function only ever sees `detail`, so they cannot leak into a client prop.
+  const internalVisible = canSeeInternalFigures(session.roles);
   let detail: QuotationDetail;
   try {
-    detail = await getQuotation(session, id);
+    const loaded = await getQuotation(session, id);
+    detail = internalVisible ? loaded : withoutInternalFigures(loaded);
   } catch (err) {
     const f = failureOf(err);
     if (f.status === 404) notFound();
@@ -141,29 +197,44 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
       ? await listSalesOrders(session, { quotationVersionId: current.id }).catch(() => [])
       : [];
   const order = orders.find((item) => item.status !== 'cancelled');
+
+  // The revision on screen: the one `?rev=` names, else the current one. Actions and the client
+  // decision always act on the current revision.
+  const { rev } = (await searchParams) ?? {};
+  const view = requestedRevision(versions, rev) ?? current;
+  const earlier = view !== null && view.id !== quotation.currentVersionId;
   const contact =
-    current?.contactId != null ? contacts.find((c) => c.id === current.contactId) : undefined;
+    view?.contactId != null ? contacts.find((c) => c.id === view.contactId) : undefined;
+  // The version carries only the payment term's id. A failed lookup drops the name, not the page.
+  const paymentTermId = view?.paymentTermId ?? null;
+  const paymentTermsName =
+    paymentTermId === null
+      ? undefined
+      : await Promise.resolve()
+          .then(() => listPaymentTerms(session))
+          .then((terms) => terms.find((t) => t.id === paymentTermId)?.label)
+          .catch(() => undefined);
 
   // The quotation returns the names of the people it names (owner, history actors): no admin directory.
   const people = new Map((detail.people ?? []).map((p) => [p.userId, p.name]));
   const facts: Fact[] =
-    current === null
+    view === null
       ? []
       : [
           {
             key: 'revision',
             label: 'Revision',
-            value: `Rev ${current.revisionNo} of ${versions.length}`,
+            value: `Rev ${view.revisionNo} of ${versions.length}`,
           },
           {
             key: 'valid',
             label: 'Valid until',
-            value: <time dateTime={current.validUntil}>{when(current.validUntil, 'date')}</time>,
+            value: <time dateTime={view.validUntil}>{when(view.validUntil, 'date')}</time>,
           },
           {
             key: 'issued',
             label: 'Issued',
-            value: <time dateTime={current.issueDate}>{when(current.issueDate, 'date')}</time>,
+            value: <time dateTime={view.issueDate}>{when(view.issueDate, 'date')}</time>,
           },
           {
             key: 'owner',
@@ -187,14 +258,14 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
           {
             key: 'pdf',
             label: 'Customer PDF',
-            value: <Pdf quotationId={quotation.id} version={current} />,
+            value: <Pdf quotation={quotation} version={view} />,
           },
-          ...(current.revisionReason !== null
+          ...(view.revisionReason !== null
             ? [
                 {
                   key: 'reason',
                   label: 'Why this revision',
-                  value: <span className={styles.wrap}>{current.revisionReason}</span>,
+                  value: <span className={styles.wrap}>{view.revisionReason}</span>,
                   wide: true,
                 },
               ]
@@ -259,28 +330,46 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
 
       <div className={styles.columns}>
         <div className={`${styles.stack} ${styles.revisionStack}`}>
-          {current !== null ? (
+          {view !== null ? (
             <>
-              <ClientDecision
-                quotationId={quotation.id}
-                number={quotation.number}
-                current={current}
-                reloadHref={path}
-              />
+              {current !== null && !earlier ? (
+                <ClientDecision
+                  quotationId={quotation.id}
+                  number={quotation.number}
+                  current={current}
+                  reloadHref={path}
+                />
+              ) : null}
               <Panel
                 className={styles.detailPanel}
-                title="Current revision"
-                description={`Last changed ${when(current.updatedAt)}`}
+                title={earlier ? `Revision ${view.revisionNo}` : 'Current revision'}
+                description={`Last changed ${when(view.updatedAt)}`}
                 actions={
                   <VersionDrawer
                     number={quotation.number}
-                    rows={revisionRows(detail, numberSystem)}
+                    rows={revisionRows(detail, path, numberSystem)}
                   />
                 }
               >
                 <FactList facts={facts} className={styles.facts ?? ''} />
               </Panel>
-              <Totals version={current} numberSystem={numberSystem} />
+              <Totals version={view} numberSystem={numberSystem} />
+              {earlier ? (
+                <div className={styles.revisionBar}>
+                  <span>Revision {view.revisionNo} contents</span>
+                  {current !== null ? (
+                    <Link href={path} prefetch={false}>
+                      Back to current revision
+                    </Link>
+                  ) : null}
+                </div>
+              ) : null}
+              <QuotationContents
+                version={view}
+                internalVisible={internalVisible}
+                paymentTermsName={paymentTermsName}
+                numberSystem={numberSystem}
+              />
             </>
           ) : versions.length > 0 ? (
             <Panel
@@ -289,7 +378,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
               actions={
                 <VersionDrawer
                   number={quotation.number}
-                  rows={revisionRows(detail, numberSystem)}
+                  rows={revisionRows(detail, path, numberSystem)}
                 />
               }
             >

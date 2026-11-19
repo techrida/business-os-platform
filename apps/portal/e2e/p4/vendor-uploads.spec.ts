@@ -136,7 +136,10 @@ test.describe('a vendor still in onboarding', () => {
     await page.goto('/vendor/onboarding/upload');
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { level: 1, name: 'Send a document' })).toBeVisible();
-    await page.getByLabel('Document', { exact: true }).selectOption('pan_certificate');
+    // The shared Select: open its trigger (the button beside the hidden docType field), pick by label.
+    await page.locator('input[name="docType"]').locator('..').getByRole('button').click();
+    await page.getByRole('option', { name: /^PAN certificate/ }).click();
+    await expect(page.locator('input[name="docType"]')).toHaveValue('pan_certificate');
     await page.getByLabel('File', { exact: true }).setInputFiles(PDF);
     await expect(page.getByRole('list', { name: 'Uploaded file' })).toContainText('scan.pdf');
     await page.getByRole('button', { name: 'Send document' }).click();

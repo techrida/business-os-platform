@@ -1,0 +1,96 @@
+import { QuotationVersionDtoSchema, type QuotationVersionDto } from '@bos/contracts';
+
+// Test data for the Contents card: parsed through the real contract so a drifting DTO fails here.
+export const ID = '11111111-1111-4111-8111-111111111111';
+export const TAX_VAT = '55555555-5555-4555-8555-555555555555';
+export const TAX_ZERO = '66666666-6666-4666-8666-666666666666';
+export const PAYMENT_TERM_ID = '77777777-7777-4777-8777-777777777777';
+const WHEN = '2026-11-08T05:45:00.000Z';
+
+export function version(over: Record<string, unknown> = {}): QuotationVersionDto {
+  return QuotationVersionDtoSchema.parse({
+    id: '22222222-2222-4222-8222-222222222222',
+    quotationId: ID,
+    number: 'QT-2082-0042',
+    revisionNo: 1,
+    status: 'sent',
+    rejectionSource: null,
+    customerId: '33333333-3333-4333-8333-333333333333',
+    contactId: null,
+    templateId: null,
+    currency: 'NPR',
+    issueDate: '2026-11-08',
+    validUntil: '2026-11-24',
+    scope: null,
+    assumptions: null,
+    exclusions: null,
+    deliveryTimeline: null,
+    termsAndConditions: null,
+    paymentTermId: null,
+    paymentSchedule: [],
+    discount: null,
+    lines: [
+      {
+        lineNo: 1,
+        catalogItemId: null,
+        description: 'Site survey',
+        uom: 'lot',
+        quantity: '2',
+        unitPrice: '1250.50',
+        unitCost: '800.25',
+        taxCodeId: TAX_VAT,
+        gross: '2501.00',
+        discountAlloc: '101.00',
+        taxable: '2400.00',
+      },
+      {
+        lineNo: 2,
+        catalogItemId: null,
+        description: 'Cabling',
+        uom: 'm',
+        quantity: '10.5',
+        unitPrice: '99.99',
+        unitCost: '60.00',
+        taxCodeId: TAX_ZERO,
+        gross: '1049.90',
+        discountAlloc: '0.00',
+        taxable: '1049.90',
+      },
+    ],
+    taxSummary: [
+      { taxCodeId: TAX_VAT, label: 'VAT', rate: '13', base: '2400.00', tax: '312.00' },
+      { taxCodeId: TAX_ZERO, label: 'Exempt', rate: '0', base: '1049.90', tax: '0.00' },
+    ],
+    totals: {
+      subtotal: '3550.90',
+      discountAmount: '101.00',
+      taxableAmount: '3449.90',
+      taxAmount: '312.00',
+      total: '3761.90',
+      effectiveDiscountPct: '2.8441',
+    },
+    internalCostTotal: '2231.40',
+    marginPct: '35.3200',
+    nprSnapshot: null,
+    approvalRequestId: null,
+    snapshotSha256: null,
+    renderedDocumentId: null,
+    renderedSha256: null,
+    renderedScanStatus: null,
+    supersedesVersionId: null,
+    supersededByVersionId: null,
+    revisionReason: null,
+    cancelReason: null,
+    submittedAt: null,
+    approvedAt: null,
+    sentAt: null,
+    acceptedAt: null,
+    rejectedAt: null,
+    expiredAt: null,
+    cancelledAt: null,
+    version: 1,
+    createdAt: WHEN,
+    updatedAt: WHEN,
+    ...over,
+  });
+}

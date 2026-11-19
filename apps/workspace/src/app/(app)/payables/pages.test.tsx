@@ -405,7 +405,10 @@ describe('bill-entry withholding registry', () => {
     expect(api.listWithholdingCodes).toHaveBeenCalledOnce();
     expect(out).toContain('TDS0');
     expect(out).toContain('Pending accountant signoff');
-    expect(out).toMatch(/<select[^>]*name="line:0:tdsCodeId"/);
+    // The dropdown submits the line's withholding code through a hidden field, empty by default,
+    // and its trigger reads "No withholding".
+    expect(out).toMatch(/<input type="hidden"[^>]*name="line:0:tdsCodeId"[^>]*value=""/);
+    expect(out).toContain('No withholding');
   });
   it('blocks entry when the withholding lookup fails rather than dropping the selection', async () => {
     api.listWithholdingCodes.mockRejectedValue(apiError(500));

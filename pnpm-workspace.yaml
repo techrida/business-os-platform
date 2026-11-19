@@ -25,6 +25,12 @@ allowBuilds:
 # `pnpm approve-builds` to review anything it lists, then remove this line (default is true).
 strictDepBuilds: false
 
+# pdfjs-dist lists the native `canvas` add-on as optional; the viewer renders in the browser and the
+# server never rasterises, so it is not installed.
+ignoredOptionalDependencies:
+  - canvas
+  - '@napi-rs/canvas'
+
 # One place for every external version. Workspace package.json files use "catalog:".
 catalog:
   # Runtime and language
@@ -106,3 +112,7 @@ catalog:
   '@radix-ui/react-popover': 1.3.1
   react-aria-components: 1.22.1
   '@internationalized/date': 3.12.4
+  # Document viewer (packages/pdf-viewer). Exact version, Apache-2.0. 4.5.136 (2024-07-27) is the newest
+  # release whose legacy build has no ES2022 static blocks (Safari 16.4+), so iOS Safari 15 can parse the
+  # main and worker bundles; it includes the CVE-2024-4367 fix (4.2.67). The worker and API must match.
+  pdfjs-dist: 4.5.136

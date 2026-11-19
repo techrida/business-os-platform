@@ -249,7 +249,6 @@ export function CompanyEditor({ settings, action }: { settings: CompanySettings;
                 {(control) => (
                   <Select
                     name="country"
-                    autoComplete="country"
                     value={address.country}
                     onChange={(e) => edit('address', { ...address, country: e.target.value })}
                     {...control}

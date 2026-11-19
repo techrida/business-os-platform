@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { signInAs } from '../helpers/memo-flow';
+import { chooseOption, selectByLabel } from '../helpers/select';
 
 /** Requires a qualified E2E_OPPORTUNITY_ID and the quotation workflow and tax codes in the P2 stack. */
 const opportunityId = process.env['E2E_OPPORTUNITY_ID'];
@@ -33,7 +34,8 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
     await add.getByLabel('Unit', { exact: true }).fill('lot');
     await add.getByRole('spinbutton', { name: 'Quantity' }).fill('1');
     await add.getByRole('spinbutton', { name: /^Rate \(/ }).fill('200000');
-    await add.getByLabel('Tax code').selectOption({ index: 1 });
+    // Tax code is required, so its list has no empty option: index 0 is the first tax code.
+    await chooseOption(selectByLabel(add, 'Tax code'), { index: 0 });
     await add.getByRole('button', { name: 'Add line', exact: true }).click();
     await expect(lines.getByText('HRMS implementation')).toBeVisible();
     await save.click();
@@ -132,7 +134,7 @@ test('save, reopen, edit, price and submit a quotation', async ({ browser, baseU
   });
 
   await test.step('refresh server pricing, save, cancel submission, then confirm', async () => {
-    await page.getByLabel('Discount type').selectOption('pct');
+    await chooseOption(selectByLabel(page, 'Discount type'), 'pct');
     await page.getByLabel('Discount (%)').fill('15');
     await expect(page.getByText('Amount unavailable until pricing is ready.')).toBeVisible();
     await expect(page.getByText('This discount needs approval')).toBeVisible();

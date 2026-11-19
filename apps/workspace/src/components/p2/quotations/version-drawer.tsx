@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +19,8 @@ export interface RevisionRow {
   id: string;
   /** "Rev 2". */
   label: string;
+  /** The detail page showing this revision: `?rev=<id>`, or the bare path for the current one. A page link, never a document link. */
+  href: string;
   current: boolean;
   status: ReactNode;
   /** The server's total for this revision, formatted. */
@@ -65,7 +68,11 @@ export function VersionDrawer({ number, rows }: { number: string; rows: readonly
                 <Td>
                   <div className={styles.revision}>
                     <span className={styles.revisionName}>
-                      {row.label}
+                      <DialogClose asChild>
+                        <Link href={row.href} prefetch={false}>
+                          {row.label}
+                        </Link>
+                      </DialogClose>
                       {row.current ? <Badge tone="info">Current</Badge> : null}
                     </span>
                     {row.note !== null ? (

@@ -68,13 +68,19 @@ describe('QuotationView markup', () => {
     expect(html).toContain('19 Nov 2026');
   });
 
-  it('renders the download as a plain link to the BFF route, and none without a file', () => {
+  it('renders View PDF and a plain Download link to the BFF route, and neither without a file', () => {
     const html = renderToStaticMarkup(<QuotationView view={sampleView()} today={TODAY} />);
+    expect(html).toContain('View PDF');
+    expect(html).not.toContain('Download PDF');
     expect(html).toContain(`href="/quotations/${sampleView().id}/document"`);
+    // The preview route is fetched by the dialog on open; nothing links to it or requests it at render.
+    expect(html).not.toContain('/document/preview');
+    expect(html).not.toContain('download=');
     const none = renderToStaticMarkup(
       <QuotationView view={sampleView({ file: null })} today={TODAY} />,
     );
     expect(none).not.toContain('/document"');
+    expect(none).not.toContain('View PDF');
   });
 });
 

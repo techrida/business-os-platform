@@ -167,7 +167,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             {view === 'board' ? <input type="hidden" name="view" value="board" /> : null}
             {rows !== 5 ? <input type="hidden" name="rows" value={rows} /> : null}
             <SearchInput
-              key={q ?? ''}
+              key={`q:${q ?? ''}`}
               aria-label="Search leads"
               placeholder="Search leads"
               name="q"
@@ -177,7 +177,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             />
             <div className={styles.filterControls}>
               <Select
-                key={source ?? ''}
+                key={`source:${source ?? ''}`}
                 aria-label="Lead source"
                 name="source"
                 defaultValue={source ?? ''}
@@ -192,7 +192,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               </Select>
               {view === 'table' ? (
                 <Select
-                  key={stage ?? ''}
+                  key={`stage:${stage ?? ''}`}
                   aria-label="Lead status"
                   name="stage"
                   defaultValue={stage ?? ''}
