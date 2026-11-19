@@ -20,6 +20,8 @@ import type {
   quotationVersions,
 } from '@bos/db';
 
+import { paymentScheduleAmounts } from '../drafting/payment-schedule';
+
 type Row<T extends { $inferSelect: object }> = T['$inferSelect'];
 
 /**
@@ -132,7 +134,11 @@ export function toCustomerQuotationView(
     throw new QuotationNotCustomerVisibleError(version.status);
   }
 
-  const schedule = PaymentMilestoneSchema.array().parse(version.paymentSchedule);
+  // The same split the staff API makes (D36), so the portal and the PDF never differ from the workspace.
+  const schedule = paymentScheduleAmounts(
+    version.total,
+    PaymentMilestoneSchema.array().parse(version.paymentSchedule),
+  );
 
   const file =
     input.renderedScanClean === true &&
@@ -174,6 +180,7 @@ export function toCustomerQuotationView(
     paymentSchedule: schedule.map((m) => ({
       label: m.label,
       percent: m.percent,
+      amount: m.amount,
       ...(m.dueDescription === undefined ? {} : { dueDescription: m.dueDescription }),
     })),
     lines: [...input.lines]

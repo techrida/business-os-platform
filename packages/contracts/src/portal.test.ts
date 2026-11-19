@@ -33,7 +33,7 @@ const view = () => ({
   termsAndConditions: null,
   deliveryTimeline: '6 weeks',
   paymentTermName: 'Net 30',
-  paymentSchedule: [{ label: 'Advance', percent: '60' }],
+  paymentSchedule: [{ label: 'Advance', percent: '60', amount: '366120.00' }],
   lines: [
     {
       lineNo: 1,

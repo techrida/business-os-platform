@@ -21,6 +21,7 @@ import {
 } from '@bos/contracts';
 import {
   createParty,
+  leads,
   opportunities,
   quotationLines,
   quotations,
@@ -1066,5 +1067,159 @@ describe('quotation cost figures follow the live role grants (D29b)', () => {
       null,
       null,
     ]);
+  });
+});
+
+// ------------------------------------------------------------------ D35 lead and D36 schedule amounts
+
+/** A lead of `scope` owned by `ownerUserId`, and an opportunity of the same entity that hangs under it. */
+async function seedLeadOpportunity(
+  scope: TxScope,
+  ownerUserId: string,
+  title: string,
+): Promise<{ leadId: string; opportunityId: string }> {
+  return withTx(db, scope, systemActor('test'), async (tx) => {
+    const [lead] = await tx
+      .insert(leads)
+      .values({
+        ...scope,
+        number: `LD-${randomUUID().slice(0, 8)}`,
+        title,
+        source: 'website',
+        ownerUserId,
+        companyName: 'Acme Pvt. Ltd.',
+        contactName: 'Asha Shrestha',
+      })
+      .returning({ id: leads.id });
+    const [opportunity] = await tx
+      .insert(opportunities)
+      .values({
+        ...scope,
+        number: `DEAL-${randomUUID().slice(0, 8)}`,
+        name: `Deal of ${title}`,
+        customerId: f.customerPartyId,
+        leadId: lead!.id,
+        ownerUserId,
+        stage: 'qualified',
+      })
+      .returning({ id: opportunities.id });
+    return { leadId: lead!.id, opportunityId: opportunity!.id };
+  });
+}
+
+describe('DraftingService.detail lead (D35)', () => {
+  it('gives the lead of the opportunity to a viewer who may read it', async () => {
+    const { leadId, opportunityId } = await seedLeadOpportunity(
+      scopeA,
+      f.ownerUserId,
+      'Own enquiry',
+    );
+    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-own');
+    // sales holds crm.lead.read as `own` and owns this lead.
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.lead).toEqual({ id: leadId, name: 'Own enquiry' });
+
+    // A read-all role sees it too.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect((await service.detail(created.id)).lead).toEqual({ id: leadId, name: 'Own enquiry' });
+    });
+  });
+
+  it("leaves the lead out when sales holds `own` scope and the lead is someone else's", async () => {
+    const otherUserId = await seedOtherStaffUser(db, f);
+    const { leadId, opportunityId } = await seedLeadOpportunity(
+      scopeA,
+      otherUserId,
+      'Their enquiry',
+    );
+    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-theirs');
+
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect('lead' in detail).toBe(false);
+    expect(JSON.stringify(detail)).not.toContain(leadId);
+
+    // Positive control: the same quotation shows the lead to a read-all role, so the omission is the scope.
+    await asCaller({ grants: grantsOf('management') }, async () => {
+      expect((await service.detail(created.id)).lead).toEqual({
+        id: leadId,
+        name: 'Their enquiry',
+      });
+    });
+  });
+
+  it('leaves the lead out for a viewer who holds no crm.lead.read at all', async () => {
+    const { opportunityId } = await seedLeadOpportunity(scopeA, f.ownerUserId, 'Own enquiry 2');
+    const created = await service.create(goldenCreateBody(f, { opportunityId }), 'lead-no-grant');
+    const grants = new Map(grantsOf('sales'));
+    grants.delete('crm.lead.read');
+    await asCaller({ grants }, async () => {
+      expect('lead' in (await service.detail(created.id))).toBe(false);
+    });
+  });
+
+  it('answers null when the opportunity has no lead', async () => {
+    // The fixture opportunity has no lead. (quotations.opportunity_id is NOT NULL, so "no opportunity" cannot occur.)
+    const created = await service.create(goldenCreateBody(f), 'lead-none');
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.lead).toBeNull();
+  });
+
+  it("never shows a lead of another entity: it is read in its own entity, and A's detail does not carry B's", async () => {
+    const scopeB: TxScope = { tenantId: f.tenantId, organizationId: f.otherEntityId };
+    const b = await seedLeadOpportunity(scopeB, f.ownerUserId, 'Entity B enquiry');
+    const inB = await asCaller({ scope: scopeB }, () =>
+      service.create(goldenCreateBody(f, { opportunityId: b.opportunityId }), 'lead-entity-b'),
+    );
+    // Positive control: entity B's own caller reads it.
+    await asCaller({ scope: scopeB }, async () => {
+      expect((await service.detail(inB.id)).lead).toEqual({
+        id: b.leadId,
+        name: 'Entity B enquiry',
+      });
+    });
+    // Entity A cannot reach the quotation, and an entity-A quotation never names B's lead.
+    expect(await statusOf(service.detail(inB.id))).toBe(404);
+    const inA = await service.create(goldenCreateBody(f), 'lead-entity-a');
+    expect(JSON.stringify(await service.detail(inA.id))).not.toContain(b.leadId);
+  });
+});
+
+describe('DraftingService payment schedule amounts (D36)', () => {
+  it('returns each milestone with its amount, remainder on the last row, on detail and getVersion', async () => {
+    const created = await service.create(
+      goldenCreateBody(f, {
+        paymentSchedule: [
+          { label: 'Advance', percent: '33.3333', dueDescription: 'On order' },
+          { label: 'Delivery', percent: '33.3333' },
+          { label: 'Go-live', percent: '33.3334' },
+        ],
+      }),
+      'schedule-amounts',
+    );
+    const detail = QuotationDetailSchema.parse(await service.detail(created.id));
+    expect(detail.versions[0]!.totals.total).toBe(GOLDEN_TOTALS.total);
+    expect(detail.versions[0]!.paymentSchedule).toEqual([
+      { label: 'Advance', percent: '33.3333', dueDescription: 'On order', amount: '896999.10' },
+      { label: 'Delivery', percent: '33.3333', amount: '896999.10' },
+      { label: 'Go-live', percent: '33.3334', amount: '897001.79' },
+    ]);
+    const version = QuotationVersionDtoSchema.parse(
+      await service.getVersion(created.id, created.currentVersionId),
+    );
+    expect(version.paymentSchedule).toEqual(detail.versions[0]!.paymentSchedule);
+
+    // The stored jsonb stays amount-free, and a later draft save (merge base from the DTO) still works.
+    const stored = await db
+      .select({ paymentSchedule: quotationVersions.paymentSchedule })
+      .from(quotationVersions)
+      .where(eq(quotationVersions.id, created.currentVersionId));
+    expect(JSON.stringify(stored[0]!.paymentSchedule)).not.toContain('amount');
+    await service.updateDraft(created.id, created.currentVersionId, {
+      expectedVersion: version.version,
+      scope: 'Changed scope',
+    });
+    expect(
+      (await service.getVersion(created.id, created.currentVersionId)).paymentSchedule,
+    ).toEqual(version.paymentSchedule);
   });
 });

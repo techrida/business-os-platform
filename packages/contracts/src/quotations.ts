@@ -230,6 +230,15 @@ export const PaymentMilestoneSchema = z.strictObject({
 });
 export type PaymentMilestone = z.infer<typeof PaymentMilestoneSchema>;
 
+/**
+ * A milestone as the API returns it (D36): the stored milestone plus its `amount`, in the document currency.
+ * The server splits the version total by the percents (D22: two decimals, half up, the remainder on the last
+ * row), so every screen, the PDF and the portal show the same figures and none recomputes them. The input
+ * `PaymentMilestoneSchema` stays amount-free: an amount is never stored or accepted.
+ */
+export const PaymentMilestoneDtoSchema = PaymentMilestoneSchema.extend({ amount: DecimalString });
+export type PaymentMilestoneDto = z.infer<typeof PaymentMilestoneDtoSchema>;
+
 // ---------------------------------------------------------------------------------------------
 // Draft content (the material fields) and bodies
 // ---------------------------------------------------------------------------------------------
@@ -479,7 +488,7 @@ export const QuotationVersionDtoSchema = z
     termsAndConditions: z.string().nullable(),
     deliveryTimeline: z.string().nullable(),
     paymentTermId: z.guid().nullable(),
-    paymentSchedule: z.array(PaymentMilestoneSchema),
+    paymentSchedule: z.array(PaymentMilestoneDtoSchema),
     discount: DiscountSchema.nullable(),
     lines: z.array(QuotationLineDtoSchema),
     taxSummary: z.array(QuotationTaxSummaryItemSchema),
@@ -604,6 +613,16 @@ export const QuotationContactSchema = z.object({
 });
 export type QuotationContact = z.infer<typeof QuotationContactSchema>;
 
+/**
+ * The lead a quotation came from (D35): the quotation's opportunity's parent lead. `name` is the lead's title;
+ * a screen builds the link from `id`.
+ */
+export const QuotationLeadSchema = z.strictObject({
+  id: z.guid(),
+  name: z.string().min(1),
+});
+export type QuotationLead = z.infer<typeof QuotationLeadSchema>;
+
 /** `GET /v1/quotations/:id`: the parent, every version (Superseded included), history and recipients. */
 export const QuotationDetailSchema = z.object({
   quotation: QuotationDtoSchema,
@@ -614,6 +633,11 @@ export const QuotationDetailSchema = z.object({
   capabilities: QuotationCapabilitiesSchema,
   /** Names of the people the quotation names: its owner and the actors of its status history. */
   people: z.array(PersonNameSchema).optional(),
+  /**
+   * The lead behind the quotation's opportunity (D35). null: the opportunity has no lead. Absent: the viewer may
+   * not read that lead (`crm.lead.read` with its scope on the lead's record), so its existence is not disclosed.
+   */
+  lead: QuotationLeadSchema.nullable().optional(),
 });
 export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
 
@@ -625,11 +649,15 @@ export type QuotationDetail = z.infer<typeof QuotationDetailSchema>;
 export const QuotationApprovalSnapshotSchema = z.object({
   nprTotal: NonNegativeDecimalString,
   effectiveDiscountPct: z.string().regex(/^\d{1,3}(\.\d{1,4})?$/),
-  /** Null when no internal cost is recorded, so the margin is unknown rather than zero. */
+  /**
+   * Null when no internal cost is recorded, so the margin is unknown rather than zero. Absent when the viewer lacks
+   * `quotation.cost.read` (the API removes it when it serves the snapshot; the stored snapshot keeps it).
+   */
   marginPct: z
     .string()
     .regex(/^-?\d{1,3}(\.\d{1,4})?$/)
-    .nullable(),
+    .nullable()
+    .optional(),
   nprDiscountAmount: NonNegativeDecimalString,
   currency: CurrencySchema,
   /** The rate to NPR; "1" for an NPR document. */

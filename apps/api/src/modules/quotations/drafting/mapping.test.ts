@@ -330,6 +330,30 @@ describe('toQuotationVersionDto', () => {
     expect(QuotationVersionDtoSchema.safeParse(dto).success).toBe(true);
   });
 
+  it('adds the amount of each payment milestone from the stored total, remainder on the last row (D36)', () => {
+    const dto = toQuotationVersionDto(
+      draftParts({
+        version: version({
+          subtotal: '1000.00',
+          taxableAmount: '1000.00',
+          taxAmount: '0.00',
+          total: '1000.00',
+          paymentSchedule: [
+            { label: 'Start', percent: '33.3333', dueDescription: 'On order' },
+            { label: 'Middle', percent: '33.3333' },
+            { label: 'End', percent: '33.3334' },
+          ],
+        }),
+      }),
+    );
+    expect(dto.paymentSchedule).toEqual([
+      { label: 'Start', percent: '33.3333', dueDescription: 'On order', amount: '333.33' },
+      { label: 'Middle', percent: '33.3333', amount: '333.33' },
+      { label: 'End', percent: '33.3334', amount: '333.34' },
+    ]);
+    expect(QuotationVersionDtoSchema.safeParse(dto).success).toBe(true);
+  });
+
   it('refuses a quotation that has no customer, and a payment schedule that is not valid', () => {
     expect(() =>
       toQuotationVersionDto(draftParts({ quotation: quotation({ customerPartyId: null }) })),
@@ -436,6 +460,16 @@ describe('toQuotationDetail', () => {
       { id: id(61), name: 'Ram Thapa', email: null },
     ]);
     expect(dto.capabilities).toEqual({ canEdit: false, canRevise: true });
+  });
+
+  it('carries the lead (D35): an object, null for none, and no key when the caller may not read it', () => {
+    const lead = { id: id(90), name: 'Website enquiry' };
+    expect(toQuotationDetail({ ...detailParts(), lead }).lead).toEqual(lead);
+    expect(toQuotationDetail({ ...detailParts(), lead: null }).lead).toBeNull();
+    expect('lead' in toQuotationDetail(detailParts())).toBe(false);
+    expect(
+      QuotationDetailSchema.safeParse(toQuotationDetail({ ...detailParts(), lead })).success,
+    ).toBe(true);
   });
 
   it('fails loudly when the current version is not among the versions', () => {
