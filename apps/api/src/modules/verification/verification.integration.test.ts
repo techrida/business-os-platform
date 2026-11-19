@@ -1443,3 +1443,51 @@ describe('Can review names the pmo reviewer (audit #19)', () => {
     expect(names).not.toContain(await nameOf(reader.userId));
   });
 });
+
+describe('the own-scope case list is scoped in SQL, before its limit (audit #9)', () => {
+  it('lists an older case of Sales A even when more than 500 newer cases belong to other customers', async () => {
+    // Sales A's own customer and its case, opened long before the others.
+    clock = new Date('2026-01-05T04:00:00Z');
+    const mine = await openCase(await newCustomer(scope, U.salesA));
+
+    // 501 newer cases on Sales B's customers: more than the list limit, all outside Sales A's scope.
+    const tag = randomUUID().slice(0, 8);
+    await withTx(db, scope, systemActor('test'), (tx) =>
+      tx.execute(sql`
+        WITH p AS (
+          INSERT INTO app.parties (id, tenant_id, kind, code, name)
+          SELECT gen_random_uuid(), ${scope.tenantId}, 'customer', 'B' || ${tag} || '-' || g, 'Bulk ' || g
+          FROM generate_series(1, 501) g
+          RETURNING id
+        ), c AS (
+          INSERT INTO app.customers (id, tenant_id, number, legal_name, name_norm, owner_user_id, address)
+          SELECT id, ${scope.tenantId}, 'CUS-' || id::text, 'Bulk Pvt. Ltd.', 'bulk', ${U.salesB}::uuid,
+                 ${ADDRESS}::jsonb
+          FROM p
+          RETURNING id
+        )
+        INSERT INTO app.verification_cases
+          (tenant_id, party_id, party_kind, status, review_policy, checklist, created_at, updated_at)
+        SELECT ${scope.tenantId}, id, 'customer', 'draft', 'document_review_v1', '[]'::jsonb,
+               '2026-11-08T04:00:00Z'::timestamptz, '2026-11-08T04:00:00Z'::timestamptz
+        FROM c
+      `),
+    );
+
+    as(U.salesA, 'sales');
+    const res = await api().get('/v1/verification-cases');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const items = VerificationCaseDtoSchema.array().parse(res.body);
+    expect(items.map((c) => c.id)).toContain(mine.id);
+    // No extra data: nothing of Sales B's customers reaches Sales A.
+    expect(items.every((c) => c.partyId === mine.partyId)).toBe(true);
+
+    // Sales B (own scope) gets their own newest cases, up to the limit, and not Sales A's.
+    as(U.salesB, 'sales');
+    const theirs = VerificationCaseDtoSchema.array().parse(
+      (await api().get('/v1/verification-cases')).body,
+    );
+    expect(theirs).toHaveLength(500);
+    expect(theirs.map((c) => c.id)).not.toContain(mine.id);
+  });
+});
