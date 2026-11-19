@@ -32,8 +32,9 @@ export interface ViewDocumentProps {
  * A button that opens the portal's document viewer: a native `<dialog>` (focus trap, Esc and top-layer
  * backdrop come from the browser) that draws the PDF with `PdfPages`, never in an iframe. The PDF is fetched from
  * `previewUrl` once each time the dialog opens, so rendering this component costs no request. While the file is
- * still being prepared (HTTP 404, 409 or 425) or fails, the dialog shows a message and a Retry button that makes
- * one new request per click; nothing polls, because every call to such a route issues a single-use signed link.
+ * still being prepared (HTTP 409 or 425) or fails, the dialog shows a message and a Retry button that makes
+ * one new request per click. A 404 (not available, or access taken away) shows a plain "not available" message with
+ * no Retry and no reason; nothing polls, because every call to such a route issues a single-use signed link.
  * Download is a separate plain anchor. Light mode only. Full screen at 480px and below.
  *
  * @example
@@ -164,13 +165,18 @@ type PdfState =
   | { status: 'loading' }
   | { status: 'ready'; data: Uint8Array }
   | { status: 'preparing' }
+  | { status: 'unavailable' }
   | { status: 'denied' }
   | { status: 'error' };
 
-/** 404, 409 and 425 mean "still being prepared"; 401 and 403 mean access was lost; other non-2xx is a failure. */
-function fetchOutcome(status: number): 'ready' | 'preparing' | 'denied' | 'error' {
+/**
+ * 409 and 425 mean "still being prepared"; 404 means the document is not available (never ready, or revoked), so
+ * retrying cannot help; 401 and 403 mean access was lost; other non-2xx is a failure.
+ */
+function fetchOutcome(status: number): 'ready' | 'preparing' | 'unavailable' | 'denied' | 'error' {
   if (status >= 200 && status < 300) return 'ready';
-  if (status === 404 || status === 409 || status === 425) return 'preparing';
+  if (status === 404) return 'unavailable';
+  if (status === 409 || status === 425) return 'preparing';
   if (status === 401 || status === 403) return 'denied';
   return 'error';
 }
@@ -249,7 +255,16 @@ function PdfStage({ name, previewUrl }: { name: string; previewUrl: string }) {
     );
   }
   if (state.status === 'preparing') {
-    return <Message title="Preparing…" text="This PDF is still being prepared." onRetry={retry} />;
+    return (
+      <Message
+        title="Preparing…"
+        text="Your document is being prepared. Please check again shortly."
+        onRetry={retry}
+      />
+    );
+  }
+  if (state.status === 'unavailable') {
+    return <Message title="Not available" text="This document is not available." />;
   }
   if (state.status === 'denied') {
     return <Message title="No access" text="You no longer have access to this file." />;
