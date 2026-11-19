@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ActivityDtoSchema,
+  ActivityKindSchema,
+  UpdateLeadBodySchema,
   type ChecklistItem,
   ContactWithEmailBodySchema,
   ConvertLeadBodySchema,
@@ -252,6 +254,43 @@ describe('stage change bodies', () => {
   });
 });
 
+describe('lead follow-up (D39)', () => {
+  const lead = {
+    title: 'T',
+    source: 'website',
+    companyName: 'Acme',
+    contactName: 'Asha',
+  };
+  const due = '2026-12-01T10:00:00+05:45';
+
+  it('takes a planned follow-up, or the old nextFollowUpAt, not both', () => {
+    expect(
+      CreateLeadBodySchema.safeParse({ ...lead, followUp: { kind: 'call', dueAt: due } }).success,
+    ).toBe(true);
+    expect(CreateLeadBodySchema.safeParse({ ...lead, nextFollowUpAt: due }).success).toBe(true);
+    expect(
+      CreateLeadBodySchema.safeParse({
+        ...lead,
+        nextFollowUpAt: due,
+        followUp: { kind: 'call', dueAt: due },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a note as a follow-up, and does not let an edit change the follow-up', () => {
+    expect(
+      CreateLeadBodySchema.safeParse({ ...lead, followUp: { kind: 'note', dueAt: due } }).success,
+    ).toBe(false);
+    expect(
+      UpdateLeadBodySchema.safeParse({ expectedVersion: 1, nextFollowUpAt: due }).success,
+    ).toBe(false);
+    expect(
+      UpdateLeadBodySchema.safeParse({ expectedVersion: 1, ownerUserId: crypto.randomUUID() })
+        .success,
+    ).toBe(true);
+  });
+});
+
 describe('CreateLeadBodySchema', () => {
   const ok = {
     title: 'Solar rooftop for Himal Traders',
@@ -367,10 +406,27 @@ describe('activities: exactly one primary subject', () => {
     ).toBe(false);
   });
 
-  it('rejects an unknown kind', () => {
+  it('rejects an unknown kind, and task, which is now a planned call, meeting or email', () => {
     expect(
       CreateActivityBodySchema.safeParse({ kind: 'telepathy', subject: 'x', leadId: id() }).success,
     ).toBe(false);
+    expect(
+      CreateActivityBodySchema.safeParse({ kind: 'task', subject: 'x', leadId: id() }).success,
+    ).toBe(false);
+  });
+
+  it('plans a call, meeting or email with dueAt, but not a note, and never with occurredAt', () => {
+    const planned = { ...base, leadId: id(), dueAt: '2026-12-01T10:00:00+05:45' };
+    expect(CreateActivityBodySchema.safeParse(planned).success).toBe(true);
+    expect(CreateActivityBodySchema.safeParse({ ...planned, kind: 'note' }).success).toBe(false);
+    expect(
+      CreateActivityBodySchema.safeParse({ ...planned, occurredAt: '2026-11-30T10:00:00+05:45' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('keeps task readable on the DTO so rows written before D39 still parse', () => {
+    expect(ActivityKindSchema.safeParse('task').success).toBe(true);
   });
 
   it('holds the same rule on the DTO, with nulls for the unused subjects', () => {
@@ -387,7 +443,11 @@ describe('activities: exactly one primary subject', () => {
       dueAt: null,
       assigneeUserId: null,
       completedAt: null,
+      cancelledAt: null,
+      planned: false,
+      createdByUserId: null,
       occurredAt: '2026-11-08T10:00:00+05:45',
+      version: 1,
     };
     expect(ActivityDtoSchema.safeParse(dto).success).toBe(true);
     expect(ActivityDtoSchema.safeParse({ ...dto, leadId: null }).success).toBe(false);
