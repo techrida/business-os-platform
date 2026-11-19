@@ -165,6 +165,10 @@ export class VerificationService implements OnModuleInit {
   onModuleInit(): void {
     const policy: DocumentOwnerPolicy = {
       ownerType: VERIFICATION_OWNER_TYPE,
+      // The reviewer must see the files they decide on. verification.review on the case authorises reading its
+      // files beside documents.read (audit #19: pmo reviews every case but holds documents.read only for its own
+      // records). It opens this owner type's files only; it never widens documents.read elsewhere.
+      readPermission: 'verification.review',
       resource: async (scope, ownerId) => {
         const l = await this.load(this.db, scope.tenantId, ownerId);
         return l === undefined ? null : caseRef(scope, l);
@@ -284,7 +288,11 @@ export class VerificationService implements OnModuleInit {
     };
   }
 
-  /** Name active staff who can open the files and review any case in this entity. */
+  /**
+   * Name active staff who can open the files and review any case in this entity: verification.review and
+   * verification.read at scope all. The review grant also opens the case files (the owner policy's
+   * readPermission), so documents.read is not required (audit #19: pmo was missing from this list).
+   */
   private async reviewerNames(scope: TxScope, submittedBy: string | null): Promise<string[]> {
     const result = await this.db.execute<{ name: string }>(sql`
       SELECT DISTINCT u.display_name AS name
@@ -297,8 +305,8 @@ export class VerificationService implements OnModuleInit {
       WHERE u.tenant_id = ${scope.tenantId} AND e.organization_id = ${scope.organizationId}
         AND u.status = 'active' AND NULLIF(btrim(u.display_name), '') IS NOT NULL
         AND u.id IS DISTINCT FROM ${submittedBy}::uuid AND p.scope = 'all'
-        AND p.permission IN ('verification.review', 'verification.read', 'documents.read')
-      GROUP BY u.id, u.display_name HAVING COUNT(DISTINCT p.permission) = 3
+        AND p.permission IN ('verification.review', 'verification.read')
+      GROUP BY u.id, u.display_name HAVING COUNT(DISTINCT p.permission) = 2
       ORDER BY name
     `);
     return result.rows.map((row) => row.name);
