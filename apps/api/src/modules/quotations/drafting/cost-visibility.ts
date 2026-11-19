@@ -6,6 +6,7 @@
 // stripping there would wipe the stored costs. The strip is an output filter, applied where a DTO is RETURNED to the
 // caller. exactOptionalPropertyTypes is on, so the keys are omitted, never set to undefined.
 import type { Permission, QuotationDetail, QuotationVersionDto } from '@bos/contracts';
+import { ConflictException } from '@nestjs/common';
 
 import { can, type Principal } from '../../../platform/authz/can';
 import type { PricingInput } from '../pricing/pricing.types';
@@ -36,21 +37,54 @@ export function detailVisibleTo(p: Principal, detail: QuotationDetail): Quotatio
   return canReadCost(p) ? detail : { ...detail, versions: detail.versions.map(withoutCostFigures) };
 }
 
+/** What a draft save needs of a stored line to keep its cost: the line's identity and the cost itself. */
+export interface StoredCostLine {
+  catalogItemId?: string | null | undefined;
+  description: string;
+  uom: string;
+  unitCost?: string | null | undefined;
+}
+
+/** 409: a caller who cannot see the cost figures tried to change which lines the quotation has. */
+export const costFiguresRestricted = () =>
+  new ConflictException({
+    code: 'cost_figures_restricted',
+    message:
+      'Lines cannot be added, removed or reordered on a quotation whose cost figures you cannot see',
+  });
+
 /**
  * The pricing input of a draft save, with the unit costs the caller may write. A caller who may read costs sets
  * them as the body says (an omitted cost clears it, as before). A caller who may not can neither set nor change nor
- * clear one: each line keeps the stored cost of its line number, and a line number that did not exist before gets
- * none. `stored` maps a line number to its stored cost (empty on create). Pricing then recomputes the internal cost
- * and the margin from these costs, so the stored totals stay consistent with the stored line costs.
+ * clear one: a cost has no identity apart from its line, so the stored costs are kept ONLY when the incoming lines
+ * are structurally identical to the stored ones (same count and, position by position, the same catalogItemId,
+ * description and uom); each line then keeps the stored cost of its position. Any add, remove, reorder or identity
+ * edit would shift costs onto other lines, so it is refused (409 cost_figures_restricted) before anything is
+ * written. Quantity, unit price, tax code and everything else stay editable. `stored` is the stored lines in line
+ * order (empty on create: no line has a cost then, and none is refused). Pricing recomputes the internal cost and
+ * the margin from these costs, so the stored totals stay consistent with the stored line costs.
  */
 export function pricingWithAllowedCosts(
   input: PricingInput,
   canRead: boolean,
-  stored: ReadonlyMap<number, string | null>,
+  stored: readonly StoredCostLine[],
 ): PricingInput {
   if (canRead) return input;
+  if (stored.length > 0) {
+    const same =
+      input.lines.length === stored.length &&
+      input.lines.every((line, i) => {
+        const old = stored[i]!;
+        return (
+          (line.catalogItemId ?? null) === (old.catalogItemId ?? null) &&
+          line.description === old.description &&
+          line.uom === old.uom
+        );
+      });
+    if (!same) throw costFiguresRestricted();
+  }
   return {
     ...input,
-    lines: input.lines.map((line) => ({ ...line, unitCost: stored.get(line.lineNo) ?? null })),
+    lines: input.lines.map((line, i) => ({ ...line, unitCost: stored[i]?.unitCost ?? null })),
   };
 }

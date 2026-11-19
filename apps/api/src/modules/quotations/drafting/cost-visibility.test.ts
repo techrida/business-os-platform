@@ -9,6 +9,7 @@ import {
   type RoleKey,
   type Scope,
 } from '@bos/contracts';
+import { ConflictException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 
 import type { Principal } from '../../../platform/authz/principal';
@@ -19,6 +20,7 @@ import {
   pricingWithAllowedCosts,
   versionVisibleTo,
   withoutCostFigures,
+  type StoredCostLine,
 } from './cost-visibility';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -246,39 +248,100 @@ describe('pricingWithAllowedCosts', () => {
       ...(c === undefined ? {} : { unitCost: c }),
     })),
   });
-  const stored = new Map<number, string | null>([
-    [1, '40.00'],
-    [2, null],
-    [3, '7.50'],
-  ]);
+  // The stored lines, in line order: the same identities as `input` builds, with their stored costs.
+  const stored: StoredCostLine[] = [
+    { catalogItemId: null, description: 'Line 1', uom: 'lot', unitCost: '40.00' },
+    { catalogItemId: null, description: 'Line 2', uom: 'lot', unitCost: null },
+    { catalogItemId: null, description: 'Line 3', uom: 'lot', unitCost: '7.50' },
+  ];
+
+  const refusal = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      return error as ConflictException;
+    }
+    throw new Error('expected a refusal');
+  };
 
   it('passes the input through for a caller who may read costs (an omitted cost clears it, as before)', () => {
     const body = input(['1.00', undefined, '2.00']);
     expect(pricingWithAllowedCosts(body, true, stored)).toBe(body);
+    // Adding a line is fine with the permission.
+    expect(() => pricingWithAllowedCosts(input(['1.00']), true, stored)).not.toThrow();
   });
 
-  it('gives each line the stored cost of its line number, whatever the body says', () => {
+  it('gives each line the stored cost of its position, whatever the body says', () => {
     const out = pricingWithAllowedCosts(input([undefined, '999.00', '1.00']), false, stored);
     expect(out.lines.map((l) => l.unitCost)).toEqual(['40.00', null, '7.50']);
   });
 
-  it('gives a line number that did not exist before no cost', () => {
-    const out = pricingWithAllowedCosts(
-      input([undefined, undefined, undefined, '5.00']),
-      false,
-      stored,
-    );
-    expect(out.lines.map((l) => l.unitCost)).toEqual(['40.00', null, '7.50', null]);
+  it('gives every line no cost on create (nothing stored, nothing refused)', () => {
     expect(
-      pricingWithAllowedCosts(input(['5.00']), false, new Map()).lines[0]!.unitCost,
-    ).toBeNull();
+      pricingWithAllowedCosts(input(['5.00', '6.00']), false, []).lines.map((l) => l.unitCost),
+    ).toEqual([null, null]);
+  });
+
+  it('refuses a removed line before any cost moves onto another line', () => {
+    const body = input([undefined, undefined]); // line 1 deleted: Line 1 / Line 3 would be renumbered 1 / 2
+    body.lines[0]!.description = 'Line 2';
+    body.lines[1]!.description = 'Line 3';
+    const error = refusal(() => pricingWithAllowedCosts(body, false, stored));
+    expect(error).toBeInstanceOf(ConflictException);
+    expect(error.getStatus()).toBe(409);
+    expect(error.getResponse()).toMatchObject({
+      code: 'cost_figures_restricted',
+      message:
+        'Lines cannot be added, removed or reordered on a quotation whose cost figures you cannot see',
+    });
+  });
+
+  it('refuses an inserted line, an appended line and a reorder', () => {
+    const inserted = input([undefined, undefined, undefined, undefined]);
+    inserted.lines[1]!.description = 'New';
+    inserted.lines[2]!.description = 'Line 2';
+    inserted.lines[3]!.description = 'Line 3';
+    expect(() => pricingWithAllowedCosts(inserted, false, stored)).toThrow(ConflictException);
+    expect(() =>
+      pricingWithAllowedCosts(input([undefined, undefined, undefined, '5.00']), false, stored),
+    ).toThrow(ConflictException);
+    const reordered = input([undefined, undefined, undefined]);
+    reordered.lines[0]!.description = 'Line 2';
+    reordered.lines[1]!.description = 'Line 1';
+    expect(() => pricingWithAllowedCosts(reordered, false, stored)).toThrow(ConflictException);
+  });
+
+  it('refuses an identity edit (catalog item, description or unit of measure) of a stored line', () => {
+    for (const edit of [{ catalogItemId: id(50) }, { description: 'Renamed' }, { uom: 'month' }]) {
+      const body = input([undefined, undefined, undefined]);
+      Object.assign(body.lines[1]!, edit);
+      expect(() => pricingWithAllowedCosts(body, false, stored), JSON.stringify(edit)).toThrow(
+        ConflictException,
+      );
+    }
+  });
+
+  it('allows quantity, unit price and tax code edits, and treats a missing catalog item as null', () => {
+    const body = input([undefined, undefined, undefined]);
+    for (const line of body.lines) {
+      line.quantity = '9';
+      line.unitPrice = '1.00';
+      line.taxCodeId = id(31);
+      delete line.catalogItemId;
+    }
+    const out = pricingWithAllowedCosts(body, false, stored);
+    expect(out.lines.map((l) => [l.quantity, l.unitCost])).toEqual([
+      ['9', '40.00'],
+      ['9', null],
+      ['9', '7.50'],
+    ]);
   });
 
   it('changes nothing but the costs and does not mutate its input', () => {
-    const body = input([undefined, undefined]);
+    const body = input([undefined, undefined, undefined]);
     const out = pricingWithAllowedCosts(body, false, stored);
     expect(out).toMatchObject({ currency: 'NPR', issueDate: '2026-11-09', discount: null });
-    expect(out.lines.map((l) => l.description)).toEqual(['Line 1', 'Line 2']);
+    expect(out.lines.map((l) => l.description)).toEqual(['Line 1', 'Line 2', 'Line 3']);
     expect(body.lines.every((l) => !('unitCost' in l))).toBe(true);
   });
 });
