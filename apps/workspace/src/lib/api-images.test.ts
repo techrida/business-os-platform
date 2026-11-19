@@ -209,6 +209,20 @@ describe('error mapping', () => {
 });
 
 describe('openImage', () => {
+  it('answers a not-found image even when the upstream body can never be cancelled', async () => {
+    // On a keep-alive response `body.cancel()` never settled in the running app, which hung every 404 for 30 s.
+    const stuck = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"message":"Image not found"}'));
+        controller.close();
+      },
+      cancel: () => new Promise<void>(() => undefined),
+    });
+    fetchMock.mockResolvedValueOnce(new Response(stuck, { status: 404 }));
+
+    await expect(openImage(session, DOC)).rejects.toMatchObject({ status: 404 });
+  }, 2_000);
+
   it('returns the raw response unbuffered, with its caching headers', async () => {
     const upstream = new Response(PNG, {
       status: 200,

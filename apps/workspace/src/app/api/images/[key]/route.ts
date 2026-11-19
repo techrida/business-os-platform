@@ -38,7 +38,7 @@ export async function GET(
     const etag = file.headers.get('etag');
 
     if (file.status === 304) {
-      await file.body?.cancel();
+      void file.body?.cancel().catch(() => undefined);
       const headers = new Headers({ 'cache-control': IMAGE_CACHE });
       if (etag !== null) headers.set('etag', etag);
       return new Response(null, { status: 304, headers });
@@ -46,7 +46,7 @@ export async function GET(
 
     const mime = (file.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
     if (!file.body || !(IMAGE_MIME as readonly string[]).includes(mime)) {
-      await file.body?.cancel();
+      void file.body?.cancel().catch(() => undefined);
       return jsonResponse({ error: { message: 'This file is not a picture.' } }, 415);
     }
 
