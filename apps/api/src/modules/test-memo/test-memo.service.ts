@@ -80,7 +80,6 @@ import { DocumentLogoResolverFactory } from '../images/document-logo.resolver';
 import { addressParts } from '../quotations/render/layouts/shared';
 import {
   DocumentLogoUnavailableError,
-  NO_DOCUMENT_LOGO_RESOLVER,
   type DocumentLogoResolver,
 } from '../quotations/render/issuer';
 import {
@@ -268,6 +267,10 @@ export class LetterheadInvalidError extends Error {
   }
 }
 
+/** The resolver when no DocumentLogoResolverFactory is wired: a referenced logo cannot be read (see the constructor). */
+const NO_LOGO_FACTORY: DocumentLogoResolver = () =>
+  Promise.reject(new Error('DocumentLogoResolverFactory is not provided'));
+
 /** Most lines a letterhead address has (LetterheadSchema); a fifth part joins the fourth line. */
 const LETTERHEAD_ADDRESS_LINES = 4;
 
@@ -366,12 +369,13 @@ export class TestMemoService implements OnModuleInit {
     // Optional: a missing notify module only slows delivery (the 5 s drain still sends), it never fails a submit.
     @Optional() private readonly notify?: NotifyService,
     // TestMemoModule imports DocumentLogoModule, so the API always has it. Optional (and last) only so a test that
-    // builds the service by hand need not; without it a referenced logo resolves to nothing (the legacy logo, if any).
+    // builds the service by hand need not. Without it a referenced logo counts as unreadable (NO_LOGO_FACTORY): a
+    // draft shows no logo and a submit fails, never freezing a logo-less letterhead silently.
     @Optional() private readonly logos?: DocumentLogoResolverFactory,
   ) {}
 
   private letterhead(scope: TxScope, mode: 'live' | 'freeze'): Promise<Letterhead | undefined> {
-    const resolveLogo = this.logos?.forScope(scope) ?? NO_DOCUMENT_LOGO_RESOLVER;
+    const resolveLogo = this.logos?.forScope(scope) ?? NO_LOGO_FACTORY;
     return buildMemoLetterhead(this.settings, scope, resolveLogo, mode, this.log);
   }
 
