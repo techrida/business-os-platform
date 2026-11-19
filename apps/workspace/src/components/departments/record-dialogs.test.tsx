@@ -67,3 +67,13 @@ it('keeps Retire disabled until a destination is chosen for the members', async 
   await act(() => Promise.resolve());
   expect(mocks.retire).toHaveBeenCalledExactlyOnceWith(SALES, 3, null);
 });
+
+it('retires an empty department without asking where members go', async () => {
+  await mount(0);
+  expect(document.body.textContent).toContain('No one is in Sales.');
+  expect(document.querySelector('input[name="moveMembersTo"]')).toBeNull();
+  expect(retireButton()?.disabled).toBe(false);
+  await click(retireButton());
+  await act(() => Promise.resolve());
+  expect(mocks.retire).toHaveBeenCalledExactlyOnceWith(SALES, 3, undefined);
+});
