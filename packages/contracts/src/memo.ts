@@ -37,10 +37,11 @@ export const MemoTemplateInputSchema = z
  * The memo letterhead: the entity's address (as the quotation footer prints it, one part per line), its logo as bytes
  * and its brand colour. The directory carries the live values for a draft; submit freezes them onto the memo, so a
  * later logo or address change never alters a memo that was sent for approval. A memo stored before letterheads has
- * none, and still reads.
+ * none, and still reads. A line joins address parts (city and district: up to 100 + 2 + 100 characters), so the
+ * per-line cap sits above any line the address settings can produce; the line count keeps the whole bounded.
  */
 export const LetterheadSchema = z.object({
-  addressLines: z.array(z.string().max(200)).max(4),
+  addressLines: z.array(z.string().max(400)).max(4),
   logoDataUrl: LogoDataUrlSchema.nullable(),
   primaryColour: HexColourSchema,
 });

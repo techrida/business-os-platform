@@ -52,13 +52,21 @@ describe('memo letterhead', () => {
     ).toBeNull();
   });
 
-  it('refuses more than four address lines, a line over 200 characters, an SVG logo and a bad colour', () => {
+  it('takes a joined city and district line of 202 characters (two 100-character parts)', () => {
+    const line = `${'c'.repeat(100)}, ${'d'.repeat(100)}`;
+    expect(line).toHaveLength(202);
+    expect(
+      LetterheadSchema.safeParse({ ...letterhead, addressLines: ['a', 'b', line, 'e'] }).success,
+    ).toBe(true);
+  });
+
+  it('refuses more than four address lines, a line over 400 characters, an SVG logo and a bad colour', () => {
     expect(
       LetterheadSchema.safeParse({ ...letterhead, addressLines: ['a', 'b', 'c', 'd', 'e'] })
         .success,
     ).toBe(false);
     expect(
-      LetterheadSchema.safeParse({ ...letterhead, addressLines: ['x'.repeat(201)] }).success,
+      LetterheadSchema.safeParse({ ...letterhead, addressLines: ['x'.repeat(401)] }).success,
     ).toBe(false);
     expect(
       LetterheadSchema.safeParse({
