@@ -2,6 +2,8 @@
 // Real: migrations as bos_owner, queries as bos_app, ReceivableOrdersService, and ReceiptsService (drafts, confirms and
 // reversals are made through it, so the quantities are the ones the receipt routes leave). Faked: the request context
 // and authz.assert (the real pure can() on a fake principal). POs are inserted directly as bos_owner.
+// Also covers the requester's side of U18 #4: RequestedOrdersService (the receipts picker of a requester) and the
+// purchase orders PurchaseRequestsService.get returns with a request.
 // Run: pnpm --filter @bos/api exec vitest run src/modules/procurement/receipts/receivable-orders.integration.test.ts
 import 'reflect-metadata';
 
@@ -21,7 +23,7 @@ import {
   createTenantWithEntity,
   runMigrations,
 } from '@bos/db';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -37,6 +39,8 @@ import { systemActor, withTx, type TxScope } from '../../../platform/db/tx';
 import { NumberingService } from '../../../platform/settings/numbering.service';
 import { ReceivableOrdersService } from './receivable-orders.service';
 import { ReceiptsService } from './receipts.service';
+import { RequestedOrdersService } from './requested-orders.service';
+import { PurchaseRequestsService } from '../requests/purchase-requests.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
 
@@ -53,12 +57,14 @@ let scopeA: TxScope;
 let scopeB: TxScope;
 let receipts: ReceiptsService;
 let orders: ReceivableOrdersService;
+let requested: RequestedOrdersService;
+let requests: PurchaseRequestsService;
 let taxCodeId = '';
 let vendorId = '';
 let departmentA = '';
 let departmentB = '';
 
-const U = { warehouse: '', requester: '', procurement: '' };
+const U = { warehouse: '', requester: '', otherRequester: '', procurement: '' };
 
 const grantsOf = (role: RoleKey) =>
   new Map(Object.entries(DEFAULT_ROLE_PERMISSIONS[role])) as Map<Permission, Scope>;
@@ -170,6 +176,7 @@ beforeAll(async () => {
       .userId;
   U.warehouse = await staff('warehouse');
   U.requester = await staff('operations_officer');
+  U.otherRequester = await staff('operations_officer');
   U.procurement = await staff('procurement');
 
   departmentA = (await createDepartment(appPool, scopeA)).departmentId;
@@ -210,6 +217,18 @@ beforeAll(async () => {
     () => now,
   );
   orders = new ReceivableOrdersService(db, caller);
+  requested = new RequestedOrdersService(db, caller);
+  // get() reads only the database and the caller; the write collaborators are never reached.
+  requests = new PurchaseRequestsService(
+    db,
+    authz as unknown as AuthzService,
+    {} as never,
+    {} as never,
+    new AuditService(db),
+    new NumberingService(),
+    {} as never,
+    caller,
+  );
 });
 
 afterAll(async () => {
@@ -242,11 +261,18 @@ interface Po {
   id: string;
   number: string;
   lineIds: string[];
+  prId: string;
 }
 
 /** A request and a PO in `scope` (issued unless told otherwise) with one line per spec; issued at `issuedAt`. */
 async function newPo(
-  options: { scope?: TxScope; status?: string; lines?: LineSpec[]; issuedAt?: string } = {},
+  options: {
+    scope?: TxScope;
+    status?: string;
+    lines?: LineSpec[];
+    issuedAt?: string;
+    requester?: string;
+  } = {},
 ): Promise<Po> {
   const scope = options.scope ?? scopeA;
   const status = options.status ?? 'issued';
@@ -264,7 +290,7 @@ async function newPo(
       scope.organizationId,
       `PR-${randomUUID()}`,
       scope === scopeA ? departmentA : departmentB,
-      U.requester,
+      options.requester ?? U.requester,
       (await createCostCenter(appPool, scope)).costCenterId,
     ],
   );
@@ -315,7 +341,7 @@ async function newPo(
     );
     lineIds.push(line!.id);
   }
-  return { id: po!.id, number: po!.number, lineIds };
+  return { id: po!.id, number: po!.number, lineIds, prId: pr!.id };
 }
 
 /** A receipt of `quantity` on one PO line through the receipt service; confirmed unless `draft`. */
@@ -434,5 +460,145 @@ describe('receivable orders', () => {
     expect(idsB).not.toContain(inA.id);
     current.scope = null;
     expect((await listed()).map((r) => r.id)).not.toContain(inB.id);
+  });
+});
+
+// The purchase orders of the caller's own requests (U18 #4): the receipts page's picker for a requester, who holds
+// no purchase order read. Always the caller's own requests, whatever their read scope, and only the acting entity.
+describe("the requester's own purchase orders", () => {
+  const asRequester = (userId = U.requester) => {
+    current.userId = userId;
+    current.role = 'operations_officer';
+  };
+  const mine = async () => requested.list({ limit: 200 });
+
+  it("lists the caller's own orders with number, status and vendor, without drafts or cancelled ones", async () => {
+    const service = await newPo({ lines: [SERVICE1] });
+    const done = await newPo({ status: 'fully_received' });
+    const draft = await newPo({ status: 'draft' });
+    const cancelled = await newPo();
+    await ownerRun(
+      scopeA.organizationId,
+      `UPDATE app.purchase_orders SET status = 'cancelled', closed_reason = 'Vendor withdrew' WHERE id = $1`,
+      [cancelled.id],
+    );
+    asRequester();
+    const rows = await mine();
+    expect(rows.find((r) => r.id === service.id)).toEqual({
+      id: service.id,
+      number: service.number,
+      status: 'issued',
+      vendorName: VENDOR_NAME,
+    });
+    expect(rows.find((r) => r.id === done.id)?.status).toBe('fully_received');
+    const ids = rows.map((r) => r.id);
+    expect(ids).not.toContain(draft.id);
+    expect(ids).not.toContain(cancelled.id);
+  });
+
+  it('returns only the picker fields: no amount, vendor id, request or creator rides along', async () => {
+    await newPo({ lines: [SERVICE1] });
+    asRequester();
+    const rows = await mine();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(['id', 'number', 'status', 'vendorName']);
+    }
+  });
+
+  it("never lists another requester's orders, even to a caller who reads every request", async () => {
+    const theirs = await newPo({ requester: U.otherRequester });
+    asRequester();
+    expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
+    current.userId = U.procurement;
+    current.role = 'procurement';
+    expect((await mine()).map((r) => r.id)).not.toContain(theirs.id);
+    asRequester(U.otherRequester);
+    expect((await mine()).map((r) => r.id)).toContain(theirs.id);
+  });
+
+  it("never lists another entity's orders", async () => {
+    const inA = await newPo();
+    const inB = await newPo({ scope: scopeB });
+    asRequester();
+    const idsA = (await mine()).map((r) => r.id);
+    expect(idsA).toContain(inA.id);
+    expect(idsA).not.toContain(inB.id);
+    // The file shares one database: entity B may hold this requester's orders from earlier tests too.
+    current.scope = scopeB;
+    const idsB = (await mine()).map((r) => r.id);
+    expect(idsB).toContain(inB.id);
+    expect(idsB).not.toContain(inA.id);
+  });
+});
+
+// A purchase request's detail names its orders (U18 #4) under the request's own read, with can.receiveService
+// mirroring ReceiptsService.assertMayReceive for a service receipt.
+describe('the purchase orders on a purchase request', () => {
+  it('shows the requester each order with Receive service only on an open order with a service line', async () => {
+    const service = await newPo({ lines: [SERVICE1] });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const pr = await requests.get(service.prId);
+    expect(pr.purchaseOrders).toEqual([
+      {
+        id: service.id,
+        number: service.number,
+        status: 'issued',
+        vendorName: VENDOR_NAME,
+        can: { receiveService: true },
+      },
+    ]);
+    // The flag holds: the requester can record the service receipt it promises.
+    await expect(
+      receipts.create(
+        {
+          purchaseOrderId: service.id,
+          kind: 'service',
+          receivedAt: '2026-11-09',
+          lines: [{ poLineId: service.lineIds[0]!, quantity: '1' }],
+        },
+        randomUUID(),
+      ),
+    ).resolves.toMatchObject({ purchaseOrderId: service.id });
+  });
+
+  it('offers no Receive service on a goods order, a received order, or to procurement', async () => {
+    const goods = await newPo({ lines: [GOODS5] });
+    const done = await newPo({ lines: [SERVICE1], status: 'fully_received' });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    expect((await requests.get(goods.prId)).purchaseOrders?.[0]?.can.receiveService).toBe(false);
+    expect((await requests.get(done.prId)).purchaseOrders?.[0]?.can.receiveService).toBe(false);
+    const service = await newPo({ lines: [SERVICE1] });
+    current.userId = U.procurement;
+    current.role = 'procurement';
+    const seen = (await requests.get(service.prId)).purchaseOrders ?? [];
+    expect(seen.map((o) => o.id)).toEqual([service.id]);
+    expect(seen[0]?.can.receiveService).toBe(false);
+  });
+
+  it('adds only number, status, vendor name and the flag: no amount or vendor id rides along', async () => {
+    const po = await newPo({ lines: [SERVICE1, GOODS3] });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    const [order] = (await requests.get(po.prId)).purchaseOrders ?? [];
+    expect(Object.keys(order ?? {}).sort()).toEqual([
+      'can',
+      'id',
+      'number',
+      'status',
+      'vendorName',
+    ]);
+    expect(Object.keys(order?.can ?? {})).toEqual(['receiveService']);
+  });
+
+  it('leaves out a draft order, and another requester cannot read the request at all', async () => {
+    const draft = await newPo({ status: 'draft' });
+    current.userId = U.requester;
+    current.role = 'operations_officer';
+    expect((await requests.get(draft.prId)).purchaseOrders).toEqual([]);
+    current.userId = U.otherRequester;
+    await expect(requests.get(draft.prId)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

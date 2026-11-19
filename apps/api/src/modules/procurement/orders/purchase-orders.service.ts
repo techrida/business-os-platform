@@ -26,11 +26,15 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { AuditService } from '../../../platform/audit/audit.service';
+import { can } from '../../../platform/authz/can';
+import type { Principal } from '../../../platform/authz/principal';
 import { DB, type Db, type DbTransaction } from '../../../platform/db/db.module';
 import { withIdempotency } from '../../../platform/db/idempotency';
 import { withTx, type TxScope } from '../../../platform/db/tx';
 import { searchPage } from '../../../platform/list';
+import { ApprovalsNotify } from '../../approvals/ports';
 import { ApprovalsService } from '../../approvals/requests.service';
+import { BILLABLE_PO_STATUSES } from '../../payables/bills/vendor-bill.rules';
 import { PurchaseOrdersCaller } from './purchase-orders.caller';
 import {
   PO_AMENDMENT_DOCUMENT_TYPE,
@@ -112,6 +116,12 @@ export interface PurchaseOrderDto {
    * quotation's line ids). Read-only; absent otherwise.
    */
   proposedLines?: PurchaseOrderLineDto[];
+  /**
+   * What the caller may do from this order outside the PO routes, from the caller's live grants (detail only):
+   * `enterBill` is the bill entry route's own check (an active staff caller holding payables.bill.enter) on an
+   * order a bill can be entered against (BILLABLE_PO_STATUSES).
+   */
+  can?: { enterBill: boolean };
 }
 
 /** A row of the list: the detail without its lines, and always with the vendor's name. */
@@ -178,6 +188,15 @@ const toDto = (po: PoRow, lines: readonly PoLineRow[]): PurchaseOrderDto => ({
   lines: lines.map(toLineDto),
 });
 
+/** May `p` enter a bill against an order in `status`? Mirrors POST /v1/payables/bills: the grant alone decides. */
+export function mayEnterBill(p: Principal, status: PoStatus): boolean {
+  return (
+    p.orgKind === 'staff' &&
+    can(p, 'payables.bill.enter').allowed &&
+    (BILLABLE_PO_STATUSES as readonly string[]).includes(status)
+  );
+}
+
 /** Joins a PO to its vendor; vendors are tenant level, so the join is on (tenantId, id) only. */
 const vendorOf = (po: typeof purchaseOrders) =>
   and(eq(vendors.tenantId, po.tenantId), eq(vendors.id, po.vendorId));
@@ -240,6 +259,8 @@ export class PurchaseOrdersService {
     @Optional()
     @Inject(PURCHASE_ORDERS_CLOCK)
     private readonly clock: () => Date = () => new Date(),
+    /** Tells the requester their order was issued (in-app only); absent in tests that do not look. */
+    @Optional() private readonly notify?: ApprovalsNotify,
   ) {}
 
   // ------------------------------------------------------------------------------------------------- reads
@@ -300,7 +321,7 @@ export class PurchaseOrdersService {
 
   /** 404 outside the acting entity. */
   async get(id: string): Promise<PurchaseOrderDto> {
-    const { scope, actor } = this.caller.current();
+    const { scope, actor, principal } = this.caller.current();
     return withTx(this.db, scope, actor, async (tx) => {
       const [row] = await tx
         .select({ po: purchaseOrders, vendorName: vendors.legalName })
@@ -325,6 +346,7 @@ export class PurchaseOrdersService {
         ...toDto(row.po, lines),
         vendorName: row.vendorName,
         ...(proposed !== undefined ? { proposedLines: proposed } : {}),
+        can: { enterBill: mayEnterBill(principal, row.po.status) },
       };
     });
   }
@@ -433,10 +455,42 @@ export class PurchaseOrdersService {
             before: { status: 'draft' },
             after: { status: 'issued', version: 1, ...totals },
           });
+          await this.notifyRequester(tx, scope, row, principal.userId);
           return { status: 200, response: toDto(row, lines) };
         },
       );
       return done.response;
+    });
+  }
+
+  /**
+   * An in-app notice to the purchase request's requester that its order was issued (U18 #4), so they know there is
+   * an order to receive a service against. In the issue transaction; one notice per order (dedupeKey). Not sent
+   * when the requester issued it themselves.
+   */
+  private async notifyRequester(
+    tx: DbTransaction,
+    scope: TxScope,
+    po: PoRow,
+    issuedBy: string,
+  ): Promise<void> {
+    if (this.notify === undefined) return;
+    const [pr] = await tx
+      .select({
+        requesterUserId: purchaseRequests.requesterUserId,
+        number: purchaseRequests.number,
+      })
+      .from(purchaseRequests)
+      .where(scoped(scope).where(purchaseRequests, eq(purchaseRequests.id, po.purchaseRequestId)))
+      .limit(1);
+    if (pr === undefined || pr.requesterUserId === issuedBy) return;
+    const request = pr.number ?? 'your purchase request';
+    await this.notify.notifyUser(tx, {
+      userId: pr.requesterUserId,
+      title: `Purchase order ${po.number} issued`,
+      body: `Purchase order ${po.number} was issued for ${request}.`,
+      link: `/procurement/requests/${po.purchaseRequestId}`,
+      dedupeKey: `purchase_order:${po.id}:issued`,
     });
   }
 

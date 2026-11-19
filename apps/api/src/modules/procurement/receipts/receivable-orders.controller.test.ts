@@ -10,7 +10,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ANY_AUTHENTICATED_KEY, CAN_KEY } from '../../../platform/authz/decorators';
 import type { ReceivableOrdersService } from './receivable-orders.service';
-import { ReceivableOrdersController } from './receipts.controller';
+import { ReceivableOrdersController, RequestedOrdersController } from './receipts.controller';
+import type { RequestedOrdersService } from './requested-orders.service';
 
 function setup() {
   const service = { list: vi.fn().mockResolvedValue([]) };
@@ -53,6 +54,45 @@ describe('GET /v1/procurement/receivable-orders', () => {
     expect(() => controller.list({ limit: '201' })).toThrow(BadRequestException);
     expect(() => controller.list({ organizationId: 'x' })).toThrow(BadRequestException);
     expect(service.list).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /v1/procurement/requested-orders', () => {
+  const requested = () => {
+    const service = { list: vi.fn().mockResolvedValue([]) };
+    return {
+      service,
+      controller: new RequestedOrdersController(service as unknown as RequestedOrdersService),
+    };
+  };
+
+  it('needs procurement.pr.read on the route, with no any-signed-in-user marker', () => {
+    expect(Reflect.getMetadata('path', RequestedOrdersController)).toBe(
+      'v1/procurement/requested-orders',
+    );
+    expect(Reflect.getMetadata(CAN_KEY, RequestedOrdersController.prototype.list)).toBe(
+      'procurement.pr.read',
+    );
+    expect(Reflect.getMetadata(ANY_AUTHENTICATED_KEY, RequestedOrdersController)).toBeUndefined();
+    expect(
+      Reflect.getMetadata(ANY_AUTHENTICATED_KEY, RequestedOrdersController.prototype.list),
+    ).toBeUndefined();
+  });
+
+  it('hands the service the parsed query, and is a 400 for a bad limit or an unknown key', async () => {
+    const { service, controller } = requested();
+    await controller.list({});
+    expect(service.list).toHaveBeenCalledWith({ limit: 100 });
+    expect(() => controller.list({ limit: '0' })).toThrow(BadRequestException);
+    expect(() => controller.list({ requesterUserId: 'x' })).toThrow(BadRequestException);
+    expect(service.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('is reached by the requester role, which holds no purchase order or receipt grant', () => {
+    const officer = DEFAULT_ROLE_PERMISSIONS.operations_officer;
+    expect(officer['procurement.pr.read']).toBe('own');
+    expect(officer['procurement.po.issue']).toBeUndefined();
+    expect(officer['procurement.receipt.confirm']).toBeUndefined();
   });
 });
 

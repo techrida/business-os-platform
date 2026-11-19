@@ -69,6 +69,7 @@ import {
 } from './vendor-bill.rules';
 import { MatchExceptionSubject, VendorBillSubject } from './vendor-bill.subject';
 import { VendorBillsService } from './vendor-bills.service';
+import { VendorOrdersService } from './vendor-orders.service';
 import { billDocumentOwnerPolicy, BillDocumentsService } from './bill-documents.service';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 180_000 });
@@ -87,6 +88,7 @@ let approvals: ApprovalsService;
 let service: VendorBillsService;
 let orders: PurchaseOrdersService;
 let receiptsService: ReceiptsService;
+let pickers: VendorOrdersService;
 let deptA = '';
 let vatCode = '';
 
@@ -234,6 +236,7 @@ beforeAll(async () => {
     () => now,
   );
   orders = new PurchaseOrdersService(db, approvals, audit, caller, () => now);
+  pickers = new VendorOrdersService(db, caller);
   receiptsService = new ReceiptsService(
     db,
     authz as unknown as AuthzService,
@@ -520,6 +523,63 @@ describe('match (check 6, AD6 defaults from settings)', () => {
     expect((await service.list(PAGE)).rows.find((row) => row.id === bill.id)).toMatchObject(
       expected,
     );
+  });
+
+  it('names the purchase order on bill list and detail for Finance, who holds no purchase order read', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    const plain = await billWithoutPo(await doc(['clean']));
+    const [stored] = await read((tx) =>
+      tx.execute<{ number: string }>(
+        sql`SELECT number FROM app.purchase_orders WHERE id = ${po.id}`,
+      ),
+    ).then((r) => r.rows);
+    as(U.fin, 'finance');
+    expect(grantsOf('finance').has('procurement.po.issue')).toBe(false);
+    expect(grantsOf('finance').has('procurement.pr.read')).toBe(false);
+    expect(await service.get(bill.id)).toMatchObject({
+      purchaseOrderId: po.id,
+      purchaseOrderNumber: stored!.number,
+    });
+    const listed = (await service.list(PAGE)).rows;
+    expect(listed.find((row) => row.id === bill.id)?.purchaseOrderNumber).toBe(stored!.number);
+    expect(listed.find((row) => row.id === plain.id)?.purchaseOrderNumber).toBeNull();
+    expect((await service.get(plain.id)).purchaseOrderNumber).toBeNull();
+    as(U.acct, 'accountant');
+  });
+
+  it('adds only the order number to a bill: no other purchase order field rides along', async () => {
+    const po = await receivedPo('1', '1000.00', '1');
+    const bill = await billFor(po, '1', '1000.00');
+    as(U.fin, 'finance');
+    const { lines: _lines, fileStatus: _file, ...detail } = await service.get(bill.id);
+    const row = (await service.list(PAGE)).rows.find((r) => r.id === bill.id)!;
+    as(U.acct, 'accountant');
+    const expectedKeys = [
+      'approvalRequestId',
+      'currency',
+      'documentId',
+      'enteredBy',
+      'fiscalYear',
+      'id',
+      'invoiceDate',
+      'kind',
+      'matchStatus',
+      'netTotal',
+      'number',
+      'payableTotal',
+      'purchaseOrderId',
+      'purchaseOrderNumber',
+      'status',
+      'tdsTotal',
+      'vatTotal',
+      'vendorInvoiceNo',
+      'vendorName',
+      'vendorPartyId',
+      'version',
+    ];
+    expect(Object.keys(detail).sort()).toEqual(expectedKeys);
+    expect(Object.keys(row).sort()).toEqual(expectedKeys);
   });
 
   it('passes +2% on 10,000 and lets the bill through to Accountant -> Finance', async () => {
@@ -1066,5 +1126,85 @@ describe('entity wall', () => {
     );
     expect(e.getStatus()).toBe(422);
     expect(codeOf(e)).toBe('PO_LINE_NOT_FOUND');
+  });
+});
+
+// The payables purchase order pickers (U18 #12, #13): the accountant and Finance hold no purchase order read, so the
+// bill and payment request forms list orders through VendorOrdersService, under their own form grant.
+describe('purchase order pickers', () => {
+  /** A PO of `vendorId` in entity A left in draft: never offered by either picker. */
+  async function draftPo(vendorId: string): Promise<string> {
+    const prId = randomUUID();
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.purchase_requests (id, tenant_id, organization_id, request_type, department_id,
+            requester_user_id, cost_center_id, justification, required_by, budget_code, currency)
+          VALUES (${prId}, ${scopeA.tenantId}, ${scopeA.organizationId}, 'goods', ${deptA}, ${U.req},
+                  ${(await createCostCenter(appPool, scopeA)).costCenterId}, 'Chairs', '2026-12-01', 'IT-2083', 'NPR')`,
+    );
+    const id = randomUUID();
+    poSeq += 1;
+    await exec(
+      scopeA,
+      sql`INSERT INTO app.purchase_orders (id, tenant_id, organization_id, number, number_seq, fiscal_year,
+            purchase_request_id, vendor_id, currency, payment_terms_days, approved_total, fx_rate,
+            approved_total_npr, approved_band, created_by)
+          VALUES (${id}, ${scopeA.tenantId}, ${scopeA.organizationId}, ${`PO-B-${poSeq}`}, ${poSeq}, '2082/83',
+                  ${prId}, ${vendorId}, 'NPR', 30, '100.00', 1, '100.00', 'base', ${U.proc})`,
+    );
+    return id;
+  }
+  const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+
+  it("offers the accountant the chosen vendor's billable orders, without a draft", async () => {
+    const part = await receivedPo('2', '100.00', '1');
+    const other = await receivedPo('1', '100.00', '1');
+    const draft = await draftPo(part.vendorId);
+    as(U.acct, 'accountant');
+
+    const mine = await pickers.billable({ vendorId: part.vendorId, limit: 100 });
+    expect(mine).toEqual([
+      {
+        id: part.id,
+        number: expect.stringMatching(/^PO-B-\d+$/) as string,
+        status: 'partially_received',
+        vendorId: part.vendorId,
+      },
+    ]);
+    const all = ids(await pickers.billable({ limit: 200 }));
+    expect(all).toEqual(expect.arrayContaining([part.id, other.id]));
+    expect(all).not.toContain(draft);
+  });
+
+  it('offers Finance the vendor orders a payment request can name, without a draft', async () => {
+    const full = await receivedPo('1', '100.00', '1');
+    const draft = await draftPo(full.vendorId);
+    as(U.fin, 'finance');
+
+    const rows = await pickers.forPaymentRequest({ vendorId: full.vendorId, limit: 100 });
+    expect(ids(rows)).toEqual([full.id]);
+    expect(rows[0]?.status).toBe('fully_received');
+    expect(ids(rows)).not.toContain(draft);
+  });
+
+  it('returns only id, number, status and vendor: no amount, request or creator rides along', async () => {
+    const po = await receivedPo('1', '100.00', '1');
+    as(U.acct, 'accountant');
+    const [bill] = await pickers.billable({ vendorId: po.vendorId, limit: 100 });
+    as(U.fin, 'finance');
+    const [pay] = await pickers.forPaymentRequest({ vendorId: po.vendorId, limit: 100 });
+    for (const row of [bill, pay]) {
+      expect(Object.keys(row ?? {}).sort()).toEqual(['id', 'number', 'status', 'vendorId']);
+    }
+  });
+
+  it("never lists another entity's orders", async () => {
+    const po = await receivedPo('1', '100.00', '1');
+    current.scope = scopeB;
+    as(U.acct, 'accountant');
+    expect(ids(await pickers.billable({ limit: 200 }))).not.toContain(po.id);
+    expect(await pickers.billable({ vendorId: po.vendorId, limit: 200 })).toEqual([]);
+    as(U.fin, 'finance');
+    expect(await pickers.forPaymentRequest({ vendorId: po.vendorId, limit: 200 })).toEqual([]);
   });
 });

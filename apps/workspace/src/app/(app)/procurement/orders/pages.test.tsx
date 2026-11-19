@@ -72,6 +72,7 @@ const order = (over: Record<string, unknown> = {}) => ({
   rfqId: null,
   vendorQuotationId: null,
   vendorId: VENDOR,
+  vendorName: 'Himal Traders Pvt. Ltd.',
   currency: 'NPR',
   paymentTermsDays: 30,
   advancePercent: '0.00',
@@ -178,10 +179,22 @@ describe('the purchase order list', () => {
     expect(out).toContain('Clear filters');
   });
 
-  it('falls back to an unavailable-name label when the vendor cannot be read, and keeps a long name wrapping', async () => {
+  it('names each vendor from the list response, with no vendor read per row', async () => {
     vendors.getVendor.mockRejectedValue(apiError(403));
-    api.listPurchaseOrdersPage.mockResolvedValue(page([order()]));
-    expect(await list()).toContain('Vendor name unavailable');
+    api.listPurchaseOrdersPage.mockResolvedValue(
+      page([
+        order(),
+        order({ id: LINE, number: 'PO-2082-0002', vendorName: 'Everest Supplies' }),
+      ]),
+    );
+    const out = await list();
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
+    expect(out).toContain('Everest Supplies');
+    expect(out).not.toContain('Vendor name unavailable');
+    expect(vendors.getVendor).not.toHaveBeenCalled();
+    api.getPurchaseOrder.mockResolvedValue(order());
+    expect(await detail()).toContain('Himal Traders Pvt. Ltd.');
+    expect(vendors.getVendor).not.toHaveBeenCalled();
   });
 
   it('shows the no-access pattern for a 403 and a retry for any other failure', async () => {
@@ -259,16 +272,29 @@ describe('the purchase order page', () => {
     expect(out).toContain('Receive goods');
   });
 
-  it('still shows the order when the vendor, versions and progress panels fail', async () => {
+  it('offers Enter bill only when the order says the caller may enter a bill on it', async () => {
+    session.roles = ['accountant'];
+    api.getPurchaseOrder.mockResolvedValue(order({ can: { enterBill: true } }));
+    const out = await detail();
+    expect(out).toContain('Enter bill');
+    expect(out).toContain(`/payables/bills/new?po=${ID}`);
+    for (const can of [{ enterBill: false }, undefined]) {
+      api.getPurchaseOrder.mockResolvedValue(order({ can }));
+      const without = await detail();
+      expect(without).not.toContain('Enter bill');
+      expect(without).not.toContain('/payables/bills/new');
+    }
+  });
+
+  it('still shows the order when the versions and progress panels fail', async () => {
     api.getPurchaseOrder.mockResolvedValue(order());
     api.listPoVersions.mockRejectedValue(apiError(500));
     api.getPoProgress.mockRejectedValue(apiError(500));
-    vendors.getVendor.mockRejectedValue(apiError(403));
     const out = await detail();
     expect(out).toContain('PO-2082-0001');
     expect(out).toContain('The versions did not load');
     expect(out).toContain('The receipt progress did not load');
-    expect(out).toContain('Vendor name unavailable');
+    expect(out).toContain('Himal Traders Pvt. Ltd.');
     expect(out).toContain('Approved total');
   });
 

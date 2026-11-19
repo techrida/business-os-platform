@@ -12,13 +12,11 @@ import { Page, PageHeader } from '@/components/ui/page';
 import { Pagination } from '@/components/ui/pagination';
 
 import { CellTitle, Table, Td, Th } from '@/components/ui/table';
-import { getVendor } from '@/lib/api-vendors';
 import { listPurchaseOrdersPage, type PoListItem } from '@/lib/api-purchase-orders';
 import { requireStaffSession } from '@/lib/bff';
 import { getNumberSystems } from '@/lib/display-settings';
 import { when } from '@/lib/kernel-format';
 import { activeFilterLabels, clearFiltersHref, hrefWith, readList } from '@/lib/list-params';
-import type { Session } from '@/lib/session';
 
 import layout from '../procurement.module.css';
 import { poFailure } from './_lib/failure';
@@ -32,27 +30,7 @@ export const dynamic = 'force-dynamic';
 const PATH = '/procurement/orders';
 const LIST = { multi: { status: PO_STATUSES } } as const;
 
-/** Vendor names for the rows on this page. Unreadable vendors show an explicit unavailable-name label. */
-async function vendorNames(session: Session, ids: readonly string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(ids)];
-  const settled = await Promise.allSettled(unique.map((id) => getVendor(session, id)));
-  const names = new Map<string, string>();
-  settled.forEach((r, i) => {
-    const id = unique[i];
-    if (id !== undefined && r.status === 'fulfilled') names.set(id, r.value.legalName);
-  });
-  return names;
-}
-
-function Row({
-  po,
-  vendor,
-  numberSystems,
-}: {
-  po: PoListItem;
-  vendor: string | undefined;
-  numberSystems: NumberSystems;
-}) {
+function Row({ po, numberSystems }: { po: PoListItem; numberSystems: NumberSystems }) {
   const status = PO_STATUS_LABEL[po.status];
   return (
     <tr>
@@ -62,15 +40,7 @@ function Row({
         </Link>
       </Td>
       <Td>
-        <CellTitle
-          title={
-            vendor !== undefined ? (
-              <span className={styles.long}>{vendor}</span>
-            ) : (
-              <span className={styles.quiet}>Vendor name unavailable</span>
-            )
-          }
-        />
+        <CellTitle title={<span className={styles.long}>{po.vendorName}</span>} />
       </Td>
       <Td nowrap>
         <Badge tone={status.tone}>{status.text}</Badge>
@@ -133,13 +103,6 @@ export default async function PurchaseOrdersPage({
     problem = { message: f.message, status: f.status };
   }
 
-  const names =
-    orders !== null && orders.length > 0
-      ? await vendorNames(
-          session,
-          orders.map((o) => o.vendorId),
-        )
-      : new Map<string, string>();
   const filtered = activeFilterLabels(
     { q: list.q, multi: list.multi, single: {} },
     {
@@ -221,12 +184,7 @@ export default async function PurchaseOrdersPage({
             </thead>
             <tbody>
               {orders.map((po) => (
-                <Row
-                  numberSystems={numberSystems}
-                  key={po.id}
-                  po={po}
-                  vendor={names.get(po.vendorId)}
-                />
+                <Row numberSystems={numberSystems} key={po.id} po={po} />
               ))}
             </tbody>
           </Table>
