@@ -337,7 +337,8 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
   const mayEnterBill = po.can?.enterBill === true;
   const primary = primaryOrderAction({
     issue: can.issue,
-    receive: mayReceive,
+    // Receive goods is promoted only for the warehouse grant: without it the receipt page may refuse the lines left.
+    receive: mayReceive && grants.confirm,
     enterBill: mayEnterBill,
   });
   const received = (lineId: string): string | null =>
