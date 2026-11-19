@@ -30,6 +30,14 @@ const SCOPE_TEXT: Record<Scope, string> = {
   all: 'Every record in the organisation.',
 };
 
+/**
+ * A plain-language line under a permission whose key alone does not say what it shows. D29: the internal cost
+ * figures are their own permission, so an admin can tell why a role sees or misses them.
+ */
+const PERMISSION_NOTES: Partial<Record<Permission, string>> = {
+  'quotation.cost.read': 'Sees unit cost, internal cost total and margin on quotations.',
+};
+
 /** Group rows by the part before the first dot (admin, approvals, documents ...). */
 function groupPermissions(): [string, Permission[]][] {
   const groups = new Map<string, Permission[]>();
@@ -108,6 +116,9 @@ export default async function RolesPage() {
               <tr key={permission}>
                 <Th scope="row" className={admin.rowHead}>
                   <span className={styles.perm}>{permission}</span>
+                  {PERMISSION_NOTES[permission] ? (
+                    <span className={styles.sod}>{PERMISSION_NOTES[permission]}</span>
+                  ) : null}
                   {SOD_PERMISSIONS.includes(permission) ? (
                     <span className={styles.sod}>
                       Separation of duties applies: not the person who prepared it.
