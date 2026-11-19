@@ -2,7 +2,7 @@
 // kernel-ui.ts so Client Components do not pull in decimal.js and the Nepali calendar).
 // Serves the NFR "amounts are exact and dates are Kathmandu time" for every kernel screen.
 import { DEFAULT_ROLE_PERMISSIONS } from '@bos/contracts';
-import { formatKathmandu, formatMoney } from '@bos/locale';
+import { formatKathmandu, formatMoney, type NumberSystem } from '@bos/locale';
 
 import { humanizeKey } from './kernel-ui';
 
@@ -18,9 +18,19 @@ function asCurrency(value: unknown): Currency | null {
 const DECIMAL = /^-?\d{1,16}(\.\d{1,2})?$/;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
-/** Money for display, or the raw text when it is not a decimal (never throws on odd data). */
-export function money(amount: string, currency: Currency = 'NPR'): string {
-  return DECIMAL.test(amount) ? formatMoney(amount, currency) : amount;
+/**
+ * Money for display, or the raw text when it is not a decimal (never throws on odd data).
+ * `numberSystem` is the tenant's grouping setting (`getNumberSystem()` on the server); left out,
+ * each currency keeps its own grouping.
+ */
+export function money(
+  amount: string,
+  currency: Currency = 'NPR',
+  numberSystem?: NumberSystem,
+): string {
+  return DECIMAL.test(amount)
+    ? formatMoney(amount, currency, numberSystem === undefined ? undefined : { numberSystem })
+    : amount;
 }
 
 /** `17 Jul 2025, 05:45` in Kathmandu time, or the raw text when it is not a date. */
@@ -103,6 +113,7 @@ function snapshotValue(value: unknown, references: ReadonlyMap<string, string>):
 export function snapshotEntries(
   snapshot: unknown,
   references: ReadonlyMap<string, string> = new Map(),
+  numberSystem?: NumberSystem,
 ): SnapshotEntry[] {
   if (isEmptyValue(snapshot)) return [];
   if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
@@ -123,10 +134,10 @@ export function snapshotEntries(
       const label = humanizeKey(key);
       if (typeof raw === 'string') {
         if (/Npr$/.test(key) && DECIMAL.test(raw)) {
-          return { key, label, value: money(raw, 'NPR'), block: false };
+          return { key, label, value: money(raw, 'NPR', numberSystem), block: false };
         }
         if (key === 'amount' && currency !== null && DECIMAL.test(raw)) {
-          return { key, label, value: money(raw, currency), block: false };
+          return { key, label, value: money(raw, currency, numberSystem), block: false };
         }
         if (ISO_INSTANT.test(raw)) return { key, label, value: when(raw), block: false };
         return { key, label, value: raw, block: raw.includes('\n') || raw.length > 120 };

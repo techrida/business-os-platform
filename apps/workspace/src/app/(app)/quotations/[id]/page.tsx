@@ -1,4 +1,5 @@
 import type { QuotationDetail, QuotationVersionDto } from '@bos/contracts';
+import type { NumberSystem } from '@bos/locale';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -18,6 +19,7 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { listSalesOrders } from '@/lib/api-billing';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
+import { getNumberSystem } from '@/lib/display-settings';
 import { money, when } from '@/lib/kernel-format';
 
 export const metadata: Metadata = { title: 'Quotation · Business OS' };
@@ -39,7 +41,13 @@ function Pdf({ quotationId, version }: { quotationId: string; version: Quotation
   );
 }
 
-function Totals({ version }: { version: QuotationVersionDto }) {
+function Totals({
+  version,
+  numberSystem,
+}: {
+  version: QuotationVersionDto;
+  numberSystem: NumberSystem;
+}) {
   const { totals, currency } = version;
   const rows: { key: string; label: string; value: string; grand?: boolean }[] = [
     { key: 'subtotal', label: 'Subtotal', value: totals.subtotal },
@@ -64,7 +72,7 @@ function Totals({ version }: { version: QuotationVersionDto }) {
             className={row.grand ? `${styles.totalRow} ${styles.grandTotal}` : styles.totalRow}
           >
             <dt className={styles.totalTerm}>{row.label}</dt>
-            <dd className={styles.totalValue}>{money(row.value, currency)}</dd>
+            <dd className={styles.totalValue}>{money(row.value, currency, numberSystem)}</dd>
           </div>
         ))}
       </dl>
@@ -72,7 +80,7 @@ function Totals({ version }: { version: QuotationVersionDto }) {
   );
 }
 
-function revisionRows(detail: QuotationDetail): RevisionRow[] {
+function revisionRows(detail: QuotationDetail, numberSystem: NumberSystem): RevisionRow[] {
   const { quotation, versions } = detail;
   return [...versions]
     .sort((a, b) => b.revisionNo - a.revisionNo)
@@ -81,7 +89,7 @@ function revisionRows(detail: QuotationDetail): RevisionRow[] {
       label: `Rev ${v.revisionNo}`,
       current: v.id === quotation.currentVersionId,
       status: <QuotationStatusBadge status={v.status} rejectionSource={v.rejectionSource} />,
-      total: money(v.totals.total, v.currency),
+      total: money(v.totals.total, v.currency, numberSystem),
       validUntil: when(v.validUntil, 'date'),
       note: v.revisionReason,
       pdf: <Pdf quotationId={quotation.id} version={v} />,
@@ -94,6 +102,8 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
   if (!UUID.test(id)) notFound();
   const path = `/quotations/${encodeURIComponent(id)}`;
   const session = await requireStaffSession(path);
+
+  const numberSystem = await getNumberSystem();
 
   let detail: QuotationDetail;
   try {
@@ -205,7 +215,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
               <>
                 <span className={styles.headerFact}>Revision {current.revisionNo}</span>
                 <span className={styles.headerFact}>
-                  {money(current.totals.total, current.currency)}
+                  {money(current.totals.total, current.currency, numberSystem)}
                 </span>
               </>
             ) : null}
@@ -261,17 +271,17 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
                 className={styles.detailPanel}
                 title="Current revision"
                 description={`Last changed ${when(current.updatedAt)}`}
-                actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail)} />}
+                actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail, numberSystem)} />}
               >
                 <FactList facts={facts} className={styles.facts ?? ''} />
               </Panel>
-              <Totals version={current} />
+              <Totals version={current} numberSystem={numberSystem} />
             </>
           ) : versions.length > 0 ? (
             <Panel
               className={styles.detailPanel}
               title="Revisions"
-              actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail)} />}
+              actions={<VersionDrawer number={quotation.number} rows={revisionRows(detail, numberSystem)} />}
             >
               <p className={styles.note}>Open the list to see every revision.</p>
             </Panel>

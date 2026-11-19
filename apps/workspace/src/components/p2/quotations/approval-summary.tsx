@@ -1,5 +1,6 @@
 import { trimPercent } from '@bos/contracts';
 import type { ApprovalRequestDto } from '@bos/contracts';
+import type { NumberSystem } from '@bos/locale';
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -15,8 +16,14 @@ type SummaryRequest = Pick<ApprovalRequestDto, 'snapshot'> & {
 };
 
 /** The stored values as they are, for a snapshot that is not a quotation snapshot. */
-function StoredValues({ snapshot }: { snapshot: unknown }) {
-  const facts: Fact[] = snapshotEntries(snapshot).map((row) => ({
+function StoredValues({
+  snapshot,
+  numberSystem,
+}: {
+  snapshot: unknown;
+  numberSystem: NumberSystem | undefined;
+}) {
+  const facts: Fact[] = snapshotEntries(snapshot, undefined, numberSystem).map((row) => ({
     key: row.key,
     label: row.label,
     value: row.block ? <pre className={styles.pre}>{row.value}</pre> : row.value,
@@ -35,7 +42,14 @@ function StoredValues({ snapshot }: { snapshot: unknown }) {
  * a stored string, formatted for display only. A snapshot that does not parse shows "Not in this
  * snapshot" and the stored values as they are.
  */
-export function QuotationApprovalSummary({ request }: { request: SummaryRequest }) {
+export function QuotationApprovalSummary({
+  request,
+  numberSystem,
+}: {
+  request: SummaryRequest;
+  /** The tenant's grouping setting; left out, each currency keeps its own grouping. */
+  numberSystem?: NumberSystem;
+}) {
   const snap = parseApprovalSnapshot(request.snapshot);
 
   if (snap === null) {
@@ -45,7 +59,7 @@ export function QuotationApprovalSummary({ request }: { request: SummaryRequest 
           The quotation summary could not be read from this request, so the stored values are shown
           as they are.
         </Alert>
-        <StoredValues snapshot={request.snapshot} />
+        <StoredValues snapshot={request.snapshot} numberSystem={numberSystem} />
       </div>
     );
   }
@@ -58,12 +72,12 @@ export function QuotationApprovalSummary({ request }: { request: SummaryRequest 
     {
       key: 'total',
       label: 'Total (NPR)',
-      value: <span className={`${styles.figure} ${styles.total}`}>{money(snap.nprTotal)}</span>,
+      value: <span className={`${styles.figure} ${styles.total}`}>{money(snap.nprTotal, 'NPR', numberSystem)}</span>,
     },
     {
       key: 'discount',
       label: 'Discount',
-      value: <span className={styles.figure}>{money(snap.nprDiscountAmount)}</span>,
+      value: <span className={styles.figure}>{money(snap.nprDiscountAmount, 'NPR', numberSystem)}</span>,
     },
     {
       key: 'discountPct',

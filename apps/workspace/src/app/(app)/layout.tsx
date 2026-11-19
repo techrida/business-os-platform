@@ -5,7 +5,9 @@ import { accountLabel } from '@/components/shell/account-label';
 import { Header } from '@/components/shell/header';
 import { ShellFrame, ShellMain } from '@/components/shell/shell-state';
 import { Sidebar } from '@/components/shell/sidebar';
+import { NumberSystemProvider } from '@/components/ui/number-system-context';
 import { WebVitals } from '@/components/web-vitals';
+import { getNumberSystem } from '@/lib/display-settings';
 import { getSession } from '@/lib/session';
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -23,6 +25,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (session.roles.length === 0) redirect('/no-access');
 
   const roles = accountLabel(session.roles);
+  // Never throws: a failed read falls back to the default grouping.
+  const numberSystem = await getNumberSystem();
 
   return (
     <ShellFrame>
@@ -31,7 +35,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <Sidebar user={{ name: roles, detail: session.orgKind }} roles={session.roles} />
       <ShellMain>
         <Header orgKind={session.orgKind} roles={session.roles} />
-        {children}
+        <NumberSystemProvider value={numberSystem}>{children}</NumberSystemProvider>
       </ShellMain>
     </ShellFrame>
   );
