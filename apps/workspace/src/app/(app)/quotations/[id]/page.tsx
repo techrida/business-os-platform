@@ -17,7 +17,6 @@ import { FactList, Panel, type Fact } from '@/components/ui/panel';
 import { failureOf } from '@/lib/api-kernel';
 import { requireStaffSession } from '@/lib/bff';
 import { money, when } from '@/lib/kernel-format';
-import { userNames } from '@/lib/business-labels';
 
 export const metadata: Metadata = { title: 'Quotation · Business OS' };
 export const dynamic = 'force-dynamic';
@@ -128,7 +127,8 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
   const contact =
     current?.contactId != null ? contacts.find((c) => c.id === current.contactId) : undefined;
 
-  const people = await userNames(session);
+  // The quotation returns the names of the people it names (owner, history actors): no admin directory.
+  const people = new Map((detail.people ?? []).map((p) => [p.userId, p.name]));
   const facts: Fact[] =
     current === null
       ? []
