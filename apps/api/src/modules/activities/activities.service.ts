@@ -290,7 +290,8 @@ export class ActivitiesService {
       if (row === undefined) throw activityNotFound();
       const key = ACTIVITY_SUBJECT_KEYS.find((k) => row[k] !== null);
       if (key === undefined) throw activityNotFound();
-      await this.assertSubject(tx, key, row[key]!, 'write');
+      // Out of scope answers exactly like an unknown id, so a guessed activity id learns nothing.
+      await this.assertSubject(tx, key, row[key]!, 'write', activityNotFound);
       if (SYSTEM_KINDS.has(row.kind)) {
         throw new ConflictException({
           code: 'conflict',
@@ -323,17 +324,19 @@ export class ActivitiesService {
   /**
    * The subject row must exist in this entity (tenant, for a customer or contact) and the caller must hold the
    * subject's read or write permission on it. Out of scope is a 404, never a 403, so a guessed id learns nothing.
-   * Returns the subject's ref (a lead's carries its owner).
+   * Returns the subject's ref (a lead's carries its owner). `notFound` is the 404 to answer with: a route keyed by
+   * an activity id answers as if the activity itself were unknown.
    */
   private async assertSubject(
     q: Q,
     key: SubjectKey,
     id: string,
     mode: 'read' | 'write',
+    notFound: () => NotFoundException = subjectNotFound,
   ): Promise<ResourceRef> {
     const { scope, principal } = this.caller.current();
     const ref = await this.refOf(q, key, id, scope, principal);
-    if (ref === undefined) throw subjectNotFound();
+    if (ref === undefined) throw notFound();
     const action: Permission = SUBJECT_PERMISSION[key][mode];
     try {
       this.authz.assert(action, ref);
@@ -343,7 +346,7 @@ export class ActivitiesService {
         error instanceof ForbiddenException
           ? (error.getResponse() as { reason?: unknown }).reason
           : undefined;
-      if (reason === 'out_of_scope') throw subjectNotFound();
+      if (reason === 'out_of_scope') throw notFound();
       throw error;
     }
   }
