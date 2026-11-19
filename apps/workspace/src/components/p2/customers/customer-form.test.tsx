@@ -81,4 +81,19 @@ describe('customer form', () => {
     expect(currencyOptions(html)).toEqual(['NPR', 'INR']);
     expect(html).not.toContain('switched off in Settings');
   });
+
+  it('numbers the card eyebrows in the order the cards appear, and leaves them out of the headings', () => {
+    const create = render('create');
+    expect(create).toContain('01 · The basics');
+    expect(create).toContain('02 · The contact');
+    expect(create).toContain('03 · The address');
+    expect(create).toContain('04 · The terms');
+    // Without the contact card the numbers close up instead of skipping 02.
+    const edit = render('edit');
+    expect(edit).toContain('01 · The basics');
+    expect(edit).toContain('02 · The address');
+    expect(edit).toContain('03 · The terms');
+    expect(edit).not.toContain('The contact');
+    expect(create).toContain('aria-hidden="true">01 · The basics');
+  });
 });

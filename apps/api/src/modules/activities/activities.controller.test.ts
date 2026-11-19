@@ -68,6 +68,27 @@ describe('ActivitiesController', () => {
     expect(service.list).toHaveBeenLastCalledWith({ status: 'planned', limit: 50, offset: 0 });
     await list({});
     expect(service.list).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+    await list({ dueFrom: '2030-01-01', dueTo: '2030-01-01' });
+    expect(service.list).toHaveBeenLastCalledWith({
+      dueFrom: '2030-01-01',
+      dueTo: '2030-01-01',
+      limit: 50,
+      offset: 0,
+    });
+  });
+
+  it('refuses a due day that is not a date, or a range that ends before it starts, with 400', async () => {
+    const { service, list } = await setup();
+    for (const query of [
+      { dueFrom: 'tomorrow' },
+      { dueTo: '2030-02-30' },
+      { dueFrom: '2030-01-01T00:00:00Z' },
+      { dueFrom: '2030-01-03', dueTo: '2030-01-02' },
+      { dueFrom: ['2030-01-01', '2030-01-02'] },
+    ]) {
+      await expect(list(query), JSON.stringify(query)).rejects.toThrow(BadRequestException);
+    }
+    expect(service.list).not.toHaveBeenCalled();
   });
 
   it('refuses two subjects, an unknown kind, a bad id, an unknown param or a repeated q with 400', async () => {

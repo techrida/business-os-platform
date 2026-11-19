@@ -119,6 +119,23 @@ describe('users', () => {
     expect(call.headers.get('authorization')).toBe(`Bearer ${TOKEN}`);
   });
 
+  it('reads the total of all matches from X-Total-Count, and leaves it unknown without one', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], nextAfter: null, nextPage: 3 }), {
+        headers: { 'content-type': 'application/json', 'x-total-count': '134' },
+      }),
+    );
+    expect((await listUsers(session, { status: ['active'], page: 2 })).total).toBe(134);
+    fetchMock.mockResolvedValueOnce(json({ items: [], nextAfter: null, nextPage: null }));
+    expect((await listUsers(session)).total).toBeNull();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ items: [], nextAfter: null, nextPage: null }), {
+        headers: { 'content-type': 'application/json', 'x-total-count': '-1' },
+      }),
+    );
+    expect((await listUsers(session)).total).toBeNull();
+  });
+
   it('sends status and role filters as repeated params', async () => {
     fetchMock.mockResolvedValueOnce(json({ items: [], nextAfter: null, nextPage: null }));
     await listUsers(session, { status: ['active', 'invited'], role: ['sales'], q: 'ab', page: 2 });

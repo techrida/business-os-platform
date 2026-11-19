@@ -1,4 +1,5 @@
 import { QuotationDetailSchema, type QuotationDetail } from '@bos/contracts';
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -190,6 +191,14 @@ describe('edit quotation page', () => {
     expect(props.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('shows the status as its label, not the stored lowercase value', async () => {
+    await render();
+    const props = mocks.builderProps.mock.calls[0]?.[0] as { status: ReactNode };
+    const badge = renderToStaticMarkup(<>{props.status}</>);
+    expect(badge).toContain('Returned');
+    expect(badge).not.toContain('>returned<');
+  });
+
   it('says the current revision is missing instead of editing another one', async () => {
     const d = detail();
     mocks.getQuotation.mockResolvedValue({ ...d, versions: d.versions.filter((v) => v.id !== V2) });
@@ -205,6 +214,8 @@ describe('edit quotation page', () => {
     });
     const html = await render();
     expect(html).toContain('You can view this quotation but not edit it');
+    expect(html).toContain('Returned');
+    expect(html).not.toContain('>returned<');
     expect(html).toContain(`href="/quotations/${ID}"`);
     expect(mocks.builderProps).not.toHaveBeenCalled();
   });

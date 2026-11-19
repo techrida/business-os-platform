@@ -80,6 +80,12 @@
   overflow-wrap: anywhere;
 }
 
+.recordNote {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-caption);
+}
+
 .records svg {
   flex: none;
   color: var(--icon-secondary);

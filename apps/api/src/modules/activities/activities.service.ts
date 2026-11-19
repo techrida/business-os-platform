@@ -34,7 +34,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, not, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, not, or, type SQL } from 'drizzle-orm';
 
 import { AuditService } from '../../platform/audit/audit.service';
 import { AuthzService, scopeWhereFor } from '../../platform/authz/authz.service';
@@ -49,6 +49,7 @@ import { leadRef } from '../leads/leads.service';
 import { opportunityRef } from '../opportunities/opportunities.service';
 import { ActivitiesCaller } from './activities.caller';
 import {
+  dueRangeBounds,
   activityNames,
   isPlannedRow,
   isPlannedSql,
@@ -99,6 +100,10 @@ export class ActivitiesService {
     filters.push(isNull(activities.cancelledAt));
     if (q.status === 'planned') filters.push(isPlannedSql);
     if (q.status === 'logged') filters.push(not(isPlannedSql));
+    // A due-day range keeps only activities with a due time inside it (a NULL due time never compares).
+    const due = dueRangeBounds(q);
+    if (due.from !== undefined) filters.push(gte(activities.dueAt, due.from));
+    if (due.before !== undefined) filters.push(lt(activities.dueAt, due.before));
     const order =
       q.status === 'planned'
         ? [asc(activities.dueAt), asc(activities.id)]

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { NoticeCard } from '@/components/shell/notice-card';
 import { Button } from '@/components/ui/button';
 import { CenteredPage } from '@/components/ui/centered-page';
+import { getFooterLinks } from '@/lib/env';
 import { getSession } from '@/lib/session';
 
 /**
@@ -18,8 +19,9 @@ export default async function NoAccessPage() {
   if (session && session.orgKind !== 'staff') redirect('/staff-only');
 
   return (
-    <CenteredPage>
+    <CenteredPage width="split">
       <NoticeCard
+        footerLinks={getFooterLinks()}
         title="You don't have access yet"
         actions={
           <form method="post" action="/auth/logout">

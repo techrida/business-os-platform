@@ -65,10 +65,38 @@ it('adds a status to the ones in the URL as repeated params and drops the page',
   );
 });
 
-it('shows the statuses the URL carries and clears one back to the rest', async () => {
+// Removing the last status asks for every case explicitly; no param would bring the default back.
+it('shows the statuses the URL carries and unchecking the last one lists every status', async () => {
   await mount('status=submitted', { status: ['submitted'] });
   expect(triggerWith('Awaiting review')).toBeTruthy();
   await click(triggerWith('Awaiting review'));
   await click(option('Awaiting review'));
-  expect(router.push).toHaveBeenLastCalledWith('/verification', { scroll: false });
+  expect(router.push).toHaveBeenLastCalledWith('/verification?status=all', { scroll: false });
+});
+
+it('Clear in the status list sets status=all, and a status chosen from All replaces it', async () => {
+  await mount('', { status: ['submitted'] });
+  await click(triggerWith('Awaiting review'));
+  const clear = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+    (b) => b.textContent?.trim() === 'Clear',
+  )!;
+  await click(clear);
+  expect(router.push).toHaveBeenLastCalledWith('/verification?status=all', { scroll: false });
+
+  await mounted.unmount();
+  await mount('status=all', { status: [], all: true });
+  await click(triggerWith('All statuses'));
+  await click(option('Verified'));
+  expect(router.push).toHaveBeenLastCalledWith('/verification?status=approved', { scroll: false });
+});
+
+it('keeps an explicit All in a no-JavaScript submit', async () => {
+  await mount('status=all', { status: [], all: true });
+  const data = new FormData(mounted.container.querySelector('form')!);
+  expect(data.getAll('status')).toEqual(['all']);
+  await mounted.unmount();
+  await mount('', { status: ['submitted'] });
+  expect(new FormData(mounted.container.querySelector('form')!).getAll('status')).toEqual([
+    'submitted',
+  ]);
 });

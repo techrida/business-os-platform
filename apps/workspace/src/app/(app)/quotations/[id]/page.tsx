@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { hasPermission } from '@/components/p2/customers/permissions';
-import { listPaymentTerms } from '@/components/p2/quote-builder/api';
+import { stageLabel } from '@/components/p2/crm/stages';
+import { getOpportunity, listPaymentTerms } from '@/components/p2/quote-builder/api';
 import { getQuotation } from '@/components/p2/quotations/api';
 import { QuotationContents } from '@/components/p2/quotations/contents';
 import styles from '@/components/p2/quotations/detail.module.css';
@@ -207,6 +208,10 @@ export default async function QuotationDetailPage({
   const earlier = view !== null && view.id !== quotation.currentVersionId;
   const contact =
     view?.contactId != null ? contacts.find((c) => c.id === view.contactId) : undefined;
+  // The deal's number and stage come from the opportunity itself; a denied or failed read leaves the plain link.
+  const opportunity = await Promise.resolve()
+    .then(() => getOpportunity(session, quotation.opportunityId))
+    .catch(() => null);
   // The version carries only the payment term's id. A failed lookup drops the name, not the page.
   const paymentTermId = view?.paymentTermId ?? null;
   const paymentTermsName =
@@ -420,8 +425,13 @@ export default async function QuotationDetailPage({
               <li>
                 <Icon name="briefcase" size={18} />
                 <Link href={`/opportunities/${encodeURIComponent(quotation.opportunityId)}`}>
-                  View opportunity
+                  {opportunity !== null ? opportunity.number : 'View opportunity'}
                 </Link>
+                {opportunity !== null ? (
+                  <span className={styles.recordNote}>
+                    {stageLabel('opportunity', opportunity.stage)}
+                  </span>
+                ) : null}
               </li>
               {order ? (
                 <li>

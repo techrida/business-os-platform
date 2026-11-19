@@ -60,7 +60,7 @@ export function OpportunityFilters({
 }) {
   return (
     <FilterBar
-      search={{ label: 'Search opportunities', placeholder: 'Search name or number' }}
+      search={{ label: 'Search opportunities', placeholder: 'Search name, number or customer' }}
       preserve={{ view: view === 'board' ? 'board' : undefined, rows: String(rows) }}
     >
       <Controls view={view} {...controls} />
