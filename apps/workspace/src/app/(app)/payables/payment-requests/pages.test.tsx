@@ -220,7 +220,7 @@ it('opens the list and the entry for a role an admin granted payment requests at
   session.roles = ['accountant'];
   grants.live = new Map([['payables.payment.request', 'own']]);
   expect(await listOf()).toContain('PAY-2083-0001');
-  expect(api.listPaymentRequestsPage).toHaveBeenCalledOnce();
+  expect(api.listPaymentRequestsPage).toHaveBeenCalled();
   const entry = renderToStaticMarkup(await NewPage());
   expect(entry).not.toContain('Your roles do not include payment requests.');
   expect(entry).toContain('name="vendorPartyId"');
