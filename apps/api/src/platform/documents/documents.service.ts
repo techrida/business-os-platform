@@ -53,7 +53,7 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, isNull, max } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, max, or } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import { z } from 'zod';
 
@@ -142,6 +142,31 @@ export interface DownloadHandle {
   mime: string;
   size: number;
 }
+
+/**
+ * What openImage gives back: the bytes, or (when the caller already holds this version) only the ETag, so the
+ * controller answers 304 without the storage ever being opened. `etag` is the version id, unquoted.
+ */
+export type ImageHandle =
+  | { notModified: true; etag: string }
+  | { notModified: false; stream: Readable; mime: string; size: number; etag: string };
+
+/**
+ * Whether an `If-None-Match` header names this ETag: a single tag, quoted (`"id"`) or not, weak (`W/"id"`) or
+ * strong (weak comparison, as RFC 9110 asks for If-None-Match), or a comma list of them.
+ */
+export function etagMatches(ifNoneMatch: string | undefined, etag: string): boolean {
+  if (ifNoneMatch === undefined) return false;
+  return ifNoneMatch.split(',').some((part) => {
+    let tag = part.trim();
+    if (tag.startsWith('W/')) tag = tag.slice(2);
+    if (tag.length >= 2 && tag.startsWith('"') && tag.endsWith('"')) tag = tag.slice(1, -1);
+    return tag !== '' && tag === etag;
+  });
+}
+
+/** People belong to the tenant, not to one entity: a profile picture shows in every entity of its tenant. */
+const TENANT_WIDE_IMAGE_OWNER = 'user_avatar';
 
 export function toVersionDto(v: VersionRow): DocumentVersionDto {
   return {
@@ -864,16 +889,22 @@ export class DocumentsService {
    * Opens an image (a company logo, a profile picture, a customer or vendor logo) for `GET /v1/images/:documentId`.
    * Asks no permission: any signed-in staff principal of the tenant may see these (U12); the controller
    * authenticates and passes the request's scope. The document must be live, of an image owner type, in the scope's
-   * tenant AND entity, and its newest version (by number, whatever its status) must be `clean` with an image type.
+   * tenant AND entity (a `user_avatar` only in the tenant: people belong to the tenant, not one entity), and its
+   * newest version (by number, whatever its status) must be `clean` with an image type.
    * Every refusal, including a file missing from storage, is the same 404 (never a 403), so the caller learns
    * nothing about whether the document exists. `etag` is the version id, unquoted: the caller quotes it.
+   * When `ifNoneMatch` (the request's `If-None-Match`) names that version, the result is `notModified` and the
+   * storage is never opened; every check above still runs first, so a 304 never answers for a refused image.
    */
-  async openImage(
-    scope: TxScope,
-    documentId: string,
-  ): Promise<{ stream: Readable; mime: string; size: number; etag: string }> {
+  async openImage(scope: TxScope, documentId: string, ifNoneMatch?: string): Promise<ImageHandle> {
     if (!Id.safeParse(documentId).success) throw new NotFoundException(IMAGE_NOT_FOUND);
-    const s = scoped(scope);
+    // scoped() refuses an empty id; the entity filter is written here because a profile picture skips it.
+    const { tenantId, organizationId } = scoped(scope).scope;
+    const sameEntityOrTenantWide = (table: typeof documents | typeof documentVersions) =>
+      or(
+        eq(documents.ownerType, TENANT_WIDE_IMAGE_OWNER),
+        eq(table.organizationId, organizationId),
+      );
     const [row] = await this.db
       .select({
         ownerType: documents.ownerType,
@@ -886,8 +917,12 @@ export class DocumentsService {
       .innerJoin(documentVersions, eq(documentVersions.documentId, documents.id))
       .where(
         and(
-          s.where(documents, and(eq(documents.id, documentId), isNull(documents.removedAt))),
-          s.where(documentVersions),
+          eq(documents.tenantId, tenantId),
+          eq(documentVersions.tenantId, tenantId),
+          sameEntityOrTenantWide(documents),
+          sameEntityOrTenantWide(documentVersions),
+          eq(documents.id, documentId),
+          isNull(documents.removedAt),
         ),
       )
       .orderBy(desc(documentVersions.version))
@@ -896,8 +931,8 @@ export class DocumentsService {
     if (
       row === undefined ||
       row.removedAt !== null ||
-      row.tenantId !== scope.tenantId ||
-      row.organizationId !== scope.organizationId ||
+      row.tenantId !== tenantId ||
+      (row.ownerType !== TENANT_WIDE_IMAGE_OWNER && row.organizationId !== organizationId) ||
       !isImageOwnerType(row.ownerType) ||
       row.version.status !== 'clean' ||
       row.version.detectedMime === null ||
@@ -905,9 +940,12 @@ export class DocumentsService {
     ) {
       throw new NotFoundException(IMAGE_NOT_FOUND);
     }
+    if (etagMatches(ifNoneMatch, row.version.id))
+      return { notModified: true, etag: row.version.id };
     try {
       const stream = await this.storage.openClean(row.version.storageKey);
       return {
+        notModified: false,
         stream,
         mime: row.version.detectedMime,
         size: row.version.sizeBytes,

@@ -1,6 +1,7 @@
 // Images as documents (U12, D33): an owner policy may narrow the upload types and size (logos and avatars: PNG,
-// JPEG, WebP up to 512 KiB), `openImage` serves a clean image to any signed-in staff of the tenant and entity with
-// one 404 for every refusal, and `createAndReceiveScanned` (the legacy-logo migrator) never skips the virus scan.
+// JPEG, WebP up to 512 KiB), `openImage` serves a clean image to any signed-in staff of the tenant and entity (a
+// profile picture: of the tenant) with one 404 for every refusal and a storage-free "not modified" for a matching
+// If-None-Match, and `createAndReceiveScanned` (the legacy-logo migrator) never skips the virus scan.
 // Unit level with fakes; the SQL scoping of openImage against Postgres is not covered here.
 import 'reflect-metadata';
 
@@ -259,10 +260,88 @@ describe('DocumentsService.openImage', () => {
 
     const image = await svc.openImage(scope, DOC_ID);
 
-    expect(image).toMatchObject({ mime: 'image/png', size: PNG.length, etag: VERSION_ID });
-    expect(image.stream).toBeInstanceOf(Readable);
+    expect(image).toMatchObject({
+      notModified: false,
+      mime: 'image/png',
+      size: PNG.length,
+      etag: VERSION_ID,
+    });
+    expect(image.notModified ? undefined : image.stream).toBeInstanceOf(Readable);
     expect(storage.openClean).toHaveBeenCalledWith(`${TENANT}/${VERSION_ID}`);
     expect(authz.assert).not.toHaveBeenCalled();
+  });
+
+  it('opens a profile picture from another entity of the same tenant: people belong to the tenant', async () => {
+    const { svc, storage } = imageSetup([{ ...good, organizationId: randomUUID() }]);
+
+    const image = await svc.openImage(scope, DOC_ID);
+
+    expect(image).toMatchObject({ notModified: false, etag: VERSION_ID });
+    expect(storage.openClean).toHaveBeenCalledTimes(1);
+  });
+
+  it('is still a 404 for a profile picture of another tenant, whatever its entity', async () => {
+    for (const organizationId of [ORG, randomUUID()]) {
+      const { svc, storage } = imageSetup([{ ...good, tenantId: randomUUID(), organizationId }]);
+      await expect(svc.openImage(scope, DOC_ID)).rejects.toBeInstanceOf(NotFoundException);
+      expect(storage.openClean).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(['entity_logo', 'customer_logo', 'vendor_logo'])(
+    'keeps a %s to its entity: opens in the same one, 404 from another of the same tenant',
+    async (ownerType) => {
+      const same = imageSetup([{ ...good, ownerType }]);
+      await expect(same.svc.openImage(scope, DOC_ID)).resolves.toMatchObject({
+        notModified: false,
+      });
+
+      const other = imageSetup([{ ...good, ownerType, organizationId: randomUUID() }]);
+      await expect(other.svc.openImage(scope, DOC_ID)).rejects.toBeInstanceOf(NotFoundException);
+      expect(other.storage.openClean).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['quoted', `"${VERSION_ID}"`],
+    ['bare', VERSION_ID],
+    ['weak', `W/"${VERSION_ID}"`],
+    ['in a comma list', `"${randomUUID()}", W/"${VERSION_ID}" ,"${randomUUID()}"`],
+  ])(
+    'answers not modified for a matching If-None-Match (%s) without opening the storage',
+    async (_name, header) => {
+      const { svc, storage } = imageSetup([good]);
+
+      const image = await svc.openImage(scope, DOC_ID, header);
+
+      expect(image).toEqual({ notModified: true, etag: VERSION_ID });
+      expect(storage.openClean).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['another version', `"${randomUUID()}"`],
+    ['an empty header', ''],
+    ['empty quotes', '""'],
+    ['a prefix of the version id', `"${VERSION_ID.slice(0, 8)}"`],
+  ])('opens the storage for a non-matching If-None-Match (%s)', async (_name, header) => {
+    const { svc, storage } = imageSetup([good]);
+
+    const image = await svc.openImage(scope, DOC_ID, header);
+
+    expect(image).toMatchObject({ notModified: false, etag: VERSION_ID });
+    expect(storage.openClean).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a 404, not a 304, for a refused image even when If-None-Match names its version', async () => {
+    const { svc, storage } = imageSetup([
+      { ...good, ownerType: 'entity_logo', organizationId: randomUUID() },
+    ]);
+
+    await expect(svc.openImage(scope, DOC_ID, `"${VERSION_ID}"`)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(storage.openClean).not.toHaveBeenCalled();
   });
 
   const refusals: [string, () => ReturnType<typeof imageSetup>, string?][] = [
@@ -277,7 +356,10 @@ describe('DocumentsService.openImage', () => {
     ),
     ['an owner type that is not an image', () => imageSetup([{ ...good, ownerType: 'quotation' }])],
     ['another tenant', () => imageSetup([{ ...good, tenantId: randomUUID() }])],
-    ['another entity', () => imageSetup([{ ...good, organizationId: randomUUID() }])],
+    [
+      'a company logo of another entity',
+      () => imageSetup([{ ...good, ownerType: 'entity_logo', organizationId: randomUUID() }]),
+    ],
     [
       'a clean file whose detected type is not an image',
       () =>
