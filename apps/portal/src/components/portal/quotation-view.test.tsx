@@ -62,7 +62,7 @@ describe('QuotationView markup', () => {
       deliveryTimeline: null,
       paymentTermName: null,
       paymentSchedule: [],
-    } as never);
+    });
     const html = renderToStaticMarkup(<QuotationView view={view} today={TODAY} />);
     expect(html).not.toContain('>Terms<');
   });
