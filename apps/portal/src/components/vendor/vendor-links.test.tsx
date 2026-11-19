@@ -20,6 +20,9 @@ const m = vi.hoisted(() => ({
 vi.mock('server-only', () => ({}));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/vendor',
+  // The list's filter bar is a client component and reads these.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
   redirect: (to: string) => {
     throw new Redirect(to);
   },
@@ -145,7 +148,8 @@ describe('PurchaseOrderView submit-a-bill link', () => {
 });
 
 describe('Bills page submit-a-bill link', () => {
-  const render = async () => renderToStaticMarkup((await BillsPage()) as ReactElement);
+  const render = async () =>
+    renderToStaticMarkup((await BillsPage({ searchParams: Promise.resolve({}) })) as ReactElement);
 
   beforeEach(() => {
     for (const f of Object.values(m)) f.mockReset();
