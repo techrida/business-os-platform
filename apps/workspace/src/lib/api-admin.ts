@@ -234,6 +234,14 @@ export function getSetting(session: Session, key: SettingKey): Promise<SettingCu
   return requestParsed(session, 'GET', `/v1/admin/settings/${seg(key)}`, SettingCurrentSchema);
 }
 
+/**
+ * The saved default reminder and escalation times (`approvals.sla_defaults`). Readable by anyone who
+ * may edit approval workflows, unlike `getSetting`, which needs the settings admin permission.
+ */
+export function getApprovalSlaDefaults(session: Session): Promise<SettingCurrent> {
+  return requestParsed(session, 'GET', '/v1/admin/approval-sla-defaults', SettingCurrentSchema);
+}
+
 export function putSetting(
   session: Session,
   key: SettingKey,
