@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ActivityDto, LeadOwnerOption } from '@bos/contracts';
+import { avatarColour, type ActivityDto, type LeadOwnerOption } from '@bos/contracts';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -25,7 +25,7 @@ vi.mock('@/components/p2/crm/crm-api', () => ({
 }));
 vi.mock('@/components/ui/toast', () => ({ toast: { success: mocks.success, error: mocks.error } }));
 
-import { FollowUpsCard, sortFollowUps } from './follow-ups-card';
+import { assigneeAvatar, FollowUpsCard, sortFollowUps } from './follow-ups-card';
 
 const LEAD = '11111111-1111-4111-8111-111111111111';
 const OWNER = '33333333-3333-4333-8333-333333333333';
@@ -132,7 +132,29 @@ it('shows the assignee with initials, and a plain fallback for someone outside t
   expect(first?.textContent).toContain('Another teammate');
   expect(second?.textContent).toContain('Sita Rai');
   expect(second?.querySelector('[aria-hidden="true"]')?.textContent).toBe('SR');
+  expect(
+    second
+      ?.querySelector<HTMLElement>('[aria-hidden="true"]')
+      ?.style.getPropertyValue('--avatar-fill'),
+  ).toBe(avatarColour(OWNER));
   await mounted.unmount();
+});
+
+it("seeds the assignee avatar from their user id, with the picture the owners list carries", () => {
+  const picture = '66666666-6666-4666-8666-666666666666';
+  const withPicture = [{ ...owners[0]!, avatarDocumentId: picture }];
+  expect(assigneeAvatar({ assigneeUserId: OWNER }, withPicture)).toEqual({
+    seedId: OWNER,
+    imageDocumentId: picture,
+  });
+  expect(assigneeAvatar({ assigneeUserId: STRANGER }, withPicture)).toEqual({
+    seedId: STRANGER,
+    imageDocumentId: null,
+  });
+  expect(assigneeAvatar({ assigneeUserId: null }, withPicture)).toEqual({
+    seedId: null,
+    imageDocumentId: null,
+  });
 });
 
 it('shows an empty state and still offers Schedule follow-up', async () => {

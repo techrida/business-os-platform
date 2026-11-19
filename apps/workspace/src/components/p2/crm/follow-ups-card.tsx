@@ -95,6 +95,19 @@ export function assigneeName(
 }
 
 /**
+ * The assignee avatar's colour seed (their user id) and picture. Only the owners list carries a
+ * picture; someone named only by the users directory, or unknown, shows seeded initials.
+ */
+export function assigneeAvatar(
+  item: Pick<ActivityDto, 'assigneeUserId'>,
+  owners: readonly LeadOwnerOption[],
+): { seedId: string | null; imageDocumentId: string | null } {
+  if (!item.assigneeUserId) return { seedId: null, imageDocumentId: null };
+  const owner = owners.find((o) => o.userId === item.assigneeUserId);
+  return { seedId: item.assigneeUserId, imageDocumentId: owner?.avatarDocumentId ?? null };
+}
+
+/**
  * Complete, Reschedule and Cancel for one planned follow-up, on any subject. Shared by the
  * Follow-ups card and the Planned table on /activities.
  */
@@ -197,7 +210,12 @@ function FollowUpRow({
         </p>
         <p className={styles.meta}>
           <span className={styles.assignee}>
-            <Avatar name={assignee} size="small" shape="circle" />
+            <Avatar
+              name={assignee}
+              {...assigneeAvatar(item, owners)}
+              size="small"
+              shape="circle"
+            />
             <span>{assignee}</span>
           </span>
         </p>
